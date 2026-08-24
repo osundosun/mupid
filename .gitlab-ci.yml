@@ -1,0 +1,17 @@
+stages:
+  - ai-review
+
+gemini-code-review:
+  stage: ai-review
+  image: python:3.12-slim
+  interruptible: true
+  allow_failure: true
+  timeout: 5m
+  variables:
+    GIT_DEPTH: "0"
+    GEMINI_MODEL: "gemini-3.7-flash"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^study\/이규원\//'
+    - when: never
+  script:
+    - python scripts/gemini_review.py
