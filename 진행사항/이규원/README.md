@@ -3,7 +3,7 @@
 **학습 주제:** React + TypeScript 기반 Text-to-SQL 프론트엔드 구현  
 **학습 기간:** 2026-08-24 ~ 2026-08-28  
 **1일 학습 시간:** 4시간  
-**학습 프로젝트:** [`text-to-sql-console`](./text-to-sql-console)
+**1일차 학습 폴더:** [`day01-react-typescript`](./day01-react-typescript)
 
 ---
 
@@ -32,7 +32,7 @@
 
 #### 학습 목표
 
-- Text-to-SQL Console의 화면과 데이터 흐름을 설계한다.
+- React + TypeScript 학습 화면과 AI 서비스의 데이터 흐름을 설계한다.
 - TypeScript의 주요 타입 문법을 API 요청·응답 구조에 적용한다.
 - 실제 백엔드 없이도 확인 가능한 Mock 결과 화면을 구현한다.
 
@@ -115,7 +115,7 @@ SQL 결과는 질의에 따라 컬럼 이름이 달라지기 때문에 고정된
 일자별 작업을 주제별 브랜치로 분리하고, 완료 후 Merge Request를 통해 `master`에 반영한다.
 
 ```text
-codex/study/lee-gyuwon/typescript-setup     # 1일차
+codex/study/lee-gyuwon/day01-react-typescript # 1일차
 codex/study/lee-gyuwon/query-form           # 2일차 예정
 codex/study/lee-gyuwon/api-integration      # 3일차 예정
 codex/study/lee-gyuwon/result-history-ui    # 4일차 예정
@@ -125,7 +125,7 @@ codex/study/lee-gyuwon/test-refactor-docs   # 5일차 예정
 ## 실행 및 검증
 
 ```bash
-cd text-to-sql-console
+cd day01-react-typescript
 npm install
 npm run lint
 npm run build

@@ -1,6 +1,6 @@
-# Text-to-SQL Console
+# Day 01 - React + TypeScript 프로젝트 구조
 
-React와 TypeScript로 자연어 질문부터 SQL 결과 테이블까지의 데이터 흐름을 설계하는 개인 학습 프로젝트입니다.
+React와 TypeScript의 타입 시스템과 프로젝트 구조를 학습하기 위해, 자연어 질문부터 SQL 결과 테이블까지의 데이터 흐름을 예제로 구현한 1일차 개인 학습 프로젝트입니다.
 
 ## 1일차 구현 범위
 

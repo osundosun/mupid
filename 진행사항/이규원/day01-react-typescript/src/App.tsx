@@ -9,16 +9,16 @@ const response = getMockQueryResponse()
 const requestStatus: RequestStatus = 'success'
 
 function App() {
-  useDocumentTitle('Text-to-SQL Console | Day 1')
+  useDocumentTitle('Day 01 | React + TypeScript')
 
   return (
     <main className="app-shell">
       <header className="site-header">
-        <a className="brand" href="#top" aria-label="Text-to-SQL Console 처음으로">
+        <a className="brand" href="#top" aria-label="React TypeScript Study 처음으로">
           <span className="brand-mark" aria-hidden="true">
             T
           </span>
-          <span>Text-to-SQL Console</span>
+          <span>React + TypeScript Study</span>
         </a>
         <span className="day-badge">DAY 01 · FOUNDATION</span>
       </header>
