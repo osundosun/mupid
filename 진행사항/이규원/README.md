@@ -115,11 +115,11 @@ SQL 결과는 질의에 따라 컬럼 이름이 달라지기 때문에 고정된
 일자별 작업을 주제별 브랜치로 분리하고, 완료 후 Merge Request를 통해 `master`에 반영한다.
 
 ```text
-codex/study/lee-gyuwon/day01-react-typescript # 1일차
-codex/study/lee-gyuwon/query-form           # 2일차 예정
-codex/study/lee-gyuwon/api-integration      # 3일차 예정
-codex/study/lee-gyuwon/result-history-ui    # 4일차 예정
-codex/study/lee-gyuwon/test-refactor-docs   # 5일차 예정
+study/이규원/day01-react-typescript   # 1일차
+study/이규원/day02-query-form         # 2일차 예정
+study/이규원/day03-api-integration    # 3일차 예정
+study/이규원/day04-result-history-ui  # 4일차 예정
+study/이규원/day05-test-refactor-docs # 5일차 예정
 ```
 
 ## 실행 및 검증
