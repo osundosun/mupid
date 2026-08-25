@@ -2,7 +2,6 @@
 
 **학습 주제:** React + TypeScript 기반 Text-to-SQL 프론트엔드 구현  
 **학습 기간:** 2026-08-24 ~ 2026-08-28  
-**1일 학습 시간:** 4시간  
 **누적 학습 프로젝트:** [`react-typescript-text-to-sql`](./react-typescript-text-to-sql)<br>
 **2일차 작업 브랜치:** `study/이규원/day02-query-form`
 
