@@ -50,7 +50,7 @@
 #### 작업 정보
 
 - 브랜치: `study/이규원/day01-react-typescript`
-- 프로젝트 폴더: `day01-react-typescript`
+- 프로젝트 폴더: `react-typescript-text-to-sql`
 
 ---
 
