@@ -180,6 +180,213 @@ footer {
   line-height: 1.7;
 }
 
+.query-section {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.65fr) minmax(0, 1.35fr);
+  gap: 72px;
+  align-items: start;
+}
+
+.query-section .section-heading {
+  position: sticky;
+  top: 32px;
+}
+
+.query-form {
+  padding: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--card-shadow);
+}
+
+.form-header,
+.field-label-row,
+.form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.form-header {
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.form-header span,
+.example-list > span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.form-header h3 {
+  margin: 5px 0 0;
+  color: var(--ink);
+  font-size: 24px;
+  letter-spacing: -0.04em;
+}
+
+.contract-badge {
+  padding: 8px 11px;
+  border: 1px solid #cdd5ff;
+  border-radius: 999px;
+  color: var(--accent) !important;
+  background: #f3f5ff;
+  white-space: nowrap;
+}
+
+.field-group {
+  margin-top: 25px;
+}
+
+.field-group label {
+  display: inline-block;
+  margin-bottom: 9px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.field-group select,
+.field-group textarea {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  color: var(--ink);
+  background: var(--surface-muted);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
+}
+
+.field-group select {
+  height: 48px;
+  padding: 0 14px;
+}
+
+.field-group textarea {
+  min-height: 132px;
+  padding: 14px;
+  line-height: 1.65;
+  resize: vertical;
+}
+
+.field-group select:focus,
+.field-group textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgb(55 89 255 / 10%);
+}
+
+.field-group textarea[aria-invalid='true'] {
+  border-color: #dc3b50;
+  box-shadow: 0 0 0 4px rgb(220 59 80 / 8%);
+}
+
+.field-help,
+.field-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.field-help {
+  color: var(--muted);
+}
+
+.field-error,
+.character-count.error {
+  color: #c22d43;
+}
+
+.character-count {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.example-list {
+  margin-top: 24px;
+}
+
+.example-list > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.example-list button {
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 12px;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.example-list button:hover:not(:disabled),
+.example-list button:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  color: var(--accent);
+  background: #f3f5ff;
+}
+
+.form-actions {
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.form-actions p {
+  max-width: 330px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.submit-button {
+  min-width: 150px;
+  padding: 13px 18px;
+  border: 0;
+  border-radius: 12px;
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 10px 24px rgb(55 89 255 / 22%);
+  cursor: pointer;
+  font-weight: 720;
+}
+
+.submit-button:hover:not(:disabled) {
+  background: #2646df;
+}
+
+.submit-button:focus-visible {
+  outline: 3px solid rgb(55 89 255 / 25%);
+  outline-offset: 3px;
+}
+
+.submit-button:disabled,
+.example-list button:disabled,
+.field-group select:disabled,
+.field-group textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .flow-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -373,6 +580,15 @@ footer {
     transform: none;
   }
 
+  .query-section {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .query-section .section-heading {
+    position: static;
+  }
+
   .flow-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -459,5 +675,17 @@ footer {
 
   .result-meta {
     white-space: normal;
+  }
+
+  .form-header,
+  .form-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .contract-badge,
+  .submit-button {
+    width: 100%;
+    text-align: center;
   }
 }

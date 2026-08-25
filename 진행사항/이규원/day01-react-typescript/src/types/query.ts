@@ -1,12 +1,27 @@
 export type RequestStatus = 'idle' | 'loading' | 'success' | 'error'
 
 export interface QueryRequest {
+  dbId: string
+  question: string
+}
+
+export interface DatabaseOption {
+  id: string
+  label: string
+  description: string
+}
+
+export interface ExampleQuestion {
+  id: string
+  dbId: string
+  label: string
   question: string
 }
 
 export type QueryRow = Record<string, string | number | null>
 
 export interface QueryResult {
+  dbId: string
   question: string
   sql: string
   columns: string[]

@@ -13,7 +13,7 @@ export function QueryResultPreview({ response, status }: QueryResultPreviewProps
     <article className="result-card">
       <div className="result-toolbar">
         <div>
-          <span className="query-label">QUESTION</span>
+          <span className="query-label">QUESTION · {data.dbId}</span>
           <p className="query-text">{data.question}</p>
         </div>
         <div className="result-meta" aria-label="응답 메타 정보">

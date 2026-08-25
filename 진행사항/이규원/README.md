@@ -3,7 +3,8 @@
 **학습 주제:** React + TypeScript 기반 Text-to-SQL 프론트엔드 구현  
 **학습 기간:** 2026-08-24 ~ 2026-08-28  
 **1일 학습 시간:** 4시간  
-**1일차 학습 폴더:** [`day01-react-typescript`](./day01-react-typescript)
+**1일차 학습 폴더:** [`day01-react-typescript`](./day01-react-typescript)<br>
+**2일차 작업 브랜치:** `study/이규원/day02-query-form`
 
 ---
 
@@ -19,7 +20,7 @@
 | 일차 | 주제 | 주요 산출물 | 상태 |
 |---|---|---|---|
 | 1일차 | TypeScript와 프로젝트 구조 | 타입, Mock 데이터, 기본 결과 화면 | ✅ 완료 |
-| 2일차 | React 컴포넌트와 입력 폼 | 질문 입력 및 유효성 검사 | ⬜ 예정 |
+| 2일차 | React 컴포넌트와 입력 폼 | DB 선택, 질문 입력 및 유효성 검사 | ✅ 완료 |
 | 3일차 | 비동기 API와 요청 상태 | 로딩, 오류, 재시도, 요청 취소 | ⬜ 예정 |
 | 4일차 | 결과 UI와 사용자 기능 | SQL 복사, 동적 테이블, 최근 기록 | ⬜ 예정 |
 | 5일차 | 테스트와 리팩터링 | 컴포넌트 테스트 및 최종 문서화 | ⬜ 예정 |
@@ -98,6 +99,72 @@ SQL 결과는 질의에 따라 컬럼 이름이 달라지기 때문에 고정된
 - 빈 질문과 공백 입력 유효성 검사
 - 요청 중 버튼 비활성화 UI 구현
 
+### 2026-08-25 — 2일차: React 컴포넌트와 Text-to-SQL 입력 폼
+
+#### 학습 목표
+
+- Skeleton-2 Text-to-SQL의 `db_id`, `question`, `query` 구조를 프론트엔드 입력·결과 UI에 연결한다.
+- React Controlled Component와 TypeScript 이벤트 타입을 이용해 폼 상태를 안전하게 관리한다.
+- 필수 입력, 글자 수, 공백 입력을 검증하고 오류 메시지를 접근성 속성과 함께 제공한다.
+
+#### 시간별 진행 내용
+
+| 시간 | 진행 내용 |
+|---|---|
+| 1시간 | 명세서와 Skeleton-2 데이터 구조 확인, 입력 화면과 컴포넌트 설계 |
+| 1시간 | `useState`, Props, `ChangeEvent`, `FormEvent`를 적용한 React 폼 학습 |
+| 1시간 30분 | DB 선택, 질문 입력, 예시 질문, 유효성 검사 및 Mock 결과 연결 구현 |
+| 30분 | ESLint·프로덕션 빌드·브라우저 동작 확인 및 README 정리 |
+
+#### 명세서와 프론트엔드의 연결
+
+| Skeleton-2 필드 | 프론트엔드 구현 |
+|---|---|
+| `db_id` | `DatabaseSelect`에서 질의 대상 데이터베이스 선택 |
+| `question` | Controlled `textarea`로 자연어 질문 입력 및 검증 |
+| `query` | 제출된 요청에 대한 생성 SQL과 결과 테이블 표시 |
+
+#### 학습한 React·TypeScript 개념
+
+- `useState<QueryRequest>` Generic으로 폼 상태 구조 고정
+- `ChangeEvent<HTMLSelectElement>`, `ChangeEvent<HTMLTextAreaElement>`로 입력 이벤트 타입 명시
+- `FormEvent<HTMLFormElement>`와 `preventDefault()`를 이용한 폼 제출 처리
+- Props의 콜백 타입으로 자식 컴포넌트의 입력을 부모 상태와 결과 화면에 전달
+- `trim()` 기반 공백 입력 검사와 최소·최대 글자 수 검증
+- `aria-invalid`, `aria-describedby`로 오류 메시지와 입력 요소 연결
+
+#### 구현 내용
+
+- 데이터베이스 선택용 `DatabaseSelect` 컴포넌트 구현
+- 자연어 질문을 관리하는 Controlled 입력 폼 구현
+- Skeleton-2 예시를 포함한 예시 질문 선택 기능 구현
+- 질문 미입력, 공백 입력, 10자 미만, 240자 초과 유효성 검사
+- 제출된 `dbId`와 `question`이 Mock API 응답과 결과 화면에 반영되도록 연결
+- 요청 중 입력과 제출 버튼이 비활성화되는 상태 처리
+- 데스크톱과 모바일에서 사용할 수 있는 반응형 폼 레이아웃 작성
+
+#### 어려웠던 점과 해결 방법
+
+예시 질문을 선택하면 질문 내용뿐 아니라 해당 질문에 맞는 데이터베이스도 함께 바뀌어야 했다. 예시 항목을 `ExampleQuestion` 타입으로 정의하고 `dbId`와 `question`을 하나의 객체로 관리해 두 값을 동시에 갱신하도록 해결했다.
+
+또한 HTML의 `required` 속성만 사용하면 검증 규칙과 안내 문구를 세밀하게 제어하기 어려웠다. 제출 시 별도 검증 함수를 실행하고, 오류 내용을 입력 요소의 접근성 속성과 연결해 사용자가 문제를 바로 확인할 수 있도록 구성했다.
+
+#### 2일차 산출물
+
+- 데이터베이스 선택 및 자연어 질문 입력 폼
+- Props와 이벤트 타입이 적용된 React 컴포넌트
+- 예시 질문 선택 기능
+- 입력값 유효성 검사와 접근성 오류 안내
+- 폼 제출과 연동되는 Mock SQL 결과 화면
+- ESLint·프로덕션 빌드·브라우저 동작 검증 결과
+
+#### 다음 학습 계획
+
+- Mock API 호출을 비동기 함수로 전환
+- 로딩·성공·실패 요청 상태별 UI 구현
+- 오류 발생 시 재시도 기능 구현
+- 중복 요청 방지와 요청 취소 방식 학습
+
 ---
 
 ## 학습 기술 스택
@@ -116,7 +183,7 @@ SQL 결과는 질의에 따라 컬럼 이름이 달라지기 때문에 고정된
 
 ```text
 study/이규원/day01-react-typescript   # 1일차
-study/이규원/day02-query-form         # 2일차 예정
+study/이규원/day02-query-form         # 2일차 완료
 study/이규원/day03-api-integration    # 3일차 예정
 study/이규원/day04-result-history-ui  # 4일차 예정
 study/이규원/day05-test-refactor-docs # 5일차 예정
