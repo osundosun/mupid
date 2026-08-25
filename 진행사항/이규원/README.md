@@ -3,7 +3,7 @@
 **학습 주제:** React + TypeScript 기반 Text-to-SQL 프론트엔드 구현  
 **학습 기간:** 2026-08-24 ~ 2026-08-28  
 **1일 학습 시간:** 4시간  
-**1일차 학습 폴더:** [`day01-react-typescript`](./day01-react-typescript)<br>
+**누적 학습 프로젝트:** [`react-typescript-text-to-sql`](./react-typescript-text-to-sql)<br>
 **2일차 작업 브랜치:** `study/이규원/day02-query-form`
 
 ---
@@ -192,7 +192,7 @@ study/이규원/day05-test-refactor-docs # 5일차 예정
 ## 실행 및 검증
 
 ```bash
-cd day01-react-typescript
+cd react-typescript-text-to-sql
 npm install
 npm run lint
 npm run build
