@@ -14,7 +14,7 @@
 |---|---|---|---|---|
 | 1일차 | 2026-08-24 | TypeScript와 프로젝트 구조 | `study/이규원/day01-react-typescript` | ✅ 완료 |
 | 2일차 | 2026-08-25 | React 컴포넌트와 입력 폼 | `study/이규원/day02-query-form` | ✅ 완료 |
-| 3일차 | 2026-08-26 | 비동기 API와 요청 상태 | `study/이규원/day03-api-integration` | ⬜ 예정 |
+| 3일차 | 2026-08-26 | 비동기 API와 요청 상태 | `study/이규원/day03-api-integration` | ✅ 완료 |
 | 4일차 | 2026-08-27 | 결과 UI와 사용자 기능 | `study/이규원/day04-result-history-ui` | ⬜ 예정 |
 | 5일차 | 2026-08-28 | 테스트와 리팩터링 | `study/이규원/day05-test-refactor-docs` | ⬜ 예정 |
 
@@ -97,6 +97,64 @@
 
 ---
 
+### 2026-08-26 — 3일차: 비동기 API와 요청 상태
+
+#### 학습 내용
+
+- 동기 Mock 함수를 `Promise` 기반 비동기 `requestQuery`로 전환
+- `RequestStatus`의 `idle`, `loading`, `success`, `error` 상태를 화면과 연결
+- `AbortController`와 `AbortSignal`을 이용한 요청 취소 구현
+- `setTimeout`을 `abort` 이벤트와 연결해 대기 중에도 즉시 취소되도록 처리
+- `QueryErrorCode` union과 `QueryRequestError`로 실패 원인을 타입으로 구분
+- `unknown` 예외를 `toQueryError`로 정규화해 화면에서 한 가지 타입만 사용
+- `useQueryRequest` 커스텀 훅으로 요청 상태·취소·재시도 로직 분리
+- 진행 중 요청이 있으면 새 요청을 막는 중복 요청 방지 처리
+- 요청 ID 비교로 취소되거나 뒤늦게 도착한 응답을 화면에서 무시
+- 언마운트 시 진행 중이던 요청을 정리하는 `useEffect` cleanup 작성
+
+#### 요청 상태 전이
+
+```text
+idle ──제출──> loading ──성공──> success
+                 │
+                 ├──실패──> error ──재시도──> loading
+                 └──취소──> idle (직전 결과 유지)
+```
+
+#### 실패 원인별 처리
+
+| 오류 코드 | 발생 상황 | 재시도 |
+|---|---|---|
+| `network` | 서버에 연결하지 못한 경우 | 가능 |
+| `timeout` | 응답 시간이 초과된 경우 | 가능 |
+| `server` | SQL 생성 중 서버 오류가 발생한 경우 | 가능 |
+| `canceled` | 사용자가 요청을 취소한 경우 | 해당 없음 |
+
+#### 산출물
+
+- 취소 가능한 비동기 Mock API 계층
+- `useQueryRequest` 요청 상태 관리 훅
+- `RequestStatusBanner` 상태 안내 및 취소·재시도 UI
+- 로딩 스켈레톤, 오류 안내, 빈 상태로 전환되는 결과 화면
+- 요청 상태와 오류 코드 TypeScript 타입
+
+#### 검증 결과
+
+- `npm run lint` 통과
+- `npm run build` 통과
+- 1·2회차 성공, 3회차 실패 후 재시도 성공 확인
+- 요청 중 취소 시 직전 결과가 유지되는지 확인
+- 요청 중 중복 제출 시 시도 횟수가 늘지 않는 것을 확인
+- 375px 화면에서 가로 스크롤이 발생하지 않는 것을 확인
+- 브라우저 경고 및 오류 없음
+
+#### 작업 정보
+
+- 브랜치: `study/이규원/day03-api-integration`
+- 누적 프로젝트 폴더: `react-typescript-text-to-sql`
+
+---
+
 ## 학습 기술 스택
 
 | 분류 | 스택 | 활용 내용 | 상태 |
@@ -106,6 +164,7 @@
 | Build Tool | Vite | 개발 서버와 프로덕션 빌드 | ✅ 적용 |
 | Code Quality | ESLint | TypeScript·React 정적 검사 | ✅ 적용 |
 | Styling | CSS | 반응형 폼과 결과 테이블 | 🔄 진행 중 |
+| Web API | AbortController | 진행 중인 요청 취소와 정리 | ✅ 적용 |
 
 ## 브랜치 운영 방식
 
@@ -113,7 +172,7 @@
 master                                  # 일자별 진행 README
 ├─ study/이규원/day01-react-typescript   # 1일차 결과
 ├─ study/이규원/day02-query-form         # 2일차 결과
-├─ study/이규원/day03-api-integration    # 3일차 예정
+├─ study/이규원/day03-api-integration    # 3일차 결과
 ├─ study/이규원/day04-result-history-ui  # 4일차 예정
 └─ study/이규원/day05-test-refactor-docs # 5일차 예정
 ```
