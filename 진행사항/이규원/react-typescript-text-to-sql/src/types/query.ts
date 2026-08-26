@@ -1,5 +1,7 @@
 export type RequestStatus = 'idle' | 'loading' | 'success' | 'error'
 
+export type QueryErrorCode = 'network' | 'timeout' | 'server' | 'canceled'
+
 export interface QueryRequest {
   dbId: string
   question: string
@@ -33,4 +35,10 @@ export interface QueryResult {
 export interface ApiResponse<T> {
   data: T
   requestedAt: string
+}
+
+export interface QueryError {
+  code: QueryErrorCode
+  message: string
+  retryable: boolean
 }
