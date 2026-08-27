@@ -16,7 +16,7 @@ function App() {
   const { status, response, error, isLoading, run } = useQueryRequest()
   const { entries, add } = useQueryHistory()
 
-  useDocumentTitle('Day 04 | Result History UI')
+  useDocumentTitle('Day 05 | Test & Refactor')
 
   useEffect(() => {
     if (status === 'success' && response) {
@@ -33,50 +33,50 @@ function App() {
           </span>
           <span>React + TypeScript Study</span>
         </a>
-        <span className="day-badge">DAY 04 · RESULT HISTORY</span>
+        <span className="day-badge">DAY 05 · TEST & REFACTOR</span>
       </header>
 
       <section className="hero" id="top">
         <div className="hero-copy">
           <p className="eyebrow">REACT + TYPESCRIPT STUDY</p>
           <h1>
-            생성된 결과를
-            <span>다시 쓰는 경험까지 설계합니다.</span>
+            동작을 검증하고
+            <span>변경에 안전한 구조로 다듬습니다.</span>
           </h1>
           <p className="hero-description">
-            생성 SQL 복사와 최근 성공 질문 재실행을 더해 Text-to-SQL 응답을 다시 활용할 수
-            있도록 확장한 4일차 결과물입니다.
+            폼 검증과 최근 질문 관리 로직을 순수 함수로 분리하고, Vitest와 React Testing
+            Library로 핵심 동작을 자동 검증하는 5일차 결과물입니다.
           </p>
-          <div className="hero-meta" aria-label="요청 처리 구성 정보">
+          <div className="hero-meta" aria-label="테스트 구성 정보">
             <div>
-              <strong>01</strong>
-              <span>Copy action</span>
+              <strong>04</strong>
+              <span>Test files</span>
             </div>
             <div>
-              <strong>03</strong>
-              <span>Recent queries</span>
+              <strong>02</strong>
+              <span>Pure utilities</span>
             </div>
             <div>
               <strong>01</strong>
-              <span>History state</span>
+              <span>Test command</span>
             </div>
           </div>
         </div>
 
         <aside className="type-card" aria-label="TypeScript 타입 예시">
           <div className="type-card-header">
-            <span>query-history.ts</span>
-            <span className="status-dot">stateful</span>
+            <span>queryRequest.test.ts</span>
+            <span className="status-dot">verified</span>
           </div>
           <pre>
-            <code>{`interface QueryHistoryEntry {
-  id: string
-  data: QueryResult
-}
+            <code>{`it('공백 질문을 거부한다', () => {
+  const errors = validateQueryRequest({
+    dbId: 'concert_singer',
+    question: '   ',
+  })
 
-setEntries((current) =>
-  [entry, ...current].slice(0, 3),
-)`}</code>
+  expect(errors.question).toBeDefined()
+})`}</code>
           </pre>
         </aside>
       </section>
@@ -144,8 +144,8 @@ setEntries((current) =>
       </section>
 
       <footer>
-        <span>Day 04 complete</span>
-        <span>Vite · React · TypeScript · ESLint</span>
+        <span>Day 05 complete</span>
+        <span>Vite · React · TypeScript · Vitest</span>
       </footer>
     </main>
   )

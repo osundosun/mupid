@@ -2,17 +2,14 @@ import { useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { databaseOptions } from '../mocks/queryForm'
 import type { QueryRequest } from '../types/query'
+import { normalizeQueryRequest, validateQueryRequest } from '../utils/queryRequest'
+import type { QueryFormErrors } from '../utils/queryRequest'
 import { DatabaseSelect } from './DatabaseSelect'
 
 interface QueryFormProps {
   initialValues: QueryRequest
   isSubmitting?: boolean
   onSubmit: (request: QueryRequest) => void
-}
-
-interface QueryFormErrors {
-  dbId?: string
-  question?: string
 }
 
 export function QueryForm({
@@ -22,21 +19,6 @@ export function QueryForm({
 }: QueryFormProps) {
   const [values, setValues] = useState<QueryRequest>(initialValues)
   const [errors, setErrors] = useState<QueryFormErrors>({})
-
-  function validate(request: QueryRequest): QueryFormErrors {
-    const nextErrors: QueryFormErrors = {}
-    const trimmedQuestion = request.question.trim()
-
-    if (!request.dbId) {
-      nextErrors.dbId = '데이터베이스를 선택해 주세요.'
-    }
-
-    if (!trimmedQuestion) {
-      nextErrors.question = '자연어 질문을 입력해 주세요.'
-    }
-
-    return nextErrors
-  }
 
   function handleDatabaseChange(dbId: string) {
     setValues((current) => ({ ...current, dbId }))
@@ -51,11 +33,8 @@ export function QueryForm({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    const nextRequest = {
-      dbId: values.dbId,
-      question: values.question.trim(),
-    }
-    const nextErrors = validate(nextRequest)
+    const nextRequest = normalizeQueryRequest(values)
+    const nextErrors = validateQueryRequest(nextRequest)
 
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) {
