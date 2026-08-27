@@ -51,4 +51,22 @@
 
 ### 2026-08-27
 
+- **MetaMusic** — Spring Boot 4.1.1 음악 메타데이터 서비스 백엔드 스켈레톤 구축 (SpringSecurity · JPA · Flyway 실습)
+  - 아키텍처 설계: nginx → Controller(User·Song·Search) → Service → Repository 3계층 구조를 다이어그램으로 정리 (`MetaMusic.arch.json`, `metamusic.png`)
+  - 프로젝트 구성: Java 21 toolchain · Gradle, MySQL(`localhost:13306/meta_music_Db`) + Flyway, JJWT 0.12.5, Lombok, Actuator/DevTools
+  - 패키지 구조를 도메인 기반으로 분리 — `auth/{controller,request,service}`, `user/{entity,repository}`, `common/{auth,config}`
+  - JWT 인증 기반 구현
+    - `JwtProvider` — `jwt.secret`(BASE64 디코딩) 기반 HMAC-SHA 서명, subject=email + `role` 클레임, 유효기간 1시간. 토큰 파싱 결과를 `UsernamePasswordAuthenticationToken`으로 변환하고 `validateToken`에서 `JwtException`·`IllegalArgumentException` 캐치
+    - `AuthFilter`(`OncePerRequestFilter`) — `Authorization: Bearer` 헤더 파싱 → 검증 → `SecurityContextHolder`에 인증 주입
+    - `SecurityConfig` — csrf·httpBasic·formLogin 비활성화, `SessionCreationPolicy.STATELESS`, `/api/auth/**` permitAll + 그 외 authenticated, `UsernamePasswordAuthenticationFilter` 앞에 `AuthFilter` 등록, `BCryptPasswordEncoder` 빈 등록
+  - 도메인 모델: `User` 엔티티(email·username unique, `UserRole` GUEST·USER·ADMIN을 `EnumType.STRING`으로 저장), `UserRepository.findByEmail`
+  - 요청 검증: `AuthLoginRequest`를 record + Bean Validation(`@NotBlank`, `@Email`)으로 작성, 검증 메시지 한글화
+  - 미완 / 확인된 이슈
+    - 컴파일 불가 2건 — `JwtProvider.issueRefreshToken()` 본문 미작성(return 없음), `SecurityConfig.filterChain()`에 `throws Exception` 누락(`HttpSecurity.build()`가 checked exception 던짐)
+    - `AuthFilter.doFilterInternal`에서 `filterChain.doFilter(request, response)` 호출 누락 — 필터 체인이 끊겨 모든 요청이 뒤 단계로 넘어가지 못함
+    - `AuthController.login`이 더미 `User`로 토큰만 발급하는 TODO 상태, `AuthService`/`AuthServiceImpl`은 빈 껍데기
+    - `User.password` 길이 30 — BCrypt 해시(60자) 저장 불가. `@Builder`만 선언되어 JPA용 기본 생성자 부재
+    - Flyway `V260827_1330_init.sql`이 빈 파일 — 스키마 DDL 미작성
+  - 다음 단계: 로그인·회원가입 서비스 로직 구현, RefreshToken 발급/재발급, Song·Search 도메인 추가, 전역 예외 처리
+
 ### 2026-08-28
