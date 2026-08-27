@@ -1,20 +1,30 @@
+import { useEffect } from 'react'
 import './App.css'
 import { getMockQueryResponse } from './api/queryApi'
 import { DataFlow } from './components/DataFlow'
 import { QueryForm } from './components/QueryForm'
+import { QueryHistory } from './components/QueryHistory'
 import { QueryResultPreview } from './components/QueryResultPreview'
 import { RequestStatusBanner } from './components/RequestStatusBanner'
 import { useDocumentTitle } from './hooks/useDocumentTitle'
+import { useQueryHistory } from './hooks/useQueryHistory'
 import { useQueryRequest } from './hooks/useQueryRequest'
-import { FAILURE_INTERVAL, REQUEST_DELAY_MS } from './mocks/queryScenario'
+import { FAILURE_INTERVAL } from './mocks/queryScenario'
 
 const initialRequest = getMockQueryResponse().data
 
 function App() {
   const { status, response, error, attempt, isLoading, canRetry, run, retry, cancel } =
     useQueryRequest()
+  const { entries, add, remove, clear } = useQueryHistory()
 
-  useDocumentTitle('Day 03 | Async Request States')
+  useDocumentTitle('Day 04 | Result History UI')
+
+  useEffect(() => {
+    if (status === 'success' && response) {
+      add(response)
+    }
+  }, [add, response, status])
 
   return (
     <main className="app-shell">
@@ -25,51 +35,52 @@ function App() {
           </span>
           <span>React + TypeScript Study</span>
         </a>
-        <span className="day-badge">DAY 03 · API INTEGRATION</span>
+        <span className="day-badge">DAY 04 · RESULT HISTORY</span>
       </header>
 
       <section className="hero" id="top">
         <div className="hero-copy">
           <p className="eyebrow">REACT + TYPESCRIPT STUDY</p>
           <h1>
-            응답을 기다리는 시간도
-            <span>화면의 상태입니다.</span>
+            생성된 결과를
+            <span>다시 쓰는 경험까지 설계합니다.</span>
           </h1>
           <p className="hero-description">
-            Mock 호출을 Promise 기반 비동기 함수로 전환하고, 로딩·성공·실패 상태와 재시도,
-            AbortController를 이용한 요청 취소까지 타입으로 관리한 3일차 결과물입니다.
+            생성 SQL 복사, 결과 CSV 저장, 최근 질문 기록과 재실행을 더해 Text-to-SQL 응답을
+            실제 작업에 활용할 수 있도록 확장한 4일차 결과물입니다.
           </p>
           <div className="hero-meta" aria-label="요청 처리 구성 정보">
             <div>
-              <strong>04</strong>
-              <span>Request states</span>
+              <strong>02</strong>
+              <span>Result actions</span>
             </div>
             <div>
-              <strong>03</strong>
-              <span>Error codes</span>
+              <strong>05</strong>
+              <span>Recent queries</span>
             </div>
             <div>
-              <strong>{(REQUEST_DELAY_MS / 1000).toFixed(1)}s</strong>
-              <span>Mock latency</span>
+              <strong>01</strong>
+              <span>Local storage</span>
             </div>
           </div>
         </div>
 
         <aside className="type-card" aria-label="TypeScript 타입 예시">
           <div className="type-card-header">
-            <span>request-state.ts</span>
-            <span className="status-dot">async</span>
+            <span>query-history.ts</span>
+            <span className="status-dot">persistent</span>
           </div>
           <pre>
-            <code>{`type RequestStatus =
-  | 'idle'
-  | 'loading'
-  | 'success'
-  | 'error'
+            <code>{`interface QueryHistoryEntry {
+  id: string
+  requestedAt: string
+  data: QueryResult
+}
 
-requestQuery(request, {
-  signal,
-}): Promise<ApiResponse<QueryResult>>`}</code>
+localStorage.setItem(
+  STORAGE_KEY,
+  JSON.stringify(entries),
+)`}</code>
           </pre>
         </aside>
       </section>
@@ -132,8 +143,26 @@ requestQuery(request, {
         <QueryResultPreview response={response} status={status} error={error} />
       </section>
 
+      <section className="section-block history-section" aria-labelledby="history-title">
+        <div className="section-heading">
+          <p>05 · RECENT QUERY HISTORY</p>
+          <h2 id="history-title">성공한 질문을 저장하고 다시 실행</h2>
+          <span>
+            최근 성공 기록을 최대 5개까지 localStorage에 보관하고, 같은 질문을 다시 요청하거나
+            개별 기록과 전체 기록을 삭제할 수 있습니다.
+          </span>
+        </div>
+        <QueryHistory
+          entries={entries}
+          disabled={isLoading}
+          onRerun={run}
+          onRemove={remove}
+          onClear={clear}
+        />
+      </section>
+
       <footer>
-        <span>Day 03 complete</span>
+        <span>Day 04 complete</span>
         <span>Vite · React · TypeScript · ESLint</span>
       </footer>
     </main>

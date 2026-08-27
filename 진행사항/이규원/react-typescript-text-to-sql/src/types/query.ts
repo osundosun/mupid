@@ -42,3 +42,9 @@ export interface QueryError {
   message: string
   retryable: boolean
 }
+
+export interface QueryHistoryEntry {
+  id: string
+  requestedAt: string
+  data: QueryResult
+}

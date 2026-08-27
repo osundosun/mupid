@@ -1,5 +1,6 @@
 import type { ApiResponse, QueryError, QueryResult, RequestStatus } from '../types/query'
 import { formatElapsedTime } from '../utils/formatElapsedTime'
+import { ResultActions } from './ResultActions'
 
 interface QueryResultPreviewProps {
   response: ApiResponse<QueryResult> | null
@@ -95,6 +96,8 @@ export function QueryResultPreview({ response, status, error }: QueryResultPrevi
           <span>{formatElapsedTime(data.elapsedTime)}</span>
         </div>
       </div>
+
+      <ResultActions key={`${data.dbId}-${data.question}`} result={data} />
 
       <div className="result-layout">
         <section className="sql-panel" aria-labelledby="sql-title">
