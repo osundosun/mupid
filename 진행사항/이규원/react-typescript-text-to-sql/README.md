@@ -5,37 +5,27 @@ React와 TypeScript의 타입 시스템과 프로젝트 구조를 학습하기 �
 ## 1일차 구현 범위
 
 - Vite 기반 React + TypeScript 프로젝트 구성
-- ESLint 기반 정적 검사 환경 구성
-- `type`, `interface`, union type, optional-friendly row type 적용
+- `type`, `interface`, union type 적용
 - `Record<string, string | number | null>`을 사용한 동적 SQL 결과 행 정의
 - Generic `ApiResponse<T>`를 사용한 공통 API 응답 타입 정의
-- 타입이 적용된 Mock Text-to-SQL 데이터 작성
-- Mock 응답을 SQL 코드와 결과 테이블로 렌더링
-- API, 컴포넌트, 훅, Mock, 타입, 유틸리티 디렉터리 분리
+- Mock 응답을 SQL 코드와 결과 테이블로 출력
 
 ## 2일차 구현 범위
 
-- Skeleton-2 Text-to-SQL의 `db_id`, `question`, `query` 데이터 구조 확인
-- `DatabaseSelect`, `QueryForm`, `ExampleQuestionList` 컴포넌트 분리
+- Skeleton-2의 `db_id`, `question` 데이터 구조 확인
+- `DatabaseSelect`, `QueryForm` 컴포넌트 분리
 - `useState<QueryRequest>`를 사용한 Controlled Component 구현
-- Select와 Textarea의 변경 이벤트, Form 제출 이벤트에 TypeScript 타입 적용
-- 질문 미입력, 공백 입력, 10자 미만, 240자 초과 유효성 검사
-- 예시 질문 선택 시 데이터베이스와 질문을 함께 갱신
+- Select, Textarea, Form 이벤트에 TypeScript 타입 적용
+- 빈 질문과 공백 입력 검증
 - 제출한 요청을 Mock API와 SQL 결과 화면에 반영
-- `aria-invalid`, `aria-describedby`를 사용한 입력 오류 안내
 
 ## 3일차 구현 범위
 
 - 동기 Mock 호출을 `Promise` 기반 비동기 `requestQuery` 함수로 전환
-- `AbortController`와 `AbortSignal`을 이용한 진행 중 요청 취소
-- `setTimeout`을 `abort` 이벤트와 연결해 대기 중에도 즉시 중단되도록 처리
-- `QueryErrorCode` union과 `QueryRequestError`로 실패 원인 구분
-- `unknown` 예외를 `toQueryError`로 정규화해 화면에서 단일 타입만 사용
-- `useQueryRequest` 커스텀 훅으로 요청 상태·취소·재시도 로직 분리
-- 진행 중 요청이 있을 때 새 요청을 막는 중복 요청 방지
-- 요청 ID 비교로 취소되거나 뒤늦게 도착한 응답 무시
-- 언마운트 시 진행 중 요청을 정리하는 cleanup 처리
-- `RequestStatusBanner`로 상태 안내와 취소·재시도 버튼 제공
+- `useQueryRequest` 커스텀 훅으로 요청 상태 로직 분리
+- `idle`, `loading`, `success`, `error` 상태 연결
+- `async/await`와 `try/catch`를 이용한 요청 처리
+- `RequestStatusBanner`로 현재 상태 안내
 - 로딩 스켈레톤, 오류 안내, 빈 상태로 전환되는 결과 화면 구현
 
 ## 4일차 구현 범위
@@ -64,17 +54,12 @@ npm run build
 브라우저에서는 다음 동작을 확인합니다.
 
 1. 빈 질문을 제출하면 오류 메시지가 표시되는지 확인합니다.
-2. 예시 질문을 선택하면 DB와 질문이 함께 변경되는지 확인합니다.
-3. 정상 제출 후 선택한 DB와 질문이 결과 화면에 반영되는지 확인합니다.
-4. 화면 너비가 좁아져도 폼과 결과 테이블을 사용할 수 있는지 확인합니다.
-5. 제출 직후 로딩 스켈레톤이 나타나고 제출 버튼이 비활성화되는지 확인합니다.
-6. 로딩 중 요청 취소를 누르면 직전 결과가 유지된 채 대기 상태로 돌아가는지 확인합니다.
-7. 3번째 요청이 실패하면 오류 코드와 안내 문구가 표시되는지 확인합니다.
-8. 재시도를 누르면 같은 질문으로 다시 요청해 결과가 표시되는지 확인합니다.
-9. SQL 복사 후 버튼이 `Copied!` 상태로 바뀌는지 확인합니다.
-10. 성공 요청이 최근 질문에 추가되고 최대 3개까지만 표시되는지 확인합니다.
-11. 최근 질문을 다시 실행해도 중복 기록이 생기지 않는지 확인합니다.
-12. 모바일 화면에서도 최근 질문과 실행 버튼을 사용할 수 있는지 확인합니다.
+2. 정상 제출 후 선택한 DB와 질문이 결과 화면에 반영되는지 확인합니다.
+3. 제출 직후 로딩 화면이 나타나고 버튼이 비활성화되는지 확인합니다.
+4. SQL 복사 후 버튼이 `Copied!` 상태로 바뀌는지 확인합니다.
+5. 성공 요청이 최근 질문에 추가되는지 확인합니다.
+6. 최근 질문을 다시 실행해도 중복 기록이 생기지 않는지 확인합니다.
+7. 모바일 화면에서도 폼과 결과를 사용할 수 있는지 확인합니다.
 
 ## 폴더 구조
 
@@ -96,4 +81,4 @@ src/
 질문 입력 → API 요청 → SQL 응답 → SQL 코드 + 결과 테이블
 ```
 
-현재는 실제 Text-to-SQL 서버 대신 지연과 실패를 재현하는 Mock 비동기 호출을 사용하며, `requestQuery`가 `Promise`와 `AbortSignal` 계약을 그대로 따르므로 이후 `fetch` 구현으로 교체할 수 있습니다. 다음 단계에서는 컴포넌트 테스트와 접근성 점검, 상태 로직 리팩터링을 진행할 예정입니다.
+현재는 실제 Text-to-SQL 서버 대신 지연 시간을 둔 Mock 비동기 호출을 사용합니다. 이후 `requestQuery` 내부를 `fetch` 구현으로 교체할 수 있습니다.

@@ -1,4 +1,4 @@
-import type { DatabaseOption, ExampleQuestion } from '../types/query'
+import type { DatabaseOption } from '../types/query'
 
 export const databaseOptions: DatabaseOption[] = [
   {
@@ -15,32 +15,5 @@ export const databaseOptions: DatabaseOption[] = [
     id: 'employee_hire_evaluation',
     label: 'Employee Evaluation',
     description: '채용 및 직원 평가 정보를 다루는 인사 도메인 데이터베이스',
-  },
-]
-
-export const exampleQuestions: ExampleQuestion[] = [
-  {
-    id: 'older-heads',
-    dbId: 'department_management',
-    label: '56세 초과 부서장 수',
-    question: 'How many heads of the departments are older than 56?',
-  },
-  {
-    id: 'department-list',
-    dbId: 'department_management',
-    label: '부서 이름 정렬',
-    question: 'List all department names in alphabetical order.',
-  },
-  {
-    id: 'concert-count',
-    dbId: 'concert_singer',
-    label: '연도별 콘서트 수',
-    question: 'How many concerts were held in each year?',
-  },
-  {
-    id: 'employee-score',
-    dbId: 'employee_hire_evaluation',
-    label: '평균 평가 점수',
-    question: 'Show the average evaluation score for each employee.',
   },
 ]

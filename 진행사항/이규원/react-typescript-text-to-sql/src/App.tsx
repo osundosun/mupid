@@ -9,13 +9,11 @@ import { RequestStatusBanner } from './components/RequestStatusBanner'
 import { useDocumentTitle } from './hooks/useDocumentTitle'
 import { useQueryHistory } from './hooks/useQueryHistory'
 import { useQueryRequest } from './hooks/useQueryRequest'
-import { FAILURE_INTERVAL } from './mocks/queryScenario'
 
 const initialRequest = getMockQueryResponse().data
 
 function App() {
-  const { status, response, error, attempt, isLoading, canRetry, run, retry, cancel } =
-    useQueryRequest()
+  const { status, response, error, isLoading, run } = useQueryRequest()
   const { entries, add } = useQueryHistory()
 
   useDocumentTitle('Day 04 | Result History UI')
@@ -113,21 +111,13 @@ setEntries((current) =>
       <section className="section-block" aria-labelledby="request-state-title">
         <div className="section-heading">
           <p>03 · REQUEST STATE</p>
-          <h2 id="request-state-title">요청의 네 가지 상태를 화면으로 관리</h2>
+          <h2 id="request-state-title">비동기 요청 상태를 화면으로 관리</h2>
           <span>
-            요청 중에는 중복 전송을 막고 취소 버튼을, 실패하면 오류 원인과 재시도 버튼을
-            제공합니다. 학습용 Mock은 {FAILURE_INTERVAL}번째 요청마다 실패해 재시도 흐름을
-            확인할 수 있습니다.
+            Promise 기반 Mock API를 호출하고 대기, 로딩, 성공, 실패 상태에 따라 안내 화면을
+            변경합니다.
           </span>
         </div>
-        <RequestStatusBanner
-          status={status}
-          error={error}
-          attempt={attempt}
-          canRetry={canRetry}
-          onRetry={retry}
-          onCancel={cancel}
-        />
+        <RequestStatusBanner status={status} error={error} />
       </section>
 
       <section className="section-block preview-section" aria-labelledby="preview-title">

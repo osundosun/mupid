@@ -1,11 +1,8 @@
 import { useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
-import { databaseOptions, exampleQuestions } from '../mocks/queryForm'
-import type { ExampleQuestion, QueryRequest } from '../types/query'
+import { databaseOptions } from '../mocks/queryForm'
+import type { QueryRequest } from '../types/query'
 import { DatabaseSelect } from './DatabaseSelect'
-import { ExampleQuestionList } from './ExampleQuestionList'
-
-const MAX_QUESTION_LENGTH = 240
 
 interface QueryFormProps {
   initialValues: QueryRequest
@@ -36,10 +33,6 @@ export function QueryForm({
 
     if (!trimmedQuestion) {
       nextErrors.question = '자연어 질문을 입력해 주세요.'
-    } else if (trimmedQuestion.length < 10) {
-      nextErrors.question = '질문은 10자 이상 입력해 주세요.'
-    } else if (request.question.length > MAX_QUESTION_LENGTH) {
-      nextErrors.question = `질문은 ${MAX_QUESTION_LENGTH}자 이하로 입력해 주세요.`
     }
 
     return nextErrors
@@ -53,11 +46,6 @@ export function QueryForm({
   function handleQuestionChange(event: ChangeEvent<HTMLTextAreaElement>) {
     setValues((current) => ({ ...current, question: event.target.value }))
     setErrors((current) => ({ ...current, question: undefined }))
-  }
-
-  function handleExampleSelect(example: ExampleQuestion) {
-    setValues({ dbId: example.dbId, question: example.question })
-    setErrors({})
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -76,8 +64,6 @@ export function QueryForm({
 
     onSubmit(nextRequest)
   }
-
-  const isQuestionTooLong = values.question.length > MAX_QUESTION_LENGTH
 
   return (
     <form className="query-form" noValidate onSubmit={handleSubmit}>
@@ -98,12 +84,7 @@ export function QueryForm({
       {errors.dbId && <p className="field-error">{errors.dbId}</p>}
 
       <div className="field-group">
-        <div className="field-label-row">
-          <label htmlFor="question">Natural language question</label>
-          <span className={isQuestionTooLong ? 'character-count error' : 'character-count'}>
-            {values.question.length}/{MAX_QUESTION_LENGTH}
-          </span>
-        </div>
+        <label htmlFor="question">Natural language question</label>
         <textarea
           id="question"
           rows={5}
@@ -125,18 +106,12 @@ export function QueryForm({
         )}
       </div>
 
-      <ExampleQuestionList
-        examples={exampleQuestions}
-        disabled={isSubmitting}
-        onSelect={handleExampleSelect}
-      />
-
       <div className="form-actions">
         <p>현재는 입력 계약을 확인하기 위한 Mock 응답을 사용합니다.</p>
         <button
           className="submit-button"
           type="submit"
-          disabled={isSubmitting || isQuestionTooLong}
+          disabled={isSubmitting}
         >
           {isSubmitting ? 'Generating…' : 'Generate SQL'}
         </button>

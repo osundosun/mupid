@@ -1,11 +1,11 @@
-import type { ApiResponse, QueryError, QueryResult, RequestStatus } from '../types/query'
+import type { ApiResponse, QueryResult, RequestStatus } from '../types/query'
 import { formatElapsedTime } from '../utils/formatElapsedTime'
 import { ResultActions } from './ResultActions'
 
 interface QueryResultPreviewProps {
   response: ApiResponse<QueryResult> | null
   status: RequestStatus
-  error: QueryError | null
+  error: string | null
 }
 
 function ResultSkeleton() {
@@ -51,8 +51,8 @@ export function QueryResultPreview({ response, status, error }: QueryResultPrevi
       <article className="result-card is-error">
         <div className="result-toolbar">
           <div>
-            <span className="query-label">REQUEST FAILED · {error?.code}</span>
-            <p className="query-text">{error?.message}</p>
+            <span className="query-label">REQUEST FAILED</span>
+            <p className="query-text">{error}</p>
           </div>
           <div className="result-meta">
             <span className="error">error</span>
@@ -60,7 +60,7 @@ export function QueryResultPreview({ response, status, error }: QueryResultPrevi
         </div>
         <ResultPlaceholder
           title="표시할 결과가 없습니다"
-          description="요청이 실패해 SQL과 결과 테이블을 받지 못했습니다. 위의 재시도 버튼으로 같은 질문을 다시 보낼 수 있습니다."
+          description="요청이 실패해 SQL과 결과 테이블을 받지 못했습니다. 잠시 후 다시 제출해 주세요."
         />
       </article>
     )
@@ -78,9 +78,6 @@ export function QueryResultPreview({ response, status, error }: QueryResultPrevi
   }
 
   const { data } = response
-  // 취소 후에는 직전 성공 응답이 남아 있으므로 상태 칩을 previous로 구분한다.
-  const metaStatus = status === 'idle' ? 'previous' : status
-
   return (
     <article className="result-card">
       <div className="result-toolbar">
@@ -89,7 +86,7 @@ export function QueryResultPreview({ response, status, error }: QueryResultPrevi
           <p className="query-text">{data.question}</p>
         </div>
         <div className="result-meta" aria-label="응답 메타 정보">
-          <span className={status === 'success' ? 'success' : undefined}>{metaStatus}</span>
+          <span className="success">success</span>
           <span>·</span>
           <span>{data.modelName}</span>
           <span>·</span>

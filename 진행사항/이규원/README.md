@@ -42,7 +42,6 @@
 | Build Tool | Vite | 개발 서버와 프로덕션 빌드 | ✅ 적용 |
 | Code Quality | ESLint | TypeScript·React 정적 검사 | ✅ 적용 |
 | Styling | CSS | 반응형 폼과 결과 테이블 | 🔄 진행 중 |
-| Web API | AbortController | 진행 중인 요청 취소와 정리 | ✅ 적용 |
 | Web API | Clipboard API | 생성 SQL 복사 | ✅ 적용 |
 
 ## 브랜치 운영 방식
