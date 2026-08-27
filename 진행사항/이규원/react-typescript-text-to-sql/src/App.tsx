@@ -1,20 +1,28 @@
+import { useEffect } from 'react'
 import './App.css'
 import { getMockQueryResponse } from './api/queryApi'
 import { DataFlow } from './components/DataFlow'
 import { QueryForm } from './components/QueryForm'
+import { QueryHistory } from './components/QueryHistory'
 import { QueryResultPreview } from './components/QueryResultPreview'
 import { RequestStatusBanner } from './components/RequestStatusBanner'
 import { useDocumentTitle } from './hooks/useDocumentTitle'
+import { useQueryHistory } from './hooks/useQueryHistory'
 import { useQueryRequest } from './hooks/useQueryRequest'
-import { FAILURE_INTERVAL, REQUEST_DELAY_MS } from './mocks/queryScenario'
 
 const initialRequest = getMockQueryResponse().data
 
 function App() {
-  const { status, response, error, attempt, isLoading, canRetry, run, retry, cancel } =
-    useQueryRequest()
+  const { status, response, error, isLoading, run } = useQueryRequest()
+  const { entries, add } = useQueryHistory()
 
-  useDocumentTitle('Day 03 | Async Request States')
+  useDocumentTitle('Day 04 | Result History UI')
+
+  useEffect(() => {
+    if (status === 'success' && response) {
+      add(response)
+    }
+  }, [add, response, status])
 
   return (
     <main className="app-shell">
@@ -25,51 +33,50 @@ function App() {
           </span>
           <span>React + TypeScript Study</span>
         </a>
-        <span className="day-badge">DAY 03 · API INTEGRATION</span>
+        <span className="day-badge">DAY 04 · RESULT HISTORY</span>
       </header>
 
       <section className="hero" id="top">
         <div className="hero-copy">
           <p className="eyebrow">REACT + TYPESCRIPT STUDY</p>
           <h1>
-            응답을 기다리는 시간도
-            <span>화면의 상태입니다.</span>
+            생성된 결과를
+            <span>다시 쓰는 경험까지 설계합니다.</span>
           </h1>
           <p className="hero-description">
-            Mock 호출을 Promise 기반 비동기 함수로 전환하고, 로딩·성공·실패 상태와 재시도,
-            AbortController를 이용한 요청 취소까지 타입으로 관리한 3일차 결과물입니다.
+            생성 SQL 복사와 최근 성공 질문 재실행을 더해 Text-to-SQL 응답을 다시 활용할 수
+            있도록 확장한 4일차 결과물입니다.
           </p>
           <div className="hero-meta" aria-label="요청 처리 구성 정보">
             <div>
-              <strong>04</strong>
-              <span>Request states</span>
+              <strong>01</strong>
+              <span>Copy action</span>
             </div>
             <div>
               <strong>03</strong>
-              <span>Error codes</span>
+              <span>Recent queries</span>
             </div>
             <div>
-              <strong>{(REQUEST_DELAY_MS / 1000).toFixed(1)}s</strong>
-              <span>Mock latency</span>
+              <strong>01</strong>
+              <span>History state</span>
             </div>
           </div>
         </div>
 
         <aside className="type-card" aria-label="TypeScript 타입 예시">
           <div className="type-card-header">
-            <span>request-state.ts</span>
-            <span className="status-dot">async</span>
+            <span>query-history.ts</span>
+            <span className="status-dot">stateful</span>
           </div>
           <pre>
-            <code>{`type RequestStatus =
-  | 'idle'
-  | 'loading'
-  | 'success'
-  | 'error'
+            <code>{`interface QueryHistoryEntry {
+  id: string
+  data: QueryResult
+}
 
-requestQuery(request, {
-  signal,
-}): Promise<ApiResponse<QueryResult>>`}</code>
+setEntries((current) =>
+  [entry, ...current].slice(0, 3),
+)`}</code>
           </pre>
         </aside>
       </section>
@@ -104,21 +111,13 @@ requestQuery(request, {
       <section className="section-block" aria-labelledby="request-state-title">
         <div className="section-heading">
           <p>03 · REQUEST STATE</p>
-          <h2 id="request-state-title">요청의 네 가지 상태를 화면으로 관리</h2>
+          <h2 id="request-state-title">비동기 요청 상태를 화면으로 관리</h2>
           <span>
-            요청 중에는 중복 전송을 막고 취소 버튼을, 실패하면 오류 원인과 재시도 버튼을
-            제공합니다. 학습용 Mock은 {FAILURE_INTERVAL}번째 요청마다 실패해 재시도 흐름을
-            확인할 수 있습니다.
+            Promise 기반 Mock API를 호출하고 대기, 로딩, 성공, 실패 상태에 따라 안내 화면을
+            변경합니다.
           </span>
         </div>
-        <RequestStatusBanner
-          status={status}
-          error={error}
-          attempt={attempt}
-          canRetry={canRetry}
-          onRetry={retry}
-          onCancel={cancel}
-        />
+        <RequestStatusBanner status={status} error={error} />
       </section>
 
       <section className="section-block preview-section" aria-labelledby="preview-title">
@@ -132,8 +131,20 @@ requestQuery(request, {
         <QueryResultPreview response={response} status={status} error={error} />
       </section>
 
+      <section className="section-block history-section" aria-labelledby="history-title">
+        <div className="section-heading">
+          <p>05 · RECENT QUERY HISTORY</p>
+          <h2 id="history-title">최근 성공 질문을 다시 실행</h2>
+          <span>
+            현재 화면에서 성공한 질문을 최대 3개까지 관리하고, 버튼 한 번으로 같은 요청을 다시
+            실행할 수 있습니다.
+          </span>
+        </div>
+        <QueryHistory entries={entries} disabled={isLoading} onRerun={run} />
+      </section>
+
       <footer>
-        <span>Day 03 complete</span>
+        <span>Day 04 complete</span>
         <span>Vite · React · TypeScript · ESLint</span>
       </footer>
     </main>
