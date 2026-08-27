@@ -1,7 +1,19 @@
 # 정예준 — 진행사항
 
 **주제** 
-**기간** 2026-08-18 ~
+**기간** 2026-08-18 ~ 2026-08-28
+
+---
+
+## 학습 기술 스택
+
+| 분류 | 스택 | 상태 |
+|---|---|---|
+| AI | [LLM 양자화 및 파인튜닝](LLM_양자화_파인튜닝.md) | ✅ 완료 |
+| AI | [위성 이미지 기반 농지 이상탐지 모델 학습](위성_이미지_이상탐지.md) | ✅ 완료 |
+| 인프라 | [Hadoop Docker 환경 구축 및 MapReduce 실습](Hadoop_Docker_MapReduce.md) | ✅ 완료 |
+| 인프라 | 쿠버네티스 활용 분산 서버 배포 및 관리 | 🔄 진행 중 |
+| 백엔드 | SpringSecurity · JPA · Flyway | 🔄 진행 중 |
 
 ---
 
@@ -28,13 +40,15 @@
   - 트러블슈팅 기록: `BatchEncoding.squeeze`, `datasets.map(num_proc)` pickle 실패, PEFT adapter 중첩, T4 V1 Engine 미지원(→ `dtype="half"` + `enforce_eager`)
 - 다음 단계: Hadoop · Hive · Spark 분산 처리 및 쿠버네티스 배포 학습 착수
 
----
+### 2026-08-26
 
-## 학습 기술 스택
+- **[Hadoop Docker 환경 구축 및 MapReduce 실습](Hadoop_Docker_MapReduce.md)** — 단일 컨테이너 pseudo-distributed Hadoop 3.3.6 + Java 21 환경 구축
+  - Dockerfile(Ubuntu 24.04) + docker-compose.yml로 HDFS·YARN 데몬 자동 기동, entrypoint.sh에서 NameNode 포맷·Ant 빌드·입력 데이터 업로드 자동화
+  - MapReduce WordCount1Char 잡 구현 및 YARN 제출 — `Driver.java` + `Wordcount1char.java` (Mapper: 첫 글자 추출, Reducer: 빈도 합산, `NumReduceTasks=2`)
+  - 트러블슈팅 3건 해결: (1) MRAppMaster ClassNotFoundException — `mapred-site.xml`에 `HADOOP_MAPRED_HOME` env 전달 설정 추가, (2) 설정 반영 안 됨 — `COPY` vs volume mount 차이, `--no-cache` 재빌드, (3) Java 21 모듈 접근 제한 — `--add-opens` 13개 모듈을 AM/Map/Reduce JVM opts에 추가
+  - YARN 아키텍처 정리: ResourceManager·NodeManager·ApplicationMaster 구조, 컨테이너 단위 자원 격리, Hadoop 1.x JobTracker와의 차이
+  - 템플릿 과제 18종(MatrixAdd·KMeans·KNNJoin·VecSimJoin·AllPairJoin 등) 확인, 미구현 상태
 
-| 분류 | 스택 | 상태 |
-|---|---|---|
-| AI | [LLM 양자화 및 파인튜닝](LLM_양자화_파인튜닝.md) | ✅ 완료 |
-| AI | [위성 이미지 기반 농지 이상탐지 모델 학습](위성_이미지_이상탐지.md) | ✅ 완료 |
-| 인프라 | Hadoop · Hive · Spark를 활용한 분산 처리 | 🔄 진행 중 |
-| 인프라 | 쿠버네티스 활용 분산 서버 배포 및 관리 | 🔄 진행 중 |
+### 2026-08-27
+
+### 2026-08-28
