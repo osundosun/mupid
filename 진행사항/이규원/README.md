@@ -15,7 +15,7 @@
 | 1일차 | 2026-08-24 | TypeScript와 프로젝트 구조 | `study/이규원/day01-react-typescript` | ✅ 완료 |
 | 2일차 | 2026-08-25 | React 컴포넌트와 입력 폼 | `study/이규원/day02-query-form` | ✅ 완료 |
 | 3일차 | 2026-08-26 | 비동기 API와 요청 상태 | `study/이규원/day03-api-integration` | ✅ 완료 |
-| 4일차 | 2026-08-27 | 결과 UI와 사용자 기능 | `study/이규원/day04-result-history-ui` | ✅ 완료 |
+| 4일차 | 2026-08-27 | 결과 화면 사용자 기능 | `study/이규원/day04-result-history-ui` | ✅ 완료 |
 | 5일차 | 2026-08-28 | 테스트와 리팩터링 | `study/이규원/day05-test-refactor-docs` | ⬜ 예정 |
 
 ---
