@@ -4,8 +4,6 @@ interface QueryHistoryProps {
   entries: QueryHistoryEntry[]
   disabled?: boolean
   onRerun: (request: QueryRequest) => void
-  onRemove: (id: string) => void
-  onClear: () => void
 }
 
 function formatRequestedAt(requestedAt: string): string {
@@ -27,15 +25,13 @@ export function QueryHistory({
   entries,
   disabled = false,
   onRerun,
-  onRemove,
-  onClear,
 }: QueryHistoryProps) {
   if (entries.length === 0) {
     return (
       <div className="history-empty">
         <span>NO RECENT QUERIES</span>
         <h3>성공한 질문이 여기에 쌓입니다</h3>
-        <p>질문을 실행하면 최근 기록을 최대 5개까지 브라우저에 저장합니다.</p>
+        <p>질문을 실행하면 현재 화면에서 최근 성공 질문을 최대 3개까지 확인할 수 있습니다.</p>
       </div>
     )
   }
@@ -44,12 +40,9 @@ export function QueryHistory({
     <div className="history-card">
       <div className="history-toolbar">
         <div>
-          <span>LOCAL HISTORY</span>
-          <strong>{entries.length} / 5 saved</strong>
+          <span>RECENT QUESTIONS</span>
+          <strong>{entries.length} / 3 recent</strong>
         </div>
-        <button className="history-clear" type="button" disabled={disabled} onClick={onClear}>
-          Clear all
-        </button>
       </div>
 
       <ol className="history-list">
@@ -73,15 +66,6 @@ export function QueryHistory({
                 }
               >
                 Run again
-              </button>
-              <button
-                className="history-remove"
-                type="button"
-                disabled={disabled}
-                aria-label={`${entry.data.question} 기록 삭제`}
-                onClick={() => onRemove(entry.id)}
-              >
-                Remove
               </button>
             </div>
           </li>

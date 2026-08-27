@@ -27,7 +27,7 @@
 | `260824.md` | 2026-08-24 | TypeScript와 프로젝트 구조 | ✅ 완료 |
 | `260825.md` | 2026-08-25 | React 컴포넌트와 입력 폼 | ✅ 완료 |
 | `260826.md` | 2026-08-26 | 비동기 API와 요청 상태 | ✅ 완료 |
-| `260827.md` | 2026-08-27 | 결과 활용 UI와 최근 질의 기록 | ✅ 완료 |
+| `260827.md` | 2026-08-27 | 결과 화면 사용자 기능 | ✅ 완료 |
 
 각 날짜의 학습 개념, 구현 내용, 문제 해결 과정과 검증 결과는 해당 날짜의 Markdown 파일에 분리해 기록합니다.
 
@@ -43,8 +43,7 @@
 | Code Quality | ESLint | TypeScript·React 정적 검사 | ✅ 적용 |
 | Styling | CSS | 반응형 폼과 결과 테이블 | 🔄 진행 중 |
 | Web API | AbortController | 진행 중인 요청 취소와 정리 | ✅ 적용 |
-| Web API | Clipboard·Blob | SQL 복사와 CSV 파일 생성 | ✅ 적용 |
-| Browser Storage | localStorage | 최근 성공 질의 최대 5개 저장 | ✅ 적용 |
+| Web API | Clipboard API | 생성 SQL 복사 | ✅ 적용 |
 
 ## 브랜치 운영 방식
 

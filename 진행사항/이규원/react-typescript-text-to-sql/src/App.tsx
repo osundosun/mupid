@@ -16,7 +16,7 @@ const initialRequest = getMockQueryResponse().data
 function App() {
   const { status, response, error, attempt, isLoading, canRetry, run, retry, cancel } =
     useQueryRequest()
-  const { entries, add, remove, clear } = useQueryHistory()
+  const { entries, add } = useQueryHistory()
 
   useDocumentTitle('Day 04 | Result History UI')
 
@@ -46,21 +46,21 @@ function App() {
             <span>다시 쓰는 경험까지 설계합니다.</span>
           </h1>
           <p className="hero-description">
-            생성 SQL 복사, 결과 CSV 저장, 최근 질문 기록과 재실행을 더해 Text-to-SQL 응답을
-            실제 작업에 활용할 수 있도록 확장한 4일차 결과물입니다.
+            생성 SQL 복사와 최근 성공 질문 재실행을 더해 Text-to-SQL 응답을 다시 활용할 수
+            있도록 확장한 4일차 결과물입니다.
           </p>
           <div className="hero-meta" aria-label="요청 처리 구성 정보">
             <div>
-              <strong>02</strong>
-              <span>Result actions</span>
+              <strong>01</strong>
+              <span>Copy action</span>
             </div>
             <div>
-              <strong>05</strong>
+              <strong>03</strong>
               <span>Recent queries</span>
             </div>
             <div>
               <strong>01</strong>
-              <span>Local storage</span>
+              <span>History state</span>
             </div>
           </div>
         </div>
@@ -68,18 +68,16 @@ function App() {
         <aside className="type-card" aria-label="TypeScript 타입 예시">
           <div className="type-card-header">
             <span>query-history.ts</span>
-            <span className="status-dot">persistent</span>
+            <span className="status-dot">stateful</span>
           </div>
           <pre>
             <code>{`interface QueryHistoryEntry {
   id: string
-  requestedAt: string
   data: QueryResult
 }
 
-localStorage.setItem(
-  STORAGE_KEY,
-  JSON.stringify(entries),
+setEntries((current) =>
+  [entry, ...current].slice(0, 3),
 )`}</code>
           </pre>
         </aside>
@@ -146,19 +144,13 @@ localStorage.setItem(
       <section className="section-block history-section" aria-labelledby="history-title">
         <div className="section-heading">
           <p>05 · RECENT QUERY HISTORY</p>
-          <h2 id="history-title">성공한 질문을 저장하고 다시 실행</h2>
+          <h2 id="history-title">최근 성공 질문을 다시 실행</h2>
           <span>
-            최근 성공 기록을 최대 5개까지 localStorage에 보관하고, 같은 질문을 다시 요청하거나
-            개별 기록과 전체 기록을 삭제할 수 있습니다.
+            현재 화면에서 성공한 질문을 최대 3개까지 관리하고, 버튼 한 번으로 같은 요청을 다시
+            실행할 수 있습니다.
           </span>
         </div>
-        <QueryHistory
-          entries={entries}
-          disabled={isLoading}
-          onRerun={run}
-          onRemove={remove}
-          onClear={clear}
-        />
+        <QueryHistory entries={entries} disabled={isLoading} onRerun={run} />
       </section>
 
       <footer>

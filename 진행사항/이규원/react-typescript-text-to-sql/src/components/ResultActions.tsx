@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import type { QueryResult } from '../types/query'
-import { downloadResultCsv } from '../utils/exportCsv'
 
 type CopyStatus = 'idle' | 'copied' | 'error'
 
@@ -27,9 +26,6 @@ export function ResultActions({ result }: ResultActionsProps) {
       </span>
       <button className="action-button" type="button" onClick={handleCopy}>
         {copyStatus === 'copied' ? 'Copied!' : 'Copy SQL'}
-      </button>
-      <button className="action-button accent" type="button" onClick={() => downloadResultCsv(result)}>
-        Download CSV
       </button>
     </div>
   )
