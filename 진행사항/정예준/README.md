@@ -1,7 +1,19 @@
 # 정예준 — 진행사항
 
 **주제** 
-**기간** 2026-08-18 ~
+**기간** 2026-08-18 ~ 2026-08-28
+
+---
+
+## 학습 기술 스택
+
+| 분류 | 스택 | 상태 |
+|---|---|---|
+| AI | [LLM 양자화 및 파인튜닝](LLM_양자화_파인튜닝.md) | ✅ 완료 |
+| AI | [위성 이미지 기반 농지 이상탐지 모델 학습](위성_이미지_이상탐지.md) | ✅ 완료 |
+| 인프라 | [Hadoop Docker 환경 구축 및 MapReduce 실습](Hadoop_Docker_MapReduce.md) | ✅ 완료 |
+| 인프라 | 쿠버네티스 활용 분산 서버 배포 및 관리 | 🔄 진행 중 |
+| 백엔드 | SpringSecurity · JPA · Flyway | 🔄 진행 중 |
 
 ---
 
@@ -28,13 +40,33 @@
   - 트러블슈팅 기록: `BatchEncoding.squeeze`, `datasets.map(num_proc)` pickle 실패, PEFT adapter 중첩, T4 V1 Engine 미지원(→ `dtype="half"` + `enforce_eager`)
 - 다음 단계: Hadoop · Hive · Spark 분산 처리 및 쿠버네티스 배포 학습 착수
 
----
+### 2026-08-26
 
-## 학습 기술 스택
+- **[Hadoop Docker 환경 구축 및 MapReduce 실습](Hadoop_Docker_MapReduce.md)** — 단일 컨테이너 pseudo-distributed Hadoop 3.3.6 + Java 21 환경 구축
+  - Dockerfile(Ubuntu 24.04) + docker-compose.yml로 HDFS·YARN 데몬 자동 기동, entrypoint.sh에서 NameNode 포맷·Ant 빌드·입력 데이터 업로드 자동화
+  - MapReduce WordCount1Char 잡 구현 및 YARN 제출 — `Driver.java` + `Wordcount1char.java` (Mapper: 첫 글자 추출, Reducer: 빈도 합산, `NumReduceTasks=2`)
+  - 트러블슈팅 3건 해결: (1) MRAppMaster ClassNotFoundException — `mapred-site.xml`에 `HADOOP_MAPRED_HOME` env 전달 설정 추가, (2) 설정 반영 안 됨 — `COPY` vs volume mount 차이, `--no-cache` 재빌드, (3) Java 21 모듈 접근 제한 — `--add-opens` 13개 모듈을 AM/Map/Reduce JVM opts에 추가
+  - YARN 아키텍처 정리: ResourceManager·NodeManager·ApplicationMaster 구조, 컨테이너 단위 자원 격리, Hadoop 1.x JobTracker와의 차이
+  - 템플릿 과제 18종(MatrixAdd·KMeans·KNNJoin·VecSimJoin·AllPairJoin 등) 확인, 미구현 상태
 
-| 분류 | 스택 | 상태 |
-|---|---|---|
-| AI | [LLM 양자화 및 파인튜닝](LLM_양자화_파인튜닝.md) | ✅ 완료 |
-| AI | [위성 이미지 기반 농지 이상탐지 모델 학습](위성_이미지_이상탐지.md) | ✅ 완료 |
-| 인프라 | Hadoop · Hive · Spark를 활용한 분산 처리 | 🔄 진행 중 |
-| 인프라 | 쿠버네티스 활용 분산 서버 배포 및 관리 | 🔄 진행 중 |
+### 2026-08-27
+
+- **MetaMusic** — Spring Boot 4.1.1 음악 메타데이터 서비스 백엔드 스켈레톤 구축 (SpringSecurity · JPA · Flyway 실습)
+  - 아키텍처 설계: nginx → Controller(User·Song·Search) → Service → Repository 3계층 구조를 다이어그램으로 정리 (`MetaMusic.arch.json`, `metamusic.png`)
+  - 프로젝트 구성: Java 21 toolchain · Gradle, MySQL(`localhost:13306/meta_music_Db`) + Flyway, JJWT 0.12.5, Lombok, Actuator/DevTools
+  - 패키지 구조를 도메인 기반으로 분리 — `auth/{controller,request,service}`, `user/{entity,repository}`, `common/{auth,config}`
+  - JWT 인증 기반 구현
+    - `JwtProvider` — `jwt.secret`(BASE64 디코딩) 기반 HMAC-SHA 서명, subject=email + `role` 클레임, 유효기간 1시간. 토큰 파싱 결과를 `UsernamePasswordAuthenticationToken`으로 변환하고 `validateToken`에서 `JwtException`·`IllegalArgumentException` 캐치
+    - `AuthFilter`(`OncePerRequestFilter`) — `Authorization: Bearer` 헤더 파싱 → 검증 → `SecurityContextHolder`에 인증 주입
+    - `SecurityConfig` — csrf·httpBasic·formLogin 비활성화, `SessionCreationPolicy.STATELESS`, `/api/auth/**` permitAll + 그 외 authenticated, `UsernamePasswordAuthenticationFilter` 앞에 `AuthFilter` 등록, `BCryptPasswordEncoder` 빈 등록
+  - 도메인 모델: `User` 엔티티(email·username unique, `UserRole` GUEST·USER·ADMIN을 `EnumType.STRING`으로 저장), `UserRepository.findByEmail`
+  - 요청 검증: `AuthLoginRequest`를 record + Bean Validation(`@NotBlank`, `@Email`)으로 작성, 검증 메시지 한글화
+  - 미완 / 확인된 이슈
+    - 컴파일 불가 2건 — `JwtProvider.issueRefreshToken()` 본문 미작성(return 없음), `SecurityConfig.filterChain()`에 `throws Exception` 누락(`HttpSecurity.build()`가 checked exception 던짐)
+    - `AuthFilter.doFilterInternal`에서 `filterChain.doFilter(request, response)` 호출 누락 — 필터 체인이 끊겨 모든 요청이 뒤 단계로 넘어가지 못함
+    - `AuthController.login`이 더미 `User`로 토큰만 발급하는 TODO 상태, `AuthService`/`AuthServiceImpl`은 빈 껍데기
+    - `User.password` 길이 30 — BCrypt 해시(60자) 저장 불가. `@Builder`만 선언되어 JPA용 기본 생성자 부재
+    - Flyway `V260827_1330_init.sql`이 빈 파일 — 스키마 DDL 미작성
+  - 다음 단계: 로그인·회원가입 서비스 로직 구현, RefreshToken 발급/재발급, Song·Search 도메인 추가, 전역 예외 처리
+
+### 2026-08-28
