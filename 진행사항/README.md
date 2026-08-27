@@ -27,6 +27,6 @@
 | 곽도연 | LLM 튜닝 · 지식 증류 기반 경량 Text-to-SQL 모델 |
 | 김건우 | |
 | 안규리 | |
-| 이규원 | |
+| 이규원 | React · TypeScript 기반 Text-to-SQL 프론트엔드 구현 |
 | 정예준 | Hadoop · 신경망 모델 학습 · Kubernetes |
 | 정준호 | |
