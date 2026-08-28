@@ -26,7 +26,7 @@
 |---|---|
 | 곽도연 | LLM 튜닝 · 지식 증류 기반 경량 Text-to-SQL 모델 |
 | 김건우 | |
-| 안규리 | |
+| 안규리 | 사용자 청취 행동 기반 음악 취향 탐색·추천<br>Jamendo API · librosa · OpenL3 · 암묵적 피드백 · Apache Spark |
 | 이규원 | **아이디어 기획** — 밥상레이더 · 필지큐 · FoodGraph<br>**기술 학습** — React·TypeScript 기반 Text-to-SQL 프론트엔드 |
 | 정예준 | Hadoop · 신경망 모델 학습 · Kubernetes |
 | 정준호 | |
