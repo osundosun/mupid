@@ -27,6 +27,6 @@
 | 곽도연 | LLM 튜닝 · 지식 증류 기반 경량 Text-to-SQL 모델 |
 | 김건우 | |
 | 안규리 | |
-| 이규원 | 빅데이터·분산 프로젝트 아이디어 기획 · React·TypeScript 기반 Text-to-SQL 프론트엔드 구현 |
+| 이규원 | 빅데이터·분산 서비스 아이디어 기획(밥상레이더·필지큐·생활 의사결정 서비스·FoodGraph) · React·TypeScript 기반 Text-to-SQL 프론트엔드 구현 |
 | 정예준 | Hadoop · 신경망 모델 학습 · Kubernetes |
 | 정준호 | |
