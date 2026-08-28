@@ -29,13 +29,30 @@
     - 수익성·가격 변동성·생산량 변동성 등을 활용한 안정성 지표 검토
     - 최종 추천 결과를 **수익성 × 안정성 4분면**으로 제공하는 방향 설정
 
+### 2026-08-26
+- **프로젝트 주제 및 핵심 기능 선정- 기존 농작물 추천 주제에서 음악 취향 탐색 서비스로 프로젝트 방향 전환**
+  - 곡 전체가 아닌 사용자가 좋아한 특정 순간(Moment)의 음악적 변화 패턴을 취향 데이터로 활용하는 방향 설정
+  - Track → Window → Moment → Scene → Track Arc 기반의 음원 구조 분석 방식 설계
+  - 사용자가 특정 timestamp에 ❤️를 남기면 전후 Energy·Rhythm·Spectral 변화 등을 분석하는 Moment DNA 기능 구상
+  - 동일한 변화 패턴을 다른 장르에서 찾아주는 Cross-Genre Resonance를 핵심 추천 기능으로 선정
+  - 자연어 음악 추천, BPM 기반 탐색, 오디오 그래프 드로잉, 음성 스케치, 음악일기 등 확장 기능 후보 조사
+  - FMA Full 약 879GB를 대규모 분석 데이터로 사용하고 Jamendo 등 라이선스 가능한 음원을 실제 추천 카탈로그로 활용하는 구조 선정
+
+### 2026-08-27
+
+- **유사 서비스 조사 및 Audio AI 모델 선정**
+  - Spotify·YouTube Music Samples·SoundCloud·Cyanite 등 기존 음악 추천·구간 탐색 서비스와 기능 비교
+  - FMA 음원을 Window 단위로 분리한 뒤 Audio Feature·Embedding·Transition Vector를 생성하는 분석 파이프라인 설계
+  - BPM·Energy·Spectral Feature 등 저수준 음향 특징 추출을 위해 **Essentia** 활용 검토
+  - Moment Pattern 탐색에는 K-Means·HDBSCAN 등 비지도 군집화를 우선 검토
+
+
 ---
 
 ## 학습 기술 스택
 
-| 분류 | 스택 | 상태       |
-|---|---|------------|
-| 데이터 | 농업·토양·기후·시장 데이터 조사 및 구조화 | ✅ 완료    |
-| AI | 시장 과열·공급과잉 위험 예측 설계 | 🔄 진행 중 |
-| AI | 토지·기후·시장 기반 추천 알고리즘 설계 | 🔄 진행 중 |
-| 검증 | 과거 데이터 기반 Backtest 구조 설계 | ⬜ 예정    |
+| 분류 | 스택 | 역할 | 상태 |
+|---|---|---|---|
+| AI | **MERT-v1-95M** | 음악 구간 Audio Embedding 추출 및 Moment 특징 표현 | ⬜ 예정 |
+| Audio | **Essentia** | BPM·Energy·Rhythm·Spectral Feature 등 음향 특징 추출 | 🔄 검토 중 |
+| AI | **HDBSCAN / K-Means** | 유사한 Moment 변화 패턴 군집화 | 🔄 검토 중 |
