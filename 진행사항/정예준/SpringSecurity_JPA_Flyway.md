@@ -1,6 +1,7 @@
 # SpringSecurity · JPA · Flyway (MetaMusic)
 
 ![metamusic.png](img/metamusic.png)
+![metamusic_erd.png](img/metamusic_erd.png)
 
 ### 목표
 Spring Boot 4 기반으로 JWT 인증을 적용한 REST API 스켈레톤(MetaMusic)을 구축한다. 세션 없이(STATELESS) 토큰만으로 인증이 성립하는 구조를 만들고, 도메인 단위 패키지 구성·Flyway 마이그레이션·컨테이너 배포까지 이어질 기반을 잡는다.
