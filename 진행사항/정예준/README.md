@@ -12,8 +12,8 @@
 | AI | [LLM 양자화 및 파인튜닝](LLM_양자화_파인튜닝.md) | ✅ 완료 |
 | AI | [위성 이미지 기반 농지 이상탐지 모델 학습](위성_이미지_이상탐지.md) | ✅ 완료 |
 | 인프라 | [Hadoop Docker 환경 구축 및 MapReduce 실습](Hadoop_Docker_MapReduce.md) | ✅ 완료 |
-| 인프라 | 쿠버네티스 활용 분산 서버 배포 및 관리 | 🔄 진행 중 |
-| 백엔드 | SpringSecurity · JPA · Flyway | 🔄 진행 중 |
+| 인프라 | [쿠버네티스 활용 분산 서버 배포 및 관리](쿠버네티스_분산_배포.md) | ✅ 완료 |
+| 백엔드 | [SpringSecurity · JPA · Flyway](SpringSecurity_JPA_Flyway.md) | ✅ 완료 |
 
 ---
 
@@ -51,7 +51,7 @@
 
 ### 2026-08-27
 
-- **MetaMusic** — Spring Boot 4.1.1 음악 메타데이터 서비스 백엔드 스켈레톤 구축 (SpringSecurity · JPA · Flyway 실습)
+- **[MetaMusic](SpringSecurity_JPA_Flyway.md)** — Spring Boot 4.1.1 음악 메타데이터 서비스 백엔드 스켈레톤 구축 (SpringSecurity · JPA · Flyway 실습)
   - 아키텍처 설계: nginx → Controller(User·Song·Search) → Service → Repository 3계층 구조를 다이어그램으로 정리 (`MetaMusic.arch.json`, `metamusic.png`)
   - 프로젝트 구성: Java 21 toolchain · Gradle, MySQL(`localhost:13306/meta_music_Db`) + Flyway, JJWT 0.12.5, Lombok, Actuator/DevTools
   - 패키지 구조를 도메인 기반으로 분리 — `auth/{controller,request,service}`, `user/{entity,repository}`, `common/{auth,config}`
@@ -62,7 +62,7 @@
   - 도메인 모델: `User` 엔티티(email·username unique, `UserRole` GUEST·USER·ADMIN을 `EnumType.STRING`으로 저장), `UserRepository.findByEmail`
   - 요청 검증: `AuthLoginRequest`를 record + Bean Validation(`@NotBlank`, `@Email`)으로 작성, 검증 메시지 한글화
   - 미완 / 확인된 이슈
-    - 컴파일 불가 2건 — `JwtProvider.issueRefreshToken()` 본문 미작성(return 없음), `SecurityConfig.filterChain()`에 `throws Exception` 누락(`HttpSecurity.build()`가 checked exception 던짐)
+    - 컴파일 불가 — `JwtProvider.issueRefreshToken()` 본문 미작성(return 없음)
     - `AuthFilter.doFilterInternal`에서 `filterChain.doFilter(request, response)` 호출 누락 — 필터 체인이 끊겨 모든 요청이 뒤 단계로 넘어가지 못함
     - `AuthController.login`이 더미 `User`로 토큰만 발급하는 TODO 상태, `AuthService`/`AuthServiceImpl`은 빈 껍데기
     - `User.password` 길이 30 — BCrypt 해시(60자) 저장 불가. `@Builder`만 선언되어 JPA용 기본 생성자 부재
@@ -70,3 +70,29 @@
   - 다음 단계: 로그인·회원가입 서비스 로직 구현, RefreshToken 발급/재발급, Song·Search 도메인 추가, 전역 예외 처리
 
 ### 2026-08-28
+
+- **[MetaMusic](SpringSecurity_JPA_Flyway.md)** — 컨테이너 이미지 빌드 및 [쿠버네티스 배포](쿠버네티스_분산_배포.md) 매니페스트 작성, JWT 토큰 구조 정리
+  - Docker 이미지화 — `deploy/docker/Dockerfile`, `bootJar` 산출물을 Zulu JDK 21 headless 베이스에 COPY하는 단일 스테이지 구성. `yejun614/meta-music:0.0.1` 빌드 완료(약 728MB)
+  - 쿠버네티스 매니페스트 — `deploy/k8s/app-deploy.yml`
+    - Deployment `replicas: 3` + `RollingUpdate(maxSurge 1 / maxUnavailable 0)` — 롤링 중에도 가용 파드 수를 유지하는 무중단 배포 설정
+    - `resources` requests(250m / 512Mi) · limits(500m / 1Gi)로 컨테이너 단위 자원 격리
+    - `readinessProbe` → `/api/actuator/health/readiness`, `livenessProbe` → `/api/actuator/health/liveness`
+    - Service `type: LoadBalancer`, 8800 → targetPort 8080
+  - 배포를 전제로 한 애플리케이션 설정 정비 (`application.yaml`)
+    - Actuator를 k8s probe와 연결 — base-path `/api/actuator`, `exposure.include: health`, `show-details: never`, `health.probes.enabled: true`로 readiness/liveness 엔드포인트 노출
+    - `server.shutdown: graceful` + `spring.lifecycle.timeout-per-shutdown-phase: 20s` — 롤링 업데이트 시 처리 중 요청 보전
+    - `SecurityConfig`에 `/api/actuator/**` permitAll 추가 — probe가 401에 막히지 않도록
+    - JWT 시크릿을 환경변수로 외부화 — `${MMUSIC_JWT_SECRET:...}` (`openssl rand -base64 32`)
+    - MySQL datasource를 주석 처리하고 H2 + h2console 의존성 추가 — 외부 DB 없이 컨테이너 단독 기동이 가능한 상태로 전환
+  - JWT 토큰 구조 개선
+    - subject를 email → **userId**로 변경, `token_type` 클레임(ACCESS / REFRESH) 추가로 토큰 종류 구분
+    - `issueRefreshToken(User)` 구현 — 유효기간 7일, role 클레임 제외(재발급 전용). `issueAccessToken`은 role을 `User`에서 직접 읽도록 시그니처 정리
+    - 어제 확인한 `AuthFilter.doFilterInternal`의 `filterChain.doFilter()` 누락 해결 — 필터 체인 정상 연결
+  - 남은 이슈
+    - `UserRepository.findById(int)`를 추가하고 `getAuthentication`에서 `Integer.parseInt(subject)` 사용 — PK가 `Long`이므로 `Long.parseLong` + `JpaRepository.findById(Long)`로 통일 필요
+    - `User` 엔티티에 `@Builder`만 있어 JPA 기본 생성자 부재 — Hibernate 엔티티 인스턴스화 실패 위험(`@NoArgsConstructor(access = PROTECTED)` 필요)
+    - `User.password` 길이 30 유지 — BCrypt 해시(60자) 저장 불가
+    - Flyway `V260827_1330_init.sql` 여전히 빈 파일 (현재는 H2 + Hibernate DDL로 우회)
+    - `AuthController.login`은 여전히 더미 User 토큰 발급 TODO, `AuthService`/`AuthServiceImpl` 비어 있음
+    - k8s 매니페스트는 작성 완료했으나 클러스터 적용(`kubectl apply`) 미확인 — 현재 컨텍스트(`docker-desktop`)에 `meta-music` 리소스 없음
+  - 다음 단계: 매니페스트 실제 적용 및 롤링 업데이트 검증, ConfigMap/Secret으로 설정 분리, 로그인·회원가입 서비스 로직 구현
