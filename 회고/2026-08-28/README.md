@@ -1,0 +1,73 @@
+# 📝 주간 회고 취합 (2026-08-28)
+
+🏫 **2반**\
+👥 **A204팀**
+
+---
+
+## 🔎 금주 회고
+
+*(참여 인원에 맞춰 가나다순으로 이름을 작성해 주세요.)*
+
+### 👤 김건우
+
+- **Keep:** 음원 분석 & 사용자 취향 발굴 프로젝트 주제 확정
+- **Problem:** 사용자들 입장에서 기존 서비스와의 차별점이 체감되지 않는 문제/아이디어 고착화
+- **Try:** 설문조사로 음악 사이트 경험에 대한 다양한 의견 수집 후 맞춤 아이디어 고도화
+
+### 👤 안규리
+
+- **Keep:** 음악 도메인 유지
+- **Problem:** 사용자 가치 수정 (무슨 가치를 제공하는 서비스인가? → 추천은 너무 보여지지 않는 부분에서 작동하는 시스템 적인 성향이 크기에 설득력이 강하지 않다. 사용자의 능동적인 행동을 기준으로 조정해보면 좋을 것 같다.)
+- **Try:** 설문지 배포를 통한 사용자 의견 수렴 및 기존 서비스의 불편함 정리
+
+### 👤 이규원
+
+- **Keep:** 팀원들과 다양한 아이디어를 자유롭게 공유하고, 피드백을 빠르게 반영하면서 기획 방향을 계속 구체화한 점이 좋았습니다. 단순히 아이디어를 정하는 데서 끝내지 않고, 실제 사용자 관점과 구현 가능성을 함께 고민한 점도 계속 이어가고 싶습니다.
+- **Problem:** 기획 초반에 아이디어가 여러 번 변경되면서 하나의 주제를 깊게 검토하기보다 새로운 아이디어를 찾는 데 많은 시간이 사용되었습니다. 또한 기능을 생각할 때 서비스의 핵심 문제와 차별점보다 구현하고 싶은 기술이나 기능을 먼저 생각하는 경우가 있었습니다.
+- **Try:** 확정된 기획을 바탕으로 핵심 기능을 구체적으로 디벨롭하고, 기능별 목적과 사용자 흐름을 정리하여 우선순위를 설정하겠습니다. 차주 계획 발표 전까지 기능 명세서와 프로토타입을 제작해 전체 서비스 흐름을 점검하고, Figma Make의 활용 방법도 직접 알아보고 적용해보겠습니다. 프로토타입을 통해 발견한 부족한 부분은 팀원들과 논의하여 기획에 반영하겠습니다.
+
+### 👤 정예준
+
+- **Keep:** 백엔드 관련 공부
+- **Problem:** 오버 엔지니어링을 줄이고 핵심 기능에 집중하자
+- **Try:** 빠르게 실행가능한 기술 시도
+
+### 👤 정준호
+
+- **Keep:** 음악 취향 분석 프로젝트 주제 확정
+- **Problem:** 다른 서비스와의 차별점을 설정하거나 구체적 기능을 설정하지 못했다.
+- **Try:** 사전 조사를 위해 타겟층(페르소나)을 확실히 정한 후 그에 대한 차별점을 제시한다.
+
+---
+
+## 🎯 차주 계획
+
+### 👤 김건우
+
+- Gemini PRO 플랜 업그레이드 후 lyria3 AI 음원 생산
+- 발표 장표 & 대본 작성
+- 발표 시점 전까지 로컬상의 데모 버전 정도만 개발 진행 후 동작 확인
+
+### 👤 안규리
+
+- 사용자의 **어떤 행동 지표**를 타깃으로 / 어떤 **라이브러리(모듈)와 플로우**로 수집하고 / 어떻게 분석하고 / 어디에 적용할건지 생각해볼 예정
+- 구체적인 관련 기술스택 및 아키텍처 선정
+- ERD 설계
+
+### 👤 이규원
+
+- 확정된 기획을 바탕으로 핵심 기능을 더 구체적으로 디벨롭하고, 차주 계획 발표 전까지 기능 명세서를 작성할 예정입니다. 또한 빠르게 화면 흐름을 확인할 수 있도록 프로토타입을 개발하고, UI 제작에 활용할 수 있는 Figma Make의 사용 방법과 프로젝트 적용 가능성을 알아보겠습니다.
+
+### 👤 정예준
+
+- DB ERD 설계
+- 백엔드 아키텍처 설계
+
+### 👤 정준호
+
+- 기획 방향(차별점) 및 구현 범위를 설정한다.
+- AI 모델 선정, AI 학습 계획, AI 구조 설계
+- 입력 데이터 종류, 데이터 형식 설정
+
+<!-- a204-retro-data:v2:eyJlbnRyaWVzIjpbeyJ1c2VyX2lkIjoiYWZjYWtxMTg1amZ3OG1paXVwOGh5Y29lN2EiLCJuYW1lIjoi6rmA6rG07JqwIiwidGhpc193ZWVrIjoiLSBLZWVwIDog7J2M7JuQIOu2hOyEnSAmIOyCrOyaqeyekCDst6jtlqUg67Cc6rW0IO2UhOuhnOygne2KuCDso7zsoJwg7ZmV7KCVXG4tIFByb2JsZW0gOiDsgqzsmqnsnpDrk6Qg7J6F7J6l7JeQ7IScIOq4sOyhtCDshJzruYTsiqTsmYDsnZgg7LCo67OE7KCQ7J20IOyytOqwkOuQmOyngCDslYrripQg66y47KCcL-yVhOydtOuUlOyWtCDqs6DssKntmZRcbi0gVHJ5IDog7ISk66y47KGw7IKs66GcIOydjOyVhSDsgqzsnbTtirgg6rK97ZeY7JeQIOuMgO2VnCDri6TslpHtlZwg7J2Y6rKsIOyImOynkSDtm4Qg66ee7LakIOyVhOydtOuUlOyWtCDqs6Drj4TtmZQiLCJuZXh0X3dlZWsiOiItIEdlbWluaSBQUk8g7ZSM656cIOyXheq3uOugiOydtOuTnCDtm4QgbHlyaWEzIEFJIOydjOybkCDsg53sgrBcbi0g67Cc7ZGcIOyepe2RnCAmIOuMgOuzuCDsnpHshLFcbi0g67Cc7ZGcIOyLnOygkCDsoITquYzsp4Ag66Gc7Lus7IOB7J2YIOuNsOuqqCDrsoTsoIQg7KCV64-E66eMIOqwnOuwnCDsp4Ttlokg7ZuEIOuPmeyekSDtmZXsnbgifSx7InVzZXJfaWQiOiJtY3VncGl3aDlmZnQ5cmZ5b3hieXQ3ZjRtbyIsIm5hbWUiOiLslYjqt5zrpqwiLCJ0aGlzX3dlZWsiOiItIEtlZXA6IOydjOyVhSDrj4TrqZTsnbgg7Jyg7KeAXG4tIFByb2JsZW06IOyCrOyaqeyekCDqsIDsuZgg7IiY7KCVICjrrLTsiqgg6rCA7LmY66W8IOygnOqzte2VmOuKlCDshJzruYTsiqTsnbjqsIA_IOKGkiDstpTsspzsnYAg64SI66y0IOuztOyXrOyngOyngCDslYrripQg67aA67aE7JeQ7IScIOyekeuPme2VmOuKlCDsi5zsiqTthZwg7KCB7J24IOyEse2WpeydtCDtgazquLDsl5Ag7ISk65Od66Cl7J20IOqwle2VmOyngCDslYrri6QuIOyCrOyaqeyekOydmCDriqXrj5nsoIHsnbgg7ZaJ64-Z7J2EIOq4sOykgOycvOuhnCDsobDsoJXtlbTrs7TrqbQg7KKL7J2EIOqygyDqsJnri6QuKVxuLSBUcnk6IOyEpOusuOyngCDrsLDtj6zrpbwg7Ya17ZWcIOyCrOyaqeyekCDsnZjqsqwg7IiY66C0IOuwjyDquLDsobQg7ISc67mE7Iqk7J2YIOu2iO2OuO2VqCDsoJXrpqwiLCJuZXh0X3dlZWsiOiItIOyCrOyaqeyekOydmCAqKuyWtOuWpCDtlonrj5kg7KeA7ZGcKirrpbwg7YOA6rmD7Jy866GcIC8g7Ja065akICoq65287J2067iM65-s66asKOuqqOuTiCnsmYAg7ZSM66Gc7JqwKirroZwg7IiY7KeR7ZWY6rOgIC8g7Ja065a76rKMIOu2hOyEne2VmOqzoCAvIOyWtOuUlOyXkCDsoIHsmqntlaDqsbTsp4Ag7IOd6rCB7ZW067O8IOyYiOyglVxuLSDqtazssrTsoIHsnbgg6rSA66CoIOq4sOyIoOyKpO2DnSDrsI8g7JWE7YKk7YWN7LKYIOyEoOyglVxuLSBFUkQg7ISk6rOEIn0seyJ1c2VyX2lkIjoieWtlcGdxdGVqcG41N3F0MWc4dzhxNGVmaW8iLCJuYW1lIjoi7J206rec7JuQIiwidGhpc193ZWVrIjoiLSBLZWVwOiDtjIDsm5Drk6Tqs7wg64uk7JaR7ZWcIOyVhOydtOuUlOyWtOulvCDsnpDsnKDroa3qsowg6rO17Jyg7ZWY6rOgLCDtlLzrk5zrsLHsnYQg67mg66W06rKMIOuwmOyYge2VmOuptOyEnCDquLDtmo0g67Cp7Zal7J2EIOqzhOyGjSDqtazssrTtmZTtlZwg7KCQ7J20IOyii-yVmOyKteuLiOuLpC4g64uo7Iic7Z6IIOyVhOydtOuUlOyWtOulvCDsoJXtlZjripQg642w7IScIOuBneuCtOyngCDslYrqs6AsIOyLpOygnCDsgqzsmqnsnpAg6rSA7KCQ6rO8IOq1rO2YhCDqsIDriqXshLHsnYQg7ZWo6ruYIOqzoOuvvO2VnCDsoJDrj4Qg6rOE7IaNIOydtOyWtOqwgOqzoCDsi7bsirXri4jri6QuXG4tIFByb2JsZW06IOq4sO2ajSDstIjrsJjsl5Ag7JWE7J2065SU7Ja06rCAIOyXrOufrCDrsogg67OA6rK965CY66m07IScIO2VmOuCmOydmCDso7zsoJzrpbwg6rmK6rKMIOqygO2GoO2VmOq4sOuztOuLpCDsg4jroZzsmrQg7JWE7J2065SU7Ja066W8IOywvuuKlCDrjbAg66eO7J2AIOyLnOqwhOydtCDsgqzsmqnrkJjsl4jsirXri4jri6QuIOuYkO2VnCDquLDriqXsnYQg7IOd6rCB7ZWgIOuVjCDshJzruYTsiqTsnZgg7ZW17IusIOusuOygnOyZgCDssKjrs4TsoJDrs7Tri6Qg6rWs7ZiE7ZWY6rOgIOyLtuydgCDquLDsiKDsnbTrgpgg6riw64ql7J2EIOuovOyggCDsg53qsIHtlZjripQg6rK97Jqw6rCAIOyeiOyXiOyKteuLiOuLpC5cbi0gVHJ5OiDtmZXsoJXrkJwg6riw7ZqN7J2EIOuwlO2DleycvOuhnCDtlbXsi6wg6riw64ql7J2EIOq1rOyytOyggeycvOuhnCDrlJTrsqjroa3tlZjqs6AsIOq4sOuKpeuzhCDrqqnsoIHqs7wg7IKs7Jqp7J6QIO2dkOumhOydhCDsoJXrpqztlZjsl6wg7Jqw7ISg7Iic7JyE66W8IOyEpOygle2VmOqyoOyKteuLiOuLpC4g7LCo7KO8IOqzhO2ajSDrsJztkZwg7KCE6rmM7KeAIOq4sOuKpSDrqoXshLjshJzsmYAg7ZSE66Gc7Yag7YOA7J6F7J2EIOygnOyeke2VtCDsoITssrQg7ISc67mE7IqkIO2dkOumhOydhCDsoJDqsoDtlZjqs6AsIEZpZ21hIE1ha2XsnZgg7Zmc7JqpIOuwqeuyleuPhCDsp4HsoJEg7JWM7JWE67O06rOgIOyggeyaqe2VtOuztOqyoOyKteuLiOuLpC4g7ZSE66Gc7Yag7YOA7J6F7J2EIO2Gte2VtCDrsJzqsqztlZwg67aA7KGx7ZWcIOu2gOu2hOydgCDtjIDsm5Drk6Tqs7wg64W87J2Y7ZWY7JesIOq4sO2ajeyXkCDrsJjsmIHtlZjqsqDsirXri4jri6QuIiwibmV4dF93ZWVrIjoi7ZmV7KCV65CcIOq4sO2ajeydhCDrsJTtg5XsnLzroZwg7ZW17IusIOq4sOuKpeydhCDrjZQg6rWs7LK07KCB7Jy866GcIOuUlOuyqOuhre2VmOqzoCwg7LCo7KO8IOqzhO2ajSDrsJztkZwg7KCE6rmM7KeAIOq4sOuKpSDrqoXshLjshJzrpbwg7J6R7ISx7ZWgIOyYiOygleyeheuLiOuLpC4g65iQ7ZWcIOu5oOultOqyjCDtmZTrqbQg7Z2Q66aE7J2EIO2ZleyduO2VoCDsiJgg7J6I64-E66GdIO2UhOuhnO2GoO2DgOyeheydhCDqsJzrsJztlZjqs6AsIFVJIOygnOyekeyXkCDtmZzsmqntlaAg7IiYIOyeiOuKlCBGaWdtYSBNYWtl7J2YIOyCrOyaqSDrsKnrspXqs7wg7ZSE66Gc7KCd7Yq4IOyggeyaqSDqsIDriqXshLHsnYQg7JWM7JWE67O06rKg7Iq164uI64ukLiJ9LHsidXNlcl9pZCI6IjFzc3RmcTVpdGZiYmJlbmFiZnA3ZTd4cXRoIiwibmFtZSI6IuygleyYiOykgCIsInRoaXNfd2VlayI6Ii0gS2VlcDog67Cx7JeU65OcIOq0gOugqCDqs7XrtoBcbi0gUHJvYmxlbTog7Jik67KEIOyXlOyngOuLiOyWtOungeydhCDspITsnbTqs6Ag7ZW17IusIOq4sOuKpeyXkCDsp5HspJHtlZjsnpBcbi0gVHJ5OiDruaDrpbTqsowg7Iuk7ZaJ6rCA64ql7ZWcIOq4sOyIoCDsi5zrj4QiLCJuZXh0X3dlZWsiOiItIERCIEVSRCDshKTqs4Rcbi0g67Cx7JeU65OcIOyVhO2CpO2FjeyymCDshKTqs4QifSx7InVzZXJfaWQiOiJwc29yZng0cXQzcnNwOGkzeGlzcG5leWVxYyIsIm5hbWUiOiLsoJXspIDtmLgiLCJ0aGlzX3dlZWsiOiItIEtlZXAgOiDsnYzslYUg7Leo7ZalIOu2hOyEnSDtlITroZzsoJ3tirgg7KO87KCcIO2ZleyglVxuLSBQcm9ibGVtIDog64uk66W4IOyEnOu5hOyKpOyZgOydmCDssKjrs4TsoJDsnYQg7ISk7KCV7ZWY6rGw64KYIOq1rOyytOyggSDquLDriqXsnYQg7ISk7KCV7ZWY7KeAIOuqu-2WiOuLpC5cbi0gVHJ5IDog7IKs7KCEIOyhsOyCrOulvCDsnITtlbQg7YOA6rKf7Li1KO2OmOultOyGjOuCmCnsnYQg7ZmV7Iuk7Z6IIOygle2VnCDtm4Qg6re47JeQIOuMgO2VnCDssKjrs4TsoJDsnYQg7KCc7Iuc7ZWc64ukLiIsIm5leHRfd2VlayI6Ii0g6riw7ZqNIOuwqe2WpSjssKjrs4TsoJApIOuwjyDqtaztmIQg67KU7JyE66W8IOyEpOygle2VnOuLpC5cbi0gQUkg66qo6424IOyEoOyglSwgQUkg7ZWZ7Iq1IOqzhO2ajSwgQUkg6rWs7KGwIOyEpOqzhFxuLSDsnoXroKUg642w7J207YSwIOyiheulmCwg642w7J207YSwIO2YleyLnSDshKTsoJUifV19 -->
