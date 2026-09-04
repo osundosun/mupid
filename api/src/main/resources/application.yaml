@@ -1,0 +1,33 @@
+server:
+  port: ${MUPID_PORT:8800}
+
+spring:
+  application:
+    name: api
+  config:
+    import:
+      - optional:file:.env[.properties]
+  datasource:
+    url: ${MUPID_MYSQL_URL}
+    username: ${MUPID_MYSQL_USER}
+    password: ${MUPID_MYSQL_PASSWORD}
+  data:
+    redis:
+      host: ${MUPID_REDIS_HOST}
+      port: ${MUPID_REDIS_PORT}
+      timeout: 3000ms
+
+management:
+  endpoints:
+    web:
+      base-path: /api/actuator
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+
+jwt:
+  secret: ${MUPID_JWT_SECRET}

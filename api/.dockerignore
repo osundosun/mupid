@@ -1,0 +1,15 @@
+.git
+.gradle
+.mybatis
+build
+bin
+out
+.idea
+.vscode
+.env
+.env.example
+*.log
+Dockerfile
+compose.yml
+compose.prod.yml
+nginx
