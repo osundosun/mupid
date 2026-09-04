@@ -1,0 +1,25 @@
+server:
+  port: ${MUPID_PORT:8800}
+
+spring:
+  application:
+    name: api
+  datasource:
+    url: ${MUPID_MYSQL_URL}
+    username: ${MUPID_MYSQL_USER}
+    password: ${MUPID_MYSQL_PASSWORD}
+
+management:
+  endpoints:
+    web:
+      base-path: /api/actuator
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+
+jwt:
+  secret: ${MUPID_JWT_SECRET}  # openssl rand -base64 32
