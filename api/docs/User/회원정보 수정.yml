@@ -1,0 +1,33 @@
+info:
+  name: 회원정보 수정
+  type: http
+  seq: 2
+
+http:
+  method: PATCH
+  url: "{{BASE_URL}}/api/v1/user"
+  auth: inherit
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    content: |
+      {
+        "password": "newpassword123!",
+        "nickname": "newnickname",
+        "birthYear": 1999,
+        "gender": "F"
+      }
+
+docs:
+  description: |
+    변경할 필드만 전송하면 됩니다 (모두 선택).
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

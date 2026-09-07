@@ -1,0 +1,18 @@
+info:
+  name: 프로필 사진 삭제
+  type: http
+  seq: 5
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/user/image"
+  auth: inherit
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

@@ -1,0 +1,18 @@
+info:
+  name: 회원탈퇴
+  type: http
+  seq: 3
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/user"
+  auth: inherit
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

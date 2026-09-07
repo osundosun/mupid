@@ -1,0 +1,29 @@
+info:
+  name: 인증 메일 발송
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/mail/verification"
+  auth: inherit
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    content: |
+      {
+        "email": "user@example.com"
+      }
+
+docs:
+  description: |
+    회원가입용 이메일 인증 메일을 발송합니다.
+    응답으로 verificationId 를 받습니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

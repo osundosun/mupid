@@ -1,0 +1,29 @@
+info:
+  name: 비밀번호 재설정 메일 발송
+  type: http
+  seq: 7
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/user/reset"
+  auth: inherit
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    content: |
+      {
+        "email": "user@example.com"
+      }
+
+docs:
+  description: |
+    가입된 이메일로 비밀번호 재설정 인증 메일을 발송합니다.
+    응답으로 verificationId 를 받습니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

@@ -1,0 +1,24 @@
+info:
+  name: 로그아웃
+  type: http
+  seq: 3
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/auth"
+  auth: inherit
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Cookie
+      value: refresh_token={{REFRESH_TOKEN}}
+
+docs:
+  description: |
+    액세스 토큰과 리프레시 토큰을 모두 무효화합니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

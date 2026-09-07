@@ -1,0 +1,29 @@
+info:
+  name: 프로필 사진 수정
+  type: http
+  seq: 4
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/user/image"
+  auth: inherit
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  body:
+    type: multipartForm
+    multiPartEntry:
+      - name: file
+        type: file
+        value: []
+
+docs:
+  description: |
+    multipart/form-data 로 `file` 필드에 이미지를 첨부합니다.
+    Bruno UI 에서는 body 타입을 Multipart Form 으로 선택 후 파일을 지정하세요.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

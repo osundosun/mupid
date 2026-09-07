@@ -1,0 +1,29 @@
+info:
+  name: 인증 코드 제출
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/mail/verification"
+  auth: inherit
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    content: |
+      {
+        "verificationId": 1,
+        "token": "이메일로 받은 인증 코드"
+      }
+
+docs:
+  description: |
+    이메일로 받은 인증 코드를 제출해 검증합니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
