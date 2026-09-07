@@ -1,0 +1,62 @@
+frontend-verify:
+  stage: verify
+  image: node:22-bookworm-slim
+  tags: [mupid-ci]
+  interruptible: true
+  timeout: 15m
+  variables:
+    MUPID_DEPLOY_TARGET: ec2
+    NEXT_TELEMETRY_DISABLED: '1'
+  cache:
+    key:
+      files: [App/package-lock.json]
+      prefix: frontend-npm
+    paths: [App/.npm/]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: [App/**/*, infra/ci/frontend.yml, infra/ci/frontend-release.sh, infra/deploy/receive-front.py, .gitlab-ci.yml]
+    - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
+      changes: [App/**/*, infra/ci/frontend.yml, infra/ci/frontend-release.sh, infra/deploy/receive-front.py, .gitlab-ci.yml]
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  script:
+    - cd App
+    - npm ci --cache .npm --prefer-offline --no-audit --no-fund
+    - npm run build
+    - test -f dist/client/index.html
+  artifacts:
+    expire_in: 7 days
+    paths: [App/dist/client/]
+
+frontend-package:
+  stage: package
+  image: alpine:3.22
+  tags: [mupid-ci]
+  needs: [frontend-verify]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: [App/**/*, infra/ci/frontend.yml, infra/ci/frontend-release.sh, infra/deploy/receive-front.py, .gitlab-ci.yml]
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      changes: [App/**/*, infra/ci/frontend.yml, infra/ci/frontend-release.sh, infra/deploy/receive-front.py, .gitlab-ci.yml]
+  script:
+    - apk add --no-cache curl
+    - sh infra/ci/frontend-release.sh package
+
+frontend-deploy:
+  stage: deploy
+  image: alpine:3.22
+  tags: [mupid-ci]
+  needs: [frontend-package]
+  resource_group: mupid-demo
+  environment:
+    name: demo
+    url: https://j15a204.p.ssafy.io
+  timeout: 10m
+  interruptible: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      changes: [App/**/*, infra/ci/frontend.yml, infra/ci/frontend-release.sh, infra/deploy/receive-front.py, .gitlab-ci.yml]
+  script:
+    - apk add --no-cache curl openssh-client
+    - sh infra/ci/frontend-release.sh deploy

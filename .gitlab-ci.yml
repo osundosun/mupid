@@ -5,6 +5,7 @@ stages:
   - deploy
 
 include:
+  - local: infra/ci/frontend.yml
   - local: infra/ci/backend.yml
   - local: infra/ci/release.yml
 
