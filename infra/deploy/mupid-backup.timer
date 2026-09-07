@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Mupid MySQL backup (03:00 Asia/Seoul)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Asia/Seoul
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

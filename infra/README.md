@@ -48,3 +48,17 @@
 - 백업·복원, 프런트 배포, CI에서 서버까지 전체 자동배포는 아직 미검증.
 
 작업 브랜치 `back/chore/cicd-setup`, MR !23. master/develop 직접 push 및 자동 병합은 하지 않는다.
+
+## DB 백업
+
+`backup.py`를 서버 `/usr/local/sbin/mupid-backup`에 설치했다. `mupid-backup.timer`는 매일 한국시간 03:00부터 최대 5분 이내에 실행한다. 백업마다 SHA256을 기록하고 네트워크/운영 볼륨 연결이 없는 임시 MySQL 컨테이너에서 SQL 복원 및 CHECK TABLE을 수행한다. 한글·바이너리·NULL 테스트 데이터 왕복 검증도 해당 임시 컨테이너 안에서 수행한다.
+
+- 저장 위치: `/srv/mupid/backups`, root 전용 권한. SQL에는 앱 데이터가 포함될 수 있으므로 저장소에 올리지 않는다.
+- `sudo systemctl start mupid-backup.service`: 즉시 백업 및 복원 검증.
+- `sudo journalctl -u mupid-backup.service`: 결과/실패 확인.
+- `sudo /usr/local/sbin/mupid-backup verify /srv/mupid/backups/<파일>.sql.gz`: 기존 백업 재검증.
+- `.verified.json`이 있어야 복원 검증까지 통과한 백업이다.
+- 현재 DB는 테이블 0개다. 실제 앱 스키마가 추가되면 그 테이블도 자동으로 복원 검사한다.
+- 임시 복원 DB는 메모리 1GB, tmpfs 768MB 제한이다. 데이터 증가 시 조정한다.
+- 현재 백업은 기본 EC2 내부에만 저장한다. 서버 손실 대비 외부 보관, 보관 기간별 정리, 실패 알림은 후속 과제다. 자동 삭제는 아직 하지 않는다.
+- MySQL만 대상이며 Redis AOF, 서버 설정/비밀값, 인증서는 별도 백업 대상이다. 스키마 변경 작업과 백업 시간을 겹치지 않게 한다.

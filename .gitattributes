@@ -3,3 +3,4 @@
 # Shell scripts must remain executable by Linux runners after Windows checkout.
 *.sh text eol=lf
 api/gradlew text eol=lf
+infra/deploy/*.py text eol=lf
