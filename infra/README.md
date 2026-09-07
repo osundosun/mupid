@@ -72,3 +72,7 @@ frontend-verify는 npm ci와 정적 빌드를 실행하고 산출물을 보관�
 서버 설치: receive-front.py → /usr/local/sbin/mupid-receive-front (root 755), ssh-entrypoint.sh → /usr/local/bin/mupid-ssh-entrypoint. sudoers에 mupid-deploy의 mupid-receive-front 실행만 추가한다. Nginx는 /srv/mupid/web을 읽기 전용 마운트한다. 기존 서버 config는 별도 백업 후 갱신한다.
 
 아카이브 체크섬/상대경로/파일 종류/용량을 검사하며 심볼릭 링크 항목은 거부한다. HTTPS deployment.txt의 버전이 다르거나 홈 응답이 실패하면 직전 프런트 링크로 복구한다. DB/API 컨테이너를 교체하지 않는다. current 전환에 필요한 새 파일만 배포하고 Sites 프로젝트는 변경하지 않는다.
+
+## 운영 완료 상태 (2026-09-07 갱신)
+
+프런트·백엔드 통합 자동배포와 GitLab 배포 변수 연결은 완료했다. 백업은 추가 EC2 /srv/mupid-backup-vault에도 자동 보관하며 수신 체크섬 및 독립 복원 검증을 마쳤다. 상세 절차와 현재 상태는 OPERATIONS.md, PROGRESS.md를 기준으로 한다. 이 갱신은 위 초기 단계의 미완료 표기를 대체한다. 실패 알림은 사용자 요청으로 후속 작업으로 미룬다.
