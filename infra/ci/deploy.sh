@@ -10,6 +10,13 @@ for file in image.tar.gz image.tar.gz.sha256; do
 done
 sha256sum -c image.tar.gz.sha256
 checksum=$(sha256sum image.tar.gz | cut -d ' ' -f 1)
-chmod 600 "$MUPID_DEPLOY_SSH_KEY"
-ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$MUPID_DEPLOY_KNOWN_HOSTS" -i "$MUPID_DEPLOY_SSH_KEY" mupid-deploy@j15a204.p.ssafy.io "deploy $CI_COMMIT_SHA $checksum" < image.tar.gz
+umask 077
+# GitLab file values pasted from Windows may use CRLF or omit the final newline.
+key=/tmp/mupid-deploy/id_deploy
+trap 'rm -f "$key"' EXIT
+tr -d '\r' < "$MUPID_DEPLOY_SSH_KEY" > "$key"
+printf '\n' >> "$key"
+chmod 600 "$key"
+ssh-keygen -y -P '' -f "$key" >/dev/null
+ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$MUPID_DEPLOY_KNOWN_HOSTS" -i "$key" mupid-deploy@j15a204.p.ssafy.io "deploy $CI_COMMIT_SHA $checksum" < image.tar.gz
 curl --fail --silent --show-error --max-time 15 https://j15a204.p.ssafy.io/api/actuator/health | grep -q '"status":"UP"'
