@@ -1,12 +1,3 @@
-# 개발용: 스프링은 호스트(IDE/`./gradlew bootRun`)에서 직접 실행하고,
-# 여기서는 인프라와 nginx 만 띄운다.
-#   docker compose up -d
-#   ./gradlew bootRun
-#
-# 스프링까지 컨테이너로 띄우는 운영 구성은 compose.prod.yml 을 사용할 것.
-#
-# nginx 는 호스트에서 도는 스프링(host.docker.internal:8800)으로 프록시하므로
-# http://localhost:8080/api/... 로 운영과 같은 경로로 확인할 수 있다.
 name: mupid-dev
 
 services:
@@ -24,7 +15,6 @@ services:
       - "${MUPID_NGINX_PORT:-8080}:80"
     networks:
       - frontend
-    # Docker Desktop 이 아닌 리눅스에서도 host.docker.internal 이 호스트를 가리키도록
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -44,7 +34,6 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
-    # 호스트의 스프링이 붙어야 하므로 반드시 포트를 노출한다 (.env 의 MUPID_MYSQL_URL 과 동일)
     ports:
       - "${MUPID_MYSQL_PORT:-13306}:3306"
     volumes:
@@ -75,6 +64,30 @@ services:
       timeout: 3s
       retries: 10
 
+  storage:
+    image: chrislusf/seaweedfs
+    container_name: mupid-dev-storage
+    restart: unless-stopped
+    command: ["server", "-dir=/data", "-s3", "-filer"]
+    environment:
+      - AWS_ACCESS_KEY_ID=${MUPID_S3_ACCESS_KEY}
+      - AWS_SECRET_ACCESS_KEY=${MUPID_S3_SECRET}
+      - S3_BUCKET=${MUPID_S3_BUCKET}
+    ports:
+      - "8333:8333"
+      - "9333:9333"
+      - "8888:8888"
+    volumes:
+      - storage-data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8333/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
 networks:
   frontend:
     name: mupid-dev-frontend
@@ -88,3 +101,5 @@ volumes:
     name: mupid-dev-mysql-data
   redis-data:
     name: mupid-dev-redis-data
+  storage-data:
+    name: mupid-dev-storage-data
