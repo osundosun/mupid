@@ -1,0 +1,28 @@
+frontend-verify:
+  stage: verify
+  image: node:22-bookworm-slim
+  tags: [mupid-ci]
+  interruptible: true
+  timeout: 15m
+  variables:
+    MUPID_DEPLOY_TARGET: ec2
+    NEXT_TELEMETRY_DISABLED: '1'
+  cache:
+    key:
+      files: [App/package-lock.json]
+      prefix: frontend-npm
+    paths: [App/.npm/]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: [App/**/*, infra/ci/frontend.yml, .gitlab-ci.yml]
+    - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
+      changes: [App/**/*, infra/ci/frontend.yml, .gitlab-ci.yml]
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  script:
+    - cd App
+    - npm ci --cache .npm --prefer-offline --no-audit --no-fund
+    - npm run build
+    - test -f dist/client/index.html
+  artifacts:
+    expire_in: 7 days
+    paths: [App/dist/client/]
