@@ -31,3 +31,19 @@ management:
 
 jwt:
   secret: ${MUPID_JWT_SECRET}
+
+gmail:
+  client-id: ${MUPID_GMAIL_CLIENT_ID}
+  client-secret: ${MUPID_GMAIL_CLIENT_SECRET}
+  token: ${MUPID_GMAIL_TOKEN}
+
+aws:
+  s3:
+    endpoint: ${MUPID_S3_ENDPOINT}
+    region: "SeaweedFS"
+    access-key: ${MUPID_S3_ACCESS_KEY}
+    secret-key: ${MUPID_S3_SECRET}
+    bucket-name: ${MUPID_S3_BUCKET}
+
+redis:
+  key-prefix: ${MUPID_REDIS_KEY_PREFIX}
