@@ -14,6 +14,10 @@ if not re.search(r'^\s*limit\s*=', source, flags=re.M):
     source = source.replace('[[runners]]', '[[runners]]\n  limit = 1', 1)
 if not re.search(r'^\s*request_concurrency\s*=', source, flags=re.M):
     source = source.replace('[[runners]]', '[[runners]]\n  request_concurrency = 2', 1)
+# Rootless BuildKit needs user namespace/mount syscalls on Ubuntu Docker.
+# This applies to this dedicated runner's job containers, not host-wide policy.
+if not re.search(r'^\s*security_opt\s*=', source, flags=re.M):
+    source = source.replace('[runners.docker]', '[runners.docker]\n    security_opt = ["seccomp=unconfined", "apparmor=unconfined"]', 1)
 parsed = tomllib.loads(source)
 docker = parsed['runners'][0]['docker']
 assert not docker.get('privileged', False)

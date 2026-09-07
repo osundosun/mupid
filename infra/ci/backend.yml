@@ -46,6 +46,9 @@ backend-verify:
     - cd api
     - bash ../infra/ci/wait-services.sh
     - bash gradlew --no-daemon --console=plain build
+    - mkdir -p build/release
+    - find build/libs -maxdepth 1 -name '*.jar' ! -name '*-plain.jar' -exec cp {} build/release/app.jar \;
+    - test -s build/release/app.jar
   artifacts:
     when: always
     expire_in: 7 days
@@ -53,3 +56,4 @@ backend-verify:
       junit: api/build/test-results/test/TEST-*.xml
     paths:
       - api/build/reports/tests/test/
+      - api/build/release/app.jar

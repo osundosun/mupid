@@ -1,0 +1,26 @@
+# Build the exact JAR that passed verification; no Docker daemon/socket in jobs.
+backend-package:
+  stage: package
+  tags: [mupid-ci]
+  image:
+    name: moby/buildkit@sha256:80b15f0735e87bab7bf59ec4d695dfb4a7cfb25521cf56dc75d6f256285b63ef
+    entrypoint: ['']
+    docker:
+      user: '0'
+  needs:
+    - job: backend-verify
+      artifacts: true
+  timeout: 20m
+  variables:
+    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: [api/**/*, infra/**/*, .gitlab-ci.yml]
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
+      changes: [api/**/*, infra/**/*, .gitlab-ci.yml]
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  script:
+    - apk add --no-cache curl
+    - sh infra/ci/package-image.sh
