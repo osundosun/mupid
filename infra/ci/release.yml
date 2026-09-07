@@ -24,3 +24,21 @@ backend-package:
   script:
     - apk add --no-cache curl
     - sh infra/ci/package-image.sh
+
+backend-deploy:
+  stage: deploy
+  image: alpine:3.22
+  tags: [mupid-ci]
+  needs: [backend-package]
+  resource_group: mupid-demo
+  environment:
+    name: demo
+    url: https://j15a204.p.ssafy.io
+  timeout: 15m
+  interruptible: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      changes: [api/**/*, infra/**/*, .gitlab-ci.yml]
+  script:
+    - apk add --no-cache curl openssh-client
+    - sh infra/ci/deploy.sh
