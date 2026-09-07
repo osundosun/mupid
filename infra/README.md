@@ -14,7 +14,7 @@
 ## Git
 
 - 작업 브랜치: `back/chore/cicd-setup` (사용자 요청으로 Jira 번호 생략).
-- `master`/`develop` 직접 push 금지. 커밋·push·MR 병합은 현재 미실행.
+- `master`/`develop` 직접 push 금지. 작업 브랜치 push 및 MR !23 생성 완료, 병합은 미실행.
 - 기존 AI 리뷰 job은 유지한다.
 - `mupid-ci` Runner는 현재 프로젝트에 제한하고, untagged job을 받지 않는다.
 
@@ -58,7 +58,7 @@ docker compose -p mupid-ci-smoke -f compose.ci.yml down
 
 ## 후속 작업
 
-1. Online 상태인 전용 Runner #2083에서 실제 GitLab job 실행 (CI 변경 커밋/push 필요).
+1. MR !23 검토. Runner #2083에서 첫 실제 MR pipeline #181373이 성공했고 테스트 보고서와 캐시를 저장했다.
 2. 이미지 저장소 제공 여부 확인 후 이미지 build/publish/deploy 구성.
 3. 서버 운영 디렉터리와 비밀값·제한 DB 계정 구성.
 4. HTTPS, 배포 잠금, 버전 기록, 상태 검사, 이전 버전 복구.

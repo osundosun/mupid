@@ -1,6 +1,6 @@
 # 구축 진행 기록 — 2026-09-07
 
-진행도: 40/100% (서버·Runner 연결 완료, 실제 GitLab CI 및 자동배포 미완료)
+진행도: 50/100% (서버·Runner·실제 MR CI 검증 완료, 자동배포 미완료)
 
 ## 검증 완료
 
@@ -19,6 +19,9 @@
 - 전체 job 동시성 1, 빌드 컨테이너 CPU 2/메모리 4GB, 서비스별 CPU 1/메모리 1GB.
 - Runner 관리 컨테이너 CPU 0.5/메모리 512MB. job 컨테이너는 privileged=false, Docker 소켓 미제공.
 - Runner 설정은 `/srv/mupid-runner/config/config.toml`에 root 소유/600 권한으로 보관.
+- 작업 브랜치 커밋/push 및 develop 대상 MR !23 생성. 병합은 미실행.
+- 실제 MR pipeline #181373 / job #489907 성공: Gradle build/test 1분 56초.
+- JUnit XML 1개 및 HTML 테스트 보고서 업로드 성공(201), Runner 로컬 Gradle 캐시 저장 성공.
 
 ## 현재 상태
 
@@ -30,13 +33,14 @@
 - 그룹/인스턴스 Runner 없음. 기존 AI review Runner #2015는 stale.
 - 전용 Runner #2083 Online: `mupid-ci`, 프로젝트 제한, 최대 1200초, untagged 비활성.
 - Container Registry 직접 접근은 404이며 Deploy 메뉴에도 항목 없음. 제공 여부 추가 확인 필요.
-- CI 검증 파일은 로컬 작성 완료, GitLab에서 실제 실행하지 않음.
-- 커밋/push/MR 생성·병합은 미실행.
+- CI 검증 파일을 실제 GitLab MR 파이프라인에서 실행·검증함.
+- MR: https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21A204/-/merge_requests/23
+- 최초 성공 pipeline: https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21A204/-/pipelines/181373
 
 ## 다음 작업
 
-1. 현재 변경을 작업 브랜치에 커밋/push하고 MR 생성 (사용자 요청 필요).
-2. 실제 GitLab CI job에서 빌드·테스트·JUnit 보고서·캐시 검증.
+1. MR 변경 검토 (병합은 미실행).
+2. 후속 CI 실행에서 Gradle 캐시 복원 확인.
 3. 이미지 저장소 결정 및 build/publish/deploy 구현.
 4. 운영 계정/HTTPS/배포 잠금/버전 기록/롤백 검증.
 5. 백업·복원·프런트 배포 검증.
