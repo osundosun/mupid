@@ -1,0 +1,16 @@
+name: mupid-runner
+services:
+  runner:
+    image: gitlab/gitlab-runner@sha256:af0325804248aee217e055e753add77ccaaba6c8f5e2143b01108fd401165ef3
+    restart: unless-stopped
+    cpus: 0.5
+    mem_limit: 512m
+    volumes:
+      - /srv/mupid-runner/config:/etc/gitlab-runner
+      # Only the trusted runner manager receives the socket, never CI jobs.
+      - /var/run/docker.sock:/var/run/docker.sock
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'

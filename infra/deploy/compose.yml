@@ -1,0 +1,80 @@
+name: mupid
+x-logging: &logging
+  driver: json-file
+  options: {max-size: '10m', max-file: '3'}
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: mupid-nginx
+    restart: unless-stopped
+    logging: *logging
+    volumes:
+      - /srv/mupid/config/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /srv/mupid/acme:/var/www/acme:ro
+      - /srv/mupid/web:/srv/web:ro
+    ports:
+      - '${MUPID_HTTP_PORT}:80'
+      - '${MUPID_HTTPS_PORT}:443'
+    networks: [frontend]
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -qO-, 'http://127.0.0.1/healthz']
+      interval: 10s
+      timeout: 3s
+      retries: 6
+  api:
+    image: ${MUPID_API_IMAGE:?image required}
+    container_name: mupid-api
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 2g
+    environment:
+      MUPID_MYSQL_USER: ${MUPID_MYSQL_USER}
+      MUPID_MYSQL_PASSWORD: ${MUPID_MYSQL_PASSWORD}
+      MUPID_JWT_SECRET: ${MUPID_JWT_SECRET}
+      MUPID_PORT: '8800'
+      MUPID_MYSQL_URL: jdbc:mysql://mysql:3306/mupid?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&serverTimezone=Asia/Seoul
+      MUPID_REDIS_HOST: redis
+      MUPID_REDIS_PORT: '6379'
+    networks: [frontend, backend]
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+  mysql:
+    image: mysql:8.4
+    container_name: mupid-mysql
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MUPID_MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: mupid
+      TZ: Asia/Seoul
+    command: [--character-set-server=utf8mb4, --collation-server=utf8mb4_unicode_ci]
+    volumes: [mysql-data:/var/lib/mysql]
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, 'mysqladmin ping -h 127.0.0.1 -p$$MYSQL_ROOT_PASSWORD --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 15
+  redis:
+    image: redis:7.4-alpine
+    container_name: mupid-redis
+    restart: unless-stopped
+    logging: *logging
+    command: [redis-server, --appendonly, 'yes']
+    volumes: [redis-data:/data]
+    networks: [backend]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+networks:
+  frontend: {external: true, name: mupid-frontend}
+  backend: {external: true, name: mupid-backend}
+volumes:
+  mysql-data: {external: true, name: mupid-mysql-data}
+  redis-data: {external: true, name: mupid-redis-data}

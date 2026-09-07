@@ -1,0 +1,12 @@
+{
+  "name": "s15p21a204",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Git hook(husky) 관리용 루트 패키지",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

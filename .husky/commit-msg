@@ -1,0 +1,56 @@
+#!/usr/bin/env sh
+# 커밋 메시지 제목 끝에 브랜치명에서 추출한 JIRA 티켓 번호를 " [S15P21A204-xx]" 형태로 붙인다.
+# - 'A204 회고 봇'의 자동 커밋은 예외로 둔다.
+# - merge / squash / rebase 로 만들어지는 커밋 메시지는 건드리지 않는다.
+
+MSG_FILE="$1"
+COMMIT_SOURCE="$2"
+
+# 1) merge / squash 로 만들어진 메시지는 그대로 둔다.
+case "$COMMIT_SOURCE" in
+  merge|squash) exit 0 ;;
+esac
+
+# 2) 'A204 회고 봇' 자동 커밋은 예외.
+AUTHOR_IDENT="$(git var GIT_AUTHOR_IDENT 2>/dev/null)"
+case "$AUTHOR_IDENT" in
+  "A204 회고 봇 <"*|*"<a204-retro-bot@"*) exit 0 ;;
+esac
+
+# 3) rebase / cherry-pick / revert / merge 진행 중(detached HEAD)에는 건드리지 않는다.
+GIT_DIR_PATH="$(git rev-parse --git-dir 2>/dev/null)"
+if [ -d "$GIT_DIR_PATH/rebase-merge" ] || [ -d "$GIT_DIR_PATH/rebase-apply" ] ||
+   [ -f "$GIT_DIR_PATH/CHERRY_PICK_HEAD" ] || [ -f "$GIT_DIR_PATH/REVERT_HEAD" ] ||
+   [ -f "$GIT_DIR_PATH/MERGE_HEAD" ]; then
+  exit 0
+fi
+
+# 4) 브랜치명에서 JIRA 티켓 번호 추출 (S15P21A204-<숫자>)
+BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)"
+TICKET="$(printf '%s' "$BRANCH" | grep -oE 'S15P21A204-[0-9]+' | head -n 1)"
+
+if [ -z "$TICKET" ]; then
+  echo "" >&2
+  echo "✖ 커밋 실패: 브랜치명에서 JIRA 티켓 번호를 찾지 못했습니다." >&2
+  echo "  현재 브랜치: ${BRANCH:-(detached HEAD)}" >&2
+  echo "  브랜치명 컨벤션: <type>/S15P21A204-<번호>-<branch-name>" >&2
+  echo "  예) back/feat/S15P21A204-44-husky-setting" >&2
+  echo "" >&2
+  exit 1
+fi
+
+# 5) 주석(#)과 빈 줄을 건너뛴 첫 줄(제목) 끝에 티켓 번호를 덧붙인다.
+#    이미 티켓 번호가 적혀 있으면 중복해서 붙이지 않는다.
+awk -v ticket="$TICKET" '
+  BEGIN { tagged = 0 }
+  {
+    if (!tagged && $0 !~ /^[[:space:]]*#/ && $0 ~ /[^[:space:]]/) {
+      tagged = 1
+      if (index($0, ticket) == 0) {
+        sub(/[[:space:]]+$/, "", $0)
+        $0 = $0 " [" ticket "]"
+      }
+    }
+    print
+  }
+' "$MSG_FILE" > "$MSG_FILE.husky.tmp" && mv "$MSG_FILE.husky.tmp" "$MSG_FILE"
