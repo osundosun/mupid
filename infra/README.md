@@ -62,3 +62,13 @@
 - 임시 복원 DB는 메모리 1GB, tmpfs 768MB 제한이다. 데이터 증가 시 조정한다.
 - 현재 백업은 기본 EC2 내부에만 저장한다. 서버 손실 대비 외부 보관, 보관 기간별 정리, 실패 알림은 후속 과제다. 자동 삭제는 아직 하지 않는다.
 - MySQL만 대상이며 Redis AOF, 서버 설정/비밀값, 인증서는 별도 백업 대상이다. 스키마 변경 작업과 백업 시간을 겹치지 않게 한다.
+
+## EC2 프런트 배포
+
+기존 Sites 설정은 보존한다. MUPID_DEPLOY_TARGET=ec2 환경에서 npm run build를 실행하면 dist/client에 정적 HTML을 생성한다. 기존 npm run build는 Sites 구성을 유지한다.
+
+frontend-verify는 npm ci와 정적 빌드를 실행하고 산출물을 보관한다. develop 병합 후 frontend-package가 Generic Packages/mupid-web에 저장하며 frontend-deploy가 기존 제한 배포 키로 deploy-front 명령을 실행한다. 서버는 /srv/mupid/web/<SHA>에 검증한 파일만 풀고 current 심볼릭 링크를 교체한다. 같은 도메인의 /api/는 기존 백엔드로 전달한다. 현재 프런트는 샘플 데이터이며 실제 업무 API 연결은 아직 없다.
+
+서버 설치: receive-front.py → /usr/local/sbin/mupid-receive-front (root 755), ssh-entrypoint.sh → /usr/local/bin/mupid-ssh-entrypoint. sudoers에 mupid-deploy의 mupid-receive-front 실행만 추가한다. Nginx는 /srv/mupid/web을 읽기 전용 마운트한다. 기존 서버 config는 별도 백업 후 갱신한다.
+
+아카이브 체크섬/상대경로/파일 종류/용량을 검사하며 심볼릭 링크 항목은 거부한다. HTTPS deployment.txt의 버전이 다르거나 홈 응답이 실패하면 직전 프런트 링크로 복구한다. DB/API 컨테이너를 교체하지 않는다. current 전환에 필요한 새 파일만 배포하고 Sites 프로젝트는 변경하지 않는다.
