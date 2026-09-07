@@ -1,0 +1,2 @@
+# husky hook 스크립트는 Windows 에서도 반드시 LF 로 체크아웃되어야 sh 가 실행할 수 있다.
+.husky/** text eol=lf
