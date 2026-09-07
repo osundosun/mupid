@@ -1,5 +1,9 @@
 stages:
+  - verify
   - ai-review
+
+include:
+  - local: infra/ci/backend.yml
 
 gemini-code-review:
   stage: ai-review
