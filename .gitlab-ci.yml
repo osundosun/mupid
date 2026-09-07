@@ -1,5 +1,12 @@
 stages:
+  - verify
   - ai-review
+  - package
+  - deploy
+
+include:
+  - local: infra/ci/backend.yml
+  - local: infra/ci/release.yml
 
 gemini-code-review:
   stage: ai-review
