@@ -6,8 +6,8 @@ After=docker.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/mupid-backup
+ExecStartPost=/usr/local/sbin/mupid-backup-sync
 User=root
 UMask=0077
 TimeoutStartSec=30min
 Nice=10
-

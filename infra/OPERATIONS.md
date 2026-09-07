@@ -88,3 +88,17 @@ Certbot webroot /srv/mupid/acme, 갱신 후 Nginx reload hook. UFW는 active이�
 - 자동배포를 멈출 때 GitLab MUPID_DEPLOY_ENABLED를 false로 변경한다. 이미 실행 중인 job은 별도 확인이 필요하다.
 
 현재 인프라 미완료: 백업 분리 보관, 실패 알림 대상 연결. 서비스 개발 미완료: 업무 API 및 데이터 처리 서비스 연결과 실제 기능 통합 검증.
+
+## 추가 EC2 백업 분리 보관 (2026-09-07 적용)
+
+매일 mupid-backup.service가 로컬 백업/격리 복원을 마친 뒤 ExecStartPost로 mupid-backup-sync를 실행한다. 최신 검증된 .sql.gz와 체크섬/검증 JSON을 추가 EC2 /srv/mupid-backup-vault에 보관한다. 전송 실패는 서비스 실패로 표시되고 로컬 백업은 유지된다. 전송만 재시도할 때 sudo /usr/local/sbin/mupid-backup-sync를 실행한다.
+
+기본 EC2 /srv/mupid/backup-ssh에 root 700 디렉터리와 전용 개인키 600을 보관한다. 추가 EC2의 mupid-backup 계정은 sudo 권한 없이 root 소유 강제 수신 스크립트만 실행한다. 업로드 파일명 제한, 1GiB 제한, SHA256 검증, 기존 파일 덮어쓰기 금지를 적용한다. 이 계정으로 다운로드/삭제/일반 셸을 실행할 수 없다. 수신 볼트는 해당 계정 소유 700, 파일은 600이다. CI job에 볼트나 키를 마운트하지 않는다.
+
+설치 파일: backup-sync.py → 기본 EC2 /usr/local/sbin/mupid-backup-sync; backup-receive.py → 추가 EC2 /usr/local/bin/mupid-backup-receive (root 755). 추가 서버 호스트 공개키는 관리자 SSH로 검증한 값만 known_hosts에 등록한다. 백업 개인키는 생성한 서버에서만 보관하며 관리자 PEM/CI 배포 키를 재사용하지 않는다.
+
+복구는 관리자 SSH로 볼트 파일을 안전한 복원 환경에 가져오고 백업 checksum/격리 복원을 재검증한 후 진행한다. 최초 분리 복사본은 추가 EC2 자체의 별도 MySQL에서도 복원 검증했다. 매일 실행은 기본 EC2 격리 복원 + 추가 EC2 수신 체크섬 확인이며, 추가 EC2에서의 독립 복원 검사는 정기 점검 시 별도로 실시한다.
+
+보관 기간별 자동 삭제는 아직 하지 않는다. 추가 EC2 장애·공간 부족 시 최신 로컬 검증 백업을 다시 전송한다. 두 EC2 동시 손실에는 대비하지 못하므로 이후 별도 저장소를 추가할 수 있다.
+
+실패 알림 연결은 사용자 요청으로 추후 작업이다. 현재 GitLab job 상태와 systemctl/journalctl로 실패를 확인한다. 위 문서의 분리 보관 미확정 설명은 이 절차로 대체한다.
