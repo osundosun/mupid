@@ -38,11 +38,9 @@ services:
     env_file:
       - .env
     environment:
-      # .env 값은 호스트(localhost) 기준이라 컨테이너 네트워크 기준으로 덮어쓴다
       MUPID_MYSQL_URL: jdbc:mysql://mysql:3306/mupid?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&serverTimezone=Asia/Seoul
       MUPID_REDIS_HOST: redis
       MUPID_REDIS_PORT: 6379
-    # 외부 노출은 nginx 만 담당한다. 직접 붙어야 하면 ports 로 바꿀 것.
     expose:
       - "8800"
     networks:
@@ -65,8 +63,6 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
-    # 호스트로 노출하지 않는다. backend 네트워크 안에서 api 만 접근한다.
-    # 직접 붙어야 할 땐: docker compose -f compose.prod.yml exec mysql mysql -uroot -p mupid
     expose:
       - "3306"
     volumes:
@@ -85,8 +81,6 @@ services:
     container_name: mupid-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
-    # 호스트로 노출하지 않는다. backend 네트워크 안에서 api 만 접근한다.
-    # 직접 붙어야 할 땐: docker compose -f compose.prod.yml exec redis redis-cli
     expose:
       - "6379"
     volumes:
