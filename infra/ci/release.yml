@@ -15,11 +15,11 @@ backend-package:
     BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-      changes: [api/**/*, infra/**/*, .gitlab-ci.yml]
+      changes: [api/**/*, infra/image/**/*, infra/ci/backend.yml, infra/ci/release.yml, infra/ci/package-image.sh, infra/ci/deploy.sh, infra/deploy/compose.yml, infra/deploy/receive.sh, .gitlab-ci.yml]
       when: manual
       allow_failure: true
     - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
-      changes: [api/**/*, infra/**/*, .gitlab-ci.yml]
+      changes: [api/**/*, infra/image/**/*, infra/ci/backend.yml, infra/ci/release.yml, infra/ci/package-image.sh, infra/ci/deploy.sh, infra/deploy/compose.yml, infra/deploy/receive.sh, .gitlab-ci.yml]
     - if: '$CI_PIPELINE_SOURCE == "web"'
   script:
     - apk add --no-cache curl
@@ -38,7 +38,7 @@ backend-deploy:
   interruptible: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
-      changes: [api/**/*, infra/**/*, .gitlab-ci.yml]
+      changes: [api/**/*, infra/image/**/*, infra/ci/deploy.sh, infra/deploy/compose.yml, infra/deploy/receive.sh]
   script:
     - apk add --no-cache curl openssh-client
     - sh infra/ci/deploy.sh

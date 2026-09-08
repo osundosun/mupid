@@ -1,0 +1,29 @@
+.mobile-album-discovery { display: none; }
+@media (max-width: 767px) {
+  .explore-stage .explore-mobile-list { display: none; }
+  .mobile-album-discovery { display: block; min-width: 0; width: 100%; }
+  .discovery-shelf-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 8px 0 18px; }
+  .discovery-shelf-heading h2 { font-size: 17px; font-weight: 700; letter-spacing: -.03em; }
+  .discovery-shelf-heading > span { font-size: 12px; color: #8195b4; }
+  .discovery-album-rail { display: flex; gap: 18px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 16px 0 26px; scrollbar-width: none; position: relative; }
+  .discovery-album-rail::-webkit-scrollbar { display: none; }
+  .discovery-album-rail::after { content: ''; flex: 0 0 16%; }
+  .discovery-album-pick { flex: 0 0 80%; min-width: 0; scroll-snap-align: start; border: 0; background: none; padding: 0; border-radius: 20px; }
+  .discovery-album-pick .album-art { width: 100%; height: auto; aspect-ratio: 1; display: block; border-radius: 20px; box-shadow: 0 12px 22px #6178a52a; transform: scale(.94); opacity: .65; }
+  .discovery-album-pick[aria-pressed='true'] .album-art { transform: translateY(-5px) scale(1); opacity: 1; }
+  .discovery-feature-info { display: grid; grid-template-columns: minmax(0, 1fr) 52px; align-items: center; gap: 12px; margin: 0 0 30px; min-height: 100px; }
+  .discovery-feature-copy > span { color: #8298ba; font-size: 12px; }
+  .discovery-feature-copy h3 { font-size: 25px; font-weight: 700; letter-spacing: -.04em; margin: 6px 0; line-height: 1.2; }
+  .discovery-feature-copy p { font-size: 14px; color: #6e85a8; }
+  .discovery-feature-play { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 50%; background: #6a8fd0; color: white; box-shadow: 0 6px 16px #6284bc25; }
+  .discovery-small-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 16px; }
+  .discovery-small-pick { min-width: 0; text-align: left; background: none; border: 0; padding: 0; }
+  .discovery-small-art { display: block; position: relative; margin-bottom: 10px; }
+  .discovery-small-art .album-art { display: block; width: 100%; height: auto; aspect-ratio: 1; border-radius: 16px; }
+  .discovery-small-art > svg { position: absolute; right: 8px; bottom: 8px; width: 30px; height: 30px; padding: 8px; color: #557bb8; background: #fffffff0; border-radius: 50%; }
+  .discovery-small-pick strong { display: block; font-size: 14px; line-height: 1.4; }
+  .discovery-small-pick > span:last-child { display: block; font-size: 12px; color: #8395b0; margin-top: 4px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .discovery-album-pick .album-art { transition: transform 280ms ease, opacity 280ms ease; }
+}

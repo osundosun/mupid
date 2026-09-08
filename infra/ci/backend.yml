@@ -19,12 +19,24 @@ backend-verify:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
         - api/**/*
-        - infra/**/*
+        - infra/image/**/*
+        - infra/ci/backend.yml
+        - infra/ci/release.yml
+        - infra/ci/package-image.sh
+        - infra/ci/deploy.sh
+        - infra/deploy/compose.yml
+        - infra/deploy/receive.sh
         - .gitlab-ci.yml
     - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
       changes:
         - api/**/*
-        - infra/**/*
+        - infra/image/**/*
+        - infra/ci/backend.yml
+        - infra/ci/release.yml
+        - infra/ci/package-image.sh
+        - infra/ci/deploy.sh
+        - infra/deploy/compose.yml
+        - infra/deploy/receive.sh
         - .gitlab-ci.yml
     - if: '$CI_PIPELINE_SOURCE == "web"'
   script:

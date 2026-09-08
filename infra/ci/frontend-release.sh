@@ -2,7 +2,7 @@
 set -eu
 url="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/mupid-web/$CI_COMMIT_SHA"
 if [ "$1" = package ]; then
-  tar -czf site.tar.gz -C App/dist/client .
+  tar -czf site.tar.gz -C frontend/dist/client .
   sha256sum site.tar.gz > site.tar.gz.sha256
   for file in site.tar.gz site.tar.gz.sha256; do
     curl --fail --silent --show-error --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$file" "$url/$file"

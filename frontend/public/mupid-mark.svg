@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="mupid-mark-title mupid-mark-desc">
+  <title id="mupid-mark-title">Mupid 심볼</title>
+  <desc id="mupid-mark-desc">하트를 관통하는 큐피드의 화살</desc>
+  <g fill="#2a2a2a">
+    <path d="M6 103 L110 41" stroke="#2a2a2a" stroke-width="9" fill="none" stroke-linecap="round"/>
+    <g stroke="#2a2a2a" stroke-width="8" stroke-linecap="round" fill="none">
+      <path d="M9 90 L5.8 113.8"/>
+      <path d="M19.3 83.9 L16.1 107.7"/>
+      <path d="M29.6 77.7 L26.4 101.5"/>
+    </g>
+    <path d="M122 34 L111.1 54.6 L98.7 34 Z"/>
+    <path d="M66 105.2C46.2 85.4 30 72.8 30 58.4C30 40.4 50.9 33.2 66 53C81.1 33.2 102 40.4 102 58.4C102 72.8 85.8 85.4 66 105.2Z"/>
+  </g>
+</svg>
