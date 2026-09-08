@@ -1,6 +1,10 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
+const siteUrl = process.env.MUPID_DEPLOY_TARGET === 'ec2'
+  ? 'https://j15a204.p.ssafy.io'
+  : 'https://mupid-studio.gyuone.chatgpt.site';
+
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
@@ -10,11 +14,11 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://mupid-studio.gyuone.chatgpt.site'),
+  metadataBase: new URL(siteUrl),
   title: '뮤피드',
   description:
     '좋아했던 순간이 다음 음악이 되는 곳, 뮤피드.',
-  alternates: { canonical: 'https://mupid-studio.gyuone.chatgpt.site' },
+  alternates: { canonical: siteUrl },
   applicationName: 'Mupid',
   manifest: '/manifest.webmanifest?v=mupid-cupid-2',
   appleWebApp: { capable: true, title: 'Mupid', statusBarStyle: 'default' },
@@ -42,7 +46,7 @@ export const metadata: Metadata = {
     title: '뮤피드',
     description:
       '좋아했던 순간이 다음 음악이 되는 곳, 뮤피드.',
-    url: 'https://mupid-studio.gyuone.chatgpt.site',
+    url: siteUrl,
     images: [
       {
         url: '/og-mupid-sky-v8.png',
