@@ -43,6 +43,9 @@ dependencies {
 	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.5'
 	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.5'
 
+	// Json 관련
+	implementation 'com.fasterxml.jackson.core:jackson-databind'
+
 	// Gmail 관련
     implementation 'com.google.api-client:google-api-client:2.7.0'
     implementation 'com.google.http-client:google-http-client-gson:1.45.0'
