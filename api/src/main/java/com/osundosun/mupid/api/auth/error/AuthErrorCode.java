@@ -10,19 +10,23 @@ import lombok.RequiredArgsConstructor;
 @Getter
 @RequiredArgsConstructor
 public enum AuthErrorCode implements ErrorCode {
+
+    /**
+     * 접근 권한이 없습니다.
+     */
+    FORBIDDEN(HttpStatus.FORBIDDEN, "접근 권한이 없습니다."),
  
     /**
-     * 올바르지 않은 인증 토큰을 사용하였습니다.
+     * 인증 정보가 유효하지 않거나 존재하지 않습니다.
      */
-    InvalidAuthToken(HttpStatus.UNAUTHORIZED, "MUPID_INVALID_AUTH_TOKEN", "올바르지 않은 인증 토큰을 사용하였습니다."),
+    UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "인증 정보가 유효하지 않거나 존재하지 않습니다."),
     
     /**
      * 이메일 혹은 패스워드가 잘못되었습니다.
      */
-    WrongEmailOrPassword(HttpStatus.UNAUTHORIZED, "MUPID_WRONG_EMAIL_OR_PASSWORD", "이메일 혹은 패스워드가 잘못되었습니다.");
+    WRONG_EMAIL_OR_PASSWORD(HttpStatus.UNAUTHORIZED, "이메일 혹은 패스워드가 잘못되었습니다.");
 
     private final HttpStatus status;
-    private final String code;
     private final String message;
 
 }

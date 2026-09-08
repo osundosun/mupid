@@ -15,6 +15,7 @@ import com.osundosun.mupid.api.cache.enumerate.CacheKind;
 import com.osundosun.mupid.api.cache.service.CacheService;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.user.entity.User;
+import com.osundosun.mupid.api.user.error.UserErrorCode;
 import com.osundosun.mupid.api.user.service.UserService;
 
 import lombok.RequiredArgsConstructor;
@@ -31,9 +32,11 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public AuthLoginResult login(String email, String password) {
-        User user = userService.getUserByEmail(email);
-        if (!passwordEncoder.matches(password, user.getPassword())) {
-            throw new BusinessException(AuthErrorCode.WrongEmailOrPassword);
+        User user = userService
+                        .getUserByEmail(email)
+                        .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+        if (user == null || !passwordEncoder.matches(password, user.getPassword())) {
+            throw new BusinessException(AuthErrorCode.WRONG_EMAIL_OR_PASSWORD);
         }
         return new AuthLoginResult(
             jwtProvider.issueAccessToken(user),
@@ -45,7 +48,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public String reissueAccessToken(String refreshToken) {
         if (cacheService.exists(refreshToken, CacheKind.BlockToken)) {
-            throw new BusinessException(AuthErrorCode.InvalidAuthToken);
+            throw new BusinessException(AuthErrorCode.UNAUTHORIZED);
         }
         return authProvider.refresh(refreshToken);
     }

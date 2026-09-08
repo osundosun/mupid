@@ -11,6 +11,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
+import com.osundosun.mupid.api.auth.exception.AuthForbiddenHandler;
+import com.osundosun.mupid.api.auth.exception.AuthUnauthorizedHandler;
 import com.osundosun.mupid.api.auth.filter.AuthFilter;
 
 import lombok.RequiredArgsConstructor;
@@ -21,6 +23,8 @@ import lombok.RequiredArgsConstructor;
 public class SecurityConfig {
 
     private final AuthFilter authFilter;
+    private final AuthUnauthorizedHandler authUnauthorizedHandler;
+    private final AuthForbiddenHandler authForbiddenHandler;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -46,6 +50,10 @@ public class SecurityConfig {
             .addFilterBefore(
                 authFilter,
                 UsernamePasswordAuthenticationFilter.class
+            )
+            .exceptionHandling(it -> it
+                .authenticationEntryPoint(authUnauthorizedHandler) // 401
+                .accessDeniedHandler(authForbiddenHandler) // 403
             )
             .build();
     }

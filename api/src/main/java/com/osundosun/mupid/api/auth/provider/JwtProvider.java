@@ -32,7 +32,7 @@ public class JwtProvider {
 
         return Jwts.builder()
             .subject(user.getUserId().toString())
-            .claim("role", user.getRole().getCode())
+            .claim("role", user.getRole().name())
             .claim("token_type", "ACCESS")
             .issuedAt(now)
             .expiration(validity)

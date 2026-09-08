@@ -13,8 +13,11 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.stereotype.Component;
 
+import com.osundosun.mupid.api.auth.error.AuthErrorCode;
 import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.enumerate.UserRole;
+import com.osundosun.mupid.api.user.enumerate.UserStatus;
+import com.osundosun.mupid.api.user.error.UserErrorCode;
 import com.osundosun.mupid.api.user.repository.UserRepository;
 
 import io.jsonwebtoken.Claims;
@@ -57,16 +60,18 @@ public class AuthProvider {
 
         String tokenType = claims.get("token_type", String.class);
         if (!tokenType.equals("ACCESS")) {
-            throw new BadCredentialsException("Invalid token type.");
+            throw new BadCredentialsException(AuthErrorCode.UNAUTHORIZED.getMessage());
         }
 
         int userId = Integer.parseInt(claims.getSubject());
-        UserRole userRole = UserRole.fromCode(claims.get("role", String.class));
+        UserRole userRole = UserRole.valueOf(claims.get("role", String.class));
 
         List<SimpleGrantedAuthority> authorities = Collections.singletonList(
-            new SimpleGrantedAuthority(userRole.getCode())
+            new SimpleGrantedAuthority(userRole.name())
         );
-        User principal = userRepository.findById(userId).orElseThrow();
+        User principal = userRepository
+                            .findByUserIdAndStatusNot(userId, UserStatus.WITHDRAW)
+                            .orElseThrow(() -> new BadCredentialsException(UserErrorCode.USER_NOT_FOUND.getMessage()));
         return new UsernamePasswordAuthenticationToken(principal, accessToken, authorities);
     }
 
@@ -75,11 +80,13 @@ public class AuthProvider {
 
         String tokenType = claims.get("token_type", String.class);
         if (!tokenType.equals("REFRESH")) {
-            throw new BadCredentialsException("Invalid token type.");
+            throw new BadCredentialsException(AuthErrorCode.UNAUTHORIZED.getMessage());
         }
 
         int userId = Integer.parseInt(claims.getSubject());
-        User user = userRepository.findById(userId).orElseThrow();
+        User user = userRepository
+                            .findByUserIdAndStatusNot(userId, UserStatus.WITHDRAW)
+                            .orElseThrow(() -> new BadCredentialsException(UserErrorCode.USER_NOT_FOUND.getMessage()));
         return jwtProvider.issueAccessToken(user);
     }
 

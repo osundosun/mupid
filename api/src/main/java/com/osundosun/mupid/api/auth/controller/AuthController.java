@@ -55,7 +55,7 @@ public class AuthController {
         AuthLoginResponse response = new AuthLoginResponse(
             result.accessToken(),
             user.getUserId(),
-            user.getRole().getCode()
+            user.getRole().name()
         );
 
         // 응답 전송
