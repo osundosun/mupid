@@ -14,20 +14,24 @@ public enum EmailErrorCode implements ErrorCode {
     /**
      * 해당 이메일 인증은 유효하지 않습니다.
      */
-    VerificationIdNotFound(HttpStatus.NOT_FOUND, "MUPID_VERIFICATION_ID_NOT_FOUND", "해당 이메일 인증은 유효하지 않습니다."),
+    INVALID_VERIFICATION_ID(HttpStatus.NOT_FOUND, "해당 이메일 인증은 유효하지 않습니다."),
 
     /**
      * 인증 시간이 초과하였습니다.
      */
-    VerificationHasExpired(HttpStatus.BAD_REQUEST, "MUPID_VERIFICATION_HAS_EXPIRED", "인증 시간이 초과하였습니다."),
+    VERIFICATION_HAS_EXPIRED(HttpStatus.BAD_REQUEST, "인증 시간이 초과하였습니다."),
     
     /**
      * 인증 토큰이 일치하지 않습니다.
      */
-    VerificationInvalidToken(HttpStatus.UNAUTHORIZED, "MUPID_VERIFICATION_INVALID_TOKEN", "인증 토큰이 일치하지 않습니다.");
+    INVALID_VERIFICATION_TOKEN(HttpStatus.UNAUTHORIZED, "인증 토큰이 일치하지 않습니다."),
+    
+    /**
+     * 이미 인증된 토큰입니다.
+     */
+    ALREADY_VERIFIED_TOKEN(HttpStatus.BAD_REQUEST, "이미 인증된 토큰입니다.");
     
     private final HttpStatus status;
-    private final String code;
     private final String message;
 
 }

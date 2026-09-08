@@ -32,7 +32,7 @@ public class EmailVerificationController {
     ) {
         int verificationId = emailService.sendVerification(
             request.email(),
-            EmailVerificationPurpose.SignUp,
+            EmailVerificationPurpose.SIGNUP,
             null
         );
         return ResponseEntity.ok(BaseResponse.of(

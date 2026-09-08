@@ -9,7 +9,9 @@ public record GmailProperties(
 
     String clientSecret,
 
-    String token
+    String token,
+
+    String sendAddress
 
 ) {
 
