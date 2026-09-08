@@ -68,30 +68,6 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
           <div className="section-pill">
             {part.label} · {formatTime(part.start)} – {formatTime(part.end)}
           </div>
-          <div className="player-waveform">
-            <Waveform
-              duration={m.active.duration}
-              start={part.start}
-              end={part.end}
-              progress={m.time}
-            />
-            <input
-              className="playback-range"
-              type="range"
-              aria-label="재생 위치"
-              aria-valuetext={`${formatTime(m.time)} / ${formatTime(m.active.duration)}`}
-              min={0}
-              max={m.active.duration}
-              step={1}
-              value={m.time}
-              onChange={(e) => m.seek(Number(e.target.value))}
-            />
-          </div>
-          <div className="time-labels">
-            <span>{formatTime(m.time)}</span>
-            <span>{formatTime(m.active.duration)}</span>
-          </div>
-          <PlayerControls model={m} />
           <TrackComments key={m.active.id} model={m} />
           <Lyrics track={m.active} />
           <div className="player-actions">

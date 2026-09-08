@@ -1,4 +1,17 @@
-.track-comments { margin-top:20px; text-align:left; }
+.track-comments { margin-top:12px; text-align:left; }
+.comment-wave-surface { position:relative; }
+.wave-comment-markers { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); min-height:44px; gap:2px; border-top:1px solid #dce6f5; padding-top:5px; }
+.wave-comment-markers > div { display:flex; justify-content:center; }
+.wave-comment-avatar { position:relative; width:36px; height:36px; border:2px solid white; border-radius:10px; background:#91a8d6; color:white; box-shadow:0 2px 8px #607ba626; font-weight:600; }
+.wave-comment-avatar[aria-expanded='true'] { background:#597bb7; outline:2px solid #afc4ec; }
+.wave-comment-avatar small { position:absolute; right:-5px; top:-5px; background:#f0e4f2; color:#805e87; border-radius:10px; padding:1px 4px; font-size:12px; }
+.wave-comment-hint { color:#7286a7; font-size:14px; margin:10px 0; }
+.wave-comment-popover { background:#fff; border:1px solid #dce6f5; border-radius:16px; padding:14px; max-height:220px; overflow-y:auto; }
+.wave-comment-popover article { padding:10px 0; border-bottom:1px solid #edf1f8; }
+.wave-comment-popover strong { margin-left:10px; font-size:14px; }
+.wave-comment-popover p { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:16px; }
+.track-comments > .player-controls { margin-block:20px; }
+.track-comments > .moment-comment-prompt { margin-top:16px; }
 .moment-comment-prompt { display:flex; align-items:center; gap:10px; width:100%; min-height:54px; padding:14px 18px; border:1px solid #d6e2f6; border-radius:18px; background:#ffffffc9; color:#617cae; font-size:16px; text-align:left; flex-wrap:wrap; }
 .moment-comment-prompt span { font-variant-numeric:tabular-nums; color:#456bb0; }
 .moment-comment-prompt:hover { background:#edf3ff; }
