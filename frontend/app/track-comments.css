@@ -1,4 +1,9 @@
-.track-comments { margin-top:32px; padding-top:28px; border-top:1px solid #dce6f5; text-align:left; }
+.track-comments { margin-top:20px; text-align:left; }
+.moment-comment-prompt { display:flex; align-items:center; gap:10px; width:100%; min-height:54px; padding:14px 18px; border:1px solid #d6e2f6; border-radius:18px; background:#ffffffc9; color:#617cae; font-size:16px; text-align:left; flex-wrap:wrap; }
+.moment-comment-prompt span { font-variant-numeric:tabular-nums; color:#456bb0; }
+.moment-comment-prompt:hover { background:#edf3ff; }
+.moment-comment-list { margin-top:12px; }
+.moment-comment-list > summary { cursor:pointer; padding:12px 4px; font-size:14px; color:#617cae; }
 .track-comments header,.track-comments h2,.track-comments form label,.track-comments footer,.comment-meta,.comment-tools { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .track-comments header { justify-content:space-between; }
 .track-comments h2 { font-size:20px; font-weight:600; }

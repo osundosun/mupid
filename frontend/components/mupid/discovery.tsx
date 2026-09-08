@@ -92,6 +92,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             <span>{formatTime(m.active.duration)}</span>
           </div>
           <PlayerControls model={m} />
+          <TrackComments key={m.active.id} model={m} />
           <Lyrics track={m.active} />
           <div className="player-actions">
             <button className="secondary-button" onClick={() => m.openMoment()}>
@@ -125,7 +126,6 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
               <Sparkles />이 곡을 조금 더 잔잔하게 <ChevronRight />
             </button>
           </details>
-          <TrackComments key={m.active.id} model={m} />
         </div>
       </div>
     </div>
