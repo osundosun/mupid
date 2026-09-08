@@ -20,6 +20,18 @@ backend-verify:
     MUPID_MYSQL_PASSWORD: ci-only-app-password
     MUPID_REDIS_HOST: redis
     MUPID_REDIS_PORT: '6379'
+    MUPID_REDIS_KEY_PREFIX: 'mupid:ci:'
+    # Context startup only: these values do not provide live storage or email.
+    # Tests that exercise external calls need mocks or isolated test services.
+    MUPID_S3_ENDPOINT: 'http://127.0.0.1:19000'
+    MUPID_S3_ACCESS_KEY: ci-only-access-key
+    MUPID_S3_SECRET: ci-only-secret-key
+    MUPID_S3_BUCKET: mupid-ci
+    MUPID_GMAIL_CLIENT_ID: ci-only-client-id
+    MUPID_GMAIL_CLIENT_SECRET: ci-only-client-secret
+    MUPID_GMAIL_TOKEN: ci-only-refresh-token
+    MUPID_GMAIL_SEND_ADDRESS: ci@example.invalid
+    MUPID_CLIENT_WEBSITE: 'http://127.0.0.1:13000'
     MUPID_JWT_SECRET: Y2ktb25seS10ZXN0LWtleS1ub3QtZm9yLXByb2R1Y3Rpb24=
     GRADLE_USER_HOME: $CI_PROJECT_DIR/.gradle-ci
   cache:
