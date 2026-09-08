@@ -67,7 +67,7 @@ public class UserServiceImpl implements UserService {
     @Override
     public User updateUser(int userId, UserUpdateRequest dto) {
         User user = getUser(userId).orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
-        if (dto.password() != null) user.setPassword(dto.password());
+        if (dto.password() != null) user.setPassword(passwordEncoder.encode(dto.password()));
         if (dto.nickname() != null) user.setNickname(dto.nickname());
         if (dto.birthYear() != null) user.setBirthYear(dto.birthYear());
         if (dto.gender() != null) user.setGender(UserGender.valueOf(dto.gender()));
