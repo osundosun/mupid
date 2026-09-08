@@ -1,0 +1,74 @@
+info:
+  name: 프로필 사진 조회
+  type: http
+  seq: 7
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/user/image/{{USER_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: image/png
+        - name: Content-Disposition
+          value: attachment; filename="profile.png"
+  - name: 404 사진 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_FILE_NOT_FOUND",
+            "message": "요청한 파일을 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 프로필 사진 조회
+
+  `GET /api/v1/user/image/{userId}` · 인증 필요
+
+  ## 응답
+
+  `BaseResponse` 로 감싸지 않고 **이미지 바이너리를 그대로** 반환합니다.
+
+  - `Content-Type` — 저장된 파일의 미디어 타입
+  - `Content-Disposition: attachment; filename="..."`
+
+  ## 인증
+
+  `SecurityConfig` 에 `/api/v1/user/image/**` 예외가 없어
+  `anyRequest().authenticated()` 가 적용됩니다. 즉 **다른 사용자의 사진을 볼 때도
+  액세스 토큰이 필요합니다.**
+
+  `{{USER_ID}}` 는 로그인 시 자동으로 채워집니다. 다른 사용자의 사진을 보려면
+  URL 의 값을 직접 바꾸세요.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FILE_NOT_FOUND` | 404 | 저장된 프로필 사진이 없음 |
+  | `MUPID_USER_NOT_FOUND` | 404 | 사용자 없음 |

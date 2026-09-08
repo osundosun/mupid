@@ -1,0 +1,86 @@
+info:
+  name: 인증 메일 발송
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/mail/verification"
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "email": "{{VERIFICATION_EMAIL}}"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: VERIFICATION_EMAIL
+      value: yejunjung98@gmail.com
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.verification_id
+        method: jsonq
+      variable:
+        name: VERIFICATION_ID
+        scope: runtime
+      description: 발급된 인증 ID 를 VERIFICATION_ID 변수에 저장합니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 발송 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "인증 메일이 발송되었습니다.",
+            "data": {
+              "verification_id": 1
+            }
+          }
+
+docs: |-
+  # 인증 메일 발송
+
+  `GET /api/v1/mail/verification` · 인증 불필요
+
+  회원가입용(`SIGNUP`) 이메일 인증 메일을 발송합니다.
+
+  > ⚠️ 서버가 `@GetMapping` + `@RequestBody` 조합으로 구현되어 있어
+  > **본문이 있는 GET 요청**입니다.
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `email` | string | ✅ | 인증 메일을 받을 이메일 |
+
+  ## 응답
+
+  `data.verification_id` 를 `인증 코드 제출` 과 `회원가입` 에서 사용합니다.
+  응답을 받으면 `VERIFICATION_ID` 변수가 자동으로 채워집니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 이메일 형식 오류 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 404 | 요청 본문 누락/파싱 실패 |

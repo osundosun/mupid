@@ -1,0 +1,49 @@
+info:
+  name: 프로필 사진 삭제
+  type: http
+  seq: 6
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/user/image"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 삭제 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "사용자 프로필 사진이 삭제되었습니다.",
+            "data": null
+          }
+
+docs: |-
+  # 프로필 사진 삭제
+
+  `DELETE /api/v1/user/image` · 인증 필요
+
+  액세스 토큰의 사용자의 프로필 사진을 삭제합니다. 요청 본문은 없습니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FILE_NOT_FOUND` | 404 | 저장된 프로필 사진이 없음 |

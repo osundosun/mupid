@@ -1,0 +1,83 @@
+info:
+  name: 회원정보 수정
+  type: http
+  seq: 3
+
+http:
+  method: PATCH
+  url: "{{BASE_URL}}/api/v1/user"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "password": "{{USER_PASSWORD}}",
+        "nickname": "{{USER_NICKNAME}}",
+        "birth_year": {{USER_BIRTH_YEAR}},
+        "gender": "{{USER_GENDER}}"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: USER_PASSWORD
+      value: password123
+    - name: USER_NICKNAME
+      value: 예준
+    - name: USER_BIRTH_YEAR
+      value: "2000"
+    - name: USER_GENDER
+      value: MALE
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 수정 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "회원정보가 수정 되었습니다.",
+            "data": null
+          }
+
+docs: |-
+  # 회원정보 수정
+
+  `PATCH /api/v1/user` · 인증 필요
+
+  대상은 액세스 토큰의 사용자입니다. 별도 ID 를 받지 않습니다.
+
+  ## 요청 본문 (모두 선택)
+
+  `null` 인 필드는 무시되므로, 바꿀 필드만 보내면 됩니다.
+
+  | 필드 | 타입 | 규칙 |
+  | --- | --- | --- |
+  | `password` | string | 영문/숫자/특수문자(`@$!%*#?&`) 중 2종 이상, 8~20자 |
+  | `nickname` | string | 2~10자 |
+  | `birth_year` | int | 1900 이상 |
+  | `gender` | string | `MALE` / `FEMALE` / `ETC` |
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_USER_NOT_FOUND` | 404 | 사용자 없음 또는 이미 탈퇴 |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 검증 규칙 위반 |

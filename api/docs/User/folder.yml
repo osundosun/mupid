@@ -1,0 +1,41 @@
+info:
+  name: User
+  type: folder
+  seq: 3
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # User
+
+    회원 가입/수정/탈퇴, 프로필 사진, 비밀번호 재설정을 다룹니다.
+
+    | 엔드포인트 | 동작 | 인증 |
+    | --- | --- | --- |
+    | `POST /api/v1/user` | 회원가입 | 불필요 |
+    | `GET /api/v1/user` | 회원정보 조회 | 필요 |
+    | `PATCH /api/v1/user` | 회원정보 수정 | 필요 |
+    | `DELETE /api/v1/user` | 회원탈퇴 | 필요 |
+    | `POST /api/v1/user/image` | 프로필 사진 수정 | 필요 |
+    | `DELETE /api/v1/user/image` | 프로필 사진 삭제 | 필요 |
+    | `GET /api/v1/user/image/{userId}` | 프로필 사진 조회 | 필요 |
+    | `GET /api/v1/user/reset` | 비밀번호 재설정 메일 발송 | 불필요 |
+    | `POST /api/v1/user/reset` | 비밀번호 재설정 코드 제출 | 불필요 |
+
+    ## 회원가입 순서
+
+    1. `Email / 인증 메일 발송` → `verification_id` 획득
+    2. `Email / 인증 코드 제출` → 메일로 받은 코드 검증
+    3. `User / 회원가입` → `email_verification_id` 에 위 값 전달
+
+    가입 시 상태는 `PENDING` 이고 권한은 `USER` 입니다.
+
+    ## 검증 규칙 (`UserCreateRequest`)
+
+    - `password` — 영문/숫자/특수문자(`@$!%*#?&`) 중 2종 이상 조합, 8~20자
+    - `nickname` — 2~10자
+    - `birth_year` — 1900 이상
+    - `gender` — `MALE` / `FEMALE` / `ETC`
