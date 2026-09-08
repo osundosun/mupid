@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets;
 
 import org.springframework.http.MediaType;
 
-public record StorageFileDto(
+public record StorageFileData(
 
     String filename,
 

@@ -1,6 +1,7 @@
 package com.osundosun.mupid.api.storage.service;
 
 import java.io.IOException;
+import java.util.Optional;
 
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -8,7 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.osundosun.mupid.api.common.exception.BusinessException;
-import com.osundosun.mupid.api.storage.dto.StorageFileDto;
+import com.osundosun.mupid.api.storage.dto.StorageFileData;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
 import com.osundosun.mupid.api.storage.error.StorageErrorCode;
 import com.osundosun.mupid.api.storage.properties.StorageProperties;
@@ -34,10 +35,6 @@ public class StorageServiceImpl implements StorageService {
 
     @Override
     public ObjectStorageFile uploadFile(String key, MultipartFile file) throws IOException {
-        if (!isFileExists(key)) {
-            throw new BusinessException(StorageErrorCode.DuplicatedFileKey);
-        }
-
         PutObjectRequest request = PutObjectRequest.builder()
             .bucket(props.bucketName())
             .key(key)
@@ -47,21 +44,32 @@ public class StorageServiceImpl implements StorageService {
         RequestBody body = RequestBody.fromInputStream(file.getInputStream(), file.getSize());
         s3Client.putObject(request, body);
 
-        ObjectStorageFile metaData = ObjectStorageFile.builder()
-            .originalFileName(file.getOriginalFilename())
-            .storageObjectKey(key)
-            .fileSizeBytes(Math.toIntExact(file.getSize()))
-            .build();
-        return repository.save(metaData);
+        String originalFilename = file.getOriginalFilename();
+        String contentType = file.getContentType();
+        int fileSize = Math.toIntExact(file.getSize());
+
+        return getFileByKey(key)
+            .map(metaData -> {
+                metaData.setOriginalFileName(originalFilename);
+                metaData.setContentType(contentType);
+                metaData.setFileSizeBytes(fileSize);
+                return metaData;
+            })
+            .orElseGet(() -> repository.save(
+                ObjectStorageFile.builder()
+                    .originalFileName(originalFilename)
+                    .storageObjectKey(key)
+                    .contentType(contentType)
+                    .fileSizeBytes(fileSize)
+                    .build()
+            ));
     }
 
     @Override
     @Transactional(readOnly = false)
-    public StorageFileDto getFileData(int fileId) {
-        ObjectStorageFile metaData = getFile(fileId);
-        if (metaData == null) {
-            throw new BusinessException(StorageErrorCode.FileNotFoundError);
-        }
+    public StorageFileData getFileData(int fileId) {
+        ObjectStorageFile metaData = getFile(fileId)
+            .orElseThrow(() -> new BusinessException(StorageErrorCode.FILE_NOT_FOUND));
 
         GetObjectRequest request = GetObjectRequest.builder()
             .bucket(props.bucketName())
@@ -69,7 +77,7 @@ public class StorageServiceImpl implements StorageService {
             .build();
         ResponseBytes<GetObjectResponse> objectBytes = s3Client.getObjectAsBytes(request);
 
-        return new StorageFileDto(
+        return new StorageFileData(
             metaData.getOriginalFileName(),
             MediaType.parseMediaType(metaData.getContentType()),
             objectBytes.asByteArray()
@@ -78,10 +86,8 @@ public class StorageServiceImpl implements StorageService {
 
     @Override
     public void deleteFile(int fileId) {
-        ObjectStorageFile metaData = getFile(fileId);
-        if (metaData == null) {
-            throw new BusinessException(StorageErrorCode.FileNotFoundError);
-        }
+        ObjectStorageFile metaData = getFile(fileId)
+            .orElseThrow(() -> new BusinessException(StorageErrorCode.FILE_NOT_FOUND));
         metaData.setIsDeleted(true);
 
         DeleteObjectRequest request = DeleteObjectRequest.builder()
@@ -93,22 +99,23 @@ public class StorageServiceImpl implements StorageService {
 
     @Override
     @Transactional(readOnly = false)
-    public ObjectStorageFile getFile(int fileId) {
+    public Optional<ObjectStorageFile> getFile(int fileId) {
         ObjectStorageFile metaData = repository.findById(fileId).orElse(null);
         if (metaData == null || metaData.getIsDeleted()) {
-            return null;
+            return Optional.empty();
         }
-        return metaData;
+        return Optional.of(metaData);
+    }
+
+    @Override
+    public Optional<ObjectStorageFile> getFileByKey(String key) {
+        return repository.findByStorageObjectKeyAndIsDeletedFalse(key);
     }
 
     @Override
     @Transactional(readOnly = false)
     public boolean isFileExists(String key) {
-        ObjectStorageFile metaData = repository.findByStorageObjectKey(key);
-        if (metaData == null || metaData.getIsDeleted()) {
-            return false;
-        }
-        return true;
+        return repository.findByStorageObjectKeyAndIsDeletedFalse(key).isPresent();
     }
     
 }
