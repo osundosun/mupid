@@ -7,9 +7,11 @@ const record = (value: unknown): value is Record<string, unknown> => !!value && 
 const defaults: Preferences = { onboardingSubmittedAt: null, nickname: '규원', moods: ['몽환적인', '감성적인'],
   liked: [1, 3, 7], ignored: [], history: [1, 3, 2], moments: initialMoments, playlists: initialPlaylists };
 const unavailable = async (): Promise<never> => {
+  // 미연결 인증은 성공으로 위장하지 않는다. 입력 비밀번호도 로컬 저장소에 보관하지 않는다.
   throw new Error('서버가 아직 연결되지 않았어요. 입력한 정보는 저장·전송되지 않았습니다.');
 };
 export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>): MupidService {
+  // 저장소를 주입받아 테스트와 브라우저 실행을 분리한다. 현재 데이터는 기기 간 동기화되지 않는다.
   return {
     mode: 'demo',
     async bootstrap() {

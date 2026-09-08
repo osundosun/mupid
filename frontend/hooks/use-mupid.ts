@@ -23,10 +23,14 @@ const pageNames: Page[] = [
   'welcome',
 ];
 export function useMupid(bootstrap: Bootstrap) {
+  // 화면들은 이 훅의 모델을 공유한다. 재생기나 로그인 상태를 화면마다 별도로 만들지 않는다.
   const { tracks, preferences: initial } = bootstrap;
-  const [onboardingSubmittedAt, setOnboardingSubmittedAt] = useState(initial.onboardingSubmittedAt);
-  const onboardingRef = useRef(initial.onboardingSubmittedAt);
-  const [page, setPage] = useState<Page>(initial.onboardingSubmittedAt ? 'home' : 'welcome');
+  // Local preferences are not proof of authentication or account onboarding.
+  const [onboardingSubmittedAt, setOnboardingSubmittedAt] = useState<string | null>(null);
+  const onboardingRef = useRef<string | null>(null);
+  const sessionRef = useRef<AccountSession | null>(null);
+  // 새로고침 시 세션 복원은 아직 미연결이다. 추후 서버의 세션 확인 응답으로 초기화해야 한다.
+  const [page, setPage] = useState<Page>('welcome');
   const [nickname, setNickname] = useState(initial.nickname);
   const [moods, setMoods] = useState(initial.moods);
   const [active, setActive] = useState<Track>(tracks[0]);
@@ -81,7 +85,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const chatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const go = (next: Page) => {
-    if (!onboardingSubmittedAt && next !== 'welcome') next = 'welcome';
+    // URL 직접 이동과 UI 이동 모두 같은 조건으로 보호한다. 실제 접근 권한 검증은 서버 책임이다.
+    if ((!sessionRef.current || !onboardingRef.current) && next !== 'welcome') next = 'welcome';
     setPage(next);
     setNotificationOpen(false);
     const url = new URL(window.location.href);
@@ -96,7 +101,7 @@ export function useMupid(bootstrap: Bootstrap) {
       const value = new URLSearchParams(window.location.search).get(
         'view',
       ) as Page;
-      setPage(!onboardingRef.current ? 'welcome' : pageNames.includes(value) ? value : 'home');
+      setPage(!sessionRef.current || !onboardingRef.current ? 'welcome' : pageNames.includes(value) ? value : 'home');
       window.scrollTo(0, 0);
     };
     window.addEventListener('popstate', readPage);
@@ -112,12 +117,14 @@ export function useMupid(bootstrap: Bootstrap) {
     };
   }, [initial.onboardingSubmittedAt]);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !sessionRef.current) return;
     saveQueue.current = saveQueue.current.catch(() => {}).then(() =>
       mupidService.savePreferences({ onboardingSubmittedAt, nickname, moods, liked, ignored, history, moments, playlists })
     ).catch(() => { if (mountedRef.current) setToast('변경 내용을 저장하지 못했어요. 다시 시도해 주세요.'); });
   }, [ready, onboardingSubmittedAt, nickname, moods, liked, ignored, history, moments, playlists]);
   const completeOnboarding = async (name: string, selectedMoods: string[]) => {
+    // 저장이 성공하기 전에는 홈으로 이동하거나 완료 표시를 남기지 않는다.
+    if (sessionRef.current?.kind !== 'authenticated') throw new Error('로그인이 필요해요.');
     if (!name.trim() || !selectedMoods.length) throw new Error('이름과 좋아하는 분위기를 선택해 주세요.');
     const submittedAt = new Date().toISOString();
     const value = { onboardingSubmittedAt: submittedAt, nickname: name.trim().slice(0, 20), moods: selectedMoods, liked, ignored, history, moments, playlists };
@@ -168,21 +175,38 @@ export function useMupid(bootstrap: Bootstrap) {
     setLoginDialog(true);
   };
   const signInDemo = async (email: string, password: string) => {
+    // 기존 호출부 호환을 위해 이름은 유지했지만 데모 로그인 성공을 만들지 않는다.
+    // API 어댑터에서 서버의 onboarding_submitted_at을 onboardingSubmittedAt으로 변환한다.
     const session = await mupidService.login({ email, password });
+    if (session.kind !== 'authenticated') throw new Error('실제 로그인이 필요해요.');
+    sessionRef.current = session;
+    const completedAt = session.onboardingSubmittedAt ?? null;
+    onboardingRef.current = completedAt;
+    setOnboardingSubmittedAt(completedAt);
     setNickname(session.nickname);
     setDemoSession(session);
     setLoginDialog(false);
+    setPage(completedAt ? 'home' : 'welcome');
+    window.history.replaceState({ mupid: true }, '', completedAt ? '/' : '/?view=welcome');
     setToast('뮤피드에 오신 걸 환영해요.');
     return true;
   };
   const signOutDemo = async () => {
     try { await mupidService.logout(); } catch { setToast('로그아웃하지 못했어요. 다시 시도해 주세요.'); return; }
     setDemoSession(null);
+    sessionRef.current = null;
+    onboardingRef.current = null;
+    setOnboardingSubmittedAt(null);
+    audioRef.current?.pause();
+    setPlaying(false);
+    setPage('welcome');
+    window.history.replaceState({ mupid: true }, '', '/?view=welcome');
     setLoginDialog(false);
     setToast('로그아웃 화면으로 전환했어요. 음악과 저장 기록은 그대로예요.');
   };
 
   const loadTrack = (track: Track) => {
+    // 곡이 바뀌면 이전 곡의 지연된 재생 요청과 예약된 탐색 위치를 무효화한다.
     const audio = audioRef.current;
     if (activeRef.current.id !== track.id) {
       requestId.current++;
@@ -198,6 +222,7 @@ export function useMupid(bootstrap: Bootstrap) {
     }
   };
   const seek = (value: number) => {
+    // 내부 위치 이동 함수. 화면에서 호출하는 seek는 반환 모델에서 구간 미리듣기도 해제한다.
     const next = Math.max(0, Math.min(value, activeRef.current.duration));
     setTime(next);
     const audio = audioRef.current;

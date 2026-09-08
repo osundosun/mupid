@@ -29,11 +29,13 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
     finally { setBusy(false); }
   };
   const start = (comment?: TrackComment) => {
+    // 작성 버튼을 누른 순간을 고정한다. 입력 중 음악이 진행돼도 댓글 시점은 바뀌지 않는다.
     setDraft(comment ? {at: comment.at, id: comment.id} : {at: Math.min(m.active.duration, Math.max(0, Math.floor(m.time)))});
     setBody(comment?.body ?? '');
     requestAnimationFrame(() => input.current?.focus());
   };
   const visible = items.filter(c => c.trackId === m.active.id).sort((a,b) => order === 'time' ? a.at - b.at || b.createdAt - a.createdAt : b.createdAt - a.createdAt);
+  // 지금은 이 브라우저의 댓글만 존재한다. 서버 연동 후 작성자별 수정·삭제 권한을 별도로 검증해야 한다.
   return <section className="track-comments" aria-labelledby="track-comments-heading">
     <header><h2 id="track-comments-heading"><MessageCircle size={20} /> 이 순간의 이야기 <span>{visible.length}</span></h2>
       <button className="secondary-button" disabled={!ready || busy} onClick={() => start()}>이 순간에 댓글 남기기</button></header>

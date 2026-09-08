@@ -569,7 +569,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
         <ChevronLeft />
       </button>}
       <Brand className="welcome-logo" />
-      {step === 0 ? (
+      {!m.demoSession || m.onboardingSubmittedAt ? (
         <div className="welcome-composition">
           <div className="welcome-copy">
           <p className="welcome-kicker">내 마음에 닿는 음악, 뮤피드</p>
@@ -578,7 +578,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             <br />
             다음 음악이 되는 곳
           </h1>
-          <button className="primary-button" onClick={() => setStep(1)}>
+          <button className="primary-button" onClick={() => m.demoSession ? m.go('home') : m.openLogin()}>
             뮤피드 시작하기 <ChevronRight />
           </button>
           </div>
