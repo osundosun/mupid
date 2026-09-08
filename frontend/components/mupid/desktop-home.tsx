@@ -14,7 +14,7 @@ import {
   Volume2,
 } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
-import { formatTime } from '@/lib/mupid-data';
+import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
 import { AlbumArt, LikeButton, PlayerControls, TrackRow } from './primitives';
 import { MupidMascot } from './mascot';
 import { AlbumDeck } from './album-deck';
@@ -28,11 +28,18 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
     const track = tracks.find((item) => item.id === id);
     return track ? [track] : [];
   });
-  const openLibrary = (id: number | null = null) => {
-    m.setLibraryTab('playlists');
-    m.setSelectedPlaylist(id);
-    m.go('library');
-  };
+  // 취향은 제외 조건이 아니라 정렬 기준이다. 데모 곡이 적어도 목록이 비지 않게 채운다.
+  const selectedMoods = m.onboardingSubmittedAt ? [...new Set(m.moods)] : [];
+  const selectedGenres = m.onboardingSubmittedAt ? m.genres : [];
+  const todayMoments = tracks
+    .filter(track => !m.ignored.includes(track.id))
+    .map(track => ({
+      track,
+      score: Number(selectedMoods.includes(track.mood)) + Number(selectedGenres.includes(track.genre)),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .map(({ track }) => track)
+    .slice(0, 4);
   return (
     <div className="desktop-home">
       <div className="desktop-listening-room">
@@ -69,7 +76,6 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
           <p className="desktop-song-meta">
             {m.active.album} <span>·</span> {m.active.genre}
           </p>
-          <p className="desktop-song-reason">{m.active.reason}</p>
           <button
             className="text-link desktop-song-detail"
             onClick={() => m.go('player')}
@@ -126,104 +132,28 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             </button>
           </div>
         </section>
-        <aside className="desktop-playlists" aria-label="내 플레이리스트">
+        <aside className="desktop-playlists today-moments" aria-label="오늘의 Moment 추천">
           <header>
-            <div>
-              <p>{m.displayName}님의 컬렉션</p>
-              <h2>
-                Playlists<span>.</span>
-              </h2>
-            </div>
-            <button
-              className="icon-button"
-              aria-label="플레이리스트 모두 보기"
-              onClick={() => openLibrary()}
-            >
-              <ArrowUpRight />
-            </button>
+            <div><p>오늘, 마음에 남을 음악의 순간</p><h2>오늘의 Moment<span>.</span></h2></div>
+            <button className="icon-button" aria-label="추천 음악 더 둘러보기" onClick={() => m.go('search')}><ArrowUpRight /></button>
           </header>
+          <p className="today-moment-note">{selectedMoods.length || selectedGenres.length ? '선택한 취향의 곡부터, 새롭게 발견할 음악까지 만나보세요.' : '오늘 들어볼 음악을 골랐어요.'}</p>
           <div className="desktop-playlist-list">
-            {m.playlists.slice(0, 4).map((playlist) => {
-              const playable = playlist.tracks.filter(
-                (track) => !m.ignored.includes(track.id),
-              );
-              const queued =
-                playable.some((track) => track.id === m.active.id) &&
-                playable.length === m.queueTracks.length &&
-                playable.every((track, i) => track.id === m.queueTracks[i].id);
-              const playing = queued && m.playing;
-              return (
-                <article
-                  className={`desktop-playlist-row ${queued ? 'is-current' : ''}`}
-                  key={playlist.id}
-                >
-                  <button
-                    className="desktop-playlist-open"
-                    onClick={() => openLibrary(playlist.id)}
-                  >
-                    {playlist.tracks[0] ? (
-                      <AlbumArt track={playlist.tracks[0]} />
-                    ) : (
-                      <span className="desktop-empty-cover">
-                        <Music2 />
-                      </span>
-                    )}
-                    <span>
-                      <strong>{playlist.name}</strong>
-                      <small>
-                        {playable.length}곡 ·{' '}
-                        {Math.ceil(
-                          playable.reduce(
-                            (sum, track) => sum + track.duration,
-                            0,
-                          ) / 60,
-                        )}
-                        분
-                      </small>
-                    </span>
-                  </button>
-                  <button
-                    className="icon-button"
-                    disabled={!playable.length}
-                    aria-label={`${playlist.name} ${playing ? '일시정지' : '재생'}`}
-                    onClick={() =>
-                      queued ? m.play() : m.playPlaylist(playlist)
-                    }
-                  >
-                    {playing ? (
-                      <Pause fill="currentColor" />
-                    ) : (
-                      <Play fill="currentColor" />
-                    )}
-                  </button>
-                </article>
-              );
-            })}
-            {!m.playlists.length && (
-              <div className="desktop-playlist-empty">
-                <Music2 />
-                <p>좋아하는 곡을 한곳에 모아보세요.</p>
-                <button
-                  className="text-link"
-                  onClick={() => m.setPlaylistDialog(true)}
-                >
-                  플레이리스트 만들기 <ChevronRight />
+            {todayMoments.map(track => {
+              const section = getSongSectionAt(track, track.moment);
+              const playing = m.active.id === track.id && m.playing && m.time >= section.start && m.time < section.end;
+              return <article className={`desktop-playlist-row ${playing ? 'is-current' : ''}`} key={track.id}>
+                <button className="desktop-playlist-open" aria-label={`${track.title} ${formatTime(section.start)} 추천 구간 듣기`} onClick={() => m.playSavedMoment({id: track.id, track, start: section.start, end: section.end, section: section.label})}>
+                  <AlbumArt track={track} />
+                  <span><strong>{track.title}</strong><small>{track.artist}</small></span>
                 </button>
-              </div>
-            )}
+                <button className="icon-button" aria-label={`${track.title} 추천 구간 ${playing ? '일시정지' : '재생'}`} onClick={() => playing ? m.play() : m.playSavedMoment({id: track.id, track, start: section.start, end: section.end, section: section.label})}>{playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button>
+              </article>;
+            })}
+            {!todayMoments.length && <p className="desktop-section-empty">지금 추천할 수 있는 곡이 없어요. 탐색에서 다른 음악을 만나보세요.</p>}
           </div>
-          <button
-            className="desktop-saved-link"
-            onClick={() => {
-              m.setLibraryTab('moments');
-              m.go('library');
-            }}
-          >
-            <Heart />
-            <span>
-              좋아한 구간 <strong>{m.moments.length}</strong>
-            </span>
-            <ChevronRight />
+          <button className="desktop-saved-link" onClick={() => {m.setLibraryTab('moments'); m.go('library');}}>
+            <Heart /><span>좋아한 구간 <strong>{m.moments.length}</strong></span><ChevronRight />
           </button>
         </aside>
       </div>

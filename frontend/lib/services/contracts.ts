@@ -6,10 +6,11 @@ export type AccountSession = { kind: 'demo' | 'authenticated'; nickname: string;
 /** Frontend domain contract, not a promise about the future backend's DTOs. Times are seconds. */
 export type Preferences = {
   onboardingSubmittedAt: string | null;
+  genres?: string[];
   nickname: string; moods: string[]; liked: number[]; ignored: number[];
   history: number[]; moments: SavedMoment[]; playlists: Playlist[];
 };
-export type Bootstrap = { tracks: Track[]; preferences: Preferences };
+export type Bootstrap = { tracks: Track[]; preferences: Preferences; session?: AccountSession | null };
 export type SignupInput = {
   email: string; password: string; nickname: string; birthYear: number;
   gender: 'MALE' | 'FEMALE' | 'ETC';

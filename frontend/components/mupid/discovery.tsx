@@ -90,7 +90,6 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             <div className="player-reason">
               <p className="album-name">{m.active.album}</p>
               <span className="eyebrow">WHY THIS MOMENT</span>
-              <h3>{m.active.reason}</h3>
               <p>좋아한 순간의 분위기를 따라 새로운 음악을 만나보세요.</p>
               <div className="tags">
                 {m.active.tags.map((t) => (
@@ -310,7 +309,6 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
                 </button>
               }
             />
-            <p className="recommendation-reason">{t.reason}</p>
           </div>
         ))}
       </div>

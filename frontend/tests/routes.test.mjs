@@ -13,6 +13,11 @@ test('로그인 후 완료 여부로 온보딩을 구분한다', () => {
   assert.equal(guardPath('/onboarding', true, true), '/home');
   assert.equal(guardPath('/player', true, true), '/player');
 });
+test('완료한 데모만 온보딩을 다시 열 수 있다', () => {
+  assert.equal(guardPath('/onboarding', true, true, true), '/onboarding');
+  assert.equal(guardPath('/onboarding', true, true, false), '/home');
+  assert.equal(guardPath('/onboarding', false, true, true), '/login');
+});
 test('기존 화면 키와 경로가 일대일로 연결된다', () => {
   for (const [page, path] of Object.entries(pagePaths)) assert.equal(pageForPath(path), page);
 });

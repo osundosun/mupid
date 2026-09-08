@@ -5,7 +5,8 @@ export const pagePaths = {
   moment: '/moments', similar: '/similar',
 } as const;
 
-export function guardPath(path: string, authenticated: boolean, completed: boolean) {
+export function guardPath(path: string, authenticated: boolean, completed: boolean, demo = false) {
+  if (path === '/onboarding' && authenticated && demo) return path;
   // 곡과 댓글 열람은 로그인/온보딩 상태와 무관하게 공개한다.
   if (path === '/player' || path === '/explore') return path;
   if (!authenticated) return ['/', '/login', '/signup'].includes(path) ? path : '/login';

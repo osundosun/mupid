@@ -555,21 +555,23 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
 export function WelcomeView({ model: m }: { model: MupidModel }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState(m.onboardingSubmittedAt ? m.nickname : '');
-  const [selectedMoods, setSelectedMoods] = useState<string[]>(m.onboardingSubmittedAt ? m.moods : []);
+  const [selectedMoods, setSelectedMoods] = useState<string[]>([]);
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const genreOptions = [...new Set(m.tracks.map(track => track.genre))];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   return (
     <div className="welcome-page">
       {(step > 0 || m.onboardingSubmittedAt) && <button
         className="icon-button welcome-back"
-        aria-label={step > 0 ? '시작 화면으로 돌아가기' : '홈으로 돌아가기'}
+        aria-label={step > 0 ? '이전 단계로 돌아가기' : '홈으로 돌아가기'}
         disabled={busy}
-        onClick={() => step > 0 ? setStep(0) : m.go('home')}
+        onClick={() => { setError(''); step > 0 ? setStep(step - 1) : m.go('home'); }}
       >
         <ChevronLeft />
       </button>}
       <Brand className="welcome-logo" />
-      {!m.demoSession || m.onboardingSubmittedAt ? (
+      {!m.demoSession || (m.onboardingSubmittedAt && m.demoSession.kind !== 'demo') ? (
         <div className="welcome-composition">
           <div className="welcome-copy">
           <p className="welcome-kicker">내 마음에 닿는 음악, 뮤피드</p>
@@ -590,15 +592,19 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
           onSubmit={async (e) => {
             e.preventDefault();
             if (busy) return;
+            if (step === 0) { if (name.trim()) { setError(''); setSelectedGenres([]); setStep(1); } return; }
+            if (step === 1) { if (selectedGenres.length) { setError(''); setSelectedMoods([]); setStep(2); } return; }
             setBusy(true); setError('');
-            try { await m.completeOnboarding(name, selectedMoods); }
+            try { await m.completeOnboarding(name, selectedMoods, selectedGenres); }
             catch { setError('취향을 저장하지 못했어요. 브라우저 저장 설정을 확인하고 다시 시도해 주세요.'); }
             finally { setBusy(false); }
           }}
         >
-          <h1>어떤 음악을 좋아하세요?</h1>
+          <p className="onboarding-step-count" role="status">{step + 1} / 3 · {['닉네임', '장르', '분위기'][step]}</p>
+          <h1>{['어떻게 불러드릴까요?', '어떤 장르를 좋아하세요?', '어떤 분위기를 좋아하세요?'][step]}</h1>
+          {step === 0 && <>
           <label className="field-label" htmlFor="welcome-name">
-            어떻게 불러드릴까요?
+            닉네임
           </label>
           <input
             id="welcome-name"
@@ -608,6 +614,13 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             required
             disabled={busy}
           />
+          </>}
+          {step === 1 && <fieldset key="genres" className="onboarding-choice-group">
+            <legend>좋아하는 장르 <small>하나 이상 · 여러 개 선택 가능</small></legend>
+            <div className="filter-chips wrap">{genreOptions.map(genre => <button type="button" key={genre} disabled={busy} aria-pressed={selectedGenres.includes(genre)} className={selectedGenres.includes(genre) ? 'selected' : ''} onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}>{genre}</button>)}</div>
+          </fieldset>}
+          {step === 2 && <fieldset key="moods" className="onboarding-choice-group">
+          <legend>좋아하는 분위기 <small>하나 이상 · 여러 개 선택 가능</small></legend>
           <div className="filter-chips wrap">
             {moodOptions.map((mood) => (
               <button
@@ -628,10 +641,11 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
               </button>
             ))}
           </div>
-          <p>좋아하는 분위기를 하나 이상 선택해 주세요.</p>
+          </fieldset>}
+          <p>{step === 0 ? '뮤피드에서 사용할 닉네임을 입력해 주세요.' : step === 1 ? '좋아하는 장르를 하나 이상 선택해 주세요.' : '좋아하는 분위기를 하나 이상 선택해 주세요.'}</p>
           {error && <p role="alert">{error}</p>}
-          <button className="primary-button wide" disabled={busy || !name.trim() || !selectedMoods.length}>
-            {busy ? '취향 저장 중…' : '음악 둘러보기'} <ChevronRight />
+          <button className="primary-button wide" disabled={busy || (step === 0 ? !name.trim() : step === 1 ? !selectedGenres.length : !selectedMoods.length)}>
+            {busy ? '취향 저장 중…' : step < 2 ? '다음' : '음악 둘러보기'} <ChevronRight />
           </button>
         </form>
       )}

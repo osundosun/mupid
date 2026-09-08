@@ -19,13 +19,14 @@ export function useMupid(bootstrap: Bootstrap) {
   // 화면들은 이 훅의 모델을 공유한다. 재생기나 로그인 상태를 화면마다 별도로 만들지 않는다.
   const { tracks, preferences: initial } = bootstrap;
   // Local preferences are not proof of authentication or account onboarding.
-  const [onboardingSubmittedAt, setOnboardingSubmittedAt] = useState<string | null>(null);
-  const onboardingRef = useRef<string | null>(null);
-  const sessionRef = useRef<AccountSession | null>(null);
+  const [onboardingSubmittedAt, setOnboardingSubmittedAt] = useState<string | null>(bootstrap.session?.onboardingSubmittedAt ?? null);
+  const onboardingRef = useRef<string | null>(bootstrap.session?.onboardingSubmittedAt ?? null);
+  const sessionRef = useRef<AccountSession | null>(bootstrap.session ?? null);
   // 새로고침 시 세션 복원은 아직 미연결이다. 추후 서버의 세션 확인 응답으로 초기화해야 한다.
   const [page, setPage] = useState<Page>('welcome');
   const [nickname, setNickname] = useState(initial.nickname);
   const [moods, setMoods] = useState(initial.moods);
+  const [genres, setGenres] = useState<string[]>(initial.genres ?? []);
   const [active, setActive] = useState<Track>(tracks[0]);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
@@ -44,7 +45,7 @@ export function useMupid(bootstrap: Bootstrap) {
   const [queueIds, setQueueIds] = useState<number[]>(tracks.map((t) => t.id));
   const [toast, setToast] = useState('');
   const [ready, setReady] = useState(false);
-  const [demoSession, setDemoSession] = useState<AccountSession | null>(null);
+  const [demoSession, setDemoSession] = useState<AccountSession | null>(bootstrap.session ?? null);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const [loginDialog, setLoginDialog] = useState(false);
   const loginTriggerRef = useRef<HTMLElement | null>(null);
@@ -87,7 +88,7 @@ export function useMupid(bootstrap: Bootstrap) {
     const legacy = new URLSearchParams(window.location.search).get('view');
     const requested = legacy && Object.hasOwn(pagePaths, legacy)
       ? pagePaths[legacy as keyof typeof pagePaths] : pathname === '/mupid' ? '/home' : pathname;
-    const target = guardPath(requested, !!demoSession, !!onboardingSubmittedAt);
+    const target = guardPath(requested, !!demoSession, !!onboardingSubmittedAt, demoSession?.kind === 'demo');
     setPage(pageForPath(target));
     setLoginDialog(target === '/login' || target === '/signup');
     if (target !== pathname || legacy) router.replace(target);
@@ -106,19 +107,20 @@ export function useMupid(bootstrap: Bootstrap) {
   useEffect(() => {
     if (!ready || !sessionRef.current) return;
     saveQueue.current = saveQueue.current.catch(() => {}).then(() =>
-      mupidService.savePreferences({ onboardingSubmittedAt, nickname, moods, liked, ignored, history, moments, playlists })
+      mupidService.savePreferences({ onboardingSubmittedAt, nickname, moods, genres, liked, ignored, history, moments, playlists })
     ).catch(() => { if (mountedRef.current) setToast('변경 내용을 저장하지 못했어요. 다시 시도해 주세요.'); });
-  }, [ready, onboardingSubmittedAt, nickname, moods, liked, ignored, history, moments, playlists]);
-  const completeOnboarding = async (name: string, selectedMoods: string[]) => {
+  }, [ready, onboardingSubmittedAt, nickname, moods, genres, liked, ignored, history, moments, playlists]);
+  const completeOnboarding = async (name: string, selectedMoods: string[], selectedGenres: string[]) => {
     // 저장이 성공하기 전에는 홈으로 이동하거나 완료 표시를 남기지 않는다.
     if (!sessionRef.current) throw new Error('로그인이 필요해요.');
-    if (!name.trim() || !selectedMoods.length) throw new Error('이름과 좋아하는 분위기를 선택해 주세요.');
+    if (!name.trim() || !selectedMoods.length || !selectedGenres.length || selectedGenres.some(genre => !tracks.some(t => t.genre === genre))) throw new Error('이름, 장르와 분위기를 선택해 주세요.');
     const submittedAt = new Date().toISOString();
-    const value = { onboardingSubmittedAt: submittedAt, nickname: name.trim().slice(0, 20), moods: selectedMoods, liked, ignored, history, moments, playlists };
+    const value = { onboardingSubmittedAt: submittedAt, nickname: name.trim().slice(0, 20), moods: selectedMoods, genres: selectedGenres, liked, ignored, history, moments, playlists };
     const save = saveQueue.current.catch(() => {}).then(() => mupidService.savePreferences(value));
     saveQueue.current = save;
     await save;
     setNickname(value.nickname); setMoods(selectedMoods); setOnboardingSubmittedAt(submittedAt);
+    setGenres(selectedGenres);
     onboardingRef.current = submittedAt;
     setPage('home');
     router.replace('/home');
@@ -444,6 +446,7 @@ export function useMupid(bootstrap: Bootstrap) {
     signInDemo,
     signOutDemo,
     moods,
+    genres,
     setMoods,
     active,
     playing,

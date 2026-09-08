@@ -137,7 +137,6 @@ export function SearchView({ model: m }: { model: MupidModel }) {
                 <p className="explore-artist">
                   {selected.artist} <span>— {selected.album}</span>
                 </p>
-                <p className="explore-reason">{selected.reason}</p>
                 <div className="explore-actions">
                   <button
                     className="primary-button"
