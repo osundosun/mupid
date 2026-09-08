@@ -1,0 +1,31 @@
+{
+  "id": "./",
+  "name": "Mupid — 뮤피드",
+  "short_name": "Mupid",
+  "lang": "ko",
+  "start_url": "./?view=home",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f7fe",
+  "theme_color": "#f3f7fe",
+  "icons": [
+    {
+      "src": "icons/icon-192.png?v=mupid-cupid-2",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png?v=mupid-cupid-2",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png?v=mupid-cupid-2",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

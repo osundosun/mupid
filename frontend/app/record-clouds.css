@@ -1,0 +1,49 @@
+/* Album artwork is clipped to the record's centre label, not its stage. */
+.mobile-record-stage,
+.desktop-record-stage,
+.player-art-area {
+  position: relative;
+  isolation: isolate;
+}
+.mobile-record-stage::before,
+.desktop-record-stage::before,
+.player-art-area::before {
+  content: none;
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: url('/sky-background.webp') center / cover no-repeat;
+  opacity: 0.55;
+  mask-image: radial-gradient(ellipse at center, #000 38%, transparent 73%);
+}
+.mobile-record-stage::before { inset: -12px -8px; background-position: center bottom; }
+.player-art-area::before { inset: -16px -10px; }
+.desktop-record-stage::before {
+  content: '';
+  inset: 0;
+  opacity: 0.18;
+  background-position: center bottom;
+  mask-image: radial-gradient(ellipse at 50% 60%, #000 48%, transparent 78%);
+}
+@media (max-width: 767px) {
+  .mobile-record-stage::before,
+  .player-art-area::before {
+    inset: -10px -8px;
+    opacity: 0.85;
+    background-position: center bottom;
+    mask-image: radial-gradient(ellipse at center, #000 55%, transparent 78%);
+  }
+  .mobile-record-stage::after,
+  .player-art-area::after {
+    content: none;
+    position: absolute;
+    inset: 46% -6px -6px;
+    pointer-events: none;
+    z-index: 1;
+    background: url('/sky-background.webp') center bottom / 100% auto no-repeat;
+    opacity: 0.78;
+    mask-image: linear-gradient(to bottom, transparent 12%, #000 100%);
+    border-radius: 0 0 28px 28px;
+  }
+}

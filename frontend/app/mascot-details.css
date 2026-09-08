@@ -1,0 +1,101 @@
+/* Tiny companions in reserved spaces; keep the transparent character intact. */
+.mascot-accent {
+  display: inline-flex;
+  position: relative;
+  width: var(--accent-size);
+  max-width: 100%;
+  aspect-ratio: 1;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  user-select: none;
+}
+.mascot-accent .mupid-mascot {
+  width: 100%;
+  height: auto;
+  transition: transform 220ms ease;
+}
+.mascot-sparkle {
+  position: absolute;
+  top: 12%;
+  right: 0;
+  width: 17%;
+  height: 17%;
+  color: var(--sky-pink);
+  stroke-width: 1.5;
+}
+.page-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  container: mascot-title / inline-size;
+}
+.page-title-group h1 {
+  min-width: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.page-title-mascot {
+  width: 56px;
+}
+.greeting-copy {
+  flex: 1;
+  min-width: 0;
+}
+.greeting-copy h1,
+.greeting-copy p {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.greeting-companion {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.chat-launcher .chat-launcher-mascot {
+  width: 40px;
+  height: 40px;
+  pointer-events: none;
+}
+
+@media (max-width: 767px) {
+  .page-title-group {
+    justify-content: center;
+    gap: 8px;
+  }
+  .page-title-mascot {
+    width: 40px;
+  }
+  .greeting {
+    gap: 8px;
+  }
+  .greeting-mascot {
+    width: 48px;
+  }
+}
+
+/* Decorations yield to long titles and enlarged text, never to the controls. */
+@container mascot-title (max-width: 12rem) {
+  .page-title-mascot {
+    display: none;
+  }
+}
+@container home-feed (max-width: 12rem) {
+  .greeting-mascot {
+    display: none;
+  }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .greeting:hover .mascot-accent .mupid-mascot {
+    transform: translateY(-3px) rotate(-2deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mascot-accent .mupid-mascot {
+    transition: none;
+  }
+}

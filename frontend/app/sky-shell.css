@@ -1,0 +1,267 @@
+/* One navigation and one sky palette across the working pages. */
+.desktop-app-nav,
+.desktop-app-notification {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .mupid-shell:not(.page-welcome) {
+    --nav-height: 0px;
+    padding: 24px 0 40px;
+    background:
+      radial-gradient(ellipse at 92% 3%, #fff1f88f, transparent 42%),
+      linear-gradient(180deg, #e6f3ffd9, #f5faffed 68%),
+      url('/sky-background.webp') center top / cover fixed;
+  }
+  .mupid-shell .app-header,
+  .mupid-shell .app-layout {
+    width: calc(100% - 64px);
+    max-width: 1440px;
+    margin-inline: auto;
+  }
+  .mupid-shell .app-header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    height: auto;
+    min-height: 92px;
+    padding: 16px 32px;
+    border: 1px solid #ffffffdc;
+    border-bottom: 1px solid #e8f1fd;
+    border-radius: 30px 30px 0 0;
+    background: #ffffffed;
+  }
+  .mupid-shell .brand {
+    width: 104px;
+  }
+  .mupid-shell .app-header > .brand-caption,
+  .mupid-shell .greeting .notification-wrap,
+  .mupid-shell .side-nav {
+    display: none;
+  }
+  .desktop-app-nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    min-width: 0;
+    gap: 6px;
+  }
+  .desktop-app-nav button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 44px;
+    padding: 9px 12px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    color: #657fa5;
+    font-size: 0.875rem;
+    white-space: nowrap;
+    transition:
+      color 160ms ease,
+      background 160ms ease;
+  }
+  .desktop-app-nav button svg {
+    width: 17px;
+    height: 17px;
+    flex-shrink: 0;
+    stroke-width: 1.7;
+  }
+  .desktop-app-nav button:hover {
+    background: #f0f7ff;
+    color: var(--sky-accent);
+  }
+  .desktop-app-nav button[aria-current='page'] {
+    background: linear-gradient(120deg, #e5efff, #eaf7ff);
+    border-color: #deebfd;
+    color: #396bb6;
+    font-weight: 600;
+  }
+  .desktop-app-nav button[aria-current='page'] svg {
+    color: var(--sky-accent);
+  }
+  .desktop-app-notification {
+    display: block;
+  }
+  .mupid-shell .header-profile {
+    display: flex;
+    gap: 9px;
+    min-height: 44px;
+    flex-shrink: 0;
+    color: #5e7cac;
+    font-size: 0.8125rem;
+  }
+  .mupid-shell .header-profile > span:first-child {
+    width: 38px;
+    height: 38px;
+    background: linear-gradient(135deg, #e3f0ff, #fcecf6);
+    color: #5d7eb6;
+    border: 1px solid #fff;
+    box-shadow: 0 3px 12px #83a9dd15;
+  }
+  .mupid-shell .header-profile > span:last-child {
+    max-width: 8em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mupid-shell .app-layout {
+    display: block;
+    min-height: calc(100dvh - 156px);
+    background: linear-gradient(
+      145deg,
+      #ffffffed 22%,
+      #f3f9ffeb 72%,
+      #fff7fbe6
+    );
+    border: 1px solid #ffffffdc;
+    border-top: 0;
+    border-radius: 0 0 30px 30px;
+    box-shadow: 0 24px 65px #8aaad922;
+  }
+  .mupid-shell .main-content {
+    padding: 32px 44px calc(var(--player-height) + 48px);
+    max-width: none;
+    margin: 0;
+  }
+  .mupid-shell .content-page {
+    max-width: 1080px;
+  }
+  .mupid-shell .page-heading h1,
+  .mupid-shell .player-heading h1 {
+    color: #3f65a1;
+  }
+  .mupid-shell .page-heading .icon-button {
+    color: #6795d8;
+    background: #edf5ff;
+  }
+  .mupid-shell .primary-button {
+    background: linear-gradient(120deg, #4774be, #416bb5);
+    box-shadow: 0 5px 14px #709cde24;
+  }
+  .mupid-shell .secondary-button {
+    background: #ffffffb8;
+    border-color: #dceafd;
+    color: #5880bc;
+  }
+  .mupid-shell .tags span {
+    background: #eaf3ff;
+    color: #6589c1;
+    border-color: #e1edfc;
+  }
+  .mupid-shell .like-button,
+  .mupid-shell .pink {
+    color: #e17baa;
+  }
+  .mupid-shell .filter-chips button.selected {
+    background: #e7f1ff;
+    color: #3f70b8;
+    border-color: #d6e7fc;
+    box-shadow: none;
+  }
+  .mupid-shell .sky-tabs [data-slot='tabs-list'] {
+    background: #edf5ff;
+    border-color: #e1ecfb;
+  }
+  .mupid-shell .sky-tabs [data-slot='tabs-trigger'][data-active] {
+    background: linear-gradient(110deg, #83ace9, #6793db);
+  }
+  .mupid-shell .mini-player {
+    width: calc(100% - 96px);
+    max-width: 1360px;
+    left: 50%;
+    right: auto;
+    bottom: 20px;
+    transform: translateX(-50%);
+    background: #fafdfff5;
+    border-color: #dceafd;
+    box-shadow: 0 8px 32px #638dd523;
+    border-radius: 20px;
+  }
+  .mupid-shell .chat-launcher {
+    right: max(32px, calc((100vw - 1440px) / 2 + 20px));
+    bottom: calc(var(--player-height) + 40px);
+    background: linear-gradient(125deg, #d4e8ff, #e9eaff);
+    color: #3c66a2;
+    border-color: #ffffff;
+    box-shadow: 0 8px 22px #719cde33;
+  }
+  .mupid-shell .chat-launcher i {
+    background: var(--sky-pink);
+  }
+  .mupid-shell .chat-panel {
+    right: max(28px, calc((100vw - 1440px) / 2 + 16px));
+    bottom: calc(var(--player-height) + 40px);
+    height: min(650px, calc(100dvh - var(--player-height) - 64px));
+  }
+  .mupid-shell .app-toast {
+    bottom: calc(var(--player-height) + 108px);
+  }
+  .desktop-search {
+    background: linear-gradient(110deg, #8cbced, #7e9fe1);
+    box-shadow: 0 12px 28px #82a8e329;
+  }
+  .desktop-song h1 {
+    color: var(--home-accent);
+  }
+  .desktop-playlist-row.is-current {
+    background: linear-gradient(110deg, #edf5ff, #fff4fa);
+    border-color: #b2cef3;
+  }
+  .desktop-moment-button {
+    background: #fff5fa;
+    border-color: #f0dbeb;
+    color: #ad7198;
+  }
+  .desktop-ai-entry strong {
+    color: #5b87cd;
+  }
+  .mupid-shell .explore-orbit-item.is-selected {
+    background: linear-gradient(100deg, #fff, #f6faff);
+    box-shadow:
+      0 5px 20px #83a7da12,
+      0 0 0 1px #e8f0fc;
+  }
+}
+
+@media (min-width: 1024px) {
+  .mupid-shell.page-home .main-content {
+    padding: 0;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .mupid-shell .app-header {
+    gap: 12px;
+    padding-inline: 24px;
+  }
+  .mupid-shell .header-profile > span:last-child {
+    display: none;
+  }
+  .mupid-shell .brand {
+    width: 88px;
+  }
+  .desktop-app-nav button {
+    padding-inline: 9px;
+  }
+  .desktop-app-nav button svg {
+    display: none;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .mupid-shell .app-header,
+  .mupid-shell .app-layout {
+    width: calc(100% - 32px);
+  }
+  .mupid-shell .main-content {
+    padding-inline: 28px;
+  }
+  .mupid-shell .mini-player {
+    width: calc(100% - 48px);
+  }
+}
