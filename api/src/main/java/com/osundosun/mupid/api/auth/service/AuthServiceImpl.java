@@ -32,9 +32,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public AuthLoginResult login(String email, String password) {
-        User user = userService
-                        .getUserByEmail(email)
-                        .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+        User user = userService.getUserByEmail(email).orElse(null);
         if (user == null || !passwordEncoder.matches(password, user.getPassword())) {
             throw new BusinessException(AuthErrorCode.WRONG_EMAIL_OR_PASSWORD);
         }
