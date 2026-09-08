@@ -1,0 +1,297 @@
+/* An open listening room, not another card. Desktop keeps its own composition. */
+.mobile-listening {
+  display: none;
+}
+@media (max-width: 1023px) {
+  .page-home .home-feed {
+    max-width: 680px;
+    margin-inline: auto;
+    width: 100%;
+  }
+  .page-home .now-sidebar {
+    display: none;
+  }
+  .page-home .greeting {
+    margin-bottom: 4px;
+  }
+  .page-home .greeting p {
+    font-size: 0.875rem;
+  }
+  .mobile-listening {
+    display: grid;
+    min-width: 0;
+    padding: 0 0 20px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--surface-line);
+  }
+  .mobile-listening-topline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 44px;
+  }
+  .mobile-listening-topline > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--ink-secondary);
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+  }
+  .mobile-listening-topline i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #abb9cc;
+  }
+  .mobile-listening-topline i.is-playing {
+    background: #759ecb;
+    box-shadow: 0 0 0 4px #e4edf9;
+  }
+  .mobile-listening-topline .text-link {
+    font-size: 0.875rem;
+    min-height: 44px;
+  }
+  .mobile-record-stage {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    min-width: 0;
+    padding: 0 0 16px;
+    border: 0;
+    background: radial-gradient(
+      ellipse at 45% 55%,
+      #dceaff99,
+      #f2effa55 45%,
+      transparent 72%
+    );
+    border-radius: 24px;
+  }
+  .mobile-record-art {
+    width: min(92%, 344px);
+    height: auto;
+    aspect-ratio: 1;
+    object-fit: contain;
+    filter: var(--record-tone) drop-shadow(0 12px 14px #6177991a);
+  }
+  .mobile-listening-detail {
+    min-width: 0;
+  }
+  .mobile-song-heading {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .mobile-song-copy {
+    flex: 1;
+    min-width: 0;
+  }
+  .mobile-song-heading h2 {
+    color: var(--ink-strong);
+    font-size: clamp(1.5rem, 5.5vw, 1.875rem);
+    font-weight: 650;
+    line-height: 1.3;
+    letter-spacing: -0.04em;
+    margin: 2px 0 4px;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  .mobile-song-heading p {
+    font-size: 0.875rem;
+    color: var(--ink-secondary);
+    overflow-wrap: anywhere;
+  }
+  .mobile-song-heading .mobile-album-name {
+    font-size: 0.75rem;
+    color: #7890b2;
+  }
+  .mobile-song-heading .like-button {
+    border: 1px solid #dee8f5;
+    background: #ffffff85;
+  }
+  .mobile-home-seek {
+    margin-top: 6px;
+  }
+  .mobile-home-seek [data-slot='slider'] > div {
+    min-height: 44px;
+  }
+  .mobile-home-seek [data-slot='slider-track'] {
+    height: 3px;
+    background: #dce5f3;
+  }
+  .mobile-home-seek [data-slot='slider-range'] {
+    background: #7fa2d4;
+  }
+  .mobile-home-seek [data-slot='slider-thumb'] {
+    width: 10px;
+    height: 10px;
+    border: 0;
+    background: #7a9bce;
+  }
+  .mobile-playback-times {
+    display: flex;
+    justify-content: space-between;
+    margin-top: -6px;
+    color: #7b8da8;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .mobile-listening-controls .player-controls {
+    justify-content: space-between;
+    max-width: 320px;
+    gap: 4px;
+    margin: 12px auto;
+    flex-wrap: wrap;
+  }
+  .mobile-listening-controls .play-main {
+    width: 54px;
+    height: 54px;
+    min-height: 54px;
+    background: linear-gradient(145deg, #8aace0, #547cc0);
+    box-shadow: 0 6px 14px #658bc02e;
+  }
+  .mobile-listening-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .mobile-listening-actions > button:not(.icon-button) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 44px;
+    flex: 1 1 auto;
+    background: none;
+    border: 0;
+    border-radius: 10px;
+    font-size: 0.875rem;
+    color: #617ca8;
+    white-space: nowrap;
+  }
+  .mobile-listening-actions > button:first-child {
+    color: #a87198;
+  }
+  .mobile-listening-actions > button:hover {
+    background: #e9f0fa;
+  }
+  .mobile-listening-actions svg {
+    width: 17px;
+    height: 17px;
+  }
+  .page-home .search-box {
+    background: #ffffff70;
+    box-shadow: none;
+    border-radius: 999px;
+  }
+  .page-home .quick-links {
+    padding-block: 20px;
+    border-bottom: 1px solid var(--surface-line);
+    margin-bottom: 8px;
+  }
+  .page-home .quick-link {
+    min-height: 64px;
+  }
+  .page-home .quick-link-icon {
+    background: transparent;
+  }
+  .page-home .quick-link-label {
+    min-height: 0;
+  }
+  .page-home .section-heading {
+    margin-top: 28px;
+    margin-bottom: 14px;
+  }
+  .page-home .section-heading > .text-link {
+    font-size: 0.875rem;
+    min-height: 44px;
+  }
+  .page-home .mix-card strong {
+    font-size: 0.875rem;
+  }
+  .page-home .recent-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .page-home .recent-track {
+    padding: 12px 0;
+    border: 0;
+    border-bottom: 1px solid var(--surface-line);
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+  .page-home .recent-track .album-art {
+    width: 48px;
+  }
+  .page-home .home-discovery-note {
+    margin-top: 28px;
+    background: none;
+    border: 0;
+    border-top: 1px solid var(--surface-line);
+    border-radius: 0;
+    padding-inline: 0;
+    box-shadow: none;
+  }
+}
+@media (max-width: 767px) {
+  .page-home .app-header {
+    display: flex;
+    height: 64px;
+    border-bottom: 0;
+    background: transparent;
+    padding-inline: var(--page-gutter);
+    max-width: 520px;
+    margin-inline: auto;
+  }
+  .page-home .main-content {
+    padding-top: 8px;
+  }
+}
+@media (max-width: 767px) and (max-height: 740px) {
+  .mobile-record-art {
+    width: min(90%, 312px);
+  }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  .mobile-listening {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 24px;
+    align-items: center;
+  }
+  .mobile-listening-topline {
+    grid-column: 1 / -1;
+  }
+  .mobile-record-art {
+    width: min(100%, 300px);
+  }
+}
+@container home-feed (max-width: 18rem) {
+  .mobile-listening {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mobile-listening-actions > button:not(.icon-button) {
+    white-space: normal;
+  }
+  .mobile-listening-topline {
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mobile-song-copy {
+    animation: mobile-song-in 220ms ease both;
+  }
+  @keyframes mobile-song-in {
+    from {
+      opacity: 0.4;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}

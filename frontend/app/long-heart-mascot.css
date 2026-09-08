@@ -1,0 +1,33 @@
+/* Selected lavender artwork with a real alpha channel, shared across placements. */
+.mupid-mascot,
+.welcome-page .welcome-illustration {
+  filter: none;
+}
+.mupid-mascot {
+  display: inline-block;
+  width: var(--mascot-size, 96px);
+  height: var(--mascot-size, 96px);
+  background: url('/mupid-mascot-lavender.png') center / contain no-repeat;
+  mix-blend-mode: normal;
+  mask-image: none;
+}
+.mascot-accent .mupid-mascot { height: 100%; }
+.page-title-group .page-title-mascot {
+  width: 80px;
+  height: 64px;
+  aspect-ratio: 5 / 4;
+  flex-shrink: 0;
+}
+.page-title-mascot .mupid-mascot {
+  width: 100%;
+  height: 100%;
+  background-image: url('/mupid-mascot-lavender.png');
+  background-position: center;
+  background-size: contain;
+  mask-image: none;
+}
+.page-title-mascot .mascot-sparkle { display: none; }
+@media (max-width: 767px) {
+  .page-title-group .page-title-mascot { width: 65px; height: 52px; }
+}
+.mupid-shell .chat-launcher { background: #f3f7ff; color: #547dbd; border-color: #d5e2f6; }

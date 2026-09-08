@@ -1,0 +1,576 @@
+/* A dedicated desktop composition; the existing mobile home is unchanged. */
+.desktop-home {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .page-home {
+    --nav-height: 0px;
+    --player-height: 72px;
+  }
+  .page-home .home-grid {
+    display: none;
+  }
+  .page-home .main-content {
+    padding: 0;
+    margin: 0;
+    max-width: none;
+    container: desktop-room / inline-size;
+  }
+  .desktop-home {
+    display: block;
+    color: var(--ink-strong);
+  }
+  .desktop-listening-room {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(13.5rem, 0.85fr) minmax(
+        16rem,
+        0.82fr
+      );
+    align-items: center;
+    column-gap: 32px;
+    padding: 20px 44px 0 0;
+  }
+  .desktop-record-stage {
+    position: relative;
+    align-self: stretch;
+    min-width: 0;
+    min-height: 480px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .desktop-record-crop {
+    overflow: hidden;
+    padding-block: 12px;
+  }
+  .desktop-record-art {
+    width: clamp(400px, 39vw, 520px);
+    max-width: none;
+    height: auto;
+    transform: translateX(-96px);
+    filter: var(--record-tone) drop-shadow(8px 14px 20px #45597412);
+  }
+  .desktop-record-caption {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    align-self: flex-end;
+    gap: 8px;
+    min-height: 44px;
+    background: none;
+    border: 0;
+    color: var(--ink-secondary);
+    font-size: 0.75rem;
+    margin: -12px 20px 14px 0;
+  }
+  .desktop-record-caption svg {
+    width: 15px;
+  }
+  .record-status {
+    width: 6px;
+    height: 6px;
+    background: #bbc8da;
+    border-radius: 50%;
+  }
+  .record-status.is-playing {
+    background: #668abf;
+    box-shadow: 0 0 0 4px #edf2fa;
+  }
+  .desktop-song {
+    min-width: 0;
+    padding-block: 12px;
+  }
+  .desktop-song-kicker {
+    font-size: 0.8125rem;
+    color: var(--ink-secondary);
+    margin-bottom: 12px;
+  }
+  .desktop-song h1 {
+    color: var(--home-accent);
+    font-size: clamp(2.25rem, 4.3vw, 3.75rem);
+    font-weight: 700;
+    letter-spacing: -0.065em;
+    line-height: 1.12;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  .desktop-song-artist {
+    font-size: 1rem;
+    color: #4f6687;
+    margin-top: 10px;
+  }
+  .desktop-song-meta {
+    color: #7a8a9f;
+    font-size: 0.8125rem;
+    margin-top: 4px;
+    line-height: 1.65;
+  }
+  .desktop-song-meta > span {
+    margin-inline: 4px;
+  }
+  .desktop-song-reason {
+    font-size: 1rem;
+    color: var(--ink-secondary);
+    line-height: 1.65;
+    margin-top: 18px;
+    word-break: keep-all;
+  }
+  .desktop-song-detail {
+    margin-top: 0;
+    font-size: 0.875rem;
+  }
+  .desktop-song-playback {
+    margin-top: 12px;
+  }
+  .desktop-song .full-controls {
+    width: 100%;
+    max-width: 300px;
+    margin: 0 0 6px;
+    gap: 2px;
+  }
+  .desktop-song .full-controls .play-main {
+    width: 54px;
+    height: 54px;
+    background: var(--home-accent);
+    box-shadow: 0 6px 15px #547aa121;
+  }
+  .desktop-song .full-controls .play-main:hover {
+    background: #5d7fad;
+  }
+  .desktop-seek {
+    display: block;
+    width: 100%;
+    height: 24px;
+    margin: 0;
+    cursor: pointer;
+    accent-color: var(--home-accent);
+  }
+  .desktop-song .time-labels {
+    font-size: 0.75rem;
+  }
+  .desktop-song-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .desktop-moment-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 9px 14px;
+    border: 1px solid #d9e3f0;
+    border-radius: 12px;
+    color: #5d7ea8;
+    background: #fff;
+    font-size: 0.875rem;
+  }
+  .desktop-moment-button:hover {
+    background: #edf3fb;
+  }
+  .desktop-moment-button svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+  .desktop-audio-options {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 0;
+  }
+  .desktop-audio-options label {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    min-height: 44px;
+    color: #8295b0;
+  }
+  .desktop-audio-options svg {
+    width: 17px;
+    height: 17px;
+  }
+  .desktop-audio-options input {
+    width: 70px;
+    height: 28px;
+    accent-color: #9aaec9;
+  }
+  .desktop-playlists {
+    min-width: 0;
+    align-self: center;
+    padding-left: 18px;
+  }
+  .desktop-playlists > header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+  .desktop-playlists > header p {
+    font-size: 0.75rem;
+    color: var(--ink-secondary);
+    margin-bottom: 7px;
+  }
+  .desktop-playlists h2 {
+    font-size: clamp(1.75rem, 2.8vw, 2.5rem);
+    font-weight: 650;
+    letter-spacing: -0.05em;
+    color: var(--home-accent);
+    line-height: 1.2;
+  }
+  .desktop-playlists h2 > span {
+    color: #b6c9e3;
+  }
+  .desktop-playlist-list {
+    display: grid;
+    gap: 8px;
+  }
+  .desktop-playlist-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 0;
+    border: 1px solid transparent;
+    border-bottom-color: #e7edf5;
+    border-radius: 0;
+    transition:
+      background 160ms ease,
+      border-color 160ms ease;
+  }
+  .desktop-playlist-row:hover {
+    background: #f0f5fc;
+  }
+  .desktop-playlist-row.is-current {
+    background: #f0f5fc;
+    border-color: #a8bed9;
+    border-radius: 16px;
+    padding-inline: 10px;
+    margin-inline: -10px;
+  }
+  .desktop-playlist-open {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: 12px;
+    border: 0;
+    background: none;
+    padding: 0;
+    text-align: left;
+  }
+  .desktop-playlist-open .album-art,
+  .desktop-empty-cover {
+    width: 48px;
+    height: 48px;
+    border-radius: 11px;
+    flex-shrink: 0;
+  }
+  .desktop-empty-cover {
+    display: grid;
+    place-items: center;
+    background: #eaf0f8;
+    color: var(--home-accent);
+  }
+  .desktop-playlist-open > span:last-child {
+    min-width: 0;
+  }
+  .desktop-playlist-open strong {
+    display: block;
+    font-weight: 500;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  .desktop-playlist-open small {
+    display: block;
+    font-size: 0.75rem;
+    color: #8293ac;
+    margin-top: 4px;
+  }
+  .desktop-playlist-row > .icon-button svg {
+    width: 15px;
+    height: 15px;
+  }
+  .desktop-saved-link {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 44px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 0.8125rem;
+    color: var(--ink-secondary);
+    margin-top: 16px;
+  }
+  .desktop-saved-link > svg {
+    width: 16px;
+    height: 16px;
+  }
+  .desktop-saved-link > svg:first-child {
+    color: #c38cae;
+  }
+  .desktop-saved-link > svg:last-child {
+    margin-left: auto;
+  }
+  .desktop-saved-link strong {
+    color: #597eae;
+    margin-left: 6px;
+    font-weight: 600;
+  }
+  .desktop-demo {
+    font-size: 0.75rem;
+    color: #8c9bb0;
+    margin-top: 10px;
+  }
+  .desktop-home-bottom {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(16rem, 1fr);
+    align-items: center;
+    gap: 48px;
+    padding: 24px 44px 32px;
+  }
+  .desktop-search {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    min-height: 80px;
+    background: var(--home-search);
+    border-radius: 20px;
+    padding: 18px 20px;
+    box-shadow: 0 12px 22px #6d8db51a;
+  }
+  .desktop-search > svg {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    color: white;
+  }
+  .desktop-search input {
+    flex: 1;
+    min-width: 0;
+    height: 44px;
+    padding: 0 18px;
+    background: #fcfdff;
+    color: var(--ink-strong);
+    border: 0;
+    border-radius: 999px;
+    font-size: 1rem;
+  }
+  .desktop-search input::placeholder {
+    color: #8395af;
+    font-size: 0.875rem;
+  }
+  .desktop-search .icon-button {
+    color: white;
+    border-color: #b2c6e0;
+  }
+  .desktop-search .icon-button:hover {
+    background: #93add0;
+  }
+  .desktop-ai-entry {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: none;
+    border: 0;
+    padding: 0;
+    text-align: left;
+    min-height: 64px;
+  }
+  .desktop-ai-entry small {
+    display: block;
+    color: var(--ink-secondary);
+    font-size: 0.8125rem;
+    margin-bottom: 6px;
+    line-height: 1.5;
+  }
+  .desktop-ai-entry strong {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: #5478a9;
+  }
+  .desktop-ai-entry strong svg {
+    width: 16px;
+    height: 16px;
+  }
+  .desktop-home-shelves {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 56px;
+    margin: 0 44px;
+    padding: 32px 0;
+    border-top: 1px solid var(--surface-line);
+  }
+  .desktop-home-shelves > section {
+    min-width: 0;
+  }
+  .desktop-home-shelves header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .desktop-home-shelves h2 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    margin-top: 5px;
+  }
+  .desktop-home-shelves .text-link {
+    font-size: 0.875rem;
+  }
+  .desktop-recommendation-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .desktop-recommendation {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+    min-height: 78px;
+    padding: 12px 0;
+    border: 0;
+    border-bottom: 1px solid var(--surface-line);
+    background: none;
+    text-align: left;
+  }
+  .desktop-recommendation:hover {
+    background: #f0f5fc;
+  }
+  .desktop-track-number {
+    color: #9aaac0;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .desktop-recommendation .album-art {
+    width: 48px;
+    border-radius: 10px;
+  }
+  .desktop-recommendation > span:last-of-type {
+    flex: 1;
+    min-width: 0;
+  }
+  .desktop-recommendation strong,
+  .desktop-recommendation small {
+    display: block;
+  }
+  .desktop-recommendation strong {
+    font-size: 0.875rem;
+    font-weight: 500;
+    word-break: keep-all;
+  }
+  .desktop-recommendation small {
+    font-size: 0.75rem;
+    color: var(--ink-secondary);
+    margin-top: 4px;
+  }
+  .desktop-recommendation > svg {
+    width: 18px;
+    color: #91a6c2;
+    flex-shrink: 0;
+  }
+  .desktop-home-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 44px 24px;
+    gap: 16px;
+    color: #8d9cb2;
+    font-size: 0.75rem;
+  }
+  .desktop-section-empty,
+  .desktop-playlist-empty {
+    color: var(--ink-secondary);
+    font-size: 0.875rem;
+    line-height: 1.7;
+    padding: 24px 0;
+  }
+  .desktop-playlist-empty > svg {
+    width: 28px;
+    margin-bottom: 12px;
+    color: var(--home-accent);
+  }
+  .page-home .chat-launcher {
+    bottom: 24px;
+  }
+  .page-home .chat-panel {
+    bottom: 24px;
+    height: min(650px, calc(100dvh - 48px));
+  }
+  .page-home .app-toast {
+    bottom: 90px;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1199px) {
+  .desktop-listening-room {
+    column-gap: 22px;
+    padding-right: 32px;
+  }
+  .desktop-playlists {
+    padding-left: 0;
+  }
+  .desktop-song .full-controls {
+    flex-wrap: wrap;
+  }
+  .desktop-home-bottom {
+    padding-inline: 32px;
+    gap: 28px;
+  }
+  .desktop-search {
+    padding-inline: 16px;
+    gap: 12px;
+  }
+  .desktop-home-shelves {
+    margin-inline: 32px;
+    gap: 32px;
+  }
+}
+
+/* A roomy two-column fallback for large text without changing the mobile home. */
+@container desktop-room (max-width: 52rem) {
+  .desktop-listening-room {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    padding-right: 32px;
+  }
+  .desktop-playlists {
+    grid-column: 1 / -1;
+    padding: 32px 0 0 32px;
+  }
+  .desktop-playlist-list {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px 24px;
+  }
+  .desktop-song .full-controls,
+  .desktop-playlist-row {
+    flex-wrap: wrap;
+  }
+  .desktop-playlist-open {
+    flex-basis: calc(100% - 48px);
+  }
+  .desktop-home-bottom,
+  .desktop-home-shelves {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .desktop-search {
+    flex-wrap: wrap;
+  }
+  .desktop-search input {
+    flex-basis: 60%;
+  }
+}

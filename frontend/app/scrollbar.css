@@ -1,0 +1,17 @@
+/* Keep native scrolling and interaction, with the shared sky palette. */
+html,
+body * {
+  scrollbar-color: #8daee0 #edf4fc;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #edf4fc; }
+::-webkit-scrollbar-thumb {
+  background: #8daee0;
+  border: 2px solid #edf4fc;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: #6e95cf; }
+::-webkit-scrollbar-corner { background: #edf4fc; }
+@media (forced-colors: active) {
+  html, body * { scrollbar-color: auto; }
+}

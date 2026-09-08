@@ -1,0 +1,89 @@
+.mupid-shell .chat-launcher {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  min-width: 90px;
+  height: 52px;
+  padding: 0 13px 0 7px;
+  border-radius: 999px;
+  background: #6088ca;
+  color: #fff;
+  border: 1px solid #ffffff;
+}
+.mupid-shell .chat-launcher .chat-launcher-label {
+  display: inline;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+.mupid-shell .chat-launcher > svg { width: 19px; height: 19px; }
+.mupid-shell .chat-launcher .chat-launcher-mascot {
+  display: block;
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  flex: 0 0 36px;
+  pointer-events: none;
+}
+.explore-stage .explore-orbit { display: none; }
+.explore-stage .explore-mobile-list { display: block; min-width: 0; }
+.explore-mobile-pagination { display: flex; align-items: center; justify-content: center; gap: 18px; padding-top: 18px; }
+.explore-mobile-list .explore-status-slot { width: 18px; flex: 0 0 18px; }
+@media (min-width: 768px) {
+  .explore-stage { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); align-items: start; }
+}
+@media (min-width: 0px) {
+  .explore-mobile-list .track-list { gap: 0; }
+  .explore-mobile-list .track-row {
+    border: 0;
+    border-bottom: 1px solid #dce6f080;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 14px 2px;
+    gap: 14px;
+  }
+  .explore-mobile-list .track-row:last-child { border-bottom: 0; }
+  .explore-mobile-list .track-row.is-playing {
+    background: linear-gradient(90deg, #e0edff80, transparent);
+  }
+  .explore-mobile-list .track-row .album-art {
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    box-shadow: 0 4px 12px #466c9920;
+  }
+  .explore-mobile-list .track-row .play-small {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+  .explore-mobile-list .track-row.is-playing .play-small {
+    color: #fff;
+    background: #6b91cc;
+    border-radius: 50%;
+  }
+  .explore-mobile-list .moment-meta { font-size: 0.75rem; color: #879abb; }
+  .explore-mobile-list .playback-status { width: 18px; flex: 0 0 18px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .explore-mobile-list .track-row {
+    position: relative;
+    isolation: isolate;
+  }
+  .explore-mobile-list .track-row.is-playing { background: transparent; }
+  .explore-mobile-list .track-row::before {
+    content: ''; position: absolute; inset: 0; z-index: -1;
+    pointer-events: none; background: linear-gradient(90deg, #e0edff80, transparent);
+    opacity: 0; transition: opacity 280ms ease;
+  }
+  .explore-mobile-list .track-row.is-playing::before { opacity: 1; }
+  .explore-mobile-list .play-small { transition: transform 160ms ease, background 200ms ease; }
+  .explore-mobile-list .play-small:active { transform: scale(0.9); }
+}

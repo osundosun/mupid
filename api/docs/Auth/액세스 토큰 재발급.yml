@@ -1,0 +1,88 @@
+info:
+  name: 액세스 토큰 재발급
+  type: http
+  seq: 2
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/auth"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Cookie
+      value: refresh_token={{REFRESH_TOKEN}}
+  auth: inherit
+
+runtime:
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.access_token
+        method: jsonq
+      variable:
+        name: ACCESS_TOKEN
+        scope: runtime
+      description: 재발급된 액세스 토큰으로 ACCESS_TOKEN 변수를 갱신합니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 재발급 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "access_token": "eyJhbGciOiJIUzI1NiJ9..."
+            }
+          }
+  - name: 401 리프레시 토큰 무효
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_UNAUTHORIZED",
+            "message": "인증 정보가 유효하지 않거나 존재하지 않습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 액세스 토큰 재발급
+
+  `GET /api/v1/auth`
+
+  쿠키의 리프레시 토큰으로 새 액세스 토큰을 발급합니다.
+
+  ## 필요한 인증 정보
+
+  - `Cookie: refresh_token=...` — `@CookieValue(name = "refresh_token")` 로 읽습니다. 없으면 400.
+  - `Authorization: Bearer ...` — `SecurityConfig` 에서 `POST /api/v1/auth` 만
+    `permitAll` 이므로, 이 `GET` 요청은 `anyRequest().authenticated()` 에 걸려
+    **유효한 액세스 토큰도 함께 필요합니다.**
+
+  응답을 받으면 `ACCESS_TOKEN` 변수가 새 토큰으로 갱신됩니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 리프레시 토큰이 만료·위조되었거나 로그아웃으로 차단됨 |

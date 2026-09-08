@@ -1,0 +1,223 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import './mupid.css';
+@import './discovery-design.css';
+@import './desktop-home.css';
+@import './sky-shell.css';
+@import './mascot-details.css';
+@import './album-deck.css';
+@import './demo-login.css';
+@import './mobile-home.css';
+@import './mobile-navigation.css';
+@import './playback-details.css';
+@import './record-motion.css';
+@import './explore-mobile-polish.css';
+@import './cursor.css';
+@import './scrollbar.css';
+@import './record-clouds.css';
+@import './collection-polish.css';
+@import './mobile-album-discovery.css';
+@import './long-heart-mascot.css';
+@import './welcome-redesign.css';
+@import './track-comments.css';
+@custom-variant dark (&:is(.dark *));
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Thin.woff2')
+    format('woff2');
+  font-weight: 100;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-ExtraLight.woff2')
+    format('woff2');
+  font-weight: 200;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Light.woff2')
+    format('woff2');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Regular.woff2')
+    format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Medium.woff2')
+    format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-SemiBold.woff2')
+    format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Bold.woff2')
+    format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-ExtraBold.woff2')
+    format('woff2');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Black.woff2')
+    format('woff2');
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme inline {
+  --font-sans: var(--font-mupid);
+  --font-serif: var(--font-mupid);
+  --font-mono: var(--font-mupid);
+  --font-heading: var(--font-mupid);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: #fff;
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: #e5eeff;
+  --color-accent-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: #5b83d3;
+  --color-destructive: #cc4775;
+  --radius-sm: 0.6rem;
+  --radius-md: 0.85rem;
+  --radius-lg: 1.1rem;
+  --radius-xl: 1.4rem;
+  --radius-2xl: 1.75rem;
+}
+:root {
+  --font-mupid:
+    'Pretendard', -apple-system, BlinkMacSystemFont, 'Malgun Gothic', sans-serif;
+  --font-chat: var(--font-mupid);
+  --background: #f7faff;
+  --foreground: #34548a;
+  --page-gutter: clamp(18px, 4.6vw, 24px);
+  --card: #fff;
+  --primary: #507dce;
+  --muted: #eaf1fc;
+  --muted-foreground: #617da7;
+  --border: #e3ebf8;
+  --surface-line: #dce5f1;
+  --ink-strong: #293d60;
+  --ink-secondary: #637591;
+  --surface-hover: #eaf0f9;
+  --home-surface: #fbfdff;
+  --home-accent: #598ad2;
+  --home-search: #77a5e4;
+  --sky-tint: #e8f3ff;
+  --sky-accent: #477dca;
+  --sky-pink: #e88fbb;
+}
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    box-sizing: border-box;
+  }
+  html {
+    font-family: var(--font-mupid);
+    color: var(--foreground);
+    background: var(--background);
+  }
+  body {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible {
+    outline: 3px solid #78a2ec;
+    outline-offset: 4px;
+  }
+  a {
+    color: inherit;
+  }
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+}
+/* All app text, including conversation text, uses Pretendard.
+   Keep this outside Tailwind layers so browser/control and utility defaults cannot diverge. */
+:where(html, body, body *) {
+  font-family: var(--font-mupid) !important;
+}
+:where(input, textarea)::placeholder {
+  font-family: var(--font-mupid) !important;
+}
+.chat-handwriting,
+.chat-handwriting::placeholder {
+  font-family: var(--font-chat) !important;
+  font-weight: 400;
+  font-synthesis: none;
+}
+::selection {
+  background: #cbdfff;
+  color: #183c7e;
+}

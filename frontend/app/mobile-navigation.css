@@ -1,0 +1,199 @@
+/* Desktop's fine-line icons and sky selection pill, arranged for a thumb. */
+.mobile-profile-link {
+  display: none;
+}
+@media (max-width: 767px) {
+  .mupid-shell {
+    margin: 0;
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .mupid-shell:not(.page-welcome) {
+    padding: 22px clamp(20px, 6vw, 28px) 0;
+    background:
+      radial-gradient(ellipse at 92% 3%, #fff1f88f, transparent 42%),
+      linear-gradient(180deg, #e6f3ffd9, #f5faffed 68%),
+      url('/sky-background.webp') center top / cover fixed;
+  }
+  .mupid-shell:not(.page-welcome) .app-layout {
+    width: 100%;
+    max-width: 520px;
+    margin-inline: auto;
+    background: linear-gradient(145deg, #ffffffed 22%, #f3f9ffeb 72%, #fff7fbe6);
+    border: 2px solid #d5e3f5;
+    border-top: 0;
+    border-radius: 0 0 28px 28px;
+    box-shadow: 0 24px 65px #8aaad922;
+  }
+  .mupid-shell:not(.page-welcome) .app-header {
+    width: 100%;
+    border: 2px solid #d5e3f5;
+    border-bottom: 1px solid #e8f1fd;
+    border-radius: 28px 28px 0 0;
+    background: #ffffffed;
+  }
+  .mupid-shell:not(.page-welcome) {
+    --nav-height: max(76px, calc(4rem + 12px));
+  }
+  .mupid-shell .app-header {
+    display: flex;
+    align-items: center;
+    height: auto;
+    min-height: calc(60px + env(safe-area-inset-top, 0px));
+    padding: calc(8px + env(safe-area-inset-top, 0px)) var(--page-gutter) 8px;
+    max-width: 520px;
+    margin-inline: auto;
+    gap: 16px;
+    border: 0;
+    background: transparent;
+  }
+  .mupid-shell .app-header .brand {
+    width: 88px;
+  }
+  .mupid-shell .app-header .header-profile {
+    display: none;
+  }
+  .mobile-profile-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px 10px;
+    gap: 6px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    color: #657fa5;
+    font-size: 0.875rem;
+    background: none;
+  }
+  .mobile-profile-link svg {
+    width: 18px;
+    height: 18px;
+    stroke-width: 1.7;
+  }
+  .mobile-profile-link[aria-current='page'] {
+    background: linear-gradient(120deg, #e5efff, #eaf7ff);
+    border-color: #deebfd;
+    color: #396bb6;
+  }
+  .mupid-shell .main-content {
+    padding-top: 12px;
+  }
+  .mupid-shell .mobile-nav {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: start;
+    gap: 2px;
+    height: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px));
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid #e2ebf8;
+    background: #fcfdfff2;
+    box-shadow: 0 -6px 24px #688abc06;
+    backdrop-filter: blur(20px);
+    container: mobile-navigation / inline-size;
+  }
+  .mupid-shell .mobile-nav button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    align-self: stretch;
+    gap: 3px;
+    padding: 0;
+    min-width: 0;
+    min-height: 58px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    color: #7387a6;
+    border: 0;
+    border-radius: 16px;
+    background: none;
+    white-space: normal;
+  }
+  .mobile-nav-icon {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-width: 44px;
+    width: min(100%, 52px);
+    height: 32px;
+    flex-shrink: 0;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    transition:
+      background 180ms ease,
+      border-color 180ms ease;
+  }
+  .mupid-shell .mobile-nav button svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke-width: 1.7;
+  }
+  .mupid-shell .mobile-nav button.active {
+    color: #396bb6;
+    font-weight: 600;
+  }
+  .mobile-nav button[aria-current='page'] .mobile-nav-icon {
+    background: linear-gradient(120deg, #e5efff, #eaf7ff);
+    border-color: #deebfd;
+  }
+  .mobile-nav-label {
+    max-width: 100%;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  .mupid-shell .mobile-nav button:hover .mobile-nav-icon {
+    background: #edf5ff;
+  }
+  .mupid-shell .mini-player {
+    left: 12px;
+    right: 12px;
+    max-width: 496px;
+    bottom: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px) + 8px);
+    border-radius: 16px;
+    border-color: #e1eafa;
+    background: #ffffffed;
+    box-shadow: 0 6px 22px #6484b213;
+  }
+  .mupid-shell.page-player .main-content {
+    padding-bottom: calc(var(--dock-height) + 24px);
+  }
+  .page-player .vinyl-record {
+    width: min(100%, 290px, 34svh);
+  }
+  .page-player .player-heading {
+    margin-bottom: 4px;
+  }
+  .page-player .player-body {
+    gap: 10px;
+  }
+  .page-player .player-detail .full-controls {
+    margin-block: 12px;
+  }
+  .page-home .greeting p {
+    font-size: 0.8125rem;
+  }
+  .page-home .greeting-mascot {
+    width: 40px;
+  }
+}
+/* Enlarged labels can wrap, with dock height reserved above the safe area. */
+@media (max-width: 767px) {
+  @container mobile-navigation (max-width: 18rem) {
+    .mobile-nav-icon {
+      width: 44px;
+    }
+    .mobile-nav-label {
+      font-size: 0.75rem;
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mobile-nav-icon {
+    transition: none;
+  }
+}
