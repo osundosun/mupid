@@ -1,30 +1,94 @@
 info:
   name: 비밀번호 재설정 코드 제출
   type: http
-  seq: 8
+  seq: 9
 
 http:
   method: POST
   url: "{{BASE_URL}}/api/v1/user/reset"
-  auth: inherit
   headers:
     - name: Content-Type
       value: application/json
   body:
     type: json
-    content: |
+    data: |-
       {
-        "verificationId": 1,
-        "token": "이메일로 받은 인증 코드",
-        "password": "newpassword123!"
+        "verification_id": {{VERIFICATION_ID}},
+        "token": "{{PW_RESET_TOKEN}}",
+        "password": "{{PW_RESET_NEW_PASSWORD}}"
       }
+  auth: inherit
 
-docs:
-  description: |
-    인증 코드 검증 후 즉시 새 비밀번호로 변경합니다.
+runtime:
+  variables:
+    - name: PW_RESET_TOKEN
+      value: GE6WS1
+    - name: PW_RESET_NEW_PASSWORD
+      value: password123
 
 settings:
   encodeUrl: true
   timeout: 0
   followRedirects: true
   maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 변경 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "패스워드가 변경되었습니다.",
+            "error_details": null
+          }
+  - name: 401 인증 코드 불일치
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_VERIFICATION_TOKEN",
+            "message": "인증 토큰이 일치하지 않습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 비밀번호 재설정 코드 제출
+
+  `POST /api/v1/user/reset` · 인증 불필요
+
+  인증 코드를 검증하고, 통과하면 즉시 새 비밀번호로 변경합니다.
+  별도의 "변경" 요청이 없는 단일 단계입니다.
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 규칙 |
+  | --- | --- | --- | --- |
+  | `verification_id` | int | ✅ | `비밀번호 재설정 메일 발송` 응답의 ID |
+  | `token` | string | ✅ | 메일로 받은 인증 코드 (공백 불가) |
+  | `password` | string | ✅ | 영문/숫자/특수문자(`@$!%*#?&`) 중 2종 이상, 8~20자 |
+
+  `verification_id` 는 메일 발송 이후 `{{VERIFICATION_ID}}` 변수로 자동 치환됩니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_VERIFICATION_ID` | 404 | 해당 인증 건이 없음 |
+  | `MUPID_VERIFICATION_HAS_EXPIRED` | 400 | 인증 시간 초과 |
+  | `MUPID_INVALID_VERIFICATION_TOKEN` | 401 | 인증 코드 불일치 |
+  | `MUPID_ALREADY_VERIFIED_TOKEN` | 400 | 이미 인증을 마친 건 |
+  | `MUPID_USER_NOT_FOUND` | 404 | 인증 건에 연결된 사용자가 없음 |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 비밀번호 규칙 위반 |

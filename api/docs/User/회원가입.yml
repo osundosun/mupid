@@ -6,29 +6,111 @@ info:
 http:
   method: POST
   url: "{{BASE_URL}}/api/v1/user"
-  auth: inherit
   headers:
     - name: Content-Type
       value: application/json
   body:
     type: json
-    content: |
+    data: |-
       {
-        "email": "user@example.com",
-        "emailVerificationId": 1,
-        "password": "example123!",
-        "nickname": "mupid",
-        "birthYear": 2000,
-        "gender": "M"
+        "email": "{{USER_EMAIL}}",
+        "email_verification_id": {{VERIFICATION_ID}},
+        "password": "{{USER_PASSWORD}}",
+        "nickname": "{{USER_NICKNAME}}",
+        "birth_year": {{USER_BIRTH_YEAR}},
+        "gender": "{{USER_GENDER}}"
       }
+  auth: inherit
 
-docs:
-  description: |
-    비밀번호는 영문/숫자/특수문자 중 2가지 이상 조합, 8~20자.
-    닉네임은 2~10자, 출생 연도는 1900 이상.
+runtime:
+  variables:
+    - name: VERIFICATION_ID
+      value: "9"
+    - name: USER_EMAIL
+      value: yejunjung98@gmail.com
+    - name: USER_PASSWORD
+      value: password123
+    - name: USER_NICKNAME
+      value: 예준
+    - name: USER_BIRTH_YEAR
+      value: "2000"
+    - name: USER_GENDER
+      value: MALE
 
 settings:
   encodeUrl: true
   timeout: 0
   followRedirects: true
   maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 가입 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "회원가입 되었습니다.",
+            "error_details": null
+          }
+  - name: 400 이메일 인증 미완료
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_EMAIL_VERIFICATION_REQUIRED",
+            "message": "이메일 인증이 필요합니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 회원가입
+
+  `POST /api/v1/user` · 인증 불필요
+
+  ## 선행 조건
+
+  1. `Email / 인증 메일 발송` 으로 `verification_id` 를 받습니다.
+  2. `Email / 인증 코드 제출` 로 코드를 검증합니다.
+  3. 그 `verification_id` 를 `email_verification_id` 로 전달합니다.
+
+  인증이 유효하지 않거나, 인증에 사용된 이메일과 `email` 이 다르면
+  `MUPID_EMAIL_VERIFICATION_REQUIRED` 가 반환됩니다.
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 규칙 |
+  | --- | --- | --- | --- |
+  | `email` | string | ✅ | 이메일 형식 |
+  | `email_verification_id` | int | ✅ | 검증 완료된 인증 ID |
+  | `password` | string | ✅ | 영문/숫자/특수문자(`@$!%*#?&`) 중 2종 이상, 8~20자 |
+  | `nickname` | string | ✅ | 2~10자 |
+  | `birth_year` | int | ✅ | 1900 이상 |
+  | `gender` | string | ✅ | `MALE` / `FEMALE` / `ETC` |
+
+  > 필드명은 snake_case 입니다 (`spring.jackson.property-naming-strategy: SNAKE_CASE`).
+  > `gender` 에 `M`, `F` 같은 값을 넣으면 `UserGender.fromCode` 에서 실패합니다.
+
+  가입 직후 상태는 `PENDING`(온보딩 필요), 권한은 `USER` 입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_EMAIL_VERIFICATION_REQUIRED` | 400 | 이메일 인증 미완료 또는 이메일 불일치 |
+  | `MUPID_DUPLICATE_EMAIL` | 400 | 이미 가입된 이메일 |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 검증 규칙 위반 |
+  | `MUPID_INVALID_VERIFICATION_ID` | 404 | 인증 ID 없음 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 404 | 요청 본문 누락/파싱 실패 |

@@ -6,24 +6,85 @@ info:
 http:
   method: POST
   url: "{{BASE_URL}}/api/v1/mail/verification"
-  auth: inherit
   headers:
     - name: Content-Type
       value: application/json
   body:
     type: json
-    content: |
+    data: |-
       {
-        "verificationId": 1,
-        "token": "이메일로 받은 인증 코드"
+        "verification_id": "{{VERIFICATION_ID}}",
+        "token": "{{VERIFICATION_TOKEN}}"
       }
+  auth: inherit
 
-docs:
-  description: |
-    이메일로 받은 인증 코드를 제출해 검증합니다.
+runtime:
+  variables:
+    - name: VERIFICATION_ID
+      value: "9"
+    - name: VERIFICATION_TOKEN
+      value: 281FE265-83DB-4BDD-A2DF-233A66207D38
 
 settings:
   encodeUrl: true
   timeout: 0
   followRedirects: true
   maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 인증 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "이메일 인증에 성공하였습니다.",
+            "error_details": null
+          }
+  - name: 401 인증 코드 불일치
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_VERIFICATION_TOKEN",
+            "message": "인증 토큰이 일치하지 않습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 인증 코드 제출
+
+  `POST /api/v1/mail/verification` · 인증 불필요
+
+  메일로 받은 인증 코드를 검증합니다.
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `verification_id` | int | ✅ | `인증 메일 발송` 응답의 ID |
+  | `token` | string | ✅ | 메일로 받은 인증 코드 (공백 불가) |
+
+  `verification_id` 는 `인증 메일 발송` 이후 `{{VERIFICATION_ID}}` 변수로
+  자동 치환됩니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_VERIFICATION_ID` | 404 | 해당 인증 건이 없음 |
+  | `MUPID_VERIFICATION_HAS_EXPIRED` | 400 | 인증 시간 초과 |
+  | `MUPID_INVALID_VERIFICATION_TOKEN` | 401 | 인증 코드 불일치 |
+  | `MUPID_ALREADY_VERIFIED_TOKEN` | 400 | 이미 인증을 마친 건 |

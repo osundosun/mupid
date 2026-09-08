@@ -6,19 +6,54 @@ info:
 http:
   method: DELETE
   url: "{{BASE_URL}}/api/v1/auth"
-  auth: inherit
   headers:
     - name: Authorization
       value: Bearer {{ACCESS_TOKEN}}
     - name: Cookie
       value: refresh_token={{REFRESH_TOKEN}}
-
-docs:
-  description: |
-    액세스 토큰과 리프레시 토큰을 모두 무효화합니다.
+  auth: inherit
 
 settings:
   encodeUrl: true
   timeout: 0
   followRedirects: true
   maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 로그아웃 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "로그아웃 처리되었습니다.",
+            "data": null
+          }
+
+docs: |-
+  # 로그아웃
+
+  `DELETE /api/v1/auth` · 인증 필요
+
+  액세스 토큰과 리프레시 토큰을 모두 Redis 블록 목록(`block:token`)에 등록해
+  더 이상 사용할 수 없게 만듭니다.
+
+  ## 필요한 인증 정보
+
+  - `Authorization: Bearer {{ACCESS_TOKEN}}`
+  - `Cookie: refresh_token={{REFRESH_TOKEN}}`
+
+  두 값 모두 있어야 합니다. 액세스 토큰은 `Authentication.getCredentials()` 에서,
+  리프레시 토큰은 쿠키에서 읽습니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |

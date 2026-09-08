@@ -13,10 +13,36 @@ http:
     type: json
     data: |-
       {
-        "email": "yejunjung98@gmail.com",
-        "password": "password123"
+        "email": "{{USER_EMAIL}}",
+        "password": "{{USER_PASSWORD}}"
       }
   auth: inherit
+
+runtime:
+  variables:
+    - name: USER_EMAIL
+      value: yejunjung98@gmail.com
+    - name: USER_PASSWORD
+      value: password123
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.access_token
+        method: jsonq
+      variable:
+        name: ACCESS_TOKEN
+        scope: runtime
+      description: 액세스 토큰을 ACCESS_TOKEN 변수에 저장합니다.
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.user_id
+        method: jsonq
+      variable:
+        name: USER_ID
+        scope: runtime
+      description: 사용자 ID 를 USER_ID 변수에 저장합니다.
 
 settings:
   encodeUrl: true
@@ -24,3 +50,86 @@ settings:
   followRedirects: true
   maxRedirects: 5
   forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 로그인 성공
+    request:
+      url: "{{BASE_URL}}/api/v1/auth"
+      method: POST
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "email": "user@example.com",
+            "password": "example123!"
+          }
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+        - name: Set-Cookie
+          value: refresh_token=eyJhbGciOi...; Max-Age=1800; Path=/; Secure; HttpOnly; SameSite=Strict
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "access_token": "eyJhbGciOiJIUzI1NiJ9...",
+              "user_id": 1,
+              "user_role": "USER"
+            }
+          }
+  - name: 401 이메일/비밀번호 불일치
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_WRONG_EMAIL_OR_PASSWORD",
+            "message": "이메일 혹은 패스워드가 잘못되었습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 로그인
+
+  `POST /api/v1/auth` · 인증 불필요
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `email` | string | ✅ | 이메일 형식 |
+  | `password` | string | ✅ | 비밀번호 |
+
+  ## 응답
+
+  - 본문 `data.access_token` — 액세스 토큰
+  - 본문 `data.user_id` — 사용자 ID
+  - 본문 `data.user_role` — `GUEST` / `USER` / `ADMIN` (`UserRole.name()`)
+  - 헤더 `Set-Cookie: refresh_token=...` — HttpOnly + Secure 리프레시 토큰
+
+  응답을 받으면 `ACCESS_TOKEN` 과 `USER_ID` 변수가 자동으로 채워집니다.
+  `REFRESH_TOKEN` 은 쿠키가 `Secure` 라 http 환경에서 자동 저장되지 않으므로,
+  응답 헤더의 `Set-Cookie` 값을 `Local` 환경의 `REFRESH_TOKEN` 에 직접
+  붙여넣어야 재발급/로그아웃 요청이 동작합니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_WRONG_EMAIL_OR_PASSWORD` | 401 | 이메일 혹은 비밀번호 불일치 |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 이메일 형식 오류 등 검증 실패 |
+  | `MUPID_USER_NOT_FOUND` | 404 | 가입되지 않았거나 탈퇴한 이메일 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 404 | 요청 본문 누락/파싱 실패 |

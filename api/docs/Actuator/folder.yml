@@ -5,3 +5,12 @@ info:
 
 request:
   auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Actuator
+
+    Spring Boot Actuator 엔드포인트입니다.
+    `management.endpoints.web.base-path` 가 `/api/actuator` 로 재정의되어 있고,
+    노출 대상은 `health` 하나뿐입니다.
