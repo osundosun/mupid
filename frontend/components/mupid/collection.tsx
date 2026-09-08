@@ -535,7 +535,7 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
         </div>
       </section>
       <Heading title="최근 감상 기록" />
-      <div className="track-list">
+      <div className="track-list profile-history" role="region" aria-label="최근 감상 기록 목록" tabIndex={0}>
         {m.history
           .map((id) => tracks.find((t) => t.id === id)!)
           .filter(Boolean)

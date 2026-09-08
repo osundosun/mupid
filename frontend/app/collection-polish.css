@@ -67,6 +67,30 @@
   border-radius: 999px; box-shadow: 0 4px 14px #6c8cba0c;
 }
 .mupid-shell .desktop-moment-button:hover { background: #e2ecfc; border-color: #b6ccef; }
+/* 감상 기록은 화면 높이에 맞는 독립 스크롤 영역으로 두어 마지막 곡까지 접근할 수 있게 한다. */
+.mupid-shell .main-content .profile-history {
+  max-height: min(28rem, 60dvh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  padding: 8px;
+  border: 1px solid #dce6f4;
+  border-radius: 18px;
+  background: #ffffff80;
+  align-content: start;
+}
+.mupid-shell .main-content .profile-history .track-row {
+  min-height: 88px;
+  padding: 14px 12px;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+.mupid-shell .profile-history .album-art { flex-shrink: 0; }
+.mupid-shell .profile-history:focus-visible { outline: 2px solid #829bd1; outline-offset: 3px; }
+.mupid-shell.page-profile .main-content {
+  padding-bottom: calc(var(--dock-height) + 48px);
+}
 .queue-dialog .track-list { gap: 0; overflow-y: auto; min-height: 0; }
 .queue-dialog .track-row { padding: 12px 2px; border: 0; border-bottom: 1px solid #e2eaf5; border-radius: 0; background: transparent; gap: 12px; }
 .queue-dialog .track-row .album-art { width: 48px; height: 48px; flex-shrink: 0; border-radius: 12px; }

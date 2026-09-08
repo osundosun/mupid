@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { trackComments, validateComment } from '../lib/track-comments.ts';
+import { trackComments, validateComment, commentUserId, ownsComment } from '../lib/track-comments.ts';
+
+test('댓글 소유권은 인증된 회원 ID로만 판단한다', () => {
+  for (const session of [null, {kind:'demo', userId:1}, {kind:'authenticated'}, {kind:'authenticated', userId:0}]) assert.equal(commentUserId(session), null);
+  assert.equal(commentUserId({kind:'authenticated', userId:1}), 1);
+  assert.equal(ownsComment({authorId:1}, 1), true);
+  assert.equal(ownsComment({authorId:1}, 2), false);
+  assert.equal(ownsComment({authorId:1}, null), false);
+  assert.equal(ownsComment({author:'동일 닉네임'}, 1), false);
+});
 
 test('comment text and song timestamp boundaries', () => {
   assert.equal(validateComment('좋아요', 0, 120), true);

@@ -1,4 +1,11 @@
-export type TrackComment = { id: string; trackId: number; at: number; body: string; author: string; createdAt: number };
+export type TrackComment = { id: string; trackId: number; at: number; body: string; author: string; authorId?: number; createdAt: number };
+// 기존 ID 없는 댓글은 읽기만 허용한다. 닉네임이 같다고 소유권을 부여하면 안 된다.
+export function commentUserId(session: {kind: string; userId?: number} | null): number | null {
+  return session?.kind === 'authenticated' && Number.isSafeInteger(session.userId) && session.userId! > 0 ? session.userId! : null;
+}
+export function ownsComment(comment: TrackComment, userId: number | null) {
+  return userId !== null && comment.authorId === userId;
+}
 const key = 'mupid.track-comments.v1';
 export function validateComment(body: string, at: number, duration: number) {
   return !!body.trim() && body.trim().length <= 500 && Number.isFinite(duration) && Number.isFinite(at) && at >= 0 && at <= duration;

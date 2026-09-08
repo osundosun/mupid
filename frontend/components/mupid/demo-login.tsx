@@ -1,5 +1,6 @@
 'use client';
 import { useRef, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { LogIn, LogOut } from 'lucide-react';
 import {
   Dialog,
@@ -15,7 +16,9 @@ import type { SignupInput } from '@/lib/services/contracts';
 
 export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
   const [name, setName] = useState('');
-  const [signup, setSignup] = useState(false);
+  const router = useRouter();
+  const signup = usePathname() === '/signup';
+  const setSignup = (value: boolean) => router.push(value ? '/signup' : '/login');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -27,7 +30,7 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
       onOpenChange={(open) => {
         m.setLoginDialog(open);
         if (!open) {
-          setSignup(false);
+          router.push('/');
           setMessage('');
           setName('');
           form.current?.reset();
@@ -78,7 +81,7 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
             try {
               await m.signInDemo(name, passwordValue);
               form.current?.reset(); setName('');
-            } catch { setMessage(mupidService.mode === 'demo' ? '로그인 서버 연결 준비 중이에요. 로그인 없이 취향을 선택하고 음악을 둘러볼 수 있어요.' : '로그인하지 못했어요. 입력 정보와 연결 상태를 확인해 주세요.'); }
+            } catch { setMessage(mupidService.mode === 'demo' ? '로그인 서버 연결 준비 중이에요. 서버 연결 후 로그인하고 취향을 설정할 수 있어요.' : '로그인하지 못했어요. 입력 정보와 연결 상태를 확인해 주세요.'); }
             finally { setBusy(false); }
           }}
         >

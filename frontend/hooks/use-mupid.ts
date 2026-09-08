@@ -1,5 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { guardPath, pageForPath, pagePaths } from '@/lib/routes';
 import { mupidService } from '@/lib/services';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
@@ -11,18 +13,9 @@ import {
   type ChatMessage,
 } from '@/lib/mupid-data';
 
-const pageNames: Page[] = [
-  'home',
-  'search',
-  'library',
-  'report',
-  'profile',
-  'player',
-  'moment',
-  'similar',
-  'welcome',
-];
 export function useMupid(bootstrap: Bootstrap) {
+  const router = useRouter();
+  const pathname = usePathname() || '/';
   // 화면들은 이 훅의 모델을 공유한다. 재생기나 로그인 상태를 화면마다 별도로 만들지 않는다.
   const { tracks, preferences: initial } = bootstrap;
   // Local preferences are not proof of authentication or account onboarding.
@@ -86,33 +79,27 @@ export function useMupid(bootstrap: Bootstrap) {
 
   const go = (next: Page) => {
     // URL 직접 이동과 UI 이동 모두 같은 조건으로 보호한다. 실제 접근 권한 검증은 서버 책임이다.
-    if ((!sessionRef.current || !onboardingRef.current) && next !== 'welcome') next = 'welcome';
-    setPage(next);
     setNotificationOpen(false);
-    const url = new URL(window.location.href);
-    if (next === 'home') url.searchParams.delete('view');
-    else url.searchParams.set('view', next);
-    window.history.pushState({ mupid: true }, '', url);
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    router.push(guardPath(pagePaths[next], !!sessionRef.current, !!onboardingRef.current));
   };
   useEffect(() => {
+    // 예전 ?view= 링크는 호환하되 새로운 화면 이동은 경로 주소를 사용한다.
+    const legacy = new URLSearchParams(window.location.search).get('view');
+    const requested = legacy && Object.hasOwn(pagePaths, legacy)
+      ? pagePaths[legacy as keyof typeof pagePaths] : pathname === '/mupid' ? '/home' : pathname;
+    const target = guardPath(requested, !!demoSession, !!onboardingSubmittedAt);
+    setPage(pageForPath(target));
+    setLoginDialog(target === '/login' || target === '/signup');
+    if (target !== pathname || legacy) router.replace(target);
+  }, [pathname, demoSession, onboardingSubmittedAt, router]);
+  useEffect(() => {
     mountedRef.current = true;
-    const readPage = () => {
-      const value = new URLSearchParams(window.location.search).get(
-        'view',
-      ) as Page;
-      setPage(!sessionRef.current || !onboardingRef.current ? 'welcome' : pageNames.includes(value) ? value : 'home');
-      window.scrollTo(0, 0);
-    };
-    window.addEventListener('popstate', readPage);
     queueMicrotask(() => {
       if (!mountedRef.current) return;
-      readPage();
       setReady(true);
     });
     return () => {
       mountedRef.current = false;
-      window.removeEventListener('popstate', readPage);
       if (chatTimer.current) clearTimeout(chatTimer.current);
     };
   }, [initial.onboardingSubmittedAt]);
@@ -134,7 +121,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setNickname(value.nickname); setMoods(selectedMoods); setOnboardingSubmittedAt(submittedAt);
     onboardingRef.current = submittedAt;
     setPage('home');
-    window.history.replaceState({ mupid: true }, '', '/');
+    router.replace('/home');
     window.scrollTo(0, 0);
   };
   useEffect(() => {
@@ -173,6 +160,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setChatOpen(false);
     setNotificationOpen(false);
     setLoginDialog(true);
+    router.push('/login');
   };
   const signInDemo = async (email: string, password: string) => {
     // 기존 호출부 호환을 위해 이름은 유지했지만 데모 로그인 성공을 만들지 않는다.
@@ -187,7 +175,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setDemoSession(session);
     setLoginDialog(false);
     setPage(completedAt ? 'home' : 'welcome');
-    window.history.replaceState({ mupid: true }, '', completedAt ? '/' : '/?view=welcome');
+    router.replace(completedAt ? '/home' : '/onboarding');
     setToast('뮤피드에 오신 걸 환영해요.');
     return true;
   };
@@ -200,7 +188,7 @@ export function useMupid(bootstrap: Bootstrap) {
     audioRef.current?.pause();
     setPlaying(false);
     setPage('welcome');
-    window.history.replaceState({ mupid: true }, '', '/?view=welcome');
+    router.replace('/');
     setLoginDialog(false);
     setToast('로그아웃 화면으로 전환했어요. 음악과 저장 기록은 그대로예요.');
   };
