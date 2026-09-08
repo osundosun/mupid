@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.osundosun.mupid.api.common.response.BaseResponse;
-import com.osundosun.mupid.api.storage.dto.StorageFileDto;
+import com.osundosun.mupid.api.storage.dto.StorageFileData;
 import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.service.UserImageService;
 
@@ -56,7 +56,7 @@ public class UserImageController {
     public ResponseEntity<byte[]> getUserImage(
         @PathVariable int userId
     ) {
-        StorageFileDto storageFile = userImageService.getUserImageData(userId);
+        StorageFileData storageFile = userImageService.getUserImageData(userId);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(storageFile.mediaType());
         headers.add(

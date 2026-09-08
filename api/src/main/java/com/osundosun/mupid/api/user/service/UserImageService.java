@@ -4,7 +4,7 @@ import java.io.IOException;
 
 import org.springframework.web.multipart.MultipartFile;
 
-import com.osundosun.mupid.api.storage.dto.StorageFileDto;
+import com.osundosun.mupid.api.storage.dto.StorageFileData;
 
 public interface UserImageService {
     
@@ -12,6 +12,6 @@ public interface UserImageService {
 
     void deleteUserImage(int userId);
 
-    StorageFileDto getUserImageData(int userId);
+    StorageFileData getUserImageData(int userId);
     
 }

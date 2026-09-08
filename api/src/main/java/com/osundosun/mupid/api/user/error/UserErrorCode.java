@@ -14,15 +14,20 @@ public enum UserErrorCode implements ErrorCode {
     /**
      * 이메일 인증이 필요합니다.
      */
-    EmailVerificationRequired(HttpStatus.BAD_REQUEST, "MUPUD_EMAIL_VERIFICATION_REQUIRED", "이메일 인증이 필요합니다."),
+    EMAIL_VERIFICATION_REQUIRED(HttpStatus.BAD_REQUEST, "이메일 인증이 필요합니다."),
+
+    /**
+     * 이메일이 중복되었습니다.
+     */
+    DUPLICATE_EMAIL(HttpStatus.BAD_REQUEST, "이메일이 중복되었습니다."),
     
     /**
      * 요청한 유저를 찾을 수 없습니다.
      */
-    UserNotFound(HttpStatus.NOT_FOUND, "MUPID_USER_NOT_FOUND", "요청한 유저를 찾을 수 없습니다.");
+    USER_NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 유저를 찾을 수 없습니다.");
 
+    
     private final HttpStatus status;
-    private final String code;
     private final String message;
 
 }

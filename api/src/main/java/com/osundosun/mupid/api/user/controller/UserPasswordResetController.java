@@ -35,13 +35,15 @@ public class UserPasswordResetController {
     public ResponseEntity<BaseResponse<UserPasswordResetResponse>> sendReseteMail(
         @Valid @RequestBody UserPasswordResetRequest request
     ) {
-        User user = userService.getUserByEmail(request.email());
+        User user = userService
+                        .getUserByEmail(request.email())
+                        .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
         if (user == null) {
-            throw new BusinessException(UserErrorCode.UserNotFound);
+            throw new BusinessException(UserErrorCode.USER_NOT_FOUND);
         }
         int verificationId = emailService.sendVerification(
             request.email(),
-            EmailVerificationPurpose.PasswordReset,
+            EmailVerificationPurpose.PW_RESET,
             user
         );
         return ResponseEntity.ok(BaseResponse.of(
@@ -58,7 +60,7 @@ public class UserPasswordResetController {
         EmailVerification verification = emailService.getVerification(request.verificationId());
         User user = verification.getUser();
         if (user == null) {
-            throw new BusinessException(UserErrorCode.UserNotFound);
+            throw new BusinessException(UserErrorCode.USER_NOT_FOUND);
         }
         UserUpdateRequest updateDto = new UserUpdateRequest(request.password(), null, null, null);
         user = userService.updateUser(user.getUserId(), updateDto);
