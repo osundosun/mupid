@@ -44,7 +44,14 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
       return { tracks: structuredClone(tracks), preferences };
     },
     async savePreferences(value) { storage.setItem(preferencesKey, JSON.stringify(value)); },
-    login: unavailable,
+    // 공개 체험 전용 계정이다. 서버 회원이나 실제 인증 토큰으로 취급하지 않는다.
+    async login({ email, password }) {
+      if (email.trim().toLowerCase() !== 'demo@naver.com' || password !== '1234') {
+        throw new Error('데모 이메일 또는 비밀번호를 확인해 주세요.');
+      }
+      const { preferences } = await this.bootstrap();
+      return { kind: 'demo', userId: -1, nickname: '데모', onboardingSubmittedAt: preferences.onboardingSubmittedAt };
+    },
     async logout() {},
     signup: unavailable,
     requestEmailVerification: unavailable,

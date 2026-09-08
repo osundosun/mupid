@@ -81,10 +81,11 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
             try {
               await m.signInDemo(name, passwordValue);
               form.current?.reset(); setName('');
-            } catch { setMessage(mupidService.mode === 'demo' ? '로그인 서버 연결 준비 중이에요. 서버 연결 후 로그인하고 취향을 설정할 수 있어요.' : '로그인하지 못했어요. 입력 정보와 연결 상태를 확인해 주세요.'); }
+            } catch { setMessage(mupidService.mode === 'demo' ? '데모 이메일 또는 비밀번호를 확인해 주세요.' : '로그인하지 못했어요. 입력 정보와 연결 상태를 확인해 주세요.'); }
             finally { setBusy(false); }
           }}
         >
+          {!signup && mupidService.mode === 'demo' && <p className="comment-local-note">체험 계정: demo@naver.com / 1234<br />실제 회원 계정이 아니며 활동은 이 브라우저에만 저장돼요.</p>}
           <label htmlFor="demo-login-name" className="field-label">
             이메일
           </label>

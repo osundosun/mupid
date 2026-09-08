@@ -111,7 +111,7 @@ export function useMupid(bootstrap: Bootstrap) {
   }, [ready, onboardingSubmittedAt, nickname, moods, liked, ignored, history, moments, playlists]);
   const completeOnboarding = async (name: string, selectedMoods: string[]) => {
     // 저장이 성공하기 전에는 홈으로 이동하거나 완료 표시를 남기지 않는다.
-    if (sessionRef.current?.kind !== 'authenticated') throw new Error('로그인이 필요해요.');
+    if (!sessionRef.current) throw new Error('로그인이 필요해요.');
     if (!name.trim() || !selectedMoods.length) throw new Error('이름과 좋아하는 분위기를 선택해 주세요.');
     const submittedAt = new Date().toISOString();
     const value = { onboardingSubmittedAt: submittedAt, nickname: name.trim().slice(0, 20), moods: selectedMoods, liked, ignored, history, moments, playlists };
@@ -166,7 +166,7 @@ export function useMupid(bootstrap: Bootstrap) {
     // 기존 호출부 호환을 위해 이름은 유지했지만 데모 로그인 성공을 만들지 않는다.
     // API 어댑터에서 서버의 onboarding_submitted_at을 onboardingSubmittedAt으로 변환한다.
     const session = await mupidService.login({ email, password });
-    if (session.kind !== 'authenticated') throw new Error('실제 로그인이 필요해요.');
+    if (session.kind !== 'authenticated' && !(mupidService.mode === 'demo' && session.kind === 'demo' && session.userId === -1)) throw new Error('로그인이 필요해요.');
     sessionRef.current = session;
     const completedAt = session.onboardingSubmittedAt ?? null;
     onboardingRef.current = completedAt;

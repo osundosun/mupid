@@ -12,6 +12,15 @@ const memory = () => { const values = new Map(); return {
   getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key), values,
 }; };
 
+test('public demo account accepts only the configured credentials', async () => {
+  const service = createDemoService(memory());
+  const session = await service.login({ email:'demo@naver.com', password:'1234' });
+  assert.equal(session.kind, 'demo'); assert.equal(session.userId, -1);
+  assert.equal(session.onboardingSubmittedAt, null);
+  await assert.rejects(service.login({email:'demo@naver.com', password:'wrong'}));
+  await assert.rejects(service.login({email:'other@naver.com', password:'1234'}));
+});
+
 test('bootstrap returns independent demo snapshots', async () => {
   const service = createDemoService(memory());
   const first = await service.bootstrap(); first.tracks.length = 0; first.preferences.playlists.length = 0;

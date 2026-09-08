@@ -1,4 +1,4 @@
-.track-comments { margin-top:12px; text-align:left; }
+.track-comments { margin-top:12px; text-align:left; position:relative; }
 .comment-wave-surface { position:relative; }
 .wave-comment-markers { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); min-height:44px; gap:2px; border-top:1px solid #dce6f5; padding-top:5px; }
 .wave-comment-markers > div { display:flex; justify-content:center; }
@@ -37,3 +37,20 @@
 .comment-tools time { margin-right:auto; }
 .comment-delete { margin-top:14px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
 @media(max-width:767px) { .track-comments header { align-items:flex-start; gap:16px; } .track-comments form { padding:16px; } .comment-tools button { min-height:44px; } }
+
+/* 파형 위의 좌표는 유지하고 입력창만 겹쳐 띄워 주변 콘텐츠가 밀리지 않게 한다. */
+.track-comments form.wave-comment-composer {
+  position:absolute; z-index:30; top:78px;
+  width:min(320px, 100%); box-sizing:border-box;
+  left:clamp(0px, calc(var(--comment-anchor) - 160px), max(0px, calc(100% - 320px)));
+  padding:14px; margin:0; border-radius:16px; background:#fff;
+  box-shadow:0 12px 36px #425d9b30; border:1px solid #cfddf4;
+  animation:comment-bubble-in .16s ease-out;
+}
+.wave-comment-composer::before { content:''; position:absolute; top:-7px; left:24px; width:12px; height:12px; background:white; border-left:1px solid #cfddf4; border-top:1px solid #cfddf4; transform:rotate(45deg); }
+.track-comments .wave-comment-composer textarea { min-height:64px; max-height:120px; margin:10px 0; padding:10px; resize:none; line-height:1.4; }
+.track-comments .wave-comment-composer label { font-size:14px; gap:6px; }
+.track-comments .wave-comment-composer footer { gap:8px; }
+.wave-comment-composer .primary-button { min-height:40px; padding:8px 12px; font-size:14px; }
+@keyframes comment-bubble-in { from {opacity:0; transform:translateY(-5px) scale(.97);} to {opacity:1; transform:none;} }
+@media(prefers-reduced-motion:reduce) { .track-comments form.wave-comment-composer {animation:none;} }
