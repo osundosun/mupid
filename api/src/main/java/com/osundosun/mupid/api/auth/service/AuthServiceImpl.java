@@ -15,7 +15,6 @@ import com.osundosun.mupid.api.cache.enumerate.CacheKind;
 import com.osundosun.mupid.api.cache.service.CacheService;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.user.entity.User;
-import com.osundosun.mupid.api.user.error.UserErrorCode;
 import com.osundosun.mupid.api.user.service.UserService;
 
 import lombok.RequiredArgsConstructor;
