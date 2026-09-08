@@ -6,7 +6,11 @@ public interface ErrorCode {
     
     HttpStatus getStatus();
 
-    String getCode();
+    String name();
+
+    default String getCode() {
+        return "MUPID_%s".formatted(name());
+    }
     
     String getMessage();
 
