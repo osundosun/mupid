@@ -103,8 +103,6 @@ public class EmailServiceImpl implements EmailService {
                 .orElseThrow(() -> new BusinessException(EmailErrorCode.INVALID_VERIFICATION_ID));
         LocalDateTime verifiedAt = verification.getVerifiedAt();
 
-        System.out.println("debug : " + Duration.between(verifiedAt, now).toHours());
-
         return (
             verifiedAt != null &&
 
