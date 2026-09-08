@@ -23,6 +23,7 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
           if (typeof saved.onboardingSubmittedAt === 'string' && Number.isFinite(Date.parse(saved.onboardingSubmittedAt))) preferences.onboardingSubmittedAt = saved.onboardingSubmittedAt;
           if (typeof saved.nickname === 'string' && saved.nickname.trim()) preferences.nickname = saved.nickname.slice(0, 20);
           if (Array.isArray(saved.moods)) preferences.moods = saved.moods.filter((v: unknown) => typeof v === 'string');
+          if (Array.isArray(saved.genres)) preferences.genres = [...new Set(saved.genres.filter((v: unknown): v is string => typeof v === 'string' && tracks.some(t => t.genre === v)))];
           for (const key of ['liked', 'ignored', 'history'] as const) {
             if (Array.isArray(saved[key])) preferences[key] = saved[key].filter((id: unknown) => tracks.some(t => t.id === id));
           }
@@ -41,7 +42,10 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
           });
         }
       } catch { /* Recover using demo defaults; never clear the user's stored value here. */ }
-      return { tracks: structuredClone(tracks), preferences };
+      // 공개 데모 표시만 복원한다. 실제 회원 토큰이나 비밀번호는 저장하지 않는다.
+      let session: import('./contracts').AccountSession | null = null;
+      try { if (storage.getItem('mupid.demo-session.v1') === 'active') session = {kind: 'demo', userId: -1, nickname: preferences.nickname, onboardingSubmittedAt: preferences.onboardingSubmittedAt}; } catch {}
+      return { tracks: structuredClone(tracks), preferences, session };
     },
     async savePreferences(value) { storage.setItem(preferencesKey, JSON.stringify(value)); },
     // 공개 체험 전용 계정이다. 서버 회원이나 실제 인증 토큰으로 취급하지 않는다.
@@ -50,9 +54,10 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
         throw new Error('데모 이메일 또는 비밀번호를 확인해 주세요.');
       }
       const { preferences } = await this.bootstrap();
+      storage.setItem('mupid.demo-session.v1', 'active');
       return { kind: 'demo', userId: -1, nickname: '데모', onboardingSubmittedAt: preferences.onboardingSubmittedAt };
     },
-    async logout() {},
+    async logout() { storage.removeItem('mupid.demo-session.v1'); },
     signup: unavailable,
     requestEmailVerification: unavailable,
     async readPhoto() { const value = storage.getItem(photoKey); return value?.startsWith('data:image/jpeg;base64,') ? value : ''; },

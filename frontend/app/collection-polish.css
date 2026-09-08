@@ -91,6 +91,10 @@
 .mupid-shell.page-profile .main-content {
   padding-bottom: calc(var(--dock-height) + 48px);
 }
+.today-moments .today-moment-note { font-size:14px; line-height:1.6; color:#7185a7; margin:12px 0; }
+.today-moments .today-moment-time { color:#8b709c; font-variant-numeric:tabular-nums; }
+.today-moments .today-moment-reason { white-space:normal; line-height:1.5; margin-top:6px; }
+.today-moments .desktop-playlist-open { align-items:flex-start; }
 .queue-dialog .track-list { gap: 0; overflow-y: auto; min-height: 0; }
 .queue-dialog .track-row { padding: 12px 2px; border: 0; border-bottom: 1px solid #e2eaf5; border-radius: 0; background: transparent; gap: 12px; }
 .queue-dialog .track-row .album-art { width: 48px; height: 48px; flex-shrink: 0; border-radius: 12px; }
