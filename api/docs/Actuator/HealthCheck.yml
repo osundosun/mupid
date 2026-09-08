@@ -1,0 +1,47 @@
+info:
+  name: HealthCheck
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/actuator/health"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 정상
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "status": "UP"
+          }
+
+docs: |-
+  # 헬스체크
+
+  `GET /api/actuator/health` · 인증 불필요
+
+  Actuator 헬스 엔드포인트입니다. `application.yaml` 에서
+  `management.endpoint.health.show-details: never` 로 설정되어 있으므로
+  세부 컴포넌트 상태 없이 `status` 만 반환합니다.
+
+  `probes.enabled: true` 이므로 아래 경로도 사용할 수 있습니다.
+
+  - `GET /api/actuator/health/liveness`
+  - `GET /api/actuator/health/readiness`
+
+  DB(MySQL) 나 Redis 연결이 끊기면 `503` 과 `{"status":"DOWN"}` 이 반환됩니다.

@@ -16,6 +16,8 @@ spring:
       host: ${MUPID_REDIS_HOST}
       port: ${MUPID_REDIS_PORT}
       timeout: 3000ms
+  jackson:
+    property-naming-strategy: SNAKE_CASE
 
 management:
   endpoints:
@@ -31,3 +33,23 @@ management:
 
 jwt:
   secret: ${MUPID_JWT_SECRET}
+
+gmail:
+  client-id: ${MUPID_GMAIL_CLIENT_ID}
+  client-secret: ${MUPID_GMAIL_CLIENT_SECRET}
+  token: ${MUPID_GMAIL_TOKEN}
+  send-address: ${MUPID_GMAIL_SEND_ADDRESS}
+
+aws:
+  s3:
+    endpoint: ${MUPID_S3_ENDPOINT}
+    region: "SeaweedFS"
+    access-key: ${MUPID_S3_ACCESS_KEY}
+    secret-key: ${MUPID_S3_SECRET}
+    bucket-name: ${MUPID_S3_BUCKET}
+
+redis:
+  key-prefix: ${MUPID_REDIS_KEY_PREFIX}
+
+mupid-client:
+  website: ${MUPID_CLIENT_WEBSITE:}

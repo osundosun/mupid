@@ -1,0 +1,28 @@
+info:
+  name: Email
+  type: folder
+  seq: 4
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Email
+
+    회원가입용 이메일 인증입니다. 전부 `permitAll` 이라 액세스 토큰이 필요 없습니다.
+
+    | 엔드포인트 | 동작 |
+    | --- | --- |
+    | `GET /api/v1/mail/verification` | 인증 메일 발송 |
+    | `POST /api/v1/mail/verification` | 인증 코드 제출 |
+    | `GET /api/v1/mail/verification/{verificationId}` | 인증 유효 여부 확인 |
+
+    ## 주의: GET + 요청 본문
+
+    `EmailVerificationController.sendAddressVerificationMail` 은 `@GetMapping` 에
+    `@RequestBody` 를 함께 사용합니다. 그래서 인증 메일 발송은 **본문이 있는 GET
+    요청**입니다. 스펙상 권장되지 않는 형태지만 현재 서버 구현이 그렇습니다.
+
+    비밀번호 재설정 메일(`User / 비밀번호 재설정 메일 발송`)도 같은 구조입니다.

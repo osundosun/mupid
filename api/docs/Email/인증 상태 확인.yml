@@ -1,0 +1,53 @@
+info:
+  name: 인증 상태 확인
+  type: http
+  seq: 3
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/mail/verification/{{VERIFICATION_ID}}"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 유효한 인증
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "is_valid": true
+            }
+          }
+
+docs: |-
+  # 인증 상태 확인
+
+  `GET /api/v1/mail/verification/{verificationId}` · 인증 불필요
+
+  `verificationId` 로 해당 이메일 인증이 아직 유효한지 확인합니다.
+
+  ## 응답
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `data.is_valid` | boolean | 인증이 유효하면 `true` |
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_VERIFICATION_ID` | 404 | 해당 인증 건이 없음 |

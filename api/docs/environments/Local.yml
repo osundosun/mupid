@@ -1,0 +1,18 @@
+name: Local
+
+variables:
+  - name: BASE_URL
+    value: http://localhost:8800
+    description: API 서버 주소
+  - name: ACCESS_TOKEN
+    value: ""
+    description: 로그인 / 액세스 토큰 재발급 응답에서 자동 저장됩니다.
+  - name: REFRESH_TOKEN
+    value: ""
+    description: 로그인 응답의 Set-Cookie(refresh_token) 값을 직접 붙여넣으세요.
+  - name: VERIFICATION_ID
+    value: ""
+    description: 인증 메일 발송 응답에서 자동 저장됩니다.
+  - name: USER_ID
+    value: ""
+    description: 로그인 응답에서 자동 저장됩니다.

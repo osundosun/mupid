@@ -1,0 +1,101 @@
+info:
+  name: 비밀번호 재설정 메일 발송
+  type: http
+  seq: 8
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/user/reset"
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "email": "{{PW_RESET_EMAIL}}"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: PW_RESET_EMAIL
+      value: yejunjung98@gmail.com
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.verification_id
+        method: jsonq
+      variable:
+        name: VERIFICATION_ID
+        scope: runtime
+      description: 발급된 인증 ID 를 VERIFICATION_ID 변수에 저장합니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 발송 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "인증 메일이 발송되었습니다.",
+            "data": {
+              "verification_id": 2
+            }
+          }
+  - name: 404 가입되지 않은 이메일
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_USER_NOT_FOUND",
+            "message": "요청한 유저를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 비밀번호 재설정 메일 발송
+
+  `GET /api/v1/user/reset` · 인증 불필요
+
+  가입된 이메일로 비밀번호 재설정 인증 메일(`PW_RESET`)을 발송합니다.
+
+  > ⚠️ 서버가 `@GetMapping` + `@RequestBody` 조합으로 구현되어 있어
+  > **본문이 있는 GET 요청**입니다.
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `email` | string | ✅ | 가입된 이메일 |
+
+  ## 응답
+
+  `data.verification_id` 를 `비밀번호 재설정 코드 제출` 에서 사용합니다.
+  응답을 받으면 `VERIFICATION_ID` 변수가 자동으로 채워집니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_USER_NOT_FOUND` | 404 | 가입되지 않았거나 탈퇴한 이메일 |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 이메일 형식 오류 |
