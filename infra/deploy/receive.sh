@@ -31,8 +31,14 @@ with tarfile.open(sys.argv[1], 'r:gz') as archive:
     if len(manifest) != 1 or manifest[0].get('RepoTags') != [sys.argv[2]]:
         raise SystemExit('Archive must contain exactly the requested image tag')
 PY
-docker load -i "$temporary" >/dev/null
 image="mupid-api:$release"
+# Validate interpolation without printing resolved secrets or replacing running containers.
+# Server configuration must be installed separately; CI only uploads the image.
+if ! MUPID_API_IMAGE="$image" docker compose --env-file "$root/.env" -f "$root/config/compose.yml" config --quiet; then
+  echo 'DEPLOY_CONFIG_INVALID: fix server configuration before retrying; running API preserved' >&2
+  exit 78
+fi
+docker load -i "$temporary" >/dev/null
 docker image inspect "$image" >/dev/null
 mv "$temporary" "$directory/image.tar.gz"
 printf '%s\n' "$checksum" > "$directory/image.sha256"
