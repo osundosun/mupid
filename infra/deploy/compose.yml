@@ -49,6 +49,12 @@ services:
       MUPID_S3_SECRET: ${MUPID_S3_SECRET:?required}
       MUPID_S3_BUCKET: ${MUPID_S3_BUCKET:?required}
       MUPID_CLIENT_WEBSITE: ${MUPID_CLIENT_WEBSITE:?required}
+      # application.yaml 이 기본값 없이 참조하므로 없으면 기동 자체가 실패한다.
+      # 같은 호스트의 clickhouse 컨테이너를 가리킨다(컨테이너 네트워크 내부).
+      # 커넥션 풀은 지연 생성이라 ClickHouse 가 아직 없어도 API 는 정상 기동한다.
+      MUPID_CLICKHOUSE_URL: ${MUPID_CLICKHOUSE_URL:-jdbc:clickhouse://clickhouse:8123/default}
+      MUPID_CLICKHOUSE_USER: ${MUPID_CLICKHOUSE_USER:-mupid}
+      MUPID_CLICKHOUSE_PASSWORD: ${MUPID_CLICKHOUSE_PASSWORD:-}
     networks: [frontend, backend]
     depends_on:
       mysql: {condition: service_healthy}
@@ -83,9 +89,197 @@ services:
       interval: 10s
       timeout: 3s
       retries: 10
+  # ---------------------------------------------------------------------------
+  # 분석 스택 (ClickHouse / Kafka)
+  #
+  # 서버 2대에 이 파일을 그대로 올리고 환경변수로 역할만 나눈다.
+  #   서버 A(Spring)  : CH_SHARD=01  CH_REPLICA=ch1   + Keeper
+  #   서버 B(FastAPI) : CH_SHARD=02  CH_REPLICA=ch2   + Kafka
+  #
+  # 기동은 서비스를 직접 지정한다. profile 이 붙은 서비스를 이름으로 지정하면 compose 가
+  # 그 profile 만 켜고 나머지(api/nginx/mysql/redis)는 건드리지 않는다.
+  #   서버 A: docker compose up -d clickhouse clickhouse-keeper
+  #   서버 B: docker compose up -d clickhouse kafka
+  #
+  # 반대로 COMPOSE_PROFILES 를 주지 않고 이름도 지정하지 않으면 분석 스택은 하나도
+  # 뜨지 않는다. 즉 기존 배포(receive.sh 의 api/nginx 재기동)는 영향을 받지 않는다.
+  #
+  # api 에 depends_on 을 걸지 않는 이유: 분석 DB 가 죽어도 API 배포와 서비스는
+  # 계속되어야 한다. actuator health 에서 ClickHouse 를 뺀 것과 같은 이유다.
+  #
+  # [중요] Docker bridge 네트워크는 호스트를 넘지 못한다. 두 서버가 서로를 찾으려면
+  # 아래 포트를 호스트에 게시하고 보안그룹에서 "상대 서버 IP 에만" 열어야 한다.
+  # 인터넷에 노출하면 안 된다.
+  #   ClickHouse 9000(native, 분산쿼리) / 9009(interserver, 파트 복제)
+  #   Keeper     9181
+  #   Kafka      9092
+  #
+  # 설정 파일은 api/clickhouse/{server,users,keeper,init,kafka} 를 서버의
+  # /srv/mupid/config/clickhouse/ 로 복사해 둔다 (nginx.conf 와 같은 위치 규칙).
+  #
+  # [주의] 아래 변수들에 ${VAR:?...} (필수 표시)를 쓰지 않았다. compose 는 profile 로
+  # 걸러내기 전에 파일 전체를 치환하므로, 필수로 걸면 analytics 를 안 쓰는 배포에서도
+  # receive.sh 의 `up -d api` 가 interpolation 오류로 실패한다. 대신 빈 기본값을 둔다.
+  # 그래서 값을 빠뜨려도 compose 는 통과하니, 올린 뒤 반드시 확인할 것:
+  #   docker exec mupid-clickhouse clickhouse-client -q "SELECT * FROM system.macros"
+  # shard/replica 가 비어 있으면 두 노드가 같은 Keeper 경로를 잡아 복제가 깨진다.
+  # ---------------------------------------------------------------------------
+  clickhouse:
+    profiles: [analytics]
+    image: clickhouse/clickhouse-server:${MUPID_CLICKHOUSE_VERSION:-25.3}
+    container_name: mupid-clickhouse
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: ${MUPID_CLICKHOUSE_MEM_LIMIT:-4g}
+    environment:
+      TZ: Asia/Seoul
+      # 이 서버의 정체성. 서버 A=01/ch1, 서버 B=02/ch2.
+      CH_SHARD: ${CH_SHARD:-}
+      CH_REPLICA: ${CH_REPLICA:-}
+      # 상대 노드가 파트를 가져올 때 접속할 "이 서버"의 주소.
+      CH_INTERSERVER_HOST: ${CH_INTERSERVER_HOST:-}
+      # 두 서버 모두 같은 값을 준다. 컨테이너 이름이 아니라 실제 주소여야 한다.
+      CH_HOST_1: ${CH_HOST_1:-}
+      CH_HOST_2: ${CH_HOST_2:-}
+      CH_KEEPER_HOST: ${CH_KEEPER_HOST:-}
+      # 0 이면 ClickHouse 가 호스트 RAM 비율로 자동 계산한다. mem_limit 를 걸었으므로
+      # 보통 0 으로 두면 되고, 다른 프로세스와 더 나눠 쓰면 바이트로 명시한다.
+      CH_MAX_SERVER_MEMORY: ${CH_MAX_SERVER_MEMORY:-0}
+      MUPID_CLICKHOUSE_PASSWORD: ${MUPID_CLICKHOUSE_PASSWORD:-}
+    # ddl.sql 의 kafka_broker_list 가 'kafka1:9092,kafka2:9092' 로 고정이라
+    # 두 이름을 Kafka 가 뜬 서버로 해석시킨다. DDL 을 수정하지 않기 위한 장치다.
+    extra_hosts:
+      - 'kafka1:${MUPID_KAFKA_HOST:-127.0.0.1}'
+      - 'kafka2:${MUPID_KAFKA_HOST}'
+    volumes:
+      - /srv/mupid/config/clickhouse/server/00-cluster.xml:/etc/clickhouse-server/config.d/00-cluster.xml:ro
+      - /srv/mupid/config/clickhouse/server/01-keeper.xml:/etc/clickhouse-server/config.d/01-keeper.xml:ro
+      - /srv/mupid/config/clickhouse/server/02-server.xml:/etc/clickhouse-server/config.d/02-server.xml:ro
+      - /srv/mupid/config/clickhouse/server/10-macros.xml:/etc/clickhouse-server/config.d/10-macros.xml:ro
+      - /srv/mupid/config/clickhouse/users/00-profile.xml:/etc/clickhouse-server/users.d/00-profile.xml:ro
+      - /srv/mupid/config/clickhouse/users/10-mupid-user.xml:/etc/clickhouse-server/users.d/10-mupid-user.xml:ro
+      - clickhouse-data:/var/lib/clickhouse
+    ports:
+      - '${MUPID_CLICKHOUSE_NATIVE_BIND:-9000}:9000'
+      - '${MUPID_CLICKHOUSE_INTERSERVER_BIND:-9009}:9009'
+    networks: [backend]
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      test: [CMD, clickhouse-client, --host, 127.0.0.1, --query, 'SELECT 1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # 서버 A 에서만 (COMPOSE_PROFILES 에 keeper 포함).
+  # 단일 노드라 쿼럼이 없다. 이 컨테이너가 죽으면 Replicated 테이블이 읽기 전용이 된다.
+  # 여유가 생기면 3 노드로 늘리고 keeper_config.xml 의 raft_configuration 을 확장할 것.
+  clickhouse-keeper:
+    profiles: [keeper]
+    image: clickhouse/clickhouse-keeper:${MUPID_CLICKHOUSE_VERSION:-25.3}
+    container_name: mupid-ch-keeper
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      TZ: Asia/Seoul
+    volumes:
+      - /srv/mupid/config/clickhouse/keeper/keeper_config.xml:/etc/clickhouse-keeper/keeper_config.xml:ro
+      - ch-keeper-data:/var/lib/clickhouse-keeper
+    ports:
+      - '${MUPID_KEEPER_BIND:-9181}:9181'
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, 'echo ruok | nc -w 2 127.0.0.1 9181 | grep -q imok']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # 서버 B 에서만 (COMPOSE_PROFILES 에 kafka 포함).
+  # 브로커 1대다. 개수는 프로듀서(Spring/FastAPI) 대수나 ClickHouse 노드 수와 무관하다.
+  # 2대는 KRaft 쿼럼이 2가 되어 장애를 한 대도 못 견디므로 의미가 없다. HA 는 3대부터.
+  kafka:
+    profiles: [kafka]
+    image: apache/kafka:${MUPID_KAFKA_VERSION:-3.9.1}
+    container_name: mupid-kafka
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: ${MUPID_KAFKA_MEM_LIMIT:-2g}
+    environment:
+      TZ: Asia/Seoul
+      CLUSTER_ID: ${MUPID_KAFKA_CLUSTER_ID:-}
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@127.0.0.1:9093
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093
+      # 컨테이너 이름이 아니라 호스트 주소를 광고해야 다른 서버의 ClickHouse 가 붙는다.
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://${MUPID_KAFKA_HOST:-127.0.0.1}:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # 브로커가 1대이므로 내부 토픽 복제본도 1이어야 한다.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # 토픽은 kafka-init 이 파티션 수까지 정해서 만든다.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+    volumes: [kafka-data:/var/lib/kafka/data]
+    ports:
+      - '${MUPID_KAFKA_BIND:-9092}:9092'
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, '/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1']
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # 1회성 초기화. 자동 실행되지 않는다. 클러스터를 처음 올린 뒤 수동으로:
+  #   서버 B: docker compose --profile init run --rm kafka-init
+  #   서버 A: docker compose --profile init run --rm clickhouse-init
+  # 둘 다 여러 번 실행해도 안전하다(토픽/DDL 모두 IF NOT EXISTS).
+  # ---------------------------------------------------------------------------
+  kafka-init:
+    profiles: [init]
+    image: apache/kafka:${MUPID_KAFKA_VERSION:-3.9.1}
+    container_name: mupid-kafka-init
+    restart: 'no'
+    environment:
+      TZ: Asia/Seoul
+      BOOTSTRAP: ${MUPID_KAFKA_HOST:-127.0.0.1}:9092
+      TOPIC: ${MUPID_KAFKA_TOPIC:-mupid.listen.events}
+      PARTITIONS: '6'
+      REPLICATION: '1'
+    volumes:
+      - /srv/mupid/config/clickhouse/kafka/create-topics.sh:/create-topics.sh:ro
+    networks: [backend]
+    entrypoint: [/bin/bash, /create-topics.sh]
+
+  clickhouse-init:
+    profiles: [init]
+    image: clickhouse/clickhouse-server:${MUPID_CLICKHOUSE_VERSION:-25.3}
+    container_name: mupid-ch-init
+    restart: 'no'
+    environment:
+      TZ: Asia/Seoul
+      CH_NODE_1: ${CH_HOST_1:-}
+      CH_NODE_2: ${CH_HOST_2:-}
+      MUPID_CLICKHOUSE_USER: ${MUPID_CLICKHOUSE_USER:-mupid}
+      MUPID_CLICKHOUSE_PASSWORD: ${MUPID_CLICKHOUSE_PASSWORD:-}
+    volumes:
+      - /srv/mupid/config/clickhouse/init:/init:ro
+    networks: [backend]
+    entrypoint: [/bin/bash, /init/apply-ddl.sh]
+
 networks:
   frontend: {external: true, name: mupid-frontend}
   backend: {external: true, name: mupid-backend}
 volumes:
   mysql-data: {external: true, name: mupid-mysql-data}
   redis-data: {external: true, name: mupid-redis-data}
+  # 서버에서 미리 만들어 둔다: docker volume create mupid-clickhouse-data 등
+  clickhouse-data: {external: true, name: mupid-clickhouse-data}
+  ch-keeper-data: {external: true, name: mupid-ch-keeper-data}
+  kafka-data: {external: true, name: mupid-kafka-data}
