@@ -116,7 +116,9 @@ q "$CH1" "INSERT INTO track_sections
     (1001,'v1',1,'s1001-intro','INTRO',0,30000,15000),
     (1001,'v1',2,'s1001-hook','HOOK',30000,60000,45000),
     (2002,'v1',1,'s2002-intro','INTRO',0,25000,10000)" >/dev/null
-sections="SELECT uniqExact(section_uid) FROM track_sections_local WHERE analysis_version='v1'"
+# 수동 테스트로 다른 트랙 구간을 넣어도 깨지지 않도록 이 스크립트가 넣은 것만 센다.
+sections="SELECT uniqExact(section_uid) FROM track_sections_local
+          WHERE analysis_version = 'v1' AND track_id IN (1001, 2002)"
 check "ch-01 구간 수" "$(q "$CH1" "$sections")" "3"
 check "ch-02 구간 수 (복제됨)" "$(q "$CH2" "$sections")" "3"
 
