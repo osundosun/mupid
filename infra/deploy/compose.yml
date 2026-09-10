@@ -31,13 +31,24 @@ services:
     logging: *logging
     mem_limit: 2g
     environment:
-      MUPID_MYSQL_USER: ${MUPID_MYSQL_USER}
-      MUPID_MYSQL_PASSWORD: ${MUPID_MYSQL_PASSWORD}
-      MUPID_JWT_SECRET: ${MUPID_JWT_SECRET}
+      MUPID_MYSQL_USER: ${MUPID_MYSQL_USER:?required}
+      MUPID_MYSQL_PASSWORD: ${MUPID_MYSQL_PASSWORD:?required}
+      MUPID_JWT_SECRET: ${MUPID_JWT_SECRET:?required}
       MUPID_PORT: '8800'
       MUPID_MYSQL_URL: jdbc:mysql://mysql:3306/mupid?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&serverTimezone=Asia/Seoul
       MUPID_REDIS_HOST: redis
       MUPID_REDIS_PORT: '6379'
+      MUPID_REDIS_KEY_PREFIX: ${MUPID_REDIS_KEY_PREFIX:?required}
+      MUPID_GMAIL_CLIENT_ID: ${MUPID_GMAIL_CLIENT_ID:?required}
+      MUPID_GMAIL_CLIENT_SECRET: ${MUPID_GMAIL_CLIENT_SECRET:?required}
+      MUPID_GMAIL_TOKEN: ${MUPID_GMAIL_TOKEN:?required}
+      MUPID_GMAIL_SEND_ADDRESS: ${MUPID_GMAIL_SEND_ADDRESS:?required}
+      # Empty endpoint selects the SDK default; confirm the application's region before using AWS.
+      MUPID_S3_ENDPOINT: ${MUPID_S3_ENDPOINT:-}
+      MUPID_S3_ACCESS_KEY: ${MUPID_S3_ACCESS_KEY:?required}
+      MUPID_S3_SECRET: ${MUPID_S3_SECRET:?required}
+      MUPID_S3_BUCKET: ${MUPID_S3_BUCKET:?required}
+      MUPID_CLIENT_WEBSITE: ${MUPID_CLIENT_WEBSITE:?required}
       # application.yaml 이 기본값 없이 참조하므로 없으면 기동 자체가 실패한다.
       # 같은 호스트의 clickhouse 컨테이너를 가리킨다(컨테이너 네트워크 내부).
       # 커넥션 풀은 지연 생성이라 ClickHouse 가 아직 없어도 API 는 정상 기동한다.
