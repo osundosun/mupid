@@ -1,0 +1,15 @@
+{
+  "bitrate": "128k",
+  "segment_time": 6,
+  "frame_duration": 20,
+  "compression_level": 10,
+  "vbr": "on",
+  "application": "audio",
+  "rtp_payload_type": 111,
+  "rtp_clock_rate": 48000,
+  "max_workers": 0,
+  "ffmpeg_threads": 2,
+  "input_dir": "./input",
+  "output_dir": "./output",
+  "processed_log": "./processed.json"
+}
