@@ -38,6 +38,30 @@ if ! MUPID_API_IMAGE="$image" docker compose --env-file "$root/.env" -f "$root/c
   echo 'DEPLOY_CONFIG_INVALID: fix server configuration before retrying; running API preserved' >&2
   exit 78
 fi
+if ! MUPID_API_IMAGE="$image" python3 - "$root" <<'PY'
+import json, os, pathlib, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+try:
+    result = subprocess.run(['docker', 'compose', '--env-file', str(root / '.env'),
+        '-f', str(root / 'config/compose.yml'), 'config', '--format', 'json'],
+        capture_output=True, text=True, check=True, timeout=30)
+    values = json.loads(result.stdout)['services']['api']['environment']
+    if values['MUPID_MYSQL_USER'].lower() == 'root':
+        print('DEPLOY_DB_ADMIN_ACCOUNT: configure the application DB account', file=sys.stderr)
+        sys.exit(1)
+    result = subprocess.run(['docker', 'exec', '-e', 'MYSQL_PWD', 'mupid-mysql',
+        'mysql', '-hmysql', '-u' + values['MUPID_MYSQL_USER'], 'mupid', '-N', '-e', 'SELECT 1'],
+        env=dict(os.environ, MYSQL_PWD=values['MUPID_MYSQL_PASSWORD']),
+        capture_output=True, timeout=15)
+    if result.returncode:
+        sys.exit(1)
+except (subprocess.SubprocessError, KeyError, ValueError, OSError):
+    sys.exit(1)
+PY
+then
+  echo 'DEPLOY_DB_UNREACHABLE: check application DB credentials/connectivity; running API preserved' >&2
+  exit 78
+fi
 docker load -i "$temporary" >/dev/null
 docker image inspect "$image" >/dev/null
 mv "$temporary" "$directory/image.tar.gz"
@@ -47,6 +71,12 @@ cp -a "$root/config/." "$directory/config-snapshot/"
 previous=$(cat "$root/current-image")
 [[ $previous =~ ^mupid-api:([0-9a-f]{40}|bootstrap)$ ]] || exit 65
 if [[ $previous == "$image" ]]; then
+  # A recorded version is not proof that the current container is healthy.
+  running=$(docker inspect --format '{{.Config.Image}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' mupid-api 2>/dev/null) || running=''
+  if [[ $running != "$image running healthy" ]] || ! curl --fail --silent --show-error --max-time 15 --resolve j15a204.p.ssafy.io:443:127.0.0.1 https://j15a204.p.ssafy.io/api/actuator/health | grep -q '"status":"UP"'; then
+    echo 'SAME_RELEASE_UNHEALTHY: recorded version is not healthy; operator recovery required' >&2
+    exit 1
+  fi
   echo "ALREADY_DEPLOYED $image"
   exit 0
 fi

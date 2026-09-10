@@ -106,6 +106,8 @@ Certbot webroot /srv/mupid/acme, 갱신 후 Nginx reload hook. UFW는 active이�
 
 ## 자원 현황 수집 (09/09 추가, 서버 미설치)
 
+09/10 갱신: 자원 보고 도구를 서버에 설치했다. 배포 스크립트의 DB 접속 검사·root 사용 방지·같은 버전의 실제 상태 검사를 설치했으며, 스토리지 검사 도구는 `sudo /usr/local/sbin/mupid-verify-storage --read-only`로 기존 버킷 접근만 확인할 수 있다. DB 인증은 해결됐지만 사용자 지시에 따라 백엔드 재배포는 실행하지 않았다. 최신 내역은 WORKLOG-2026-09-10.md를 따른다.
+
 관리자가 검토한 infra/deploy/resource-report.sh를 /usr/local/sbin/mupid-resource-report에 root 소유 755로 설치한 뒤 실행한다.
 
 ```bash
