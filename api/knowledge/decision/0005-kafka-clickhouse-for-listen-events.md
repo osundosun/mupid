@@ -1,6 +1,6 @@
 # 0005. 청취 이벤트는 Kafka → ClickHouse 로 적재한다
 
-**상태** 채택 · 인프라 구축 완료, 프로듀서 미구현
+**상태** 채택 · 구현 완료
 
 ## 맥락
 
@@ -20,7 +20,7 @@
 - 이벤트 적재가 API 응답 경로에서 분리된다. 분석 쿼리가 서비스 DB 를 흔들지 않는다.
 - 운영해야 할 것이 늘었다 — Kafka 2대, ClickHouse 클러스터, Keeper. 로컬 개발에서도 이 스택을 띄워야 분석 경로를 검증할 수 있다.
 - **CI 가 이 영역을 전혀 검증하지 않는다.** 스키마나 XML 을 고치면 `api/clickhouse/verify.sh` 를 직접 돌려야 한다.
-- 이벤트를 발행하는 프로듀서가 아직 저장소에 없다. 현재 데이터는 `verify.sh` 의 수동 INSERT 뿐이다.
+- 이벤트를 발행하는 프로듀서는 나중에 API 안에 만들었다 → [0014](0014-event-collector-in-api.md).
 - 식별자 타입은 MySQL 을 기준으로 맞춘다. `user_id`·`track_id` 모두 `UInt32` 다 (`users.user_id` 가 `Integer`). → [domain/listening-events.md](../domain/listening-events.md)
 
 ## 근거

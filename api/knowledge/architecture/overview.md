@@ -78,7 +78,7 @@ api:8800  (server.port = ${MUPID_PORT:8800})
 
 ## 애플리케이션 내부 구조
 
-패키지는 레이어가 아니라 **도메인**으로 먼저 나눈다 — `auth`, `user`, `email`, `storage`, `cache`, `analytics`, `common`, `utils`. 도메인을 넘을 때는 서비스 인터페이스만 호출한다.
+패키지는 레이어가 아니라 **도메인**으로 먼저 나눈다 — `auth`, `user`, `email`, `storage`, `cache`, `analytics`, `event`, `common`, `utils`. 도메인을 넘을 때는 서비스 인터페이스만 호출한다.
 
 ```
 auth ──► user (UserService)          로그인 시 회원 조회
@@ -88,6 +88,8 @@ user ──► email (EmailService)        가입/초기화 인증 메일
 email ──► common/gmail (GmailProvider)
 storage ──► S3Client (storage/config/StorageConfig)
 analytics ──► clickHouseJdbcTemplate 빈만 등록. 사용하는 코드는 아직 없다
+event ──► cache (CacheService)      event_id 멱등 처리
+      ──► KafkaTemplate             이벤트 발행 (event/config/EventKafkaConfig)
 ```
 
 예외는 `auth/provider/AuthProvider` 하나로, 인증 요청마다 `UserRepository` 를 직접 쓴다.
@@ -100,7 +102,7 @@ analytics ──► clickHouseJdbcTemplate 빈만 등록. 사용하는 코드는
 @EnableJpaAuditing
 ```
 
-`@ConfigurationPropertiesScan` 이 `StorageProperties` · `ClickHouseProperties` · `GmailProperties` 를 자동 등록하므로 프로퍼티 record 에 `@Component` 를 붙이지 않는다. `@EnableJpaAuditing` 은 엔티티의 `@CreatedDate` / `@LastModifiedDate` 를 위한 것이다. 설정 클래스는 "그 기술을 쓰는 도메인 아래"에 두고(`storage/config`, `analytics/config`), 여러 도메인이 공유하는 것만 `common/config` 로 올린다(`SecurityConfig`, `JdbcTemplateConfig`).
+`@ConfigurationPropertiesScan` 이 `StorageProperties` · `ClickHouseProperties` · `GmailProperties` · `EventProperties` 를 자동 등록하므로 프로퍼티 record 에 `@Component` 를 붙이지 않는다. `@EnableJpaAuditing` 은 엔티티의 `@CreatedDate` / `@LastModifiedDate` 를 위한 것이다. 설정 클래스는 "그 기술을 쓰는 도메인 아래"에 두고(`storage/config`, `analytics/config`), 여러 도메인이 공유하는 것만 `common/config` 로 올린다(`SecurityConfig`, `JdbcTemplateConfig`).
 
 ### JdbcTemplate 이 두 개인 이유
 
@@ -116,7 +118,8 @@ analytics ──► clickHouseJdbcTemplate 빈만 등록. 사용하는 코드는
 | 파일 바이트 | S3 (`aws.s3.bucket-name`) | `StorageServiceImpl` + `S3Client` | 메타는 MySQL, 실물은 S3 |
 | 차단 토큰 | Redis | `CacheServiceImpl` | 키 `block:token:<토큰>` |
 | 인증 메일 | Gmail API | `GmailProvider` | OAuth refresh token 방식 |
-| 청취 이벤트 · 구간 시그널 | ClickHouse | (미구현) | 적재는 Kafka 경로로만 |
+| 청취 이벤트 · 구간 시그널 | ClickHouse | 쓰기 `EventServiceImpl` → Kafka, 읽기 (미구현) | Spring 은 발행만 한다. 조회 코드는 아직 없다 |
+| 받은 이벤트 ID | Redis | `CacheServiceImpl` | 키 `event:id:<UUID>`, TTL 10분. 재시도 중복 차단용 |
 
 리포지토리는 세 개 모두 `JpaRepository<T, Integer>` 이고 파생 쿼리 메서드만 쓴다. 트랜잭션 경계는 `*ServiceImpl` 클래스 레벨 `@Transactional` 이며, **수정은 `save()` 없이 더티 체킹에 의존**한다.
 
@@ -124,10 +127,13 @@ MySQL 스키마의 기준은 JPA 엔티티 매핑이고, `ddl-auto` 는 로컬·
 
 ## 분석 파이프라인
 
-Spring 은 이 경로에 참여하지 않는다. `api/src` 전체에 `kafka` 문자열이 0건이고 Kafka 클라이언트 의존성도 없다. 현재 이벤트를 넣는 경로는 `api/clickhouse/verify.sh` 와 수동 `kafka-console-producer.sh` 뿐이다.
+이벤트를 발행하는 쪽은 `event` 도메인이다. `POST /api/v1/events` 가 배치를 받아 검증·멱등 처리한 뒤 Kafka 로 넘긴다 → [decision/0014](../decision/0014-event-collector-in-api.md). 컨슈머는 ClickHouse 의 Kafka 엔진이라 애플리케이션에는 프로듀서만 있다.
 
 ```
-프로듀서 (미구현)
+FE 추적 SDK  frontend/lib/analytics/
+  │ POST /api/v1/events  (JWT, 배치 20건)
+  ▼
+event 도메인                      user_id 확정 · 값 검증 · event_id 멱등(Redis)
   │ JSONEachRow
   ▼
 Kafka  mupid.listen.events        파티션 6, 복제 1
@@ -136,10 +142,12 @@ kafka_listen_events               Kafka 엔진, ON CLUSTER mupid
                                   노드당 kafka_num_consumers=3 × 2노드 = 컨슈머 6
   ▼  mv_kafka_to_events           toUUIDOrZero / parseDateTime64BestEffort
 listen_events_local               ReplicatedReplacingMergeTree, 경로에 {shard}
-  ▼  mv_user_section_signals      dictGet(dict_track_sections, ...)
-user_section_signals_local        ReplicatedMergeTree
+  ├▼ mv_user_section_signals      dictGet(dict_track_sections, ...)
+  │  user_section_signals_local   ReplicatedMergeTree
+  └▼ mv_play_section_coverage     PLAY_PROGRESS 의 [from_ms, position_ms) 를 구간 경계로 분할
+     play_section_coverage_local  ReplicatedSummingMergeTree(listened_ms)
 
-play_section_coverage_local / rec_impressions_local 은 이 연쇄 밖. 직접 INSERT 를 받는다.
+rec_impressions_local 만 이 연쇄 밖. 직접 INSERT 를 받는다.
 ```
 
 같은 두 노드를 두 벌의 클러스터로 정의한다(`api/clickhouse/server/00-cluster.xml`).

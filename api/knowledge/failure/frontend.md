@@ -37,7 +37,7 @@
 
 ### 테스트가 CI 에도 npm 스크립트에도 없다
 
-- **원인**: `frontend/tests/` 에 `node:test` 기반 `.test.mjs` 20개가 추적되고 있지만 `package.json` scripts 는 `dev/build/start/lint/format` 뿐이라 `npm test` 가 없다. 실행 방법은 `frontend/README.md` 의 `node --experimental-strip-types --test` 한 줄뿐이다.
+- **원인**: `frontend/tests/` 에 `node:test` 기반 `.test.mjs` 21개가 추적되고 있지만 `package.json` scripts 는 `dev/build/start/lint/format` 뿐이라 `npm test` 가 없다. 실행 방법은 `frontend/README.md` 의 `node --experimental-strip-types --test` 한 줄뿐이다.
 - **해결**: 프런트를 바꿨으면 이 명령을 직접 돌린다. oxlint(`.oxlintrc.json`)와 `tsc --noEmit` 도 CI 에서 돌지 않는다.
 - **근거**: `frontend/package.json`, `frontend/README.md`, `infra/ci/frontend.yml`
 

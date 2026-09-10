@@ -7,7 +7,7 @@
 베이스 패키지는 `com.osundosun.mupid.api` 다. **도메인을 먼저 나누고 그 안에서 레이어를 연다.** `controller/`, `service/` 를 최상위로 올리지 않는다.
 
 ```
-api/src/main/java/com/osundosun/mupid/api/     # 73 파일
+api/src/main/java/com/osundosun/mupid/api/     # 88 파일
 ├── ApiApplication.java                         # 부트스트랩
 ├── analytics/   config, properties                                 (2)
 ├── auth/        controller, dto, error, exception, filter,
@@ -16,6 +16,8 @@ api/src/main/java/com/osundosun/mupid/api/     # 73 파일
 ├── common/      config, error, exception, gmail, response          (12)
 ├── email/       controller, entity, enumerate, error, repository,
 │                request, response, service                         (13)
+├── event/       config, controller, dto, enumerate, error,
+│                properties, request, response, service             (15)
 ├── storage/     config, dto, entity, error, properties,
 │                repository, service                                (8)
 ├── user/        controller, entity, enumerate, error, repository,
@@ -57,6 +59,7 @@ api/src/test/java/com/osundosun/mupid/api/ApiApplicationTests.java   (1)
 | `storage` | S3 호환(SeaweedFS). `ObjectStorageFile` 로 메타데이터를 MySQL 에 남기고 바이트는 S3 에 둔다 |
 | `cache` | Redis 래퍼. `CacheKind` enum 이 키 접두사(`block:token`)를 들고, `CacheServiceImpl.buildKey` 가 `"%s:%s".formatted(kind.getRedisKey(), key)` 로 조립 |
 | `analytics` | ClickHouse. 아직 `config`+`properties` 뿐이고 컨트롤러·서비스가 없다 |
+| `event` | 청취 이벤트 수집. 엔티티·리포지터리 없음 — MySQL 을 건드리지 않고 Redis(멱등)와 Kafka(발행)만 쓴다. `enumerate` 5개가 이벤트 값 집합을 들고 있고, `dto/ListenEventMessage` 가 Kafka 로 나가는 JSON 이다 |
 | `common` | 여러 도메인이 공유하는 것만. `response`(`BaseResponse`, `ErrorResponse`), `error`(`ErrorCode`, `GlobalErrorCode`), `exception`(`BusinessException`, `GlobalExceptionHandler`), `config`(`SecurityConfig`, `JdbcTemplateConfig`), `gmail` |
 | `utils` | `MultipartFileUtils` 하나. static 메서드만 있는 public 클래스 |
 
@@ -110,7 +113,7 @@ public class UserController {
 ```
 
 - URL 은 클래스 `@RequestMapping` 에 두고 CRUD 는 HTTP 메서드로 구분한다. 핸들러 15개 중 13개가 경로 없이 `@PostMapping` / `@GetMapping` 만 붙는다. 메서드 경로를 적는 건 경로 변수를 받을 때뿐이다 — `UserImageController` 의 `@GetMapping("/{userId}")`, `EmailVerificationController` 의 `@GetMapping("/{verificationId}")` 둘뿐이다.
-- 클래스 경로는 `/api/v1/auth`, `/api/v1/user`, `/api/v1/user/image`, `/api/v1/user/reset`, `/api/v1/mail/verification` 5개다. `email` 도메인만 패키지 이름과 다른 `mail/verification` 을 쓴다.
+- 클래스 경로는 `/api/v1/auth`, `/api/v1/user`, `/api/v1/user/image`, `/api/v1/user/reset`, `/api/v1/mail/verification`, `/api/v1/events` 6개다. `email` 도메인만 패키지 이름과 다른 `mail/verification` 을 쓰고, `event` 도메인만 복수형(`events`) 경로를 쓴다 — 한 요청이 이벤트 여러 건을 담기 때문이다.
 - 반환 타입은 항상 `ResponseEntity<BaseResponse<T>>`. 예외는 파일 바이트를 내려주는 `UserImageController.getUserImage` 의 `ResponseEntity<byte[]>` 하나뿐이다.
 - 인증된 사용자는 `Authentication auth` 파라미터로 받고 `(User)auth.getPrincipal()` 로 캐스팅한다. `@AuthenticationPrincipal` 이나 ArgumentResolver 는 쓰지 않는다. principal 은 `AuthProvider.auth` 가 넣은 `User` 엔티티다.
 - 응답 record 는 컨트롤러가 직접 조립한다. `UserController.getUserInfo` 가 `User` 에서 9개 필드를 꺼내 `UserGetInfoResponse` 를 만든다.
