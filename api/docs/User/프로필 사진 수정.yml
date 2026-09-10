@@ -71,11 +71,15 @@ docs: |-
   `Content-Type` 헤더는 직접 넣지 마세요. Bruno 가 boundary 를 포함해 자동으로
   붙입니다.
 
+  `@RequestParam MultipartFile` 로 파라미터 이름을 명시하지 않으므로,
+  컴파일 시 `-parameters` 플래그에 의존해 `file` 이라는 이름이 인식됩니다.
+  Bruno 는 폼 필드 이름을 그대로 보내므로 `file` 로 두면 됩니다.
+
   ## 폼 필드
 
   | 필드 | 타입 | 필수 | 설명 |
   | --- | --- | --- | --- |
-  | `file` | file | ✅ | 프로필 이미지 (`@RequestParam("file") MultipartFile`) |
+  | `file` | file | ✅ | 프로필 이미지 (`@RequestParam MultipartFile` — 파라미터 이름은 반드시 `file`) |
 
   ## 오류
 

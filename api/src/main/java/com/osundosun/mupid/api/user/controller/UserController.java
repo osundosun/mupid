@@ -15,6 +15,7 @@ import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.request.UserCreateRequest;
 import com.osundosun.mupid.api.user.request.UserUpdateRequest;
 import com.osundosun.mupid.api.user.response.UserGetInfoResponse;
+import com.osundosun.mupid.api.user.service.UserImageService;
 import com.osundosun.mupid.api.user.service.UserService;
 
 import jakarta.validation.Valid;
@@ -26,6 +27,7 @@ import lombok.RequiredArgsConstructor;
 public class UserController {
 
     private final UserService userService;
+    private final UserImageService userImageService;
     
     @PostMapping
     public ResponseEntity<BaseResponse<Void>> createUser(
@@ -46,7 +48,7 @@ public class UserController {
             user.getUserId(), /* 유저 번호 */
             user.getEmail(), /* 이메일 */
             user.getNickname(), /* 닉네임 */
-            "/api/v1/user/image/%s".formatted(user.getUserId()), /* 프로필 이미지 URL */
+            userImageService.getUserImageUrl(user.getUserId()), /* 프로필 이미지 URL */
             user.getBirthYear(), /* 출생 연도 */
             user.getGender(), /* 성별 */
             user.getRole(), /* 권한 */

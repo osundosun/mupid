@@ -16,3 +16,15 @@ variables:
   - name: USER_ID
     value: ""
     description: 로그인 응답에서 자동 저장됩니다.
+  - name: STREAM_ID
+    value: "1"
+    description: 스트리밍 테스트에 쓸 스트림 번호를 직접 넣으세요.
+  - name: CHUNK_INDEX
+    value: "0"
+    description: 청크 조회에 쓸 청크 인덱스를 직접 넣으세요.
+  - name: CHUNK_FROM
+    value: "0"
+    description: 청크 범위 조회의 시작 인덱스입니다.
+  - name: CHUNK_TO
+    value: "3"
+    description: 청크 범위 조회의 끝 인덱스(포함)입니다.

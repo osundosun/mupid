@@ -95,5 +95,10 @@ public class UserImageServiceImpl implements UserImageService {
             throw new BusinessException(GlobalErrorCode.INTERNAL_SERVER_ERROR);
         }
     }
+
+    @Override
+    public String getUserImageUrl(int userId) {
+        return "/api/v1/user/image/%s".formatted(userId);
+    }
     
 }

@@ -13,5 +13,7 @@ public interface UserImageService {
     void deleteUserImage(int userId);
 
     StorageFileData getUserImageData(int userId);
+
+    String getUserImageUrl(int userId);
     
 }

@@ -1,0 +1,105 @@
+info:
+  name: 청크 범위 조회
+  type: http
+  seq: 3
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/chunk/{{STREAM_ID}}?from={{CHUNK_FROM}}&to={{CHUNK_TO}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: CHUNK_FROM
+      value: "0"
+    - name: CHUNK_TO
+      value: "3"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "chunks": [
+                {
+                  "index": 0,
+                  "duration_ms": 24000,
+                  "file_url": "/api/v1/chunk/data/17",
+                  "file_hash": "6e0c3d09a9e22b6ec1ea3d8a41f9e0a8"
+                },
+                {
+                  "index": 1,
+                  "duration_ms": 24000,
+                  "file_url": "/api/v1/chunk/data/18",
+                  "file_hash": "2b4a7f91c3d8e5a60f9b1c2d3e4f5a6b"
+                }
+              ]
+            }
+          }
+  - name: 200 범위에 해당하는 청크 없음
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "chunks": []
+            }
+          }
+
+docs: |-
+  # 청크 범위 조회
+
+  `GET /api/v1/chunk/{streamId}?from=...&to=...` · 인증 필요
+
+  청크 여러 개를 한 번에 조회합니다. 미리 가져오기(prefetch) 용도로 쓰세요.
+
+  ## 쿼리 파라미터
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `from` | int | ✅ | 시작 인덱스 (포함) |
+  | `to` | int | ✅ | 끝 인덱스 (포함) |
+
+  두 값 모두 필수입니다. 하나라도 빠지면 스프링이 요청 매핑에 실패해
+  400 계열 응답이 반환될 수 있으니 항상 함께 보내세요.
+
+  ## 응답 필드
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `data.chunks` | array | 범위에 해당하는 청크 목록 (각 항목은 `청크 조회` 와 동일) |
+
+  범위에 해당하는 청크가 없으면(또는 원본 음원이 삭제되었으면)
+  `chunks` 가 빈 배열로 반환됩니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |

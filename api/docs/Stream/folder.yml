@@ -1,0 +1,28 @@
+info:
+  name: Stream
+  type: folder
+  seq: 6
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Stream
+
+    음악 스트리밍 API 입니다. 음원 하나(_music_)당 여러 비트레이트의 스트림이
+    존재하고, 각 스트림은 재생 순서대로 번호가 매겨진 청크(chunk)들로 구성됩니다.
+
+    | 엔드포인트 | 동작 | 인증 |
+    | --- | --- | --- |
+    | `GET /api/v1/stream/{streamId}` | 스트림 정보 조회 | 필요 |
+    | `GET /api/v1/chunk/{streamId}/{index}` | 청크 1개 조회 | 필요 |
+    | `GET /api/v1/chunk/{streamId}?from=...&to=...` | 청크 범위 조회 | 필요 |
+
+    ## 코드 값
+
+    - `codec` — `AAC`, `OPUS`
+    - `status` — `PENDING` / `IN_PROGRESS` / `DONE` / `FAILED`
+
+    삭제된 음원(`is_deleted = true`)의 스트림·청크를 조회하면 모두 404 입니다.

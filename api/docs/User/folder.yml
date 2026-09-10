@@ -31,11 +31,11 @@ docs:
     2. `Email / 인증 코드 제출` → 메일로 받은 코드 검증
     3. `User / 회원가입` → `email_verification_id` 에 위 값 전달
 
-    가입 시 상태는 `PENDING` 이고 권한은 `USER` 입니다.
+    가입 시 상태는 `PENDING` 이고 권한은 `ROLE_USER` 입니다.
 
     ## 검증 규칙 (`UserCreateRequest`)
 
     - `password` — 영문/숫자/특수문자(`@$!%*#?&`) 중 2종 이상 조합, 8~20자
     - `nickname` — 2~10자
     - `birth_year` — 1900 이상
-    - `gender` — `MALE` / `FEMALE` / `ETC`
+    - `gender` — `M` / `F` / `ETC`

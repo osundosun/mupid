@@ -1,0 +1,108 @@
+info:
+  name: 스트림 정보 조회
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/stream/{{STREAM_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: STREAM_ID
+      value: "1"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "stream_id": 1,
+              "music_id": 1,
+              "bitrate_kbps": 192,
+              "codec": "AAC",
+              "duration_ms": 213000,
+              "chunk_count": 9,
+              "status": "DONE"
+            }
+          }
+  - name: 404 스트림 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_STREAM_NOT_FOUND",
+            "message": "요청한 스트림을 찾을 수 없습니다.",
+            "error_details": null
+          }
+  - name: 401 토큰 없음/만료
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_UNAUTHORIZED",
+            "message": "인증 정보가 유효하지 않거나 존재하지 않습니다.",
+            "errorDetails": null
+          }
+
+docs: |-
+  # 스트림 정보 조회
+
+  `GET /api/v1/stream/{streamId}` · 인증 필요
+
+  스트림 하나의 메타 정보를 조회합니다. 스트림 번호는 음원 상세 API 등에서
+  받아온다고 가정하고, 이 컬렉션에서는 `STREAM_ID` 변수로 직접 넣어 호출합니다.
+
+  ## 응답 필드
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `data.stream_id` | int | 스트림 번호 |
+  | `data.music_id` | int | 원본 음원 번호 |
+  | `data.bitrate_kbps` | int | 비트레이트 (kbps) |
+  | `data.codec` | string | `AAC` / `OPUS` |
+  | `data.duration_ms` | int | 전체 재생 길이 (ms) |
+  | `data.chunk_count` | int | 청크 개수 |
+  | `data.status` | string | `PENDING` / `IN_PROGRESS` / `DONE` / `FAILED` |
+
+  청크는 `GET /api/v1/chunk/{streamId}/{index}` 로 받습니다. 인덱스는
+  `0` 부터 `chunk_count - 1` 까지입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_STREAM_NOT_FOUND` | 404 | 스트림 없음 또는 원본 음원이 삭제됨 |

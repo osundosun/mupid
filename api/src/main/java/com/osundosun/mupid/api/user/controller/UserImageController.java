@@ -32,7 +32,7 @@ public class UserImageController {
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<BaseResponse<Void>> updateUserImage(
         Authentication auth,
-        @RequestParam("file") MultipartFile file
+        @RequestParam MultipartFile file
     ) throws IOException {
         User user = (User)auth.getPrincipal();
         userImageService.updateUserImage(user.getUserId(), file);

@@ -31,7 +31,7 @@ runtime:
     - name: USER_BIRTH_YEAR
       value: "2000"
     - name: USER_GENDER
-      value: MALE
+      value: M
 
 settings:
   encodeUrl: true
@@ -72,7 +72,7 @@ docs: |-
   | `password` | string | 영문/숫자/특수문자(`@$!%*#?&`) 중 2종 이상, 8~20자 |
   | `nickname` | string | 2~10자 |
   | `birth_year` | int | 1900 이상 |
-  | `gender` | string | `MALE` / `FEMALE` / `ETC` |
+  | `gender` | string | `M` / `F` / `ETC` |
 
   ## 오류
 
