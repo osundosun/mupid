@@ -42,6 +42,10 @@ dependencies {
 	// 드라이버 클래스는 문자열로만 참조하므로 mysql 과 같이 runtimeOnly 로 둔다.
 	runtimeOnly 'com.clickhouse:clickhouse-jdbc:0.9.0'
 
+	// Kafka(이벤트 발행) 관련
+	// 프로듀서 빈을 직접 만들므로 라이브러리만 있으면 된다. spring.kafka.* 자동설정은 쓰지 않는다.
+	implementation 'org.springframework.kafka:spring-kafka'
+
 	// JWT 관련
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.5'
 	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.5'

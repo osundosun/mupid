@@ -55,6 +55,12 @@ services:
       MUPID_CLICKHOUSE_URL: ${MUPID_CLICKHOUSE_URL:-jdbc:clickhouse://clickhouse:8123/default}
       MUPID_CLICKHOUSE_USER: ${MUPID_CLICKHOUSE_USER:-mupid}
       MUPID_CLICKHOUSE_PASSWORD: ${MUPID_CLICKHOUSE_PASSWORD:-}
+      # 이벤트 수집기가 발행할 브로커. application.yaml 이 기본값 없이 참조하므로
+      # 여기서 주지 않으면 기동 자체가 실패한다. kafka profile 로 같은 호스트에 띄웠다면
+      # 컨테이너 이름으로 충분하고, 다른 서버에 있으면 .env 에서 그 주소로 덮어쓴다.
+      # KafkaProducer 는 첫 발행 때 만들어지므로 Kafka 가 아직 없어도 API 는 정상 기동한다.
+      MUPID_KAFKA_BOOTSTRAP: ${MUPID_KAFKA_BOOTSTRAP:-kafka:9092}
+      MUPID_KAFKA_TOPIC: ${MUPID_KAFKA_TOPIC:-mupid.listen.events}
     networks: [frontend, backend]
     depends_on:
       mysql: {condition: service_healthy}

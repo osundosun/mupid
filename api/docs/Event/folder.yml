@@ -1,0 +1,36 @@
+info:
+  name: Event
+  type: folder
+  seq: 6
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Event
+
+    사용자 여정 데이터(청취 행동) 수집.
+
+    | 엔드포인트 | 동작 | 인증 |
+    | --- | --- | --- |
+    | `POST /api/v1/events` | 청취 이벤트 배치 수집 | 필요 |
+
+    ## 어디로 흘러가는가
+
+    ```
+    프론트 SDK (frontend/lib/analytics/)
+      → POST /api/v1/events          user_id 확정 · 값 검증 · event_id 멱등
+      → Kafka  mupid.listen.events   JSONEachRow
+      → ClickHouse listen_events     원본 (수정하지 않음)
+    ```
+
+    응답이 **202** 인 이유는 Kafka 발행을 기다리지 않기 때문입니다.
+    "받아서 처리 중" 이지 "적재 완료" 가 아닙니다.
+
+    ## 설계 배경
+
+    - 왜 API 가 발행하는가 → `api/knowledge/decision/0014-event-collector-in-api.md`
+    - 왜 분류·가중치를 안 보내는가 → `api/knowledge/decision/0015-derive-interpretation-at-query-time.md`
+    - 이벤트 22종의 의미 → `api/knowledge/domain/listening-events.md`
