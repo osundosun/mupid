@@ -273,6 +273,24 @@ services:
     networks: [backend]
     entrypoint: [/bin/bash, /init/apply-ddl.sh]
 
+  storage:
+    image: chrislusf/seaweedfs@sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62
+    container_name: mupid-storage
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 2g
+    command: [server, -ip=storage, -dir=/data, -filer, -s3, -s3.config=/etc/seaweedfs/s3.json, -master.volumeSizeLimitMB=1024, -volume.max=5]
+    volumes:
+      - storage-data:/data
+      - /srv/mupid/config/s3.json:/etc/seaweedfs/s3.json:ro
+      - /srv/mupid/config/filer.toml:/etc/seaweedfs/filer.toml:ro
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, "wget -S -O /dev/null http://127.0.0.1:8333/ 2>&1 | grep -q 'HTTP/1.1 403'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 networks:
   frontend: {external: true, name: mupid-frontend}
   backend: {external: true, name: mupid-backend}
@@ -283,3 +301,4 @@ volumes:
   clickhouse-data: {external: true, name: mupid-clickhouse-data}
   ch-keeper-data: {external: true, name: mupid-ch-keeper-data}
   kafka-data: {external: true, name: mupid-kafka-data}
+  storage-data: {external: true, name: mupid-storage-data}

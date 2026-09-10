@@ -57,9 +57,12 @@ class DeployConfigTest(unittest.TestCase):
         self.assertEqual(api['MUPID_S3_ENDPOINT'], '')
         self.assertEqual(api['MUPID_REDIS_HOST'], 'redis')
         self.assertEqual(api['MUPID_REDIS_PORT'], '6379')
+        self.assertEqual(api['MUPID_CLICKHOUSE_URL'], 'jdbc:clickhouse://clickhouse:8123/default')
+        self.assertEqual(api['MUPID_CLICKHOUSE_USER'], 'mupid')
+        self.assertIn('MUPID_CLICKHOUSE_PASSWORD', api)
         self.assertNotIn('MUPID_MYSQL_ROOT_PASSWORD', api)
         self.assertNotIn('MYSQL_ROOT_PASSWORD', api)
-        for service in ('api', 'mysql', 'redis'):
+        for service in ('api', 'mysql', 'redis', 'storage'):
             self.assertFalse(services[service].get('ports'), service)
 
     def test_missing_or_empty_required_values_reject_configuration(self):
