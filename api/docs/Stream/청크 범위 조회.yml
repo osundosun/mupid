@@ -17,6 +17,8 @@ runtime:
       value: "0"
     - name: CHUNK_TO
       value: "3"
+    - name: STREAM_ID
+      value: "1"
 
 settings:
   encodeUrl: true

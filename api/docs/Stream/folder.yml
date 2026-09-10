@@ -16,7 +16,7 @@ docs:
 
     | 엔드포인트 | 동작 | 인증 |
     | --- | --- | --- |
-    | `GET /api/v1/stream/{streamId}` | 스트림 정보 조회 | 필요 |
+    | `GET /api/v1/stream/{musicId}` | 스트림 정보 조회 | 필요 |
     | `GET /api/v1/chunk/{streamId}/{index}` | 청크 1개 조회 | 필요 |
     | `GET /api/v1/chunk/{streamId}?from=...&to=...` | 청크 범위 조회 | 필요 |
 
@@ -25,4 +25,6 @@ docs:
     - `codec` — `AAC`, `OPUS`
     - `status` — `PENDING` / `IN_PROGRESS` / `DONE` / `FAILED`
 
-    삭제된 음원(`is_deleted = true`)의 스트림·청크를 조회하면 모두 404 입니다.
+    삭제된 음악을 조회하면 `MUPID_MUSIC_NOT_FOUND` 가,
+    스트림이 없으면 `MUPID_STREAM_NOT_FOUND` 가 반환됩니다.
+    삭제된 음원의 청크는 모두 404 (`MUPID_CHUNK_NOT_FOUND`) 입니다.

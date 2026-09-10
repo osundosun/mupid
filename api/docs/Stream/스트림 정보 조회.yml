@@ -5,7 +5,7 @@ info:
 
 http:
   method: GET
-  url: "{{BASE_URL}}/api/v1/stream/{{STREAM_ID}}"
+  url: "{{BASE_URL}}/api/v1/stream/{{MUSIC_ID}}"
   headers:
     - name: Authorization
       value: Bearer {{ACCESS_TOKEN}}
@@ -13,7 +13,7 @@ http:
 
 runtime:
   variables:
-    - name: STREAM_ID
+    - name: MUSIC_ID
       value: "1"
 
 settings:
@@ -45,6 +45,21 @@ examples:
               "chunk_count": 9,
               "status": "DONE"
             }
+          }
+  - name: 404 음악 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_MUSIC_NOT_FOUND",
+            "message": "요청한 음악을 찾을 수 없습니다.",
+            "error_details": null
           }
   - name: 404 스트림 없음
     response:
@@ -80,10 +95,16 @@ examples:
 docs: |-
   # 스트림 정보 조회
 
-  `GET /api/v1/stream/{streamId}` · 인증 필요
+  `GET /api/v1/stream/{musicId}` · 인증 필요
 
-  스트림 하나의 메타 정보를 조회합니다. 스트림 번호는 음원 상세 API 등에서
-  받아온다고 가정하고, 이 컬렉션에서는 `STREAM_ID` 변수로 직접 넣어 호출합니다.
+  음악 번호로 스트림 메타 정보를 조회합니다. 컬렉션에서는 `MUSIC_ID` 변수로
+  직접 넣어 호출합니다.
+
+  ## 경로 파라미터
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `musicId` | int | 음악 번호 |
 
   ## 응답 필드
 
@@ -105,4 +126,5 @@ docs: |-
   | 코드 | 상태 | 설명 |
   | --- | --- | --- |
   | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
-  | `MUPID_STREAM_NOT_FOUND` | 404 | 스트림 없음 또는 원본 음원이 삭제됨 |
+  | `MUPID_MUSIC_NOT_FOUND` | 404 | 음악 없음 또는 삭제됨 |
+  | `MUPID_STREAM_NOT_FOUND` | 404 | 해당 음악의 스트림 없음 |

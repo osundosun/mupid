@@ -59,7 +59,7 @@ public class Album {
      * 커버 이미지 파일 번호
      */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "file_id")
+    @JoinColumn(name = "image_file_id")
     private ObjectStorageFile imageFile;
 
     /**

@@ -19,7 +19,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "stream_chunks")
+@Table(name = "chunks")
 @Getter
 @Setter
 @Builder
@@ -40,6 +40,12 @@ public class Chunk {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "stream_id", nullable = false)
     private Stream stream;
+
+    /**
+     * 스트림 번호 (조회 전용)
+     */
+    @Column(name = "stream_id", insertable = false, updatable = false)
+    private Integer streamId;
 
     /**
      * 청크 순서

@@ -52,7 +52,7 @@ public class Artist {
      * 이미지 파일
      */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "file_id")
+    @JoinColumn(name = "image_file_id")
     private ObjectStorageFile imageFile;
 
     /**

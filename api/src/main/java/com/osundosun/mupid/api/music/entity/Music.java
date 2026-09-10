@@ -71,7 +71,7 @@ public class Music {
      * 누적 재생 수
      */
     @Column(nullable = false)
-    private Integer playerCount;
+    private Integer playCount;
 
     /**
      * 누적 좋아요 수

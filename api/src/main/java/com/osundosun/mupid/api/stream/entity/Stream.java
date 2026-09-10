@@ -42,8 +42,14 @@ public class Stream {
      * 음악
      */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(nullable = false)
+    @JoinColumn(name = "music_id", nullable = false)
     private Music music;
+
+    /**
+     * 음악 번호 (조회 전용)
+     */
+    @Column(name = "music_id", insertable = false, updatable = false)
+    private Integer musicId;
 
     /**
      * 비트레이트

@@ -41,7 +41,8 @@ docs:
     | `REFRESH_TOKEN` | 로그인 응답의 `Set-Cookie: refresh_token=...` 값을 직접 붙여넣기 |
     | `VERIFICATION_ID` | `Email / 인증 메일 발송`, `User / 비밀번호 재설정 메일 발송` 응답에서 자동 저장 |
     | `USER_ID` | `Auth / 로그인` 응답에서 자동 저장 |
-    | `STREAM_ID` | 직접 입력 (스트리밍 테스트용 스트림 번호) |
+    | `MUSIC_ID` | 직접 입력 (스트리밍 테스트용 음악 번호) |
+    | `STREAM_ID` | 직접 입력 (청크 조회용 스트림 번호) |
     | `CHUNK_INDEX` / `CHUNK_FROM` / `CHUNK_TO` | 직접 입력 (청크 조회 범위) |
 
     ## ⚠️ 요청/응답 필드는 snake_case
