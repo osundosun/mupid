@@ -70,8 +70,12 @@ services:
     restart: unless-stopped
     command: ["server", "-dir=/data", "-s3", "-filer"]
     environment:
+      # SeaweedFS 는 이 두 값으로 S3 관리자 identity 를 만든다. 즉 이 값이 설정되면
+      # 인증 없는 S3 요청은 403 이 된다.
       - AWS_ACCESS_KEY_ID=${MUPID_S3_ACCESS_KEY}
       - AWS_SECRET_ACCESS_KEY=${MUPID_S3_SECRET}
+      # SeaweedFS 가 읽는 변수는 아니다(버킷이 자동 생성되지 않는다).
+      # 실제 버킷 생성은 storage-init 이 한다.
       - S3_BUCKET=${MUPID_S3_BUCKET}
     ports:
       - "8333:8333"
@@ -82,11 +86,286 @@ services:
     networks:
       - backend
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8333/"]
+      # '/' 는 ListBuckets 라서 자격증명이 필요하다. 인증 없이 호출하면 403 이 떠서
+      # 컨테이너가 영구히 unhealthy 로 남는다. /status 는 인증 없이 200 을 준다.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8333/status"]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 5s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # ClickHouse 클러스터 (Keeper 1 + 서버 2노드)
+  #   mupid     : 2 샤드 x 1 레플리카  (cityHash64(user_id) 로 분산)
+  #   mupid_all : 1 샤드 x 2 레플리카  (전 노드 복제, dictGet 용)
+  # 스키마는 clickhouse-init 이 clickhouse/init/01-schema.sql 을 한 번만 적용한다.
+  # ---------------------------------------------------------------------------
+  clickhouse-keeper:
+    image: clickhouse/clickhouse-keeper:${MUPID_CLICKHOUSE_VERSION:-25.3}
+    container_name: mupid-dev-ch-keeper
+    hostname: mupid-dev-ch-keeper
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Seoul
+    volumes:
+      - ./clickhouse/keeper/keeper_config.xml:/etc/clickhouse-keeper/keeper_config.xml:ro
+      - ch-keeper-data:/var/lib/clickhouse-keeper
+    networks:
+      - backend
+    healthcheck:
+      # Keeper 는 HTTP 가 아니라 ZooKeeper 호환 4글자 명령을 받는다. ruok -> imok.
+      test: ["CMD-SHELL", "echo ruok | nc -w 2 127.0.0.1 9181 | grep -q imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  clickhouse-01:
+    image: clickhouse/clickhouse-server:${MUPID_CLICKHOUSE_VERSION:-25.3}
+    container_name: mupid-dev-ch-01
+    hostname: mupid-dev-ch-01
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Seoul
+      # 설정 파일은 운영과 100% 동일하고, 노드별로 다른 건 아래 환경변수뿐이다.
+      # (clickhouse/server/10-macros.xml 이 from_env 로 읽는다)
+      CH_SHARD: "01"
+      CH_REPLICA: ch1
+      CH_INTERSERVER_HOST: mupid-dev-ch-01
+      # 클러스터 구성 (00-cluster.xml / 01-keeper.xml)
+      CH_HOST_1: mupid-dev-ch-01
+      CH_HOST_2: mupid-dev-ch-02
+      CH_KEEPER_HOST: mupid-dev-ch-keeper
+      # 0 을 주면 ClickHouse 기본 비율(호스트 RAM 의 90%) 계산을 쓴다.
+      CH_MAX_SERVER_MEMORY: ${MUPID_CLICKHOUSE_MAX_MEMORY:-4294967296}
+      MUPID_CLICKHOUSE_PASSWORD: ${MUPID_CLICKHOUSE_PASSWORD:?.env 에 MUPID_CLICKHOUSE_PASSWORD 설정 필요}
+    volumes:
+      # ClickHouse 는 config.d 하위 디렉터리를 재귀 탐색하지 않으므로 파일 단위로 마운트한다.
+      # 디렉터리째 마운트하면 이미지가 넣는 docker_related_config.xml 과
+      # 엔트리포인트가 쓰는 users.d/default-user.xml 이 사라진다.
+      - ./clickhouse/server/00-cluster.xml:/etc/clickhouse-server/config.d/00-cluster.xml:ro
+      - ./clickhouse/server/01-keeper.xml:/etc/clickhouse-server/config.d/01-keeper.xml:ro
+      - ./clickhouse/server/02-server.xml:/etc/clickhouse-server/config.d/02-server.xml:ro
+      - ./clickhouse/server/10-macros.xml:/etc/clickhouse-server/config.d/10-macros.xml:ro
+      - ./clickhouse/users/00-profile.xml:/etc/clickhouse-server/users.d/00-profile.xml:ro
+      - ./clickhouse/users/10-mupid-user.xml:/etc/clickhouse-server/users.d/10-mupid-user.xml:ro
+      - ch1-data:/var/lib/clickhouse
+    ports:
+      - "${MUPID_CLICKHOUSE_HTTP_PORT:-18123}:8123"
+      - "${MUPID_CLICKHOUSE_NATIVE_PORT:-19000}:9000"
+    networks:
+      - backend
+    depends_on:
+      # Keeper 가 응답할 때까지 기다린다. 기동 순서만 보장하면 ClickHouse 가 먼저 떠서
+      # Replicated 테이블이 잠시 읽기 전용이 되고 ON CLUSTER DDL 이 대기한다.
+      clickhouse-keeper:
+        condition: service_healthy
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--host", "127.0.0.1", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  clickhouse-02:
+    image: clickhouse/clickhouse-server:${MUPID_CLICKHOUSE_VERSION:-25.3}
+    container_name: mupid-dev-ch-02
+    hostname: mupid-dev-ch-02
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Seoul
+      # ch-01 과 파일은 전부 같고 이 세 줄만 다르다.
+      CH_SHARD: "02"
+      CH_REPLICA: ch2
+      CH_INTERSERVER_HOST: mupid-dev-ch-02
+      CH_HOST_1: mupid-dev-ch-01
+      CH_HOST_2: mupid-dev-ch-02
+      CH_KEEPER_HOST: mupid-dev-ch-keeper
+      CH_MAX_SERVER_MEMORY: ${MUPID_CLICKHOUSE_MAX_MEMORY:-4294967296}
+      MUPID_CLICKHOUSE_PASSWORD: ${MUPID_CLICKHOUSE_PASSWORD:?.env 에 MUPID_CLICKHOUSE_PASSWORD 설정 필요}
+    volumes:
+      - ./clickhouse/server/00-cluster.xml:/etc/clickhouse-server/config.d/00-cluster.xml:ro
+      - ./clickhouse/server/01-keeper.xml:/etc/clickhouse-server/config.d/01-keeper.xml:ro
+      - ./clickhouse/server/02-server.xml:/etc/clickhouse-server/config.d/02-server.xml:ro
+      - ./clickhouse/server/10-macros.xml:/etc/clickhouse-server/config.d/10-macros.xml:ro
+      - ./clickhouse/users/00-profile.xml:/etc/clickhouse-server/users.d/00-profile.xml:ro
+      - ./clickhouse/users/10-mupid-user.xml:/etc/clickhouse-server/users.d/10-mupid-user.xml:ro
+      - ch2-data:/var/lib/clickhouse
+    ports:
+      - "${MUPID_CLICKHOUSE_HTTP_PORT_2:-18124}:8123"
+      - "${MUPID_CLICKHOUSE_NATIVE_PORT_2:-19001}:9000"
+    networks:
+      - backend
+    depends_on:
+      # Keeper 가 응답할 때까지 기다린다. 기동 순서만 보장하면 ClickHouse 가 먼저 떠서
+      # Replicated 테이블이 잠시 읽기 전용이 되고 ON CLUSTER DDL 이 대기한다.
+      clickhouse-keeper:
+        condition: service_healthy
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--host", "127.0.0.1", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Kafka (KRaft, 브로커 1대)
+  #
+  # 브로커 개수는 프로듀서(Spring/FastAPI) 대수나 ClickHouse 노드 수와 무관하다.
+  # 둘 다 네트워크 클라이언트일 뿐이라 브로커 한 대에 모두 붙는다.
+  # 2대는 오히려 애매한 숫자다. KRaft 컨트롤러 쿼럼이 2면 둘 다 살아있어야 해서
+  # 장애를 한 대도 못 견딘다. 제대로 된 HA 는 3대부터라 2대는 리소스만 두 배 쓴다.
+  #
+  # ddl.sql 의 kafka_broker_list 가 'kafka1:9092,kafka2:9092' 인 것은
+  # "브로커가 2대여야 한다"가 아니라 클러스터를 찾기 위해 처음 접속해볼
+  # 부트스트랩 주소 목록이다. 그래서 이 한 대에 kafka1 / kafka2 두 alias 를 붙여
+  # DDL 을 수정하지 않고 그대로 쓴다. 클라이언트는 메타데이터를 받은 뒤 broker id
+  # 로 중복을 제거하므로 실제로는 한 대로 인식한다.
+  #
+  # [운영 변경] 브로커를 늘리면 alias 대신 실제 호스트를 쓰고, 내부 토픽
+  # replication factor 와 create-topics.sh 의 REPLICATION 을 함께 올린다.
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:${MUPID_KAFKA_VERSION:-3.9.1}
+    container_name: mupid-dev-kafka
+    hostname: kafka1
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Seoul
+      CLUSTER_ID: ${MUPID_KAFKA_CLUSTER_ID:-4L6g3nShT-eMCtK--X86sw}
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:19092
+      # INTERNAL 은 컨테이너 네트워크(ClickHouse)용, EXTERNAL 은 호스트에서 도는 Spring 용.
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:9092,EXTERNAL://localhost:${MUPID_KAFKA_PORT:-19092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # 브로커가 1대이므로 내부 토픽 복제본도 1이어야 한다. 2로 두면 기동 후
+      # __consumer_offsets 생성이 실패해 컨슈머 그룹이 못 붙는다.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # 토픽은 kafka-init 이 파티션 수까지 정해서 만든다. 자동 생성에 맡기면 파티션이
+      # 1개로 만들어져 ClickHouse 컨슈머 6개 중 5개가 유휴 상태가 된다.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "${MUPID_KAFKA_PORT:-19092}:19092"
+    networks:
+      backend:
+        aliases:
+          - kafka1
+          - kafka2
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Kafka 웹 UI (개발 편의용, 선택)
+  # 기본 기동에는 뜨지 않는다. 이름을 직접 지정하면 profile 이 자동으로 켜진다.
+  #   docker compose up -d kafka-ui   ->  http://localhost:18080
+  # ClickHouse 는 자체 웹 UI 가 있어서 별도 컨테이너가 필요 없다.
+  #   http://localhost:18123/play
+  # ---------------------------------------------------------------------------
+  kafka-ui:
+    profiles: [ui]
+    image: kafbat/kafka-ui:${MUPID_KAFKA_UI_VERSION:-v1.3.0}
+    container_name: mupid-dev-kafka-ui
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Seoul
+      KAFKA_CLUSTERS_0_NAME: mupid-dev
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    ports:
+      - "${MUPID_KAFKA_UI_PORT:-18080}:8080"
+    networks:
+      - backend
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # 1회성 초기화 컨테이너. 정상 종료(exited 0)되는 것이 기대 동작이다.
+  # ---------------------------------------------------------------------------
+  # SeaweedFS 는 S3 버킷을 자동으로 만들지 않는다. 버킷이 없으면 앱의 업로드가
+  # NoSuchBucket 으로 실패한다. weed shell 의 s3.bucket.create 는 이미 있는 버킷에
+  # 대해서도 exit 0 이라 여러 번 실행해도 안전하다.
+  storage-init:
+    image: chrislusf/seaweedfs
+    container_name: mupid-dev-storage-init
+    restart: "no"
+    environment:
+      TZ: Asia/Seoul
+    networks:
+      - backend
+    depends_on:
+      storage:
+        condition: service_healthy
+    # 이미지의 ENTRYPOINT 가 weed 라서 덮어써야 셸을 쓸 수 있다.
+    entrypoint:
+      - sh
+      - -c
+      - echo "s3.bucket.create -name ${MUPID_S3_BUCKET:?.env 에 MUPID_S3_BUCKET 설정 필요}"
+        | weed shell -master=mupid-dev-storage:9333
+
+  kafka-init:
+    image: apache/kafka:${MUPID_KAFKA_VERSION:-3.9.1}
+    container_name: mupid-dev-kafka-init
+    restart: "no"
+    environment:
+      TZ: Asia/Seoul
+      BOOTSTRAP: kafka1:9092
+      TOPIC: ${MUPID_KAFKA_TOPIC:-mupid.listen.events}
+      # 파티션 수는 브로커 수와 무관하다. 브로커가 1대여도 6개가 다 생기고
+      # ClickHouse 컨슈머 6개(노드당 kafka_num_consumers=3 × 2노드)가 하나씩 나눠 갖는다.
+      PARTITIONS: "6"
+      # 브로커가 1대이므로 복제본은 1이 최대다.
+      REPLICATION: "1"
+    volumes:
+      - ./clickhouse/kafka/create-topics.sh:/create-topics.sh:ro
+    networks:
+      - backend
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/create-topics.sh"]
+
+  clickhouse-init:
+    image: clickhouse/clickhouse-server:${MUPID_CLICKHOUSE_VERSION:-25.3}
+    container_name: mupid-dev-ch-init
+    restart: "no"
+    environment:
+      TZ: Asia/Seoul
+      CH_NODE_1: mupid-dev-ch-01
+      CH_NODE_2: mupid-dev-ch-02
+      MUPID_CLICKHOUSE_USER: ${MUPID_CLICKHOUSE_USER:-mupid}
+      MUPID_CLICKHOUSE_PASSWORD: ${MUPID_CLICKHOUSE_PASSWORD:?.env 에 MUPID_CLICKHOUSE_PASSWORD 설정 필요}
+    volumes:
+      - ./clickhouse/init:/init:ro
+    networks:
+      - backend
+    depends_on:
+      clickhouse-01:
+        condition: service_healthy
+      clickhouse-02:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/bash", "/init/apply-ddl.sh"]
 
 networks:
   frontend:
@@ -103,3 +382,13 @@ volumes:
     name: mupid-dev-redis-data
   storage-data:
     name: mupid-dev-storage-data
+  ch-keeper-data:
+    name: mupid-dev-ch-keeper-data
+  ch1-data:
+    name: mupid-dev-ch1-data
+  ch2-data:
+    name: mupid-dev-ch2-data
+  # Kafka 로그는 의도적으로 볼륨을 붙이지 않는다. 컨테이너 재시작에는 남고
+  # docker compose down 에서 사라진다. 오프셋이 초기화돼 재소비가 일어나도
+  # listen_events 가 ReplacingMergeTree 라 (user_id, occurred_at, event_id) 기준으로
+  # 중복이 정리된다.
