@@ -1,0 +1,89 @@
+# 데이터베이스 · JPA · 트랜잭션
+
+13건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+
+[← 함정 목록](README.md) · [지식 저장소](../README.md)
+
+---
+
+## 트랜잭션과 JPA
+
+### 수정 API 를 호출했는데 예외 없이 변경만 사라진다
+
+- **원인**: 수정 로직에 `save()` 가 없다. `UserServiceImpl.updateUser` 는 setter 만 호출하고 `repository.save()` 를 부르지 않는다. `UserImageServiceImpl.updateUserImage`(`user.setImageFile`), `EmailServiceImpl.validateToken`(`verification.setVerifiedAt`), `StorageServiceImpl.uploadFile` 의 메타데이터 갱신 경로도 전부 더티 체킹에 의존한다.
+- **해결**: 클래스 레벨 `@Transactional` 을 제거하지 않는다. 이 메서드들을 트랜잭션 밖에서 호출하지 않는다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserServiceImpl.java:67-75`
+
+### `@Transactional(readOnly = false)` 가 붙은 읽기 메서드를 보고 "여기선 쓰기가 된다"고 판단한다
+
+- **원인**: `StorageServiceImpl` 의 `getFileData`(69행), `getFile`(101행), `isFileExists`(116행)에 `@Transactional(readOnly = false)` 가 붙어 있다. 클래스 기본값과 같아서 아무 효과가 없는 중복이다. 게다가 `UserImageServiceImpl.getUserImageData()` 는 `readOnly = true` 로 시작해 `getFileData()` 를 호출하므로, 기존 트랜잭션에 참여하는 이 표기는 무시된다.
+- **해결**: 이 파일을 템플릿으로 복사하지 않는다. 새 읽기 메서드에는 `readOnly = true` 를 쓴다(`UserImageServiceImpl.getUserImageData`, `EmailServiceImpl.isValid` 가 올바른 예).
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/service/StorageServiceImpl.java`
+
+### 메일 발송이 실패하면 인증 레코드까지 사라진다
+
+- **원인**: `EmailServiceImpl` 은 클래스 레벨 `@Transactional` 이고 `sendVerification` 은 `repository.save(verification)`(59행) 후에 `gmailProvider.sendEmail(...)`(77행)을 호출한다. `GmailException` 은 RuntimeException 이라 트랜잭션이 롤백되고 방금 만든 `EmailVerification` 이 사라진다.
+- **해결**: 발송 실패 이력을 남기려면 별도 전파 설정이나 아웃박스가 필요하다. 반대로 순서를 뒤집어 커밋 후 발송하면 "코드는 남고 메일만 안 가는" 상태가 된다 — 어느 쪽이 나은지 먼저 정한다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/email/service/EmailServiceImpl.java:47-79`
+
+### S3 삭제가 실패하면 소프트 삭제까지 되돌아간다
+
+- **원인**: `deleteFile` 이 `metaData.setIsDeleted(true)` 와 `s3Client.deleteObject(...)` 를 같은 트랜잭션에서 한다.
+- **해결**: 의도된 동작인지 확인하고 쓴다. 더 중요한 건 **삭제가 DB 소프트 / S3 하드로 비대칭**이라는 점이다 — 소프트 삭제를 보고 "복구 가능"이라고 가정하면 안 된다. 남는 건 메타데이터뿐이고 실제 바이트는 사라진다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/service/StorageServiceImpl.java:87-98`
+
+### 엔티티를 고쳤는데 실제 컬럼이 따라오지 않는다 / 테이블이 아예 없다
+
+- **원인**: `spring.jpa.hibernate.ddl-auto` 가 로컬·운영 모두 `none` 이다 ([decision/0011](../decision/0011-jpa-manages-schema.md)). **애플리케이션은 테이블을 만들지도 컬럼을 바꾸지도 않는다.** 엔티티만 고치고 DDL 을 실행하지 않으면 기동은 성공하고 해당 컬럼을 실제로 조회하는 순간 깨진다.
+- **해결**: 엔티티 변경과 **DDL 직접 실행**을 한 작업으로 묶는다. `ddl-auto` 를 켜거나 Flyway 를 넣는 것은 해결책이 아니다 — 둘 다 의도적으로 배제한 선택이다.
+- **근거**: `api/src/main/resources/application.yaml`, `api/build.gradle`
+
+### compose 로 띄운 MySQL 에 스키마를 넣었는데 앱은 테이블이 없다고 한다
+
+- **원인**: 포트가 다르다. `api/.env.example`·`api/README.md`·`api/compose.yml` 은 개발 MySQL 을 **13306**(`"${MUPID_MYSQL_PORT:-13306}:3306"`)으로 안내하지만, 실제 `api/.env` 의 `MUPID_MYSQL_URL` 은 `jdbc:mysql://localhost:3306/mupid` 다. 즉 현재 로컬 실행은 `mupid-dev-mysql` 컨테이너가 아니라 **호스트에서 도는 MySQL** 을 본다.
+- **해결**: DB 작업 전에 `api/.env` 의 `MUPID_MYSQL_URL` 포트를 반드시 확인한다.
+- **근거**: `api/.env:10`, `api/.env.example:6`, `api/compose.yml`
+
+### 인증 메일 발송이 INSERT 에서 곧바로 실패한다
+
+- **원인**: `EmailVerification.verifiedAt` 이 `@Column(nullable = false)`(83행)인데 `EmailServiceImpl.sendVerification` 의 빌더(52-58행)는 이 값을 채우지 않는다. 값은 나중에 `validateToken()` 이 넣고, `validateToken()`·`isValid()` 는 `getVerifiedAt() != null` 로 미인증 상태를 판별한다. 코드는 null 을 정상 상태로 쓰는데 매핑만 NOT NULL 을 선언하고 있다.
+- **해결**: 이 컬럼은 NULL 허용이어야 한다. 매핑을 `nullable = true` 로 고치는 편이 맞다. `ddl-auto: none` 이라 매핑만으로는 드러나지 않지만, 이 매핑을 기준으로 테이블을 NOT NULL 로 만들면 발송이 깨진다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/email/entity/EmailVerification.java:82-83`
+
+### 회원 탈퇴가 상태 전환이 아니라 행 삭제다 (정책 위반)
+
+- **원인**: 삭제 정책은 **soft delete** 다 ([decision/0013](../decision/0013-soft-delete-policy.md)). `UserStatus.WITHDRAW`("삭제된 사용자")가 있고 `UserRepository` 의 두 조회 메서드와 `AuthProvider.auth()` 가 모두 `…AndStatusNot(UserStatus.WITHDRAW)` 로 거르는 것도 그 전제 위에 있다. 그런데 `UserServiceImpl.deleteUser()` 는 `repository.delete(user)` 로 실제 행을 지운다(78-81행).
+- **영향**: `email_verifications.user_id` 가 `users` 를 참조하므로 FK 제약을 걸면 인증 이력이 있는 회원 삭제가 실패하고, 성공하면 인증 이력이 함께 사라진다. 청취 이벤트(`listen_events.user_id`)도 참조가 끊겨 분석 데이터가 고아가 된다(ClickHouse 쪽은 TTL 18개월 동안 남는다).
+- **해결**: `deleteUser()` 를 `setStatus(WITHDRAW)` 전이로 고친다. 파일 쪽(`ObjectStorageFile.isDeleted`)은 이미 정책대로다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserServiceImpl.java:77-81`
+
+### 같은 이메일로 가입이 두 번 된다
+
+- **원인**: `User.email` 은 `@Column(nullable = false, updatable = false)` 일 뿐 `unique = true` 도 `@Table(uniqueConstraints = …)` 도 없다(저장소 전체에 `@Index`/`uniqueConstraints` 0건). 중복 방지는 `UserServiceImpl.createUser()` 의 `getUserByEmail(...).isPresent()` 검사뿐인데, 이 조회는 `statusNot(WITHDRAW)` 로 필터되므로 탈퇴 상태 행과는 애초에 충돌을 감지하지 못한다. 동시 요청도 막지 못한다.
+- **해결**: 테이블을 만들 때 유니크 인덱스를 넣을지 판단한다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/user/entity/User.java`, `api/src/main/java/com/osundosun/mupid/api/user/service/UserServiceImpl.java:49-52`
+
+### 2GB 넘는 파일을 올리면 `ArithmeticException` 이 난다
+
+- **원인**: `ObjectStorageFile.fileSizeBytes` 가 `Integer` 이고 업로드 경로가 `int fileSize = Math.toIntExact(file.getSize());` 로 좁힌다.
+- **해결**: 지금은 프로필 이미지 경로뿐이고 `USER_IMAGE_FILE_MAX_SIZE`(5MB)가 가려준다. 음원처럼 큰 파일을 이 테이블로 다루려면 컬럼 타입부터 `Long`(BIGINT)으로 바꾼다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/entity/ObjectStorageFile.java:56`, `api/src/main/java/com/osundosun/mupid/api/storage/service/StorageServiceImpl.java:49`
+
+### 프로필 사진을 지웠다 다시 올리면 같은 키의 메타데이터 행이 새로 쌓인다
+
+- **원인**: `deleteFile` 은 `isDeleted = true` 로만 바꾼다. 재업로드 시 `uploadFile` 의 중복 키 갱신 경로가 `getFileByKey` → `findByStorageObjectKeyAndIsDeletedFalse` 를 쓰므로 삭제 표시된 행을 못 찾고 `storageObjectKey` 가 같은 새 행을 insert 한다. `object_storage_files.storage_object_key` 에 유니크 제약도 없다.
+- **해결**: 키(`user/image/{userId}`)로 메타데이터를 역추적하는 코드를 새로 쓸 때 이 중복을 전제한다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/service/StorageServiceImpl.java:51-65, 87-98`
+
+### MySQL 커넥션 풀이 ClickHouse 처럼 튜닝돼 있을 거라 생각한다
+
+- **원인**: `application.yaml` 에 `spring.datasource.hikari.*` 가 하나도 없다. 같은 파일의 `clickhouse:` 블록은 `max-pool-size: 8`, `min-idle: 1`, `connection-timeout: 3s`, `validation-timeout: 3s` 를 이유(주석)까지 명시하고 있어 착각하기 쉽다.
+- **해결**: MySQL 풀 튜닝이 필요하면 처음부터 새로 정한다.
+- **근거**: `api/src/main/resources/application.yaml:51-60`
+
+### 인증 메일 만료 레코드가 계속 쌓인다
+
+- **원인**: 이메일 인증은 Redis TTL 이 아니라 MySQL 테이블(`email_verifications`)이다. 만료는 `expiredAt` 컬럼과 `EMAIL_VERIFICATION_EXPIRED_MINUTES = 15` / `EMAIL_VERIFICATION_VALID_EXPIRATION_HOURS = 1` 상수 비교로 판정하고, 만료 레코드를 지우는 배치가 없다.
+- **해결**: 인증코드 관련 버그를 Redis 에서 찾지 않는다. 정리 배치가 필요하면 별도로 만든다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/email/entity/EmailVerification.java`, `api/src/main/java/com/osundosun/mupid/api/email/service/EmailServiceImpl.java:37-38`
+

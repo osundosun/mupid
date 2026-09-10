@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS listen_events_local ON CLUSTER mupid
 (
     event_id      UUID,
     event_type    LowCardinality(String),
-    user_id       UInt64,
+    user_id       UInt32,
     track_id      UInt32,
     occurred_at   DateTime64(3, 'Asia/Seoul'),
     ingested_at   DateTime64(3, 'Asia/Seoul') DEFAULT now64(3),
@@ -80,7 +80,7 @@ LIFETIME(MIN 300 MAX 600);
 
 CREATE TABLE IF NOT EXISTS user_section_signals_local ON CLUSTER mupid
 (
-    user_id      UInt64,
+    user_id      UInt32,
     section_uid  String,
     track_id     UInt32,
     signal       LowCardinality(String),
@@ -132,7 +132,7 @@ WHERE event_type IN ('SECTION_MARK','SECTION_UNMARK','LIKE','UNLIKE','DISLIKE',
 
 CREATE TABLE IF NOT EXISTS play_section_coverage_local ON CLUSTER mupid
 (
-    user_id      UInt64,
+    user_id      UInt32,
     play_id      UUID,
     track_id     UInt32,
     section_uid  String,
@@ -156,7 +156,7 @@ ENGINE = Distributed(mupid, currentDatabase(), play_section_coverage_local, city
 CREATE TABLE IF NOT EXISTS rec_impressions_local ON CLUSTER mupid
 (
     rec_id             String,
-    user_id            UInt64,
+    user_id            UInt32,
     rec_type           LowCardinality(String),
     served_at          DateTime64(3, 'Asia/Seoul'),
     section_uids       Array(String),
@@ -234,7 +234,7 @@ CREATE TABLE IF NOT EXISTS kafka_listen_events ON CLUSTER mupid
 (
     event_id     String,
     event_type   String,
-    user_id      UInt64,
+    user_id      UInt32,
     track_id     UInt32,
     occurred_at  String,
     play_id      String,
