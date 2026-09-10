@@ -48,6 +48,17 @@ aws:
     secret-key: ${MUPID_S3_SECRET}
     bucket-name: ${MUPID_S3_BUCKET}
 
+clickhouse:
+  url: ${MUPID_CLICKHOUSE_URL}
+  username: ${MUPID_CLICKHOUSE_USER}
+  password: ${MUPID_CLICKHOUSE_PASSWORD}
+  # 분석 쿼리는 MySQL 트랜잭션 경로와 무관하므로 풀을 작게 잡는다.
+  max-pool-size: 8
+  min-idle: 1
+  connection-timeout: 3s
+  # ClickHouse 집계 쿼리는 오래 걸릴 수 있어 검증 쿼리 타임아웃을 넉넉히 둔다.
+  validation-timeout: 3s
+
 redis:
   key-prefix: ${MUPID_REDIS_KEY_PREFIX}
 
