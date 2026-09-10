@@ -59,6 +59,15 @@ docker compose up --force-recreate clickhouse-init
 docker compose down -v --remove-orphans
 ```
 
+> ⚠ `-v` 는 이 프로젝트의 **모든** 볼륨을 지운다. 분석 스택뿐 아니라
+> `mupid-dev-mysql-data`·`redis-data`·`storage-data` 까지 사라져 로컬 계정과
+> 업로드 파일이 날아간다. 스키마만 다시 적용하려는 것이라면 분석 스택만 지운다.
+>
+> ```bash
+> docker compose rm -sfv clickhouse-01 clickhouse-02 clickhouse-keeper kafka kafka-init clickhouse-init
+> docker volume rm mupid-dev-ch1-data mupid-dev-ch2-data mupid-dev-ch-keeper-data
+> ```
+
 `--remove-orphans` 를 붙이는 이유: compose 는 **현재 파일에 정의된 서비스만** 정리한다.
 서비스 이름이 바뀌면(예: `kafka-1`/`kafka-2` → `kafka`) 예전 컨테이너가 orphan 으로
 남아 포트를 계속 잡고 있어서, 새 컨테이너가 `port is already allocated` 로 뜨지 못한다.

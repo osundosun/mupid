@@ -214,7 +214,7 @@ docker compose up -d --wait        # --wait 없으면 clickhouse-init 완료를 
 
 눈으로 볼 때는 ClickHouse 내장 UI 를 쓴다. `http://localhost:18123/play` (계정 `mupid`), `http://localhost:18123/dashboard`. Kafka UI 는 `ui` profile 이라 `docker compose up -d kafka-ui` 로 따로 띄운다(`http://localhost:18080`, 인증 없음).
 
-전부 초기화: `docker compose down -v --remove-orphans` (`--remove-orphans` 를 빠뜨리는 함정은 [함정과 실패 사례](../failure/clickhouse-and-kafka.md) 참고).
+전부 초기화: `docker compose down -v --remove-orphans`. **`-v` 는 MySQL·Redis·스토리지 볼륨까지 지운다** — 분석 스키마만 다시 적용할 거면 분석 스택 컨테이너와 `ch1/ch2/ch-keeper` 볼륨만 지운다. 이 함정과 `--remove-orphans` 를 빠뜨리는 함정 모두 [함정과 실패 사례](../failure/clickhouse-and-kafka.md) 에 있다.
 
 ### `verify.sh` 가 검사하는 것
 
@@ -342,7 +342,7 @@ MySQL `JdbcTemplate` 이 `@Primary` 이므로 **`@Qualifier` 를 빠뜨리면 �
    | `CREATE MATERIALIZED VIEW IF NOT EXISTS` | `mv_kafka_to_events`, `mv_user_section_signals`, `mv_play_section_coverage` | 동일 |
    | `CREATE DICTIONARY IF NOT EXISTS` | `dict_track_sections` | 동일 |
 
-3. 테이블·MV·사전의 정의를 실제로 바꾸려면 재적용만으로 부족하다. 로컬은 `docker compose down -v --remove-orphans` 로 밀고 다시 올리는 것이 가장 확실하다.
+3. 테이블·MV·사전의 정의를 실제로 바꾸려면 재적용만으로 부족하다. 로컬은 분석 스택 컨테이너와 `ch1/ch2/ch-keeper` 볼륨만 지우고 다시 올린다 — `down -v` 는 MySQL·Redis 까지 날린다. 지우지 않고 DDL 만 검증하려면 Keeper 경로를 바꾼 사본을 임시 데이터베이스에 적용해 본다.
 4. 오브젝트를 추가/삭제했으면 **`verify.sh` 2단계의 기대값 `5/5/5/1/1` 을 함께 고친다.**
 5. 새 이벤트 테이블을 만들면 `PARTITION BY toYYYYMM(...)` + `TTL toDateTime(...) + INTERVAL 18 MONTH` + `DateTime64(3, 'Asia/Seoul')` 규칙과 `_local`/Distributed 짝 규칙을 따른다.
 6. 클러스터를 고를 때: `dictGet` 소스가 되거나 전 노드가 전체를 알아야 하면 `mupid_all` + `{shard}` 없는 Keeper 경로, 그 외 이벤트성이면 `mupid` + `{shard}` 있는 경로.

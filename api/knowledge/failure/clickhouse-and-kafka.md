@@ -68,6 +68,20 @@
 - **해결**: 재소비가 일어났으면 파생 테이블을 따로 정리한다(`verify.sh` 가 6단계 앞에서 테스트 사용자의 커버리지를 지우는 것이 그 이유다). 근본 해결은 **수집기가 `event_id` 로 중복을 걸러 Kafka 에 넣지 않는 것**이다 → [decision/0014](../decision/0014-event-collector-in-api.md). 덧붙여 ReplacingMergeTree 의 중복 정리는 **병합 시점의 파트 단위**라 즉시 반영되지 않는다 — 정확한 카운트가 필요하면 `verify.sh` 처럼 `uniqExact()` 를 쓰거나 `FINAL` 을 붙인다.
 - **근거**: `api/clickhouse/init/01-schema.sql`, `api/compose.yml`
 
+### 스키마를 새로 적용하려고 `down -v` 했더니 로컬 계정과 업로드 파일까지 사라졌다
+
+- **원인**: `-v` 는 그 compose 프로젝트의 **모든** 볼륨을 지운다. `api/compose.yml` 이 선언한 볼륨은 6개인데 분석 스택 것은 셋뿐이다(`ch1-data`, `ch2-data`, `ch-keeper-data`). 나머지 `mysql-data`·`redis-data`·`storage-data` 에는 회원·세션·업로드 파일이 들어 있다. 스키마는 `CREATE TABLE IF NOT EXISTS` 라 재적용으로 안 바뀌니 볼륨을 지워야 하는 것은 맞지만, 지울 범위가 과하다.
+- **해결**: 분석 스택만 지운다. Kafka 는 볼륨이 없어 컨테이너만 지우면 로그도 함께 사라진다.
+
+  ```bash
+  docker compose rm -sfv clickhouse-01 clickhouse-02 clickhouse-keeper kafka kafka-init clickhouse-init
+  docker volume rm mupid-dev-ch1-data mupid-dev-ch2-data mupid-dev-ch-keeper-data
+  docker compose up -d --wait
+  ```
+
+- **DDL 만 검증할 거면 아무것도 지울 필요가 없다.** Keeper 경로(`/clickhouse/tables/`)를 다른 접두사로 바꾼 사본을 임시 데이터베이스에 `--queries-file` 로 적용하면, 엔진 인자·MV JOIN·뷰 SQL 이 받아들여지는지와 커버리지 분할이 맞는지까지 확인할 수 있다. 끝나면 그 데이터베이스만 `DROP DATABASE … ON CLUSTER` 한다. 다만 `verify.sh` 자체는 `default` 를 보므로 이 방법으로는 돌릴 수 없다.
+- **근거**: `api/compose.yml` volumes 절 (선언 6개, 이름 `mupid-dev-*`)
+
 ### `docker compose up -d` 가 돌아왔는데 DDL 이 아직 적용 중이다
 
 - **원인**: `up -d` 는 1회성 초기화 컨테이너(`mupid-dev-ch-init`)의 종료를 기다리지 않는다. 더 나쁜 건 **실행 중인 컨테이너의 `.State.ExitCode` 가 0** 이라서 종료 코드만 검사하면 아직 적용 중인데도 통과해버린다는 점이다.
