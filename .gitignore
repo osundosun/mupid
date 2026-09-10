@@ -1,3 +1,11 @@
 # root (husky) dependencies
 /node_modules
 /.gradle-ci/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+
+# music_chunking (uv)
+/music_chunking/config.json
