@@ -1,5 +1,7 @@
 # MUPID 운영 인수 안내
 
+09/11 로컬 CI 변경: 백엔드 대용량 아티팩트/Generic Packages를 제거하고 BuildKit 빌드→SSH 전송 및 보관 원본 재시도를 구현했다. 서버 설치와 실제 CI 배포는 미실행이다. **병합 전 수신기를 선설치**하며, 최신 백엔드 경로와 적용 절차는 [DIRECT-DEPLOY-MIGRATION.md](DIRECT-DEPLOY-MIGRATION.md)를 따른다. 아래 Generic Packages 관련 백엔드 설명은 전환 전 기록이다.
+
 문서 갱신일: 2026-09-09. 서버 실측 기록은 2026-09-07 기준이며 이번 작업에서는 서버에 접속하거나 변경하지 않았다. 서비스 https://j15a204.p.ssafy.io/ 및 /mupid, API 상태 /api/actuator/health.
 
 ## 마지막 운영 검증 기록 (09/07)

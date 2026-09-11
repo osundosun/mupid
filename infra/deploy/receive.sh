@@ -2,13 +2,32 @@
 # Root-owned deployment endpoint. Input: SHA checksum, stdin: gzip Docker archive.
 set -euo pipefail
 umask 077
-[[ $EUID == 0 && $# == 2 && $1 =~ ^[0-9a-f]{40}$ && $2 =~ ^[0-9a-f]{64}$ ]] || exit 64
-release=$1
-checksum=$2
+[[ $EUID == 0 && $# == 2 ]] || exit 64
+mode=upload
+if [[ $1 == --resume && $2 =~ ^[0-9a-f]{40}$ ]]; then
+  mode=resume
+  release=$2
+elif [[ $1 =~ ^[0-9a-f]{40}$ && $2 =~ ^[0-9a-f]{64}$ ]]; then
+  release=$1
+  checksum=$2
+else
+  exit 64
+fi
 root=/srv/mupid
 exec 9>"$root/deploy.lock"
 flock -w 300 9 || exit 75
 directory="$root/releases/$release"
+if [[ $mode == resume ]]; then
+  if [[ ! -e "$directory/image.sha256" && ! -e "$directory/image.tar.gz" ]]; then
+    echo 'RELEASE_NOT_STORED'
+    exit 44
+  fi
+  [[ -s "$directory/image.sha256" && -s "$directory/image.tar.gz" ]] || {
+    echo 'STORED_RELEASE_INCOMPLETE: operator recovery required' >&2; exit 65;
+  }
+  checksum=$(cat "$directory/image.sha256")
+  [[ $checksum =~ ^[0-9a-f]{64}$ ]] || exit 65
+fi
 mkdir -p "$directory"
 if [[ -f "$directory/image.sha256" && $(cat "$directory/image.sha256") != "$checksum" ]]; then
   echo 'An immutable release already exists with a different checksum' >&2
@@ -16,7 +35,11 @@ if [[ -f "$directory/image.sha256" && $(cat "$directory/image.sha256") != "$chec
 fi
 temporary=$(mktemp "$directory/upload.XXXXXX")
 trap 'rm -f "$temporary"' EXIT
-head -c 1073741825 > "$temporary"
+if [[ $mode == resume ]]; then
+  head -c 1073741825 < "$directory/image.tar.gz" > "$temporary"
+else
+  head -c 1073741825 > "$temporary"
+fi
 [[ $(stat -c %s "$temporary") -lt 1073741825 ]] || { echo 'Image exceeds 1 GiB' >&2; exit 65; }
 actual=$(sha256sum "$temporary" | cut -d ' ' -f 1)
 [[ $actual == "$checksum" ]] || { echo 'Checksum mismatch; deployment not started' >&2; exit 65; }
