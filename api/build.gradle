@@ -62,7 +62,17 @@ dependencies {
 
 	// Kafka(이벤트 발행) 관련
 	// 프로듀서 빈을 직접 만들므로 라이브러리만 있으면 된다. spring.kafka.* 자동설정은 쓰지 않는다.
-	implementation 'org.springframework.kafka:spring-kafka'
+	//
+	// 압축 코덱 둘을 뺀다. 우리 프로듀서는 compression.type 을 지정하지 않아(none) 쓰지
+	// 않는데, 둘 다 전 플랫폼용 네이티브 바이너리를 담고 있어 실행 jar 을 9.2MB 불린다
+	// (zstd-jni 7.0MB + snappy-java 2.2MB). lz4-java 는 남긴다 — ClickHouse JDBC 가 쓴다.
+	//
+	// ⚠ 나중에 compression.type 을 zstd 나 snappy 로 바꾸려면 해당 exclude 를 먼저
+	//   지워야 한다. 안 지우면 런타임에 NoClassDefFoundError 로 발행이 통째로 실패한다.
+	implementation('org.springframework.kafka:spring-kafka') {
+		exclude group: 'com.github.luben', module: 'zstd-jni'
+		exclude group: 'org.xerial.snappy', module: 'snappy-java'
+	}
 
 	// JWT 관련
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.5'
