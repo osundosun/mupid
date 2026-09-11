@@ -1,3 +1,4 @@
 # root (husky) dependencies
 /node_modules
 /.gradle-ci/
+/.release/
