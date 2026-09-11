@@ -14,6 +14,8 @@ public interface UserService {
 
     Optional<User> getUserByEmail(String email);
 
+    Optional<User> getUserByImageFileId(int imageFileId);
+
     User updateUser(int userId, UserUpdateRequest dto);
 
     void deleteUser(int userId);

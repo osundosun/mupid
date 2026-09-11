@@ -65,6 +65,11 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public Optional<User> getUserByImageFileId(int imageFileId) {
+        return repository.findByImageFileId(imageFileId);
+    }
+
+    @Override
     public User updateUser(int userId, UserUpdateRequest dto) {
         User user = getUser(userId).orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
         if (dto.password() != null) user.setPassword(passwordEncoder.encode(dto.password()));
