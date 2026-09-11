@@ -1,6 +1,5 @@
 package com.osundosun.mupid.api.storage.service;
 
-import java.io.IOException;
 import java.util.Optional;
 
 import org.springframework.context.ApplicationContext;
