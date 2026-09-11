@@ -43,6 +43,20 @@
 - **해결**: 두 파일 모두 유지한다.
 - **근거**: `api/build.gradle`, `api/settings.gradle`
 
+### `ObjectMapper` 를 주입받았더니 기동이 실패한다
+
+- **원인**: Spring Boot 4 의 `JacksonAutoConfiguration` 은 **Jackson 3 만** 빈으로 등록한다. `spring-boot-jackson` 안의 팩터리 메서드 반환 타입이 전부 `tools.jackson.databind.json.JsonMapper` 계열이고, `com.fasterxml.jackson.databind.ObjectMapper` 빈은 어디서도 만들어지지 않는다. 클래스패스에는 Jackson 2 가 있으므로(`jjwt-jackson` 의 전이 의존성 + 직접 선언) **컴파일은 통과하고 기동에서 `NoSuchBeanDefinitionException` 이 난다.**
+- **확인 방법**: 실행 jar 안에 `jackson-databind-2.x.jar` 와 `jackson-databind-3.x.jar` 가 함께 들어 있다. 어느 쪽 빈이 있는지는 `javap` 로 본다.
+
+  ```bash
+  jar xf BOOT-INF/lib/spring-boot-jackson-*.jar
+  javap -cp . org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration
+  ```
+
+- **해결**: 주입하지 말고 직접 만든다. `auth/exception` 의 두 핸들러가 원래 `new ObjectMapper()` 를 쓰는 것도 같은 이유다. Jackson 3 을 주입해도 되지만, 직렬화 결과가 외부 계약(예: ClickHouse 컬럼명)이라면 애플리케이션 설정에 묶지 않는 편이 낫다 — `spring.jackson.property-naming-strategy` 를 누가 바꾸면 조용히 깨진다.
+- **CI 가 잡아주지 않는다.** 테스트를 `-x test` 로 건너뛰므로 컨텍스트 로딩이 검증되지 않는다. 빈 주입을 새로 거는 코드는 배포 전에 실제로 띄워 봐야 한다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/auth/exception/AuthUnauthorizedHandler.java`, `api/src/main/java/com/osundosun/mupid/api/event/service/EventServiceImpl.java`
+
 ### `SecurityFilterChain` 에 `throws Exception` 이 없어서 이상해 보인다
 
 - **원인**: 실수가 아니다. Spring Security 7 에서 `HttpSecurity.build()` 는 checked exception 을 던지지 않는다.

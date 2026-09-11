@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.osundosun.mupid.api.cache.enumerate.CacheKind;
 import com.osundosun.mupid.api.cache.service.CacheService;
 import com.osundosun.mupid.api.common.exception.BusinessException;
@@ -60,10 +62,25 @@ public class EventServiceImpl implements EventService {
     private static final DateTimeFormatter CLICKHOUSE_TIME =
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(ZoneId.of("Asia/Seoul"));
 
+    /**
+     * Kafka 로 나가는 JSON 전용 매퍼. 애플리케이션 ObjectMapper 를 주입받지 않는다.
+     *
+     * 1. **주입할 빈이 없다.** Spring Boot 4 의 JacksonAutoConfiguration 은 Jackson 3
+     *    (`tools.jackson.databind.json.JsonMapper`) 만 등록한다. `com.fasterxml` 의
+     *    ObjectMapper 빈은 존재하지 않아 주입을 걸면 기동이 실패한다.
+     *    (`auth/exception` 의 두 핸들러도 같은 이유로 `new ObjectMapper()` 를 쓴다.)
+     * 2. **이 필드명은 ClickHouse 와의 계약이다.** `kafka_listen_events` 컬럼명과
+     *    1:1 이어야 하는데, 애플리케이션 설정(`spring.jackson.property-naming-strategy`)
+     *    에 묶어두면 누가 그 값을 바꾸는 순간 조용히 깨진다. JSONEachRow 는 모르는
+     *    필드를 그냥 건너뛰므로 오류도 로그도 남지 않고 모든 컬럼이 기본값이 된다.
+     */
+    private static final ObjectMapper MAPPER = JsonMapper.builder()
+        .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+        .build();
+
     private final EventProperties props;
     private final CacheService cacheService;
     private final KafkaTemplate<String, String> eventKafkaTemplate;
-    private final ObjectMapper objectMapper;
 
     @Override
     public EventCollectResponse collectEvents(Integer userId, EventCollectRequest dto) {
@@ -145,7 +162,7 @@ public class EventServiceImpl implements EventService {
 
     private Optional<String> serialize(ListenEventMessage message) {
         try {
-            return Optional.of(objectMapper.writeValueAsString(message));
+            return Optional.of(MAPPER.writeValueAsString(message));
         } catch (JsonProcessingException e) {
             log.warn("청취 이벤트 직렬화 실패 event_id={}", message.eventId(), e);
             return Optional.empty();
