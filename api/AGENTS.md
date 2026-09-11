@@ -18,6 +18,7 @@
 작업 전에 반드시 확인할 것:
 
 - **엔티티를 건드린다면** → [decision/0011](knowledge/decision/0011-jpa-manages-schema.md) — `ddl-auto` 가 `none` 이라 **DDL 을 직접 실행해야 한다.** Flyway 는 쓰지 않는다.
+- **테이블·컬럼을 추가하거나 바꾼다면** → [domain/erd.md](knowledge/domain/erd.md) — MySQL 스키마 설계의 기준은 ERD 다. **ERD 수정은 반드시 팀에 의사를 물은 뒤에 한다.**
 - **배포에 반영되어야 한다면** → [decision/0008](knowledge/decision/0008-deploy-image-from-infra.md) — `api/Dockerfile` 과 `api/nginx/` 는 실제 배포에 쓰이지 않는다.
 - **정해지지 않은 것을 만났다면** → [open-questions.md](knowledge/open-questions.md) — 이미 목록에 있는지 먼저 본다.
 - **문서를 근거로 삼기 전에** → [failure/doc-drift.md](knowledge/failure/doc-drift.md) — 문서와 코드가 어긋난 지점 목록.

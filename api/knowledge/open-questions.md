@@ -110,6 +110,18 @@
 
 **정할 것**: Redis 장애 시 동작. 클램프 범위는 기본값이 들어갔으니 값만 조정하면 된다.
 
+### C4. ERD 와 현재 엔티티가 어긋난 컬럼들
+
+[domain/erd.md](domain/erd.md) 반입으로 MySQL 스키마 기준이 ERD 로 정해졌는데, 기존 엔티티 3개가 여러 곳에서 ERD 와 다르다 — `users.gender`(`M`/`F` vs `MALE`/`FEMALE`), `users.role`(`ROLE_USER` vs `USER`), `users.onboarding_submitted_at`(ERD 에 없음), `object_storage_files.file_type`·`category`·`mime`. ERD 대로 만든 테이블에는 현재 코드가 INSERT 하지 못한다.
+
+**정할 것**: enum 값을 어느 쪽에 맞출지(데이터 마이그레이션 동반), 온보딩 시각을 `users` 에 둘지 `onboarding_survey` 로 옮길지. 그리고 [decision/0011](decision/0011-jpa-manages-schema.md) 본문의 "스키마 기준은 JPA 매핑" 문장을 ERD 기준으로 고칠지.
+
+### C5. 곡 식별자가 `track_id` 와 `music_id` 로 갈린다
+
+ClickHouse 분석 스키마는 Jamendo `track_id`, MySQL ERD 는 자체 `music.music_id` 를 쓴다. 둘이 같은 곡을 가리키는지, 매핑 테이블을 둘지 정해지지 않았다.
+
+**정할 것**: 카탈로그의 단일 기준과 두 식별자를 잇는 방법.
+
 ---
 
 ## D. 정리하면 좋은 것
