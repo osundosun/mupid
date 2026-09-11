@@ -43,8 +43,7 @@ public class StorageImageServiceImpl implements StorageImageService {
         ObjectStorageFile storageFile = storageService.uploadFile(storageKey, imageFile);
 
         // 카테고리 서비스 콜백
-        StorageImageServiceCallback callbackService = appContext.getBean(category.getService());
-        callbackService.handleUploadImageAfter(storageFile);
+        getCallbackService(category).handleUploadImageAfter(storageFile);
 
         // 파일 번호 반환
         return storageFile.getFileId();
@@ -60,8 +59,7 @@ public class StorageImageServiceImpl implements StorageImageService {
         }
 
         // 카테고리 서비스 콜백
-        StorageImageServiceCallback callbackService = appContext.getBean(category.getService());
-        return callbackService.handleNoImageData(category, storageKey);
+        return getCallbackService(category).handleNoImageData(category, storageKey);
     }
 
     @Override
@@ -71,8 +69,7 @@ public class StorageImageServiceImpl implements StorageImageService {
             .orElseThrow(() -> new BusinessException(StorageErrorCode.FILE_NOT_FOUND));
 
         // 카테고리 서비스 콜백
-        StorageImageServiceCallback callbackService = appContext.getBean(category.getService());
-        callbackService.handleDeleteImageBefore(storageFile);
+        getCallbackService(category).handleDeleteImageBefore(storageFile);
 
         storageService.deleteFile(storageFile.getFileId());
     }
@@ -80,6 +77,13 @@ public class StorageImageServiceImpl implements StorageImageService {
     @Override
     public String getStorageKey(FileCategory category, String key) {
         return "image/%s/%d".formatted(category.name().toLowerCase(), key);
+    }
+
+    private StorageImageServiceCallback getCallbackService(FileCategory category) {
+        if (category.getService() == null) {
+            throw new UnsupportedOperationException("이미지 콜백 서비스가 등록되지 않았습니다.");
+        }
+        return appContext.getBean(category.getService());
     }
 
 }

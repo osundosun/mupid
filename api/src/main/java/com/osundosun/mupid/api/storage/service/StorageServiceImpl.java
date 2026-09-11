@@ -53,6 +53,7 @@ public class StorageServiceImpl implements StorageService {
 
         return getFileByKey(key)
             .map(metaData -> {
+                // key 중복시 내용만 수정
                 metaData.setOriginalFileName(originalFilename);
                 metaData.setMime(contentType);
                 metaData.setFileSizeBytes(fileSize);
