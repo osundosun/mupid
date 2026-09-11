@@ -101,8 +101,8 @@ objects="SELECT concat(
   FROM system.tables WHERE database='default'"
 o1=$(q "$CH1" "$objects")
 o2=$(q "$CH2" "$objects")
-check "ch-01 replicated/distributed/view/kafka/dict" "$o1" "5/5/4/1/1"
-check "ch-02 replicated/distributed/view/kafka/dict" "$o2" "5/5/4/1/1"
+check "ch-01 replicated/distributed/view/kafka/dict" "$o1" "5/5/5/1/1"
+check "ch-02 replicated/distributed/view/kafka/dict" "$o2" "5/5/5/1/1"
 
 echo "==> 3. ON CLUSTER DDL 큐에 실패 없음"
 check "DDL 큐 실패 건수" \
@@ -133,6 +133,17 @@ check "구간 밖 조회는 빈 문자열 (MV 필터 조건)" \
   "$(q "$CH1" "SELECT dictGet('dict_track_sections','section_uid', toUInt64(1001), toUInt32(999999)) = ''")" "1"
 
 echo "==> 6. Kafka -> mv_kafka_to_events -> listen_events"
+# listen_events 는 ReplacingMergeTree 라 같은 event_id 를 다시 넣어도 결과가 같지만,
+# mv_play_section_coverage 는 INSERT 마다 다시 발화하고 play_section_coverage 는
+# SummingMergeTree 라 재실행할 때마다 listened_ms 가 누적된다. 테스트 사용자 것만
+# 먼저 지워서 이 스크립트를 몇 번 돌려도 같은 결과가 나오게 한다.
+#
+# 이 누적이 곧 "MV 는 중복 입력을 걸러주지 않는다" 는 증거다. 원본 테이블에서
+# 중복이 병합돼 사라져도 MV 가 만든 파생 행은 남으므로, 중복 제거는 Kafka 에
+# 넣기 전(수집기)에서 끝내야 한다 → knowledge/decision/0014.
+q "$CH1" "ALTER TABLE play_section_coverage_local ON CLUSTER mupid
+          DELETE WHERE user_id IN (42, 77) SETTINGS mutations_sync = 2" >/dev/null
+
 docker exec -i "$KAFKA" /opt/kafka/bin/kafka-console-producer.sh \
   --bootstrap-server localhost:9092 --topic "$TOPIC" >/dev/null <<'EVENTS'
 {"event_id":"11111111-1111-4111-8111-111111111111","event_type":"PLAY_START","user_id":42,"track_id":1001,"occurred_at":"2026-01-01 10:00:00.000","play_id":"aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa","entry_path":"RECOMMEND","position_ms":0}
@@ -141,6 +152,7 @@ docker exec -i "$KAFKA" /opt/kafka/bin/kafka-console-producer.sh \
 {"event_id":"44444444-4444-4444-8444-444444444444","event_type":"PLAYLIST_ADD","user_id":77,"track_id":2002,"occurred_at":"2026-01-01 10:01:10.000","play_id":"bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb","entry_path":"SEARCH","position_ms":10000,"playlist_id":900}
 {"event_id":"55555555-5555-4555-8555-555555555555","event_type":"DISLIKE","user_id":77,"track_id":1001,"occurred_at":"2026-01-01 10:01:30.000","play_id":"bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb","entry_path":"SEARCH","position_ms":20000}
 {"event_id":"66666666-6666-4666-8666-666666666666","event_type":"TRACK_SKIP","user_id":42,"track_id":1001,"occurred_at":"2026-01-01 10:01:50.000","play_id":"aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa","entry_path":"RECOMMEND","position_ms":5000,"skip_trigger":"NEXT_BUTTON"}
+{"event_id":"77777777-7777-4777-8777-777777777777","event_type":"PLAY_PROGRESS","user_id":42,"track_id":1001,"occurred_at":"2026-01-01 10:00:32.000","play_id":"aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa","entry_path":"RECOMMEND","from_ms":27000,"position_ms":32000}
 EVENTS
 check "Kafka producer 실행" "$?" "0"
 
@@ -150,16 +162,17 @@ TEST_IDS="'11111111-1111-4111-8111-111111111111',
           '33333333-3333-4333-8333-333333333333',
           '44444444-4444-4444-8444-444444444444',
           '55555555-5555-4555-8555-555555555555',
-          '66666666-6666-4666-8666-666666666666'"
+          '66666666-6666-4666-8666-666666666666',
+          '77777777-7777-4777-8777-777777777777'"
 
 # Kafka 엔진은 kafka_flush_interval_ms 주기로 넘기므로 잠깐 기다린다.
 events=0
 for _ in $(seq 1 30); do
   events=$(q "$CH1" "SELECT uniqExact(event_id) FROM listen_events WHERE event_id IN ($TEST_IDS)")
-  [ "$events" = "6" ] && break
+  [ "$events" = "7" ] && break
   sleep 2
 done
-check "listen_events 이벤트 수" "$events" "6"
+check "listen_events 이벤트 수" "$events" "7"
 check "occurred_at 이 Asia/Seoul 로 파싱됨" \
   "$(q "$CH1" "SELECT toString(occurred_at) FROM listen_events WHERE event_id='22222222-2222-4222-8222-222222222222' LIMIT 1")" \
   "2026-01-01 10:00:15.000"
@@ -174,17 +187,26 @@ check "SECTION_MARK -> s1001-hook" \
 check "DISLIKE 가중치 (음수)" \
   "$(q "$CH1" "SELECT any(weight) FROM user_section_signals WHERE user_id=77 AND signal='DISLIKE'")" "-1"
 
-echo "==> 8. play_section_coverage / rec_impressions (Array, Map 왕복)"
-# 구간은 일부러 s1001-hook 을 쓴다. v_track_skips 의 r 서브쿼리가
-# (user_id, section_uid) 로 "이미 충분히 들은 구간" 을 세는데,
-# TRACK_SKIP 이벤트가 가리키는 구간(s1001-intro)에 커버리지가 있으면
-# skip_class 가 EARLY_SKIP 대신 SKIP_AFTER_HOOK 으로 바뀌어 9번 검증과 충돌한다.
+echo "==> 8. mv_play_section_coverage / rec_impressions (Array, Map 왕복)"
+# PLAY_PROGRESS 한 건이 [27000, 32000) 을 커버한다. 1001 의 구간 경계가 30000 이므로
+# s1001-intro 에 3000ms, s1001-hook 에 2000ms 로 쪼개져야 한다.
+# 끝점(32000)이 속한 구간으로 몰아주는 구현이면 intro 0 / hook 5000 이 되어 여기서 깨진다.
+cov="SELECT sum(listened_ms) FROM play_section_coverage
+     WHERE user_id = 42 AND section_uid = "
+check "구간 경계에서 쪼개짐 (s1001-intro)" "$(q "$CH1" "$cov's1001-intro'")" "3000"
+check "구간 경계에서 쪼개짐 (s1001-hook)" "$(q "$CH1" "$cov's1001-hook'")" "2000"
+
+# 수동 INSERT 로 Distributed 왕복도 같이 본다. 구간은 일부러 s1001-hook 을 쓴다.
+# v_track_skips 의 r 서브쿼리가 "이미 절반 넘게 들은 구간" 을 세는데,
+# TRACK_SKIP 이 가리키는 구간(s1001-intro)에 그만큼 커버리지가 쌓이면
+# skip_type 가 EARLY_SKIP 대신 SKIP_AFTER_HOOK 으로 바뀌어 9번 검증과 충돌한다.
 q "$CH1" "INSERT INTO play_section_coverage
-    (user_id, play_id, track_id, section_uid, entry_path, listened_ms, section_ms, reached, started_at)
+    (user_id, play_id, track_id, section_uid, entry_path, section_ms, listened_ms, started_at)
   SETTINGS distributed_foreground_insert = 1
-  VALUES (42,'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',1001,'s1001-hook','RECOMMEND',20000,30000,1,'2026-01-01 10:00:00.000')" >/dev/null
-check "play_section_coverage 적재" \
-  "$(q "$CH1" "SELECT uniqExact((user_id, play_id, section_uid)) FROM play_section_coverage WHERE user_id = 42")" "1"
+  VALUES (42,'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',1001,'s1001-hook','RECOMMEND',30000,20000,'2026-01-01 10:00:00.000')" >/dev/null
+check "play_section_coverage 키 수 (intro + hook)" \
+  "$(q "$CH1" "SELECT uniqExact((user_id, play_id, section_uid)) FROM play_section_coverage WHERE user_id = 42")" "2"
+check "SummingMergeTree 부분합 (2000 + 20000)" "$(q "$CH1" "$cov's1001-hook'")" "22000"
 
 q "$CH1" "INSERT INTO rec_impressions
     (rec_id, user_id, rec_type, served_at, section_uids, scores, explore_flags,
@@ -206,7 +228,7 @@ check "rec_impressions Map(String,String) 왕복" \
 echo "==> 9. v_track_skips (distributed_product_mode=global 필요)"
 # event_id 로 못 박는다. 수동 테스트로 TRACK_SKIP 을 더 넣어도 이 건만 본다.
 # (컬럼명에 별칭이 남아 s.user_id 는 백틱이 필요하지만 event_id 는 깔끔하다)
-skip=$(q "$CH1" "SELECT concat(skip_class,'/',toString(weight)) FROM v_track_skips
+skip=$(q "$CH1" "SELECT concat(skip_type,'/',toString(weight)) FROM v_track_skips
                  WHERE event_id = '66666666-6666-4666-8666-666666666666' LIMIT 1")
 check "EARLY_SKIP + RECOMMEND + NEXT_BUTTON -> -1" "$skip" "EARLY_SKIP/-1"
 

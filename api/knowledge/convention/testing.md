@@ -23,7 +23,7 @@ CI 에서 테스트를 뺀 것은 팀 결정이고 과정이 이력에 남아 �
 
 ### 프론트엔드
 
-`frontend/tests/` 에 `node:test` 기반 `.test.mjs` 20개가 추적되고 있다. `frontend/package.json` 의 scripts 는 `dev`/`build`/`start`/`lint`/`format` 뿐이라 `npm test` 가 없다. 실행 방법은 `frontend/README.md` 의 한 줄이 유일하다.
+`frontend/tests/` 에 `node:test` 기반 `.test.mjs` 21개가 추적되고 있다. `frontend/package.json` 의 scripts 는 `dev`/`build`/`start`/`lint`/`format` 뿐이라 `npm test` 가 없다. 실행 방법은 `frontend/README.md` 의 한 줄이 유일하다.
 
 ```bash
 npx tsc --noEmit --incremental false

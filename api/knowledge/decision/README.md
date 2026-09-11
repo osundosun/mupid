@@ -12,7 +12,7 @@
 | [0002](0002-mupid-env-prefix.md) | 모든 환경변수에 `MUPID_` 접두사를 붙인다 | 채택 · 강한 규칙 |
 | [0003](0003-error-code-enum-owns-http-status.md) | HTTP 상태를 에러 코드 enum 이 들고 있다 | 채택 |
 | [0004](0004-jwt-denylist-in-redis.md) | 로그아웃을 Redis 차단 목록으로 구현한다 | 채택 |
-| [0005](0005-kafka-clickhouse-for-listen-events.md) | 청취 이벤트는 Kafka → ClickHouse 로 적재한다 | 채택 · 프로듀서 미구현 |
+| [0005](0005-kafka-clickhouse-for-listen-events.md) | 청취 이벤트는 Kafka → ClickHouse 로 적재한다 | 채택 |
 | [0006](0006-section-as-recommendation-unit.md) | 추천 단위를 곡이 아니라 구간으로 잡는다 | 채택 · 도메인 핵심 |
 | [0007](0007-shared-nginx-template.md) | nginx 템플릿 하나를 개발·운영이 공유한다 | 채택 · `api/` 한정 |
 | [0008](0008-deploy-image-from-infra.md) | 배포 이미지는 `infra/image/Dockerfile` 로 굽는다 | 채택 · **가장 헷갈림** |
@@ -21,6 +21,8 @@
 | [0011](0011-jpa-manages-schema.md) | 스키마는 Spring JPA 가 관리한다 (Flyway 미도입) | 채택 |
 | [0012](0012-frontend-static-to-ec2.md) | 프론트엔드를 정적 산출물로 EC2 에 배포한다 | 채택 · 오해하기 쉬움 |
 | [0013](0013-soft-delete-policy.md) | 삭제는 soft delete 로 한다 | 채택 · **코드가 미준수** |
+| [0014](0014-event-collector-in-api.md) | 청취 이벤트 수집기를 API 안에 둔다 | 채택 · 구현 완료 |
+| [0015](0015-derive-interpretation-at-query-time.md) | 해석(분류·가중치)은 저장하지 않고 쿼리 시점에 계산한다 | 채택 · **기존 MV 1개가 미준수** |
 
 ## 먼저 볼 것
 

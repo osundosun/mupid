@@ -40,6 +40,20 @@ public class CacheServiceImpl implements CacheService {
     }
 
     @Override
+    public boolean setIfAbsent(String key, CacheKind kind, Duration ttl) {
+        String rkey = buildKey(key, kind);
+        return Boolean.TRUE.equals(
+            stringRedisTemplate.opsForValue().setIfAbsent(rkey, "", ttl)
+        );
+    }
+
+    @Override
+    public void delete(String key, CacheKind kind) {
+        String rkey = buildKey(key, kind);
+        stringRedisTemplate.delete(rkey);
+    }
+
+    @Override
     public boolean exists(String key, CacheKind kind) {
         String rkey = buildKey(key, kind);
         return Boolean.TRUE.equals(stringRedisTemplate.hasKey(rkey));

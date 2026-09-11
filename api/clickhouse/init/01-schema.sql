@@ -1,3 +1,23 @@
+-- Mupid 분석 스키마. ON CLUSTER 로 한 번만 적용한다 (init/apply-ddl.sh).
+--
+-- ID 타입 규칙 — MySQL 이 기준이다.
+--   JPA 엔티티의 PK 는 전부 `Integer`(INT AUTO_INCREMENT) 다. ClickHouse 는 여기에
+--   맞춰 UInt32 를 쓴다 (user_id / track_id / playlist_id / comment_id).
+--   tracks·playlists·comments 엔티티는 아직 MySQL 에 없다. 만들 때 `Integer` PK 를
+--   쓰지 않으면 이 스키마와 어긋난다.
+--
+-- from_ms 는 두 가지 의미로 쓴다.
+--   SEEK_BACK / SEEK_FORWARD  seek 하기 직전의 재생 위치
+--   PLAY_PROGRESS             직전 하트비트의 재생 위치
+--   즉 PLAY_PROGRESS 한 건은 "[from_ms, position_ms) 를 연속으로 들었다" 는 뜻이고,
+--   mv_play_section_coverage 가 이 구간을 곡 구간 경계로 쪼개 커버리지로 만든다.
+--
+-- entry_path 는 PLAY_START 뿐 아니라 그 재생에 속한 모든 이벤트에 실린다. 스킵 해석과
+-- 커버리지가 진입 경로를 필요로 하는데, 이벤트마다 PLAY_START 로 되짚는 JOIN 을 두면
+-- 뜨거운 경로가 느려지기 때문이다. LowCardinality 라 저장 비용은 사실상 없다.
+--
+-- 이벤트 22종과 필드 의미는 knowledge/domain/listening-events.md 에 있다.
+-- 스키마를 고치면 verify.sh 를 직접 돌린다. CI 는 이 영역을 검증하지 않는다.
 CREATE TABLE IF NOT EXISTS listen_events_local ON CLUSTER mupid
 (
     event_id      UUID,
@@ -18,8 +38,8 @@ CREATE TABLE IF NOT EXISTS listen_events_local ON CLUSTER mupid
     target        LowCardinality(String),
     skip_trigger  LowCardinality(String),
     reason        LowCardinality(String),
-    playlist_id   UInt64,
-    comment_id    UInt64,
+    playlist_id   UInt32,
+    comment_id    UInt32,
     content       String,
     search_query  String,
     ext           Map(String, String)
@@ -130,6 +150,20 @@ WHERE event_type IN ('SECTION_MARK','SECTION_UNMARK','LIKE','UNLIKE','DISLIKE',
   AND dictGet('dict_track_sections', 'section_uid', toUInt64(track_id), position_ms) != '';
 
 
+-- 재생 1회(play_id) 동안 각 구간을 얼마나 들었는가. mv_play_section_coverage 가
+-- PLAY_PROGRESS 하트비트에서 만든다.
+--
+-- SummingMergeTree 라 하트비트마다 같은 키에 부분합 행이 쌓이고, 병합될 때
+-- listened_ms 만 합쳐진다. **병합 시점을 보장할 수 없으므로 읽을 때 반드시
+-- GROUP BY 로 합산한다** (v_track_skips 의 r 서브쿼리가 그 예다). 합산 대상을
+-- 괄호로 명시했으므로 section_ms 는 더해지지 않는다 — 키마다 상수라 안전하다.
+--
+-- started_at 은 파티션·TTL 용이고, 병합 뒤에는 그 재생의 하트비트 중 하나가 남는다.
+-- 달을 걸친 재생은 파티션이 갈려 부분합이 남지만, 읽을 때 GROUP BY 하므로 결과는
+-- 정확하다.
+--
+-- reached 컬럼은 두지 않는다. 행이 존재한다는 것 자체가 "재생 헤드가 이 구간에
+-- 닿았다" 는 뜻이고, SummingMergeTree 에서 플래그 컬럼은 의미를 잃는다.
 CREATE TABLE IF NOT EXISTS play_section_coverage_local ON CLUSTER mupid
 (
     user_id      UInt32,
@@ -137,12 +171,11 @@ CREATE TABLE IF NOT EXISTS play_section_coverage_local ON CLUSTER mupid
     track_id     UInt32,
     section_uid  String,
     entry_path   LowCardinality(String),
-    listened_ms  UInt32,
     section_ms   UInt32,
-    reached      UInt8,
+    listened_ms  UInt64,
     started_at   DateTime64(3, 'Asia/Seoul')
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/play_section_coverage', '{replica}')
+ENGINE = ReplicatedSummingMergeTree('/clickhouse/tables/{shard}/play_section_coverage', '{replica}', (listened_ms))
 PARTITION BY toYYYYMM(started_at)
 ORDER BY (user_id, play_id, section_uid)
 TTL toDateTime(started_at) + INTERVAL 18 MONTH;
@@ -151,6 +184,35 @@ TTL toDateTime(started_at) + INTERVAL 18 MONTH;
 CREATE TABLE IF NOT EXISTS play_section_coverage ON CLUSTER mupid
 AS play_section_coverage_local
 ENGINE = Distributed(mupid, currentDatabase(), play_section_coverage_local, cityHash64(user_id));
+
+
+-- PLAY_PROGRESS 하트비트가 커버하는 오디오 구간 [from_ms, position_ms) 를 곡 구간
+-- 경계로 쪼갠다. 하트비트 하나가 두 구간에 걸치면 두 행이 나온다.
+--
+-- dictGet 이 아니라 JOIN 을 쓰는 이유: RANGE_HASHED 딕셔너리는 "한 지점이 속한 구간"
+-- 만 돌려주므로 구간을 걸친 재생을 나눌 수 없다. 끝점 기준으로 몰아주면 경계 뒤 구간이
+-- 과대 집계되는데, 하필 그 편향이 INTRO 노출 보정과 정면으로 부딪힌다.
+-- track_sections 는 mupid_all 로 전 노드에 복제돼 있어 이 JOIN 은 노드 안에서 끝난다.
+--
+-- WHERE 의 세 조건이 겹침 구간을 보장하므로 아래 뺄셈은 UInt32 언더플로가 나지 않는다.
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_play_section_coverage ON CLUSTER mupid
+TO play_section_coverage_local AS
+SELECT
+    e.user_id                   AS user_id,
+    e.play_id                   AS play_id,
+    e.track_id                  AS track_id,
+    sec.section_uid             AS section_uid,
+    e.entry_path                AS entry_path,
+    (sec.end_ms - sec.start_ms) AS section_ms,
+    toUInt64(least(e.position_ms, sec.end_ms) - greatest(e.from_ms, sec.start_ms)) AS listened_ms,
+    e.occurred_at               AS started_at
+FROM listen_events_local AS e
+INNER JOIN v_track_sections_current AS sec ON sec.track_id = e.track_id
+WHERE e.event_type = 'PLAY_PROGRESS'
+  AND e.track_id > 0
+  AND e.position_ms > e.from_ms
+  AND sec.start_ms < e.position_ms
+  AND sec.end_ms > e.from_ms;
 
 
 CREATE TABLE IF NOT EXISTS rec_impressions_local ON CLUSTER mupid
@@ -181,6 +243,20 @@ AS rec_impressions_local
 ENGINE = Distributed(mupid, currentDatabase(), rec_impressions_local, cityHash64(user_id));
 
 
+-- 스킵을 "부정" 하나로 뭉뚱그리지 않고 얼마나 듣고 넘겼는지로 나눈다.
+--
+-- MATERIALIZED VIEW 가 아니라 일반 VIEW 인 것이 핵심이다. 분류(skip_type)와 가중치는
+-- 저장하지 않고 쿼리할 때마다 계산하므로, 기준(5초 / 20% / 80%)을 고쳐 이 DDL 을 다시
+-- 적용하면 과거 이벤트까지 새 기준으로 다시 해석된다. 수집 쪽은 skip_trigger 와
+-- position_ms 만 보낸다 — 프론트는 "이 구간을 전에 들었는지" 를 알 수 없다.
+-- 배경: knowledge/decision/0015.
+--
+-- SKIP_AFTER_HOOK 판정은 play_section_coverage 를 본다. 그 테이블은 SummingMergeTree
+-- 라 병합 전 부분합이 섞여 있으므로, 재생 단위로 **먼저 GROUP BY 해서 합친 뒤에**
+-- "절반 넘게 들었나" 를 판정해야 한다. 부분합에 바로 조건을 걸면 60% 들은 재생이
+-- 30% + 30% 두 행으로 남아 있는 동안 조건을 통과하지 못한다.
+--
+-- entry_path 는 이벤트에 직접 실려 오므로 PLAY_START 로 되짚지 않는다.
 CREATE OR REPLACE VIEW v_track_skips ON CLUSTER mupid AS
 SELECT
     s.event_id,
@@ -191,7 +267,7 @@ SELECT
     s.position_ms,
     s.skip_trigger,
     sec.section_uid,
-    st.entry_path,
+    s.entry_path AS entry_path,
     (s.position_ms - sec.start_ms) AS into_ms,
     (sec.end_ms - sec.start_ms) AS sec_len,
     multiIf(
@@ -199,12 +275,12 @@ SELECT
         into_ms <= 5000 OR into_ms <= sec_len * 0.2, 'EARLY_SKIP',
         into_ms >= sec_len * 0.8,                    'LATE_SKIP',
         'MID_SKIP'
-    ) AS skip_class,
+    ) AS skip_type,
     multiIf(
-        skip_class = 'SKIP_AFTER_HOOK', 0.0,
-        skip_class = 'EARLY_SKIP' AND st.entry_path = 'RECOMMEND',
+        skip_type = 'SKIP_AFTER_HOOK', 0.0,
+        skip_type = 'EARLY_SKIP' AND entry_path = 'RECOMMEND',
             if(s.skip_trigger = 'NEXT_BUTTON', -1.0, -0.4),
-        skip_class = 'LATE_SKIP', 0.3,
+        skip_type = 'LATE_SKIP', 0.3,
         0.0
     ) AS weight
 FROM listen_events AS s
@@ -214,15 +290,18 @@ INNER JOIN v_track_sections_current AS sec
        AND s.position_ms < sec.end_ms
 LEFT JOIN
 (
-    SELECT play_id, any(entry_path) AS entry_path
-    FROM listen_events
-    WHERE event_type = 'PLAY_START'
-    GROUP BY play_id
-) AS st ON st.play_id = s.play_id
-LEFT JOIN
-(
     SELECT user_id, section_uid, count() AS n
-    FROM play_section_coverage
+    FROM
+    (
+        SELECT
+            user_id,
+            play_id,
+            section_uid,
+            sum(listened_ms) AS listened_ms,
+            any(section_ms)  AS section_ms
+        FROM play_section_coverage
+        GROUP BY user_id, play_id, section_uid
+    )
     WHERE listened_ms > section_ms * 0.5
     GROUP BY user_id, section_uid
 ) AS r ON r.user_id = s.user_id AND r.section_uid = sec.section_uid
@@ -249,8 +328,8 @@ CREATE TABLE IF NOT EXISTS kafka_listen_events ON CLUSTER mupid
     target       String,
     skip_trigger String,
     reason       String,
-    playlist_id  UInt64,
-    comment_id   UInt64,
+    playlist_id  UInt32,
+    comment_id   UInt32,
     content      String,
     search_query String,
     ext          Map(String, String)

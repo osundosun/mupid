@@ -210,6 +210,37 @@ saveQueue.current = saveQueue.current.catch(() => {}).then(() =>
 
 이메일 인증은 별도 서비스다. `frontend/lib/email-verification.ts` 의 `parseEmailLink` 는 쿼리 형식만 검증하고 신원을 만들지 않으며(코드 길이를 6자리로 가정하지 않고 2048자 제한 + 공백·제어문자 거부만 한다), `emailVerificationService.verify` 는 항상 `{ status: 'unavailable' }` 을 반환한다. 백엔드에 필요한 명세 목록은 `frontend/docs/email-verification.md` 에 있다.
 
+## 이벤트 추적: `lib/analytics/`
+
+청취 행동 22종을 모아 배치로 백엔드에 보내는 라이브러리다. 계약과 배경은 백엔드 지식 저장소에 있다 — [domain/listening-events.md](../domain/listening-events.md), [decision/0014](../decision/0014-event-collector-in-api.md), [decision/0015](../decision/0015-derive-interpretation-at-query-time.md).
+
+| 파일 | 역할 |
+|---|---|
+| `types.ts` | 이벤트 타입·값 집합. `listen_events` 컬럼과 1:1 |
+| `tracker.ts` | 큐·배치·재시도·저장소 백업, 재생 세션(`play_id`)과 재생 포인터, 기본 콘솔 싱크 |
+| `transport.ts` | `Transport` 타입과 HTTP 구현 |
+| `audio.ts` | `<audio>` 바인딩. 자동 이벤트 6종과 5초 하트비트 |
+| `index.ts` | 공개 API 와 싱글턴 `analytics` |
+
+### 지켜야 할 규약
+
+1. **화면에서 이벤트를 직접 `fetch` 하지 않는다.** `analytics` 만 쓴다. 서버 계약이 바뀌어도 호출부를 고치지 않기 위해서다.
+2. **`position_ms` 는 매번 `audio.currentTime` 을 실제로 읽어서 만든다.** 상태에 들고 있는 값을 쓰면 백그라운드 탭에서 틀어진다.
+3. **구간 번호를 보내지 않는다.** 밀리초만 보낸다. 구간 매핑은 백엔드가 한다.
+4. **가중치도 분류도 계산하지 않는다.** `TRACK_SKIP` 은 `skip_trigger` 와 `position_ms` 만 싣고, EARLY/AFTER_HOOK/LATE 분류는 ClickHouse 가 쿼리 시점에 만든다.
+5. **`occurred_at` 은 이벤트가 생길 때 각인된다.** 배치로 늦게 나가도 발생 시각은 정확하다. 이 성질에 기대는 테스트가 있다.
+6. `tracker.ts` 는 **값(value)을 relative import 하지 않는다.** 저장소 관례가 확장자 없는 import 인데 `node --experimental-strip-types` 는 그걸 해석하지 못한다. 타입 import 는 지워지므로 안전하다 — 덕분에 이 모듈만 의존성 설치 없이 `node --test` 로 돌아간다.
+
+### 자동과 수동
+
+`bindAudio(audio, analytics)` 가 자동으로 남기는 것은 `PLAY_RESUME` · `PLAY_PAUSE` · `PLAY_END` · `PLAY_STALL` · `PLAY_ERROR` · `PLAY_PROGRESS` 여섯이다. 나머지는 앱이 직접 부른다 — 오디오 엘리먼트만 봐서는 판단할 수 없기 때문이다. `seeking` 은 사용자가 슬라이더를 옮겼을 때와 앱이 `currentTime` 을 대입했을 때 똑같이 발생하고, 스킵은 무엇을 눌러 넘겼는지를 엘리먼트가 모른다.
+
+`hooks/use-mupid.ts` 에 붙일 자리는 세 곳이다 — `startPlayback` 에서 `startPlay()`, 슬라이더 핸들러에서 `seek(before, after)`, 다음곡 버튼에서 `skip(position, 'NEXT_BUTTON')`.
+
+### 아직 안 된 것
+
+`index.ts` 의 싱글턴은 기본 전송이 **콘솔 싱크**다. 백엔드 `POST /api/v1/events` 가 생기고 액세스 토큰 보관 위치가 정해지면(→ [open-questions C1](../open-questions.md)) `createTracker({ transport: createHttpTransport({ authorization }) })` 로 바꾼다. 그때 호출부는 고치지 않는다.
+
 ## 스타일: Tailwind 4 + shadcn
 
 **`tailwind.config` 파일이 없다. 만들지 않는다.** `components.json` 의 `tailwind.config` 가 빈 문자열이고, PostCSS 플러그인은 `frontend/vite.config.ts` 에서 인라인 주입된다.
@@ -276,9 +307,9 @@ MUPID_DEPLOY_TARGET=ec2 npm run build       # 빌드 (CI 와 같은 타깃)
 
 ### 테스트의 성격
 
-`frontend/tests/*.test.mjs` 20개, node:test 기반. jsdom 도 React 렌더러도 쓰지 않고 세 방식을 섞는다.
+`frontend/tests/*.test.mjs` 21개, node:test 기반. jsdom 도 React 렌더러도 쓰지 않고 세 방식을 섞는다.
 
-1. `.ts` 를 직접 import (Node 타입 스트리핑) — `email-verification`, `explore`, `mupid-data`, `track-comments`, `demo-session`.
+1. `.ts` 를 직접 import (Node 타입 스트리핑) — `email-verification`, `explore`, `mupid-data`, `track-comments`, `demo-session`, `analytics`. 이 방식이 되려면 대상 모듈이 값을 relative import 하지 않아야 한다 — 확장자 없는 지정자를 Node 가 해석하지 못하기 때문이다. `analytics.test.mjs` 는 여기에 더해 시계·저장소·전송을 주입해 타이머 없이 결정적으로 돌린다.
 2. **소스 파일을 `readFile` 로 읽어 정규식·`includes` 로 단언** — 다수. 예: `typography.test.mjs` 가 `chat.tsx` 의 `className="(?:thinking )?chat-handwriting"` 등장 횟수가 정확히 4인지 센다.
 3. `services.test.mjs` 는 `ts.transpileModule` 로 `lib/services/index.ts` 를 컴파일하고 `'../mupid-data'` 지정자를 절대 file URL 로 치환한 뒤 base64 `data:` URL 로 import 해서 메모리 저장소 더블을 주입한다.
 

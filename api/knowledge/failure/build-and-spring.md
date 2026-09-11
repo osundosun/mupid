@@ -20,11 +20,42 @@
 - **해결**: `api/build.gradle` 의 기존 항목을 보고 이름을 맞춘다. 의존성은 기존 주석 그룹(`// SpringBoot 관련`, `// JWT 관련` …)에 넣는다.
 - **근거**: `api/build.gradle`, `api/AGENTS.md`
 
+### `compileJava` 는 통과하는데 CI 가 `bootJar` 에서 의존성 충돌로 죽는다
+
+- **원인**: `compileJava` 는 `:compileClasspath` 만 해석한다. `clickhouse-jdbc` 처럼 `runtimeOnly` 로 붙은 것은 거기 없으므로, 런타임 의존성끼리의 충돌은 로컬에서 `compileJava` 만 돌리면 절대 보이지 않는다. CI 는 `bash gradlew --no-daemon --console=plain build -x test` 를 돌고 `bootJar` 가 `:runtimeClasspath` 를 해석하면서 그때 터진다.
+- **실제 사례**: `spring-kafka` 를 추가했더니 `kafka-clients` 가 `at.yawk.lz4:lz4-java:1.10.1` 을, `clickhouse-jdbc` 가 `org.lz4:lz4-java:1.8.0` 을 끌어왔다. at.yawk 쪽은 원본이 관리되지 않아 나온 재배포판이라 `org.lz4:lz4-java` capability 를 스스로 선언하는데, Gradle 은 같은 capability 를 두 모듈이 제공하면 **둘 다 거부한다**. 에러는 `Cannot select module with conflict on capability` 다.
+- **해결**: 어느 한쪽을 exclude 하면 남은 쪽이 lz4 압축을 잃으므로, capability 를 해석해 높은 버전을 고른다.
+
+  ```gradle
+  configurations.all {
+  	resolutionStrategy.capabilitiesResolution.withCapability('org.lz4:lz4-java') {
+  		selectHighestVersion()
+  	}
+  }
+  ```
+
+- **의존성을 추가했으면 `compileJava` 가 아니라 `build -x test` 로 확인한다.** CI 와 같은 명령이어야 CI 가 보는 것을 본다.
+- **근거**: `api/build.gradle`, `infra/ci/backend.yml`
+
 ### SNAPSHOT 저장소를 지우면 빌드가 깨진다
 
 - **원인**: Boot **4.1.2-SNAPSHOT** 을 쓴다. `repo.spring.io/snapshot` 저장소가 `api/build.gradle` 과 `api/settings.gradle`(pluginManagement) **양쪽에** 필요하다. 한쪽만 남기면 플러그인 또는 의존성 해석이 실패한다.
 - **해결**: 두 파일 모두 유지한다.
 - **근거**: `api/build.gradle`, `api/settings.gradle`
+
+### `ObjectMapper` 를 주입받았더니 기동이 실패한다
+
+- **원인**: Spring Boot 4 의 `JacksonAutoConfiguration` 은 **Jackson 3 만** 빈으로 등록한다. `spring-boot-jackson` 안의 팩터리 메서드 반환 타입이 전부 `tools.jackson.databind.json.JsonMapper` 계열이고, `com.fasterxml.jackson.databind.ObjectMapper` 빈은 어디서도 만들어지지 않는다. 클래스패스에는 Jackson 2 가 있으므로(`jjwt-jackson` 의 전이 의존성 + 직접 선언) **컴파일은 통과하고 기동에서 `NoSuchBeanDefinitionException` 이 난다.**
+- **확인 방법**: 실행 jar 안에 `jackson-databind-2.x.jar` 와 `jackson-databind-3.x.jar` 가 함께 들어 있다. 어느 쪽 빈이 있는지는 `javap` 로 본다.
+
+  ```bash
+  jar xf BOOT-INF/lib/spring-boot-jackson-*.jar
+  javap -cp . org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration
+  ```
+
+- **해결**: 주입하지 말고 직접 만든다. `auth/exception` 의 두 핸들러가 원래 `new ObjectMapper()` 를 쓰는 것도 같은 이유다. Jackson 3 을 주입해도 되지만, 직렬화 결과가 외부 계약(예: ClickHouse 컬럼명)이라면 애플리케이션 설정에 묶지 않는 편이 낫다 — `spring.jackson.property-naming-strategy` 를 누가 바꾸면 조용히 깨진다.
+- **CI 가 잡아주지 않는다.** 테스트를 `-x test` 로 건너뛰므로 컨텍스트 로딩이 검증되지 않는다. 빈 주입을 새로 거는 코드는 배포 전에 실제로 띄워 봐야 한다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/auth/exception/AuthUnauthorizedHandler.java`, `api/src/main/java/com/osundosun/mupid/api/event/service/EventServiceImpl.java`
 
 ### `SecurityFilterChain` 에 `throws Exception` 이 없어서 이상해 보인다
 

@@ -22,13 +22,14 @@ api/docs/
 ├── Auth/      folder.yml(seq 2) + 로그인.yml · 로그아웃.yml · 액세스 토큰 재발급.yml
 ├── User/      folder.yml(seq 3) + 회원가입.yml · 회원정보 조회.yml · …
 ├── Email/     folder.yml(seq 4) + 인증 메일 발송.yml · 인증 상태 확인.yml · 인증 코드 제출.yml
-└── Error/     folder.yml(seq 5) + NotFound.yml
+├── Error/     folder.yml(seq 5) + NotFound.yml
+└── Event/     folder.yml(seq 6) + 청취 이벤트 수집.yml
 ```
 
 ### 새 요청 파일을 만들 때
 
 - 파일명은 **한글 기능명** (`로그인.yml`, `회원가입.yml`). 영문 파일명은 `Actuator/HealthCheck.yml` 과 `Error/NotFound.yml` 둘뿐이다.
-- 도메인 폴더마다 `folder.yml` 을 둔다 — `info.{name, type: folder, seq}` + `request.auth: inherit`. 도메인 설명을 담는 `docs.{type: text/markdown, content}` 는 Actuator·Auth·User·Email 4개만 갖고 있고 `Error/folder.yml` 에는 없다.
+- 도메인 폴더마다 `folder.yml` 을 둔다 — `info.{name, type: folder, seq}` + `request.auth: inherit`. 도메인 설명을 담는 `docs.{type: text/markdown, content}` 는 Actuator·Auth·User·Email·Event 5개가 갖고 있고 `Error/folder.yml` 에만 없다.
 - 요청 파일 키 순서는 `info`(name / `type: http` / `seq`) → `http` → `runtime` → `settings` → `examples` → `docs`.
 - 표시 순서는 `info.seq` 로 지정한다.
 - 응답값 자동 저장은 `runtime.actions` 에 쓴다.

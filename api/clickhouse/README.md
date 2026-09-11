@@ -59,6 +59,15 @@ docker compose up --force-recreate clickhouse-init
 docker compose down -v --remove-orphans
 ```
 
+> ⚠ `-v` 는 이 프로젝트의 **모든** 볼륨을 지운다. 분석 스택뿐 아니라
+> `mupid-dev-mysql-data`·`redis-data`·`storage-data` 까지 사라져 로컬 계정과
+> 업로드 파일이 날아간다. 스키마만 다시 적용하려는 것이라면 분석 스택만 지운다.
+>
+> ```bash
+> docker compose rm -sfv clickhouse-01 clickhouse-02 clickhouse-keeper kafka kafka-init clickhouse-init
+> docker volume rm mupid-dev-ch1-data mupid-dev-ch2-data mupid-dev-ch-keeper-data
+> ```
+
 `--remove-orphans` 를 붙이는 이유: compose 는 **현재 파일에 정의된 서비스만** 정리한다.
 서비스 이름이 바뀌면(예: `kafka-1`/`kafka-2` → `kafka`) 예전 컨테이너가 orphan 으로
 남아 포트를 계속 잡고 있어서, 새 컨테이너가 `port is already allocated` 로 뜨지 못한다.
@@ -85,20 +94,20 @@ curl 'http://localhost:18123/?query=SELECT%20version()' \
 cd api && ./clickhouse/verify.sh
 ```
 
-고정 ID 로만 데이터를 넣으므로 여러 번 실행해도 결과가 같다. 25개 항목을 검사한다.
+고정 ID 로만 데이터를 넣으므로 여러 번 실행해도 결과가 같다. 28개 항목을 검사한다.
 
 | # | 검사 |
 | --- | --- |
 | 0 | `kafka-init` / `ch-init` 이 exit 0 으로 끝났는지 |
 | 1 | `mupid` 2 샤드, `mupid_all` 1 샤드 2 레플리카 |
-| 2 | 두 노드의 오브젝트 구성이 동일한지 (Replicated 5 / Distributed 5 / View 4 / Kafka 1 / Dictionary 1) |
+| 2 | 두 노드의 오브젝트 구성이 동일한지 (Replicated 5 / Distributed 5 / View 5 / Kafka 1 / Dictionary 1) |
 | 3 | `system.distributed_ddl_queue` 에 실패 항목이 없는지 |
 | 4 | `track_sections` 한 번 INSERT 가 두 노드에 모두 복제되는지 |
 | 5 | `dict_track_sections` 가 두 노드에서 같은 `dictGet` 결과를 주는지 |
 | 6 | Kafka → `mv_kafka_to_events` → `listen_events`, `occurred_at` 시간대 파싱 |
 | 7 | `mv_user_section_signals` 의 구간 매핑과 가중치 (`LIKE` 1.0, `DISLIKE` -1.0 등) |
-| 8 | `play_section_coverage`, `rec_impressions` 의 `Array` / `Map` 왕복 |
-| 9 | `v_track_skips` 의 `skip_class` / `weight` 계산 |
+| 8 | `mv_play_section_coverage` 의 구간 경계 분할, `rec_impressions` 의 `Array` / `Map` 왕복 |
+| 9 | `v_track_skips` 의 `skip_type` / `weight` 계산 |
 
 ## 눈으로 확인하기 (UI)
 
@@ -201,7 +210,7 @@ compose 에서 디렉터리가 아니라 XML 파일 단위로 마운트한다.
 ### `v_track_skips` 는 `distributed_product_mode=global` 이 필요하다
 
 이 뷰는 Distributed 테이블(`listen_events`)에 Distributed 서브쿼리
-(`st`: `listen_events` 의 PLAY_START, `r`: `play_section_coverage`)를 JOIN 한다.
+(`r`: `play_section_coverage` 를 재생 단위로 합산한 것)를 JOIN 한다.
 기본값 `deny` 에서는 `DISTRIBUTED_IN_JOIN_SUBQUERY_DENIED` 로 실패한다.
 서브쿼리를 `_local` 로 바꾸면 샤드 하나만 보게 되어 결과가 **틀리므로**,
 `users.d` 에서 `global` 로 설정해 이니시에이터에서 계산한 뒤 각 샤드에 broadcast 한다.
@@ -215,7 +224,8 @@ DDL 이 `SELECT s.user_id, ...` 처럼 별칭만 쓰고 `AS` 를 생략해서, �
 ```
 event_id, occurred_at, position_ms, skip_trigger   -- s 에만 있어 깔끔
 s.user_id, s.track_id, s.play_id                   -- 겹쳐서 별칭이 남음
-sec.section_uid, st.entry_path                     -- 같은 이유
+entry_path                                         -- AS 를 붙여 별칭을 떼어냈다
+sec.section_uid                                    -- 같은 이유
 ```
 
 따라서 `SELECT user_id FROM v_track_skips` 는 실패하고 `` SELECT `s.user_id` `` 로 써야 한다.

@@ -17,7 +17,7 @@ api/clickhouse/
   server/10-macros.xml       macros {shard} {replica} + interserver_http_host
   users/00-profile.xml       profiles.default (쿼리 레벨 설정)
   users/10-mupid-user.xml    앱 계정 mupid
-  verify.sh                  25개 항목 스모크 테스트
+  verify.sh                  28개 항목 스모크 테스트
 ```
 
 기동 정의는 세 벌로 나뉜다.
@@ -81,11 +81,12 @@ ClickHouse 서버 2노드 + Keeper 1대 + Kafka 1대(KRaft, broker+controller �
 | `user_section_signals_local` | `mupid` | `ReplicatedMergeTree` | `(user_id, section_uid, occurred_at)` |
 | `user_section_signals` | `mupid` | `Distributed(…, cityHash64(user_id))` | — |
 | `mv_user_section_signals` | `mupid` | `MATERIALIZED VIEW TO user_section_signals_local` | — |
-| `play_section_coverage_local` | `mupid` | `ReplicatedReplacingMergeTree` (버전 컬럼 없음) | `(user_id, play_id, section_uid)` |
+| `play_section_coverage_local` | `mupid` | `ReplicatedSummingMergeTree(…, (listened_ms))` | `(user_id, play_id, section_uid)` |
 | `play_section_coverage` | `mupid` | `Distributed(…, cityHash64(user_id))` | — |
+| `mv_play_section_coverage` | `mupid` | `MATERIALIZED VIEW TO play_section_coverage_local` | — |
 | `rec_impressions_local` | `mupid` | `ReplicatedMergeTree` | `(user_id, served_at, rec_id)` |
 | `rec_impressions` | `mupid` | `Distributed(…, cityHash64(user_id))` | — |
-| `v_track_skips` | `mupid` | `VIEW` — `listen_events` 에 Distributed 서브쿼리 2개 JOIN | — |
+| `v_track_skips` | `mupid` | `VIEW` — `listen_events` 에 `v_track_sections_current` 와 Distributed 서브쿼리 1개를 JOIN | — |
 | `kafka_listen_events` | `mupid` | `Kafka` | — |
 | `mv_kafka_to_events` | `mupid` | `MATERIALIZED VIEW TO listen_events_local` | — |
 
@@ -94,7 +95,7 @@ ClickHouse 서버 2노드 + Keeper 1대 + Kafka 1대(KRaft, broker+controller �
 - **`listen_events_local` = ReplacingMergeTree(`ingested_at`).** 정렬키 `(user_id, occurred_at, event_id)` 가 곧 중복 판정 키다. Kafka 재소비로 같은 이벤트가 다시 들어와도 병합 시 정리된다. 로컬 `api/compose.yml` 이 Kafka 로그에 볼륨을 일부러 안 붙인 근거가 이 성질이다.
 - **`track_sections_local` = ReplacingMergeTree(`created_at`).** 같은 `(analysis_version, track_id, section_index)` 재등록을 최신본으로 덮어쓴다. 마스터성 데이터라 파티션·TTL 이 없는 유일한 테이블이다.
 - **`user_section_signals_local` / `rec_impressions_local` = ReplicatedMergeTree.** 중복 정리 장치가 없다.
-- **`play_section_coverage_local` = ReplacingMergeTree (버전 컬럼 없음).** 정렬키 기준 재집계 덮어쓰기.
+- **`play_section_coverage_local` = SummingMergeTree(`listened_ms`).** `mv_play_section_coverage` 가 하트비트마다 부분합 행을 넣고, 병합될 때 `listened_ms` 만 합쳐진다. 병합 시점을 보장할 수 없는 데다 Kafka 적재가 `user_id` 샤딩을 타지 않아 한 재생의 부분합이 두 샤드에 흩어질 수 있으므로, **읽을 때 Distributed 테이블에서 재생 단위로 GROUP BY 해야 한다.**
 
 ### 파티션 · TTL · 시간대
 
@@ -116,11 +117,13 @@ TTL toDateTime(<시각 컬럼>) + INTERVAL 18 MONTH
   -> kafka_listen_events        Kafka 엔진. 노드당 kafka_num_consumers=3, 총 6 컨슈머
   -> mv_kafka_to_events         toUUIDOrZero / parseDateTime64BestEffort 로 타입 변환
   -> listen_events_local        자기 노드의 로컬 테이블
-  -> mv_user_section_signals    dictGet(dict_track_sections, section_uid, track_id, position_ms)
-  -> user_section_signals_local
+       |-> mv_user_section_signals   dictGet(dict_track_sections, section_uid, track_id, position_ms)
+       |     -> user_section_signals_local
+       +-> mv_play_section_coverage  PLAY_PROGRESS 의 [from_ms, position_ms) 를 구간 경계로 분할
+             -> play_section_coverage_local
 ```
 
-`play_section_coverage` / `rec_impressions` 는 이 연쇄에 없고 직접 INSERT 를 받는다.
+`rec_impressions` 만 이 연쇄에 없고 직접 INSERT 를 받는다. 프로듀서는 `event` 도메인이다 — `POST /api/v1/events` → `KafkaTemplate` → 토픽.
 
 ### `mv_user_section_signals` 의 가중치
 
@@ -136,16 +139,16 @@ TTL toDateTime(<시각 컬럼>) + INTERVAL 18 MONTH
 
 ### `v_track_skips`
 
-`TRACK_SKIP` 이벤트를 구간에 매핑해 `skip_class` 와 `weight` 를 계산한다.
+`TRACK_SKIP` 이벤트를 구간에 매핑해 `skip_type` 와 `weight` 를 계산한다.
 
-| `skip_class` | 조건 | `weight` |
+| `skip_type` | 조건 | `weight` |
 | --- | --- | --- |
-| `SKIP_AFTER_HOOK` | `play_section_coverage` 에 그 `(user_id, section_uid)` 를 `listened_ms > section_ms * 0.5` 로 들은 기록이 있음 | `0.0` |
+| `SKIP_AFTER_HOOK` | `play_section_coverage` 를 재생 단위로 합산했을 때 그 `(user_id, section_uid)` 를 `listened_ms > section_ms * 0.5` 로 들은 재생이 있음 | `0.0` |
 | `EARLY_SKIP` | `into_ms <= 5000` 또는 `into_ms <= sec_len * 0.2` | `entry_path='RECOMMEND'` 일 때 `NEXT_BUTTON` 이면 `-1.0`, 아니면 `-0.4`. 그 외 `0.0` |
 | `LATE_SKIP` | `into_ms >= sec_len * 0.8` | `0.3` |
 | `MID_SKIP` | 나머지 | `0.0` |
 
-이 뷰는 `users/00-profile.xml` 의 `distributed_product_mode = global` 에 의존한다. 기본값 `deny` 로는 `DISTRIBUTED_IN_JOIN_SUBQUERY_DENIED` 가 난다. **서브쿼리를 `_local` 로 바꾸는 우회는 금지다** — Kafka 적재 경로가 `user_id` 샤딩을 타지 않아 다른 샤드의 `PLAY_START` 를 놓치고 `weight` 가 틀리게 나온다. 대신 broadcast 비용이 데이터 증가에 비례해 커지는 한계가 남아 있다(같은 주석에 명시). 컬럼 이름에 별칭이 남는 문제도 있다 → [함정과 실패 사례](../failure/clickhouse-and-kafka.md).
+이 뷰는 `users/00-profile.xml` 의 `distributed_product_mode = global` 에 의존한다. 기본값 `deny` 로는 `DISTRIBUTED_IN_JOIN_SUBQUERY_DENIED` 가 난다. **서브쿼리를 `_local` 로 바꾸는 우회는 금지다** — Kafka 적재 경로가 `user_id` 샤딩을 타지 않아 한 사용자의 커버리지가 두 샤드에 흩어지고, 샤드 하나만 보면 `SKIP_AFTER_HOOK` 판정이 틀리게 나온다. 대신 broadcast 비용이 데이터 증가에 비례해 커지는 한계가 남아 있다(같은 주석에 명시). 컬럼 이름에 별칭이 남는 문제도 있다 → [함정과 실패 사례](../failure/clickhouse-and-kafka.md).
 
 ## Kafka 연동
 
@@ -195,7 +198,7 @@ TTL toDateTime(<시각 컬럼>) + INTERVAL 18 MONTH
 ```bash
 cd api
 docker compose up -d --wait        # --wait 없으면 clickhouse-init 완료를 안 기다린다
-./clickhouse/verify.sh             # 25개 항목 스모크 테스트
+./clickhouse/verify.sh             # 28개 항목 스모크 테스트
 ```
 
 | 컨테이너 | 역할 | 호스트 포트 |
@@ -211,7 +214,7 @@ docker compose up -d --wait        # --wait 없으면 clickhouse-init 완료를 
 
 눈으로 볼 때는 ClickHouse 내장 UI 를 쓴다. `http://localhost:18123/play` (계정 `mupid`), `http://localhost:18123/dashboard`. Kafka UI 는 `ui` profile 이라 `docker compose up -d kafka-ui` 로 따로 띄운다(`http://localhost:18080`, 인증 없음).
 
-전부 초기화: `docker compose down -v --remove-orphans` (`--remove-orphans` 를 빠뜨리는 함정은 [함정과 실패 사례](../failure/clickhouse-and-kafka.md) 참고).
+전부 초기화: `docker compose down -v --remove-orphans`. **`-v` 는 MySQL·Redis·스토리지 볼륨까지 지운다** — 분석 스키마만 다시 적용할 거면 분석 스택 컨테이너와 `ch1/ch2/ch-keeper` 볼륨만 지운다. 이 함정과 `--remove-orphans` 를 빠뜨리는 함정 모두 [함정과 실패 사례](../failure/clickhouse-and-kafka.md) 에 있다.
 
 ### `verify.sh` 가 검사하는 것
 
@@ -221,16 +224,16 @@ docker compose up -d --wait        # --wait 없으면 clickhouse-init 완료를 
 | --- | --- |
 | 0 | `kafka-init`/`ch-init` 이 `exited` 가 될 때까지 최대 240초 대기 후 ExitCode 0 (2) |
 | 1 | `system.clusters` 에서 `mupid`=2행, `mupid_all` 의 `uniqExact(shard_num)/count()` = `1/2` (2) |
-| 2 | 두 노드 각각 Replicated/Distributed/View/Kafka/Dictionary = `5/5/4/1/1` (2) |
+| 2 | 두 노드 각각 Replicated/Distributed/View/Kafka/Dictionary = `5/5/5/1/1` (2) |
 | 3 | `system.distributed_ddl_queue` 에 `status != 'Finished' OR exception_code != 0` 0건 (1) |
 | 4 | `track_sections` 3건 INSERT 후 두 노드의 `track_sections_local` 에 각각 3건 — `mupid_all` 복제 확인 (2) |
 | 5 | 두 노드에서 `SYSTEM RELOAD DICTIONARY` 후 `dictGet(…,1001,15000)` = `s1001-intro`, 구간 밖은 빈 문자열 (3) |
-| 6 | 이벤트 6건 발행 → 최대 60초 폴링, `uniqExact(event_id)` = 6, `occurred_at` = `2026-01-01 10:00:15.000` (3) |
+| 6 | 커버리지 초기화 후 이벤트 7건 발행 → 최대 60초 폴링, `uniqExact(event_id)` = 7, `occurred_at` = `2026-01-01 10:00:15.000` (3) |
 | 7 | 시그널 4건(PLAY_START/TRACK_SKIP 제외), `LIKE`=1, `SECTION_MARK`→`s1001-hook`, `DISLIKE`=-1 (4) |
-| 8 | `play_section_coverage` 1건, `rec_impressions` 의 `Array(String)`/`Array(Float32)`/`Map(String,Float32)`/`Map(String,String)` 왕복 (5) |
+| 8 | `PLAY_PROGRESS` 하나가 `s1001-intro` 3000ms + `s1001-hook` 2000ms 로 쪼개지는지, 수동 INSERT 를 더한 부분합 22000ms, `rec_impressions` 의 `Array(String)`/`Array(Float32)`/`Map(String,Float32)`/`Map(String,String)` 왕복 (8) |
 | 9 | `v_track_skips` 에서 EARLY_SKIP + RECOMMEND + NEXT_BUTTON → `EARLY_SKIP/-1` (1) |
 
-멱등성을 위해 고정 ID(`track_id` 1001/2002, `user_id` 42/77, `event_id` `1111…`~`6666…`, `rec_id` `rec-0001`)만 쓰고 집계도 그 ID 로 한정한다. 수동 테스트 데이터가 남아 있어도 통과한다. 8단계가 커버리지 구간으로 `s1001-hook` 을 고른 것도 9단계와의 충돌 회피 목적이다(주석에 명시) — `s1001-intro` 에 커버리지가 있으면 `skip_class` 가 `SKIP_AFTER_HOOK` 으로 바뀐다.
+멱등성을 위해 고정 ID(`track_id` 1001/2002, `user_id` 42/77, `event_id` `1111…`~`7777…`, `rec_id` `rec-0001`)만 쓰고 집계도 그 ID 로 한정한다. 수동 테스트 데이터가 남아 있어도 통과한다. 다만 `play_section_coverage` 는 SummingMergeTree 이고 MV 가 재실행마다 다시 발화해 누적되므로, 6단계 앞에서 테스트 사용자(42/77)의 커버리지를 `ALTER TABLE … DELETE` 로 먼저 지운다. 8단계가 커버리지 구간으로 `s1001-hook` 을 고른 것도 9단계와의 충돌 회피 목적이다(주석에 명시) — `s1001-intro` 에 커버리지가 있으면 `skip_type` 가 `SKIP_AFTER_HOOK` 으로 바뀐다.
 
 **CI 는 이 영역을 전혀 검증하지 않는다.** `infra/ci/backend.yml` 첫 줄이 "Build-only CI by team decision; application tests are not executed." 이고 `build -x test` 만 돈다. `01-schema.sql` 이나 XML 을 깨뜨려도 파이프라인은 통과하므로, 고쳤으면 위 절차를 직접 돌릴 것.
 
@@ -284,6 +287,16 @@ docker exec mupid-clickhouse clickhouse-client -q "SELECT * FROM system.macros"
 | `common/config/JdbcTemplateConfig.java` | `@Primary` MySQL `JdbcTemplate` 복구 |
 | `api/lombok.config` | `lombok.copyableAnnotations += @Qualifier` |
 
+이벤트를 **넣는** 쪽은 `analytics` 가 아니라 `event` 도메인이다. ClickHouse 를 직접 쓰지 않고 Kafka 로만 보낸다.
+
+| 파일 | 내용 |
+| --- | --- |
+| `api/build.gradle` | `implementation 'org.springframework.kafka:spring-kafka'` |
+| `application.yaml` 의 `event.*` | 부트스트랩 주소 · 토픽 · 배치 상한 · 멱등 TTL · `occurred_at` 허용 창 |
+| `event/config/EventKafkaConfig.java` | `ProducerFactory` / `KafkaTemplate` 를 직접 등록. `spring.kafka.*` 자동설정은 쓰지 않는다 |
+| `event/service/EventServiceImpl.java` | 검증·정규화·멱등 처리 후 발행 |
+| `event/dto/ListenEventMessage.java` | `kafka_listen_events` 컬럼과 1:1 인 JSON |
+
 `ApiApplication` 에 `@ConfigurationPropertiesScan` 이 있어 `ClickHouseProperties` 는 자동 등록된다. 값은 `application.yaml` 규칙대로 `${MUPID_...}` 로만 참조하며, `clickhouse.url` 은 **기본값이 없다** — `MUPID_CLICKHOUSE_URL` 이 없으면 기동 자체가 실패한다.
 
 ClickHouse 는 JPA 로 다루지 않는다. 엔티티/트랜잭션 모델이 맞지 않고 쓰는 쿼리가 집계와 대량 INSERT 뿐이라 `JdbcTemplate` 으로 충분하다는 판단이다. 드라이버는 문자열(`"com.clickhouse.jdbc.ClickHouseDriver"`)로만 참조하므로 mysql 과 같이 `runtimeOnly` 다.
@@ -326,17 +339,17 @@ MySQL `JdbcTemplate` 이 `@Primary` 이므로 **`@Qualifier` 를 빠뜨리면 �
    | --- | --- | --- |
    | `CREATE OR REPLACE VIEW` | `v_track_sections_current`, `v_track_skips` | 새 정의로 교체된다 |
    | `CREATE TABLE IF NOT EXISTS` | 모든 테이블 (Replicated / Distributed / Kafka) | **이미 있으면 아무 일도 안 일어난다** |
-   | `CREATE MATERIALIZED VIEW IF NOT EXISTS` | `mv_kafka_to_events`, `mv_user_section_signals` | 동일 |
+   | `CREATE MATERIALIZED VIEW IF NOT EXISTS` | `mv_kafka_to_events`, `mv_user_section_signals`, `mv_play_section_coverage` | 동일 |
    | `CREATE DICTIONARY IF NOT EXISTS` | `dict_track_sections` | 동일 |
 
-3. 테이블·MV·사전의 정의를 실제로 바꾸려면 재적용만으로 부족하다. 로컬은 `docker compose down -v --remove-orphans` 로 밀고 다시 올리는 것이 가장 확실하다.
-4. 오브젝트를 추가/삭제했으면 **`verify.sh` 2단계의 기대값 `5/5/4/1/1` 을 함께 고친다.**
+3. 테이블·MV·사전의 정의를 실제로 바꾸려면 재적용만으로 부족하다. 로컬은 분석 스택 컨테이너와 `ch1/ch2/ch-keeper` 볼륨만 지우고 다시 올린다 — `down -v` 는 MySQL·Redis 까지 날린다. 지우지 않고 DDL 만 검증하려면 Keeper 경로를 바꾼 사본을 임시 데이터베이스에 적용해 본다.
+4. 오브젝트를 추가/삭제했으면 **`verify.sh` 2단계의 기대값 `5/5/5/1/1` 을 함께 고친다.**
 5. 새 이벤트 테이블을 만들면 `PARTITION BY toYYYYMM(...)` + `TTL toDateTime(...) + INTERVAL 18 MONTH` + `DateTime64(3, 'Asia/Seoul')` 규칙과 `_local`/Distributed 짝 규칙을 따른다.
 6. 클러스터를 고를 때: `dictGet` 소스가 되거나 전 노드가 전체를 알아야 하면 `mupid_all` + `{shard}` 없는 Keeper 경로, 그 외 이벤트성이면 `mupid` + `{shard}` 있는 경로.
 7. 설정 XML 을 추가하면 **서버 레벨(`config.d`)인지 쿼리 레벨(`users.d`)인지부터** 확인하고, compose 의 `volumes` 에 **파일 단위로** 한 줄 추가한다(디렉터리째 마운트 금지). 로컬 `api/compose.yml` 노드 2곳과 운영 `infra/deploy/compose.yml` 을 함께 고친다.
 8. 새 환경변수는 ClickHouse 노드 정체성만 `CH_` 접두사를, 나머지는 `MUPID_` 접두사를 쓴다. `api/.env.example` 과 `infra/deploy/.env.example` 을 함께 갱신한다.
 9. 셸 스크립트는 `#!/usr/bin/env bash` + `git ls-files -s` 기준 `100755` 로 커밋한다.
-10. 마지막에 `docker compose up -d --wait` → `cd api && ./clickhouse/verify.sh` 로 25개 항목이 전부 PASS 인지 확인한다.
+10. 마지막에 `docker compose up -d --wait` → `cd api && ./clickhouse/verify.sh` 로 28개 항목이 전부 PASS 인지 확인한다.
 
 ## 이 영역의 함정
 
@@ -350,7 +363,7 @@ MySQL `JdbcTemplate` 이 `@Primary` 이므로 **`@Qualifier` 를 빠뜨리면 �
 - 운영 compose 는 `CH_SHARD`/`CH_REPLICA` 가 비어도 통과하고 복제가 조용히 깨진다. `extra_hosts` 의 `kafka2` 에는 기본값이 없다.
 - Kafka 적재 경로는 `cityHash64(user_id)` 샤딩을 타지 않는다.
 - 사전에 반영되기 전(`LIFETIME(MIN 300 MAX 600)`)에 도착한 이벤트는 조용히 버려진다.
-- Kafka 재소비 시 `listen_events` 는 중복이 정리되지만 `user_section_signals` 는 아니다.
+- Kafka 재소비 시 `listen_events` 는 중복이 정리되지만 `user_section_signals` / `play_section_coverage` 는 아니다. 중복 제거는 Kafka 에 넣기 전에 끝내야 한다 → [decision/0014](../decision/0014-event-collector-in-api.md).
 - `@Qualifier` 를 빠뜨리면 MySQL `JdbcTemplate` 이 주입된다. `HikariDataSource` 를 빈으로 노출하면 ClickHouse 장애가 서비스 전체 장애가 된다.
 - Git Bash 에서 `docker exec` 에 컨테이너 절대경로를 넘기면 Windows 경로로 변환된다. `docker exec -i` + `clickhouse-client` INSERT 는 멈춘다.
 - `docker compose up -d` 는 초기화 컨테이너 종료를 기다리지 않는다. 서비스 이름을 바꾸면 orphan 이 포트를 점유한다.

@@ -9,7 +9,8 @@
 | [glossary.md](glossary.md) | 용어 사전 |
 | [user-account.md](user-account.md) | 회원·이메일 인증·파일 — MySQL 에 있는 유일한 도메인 |
 | [track-sections.md](track-sections.md) | 곡과 구간, `analysis_version`, 재생 위치 → 구간 판정 |
-| [listening-events.md](listening-events.md) | 청취 이벤트 스키마, 신호 가중치, 스킵 해석 |
+| [listening-events.md](listening-events.md) | 청취 이벤트 22종, 이벤트별 필드, 신호 가중치, 스킵 해석 |
+| [event-spec.html](event-spec.html) | 위 문서를 렌더한 한 장짜리 페이지 (브라우저로 열어 본다) |
 | [recommendation.md](recommendation.md) | 선호 신호 축적, 노출 기록, 평가 |
 
 ## 핵심 개념 하나
@@ -26,10 +27,11 @@
 |---|---|
 | 회원·인증·프로필 (MySQL) | ✅ 구현 |
 | 청취 이벤트 스키마·Kafka·ClickHouse 파이프라인 | ✅ 구현 |
-| 신호 가중치·스킵 해석 (MV / VIEW) | ✅ 구현 |
-| 이벤트 프로듀서 | ❌ 없음 (데이터는 `verify.sh` 수동 INSERT 뿐) |
+| 신호 가중치·스킵 해석·구간 커버리지 (MV / VIEW) | ✅ 구현 |
+| 프론트 추적 SDK (`frontend/lib/analytics/`) | ✅ 구현 (전송은 아직 콘솔 싱크) |
+| 이벤트 수집기 (`POST /api/v1/events`) | ✅ 구현 → [decision/0014](../decision/0014-event-collector-in-api.md) |
 | `track_sections` 를 채우는 분석 파이프라인 | ❌ 없음 |
-| `play_section_coverage` 적재 | ❌ 없음 |
+| `play_section_coverage` 적재 | ✅ `mv_play_section_coverage` 구현 (채울 `PLAY_PROGRESS` 가 아직 안 들어온다) |
 | 추천 계산 · `rec_impressions` 기록 | ❌ 없음 (스키마만 있음) |
 | 온보딩 (`PENDING → ACTIVE`) | ❌ 없음 |
 
