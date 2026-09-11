@@ -20,6 +20,23 @@
 - **해결**: `api/build.gradle` 의 기존 항목을 보고 이름을 맞춘다. 의존성은 기존 주석 그룹(`// SpringBoot 관련`, `// JWT 관련` …)에 넣는다.
 - **근거**: `api/build.gradle`, `api/AGENTS.md`
 
+### `compileJava` 는 통과하는데 CI 가 `bootJar` 에서 의존성 충돌로 죽는다
+
+- **원인**: `compileJava` 는 `:compileClasspath` 만 해석한다. `clickhouse-jdbc` 처럼 `runtimeOnly` 로 붙은 것은 거기 없으므로, 런타임 의존성끼리의 충돌은 로컬에서 `compileJava` 만 돌리면 절대 보이지 않는다. CI 는 `bash gradlew --no-daemon --console=plain build -x test` 를 돌고 `bootJar` 가 `:runtimeClasspath` 를 해석하면서 그때 터진다.
+- **실제 사례**: `spring-kafka` 를 추가했더니 `kafka-clients` 가 `at.yawk.lz4:lz4-java:1.10.1` 을, `clickhouse-jdbc` 가 `org.lz4:lz4-java:1.8.0` 을 끌어왔다. at.yawk 쪽은 원본이 관리되지 않아 나온 재배포판이라 `org.lz4:lz4-java` capability 를 스스로 선언하는데, Gradle 은 같은 capability 를 두 모듈이 제공하면 **둘 다 거부한다**. 에러는 `Cannot select module with conflict on capability` 다.
+- **해결**: 어느 한쪽을 exclude 하면 남은 쪽이 lz4 압축을 잃으므로, capability 를 해석해 높은 버전을 고른다.
+
+  ```gradle
+  configurations.all {
+  	resolutionStrategy.capabilitiesResolution.withCapability('org.lz4:lz4-java') {
+  		selectHighestVersion()
+  	}
+  }
+  ```
+
+- **의존성을 추가했으면 `compileJava` 가 아니라 `build -x test` 로 확인한다.** CI 와 같은 명령이어야 CI 가 보는 것을 본다.
+- **근거**: `api/build.gradle`, `infra/ci/backend.yml`
+
 ### SNAPSHOT 저장소를 지우면 빌드가 깨진다
 
 - **원인**: Boot **4.1.2-SNAPSHOT** 을 쓴다. `repo.spring.io/snapshot` 저장소가 `api/build.gradle` 과 `api/settings.gradle`(pluginManagement) **양쪽에** 필요하다. 한쪽만 남기면 플러그인 또는 의존성 해석이 실패한다.

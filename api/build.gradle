@@ -18,6 +18,24 @@ repositories {
 	maven { url = 'https://repo.spring.io/snapshot' }
 }
 
+// lz4-java 를 서로 다른 좌표로 가져오는 의존성이 둘이라 런타임 클래스패스가 충돌한다.
+//
+//   clickhouse-jdbc  -> org.lz4:lz4-java:1.8.0
+//   kafka-clients    -> at.yawk.lz4:lz4-java:1.10.1
+//
+// at.yawk 쪽은 원본이 관리되지 않아 나온 재배포판이고, 같은 net.jpountz 클래스를
+// 담으면서 'org.lz4:lz4-java' capability 를 스스로 선언한다. 즉 둘은 서로를 대체할 수
+// 있다는 뜻이고, Gradle 은 그 선언을 보고 "둘 중 하나만 고르라" 며 빌드를 세운다.
+// 높은 버전을 고른다. 어느 쪽을 exclude 해도 남은 하나가 lz4 압축을 잃는다.
+//
+// 이 충돌은 :runtimeClasspath 에서만 드러난다. clickhouse-jdbc 가 runtimeOnly 라
+// compileJava 는 통과하고 bootJar 에서 터진다 — 검증은 CI 와 같은 build -x test 로 한다.
+configurations.all {
+	resolutionStrategy.capabilitiesResolution.withCapability('org.lz4:lz4-java') {
+		selectHighestVersion()
+	}
+}
+
 dependencies {
 	// SpringBoot 관련
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
