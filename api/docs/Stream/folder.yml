@@ -17,8 +17,12 @@ docs:
     | 엔드포인트 | 동작 | 인증 |
     | --- | --- | --- |
     | `GET /api/v1/stream/{musicId}` | 스트림 정보 조회 | 필요 |
-    | `GET /api/v1/chunk/{streamId}/{index}` | 청크 1개 조회 | 필요 |
-    | `GET /api/v1/chunk/{streamId}?from=...&to=...` | 청크 범위 조회 | 필요 |
+
+    스트림 메타 정보만 REST 로 노출됩니다. 청크 바이너리는 청킹 파이프라인
+    (music_chunking) 이 직접 처리하며 공개 HTTP 엔드포인트가 없습니다.
+
+    스트림/청크는 `Music` 폴더의 API 로 음악을 등록한 뒤 별도 파이프라인
+    (music_chunking) 이 생성합니다.
 
     ## 코드 값
 

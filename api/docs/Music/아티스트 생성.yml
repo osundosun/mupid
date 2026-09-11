@@ -1,0 +1,101 @@
+info:
+  name: 아티스트 생성
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/artist"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "name": "{{ARTIST_NAME}}"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: ARTIST_NAME
+      value: 뉴 아티스트
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.artist_id
+        method: jsonq
+      variable:
+        name: ARTIST_ID
+        scope: runtime
+      description: 생성된 아티스트 번호를 ARTIST_ID 변수에 저장합니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 생성 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "아티스트가 생성되었습니다.",
+            "data": {
+              "artist_id": 1
+            }
+          }
+  - name: 400 아티스트명 누락
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_REQUEST_BODY",
+            "message": "데이터가 잘못 입력되었습니다.",
+            "error_details": {
+              "name": "아티스트명이 입력되지 않았습니다."
+            }
+          }
+
+docs: |-
+  # 아티스트 생성
+
+  `POST /api/v1/artist` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `name` | string | ✅ | 아티스트명 |
+
+  ## 응답
+
+  `data.artist_id` 로 생성된 아티스트 번호가 반환되고 `ARTIST_ID` 변수에
+  자동 저장됩니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FORBIDDEN` | 403 | SYSTEM/ADMIN 이 아닌 토큰 |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 아티스트명 누락 등 검증 실패 |

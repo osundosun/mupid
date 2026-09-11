@@ -1,0 +1,54 @@
+info:
+  name: Storage
+  type: folder
+  seq: 8
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Storage
+
+    범용 이미지 스토리지 API 입니다. 프로필 사진 등 카테고리별 이미지를
+    업로드/조회/삭제합니다. 파일 실체는 S3 호환 오브젝트 스토리지에
+    저장되고, 메타데이터는 `object_storage_files` 테이블로 관리됩니다.
+
+    `PROFILE` 카테고리는 유저 프로필 사진에 연결되어 있어, 업로드 시
+    인증 사용자의 `image_file` 이 해당 파일로 설정됩니다.
+
+    | 엔드포인트 | 동작 | 인증 |
+    | --- | --- | --- |
+    | `POST /api/v1/storage/image/{category}/{storageKey}` | 이미지 업로드 | 필요 |
+    | `GET /api/v1/storage/image/{category}/{storageKey}` | 이미지 조회 | 필요 |
+    | `DELETE /api/v1/storage/image/{category}/{storageKey}` | 이미지 삭제 | 필요 |
+
+    ## 경로 파라미터
+
+    | 필드 | 값 | 설명 |
+    | --- | --- | --- |
+    | `category` | `PROFILE` | 프로필 이미지 (유저 콜백 연결됨) |
+    | | `ARTIST` | 아티스트 이미지 |
+    | | `ALBUM` | 앨범 이미지 |
+    | | `STREAMING` | 스트리밍용 오디오 청크 |
+    | `storageKey` | int | 대상 번호 (예: 유저 번호, 앨범 번호) |
+
+    실제 저장 키는 `image/{category 소문자}/{storageKey}` 형태입니다.
+    예: `image/profile/1`
+
+    ## 제한
+
+    - 허용 확장자: `jpg`, `jpeg`, `png`, `gif`, `webp`
+    - 최대 용량: 5 MB
+
+    ## 기본 이미지
+
+    `PROFILE` 카테고리에서 저장된 사진이 없으면 기본 프로필 이미지
+    (`default-user-profile.png`) 가 반환됩니다. 404 가 아닙니다.
+
+    ## 엔드포인트 구분
+
+    유저 프로필 사진은 전용 엔드포인트 없이 이 폴더의 API 를 그대로 사용합니다
+    (`category = profile`, `storageKey = 유저 번호`). 자세한 내용은
+    `User` 폴더 문서의 "프로필 사진" 섹션을 참고하세요.

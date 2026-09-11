@@ -1,0 +1,94 @@
+info:
+  name: 음악 수정
+  type: http
+  seq: 2
+
+http:
+  method: PATCH
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "title": "{{MUSIC_TITLE}}"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MUSIC_ID
+      value: "1"
+    - name: MUSIC_TITLE
+      value: 수정된 제목
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 수정 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "음악 정보가 수정되었습니다.",
+            "data": null
+          }
+  - name: 404 음악 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_MUSIC_NOT_FOUND",
+            "message": "요청한 음악을 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 음악 수정
+
+  `PATCH /api/v1/music/{musicId}` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  ## 요청 본문 (모두 선택)
+
+  `null` 인 필드는 무시되므로, 바꿀 필드만 보내면 됩니다.
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `album_id` | int | 이동할 앨범 번호 |
+  | `artist_id` | int | 이동할 아티스트 번호 |
+  | `title` | string | 새 곡명 (공백만 있는 값은 무시) |
+  | `release_date` | datetime | 새 발매일 (ISO-8601) |
+
+  변경 대상 앨범/아티스트가 존재하지 않으면 각각
+  `MUPID_ALBUM_NOT_FOUND` / `MUPID_ARTIST_NOT_FOUND` 가 반환됩니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FORBIDDEN` | 403 | SYSTEM/ADMIN 이 아닌 토큰 |
+  | `MUPID_MUSIC_NOT_FOUND` | 404 | 음악 없음 또는 삭제됨 |
+  | `MUPID_ALBUM_NOT_FOUND` | 404 | 앨범 없음 또는 삭제됨 |
+  | `MUPID_ARTIST_NOT_FOUND` | 404 | 아티스트 없음 또는 삭제됨 |

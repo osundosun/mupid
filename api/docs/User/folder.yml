@@ -19,11 +19,21 @@ docs:
     | `GET /api/v1/user` | 회원정보 조회 | 필요 |
     | `PATCH /api/v1/user` | 회원정보 수정 | 필요 |
     | `DELETE /api/v1/user` | 회원탈퇴 | 필요 |
-    | `POST /api/v1/user/image` | 프로필 사진 수정 | 필요 |
-    | `DELETE /api/v1/user/image` | 프로필 사진 삭제 | 필요 |
-    | `GET /api/v1/user/image/{userId}` | 프로필 사진 조회 | 필요 |
     | `GET /api/v1/user/reset` | 비밀번호 재설정 메일 발송 | 불필요 |
     | `POST /api/v1/user/reset` | 비밀번호 재설정 코드 제출 | 불필요 |
+
+    ## 프로필 사진
+
+    전용 엔드포인트가 없어지고 `Storage` 폴더의 범용 API 로 통합되었습니다.
+    `PROFILE` 카테고리를 사용하세요.
+
+    | 동작 | 방법 |
+    | --- | --- |
+    | 등록/수정 | `POST /api/v1/storage/image/profile/{{USER_ID}}` (`multipart/form-data`) |
+    | 조회 | `GET /api/v1/storage/image/profile/{{USER_ID}}` |
+    | 삭제 | `DELETE /api/v1/storage/image/profile/{{USER_ID}}` |
+
+    사진이 없으면 기본 프로필 이미지(`default-user-profile.png`)가 200 으로 반환됩니다.
 
     ## 회원가입 순서
 
@@ -32,6 +42,10 @@ docs:
     3. `User / 회원가입` → `email_verification_id` 에 위 값 전달
 
     가입 시 상태는 `PENDING` 이고 권한은 `ROLE_USER` 입니다.
+
+    ## 코드 값
+
+    - `role` — `ROLE_GUEST` / `ROLE_USER` / `ROLE_SYSTEM`(배치 프로그램) / `ROLE_ADMIN`
 
     ## 검증 규칙 (`UserCreateRequest`)
 

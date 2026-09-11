@@ -1,0 +1,56 @@
+info:
+  name: 이미지 조회
+  type: http
+  seq: 2
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/storage/image/profile/{{USER_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: image/png
+        - name: Content-Disposition
+          value: attachment; filename="default-user-profile.png"
+
+docs: |-
+  # 이미지 조회
+
+  `GET /api/v1/storage/image/{category}/{storageKey}` · 인증 필요
+
+  ## 응답
+
+  `BaseResponse` 로 감싸지 않고 **이미지 바이너리를 그대로** 반환합니다.
+
+  - `Content-Type` — 저장된 파일의 미디어 타입
+  - `Content-Disposition: attachment; filename="..."`
+
+  ## 기본 이미지
+
+  `PROFILE` 카테고리에서 파일이 없으면 기본 프로필 이미지
+  (`default-user-profile.png`, PNG) 를 200 으로 반환합니다.
+  다른 카테고리는 콜백이 없어 파일이 없으면 404
+  (`MUPID_FILE_NOT_FOUND`) 입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FILE_NOT_FOUND` | 404 | 저장된 파일이 없음 (PROFILE 제외) |

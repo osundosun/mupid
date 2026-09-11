@@ -118,8 +118,8 @@ docs: |-
   | `data.chunk_count` | int | 청크 개수 |
   | `data.status` | string | `PENDING` / `IN_PROGRESS` / `DONE` / `FAILED` |
 
-  청크는 `GET /api/v1/chunk/{streamId}/{index}` 로 받습니다. 인덱스는
-  `0` 부터 `chunk_count - 1` 까지입니다.
+  청크 데이터는 공개 HTTP 엔드포인트가 없으며 청킹 파이프라인(music_chunking)이
+  처리합니다.
 
   ## 오류
 
