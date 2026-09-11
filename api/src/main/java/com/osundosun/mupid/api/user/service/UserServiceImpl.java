@@ -38,7 +38,7 @@ public class UserServiceImpl implements UserService {
             .birthYear(dto.birthYear())
             .gender(UserGender.valueOf(dto.gender()))
             .status(UserStatus.PENDING) /* 온보딩 필요함 */
-            .role(UserRole.USER)
+            .role(UserRole.ROLE_USER)
             .build();
         
         // 이메일 인증 확인

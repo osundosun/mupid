@@ -19,7 +19,6 @@ MySQL 에 있는 유일한 도메인이다. 엔티티 3개가 전부다.
 | `gender` | `UserGender` | `@Enumerated(STRING)` |
 | `role` | `UserRole` | `@Enumerated(STRING)` |
 | `status` | `UserStatus` | `@Enumerated(STRING)` |
-| `onboardingSubmittedAt` | `LocalDateTime` | nullable |
 | `createdAt` / `updatedAt` | | `@CreatedDate` / `@LastModifiedDate` |
 
 ### `email_verifications` — `EmailVerification`
@@ -55,7 +54,7 @@ MySQL 에 있는 유일한 도메인이다. 엔티티 3개가 전부다.
 PENDING ──(온보딩 제출)──> ACTIVE ──(탈퇴)──> WITHDRAW
 ```
 
-**미구현:** `PENDING → ACTIVE` 로 바꾸는 코드가 현재 없다. `onboardingSubmittedAt` 을 기록할 온보딩 API 도 없다.
+**미구현:** `PENDING → ACTIVE` 로 바꾸는 코드가 현재 없다. 온보딩 API 도 없다. 제출 시각을 담던 `users.onboarding_submitted_at` 은 ERD 에 없어 엔티티에서 제거했고, 제출 여부는 ERD 의 `onboarding_survey` 로 판단하게 된다 — [domain/erd.md](erd.md).
 
 ## 삭제 정책 — 둘 다 soft
 

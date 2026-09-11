@@ -10,9 +10,9 @@
 | 드라이버 | `runtimeOnly 'com.mysql:mysql-connector-j'` | `api/build.gradle:39` |
 | DB | MySQL 8.4, `utf8mb4` / `utf8mb4_unicode_ci`, `TZ: Asia/Seoul` | `api/compose.yml:27`, `api/compose.prod.yml:61`, `infra/deploy/compose.yml:52` |
 | Boot | 4.1.2-SNAPSHOT · Java 21 | `api/build.gradle:3,12` |
-| 엔티티 | 3개 | `@Entity` grep 3건 |
-| 리포지토리 | 3개, 전부 `JpaRepository<T, Integer>` | 아래 표 |
-| 스키마 관리 | JPA(Hibernate). 마이그레이션 도구 미도입 | [decision/0011](../decision/0011-jpa-manages-schema.md) |
+| 엔티티 | 4개 | `@Entity` grep 4건 |
+| 리포지토리 | 4개, 전부 `JpaRepository<T, Integer>` | 아래 표 |
+| 스키마 관리 | 설계 기준은 ERD, `ddl-auto` 는 `none`. 마이그레이션 도구 미도입 | [domain/erd.md](../domain/erd.md), [decision/0011](../decision/0011-jpa-manages-schema.md) |
 | `spring.jpa.*` | 키 자체가 없음 | `api/src/main/resources/application.yaml` |
 
 ## 패키지 배치
@@ -32,14 +32,18 @@ api/src/main/java/com/osundosun/mupid/api/
 │   └── enumerate/EmailVerificationPurpose.java
 ├── storage/
 │   ├── entity/ObjectStorageFile.java      # @Table(name = "object_storage_files")
-│   └── repository/ObjectStorageFileRepository.java
+│   ├── repository/ObjectStorageFileRepository.java
+│   └── enumerate/{StorageFileType,StorageFileCategory}.java
+├── playlist/
+│   ├── entity/Playlist.java                # @Table(name = "playlists")
+│   └── repository/PlaylistRepository.java
 ├── common/config/JdbcTemplateConfig.java  # MySQL 용 @Primary JdbcTemplate
 └── analytics/config/ClickHouseConfig.java # ClickHouse 전용 JdbcTemplate (JPA 아님)
 ```
 
 ## 엔티티와 관계
 
-세 엔티티뿐이고, 연관관계는 단방향 `@ManyToOne(LAZY)` 두 개뿐이다.
+네 엔티티뿐이고, 연관관계는 단방향 `@ManyToOne(LAZY)` 세 개뿐이다.
 
 ```
 EmailVerification ──@ManyToOne(LAZY, optional=true)──▶ User
@@ -47,6 +51,9 @@ EmailVerification ──@ManyToOne(LAZY, optional=true)──▶ User
 
 User ──────────────@ManyToOne(LAZY, optional=true)──▶ ObjectStorageFile
                      FK: users.image_file_id (nullable = true)
+
+Playlist ──────────@ManyToOne(LAZY, optional=true)──▶ User
+                     FK: playlists.user_id (nullable = true, updatable = false)
 ```
 
 `@OneToMany` · `@OneToOne` · `@ManyToMany` · `cascade` · `orphanRemoval` · `@Embedded` 는 저장소 전체에 0건이다. 양방향 매핑이 없으므로 `User` 에서 인증 이력을 따라갈 수단도 없다.
@@ -64,7 +71,6 @@ User ──────────────@ManyToOne(LAZY, optional=true)�
 | `gender` | `UserGender` | `@Enumerated(EnumType.STRING) @Column(nullable = false)` |
 | `role` | `UserRole` | `@Enumerated(EnumType.STRING) @Column(nullable = false)` |
 | `status` | `UserStatus` | `@Enumerated(EnumType.STRING) @Column(nullable = false)` |
-| `onboardingSubmittedAt` | `LocalDateTime` | `@Column(nullable = true)` |
 | `createdAt` | `LocalDateTime` | `@CreatedDate @Column(nullable = false, updatable = false)` |
 | `updatedAt` | `LocalDateTime` | `@LastModifiedDate @Column(nullable = false)` |
 
@@ -78,7 +84,7 @@ User ──────────────@ManyToOne(LAZY, optional=true)�
 | `token` | `String` | `@Column(nullable = false, updatable = false)` — 6자리 랜덤 문자열 |
 | `purpose` | `EmailVerificationPurpose` | `@Enumerated(EnumType.STRING) @Column(nullable = false)` |
 | `expiredAt` | `LocalDateTime` | `@Column(nullable = false)` |
-| `verifiedAt` | `LocalDateTime` | `@Column(nullable = false)` — **INSERT 시 항상 null 이다**, 아래 함정 참고 |
+| `verifiedAt` | `LocalDateTime` | `@Column(nullable = true)` — INSERT 시 항상 null 이고, null 이 "미인증" 을 뜻한다 |
 | `createdAt` | `LocalDateTime` | `@CreatedDate @Column(nullable = false, updatable = false)` |
 
 세 엔티티 중 유일하게 `@LastModifiedDate` / `updatedAt` 이 없다.
@@ -88,13 +94,30 @@ User ──────────────@ManyToOne(LAZY, optional=true)�
 | 필드 | 타입 | 매핑 |
 |---|---|---|
 | `fileId` | `Integer` | `@Id @GeneratedValue(IDENTITY)` |
+| `fileType` | `StorageFileType` | `@Enumerated(STRING) @Column(nullable = false)` — `IMG` / `MUSIC` |
+| `category` | `StorageFileCategory` | `@Enumerated(STRING) @Column(nullable = false)` — `PROFILE` / `ARTIST` / `ALBUM` / `STREAMING` |
 | `originalFileName` | `String` | `@Column(nullable = false)` |
 | `storageObjectKey` | `String` | `@Column(nullable = false)` — S3 키. 현재 이 키를 만드는 곳은 프로필 이미지 경로 하나뿐이고 `user/image/<userId>` 형식을 쓴다 |
 | `fileSizeBytes` | `Integer` | `@Column(nullable = false)` — `Long` 이 아니다 |
-| `contentType` | `String` | `@Column(nullable = false)` |
+| `mime` | `String` | `@Column(nullable = false)` — ERD 컬럼명이 `mime` 이다 (`contentType` 이 아니다) |
 | `isDeleted` | `Boolean` | `@Column(nullable = false) @Builder.Default = false` |
 | `createdAt` | `LocalDateTime` | `@CreatedDate @Column(nullable = false, updatable = false)` |
 | `updatedAt` | `LocalDateTime` | `@LastModifiedDate @Column(nullable = false)` |
+
+### `playlists` — `playlist/entity/Playlist.java`
+
+| 필드 | 타입 | 매핑 |
+|---|---|---|
+| `playlistId` | `Integer` | `@Id @GeneratedValue(IDENTITY)` |
+| `user` | `User` | `@ManyToOne(fetch = LAZY, optional = true)` + `@JoinColumn(name = "user_id", nullable = true, updatable = false)` — **NULL 은 시스템/추천이 만든 플레이리스트** |
+| `title` | `String` | `@Column(nullable = false)` — ERD 는 `VARCHAR(100)`. 컬럼명이 `name` 이 아니다 |
+| `musicCount` | `Integer` | `@Column(nullable = false) @Builder.Default = 0` — 수록곡 수의 역정규화. ERD 가 `SMALLINT UNSIGNED` 라 `Short` 로는 범위가 부족하다 |
+| `deletedAt` | `LocalDateTime` | `@Column(nullable = true)` — 소프트 삭제. 조회는 `…AndDeletedAtIsNull` 로 거른다 |
+| `createdAt` | `LocalDateTime` | `@CreatedDate @Column(nullable = false, updatable = false)` |
+| `updatedAt` | `LocalDateTime` | `@LastModifiedDate @Column(nullable = false)` |
+
+`musicCount` 의 `@Builder.Default` 는 장식이 아니다. JPA 는 INSERT 문에 모든 컬럼을 실으므로 DB 의 `DEFAULT 0` 이 적용되지 않고, 빼면 `null` 이 들어가 NOT NULL 위반이 된다.
+
 
 ## 엔티티 작성 규약
 
@@ -133,8 +156,8 @@ public class Something { … }
 
 | enum | DB 에 저장되는 값 | 영속화되지 않는 부가 필드 |
 |---|---|---|
-| `UserGender` | `MALE`, `FEMALE`, `ETC` | `displayName` |
-| `UserRole` | `GUEST`, `USER`, `ADMIN` | `level`, `displayName` |
+| `UserGender` | `M`, `F`, `ETC` | `displayName` |
+| `UserRole` | `ROLE_USER`, `ROLE_SYSTEM`, `ROLE_ADMIN` | `level`, `displayName` |
 | `UserStatus` | `PENDING`, `ACTIVE`, `WITHDRAW` | `displayName` |
 | `EmailVerificationPurpose` | `SIGNUP`, `PW_RESET` | `displayName`, `mailTitle`, `mailTemplate`, `mailUrl` |
 
@@ -155,6 +178,7 @@ public class Something { … }
 | `UserRepository` | `JpaRepository<User, Integer>` | `findByUserIdAndStatusNot(int, UserStatus)`, `findByEmailAndStatusNot(String, UserStatus)` |
 | `EmailVerificationRepository` | `JpaRepository<EmailVerification, Integer>` | 없음 (`findById` / `save` 등 상속 메서드만 사용) |
 | `ObjectStorageFileRepository` | `JpaRepository<ObjectStorageFile, Integer>` | `findByStorageObjectKeyAndIsDeletedFalse(String)` |
+| `PlaylistRepository` | `JpaRepository<Playlist, Integer>` | `findByPlaylistIdAndDeletedAtIsNull(int)`, `findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(User)` |
 
 - **파생 쿼리 메서드만 쓴다.** `@Query` · `EntityManager` · `Specification` · `Pageable` 사용이 저장소 전체에 0건이다. 이 관례를 깨야 한다면(정렬·페이징·조인 페치 등) 왜 필요한지부터 정리하고 시작한다.
 - **삭제/숨김 조건을 메서드 이름에 박는다.** `…AndStatusNot`, `…AndIsDeletedFalse`. Hibernate 의 `@Where` / `@SQLDelete` 같은 전역 필터는 쓰지 않는다(0건).
@@ -186,15 +210,16 @@ public class Something { … }
 | 대상 | 방식 | 구현 |
 |---|---|---|
 | `object_storage_files` | soft delete | `deleteFile()` 이 `setIsDeleted(true)` 로 더티체킹 UPDATE. S3 객체는 실제로 지운다. 조회는 `findByStorageObjectKeyAndIsDeletedFalse(...)` 와 `getFile()` 안의 `getIsDeleted()` 수동 검사 |
+| `playlists` | soft delete (`deleted_at` 에 시각 기록) | 조회를 `…AndDeletedAtIsNull` 로 거른다. 삭제 API 는 아직 없다 |
 | `users` | soft delete (`UserStatus.WITHDRAW`) | ⚠ **현재 코드는 하드 삭제** — `UserServiceImpl.deleteUser()` 가 `repository.delete(user)` (`UserServiceImpl.java:80`). 정책 위반이며 고쳐야 한다 |
 
 정책은 **soft delete** 다 ([decision/0013](../decision/0013-soft-delete-policy.md)). 모든 조회가 `…AndStatusNot(WITHDRAW)` 로 거르는 것도 이 전제 위에 있다. 그런데 실제 삭제 경로는 행을 지운다 — 고쳐야 할 결함이다. 또한 `email_verifications.user_id` 가 `users` 를 참조하므로 DB 에 FK 제약을 걸면 인증 이력이 있는 회원의 하드 삭제는 실패한다.
 
-## 스키마 관리 — JPA 가 한다
+## 스키마 관리 — 기준은 ERD
 
-**스키마의 기준은 엔티티 매핑이다.** 다만 `ddl-auto` 는 `none` 이라 실제 반영은 앱 밖에서 사람이 한다. 마이그레이션 도구는 도입하지 않는다 → [decision/0011](../decision/0011-jpa-manages-schema.md)
+**설계의 기준은 ERD** 이고([domain/erd.md](../domain/erd.md)) 엔티티는 그것을 따라간다. `ddl-auto` 는 `none` 이라 실제 반영은 앱 밖에서 사람이 한다. 마이그레이션 도구는 도입하지 않는다 → [decision/0011](../decision/0011-jpa-manages-schema.md)
 
-저장소에 MySQL DDL 파일이 없는 것은 누락이 아니라 이 결정의 결과다.
+DDL 원문은 ERD 산출물인 `api/knowledge/domain/erd.sql` 에 있다. 앱이 이 파일을 읽지 않으므로 테이블 생성·변경은 사람이 직접 실행한다.
 
 | 확인 | 결과 |
 |---|---|
@@ -280,7 +305,7 @@ DB 접속값은 `MUPID_` 접두사 변수 세 개로만 주입한다. `api/AGENT
 상세는 [함정과 실패 사례](../failure/database-and-jpa.md) 참고. 요약만 적는다.
 
 - **`ddl-auto: none` 이라 스키마가 자동 반영되지 않는다.** 엔티티 변경과 DDL 실행은 별개 작업이다.
-- **`EmailVerification.verifiedAt` 이 `nullable = false` 인데 INSERT 시 항상 null 이다.** 코드는 null 을 "미인증" 상태로 쓴다. 실제 컬럼을 NOT NULL 로 만들면 인증 메일 발송이 곧바로 실패한다.
+- **`EmailVerification.verifiedAt` 은 `nullable = true` 다.** null 이 "미인증" 을 뜻한다. ERD 도 이 컬럼을 NULL 허용으로 두므로 NOT NULL 로 바꾸면 인증 메일 발송이 곧바로 실패한다. 한동안 엔티티가 `nullable = false` 로 잘못 선언돼 있었다.
 - **회원 탈퇴가 soft delete 가 아니라 행 삭제다.** FK 제약을 걸면 깨진다.
 - **이메일 유일성이 DB 제약이 아니라 애플리케이션 검사에만 있다.** 그 검사조차 `statusNot(WITHDRAW)` 로 필터되고 동시 요청을 막지 못한다.
 - **`ObjectStorageFile.fileSizeBytes` 가 `Integer` 다.** 업로드 경로가 `Math.toIntExact(...)` 로 좁히므로 2GB 이상에서 `ArithmeticException` 이 난다.

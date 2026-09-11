@@ -176,7 +176,7 @@ permitAll 목록 (코드에 적힌 순서·주석 그대로):
 
 - **CORS 설정이 없다.** `.cors(...)` 도, `@CrossOrigin` 도, nginx 의 `Access-Control-*` 헤더도 없다.
 - **메서드 보안이 없다.** `@EnableMethodSecurity` / `@PreAuthorize` / `hasRole` / `hasAuthority` 가 한 곳도 없다. 그래서 `AuthForbiddenHandler`(403) 는 빈으로만 등록돼 있고 현재 인가 규칙으로는 실행될 경로가 없다.
-- 권한 문자열에 `ROLE_` 접두사가 없다. `USER` / `ADMIN` / `GUEST` 가 그대로 들어간다.
+- 권한 문자열은 `UserRole.name()` 을 그대로 쓴다. ERD 에 맞춰 상수명이 `ROLE_USER` / `ROLE_SYSTEM` / `ROLE_ADMIN` 이 되면서 Spring 의 `hasRole` 규약과도 맞게 됐다.
 
 ## 401 / 403 응답
 

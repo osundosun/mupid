@@ -119,8 +119,8 @@ docs: |-
 
   enum 이름이 그대로 직렬화/역직렬화 값입니다.
 
-  - `gender` — `MALE`, `FEMALE`, `ETC`
-  - `role` / `user_role` — `GUEST`, `USER`, `ADMIN`
+  - `gender` — `M`, `F`, `ETC`
+  - `role` / `user_role` — `ROLE_USER`, `ROLE_SYSTEM`, `ROLE_ADMIN`
   - `status` — `PENDING`, `ACTIVE`, `WITHDRAW`
 
   가입 직후에는 `status = PENDING`(온보딩 필요), `role = USER` 입니다.

@@ -46,12 +46,12 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 | 음원 분석 | `music_analysis`, `music_analysis_instruments`, `music_section_analysis`, `music_section_analysis_mood` |
 | 스트리밍 | `streams`, `chunks` |
 | 사용자 행동 | `music_reactions`, `play_histories`, `comments` |
-| 플레이리스트 | `playlists`, `playlist_songs` |
+| 플레이리스트 | **`playlists`**, `playlist_songs` |
 | 추천·분석 | `daily_recommendations`, `daily_recommendation_songs`, `analysis_reports`, `mbti` |
 | AI 채팅 | `ai_chat_sessions`, `ai_chat_messages` |
 | 뷰 | `user_auth` — `SELECT user_id, email, password FROM users WHERE status != 'WITHDRAW'` |
 
-**엔티티가 3개뿐이라는 것은 나머지 테이블이 아직 코드에 없다는 뜻이다.** 새 도메인을 맡으면 그 테이블의 엔티티를 처음 만드는 사람이 된다.
+**엔티티가 4개뿐이라는 것은 나머지 테이블이 아직 코드에 없다는 뜻이다.** 새 도메인을 맡으면 그 테이블의 엔티티를 처음 만드는 사람이 된다.
 
 ## ERD 가 쓰는 공통 규약
 
@@ -74,7 +74,7 @@ ERD 컬럼을 JPA 엔티티로 옮길 때는 [persistence.md](../architecture/pe
 | ERD | 엔티티 |
 |---|---|
 | `INT AUTO_INCREMENT` PK | `Integer` + `@Id @GeneratedValue(strategy = GenerationType.IDENTITY)` |
-| `BIGINT AUTO_INCREMENT` PK | `Long`. 기존 3개 엔티티가 전부 `Integer` 라 이 경우가 처음 생기면 짚고 넘어간다 |
+| `BIGINT AUTO_INCREMENT` PK | `Long`. 기존 엔티티가 전부 `Integer` 라 이 경우가 처음 생기면 짚고 넘어간다 |
 | `SMALLINT UNSIGNED` | `Integer` — 범위가 0~65535 라 `Short`(최대 32767) 로는 부족하다 |
 | `INT UNSIGNED` | `Long` 을 검토한다. `Integer` 는 21억을 넘는 값에서 깨진다 |
 | `TINYINT(1)` | `Boolean` |
@@ -90,17 +90,29 @@ ERD 컬럼을 JPA 엔티티로 옮길 때는 [persistence.md](../architecture/pe
 
 ## 코드와 어긋난 지점
 
-**ERD 기준으로 보면 현재 엔티티가 틀린 곳들이다.** 발견 시점: 2026-09-11. 고치려면 데이터 마이그레이션이 필요하므로 각각 따로 논의한다.
+ERD 반입 시점(2026-09-11)에 기존 엔티티 3개가 ERD 와 여러 곳에서 달랐고, **같은 날 코드를 ERD 에 맞추는 쪽으로 정리했다.** 남은 차이와 정리 내역을 함께 적는다.
+
+### 정리된 것
+
+| 테이블 | ERD | 고친 내용 |
+|---|---|---|
+| `users.gender` | `ENUM('M','F','ETC')` | `UserGender` 상수를 `MALE`/`FEMALE` → **`M`/`F`** 로 바꿨다. 요청 `gender` 값도 `M`/`F`/`ETC` 다 |
+| `users.role` | `ENUM('ROLE_USER','ROLE_SYSTEM','ROLE_ADMIN')` | `UserRole` 상수를 `GUEST`/`USER`/`ADMIN` → **`ROLE_USER`/`ROLE_SYSTEM`/`ROLE_ADMIN`** 로 바꿨다. `GUEST` 는 없어졌고, 가입 시 권한은 `ROLE_USER` 다 |
+| `users` | `onboarding_submitted_at` 없음 | `User.onboardingSubmittedAt` 필드와 `UserGetInfoResponse` 의 `onboarding_submitted_at` 을 **제거했다.** 온보딩 제출 여부는 앞으로 `onboarding_survey` 로 판단한다 |
+| `object_storage_files` | `file_type`·`category` NOT NULL, MIME 컬럼명은 `mime` | `StorageFileType`(`IMG`/`MUSIC`)·`StorageFileCategory`(`PROFILE`/`ARTIST`/`ALBUM`/`STREAMING`) enum 을 추가하고 `contentType` 필드를 **`mime`** 으로 바꿨다. `StorageService.uploadFile` 이 두 값을 인자로 받는다 |
+| `email_verifications.verified_at` | NULL 허용 | 엔티티가 `nullable = false` 로 잘못 선언돼 있던 것을 `nullable = true` 로 고쳤다 |
+
+이 변경으로 **API 계약이 바뀌었다.** `gender` 로 `MALE` 을 보내면 500 이 되고, `GET /api/v1/user` 응답에서 `onboarding_submitted_at` 이 사라졌으며, `role` 값이 `ROLE_USER` 로 나간다. 그리고 **기존에 발급된 액세스 토큰은 `role` 클레임이 옛 값이라 깨진다** — 재로그인이 필요하다.
+
+### 남은 차이
 
 | 테이블 | ERD | 현재 코드 | 영향 |
 |---|---|---|---|
-| `users.gender` | `ENUM('M','F','ETC')` | `UserGender` 상수가 `MALE`/`FEMALE`/`ETC` | `@Enumerated(STRING)` 이 `MALE` 을 쓰려 하므로 **INSERT 실패** |
-| `users.role` | `ENUM('ROLE_USER','ROLE_SYSTEM','ROLE_ADMIN')` | `UserRole` 상수가 `GUEST`/`USER`/`ADMIN` | 같은 이유로 충돌 |
-| `users` | `onboarding_submitted_at` 컬럼 **없음** | `User.onboardingSubmittedAt` 필드 있음 | 온보딩 상태를 어디에 둘지 미정 (`onboarding_survey` 테이블이 별도로 있다) |
 | `users.nickname` | `VARCHAR(10)` | 길이 미지정 | 요청 검증이 2~10자라 실질 충돌은 없다 |
-| `object_storage_files` | `file_type`·`category` 가 `NOT NULL`, MIME 컬럼명이 `mime` | 두 컬럼 없음, `contentType` 필드 사용 | ERD 대로 만든 테이블에는 **INSERT 불가** |
+| `users.email` | `VARCHAR(320)`, 유니크 아님 (`CREATE INDEX`) | 길이 미지정, 중복은 애플리케이션에서만 막는다 | 동시 요청에서 같은 이메일이 두 번 들어갈 수 있다 |
+| `users.birth_year` | `SMALLINT` | `Integer` | 범위 안이면 무해 |
 | `email_verifications.token` | `VARCHAR(6)` + **UNIQUE** | 길이·유니크 없음 | 6자리 랜덤이 충돌하면 발송이 실패한다 |
-| `email_verifications.verified_at` | `NULL` 허용 | `@Column(nullable = false)` 인데 INSERT 시 항상 `null` | 기존에 기록된 함정 |
+| 프론트엔드 | — | `frontend/` 의 회원가입 폼과 `SignupInput` 타입이 아직 `MALE`/`FEMALE` 을 쓴다 | 지금은 데모 모드라 API 를 부르지 않지만, 연동하는 사람이 반드시 함께 고쳐야 한다 |
 
 ## 곡 식별자가 둘이다
 

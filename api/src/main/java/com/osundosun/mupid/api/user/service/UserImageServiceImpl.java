@@ -14,6 +14,8 @@ import com.osundosun.mupid.api.common.error.GlobalErrorCode;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.storage.dto.StorageFileData;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
+import com.osundosun.mupid.api.storage.enumerate.StorageFileCategory;
+import com.osundosun.mupid.api.storage.enumerate.StorageFileType;
 import com.osundosun.mupid.api.storage.service.StorageService;
 import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.error.UserErrorCode;
@@ -47,7 +49,12 @@ public class UserImageServiceImpl implements UserImageService {
 
         // 파일 등록
         String key = "user/image/%d".formatted(userId);
-        ObjectStorageFile storageFile = storageService.uploadFile(key, imageFile);
+        ObjectStorageFile storageFile = storageService.uploadFile(
+            key,
+            imageFile,
+            StorageFileType.IMG,
+            StorageFileCategory.PROFILE
+        );
 
         // 유저 데이터 수정
         User user = userService
