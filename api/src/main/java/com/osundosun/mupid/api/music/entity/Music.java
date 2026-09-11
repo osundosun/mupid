@@ -6,8 +6,6 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import com.google.auto.value.AutoValue.Builder;
-
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
@@ -20,6 +18,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -71,19 +70,22 @@ public class Music {
      * 누적 재생 수
      */
     @Column(nullable = false)
-    private Integer playCount;
+    @Builder.Default
+    private Integer playCount = 0;
 
     /**
      * 누적 좋아요 수
      */
     @Column(nullable = false)
-    private Integer likeCount;
+    @Builder.Default
+    private Integer likeCount = 0;
 
     /**
      * 삭제 여부
      */
     @Column(nullable = false)
-    private Boolean isDeleted;
+    @Builder.Default
+    private Boolean isDeleted = false;
 
     /**
      * 생성 일시

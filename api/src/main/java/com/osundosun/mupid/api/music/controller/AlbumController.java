@@ -48,7 +48,7 @@ public class AlbumController {
     }
 
     @DeleteMapping("/{albumId}")
-    public ResponseEntity<BaseResponse<?>> deleteAlbum(
+    public ResponseEntity<BaseResponse<Void>> deleteAlbum(
         @PathVariable int albumId
     ) {
         albumService.deleteAlbum(albumId);

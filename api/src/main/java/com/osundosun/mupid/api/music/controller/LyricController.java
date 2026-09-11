@@ -16,12 +16,12 @@ import com.osundosun.mupid.api.common.response.BaseResponse;
 public class LyricController {
 
     @PostMapping
-    public ResponseEntity<BaseResponse<?>> createArtist() {}
+    public ResponseEntity<BaseResponse<?>> createLyric() {}
 
     @PatchMapping
-    public ResponseEntity<BaseResponse<?>> updateArtist() {}
+    public ResponseEntity<BaseResponse<?>> updateLyric() {}
 
     @DeleteMapping
-    public ResponseEntity<BaseResponse<?>> deleteArtist() {}
+    public ResponseEntity<BaseResponse<?>> deleteLyric() {}
     
 }

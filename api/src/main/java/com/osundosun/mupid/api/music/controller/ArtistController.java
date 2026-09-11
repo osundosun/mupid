@@ -54,7 +54,7 @@ public class ArtistController {
     }
 
     @DeleteMapping("/{artistId}")
-    public ResponseEntity<BaseResponse<?>> deleteArtist(
+    public ResponseEntity<BaseResponse<Void>> deleteArtist(
         @PathVariable int artistId
     ) {
         artistService.deleteArtist(artistId);
