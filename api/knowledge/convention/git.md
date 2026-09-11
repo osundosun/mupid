@@ -49,6 +49,28 @@
 
 한글 Conventional Commits 다 (`api/AGENTS.md`). 티켓 번호는 제목 맨 끝에 붙는다.
 
+### 허용 타입 (10종)
+
+| 타입 | 쓰는 때 |
+|---|---|
+| `feat` | 기능 추가 |
+| `fix` | 버그 수정 |
+| `refactor` | 동작은 그대로, 구조만 바꿈 |
+| `perf` | 성능 개선 |
+| `test` | 테스트 추가·수정 |
+| `docs` | 문서 (지식 저장소, README, API 문서) |
+| `ci` | 파이프라인 정의 (`infra/ci/`, `.gitlab-ci.yml`) |
+| `chore` | 위 어디에도 없는 잡일 |
+| `chore(deps)` | 의존성 추가·제거·버전 변경 |
+| `chore(conf)` | 설정값 (`application.yaml`, `.env.example`, compose) |
+
+이 열 가지만 쓴다. `chore` 의 스코프는 `deps` 와 `conf` 둘뿐이고 그 외에는 스코프를
+붙이지 않는다.
+
+> 과거 커밋에는 `docs(retro):`, `chore(ci):`, `fix(ci):`, `chore(front):` 처럼 이 목록
+> 밖의 스코프가 남아 있다. 되돌리지 않되 새로 쓰지는 않는다 — 파이프라인 변경은
+> `chore(ci)` 가 아니라 `ci` 다.
+
 ### 실제로 쓰인 타입
 
 현재 브랜치 164 커밋의 제목 기준.
