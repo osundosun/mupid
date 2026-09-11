@@ -11,6 +11,7 @@ import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.storage.dto.StorageFileData;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
 import com.osundosun.mupid.api.storage.enumerate.FileCategory;
+import com.osundosun.mupid.api.storage.enumerate.FileType;
 import com.osundosun.mupid.api.storage.error.StorageErrorCode;
 import com.osundosun.mupid.api.storage.error.StorageImageErrorCode;
 import com.osundosun.mupid.api.utils.MultipartFileUtils;
@@ -40,7 +41,7 @@ public class StorageImageServiceImpl implements StorageImageService {
 
         // 파일 등록
         String storageKey = getStorageKey(category, key);
-        ObjectStorageFile storageFile = storageService.uploadFile(storageKey, imageFile);
+        ObjectStorageFile storageFile = storageService.uploadFile(FileType.IMG, category, storageKey, imageFile);
 
         // 카테고리 서비스 콜백
         getCallbackService(category).handleUploadImageAfter(storageFile);

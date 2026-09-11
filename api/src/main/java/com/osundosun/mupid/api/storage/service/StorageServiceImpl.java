@@ -11,6 +11,8 @@ import org.springframework.web.multipart.MultipartFile;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.storage.dto.StorageFileData;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
+import com.osundosun.mupid.api.storage.enumerate.FileCategory;
+import com.osundosun.mupid.api.storage.enumerate.FileType;
 import com.osundosun.mupid.api.storage.error.StorageErrorCode;
 import com.osundosun.mupid.api.storage.properties.StorageProperties;
 import com.osundosun.mupid.api.storage.repository.ObjectStorageFileRepository;
@@ -36,7 +38,7 @@ public class StorageServiceImpl implements StorageService {
     private final ObjectStorageFileRepository repository;
 
     @Override
-    public ObjectStorageFile uploadFile(String key, MultipartFile file) {
+    public ObjectStorageFile uploadFile(FileType fileType, FileCategory category, String key, MultipartFile file) {
         try {
         PutObjectRequest request = PutObjectRequest.builder()
             .bucket(props.bucketName())
@@ -54,8 +56,10 @@ public class StorageServiceImpl implements StorageService {
         return getFileByKey(key)
             .map(metaData -> {
                 // key 중복시 내용만 수정
+                metaData.setFileType(fileType);
+                metaData.setCategory(category);
                 metaData.setOriginalFileName(originalFilename);
-                metaData.setMime(contentType);
+                metaData.setMime(mime);
                 metaData.setFileSizeBytes(fileSize);
                 return metaData;
             })
@@ -65,7 +69,7 @@ public class StorageServiceImpl implements StorageService {
                     .category(category)
                     .originalFileName(originalFilename)
                     .storageObjectKey(key)
-                    .mime(contentType)
+                    .mime(mime)
                     .fileSizeBytes(fileSize)
                     .build()
             ));
