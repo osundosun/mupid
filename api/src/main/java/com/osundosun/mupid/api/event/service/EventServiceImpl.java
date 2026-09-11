@@ -315,7 +315,7 @@ public class EventServiceImpl implements EventService {
     }
 
     private <E extends Enum<E>> String name(Optional<E> value) {
-        return value.map(Enum::name).orElse("");
+        return value.map(it -> it.name()).orElse("");
     }
 
     private long clampMs(Long value) {
