@@ -26,12 +26,21 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @Transactional
 @RequiredArgsConstructor
-public class UserImageServiceImpl implements StorageImageServiceCallback {
+public class UserImageServiceImpl implements UserImageService, StorageImageServiceCallback {
 
     public static final long USER_IMAGE_FILE_MAX_SIZE = 1024 * 1024 * 5; // 5 MB
 
     private final UserService userService;
     private final StorageService storageService;
+
+    @Override
+    public String getProfileImageUrl(User user) {
+        String storageKey = user.getImageFile().getStorageObjectKey();
+        return "/api/v1/storage/image/%s/%s".formatted(
+            FileCategory.PROFILE.name().toLowerCase(),
+            storageKey
+        );
+    }
 
     @Override
     public void handleUploadImageAfter(ObjectStorageFile file) {

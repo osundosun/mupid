@@ -48,7 +48,7 @@ public class UserController {
             user.getUserId(), /* 유저 번호 */
             user.getEmail(), /* 이메일 */
             user.getNickname(), /* 닉네임 */
-            userImageService.getUserImageUrl(user.getUserId()), /* 프로필 이미지 URL */
+            userImageService.getProfileImageUrl(user), /* 프로필 이미지 URL */
             user.getBirthYear(), /* 출생 연도 */
             user.getGender(), /* 성별 */
             user.getRole(), /* 권한 */
