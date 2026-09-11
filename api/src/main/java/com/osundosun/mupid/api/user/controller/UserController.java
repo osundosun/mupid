@@ -50,8 +50,7 @@ public class UserController {
             user.getBirthYear(), /* 출생 연도 */
             user.getGender(), /* 성별 */
             user.getRole(), /* 권한 */
-            user.getStatus(), /* 유저 상태 */
-            user.getOnboardingSubmittedAt() /* 온보딩 제출 일시 */
+            user.getStatus() /* 유저 상태 */
         )));
     }
 

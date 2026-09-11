@@ -97,7 +97,7 @@
 
 ### C2. 온보딩 (`PENDING → ACTIVE`)
 
-`UserStatus.PENDING → ACTIVE` 전환 코드도, `onboardingSubmittedAt` 을 기록할 API 도 없다.
+`UserStatus.PENDING → ACTIVE` 전환 코드가 없다. `users.onboarding_submitted_at` 은 ERD 에 없어 엔티티에서 제거했으므로, 제출 여부를 `onboarding_survey` 로 판단할지 상태 전이만으로 볼지도 함께 정해야 한다.
 
 **정할 것**: auth 도메인에서 처리할지 별도 도메인으로 뺄지.
 
@@ -109,6 +109,19 @@
 - **`occurred_at` 클램프 범위** — 지금은 GA4 Measurement Protocol 을 따라 `72시간 전 ~ 5분 후` 로 두고 벗어나면 경계값으로 자른다(`event.occurred-at-max-past` / `-max-future`). 오프라인 사용이 거의 없다면 더 좁혀도 된다.
 
 **정할 것**: Redis 장애 시 동작. 클램프 범위는 기본값이 들어갔으니 값만 조정하면 된다.
+
+### C4. `decision/0011` 본문이 아직 "스키마 기준은 JPA 매핑" 이라고 적는다
+
+엔티티와 ERD 가 어긋나 있던 컬럼들(`users.gender`/`role`, `users.onboarding_submitted_at`, `object_storage_files.file_type`·`category`·`mime`, `email_verifications.verified_at`)은 **2026-09-11 에 코드를 ERD 에 맞추는 쪽으로 정리했다** — 내역은 [domain/erd.md](domain/erd.md) 의 "코드와 어긋난 지점". 그래서 기준이 ERD 라는 것은 사실상 정해졌지만, ADR 본문은 여전히 JPA 매핑을 기준으로 적고 있다.
+
+**정할 것**: [decision/0011](decision/0011-jpa-manages-schema.md) 을 개정할지, 아니면 ERD 를 다루는 새 ADR 을 세울지. 그리고 `users.email` 유니크 제약과 `email_verifications.token` 유니크를 애플리케이션이 아니라 DB 로 옮길지.
+
+
+### C5. 곡 식별자가 `track_id` 와 `music_id` 로 갈린다
+
+ClickHouse 분석 스키마는 Jamendo `track_id`, MySQL ERD 는 자체 `music.music_id` 를 쓴다. 둘이 같은 곡을 가리키는지, 매핑 테이블을 둘지 정해지지 않았다.
+
+**정할 것**: 카탈로그의 단일 기준과 두 식별자를 잇는 방법.
 
 ---
 

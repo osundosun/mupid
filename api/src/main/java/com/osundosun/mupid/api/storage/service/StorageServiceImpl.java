@@ -11,6 +11,8 @@ import org.springframework.web.multipart.MultipartFile;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.storage.dto.StorageFileData;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
+import com.osundosun.mupid.api.storage.enumerate.StorageFileCategory;
+import com.osundosun.mupid.api.storage.enumerate.StorageFileType;
 import com.osundosun.mupid.api.storage.error.StorageErrorCode;
 import com.osundosun.mupid.api.storage.properties.StorageProperties;
 import com.osundosun.mupid.api.storage.repository.ObjectStorageFileRepository;
@@ -34,7 +36,12 @@ public class StorageServiceImpl implements StorageService {
     private final ObjectStorageFileRepository repository;
 
     @Override
-    public ObjectStorageFile uploadFile(String key, MultipartFile file) throws IOException {
+    public ObjectStorageFile uploadFile(
+        String key,
+        MultipartFile file,
+        StorageFileType fileType,
+        StorageFileCategory category
+    ) throws IOException {
         PutObjectRequest request = PutObjectRequest.builder()
             .bucket(props.bucketName())
             .key(key)
@@ -45,21 +52,23 @@ public class StorageServiceImpl implements StorageService {
         s3Client.putObject(request, body);
 
         String originalFilename = file.getOriginalFilename();
-        String contentType = file.getContentType();
+        String mime = file.getContentType();
         int fileSize = Math.toIntExact(file.getSize());
 
         return getFileByKey(key)
             .map(metaData -> {
                 metaData.setOriginalFileName(originalFilename);
-                metaData.setContentType(contentType);
+                metaData.setMime(mime);
                 metaData.setFileSizeBytes(fileSize);
                 return metaData;
             })
             .orElseGet(() -> repository.save(
                 ObjectStorageFile.builder()
+                    .fileType(fileType)
+                    .category(category)
                     .originalFileName(originalFilename)
                     .storageObjectKey(key)
-                    .contentType(contentType)
+                    .mime(mime)
                     .fileSizeBytes(fileSize)
                     .build()
             ));
@@ -79,7 +88,7 @@ public class StorageServiceImpl implements StorageService {
 
         return new StorageFileData(
             metaData.getOriginalFileName(),
-            MediaType.parseMediaType(metaData.getContentType()),
+            MediaType.parseMediaType(metaData.getMime()),
             objectBytes.asByteArray()
         );
     }

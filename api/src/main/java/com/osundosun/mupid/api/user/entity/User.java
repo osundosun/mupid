@@ -103,12 +103,6 @@ public class User {
     private UserStatus status;
 
     /**
-     * 온보딩 제출 일시
-     */
-    @Column(nullable = true)
-    private LocalDateTime onboardingSubmittedAt;
-
-    /**
      * 생성 일시
      */
     @CreatedDate

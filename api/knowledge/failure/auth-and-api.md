@@ -58,14 +58,14 @@
 
 ### 잘못된 gender / role 값이 400 이 아니라 500 을 만든다
 
-- **원인**: `UserServiceImpl` 은 `UserGender.valueOf(dto.gender())`(39, 73행), `AuthProvider.auth` 는 `UserRole.valueOf(claims.get("role", String.class))`(67행)를 쓴다. `valueOf` 는 매칭 실패 시 `IllegalArgumentException` 을 던지고, `BusinessException` 이 아니라서 500 으로 나간다. `gender` 는 요청 DTO 에서 `MALE|FEMALE|ETC` 검증이 없어 그대로 서비스까지 들어온다.
+- **원인**: `UserServiceImpl` 은 `UserGender.valueOf(dto.gender())`(39, 73행), `AuthProvider.auth` 는 `UserRole.valueOf(claims.get("role", String.class))`(67행)를 쓴다. `valueOf` 는 매칭 실패 시 `IllegalArgumentException` 을 던지고, `BusinessException` 이 아니라서 500 으로 나간다. `gender` 는 요청 DTO 에서 값 검증이 없어 그대로 서비스까지 들어온다. 허용값은 ERD 에 맞춰 `M` / `F` / `ETC` 로 바뀌었다.
 - **해결**: enum 값 검증을 요청 DTO 단계에 넣어야 400 으로 응답한다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserServiceImpl.java`, `api/src/main/java/com/osundosun/mupid/api/auth/provider/AuthProvider.java:67`
 
-### `hasRole("ADMIN")` 이 매칭되지 않는다
+### `hasRole("ADMIN")` 이 매칭되지 않았다 — 해소됨
 
-- **원인**: `AuthProvider.auth` 가 `new SimpleGrantedAuthority(userRole.name())` 으로 `USER`/`ADMIN`/`GUEST` 를 접두사 없이 넣는다(커밋 `70547a2` 에서 `getCode()` → `name()` 으로 변경). Spring 의 `hasRole` 은 `ROLE_ADMIN` 을 찾는다.
-- **해결**: `hasAuthority("ADMIN")` 을 쓰거나 발급 쪽에 `ROLE_` 접두사를 붙인다.
+- **원인**: `AuthProvider.auth` 가 `new SimpleGrantedAuthority(userRole.name())` 으로 `USER`/`ADMIN`/`GUEST` 를 접두사 없이 넣었다(커밋 `70547a2` 에서 `getCode()` → `name()` 으로 변경). Spring 의 `hasRole` 은 `ROLE_ADMIN` 을 찾는다.
+- **해결**: ERD 의 `users.role` 에 맞춰 `UserRole` 상수명을 `ROLE_USER` / `ROLE_SYSTEM` / `ROLE_ADMIN` 으로 바꿨다. `name()` 이 그대로 접두사를 포함하므로 `hasRole("ADMIN")` 이 매칭된다. 단 **기존에 발급된 액세스 토큰의 `role` 클레임은 옛 값(`USER` 등)이라 `UserRole.valueOf` 에서 깨진다** — 재로그인이 필요하다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/auth/provider/AuthProvider.java:69-70`
 
 ### 403 경로가 한 번도 실제로 동작한 적이 없다

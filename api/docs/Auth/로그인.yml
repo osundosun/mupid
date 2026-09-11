@@ -82,7 +82,7 @@ examples:
             "data": {
               "access_token": "eyJhbGciOiJIUzI1NiJ9...",
               "user_id": 1,
-              "user_role": "USER"
+              "user_role": "ROLE_USER"
             }
           }
   - name: 401 이메일/비밀번호 불일치
@@ -117,7 +117,7 @@ docs: |-
 
   - 본문 `data.access_token` — 액세스 토큰
   - 본문 `data.user_id` — 사용자 ID
-  - 본문 `data.user_role` — `GUEST` / `USER` / `ADMIN` (`UserRole.name()`)
+  - 본문 `data.user_role` — `ROLE_USER` / `ROLE_SYSTEM` / `ROLE_ADMIN` (`UserRole.name()`)
   - 헤더 `Set-Cookie: refresh_token=...` — HttpOnly + Secure 리프레시 토큰
 
   응답을 받으면 `ACCESS_TOKEN` 과 `USER_ID` 변수가 자동으로 채워집니다.

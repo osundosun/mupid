@@ -6,9 +6,14 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import com.osundosun.mupid.api.storage.enumerate.StorageFileCategory;
+import com.osundosun.mupid.api.storage.enumerate.StorageFileType;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -29,13 +34,27 @@ import lombok.Setter;
 @AllArgsConstructor
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ObjectStorageFile {
-    
+
     /**
      * 파일 번호
      */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer fileId;
+
+    /**
+     * 파일 종류
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private StorageFileType fileType;
+
+    /**
+     * 파일 분류
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private StorageFileCategory category;
 
     /**
      * 원 파일 명
@@ -59,7 +78,7 @@ public class ObjectStorageFile {
      * MIME 타입
      */
     @Column(nullable = false)
-    private String contentType;
+    private String mime;
 
     /**
      * 삭제 여부

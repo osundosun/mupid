@@ -38,4 +38,4 @@ docs:
     - `password` — 영문/숫자/특수문자(`@$!%*#?&`) 중 2종 이상 조합, 8~20자
     - `nickname` — 2~10자
     - `birth_year` — 1900 이상
-    - `gender` — `MALE` / `FEMALE` / `ETC`
+    - `gender` — `M` / `F` / `ETC`
