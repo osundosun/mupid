@@ -41,6 +41,18 @@ public class ChunkServiceImpl implements ChunkService {
     }
 
     @Override
+    public List<Chunk> getChunkAll(int streamId) {
+        List<Chunk> chunks = repository.findByStreamId(streamId);
+        if (chunks.size() > 0) {
+            boolean isDeleted = chunks.get(0).getStream().getMusic().getIsDeleted();
+            if (!isDeleted) {
+                return chunks;
+            }
+        }
+        return List.of();
+    }
+
+    @Override
     public String getChunkUrl(int chunkId) {
         return "/api/v1/chunk/data/%d".formatted(chunkId);
     }

@@ -10,6 +10,8 @@ public interface ChunkService {
 
     List<Chunk> getChunkRange(int streamId, int from, int to);
 
+    List<Chunk> getChunkAll(int streamId);
+
     String getChunkUrl(int chunkId);
     
 }
