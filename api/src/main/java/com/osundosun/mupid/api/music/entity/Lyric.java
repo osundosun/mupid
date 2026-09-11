@@ -1,8 +1,6 @@
 package com.osundosun.mupid.api.music.entity;
 
 
-import com.google.auto.value.AutoValue.Builder;
-
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -14,6 +12,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -42,27 +41,15 @@ public class Lyric {
     private Music music;
 
     /**
-     * 순서
-     */
-    @Column(nullable = false)
-    private Integer index;
-
-    /**
      * 가사 내용
      */
     @Column(nullable = false)
     private String text;
 
     /**
-     * 시작 시간
+     * 가사 시간
      */
     @Column(nullable = false)
-    private Integer startTimeMs;
-
-    /**
-     * 종료 시간
-     */
-    @Column(nullable = false)
-    private Integer endTimeMs;
+    private Integer timeMs;
 
 }
