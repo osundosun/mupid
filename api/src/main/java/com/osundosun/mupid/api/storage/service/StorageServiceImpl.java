@@ -16,6 +16,7 @@ import com.osundosun.mupid.api.storage.properties.StorageProperties;
 import com.osundosun.mupid.api.storage.repository.ObjectStorageFileRepository;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -24,6 +25,7 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
+@Slf4j
 @Service
 @Transactional
 @RequiredArgsConstructor
@@ -34,7 +36,8 @@ public class StorageServiceImpl implements StorageService {
     private final ObjectStorageFileRepository repository;
 
     @Override
-    public ObjectStorageFile uploadFile(String key, MultipartFile file) throws IOException {
+    public ObjectStorageFile uploadFile(String key, MultipartFile file) {
+        try {
         PutObjectRequest request = PutObjectRequest.builder()
             .bucket(props.bucketName())
             .key(key)
@@ -51,7 +54,7 @@ public class StorageServiceImpl implements StorageService {
         return getFileByKey(key)
             .map(metaData -> {
                 metaData.setOriginalFileName(originalFilename);
-                metaData.setContentType(contentType);
+                metaData.setMime(contentType);
                 metaData.setFileSizeBytes(fileSize);
                 return metaData;
             })
@@ -59,10 +62,15 @@ public class StorageServiceImpl implements StorageService {
                 ObjectStorageFile.builder()
                     .originalFileName(originalFilename)
                     .storageObjectKey(key)
-                    .contentType(contentType)
+                    .mime(contentType)
                     .fileSizeBytes(fileSize)
                     .build()
             ));
+        } catch (IOException e) {
+            log.error(e.getMessage());
+            e.printStackTrace();
+            throw new BusinessException(StorageErrorCode.FILE_PROCESSING_FAILED);
+        }
     }
 
     @Override
@@ -79,7 +87,7 @@ public class StorageServiceImpl implements StorageService {
 
         return new StorageFileData(
             metaData.getOriginalFileName(),
-            MediaType.parseMediaType(metaData.getContentType()),
+            MediaType.parseMediaType(metaData.getMime()),
             objectBytes.asByteArray()
         );
     }
@@ -109,13 +117,23 @@ public class StorageServiceImpl implements StorageService {
 
     @Override
     public Optional<ObjectStorageFile> getFileByKey(String key) {
-        return repository.findByStorageObjectKeyAndIsDeletedFalse(key);
+        ObjectStorageFile metaData = repository
+            .findByStorageObjectKeyAndIsDeletedFalse(key).orElse(null);
+        if (metaData == null || metaData.getIsDeleted()) {
+            return Optional.empty();
+        }
+        return Optional.of(metaData);
     }
 
     @Override
     @Transactional(readOnly = false)
     public boolean isFileExists(String key) {
-        return repository.findByStorageObjectKeyAndIsDeletedFalse(key).isPresent();
+        ObjectStorageFile metaData = repository
+            .findByStorageObjectKeyAndIsDeletedFalse(key).orElse(null);
+        if (metaData == null || metaData.getIsDeleted()) {
+            return false;
+        }
+        return true;
     }
     
 }
