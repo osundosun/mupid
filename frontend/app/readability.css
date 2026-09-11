@@ -1,0 +1,140 @@
+/* Readable text without enlarging artwork or changing player controls. */
+.mupid-shell .desktop-home-shelves h2 { font-size: 23px; line-height: 1.45; }
+.mupid-shell .desktop-home-shelves .eyebrow { font-size: 15px; }
+.mupid-shell .desktop-home-shelves .text-link { font-size: 16px; }
+.mupid-shell .album-deck-copy h3 { font-size: 22px; line-height: 1.45; }
+.mupid-shell .album-deck-copy p { font-size: 17px; }
+.mupid-shell .album-deck-mood { font-size: 15px; }
+.mupid-shell .album-deck-detail { gap: 16px; padding-top: 20px; }
+.mupid-shell .album-deck-play { width: 52px; height: 52px; }
+.mupid-shell .track-row .track-info strong { font-size: 18px; line-height: 1.45; }
+.mupid-shell .track-row .track-info > span { font-size: 15px; line-height: 1.5; }
+.mupid-shell .track-row { gap: 16px; padding-block: 16px; }
+.mupid-shell .track-row .play-small { min-width: 44px; min-height: 44px; }
+@media(min-width:768px) {
+  .mupid-shell .desktop-home-shelves .track-row .album-art { width: 72px; height: 72px; flex-shrink: 0; }
+}
+.mupid-shell { font-size: 16px; line-height: 1.55; }
+.mupid-shell .desktop-app-nav button, .mupid-shell .nav-item { font-size: 16px; }
+.mupid-shell .field-label { font-size: 16px; }
+.mupid-shell .nav-search input { font-size: 16px; }
+.mupid-shell .track-title, .mupid-shell .desktop-playlist-row strong { font-size: 17px; }
+.mupid-shell .desktop-playlist-row small { font-size: 15px; }
+.mupid-shell .explore-category-heading h2, .mupid-shell .keyword-results h2 { font-size: clamp(24px, 2vw, 28px); line-height: 1.4; }
+.mupid-shell .explore-category-switch button { font-size: 17px; }
+.mupid-shell .category-groups legend { font-size: 16px; }
+.mupid-shell .category-groups button { font-size: 16px; min-height: 44px; }
+.mupid-shell .category-description, .mupid-shell .category-selected, .mupid-shell .category-reset { font-size: 15px; }
+.mupid-shell .category-search-action { justify-content: flex-end; }
+.mupid-shell .category-search-action .primary-button { font-size: 16px; }
+.mupid-shell .keyword-card-copy h3 { font-size: 18px; line-height: 1.5; }
+.mupid-shell .keyword-card-copy p { font-size: 15px; color: #7489aa; }
+.mupid-shell .keyword-preview { font-size: 15px; color: #788ca9; }
+@media(max-width:767px) {
+  /* Match the image to its grid column so it cannot crowd the title. */
+  .mupid-shell .mini-player { grid-template-columns: 44px minmax(0, 1fr) auto; column-gap: 12px; row-gap: 6px; }
+  .mupid-shell .mini-player .mini-cover { width: 44px; height: 44px; }
+  .mupid-shell .mini-player .mini-cover .album-art { display: block; width: 100%; height: 100%; }
+  .mupid-shell .mini-player .mini-cover img { width: 100%; height: 100%; object-fit: cover; }
+  .mupid-shell .mini-player .track-info { min-width: 0; gap: 4px; }
+  .mupid-shell .app-layout { width: 100%; max-width: none; }
+  .mupid-shell .keyword-explore { padding-inline: 14px; }
+  .mupid-shell .explore-category-card { padding: 22px 16px; }
+  .mupid-shell .category-groups button { padding: 12px 16px; min-height: 48px; font-size: 17px; }
+  .mupid-shell .category-search-action .primary-button { width: 100%; min-height: 50px; font-size: 18px; }
+  .mupid-shell .album-horizontal-scroll .album-scroll-batch { padding-inline: 0; }
+  .mupid-shell .keyword-card-copy h3 { font-size: 22px; }
+  .mupid-shell .keyword-card-copy p { font-size: 17px; }
+  .mupid-shell .keyword-play { width: 54px; height: 54px; }
+  .mupid-shell .explore-category-switch button { font-size: 15px; gap: 5px; }
+  .mupid-shell .mobile-nav-label { font-size: 13px; }
+}
+.daily-album-map { position: relative; width: 100%; aspect-ratio: 1; margin-top: 24px; }
+.daily-album-cell { position: absolute; padding: 2px; overflow: hidden; border: 2px solid #fff; border-radius: 6px; }
+.daily-album-cell img { width: 100%; height: 100%; object-fit: cover; }
+.daily-album-cell span { position: absolute; bottom: 0; left: 0; right: 0; padding: 12px 4px 5px; background: linear-gradient(transparent,#172941b3); color: white; font-size: 12.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.daily-album-cell:focus-visible, .daily-album-cell[aria-pressed=true] { outline: 3px solid #5278b5; outline-offset: -3px; z-index: 2; }
+.daily-album-detail { min-height: 76px; display: flex; flex-direction: column; justify-content: center; gap: 5px; margin-top: 16px; color: #607da9; font-size: 15px; }
+.daily-album-report .uniform-album-map { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 3px; aspect-ratio: auto; }
+.uniform-album-map .daily-album-cell { position: relative; width: 100%; aspect-ratio: 1; padding: 0; border: 0; border-radius: 4px; }
+.uniform-album-map .daily-album-cell[aria-expanded=true] { outline: 3px solid #5278b5; outline-offset: -3px; }
+.daily-album-popup { position: absolute; z-index: 5; width: min(240px,100%); min-height: 140px; padding: 16px 30px 16px 16px; border: 1px solid #d4e0f2; border-radius: 12px; background: #fff; box-shadow: 0 8px 24px #35547730; color: #4a6492; }
+.daily-album-popup strong { font-size: 15px; }
+.daily-album-popup p { font-size: 14px; margin: 5px 0 0; }
+.daily-popup-close { position: absolute; right: 0; top: 0; width: 36px; height: 36px; font-size: 24px; }
+@media(max-width:767px) { .daily-album-report .uniform-album-map { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+.playlist-play-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
+.playlist-play-actions button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:48px; padding:12px 18px; white-space:nowrap; font-size:16px; }
+.playlist-play-actions svg { width:21px; height:21px; flex-shrink:0; }
+@media (max-width:767px) { .playlist-play-actions { gap:8px; } .playlist-play-actions button { flex:1 1 auto; padding:12px; } }
+.playlist-play-actions button[aria-pressed="true"] { background:#e2ecfc; border-color:#7195d3; color:#365da0; box-shadow:inset 0 0 0 1px #7195d3; }
+.player-controls .toggle-control { position:relative; color:#8997ad; }
+.player-controls .toggle-control[aria-pressed="true"] { color:#4d7dc6; }
+.player-controls .toggle-control[aria-pressed="true"]::after { content:""; position:absolute; bottom:0; left:calc(50% - 2.5px); width:5px; height:5px; border-radius:50%; background:currentColor; }
+.playlist-transport { width:100%; max-width:520px; margin-top:22px; }
+.playlist-transport .player-controls { display:flex; justify-content:center; align-items:center; gap:18px; }
+.playlist-transport .player-controls .icon-button { width:44px; height:44px; flex-shrink:0; }
+.playlist-transport .player-controls .play-main { width:58px; height:58px; background:#5482ca; color:white; border-radius:50%; }
+.playlist-seek { display:flex; align-items:center; gap:12px; margin-top:18px; font-size:15px; font-variant-numeric:tabular-nums; }
+.playlist-seek input { flex:1; min-width:0; height:6px; padding:0; accent-color:#5482ca; cursor:pointer; }
+@media(max-width:767px) { .playlist-transport .player-controls { gap:8px; } }
+.track-menu-options { display:flex; flex-direction:column; gap:6px; max-height:45vh; overflow-y:auto; }
+.track-menu-options > button { display:flex; align-items:center; gap:14px; min-height:52px; padding:12px; text-align:left; border-radius:12px; font-size:16px; }
+.track-menu-options > button:hover { background:#edf3ff; }
+.track-menu-options > button:disabled { opacity:.5; }
+.track-menu-options small { margin-left:auto; }
+.track-menu-options svg { width:22px; height:22px; flex-shrink:0; }
+.track-menu-sheet form { display:grid; gap:10px; }
+/* 바텀 시트. 기본 다이얼로그는 화면 가운데에 두고 자기 크기의 절반만큼 끌어올리는데,
+   그 이동값을 transform으로 넣는 브라우저와 translate로 넣는 브라우저가 갈린다.
+   한쪽만 지우면 시트가 왼쪽 아래로 반쯤 밀려 나가므로 이동 관련 속성을 모두 지운다.
+   좌우도 left/right를 함께 0으로 박아 폭 계산에 기대지 않는다. */
+@media(max-width:767px) {
+  .track-menu-sheet {
+    position: fixed!important;
+    top: auto!important;
+    right: 0!important;
+    bottom: 0!important;
+    left: 0!important;
+    transform: none!important;
+    translate: none!important;
+    rotate: none!important;
+    scale: none!important;
+    margin: 0!important;
+    width: auto!important;
+    max-width: none!important;
+    max-height: 85dvh;
+    overflow-y: auto;
+    border-radius: 24px 24px 0 0!important;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+}
+.moment-page .moment-story { padding:40px 36px; }
+.moment-page .moment-story h2 { margin-bottom:24px; }
+.moment-page .moment-story > .primary-button { margin-top:28px; }
+.moment-page .moment-story > .text-link { margin-top:24px; }
+@media(max-width:767px) { .moment-page .moment-story { padding:24px 16px; } }
+/* 내 취향·플레이어 화면의 작은 글씨 키우기. 두 화면은 읽을 거리가 많아
+   12~13px로는 눈이 금방 피로해진다. */
+.page-report .eyebrow,
+.page-player .eyebrow { font-size: 14px; }
+.page-report .demo-note,
+.page-player .demo-note { font-size: 14px; line-height: 1.7; }
+.page-report .tags > span,
+.page-player .tags > span { font-size: 15px; }
+.mupid-shell.page-report .daily-album-cell span { font-size: 14px; }
+.page-player .section-pill { font-size: 15px; }
+.page-player .time-labels span { font-size: 15px; }
+.page-player .song-lyrics .lyrics-disclaimer { font-size: 14px; line-height: 1.7; }
+.page-player .comment-local-note { font-size: 15px; }
+.page-player .wave-comment-hint { font-size: 15px; }
+.page-player .comment-tools,
+.page-player .comment-tools button,
+.page-player .comment-sort,
+.page-player .comment-sort select { font-size: 15px; }
+.page-player .wave-comment-popover-head > span,
+.page-player .wave-comment-popover .comment-time,
+.page-player .wave-comment-popover .comment-tools button { font-size: 15px; }
+.page-player .wave-comment-popover p { font-size: 15px; }
+.page-player .wave-comment-composer label,
+.page-player .wave-comment-composer footer > span { font-size: 15px; }

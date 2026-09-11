@@ -9,6 +9,8 @@ export type Preferences = {
   genres?: string[];
   nickname: string; moods: string[]; liked: number[]; ignored: number[];
   history: number[]; moments: SavedMoment[]; playlists: Playlist[];
+  /** 마지막으로 재생한 곡. null이면 아직 한 곡도 듣지 않은 계정이다. */
+  lastPlayedId?: number | null;
 };
 export type Bootstrap = { tracks: Track[]; preferences: Preferences; session?: AccountSession | null };
 export type SignupInput = {

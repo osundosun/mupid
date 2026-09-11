@@ -10,10 +10,12 @@ import {
   Play,
   SkipBack,
   SkipForward,
-  Repeat2,
+  ListEnd,
+  Repeat,
+  Repeat1,
   Shuffle,
 } from 'lucide-react';
-import type { MupidModel } from '@/hooks/use-mupid';
+import type { MupidModel, RepeatMode } from '@/hooks/use-mupid';
 import { formatTime, type Track } from '@/lib/mupid-data';
 
 export function Brand({ className = '' }: { className?: string }) {
@@ -50,16 +52,22 @@ export function AlbumArt({
 }
 export function Heading({
   title,
+  // 데스크톱 섹션처럼 무엇을 모아 둔 자리인지 작은 윗줄로 먼저 알려 준다.
+  eyebrow,
   action,
   onAction,
 }: {
   title: string;
+  eyebrow?: string;
   action?: string;
   onAction?: () => void;
 }) {
   return (
     <div className="section-heading">
-      <h2>{title}</h2>
+      <div className="section-heading-copy">
+        {eyebrow && <span className="eyebrow">{eyebrow}</span>}
+        <h2>{title}</h2>
+      </div>
       {action && (
         <button className="text-link" onClick={onAction}>
           {action}
@@ -99,32 +107,63 @@ export function TrackRow({
   detail,
   action,
   onPlay,
+  // 추천·검색처럼 둘러보는 목록에서만 켠다. 자리가 빠듯한 목록에서는 생략한다.
+  queueable = false,
+  // 여러 곡 고르기. onSelect가 오면 체크 박스가 붙고 나머지 버튼은 잠시 물러난다.
+  selected = false,
+  onSelect,
 }: {
   track: Track;
   model: MupidModel;
   detail?: string;
   action?: ReactNode;
   onPlay?: () => void;
+  queueable?: boolean;
+  selected?: boolean;
+  onSelect?: () => void;
 }) {
   const playing = m.playing && m.active.id === track.id;
+  const picking = !!onSelect;
   return (
-    <article className={`track-row ${playing ? 'is-playing' : ''}`}>
+    <article
+      className={`track-row ${playing ? 'is-playing' : ''} ${picking ? 'is-selectable' : ''} ${selected ? 'is-selected' : ''}`}
+    >
+      {picking && (
+        <input
+          type="checkbox"
+          className="track-check"
+          checked={selected}
+          aria-label={`${track.title} 선택`}
+          onChange={onSelect}
+        />
+      )}
       <AlbumArt track={track} />
-      <button className="track-info" onClick={() => m.openTrack(track)}>
+      <button className="track-info" onClick={picking ? onSelect : () => m.openTrack(track)}>
         <strong>{track.title}</strong>
         <span>{track.artist}</span>
         <span className="moment-meta">
           {detail || `Chorus · ${formatTime(track.moment)}`}
         </span>
       </button>
-      {action}
-      <button
-        className="icon-button play-small"
-        aria-label={`${track.title} ${playing ? '일시정지' : '재생'}`}
-        onClick={onPlay ?? (() => m.play(track))}
-      >
-        {playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
-      </button>
+      {!picking && action}
+      {!picking && queueable && (
+        <button
+          className="icon-button"
+          aria-label={`${track.title} 재생 목록에 담기`}
+          onClick={() => m.addToQueue(track)}
+        >
+          <ListEnd />
+        </button>
+      )}
+      {!picking && (
+        <button
+          className="icon-button play-small"
+          aria-label={`${track.title} ${playing ? '일시정지' : '재생'}`}
+          onClick={onPlay ?? (() => m.play(track))}
+        >
+          {playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
+        </button>
+      )}
     </article>
   );
 }
@@ -134,12 +173,14 @@ export function Waveform({
   end = 0,
   compact = false,
   progress = 0,
+  ranges = [],
 }: {
   duration: number;
   start?: number;
   end?: number;
   compact?: boolean;
   progress?: number;
+  ranges?: { start: number; end: number }[];
 }) {
   const count = compact ? 48 : 86;
   return (
@@ -151,7 +192,7 @@ export function Waveform({
         return (
           <i
             className={
-              second >= start && second <= end
+              (second >= start && second <= end) || ranges.some(range => second >= range.start && second < range.end)
                 ? 'wave-selected'
                 : second < progress
                   ? 'wave-played'
@@ -177,24 +218,17 @@ export function Waveform({
 export function PlayerControls({
   model: m,
   compact = false,
+  onPlay,
 }: {
   model: MupidModel;
   compact?: boolean;
+  onPlay?: () => void;
 }) {
   return (
     <div
       className={`player-controls ${compact ? 'compact-controls' : 'full-controls'}`}
     >
-      {!compact && (
-        <button
-          className="icon-button toggle-control"
-          aria-label="셔플 재생"
-          aria-pressed={m.shuffle}
-          onClick={() => m.setShuffle(!m.shuffle)}
-        >
-          <Shuffle />
-        </button>
-      )}
+      {!compact && <ShuffleButton model={m} />}
       <button
         aria-label="이전 곡"
         className="icon-button previous-control"
@@ -205,7 +239,7 @@ export function PlayerControls({
       <button
         className="icon-button play-main"
         aria-label={m.playing ? '일시정지' : '재생'}
-        onClick={() => m.play()}
+        onClick={onPlay ?? (() => m.play())}
       >
         {m.playing ? (
           <Pause fill="currentColor" />
@@ -220,17 +254,54 @@ export function PlayerControls({
       >
         <SkipForward fill="currentColor" />
       </button>
-      {!compact && (
-        <button
-          className="icon-button toggle-control"
-          aria-label="한 곡 반복"
-          aria-pressed={m.repeat}
-          onClick={() => m.setRepeat(!m.repeat)}
-        >
-          <Repeat2 />
-        </button>
-      )}
+      {!compact && <RepeatButton model={m} />}
     </div>
+  );
+}
+// 셔플은 재생 목록(플레이리스트)을 무작위 순서로 돌린다.
+export function ShuffleButton({ model: m }: { model: MupidModel }) {
+  const on = m.shuffle;
+  return (
+    <button
+      className="icon-button toggle-control"
+      aria-label={`셔플 재생 ${on ? '끄기' : '켜기'}`}
+      aria-pressed={on}
+      onClick={() => {
+        m.setShuffle(!on);
+        m.setToast(on ? '재생 목록 순서대로 재생해요.' : '재생 목록을 섞어서 재생해요.');
+      }}
+    >
+      <Shuffle />
+    </button>
+  );
+}
+const REPEAT_ORDER: RepeatMode[] = ['off', 'all', 'one'];
+const REPEAT_LABELS: Record<RepeatMode, string> = {
+  off: '반복 없음',
+  all: '전체 반복',
+  one: '한곡 반복',
+};
+export function RepeatButton({ model: m }: { model: MupidModel }) {
+  const next = REPEAT_ORDER[(REPEAT_ORDER.indexOf(m.repeatMode) + 1) % REPEAT_ORDER.length];
+  return (
+    <button
+      className="icon-button toggle-control"
+      data-repeat={m.repeatMode}
+      aria-label={`반복 모드: ${REPEAT_LABELS[m.repeatMode]}. 누르면 ${REPEAT_LABELS[next]}`}
+      aria-pressed={m.repeatMode !== 'off'}
+      onClick={() => {
+        m.setRepeatMode(next);
+        m.setToast(
+          next === 'one'
+            ? '한곡 반복 · 이 곡을 계속 반복해요.'
+            : next === 'all'
+              ? '전체 반복 · 재생 목록을 계속 돌려요.'
+              : '반복 없음 · 목록이 끝나면 멈춰요.',
+        );
+      }}
+    >
+      {m.repeatMode === 'one' ? <Repeat1 /> : <Repeat />}
+    </button>
   );
 }
 export function LikeButton({

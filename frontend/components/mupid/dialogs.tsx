@@ -18,13 +18,9 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
-import { TrackRow } from './primitives';
-import { Pagination, PaginationContent, PaginationItem } from '@/components/ui/pagination';
 export function AppDialogs({ model: m }: { model: MupidModel }) {
   const [name, setName] = useState('');
-  const [queuePage, setQueuePage] = useState(0);
-  const pageCount = Math.max(1, Math.ceil(m.queueTracks.length / 4));
-  const currentPage = Math.min(queuePage, pageCount - 1);
+  const renaming = m.playlists.find((p) => p.id === m.renamePlaylist);
   return (
     <>
       <Dialog
@@ -69,6 +65,46 @@ export function AppDialogs({ model: m }: { model: MupidModel }) {
           </form>
         </DialogContent>
       </Dialog>
+      <Dialog
+        open={m.renamePlaylist !== null}
+        onOpenChange={(open) => { if (!open) m.setRenamePlaylist(null); }}
+      >
+        <DialogContent className="sky-dialog">
+          <DialogHeader>
+            <DialogTitle>플레이리스트 이름 바꾸기</DialogTitle>
+            <DialogDescription>담긴 음악은 그대로예요.</DialogDescription>
+          </DialogHeader>
+          {/* key로 다시 마운트해 현재 이름을 기본값으로 채운다. */}
+          <form
+            key={m.renamePlaylist}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const input = e.currentTarget.elements.namedItem('playlist-rename');
+              const trimmed = input instanceof HTMLInputElement ? input.value.trim() : '';
+              if (!trimmed) return;
+              m.setPlaylists((list) =>
+                list.map((p) => (p.id === m.renamePlaylist ? { ...p, name: trimmed } : p)),
+              );
+              m.setToast('플레이리스트 이름을 바꿨어요.');
+              m.setRenamePlaylist(null);
+            }}
+          >
+            <label className="field-label" htmlFor="playlist-rename">
+              플레이리스트 이름
+            </label>
+            <input
+              id="playlist-rename"
+              name="playlist-rename"
+              maxLength={40}
+              defaultValue={renaming?.name ?? ''}
+              required
+            />
+            <button className="primary-button wide" type="submit">
+              저장
+            </button>
+          </form>
+        </DialogContent>
+      </Dialog>
       <AlertDialog
         open={m.deletePlaylist !== null}
         onOpenChange={(open) => {
@@ -79,7 +115,7 @@ export function AppDialogs({ model: m }: { model: MupidModel }) {
           <AlertDialogHeader>
             <AlertDialogTitle>플레이리스트를 삭제할까요?</AlertDialogTitle>
             <AlertDialogDescription>
-              이 목록만 삭제되며, 좋아요한 음악과 저장한 구간은 남아 있어요.
+              이 목록만 삭제되며, 좋아요한 음악과 저장한 순간은 남아 있어요.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -99,31 +135,6 @@ export function AppDialogs({ model: m }: { model: MupidModel }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <Dialog open={m.queueDialog} onOpenChange={(open) => { m.setQueueDialog(open); if (!open) setQueuePage(0); }}>
-        <DialogContent className="sky-dialog queue-dialog">
-          <DialogHeader>
-            <DialogTitle>이어 들을 음악</DialogTitle>
-            <DialogDescription>
-              마음에 드는 곡을 눌러 바로 들어보세요.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="track-list">
-            {m.queueTracks.slice(currentPage * 4, currentPage * 4 + 4).map((t) => (
-              <TrackRow track={t} model={m} key={t.id} />
-            ))}
-          </div>
-          <Pagination aria-label="이어 들을 음악 페이지" className="queue-pagination">
-            <PaginationContent>
-              <PaginationItem><button disabled={currentPage === 0} onClick={() => setQueuePage(currentPage - 1)}>이전</button></PaginationItem>
-              {Array.from({ length: pageCount }, (_, page) => <PaginationItem key={page}>
-                <button aria-label={`${page + 1}페이지`} aria-current={currentPage === page ? 'page' : undefined}
-                  onClick={() => setQueuePage(page)}>{page + 1}</button>
-              </PaginationItem>)}
-              <PaginationItem><button disabled={currentPage === pageCount - 1} onClick={() => setQueuePage(currentPage + 1)}>다음</button></PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

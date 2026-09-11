@@ -5,8 +5,6 @@ import {
   Carousel,
   CarouselContent,
   CarouselItem,
-  CarouselNext,
-  CarouselPrevious,
   type CarouselApi,
 } from '@/components/ui/carousel';
 import type { MupidModel } from '@/hooks/use-mupid';
@@ -113,33 +111,6 @@ export function AlbumDeck({
         >
           <ArrowUpRight />
         </button>
-      </div>
-      <div className="album-deck-navigation">
-        <CarouselPrevious
-          className="album-deck-arrow"
-          aria-label="이전 추천 앨범"
-          onClick={() => api?.scrollPrev(reducedMotion)}
-        />
-        <div
-          className="album-deck-position"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          <span>
-            {selectedIndex + 1} <i>/ {items.length}</i>
-          </span>
-          <small>
-            {items.length > 1 ? '앨범을 옆으로 넘겨보세요' : '지금 고른 앨범'}
-          </small>
-          <span className="sr-only">
-            {selected.title}, {selected.artist}
-          </span>
-        </div>
-        <CarouselNext
-          className="album-deck-arrow"
-          aria-label="다음 추천 앨범"
-          onClick={() => api?.scrollNext(reducedMotion)}
-        />
       </div>
     </Carousel>
   );

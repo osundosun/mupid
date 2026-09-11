@@ -20,24 +20,24 @@ export const metadata: Metadata = {
     '좋아했던 순간이 다음 음악이 되는 곳, 뮤피드.',
   alternates: { canonical: siteUrl },
   applicationName: 'Mupid',
-  manifest: '/manifest.webmanifest?v=mupid-cupid-2',
+  manifest: '/manifest.webmanifest?v=mupid-cupid-3',
   appleWebApp: { capable: true, title: 'Mupid', statusBarStyle: 'default' },
   icons: {
     icon: [
       {
-        url: '/favicon-16.png?v=mupid-cupid-2',
+        url: '/favicon-16.png?v=mupid-cupid-3',
         type: 'image/png',
         sizes: '16x16',
       },
       {
-        url: '/favicon-32.png?v=mupid-cupid-2',
+        url: '/favicon-32.png?v=mupid-cupid-3',
         type: 'image/png',
         sizes: '32x32',
       },
     ],
-    shortcut: '/favicon-32.png?v=mupid-cupid-2',
+    shortcut: '/favicon-32.png?v=mupid-cupid-3',
     apple: {
-      url: '/apple-touch-icon.png?v=mupid-cupid-2',
+      url: '/apple-touch-icon.png?v=mupid-cupid-3',
       sizes: '180x180',
       type: 'image/png',
     },

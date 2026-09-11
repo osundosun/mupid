@@ -1,50 +1,3 @@
-.home-shortcuts {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px 8px;
-  padding: 12px 0 18px;
-  margin: 0 0 8px;
-  border-bottom: 1px solid var(--surface-line);
-  font-size: 0.875rem;
-}
-.home-shortcuts button {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  min-width: 44px;
-  min-height: 84px;
-  border: 0;
-  background: none;
-  color: #677ca9;
-  border-radius: 12px;
-  padding: 0;
-  line-height: 1.4;
-  font-weight: 500;
-}
-.home-shortcut-icon {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  border-radius: 14px;
-}
-.home-shortcut-icon svg {
-  width: 22px;
-  height: 22px;
-  stroke-width: 1.7;
-}
-.home-shortcuts button:first-child .home-shortcut-icon {
-  background: #e0e9fe;
-}
-.home-shortcuts button:hover .home-shortcut-icon {
-  background: #e7effc;
-}
-.home-shortcut-label > span {
-  display: block;
-  white-space: nowrap;
-}
 .playback-status,
 .mini-player .playback-status {
   display: inline-flex;
@@ -94,7 +47,7 @@
 .mini-timeline > span {
   flex-shrink: 0;
   white-space: nowrap;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
 }
 .mini-timeline .mini-seek {
   flex: 1;
@@ -129,17 +82,9 @@
     padding-bottom: calc(var(--player-height) + 48px);
   }
 }
-@media (max-width: 1023px) {
-  .home-shortcuts {
-    grid-template-columns: repeat(auto-fit, minmax(3em, 1fr));
-  }
-}
 @media (max-width: 767px) {
-  .home-shortcuts {
-    display: none;
-  }
   .mupid-shell:not(.no-mini) {
-    --player-height: max(104px, calc(3.5rem + 48px));
+    --player-height: max(80px, calc(3.5rem + 24px));
   }
   .mupid-shell .mini-player {
     display: grid;
@@ -150,9 +95,21 @@
     max-width: 504px;
     grid-template-columns: 36px minmax(0, 1fr) auto;
     grid-template-areas: 'cover track controls' 'timeline timeline timeline';
-    gap: 0 6px;
-    padding: 10px 10px 3px;
-    min-height: var(--player-height);
+    grid-template-rows: auto 14px;
+    gap: 0 8px;
+    padding: 6px 10px 5px;
+    min-height: 0;
+  }
+  /* 미니 플레이어의 재생바는 시간 표시 없이 얇은 한 줄로만 둔다. */
+  .mupid-shell .mini-player .mini-timeline > span {
+    display: none;
+  }
+  .mupid-shell .mini-player .mini-seek > div {
+    min-height: 14px;
+  }
+  .mupid-shell .mini-player .mini-seek [data-slot='slider-thumb'] {
+    width: 8px;
+    height: 8px;
   }
   .mini-player .mini-cover {
     grid-area: cover;
@@ -163,17 +120,15 @@
     grid-area: track;
   }
   .mini-player .track-info strong {
-    font-size: 0.875rem;
-    white-space: normal;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
+    font-size: 0.9375rem;
+    white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
     line-height: 1.3;
   }
   .mini-player .playback-status { display: none; }
   .mini-player .track-info > span:last-child {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
   }
   .mupid-shell .mini-player .player-controls {
     grid-area: controls;
@@ -198,7 +153,7 @@
     display: none;
   }
   .mupid-shell .chat-launcher {
-    bottom: calc(var(--dock-height) + 18px);
+    bottom: calc(var(--dock-height) + 8px);
     right: max(calc((100% - 504px) / 2), calc(clamp(20px, 6vw, 28px) + 8px));
   }
   .mupid-shell .chat-panel {
