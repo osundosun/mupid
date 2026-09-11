@@ -12,7 +12,7 @@ import lombok.RequiredArgsConstructor;
 public enum ArtistErrorCode implements ErrorCode {
     
     /**
-     * 요청한 음악을 찾을 수 없습니다.
+     * 요청한 아티스트를 찾을 수 없습니다.
      */
     ARTIST_NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 아티스트를 찾을 수 없습니다.");
 
