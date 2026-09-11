@@ -15,3 +15,9 @@ body * {
 @media (forced-colors: active) {
   html, body * { scrollbar-color: auto; }
 }
+/* 휴대폰 레이아웃에서는 고정된 하단 메뉴 옆에 스크롤바가 나란히 붙어 보인다.
+   스크롤 동작은 그대로 두고 페이지 스크롤바만 감춘다. */
+@media (max-width: 767px) {
+  html { scrollbar-width: none; }
+  html::-webkit-scrollbar { display: none; }
+}

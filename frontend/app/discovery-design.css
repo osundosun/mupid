@@ -28,7 +28,7 @@
   min-height: 44px;
   background: none;
   border: 0;
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   color: var(--ink-secondary);
   white-space: nowrap;
 }
@@ -48,7 +48,7 @@
   background: none;
   padding-inline: 14px;
   color: var(--ink-secondary);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
 }
 .explore-filters button.selected {
   background: #e1eaf7;
@@ -73,7 +73,7 @@
 .explore-selection .eyebrow {
   display: block;
   color: var(--ink-secondary);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   letter-spacing: 0.15em;
 }
 .explore-feature-art {
@@ -89,7 +89,7 @@
 }
 .explore-genre {
   color: var(--ink-secondary);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 .explore-genre > span {
   margin-inline: 5px;
@@ -110,10 +110,10 @@
   line-height: 1.6;
 }
 .explore-artist > span {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 .explore-reason {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   color: var(--ink-secondary);
   line-height: 1.8;
   margin-top: 18px;
@@ -132,7 +132,7 @@
   box-shadow: none;
 }
 .explore-actions .text-link {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   margin-left: 6px;
 }
 .explore-orbit {
@@ -148,10 +148,10 @@
   justify-content: space-between;
   gap: 16px;
   color: var(--ink-secondary);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
 }
 .explore-orbit-heading > span:last-child {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.08em;
 }
@@ -271,7 +271,7 @@
 }
 .explore-track-copy strong {
   display: block;
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   font-weight: 500;
   line-height: 1.4;
   word-break: keep-all;
@@ -279,7 +279,7 @@
 }
 .explore-track-copy small {
   display: block;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   line-height: 1.4;
   margin-top: 4px;
   color: var(--ink-secondary);
@@ -296,7 +296,7 @@
   border-radius: 999px;
   background: #fff;
   color: var(--ink-strong);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
   box-shadow: 0 2px 8px #3f59830d;
@@ -309,7 +309,7 @@
   padding-top: 12px;
 }
 .explore-orbit-footer > span {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 .explore-orbit-footer > div {
   display: flex;
@@ -320,7 +320,7 @@
 }
 .explore-stage .explore-demo {
   grid-column: 1 / -1;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   margin-top: 28px;
 }
 .explore-list {
@@ -338,7 +338,7 @@
 }
 .explore-list-heading > span {
   color: var(--ink-secondary);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 .explore-list .track-list {
   gap: 0;
@@ -366,12 +366,12 @@
 }
 .home-discovery-note p {
   max-width: none;
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   color: var(--ink-secondary);
   line-height: 1.6;
 }
 .home-discovery-note .text-link {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   margin-top: 8px;
 }
 
@@ -622,7 +622,7 @@
   }
   .home-discovery-note p {
     max-width: none;
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
   }
   .home-discovery-note .cupid {
     width: 98px;

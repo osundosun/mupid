@@ -144,7 +144,7 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
               </div>
             </fieldset>
           </>}
-          {message && <p role="status">{message}</p>}
+          {message && <output>{message}</output>}
           <div className={`auth-submit-actions ${signup ? 'is-signup' : ''}`}>
           <button
             className="primary-button wide"

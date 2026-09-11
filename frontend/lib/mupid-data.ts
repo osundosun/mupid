@@ -235,6 +235,38 @@ export const tracks: Track[] = [
   },
 ];
 
+// Fictional catalog entries for UI exploration. Audio and section timings reuse
+// the original eight demo sources; these are not 42 additional recordings.
+const extraDemoTitles = [
+  '유리빛 아침', '느린 파도', '너에게 닿는 빛', '밤의 정원', '여름의 뒷면', '별빛 우편함',
+  '작은 우주', '우리가 머문 자리', '오렌지 노을', '달의 궤도', '비 오는 창가', '아주 먼 산책',
+  '바람의 문장', '수요일의 꿈', '반짝이는 거리', '새벽 편지', '너머의 바다', '하얀 소음',
+  '겨울을 건너', '푸른 신호등', '나른한 일요일', '빛나는 조각', '오늘의 끝에서', '종이비행기',
+  '해질녘 대화', '밤을 걷는 마음', '여백 사이', '낯선 행성', '봄의 속도', '남겨진 멜로디',
+  '투명한 계절', '먼지 속 별', '반달 아래', '잠들지 않는 도시', '파스텔 구름', '둘만의 주파수',
+  '숲의 숨결', '조용한 파란색', '새로운 페이지', '오래된 카세트', '다시 만난 아침', '마지막 여름밤',
+];
+const demoArtists = ['Cloud Letter', 'Blue Sunday', 'Mellow Room', 'Paper Moon', 'Sea Glass', 'Afterglow', 'Day Orbit'];
+const demoGenres = ['Pop', 'Electronic', 'R&B / Soul', 'Rock', 'Folk', 'Classical'];
+const originalDemoTracks = tracks.slice();
+tracks.push(...extraDemoTitles.map((title, index): Track => {
+  const source = originalDemoTracks[index % originalDemoTracks.length];
+  return {
+    ...source,
+    id: index + 9,
+    title,
+    artist: demoArtists[index % demoArtists.length],
+    album: `뮤피드 데모 모음 ${Math.floor(index / 7) + 1}`,
+    genre: demoGenres[index % demoGenres.length],
+    reason: 'UI 탐색용 예시 곡 · 기존 데모 음원 재사용',
+    tags: ['#예시음악'],
+    sections: source.sections.map(section => ({ ...section })),
+  };
+}));
+
+// Stable, individual artwork keeps each demo track recognizable across screens.
+tracks.forEach(track => { track.image = `/demo-covers/album-${track.id}.svg`; });
+
 export const genreOptions = [
   'Electronic',
   'Indie',

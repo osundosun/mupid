@@ -30,20 +30,20 @@
   font-size: clamp(26px, 3vw, 38px); letter-spacing: -.04em;
   line-height: 1.25; margin: 12px 0; overflow-wrap: anywhere;
 }
-.collection-page .playlist-summary .eyebrow { font-size: 11px; letter-spacing: .18em; }
+.collection-page .playlist-summary .eyebrow { font-size: 12.5px; letter-spacing: .18em; }
 .collection-page .playlist-summary p { margin: 0 0 24px; }
 .playlist-tracks { min-width: 0; }
 .playlist-tracks-heading { display: flex; justify-content: space-between; align-items: center; padding: 8px 0 18px; border-bottom: 1px solid #dce6f4; }
 .playlist-tracks-heading h3 { font-size: 18px; font-weight: 700; }
-.playlist-tracks-heading > span { color: #8195b5; font-size: 14px; }
+.playlist-tracks-heading > span { color: #8195b5; font-size: 15px; }
 .collection-page .playlist-tracks .track-row { padding: 20px 4px; gap: 14px; background: transparent; border-radius: 0; }
 .collection-page .playlist-tracks .album-art { width: 54px; height: 54px; flex-shrink: 0; border-radius: 12px; }
-.collection-page .playlist-tracks .moment-meta { color: #9b84a6; font-size: 12px; }
+.collection-page .playlist-tracks .moment-meta { color: #9b84a6; font-size: 13px; }
 .collection-page .playlist-tracks .icon-button { width: 40px; min-width: 40px; height: 40px; }
 .collection-page .playlist-tracks .play-small { background: #eaf1ff; border-radius: 50%; }
 .collection-page .playlist-tracks .is-playing { background: #eaf1ff80; }
 .collection-page .add-current { grid-column: 2; margin: 0; padding: 18px; gap: 10px; border-radius: 18px; background: #eaf0fb80; flex-wrap: wrap; }
-.collection-page .add-current > span { font-size: 12px; }
+.collection-page .add-current > span { font-size: 13px; }
 @media (prefers-reduced-motion: no-preference) {
   .collection-page .playlist-tracks .track-row { transition: background-color 220ms ease; }
   .collection-page .playlist-tracks .track-row:hover { background-color: #eaf1ff70; }
@@ -58,7 +58,7 @@
   .collection-page .playlist-summary .primary-button { margin-inline: auto; }
   .collection-page .add-current { grid-column: 1; }
   .collection-page .sky-tabs > [role='tablist'] { gap: 8px; justify-content: space-between; }
-  .collection-page [role='tablist'] [role='tab'] { font-size: 13px; }
+  .collection-page [role='tablist'] [role='tab'] { font-size: 14px; }
   .collection-page .playlist-tracks .track-row { gap: 8px; }
   .collection-page .playlist-tracks .album-art { width: 44px; height: 44px; }
 }
@@ -91,19 +91,10 @@
 .mupid-shell.page-profile .main-content {
   padding-bottom: calc(var(--dock-height) + 48px);
 }
-.today-moments .today-moment-note { font-size:14px; line-height:1.6; color:#7185a7; margin:12px 0; }
+.today-moments .today-moment-note { font-size:15px; line-height:1.6; color:#7185a7; margin:12px 0; }
 .today-moments .today-moment-time { color:#8b709c; font-variant-numeric:tabular-nums; }
 .today-moments .today-moment-reason { white-space:normal; line-height:1.5; margin-top:6px; }
 .today-moments .desktop-playlist-open { align-items:flex-start; }
-.queue-dialog .track-list { gap: 0; overflow-y: auto; min-height: 0; }
-.queue-dialog .track-row { padding: 12px 2px; border: 0; border-bottom: 1px solid #e2eaf5; border-radius: 0; background: transparent; gap: 12px; }
-.queue-dialog .track-row .album-art { width: 48px; height: 48px; flex-shrink: 0; border-radius: 12px; }
-.queue-dialog .moment-meta { color: #8799b4; font-size: 12px; }
-.queue-dialog .track-row .play-small { width: 40px; height: 40px; min-width: 40px; background: #eaf1fc; border: 0; }
-.queue-dialog .queue-pagination { padding-top: 12px; }
-.queue-pagination button { min-width: 40px; min-height: 40px; padding: 8px 12px; border-radius: 50px; color: #6183b6; }
-.queue-pagination button[aria-current='page'] { background: #668bc8; color: white; }
-.queue-pagination button:disabled { opacity: .35; }
 .collection-page .playlist-grid {
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px;
 }
@@ -120,12 +111,28 @@
 .collection-page .playlist-card strong { font-size: 18px; line-height: 1.4; display: block; overflow-wrap: anywhere; }
 .collection-page .playlist-card small { display: block; margin-top: 6px; color: #8a9bb5; }
 .collection-page .playlist-card > svg { display: none; }
-.collection-page .new-playlist { width: auto; margin: 24px 0 30px auto; padding: 12px 22px; border-radius: 999px; border: 1px solid #d5e3f7; background: #edf4ff; }
-.song-lyrics { margin: 18px 0; border-block: 1px solid #dce6f4; text-align: left; }
-.song-lyrics summary { display: flex; justify-content: space-between; padding: 16px 4px; cursor: pointer; font-weight: 600; }
-.song-lyrics-body { max-height: 260px; overflow-y: auto; padding: 8px 12px 24px; text-align: center; line-height: 2.2; color: #657fa8; }
-.song-lyrics-body h3 { font-weight: 700; color: #385d98; margin-bottom: 14px; }
-.song-lyrics-body .lyrics-disclaimer { font-size: 12px; line-height: 1.6; color: #8997ac; margin-bottom: 18px; }
+/* 만들기 칸도 앨범 칸과 같은 크기·비율로 두어 줄이 어긋나지 않게 한다. */
+.collection-page .new-playlist {
+  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 16px;
+  width: 100%; margin: 0; padding: 0 0 20px;
+  border: 0; border-radius: 0; background: transparent; text-align: left; cursor: pointer;
+}
+.collection-page .new-playlist .new-playlist-tile {
+  display: grid; place-items: center;
+  width: 100%; aspect-ratio: 1;
+  border: 2px dashed #c3d6f0; border-radius: 22px; background: #f4f8ff;
+  color: #6f93c9;
+  transition: border-color .15s ease, background .15s ease, color .15s ease;
+}
+.collection-page .new-playlist .new-playlist-tile svg { width: 34px; height: 34px; }
+.collection-page .new-playlist strong { font-size: 18px; line-height: 1.4; color: #5b7093; }
+.collection-page .new-playlist:hover .new-playlist-tile { border-color: #7ba2da; background: #e9f1ff; color: #3f66b8; }
+.collection-page .new-playlist:focus-visible .new-playlist-tile { outline: 3px solid #9dc0f5; outline-offset: 3px; }
+.song-lyrics { margin: 24px auto 0; max-width: 420px; text-align: center; line-height: 2.2; color: #657fa8; }
+.song-lyrics h3 { font-weight: 700; color: #385d98; line-height: 1.5; margin-bottom: 14px; }
+.song-lyrics p { margin: 0; overflow-wrap: anywhere; word-break: keep-all; }
+.song-lyrics .song-lyrics-empty { color: #8997ac; }
+.song-lyrics .lyrics-disclaimer { font-size: 13px; line-height: 1.6; color: #8997ac; margin-top: 18px; }
 @media (prefers-reduced-motion: no-preference) {
   .collection-page .playlist-card > .album-art { transition: transform 250ms ease, box-shadow 250ms ease; }
   .collection-page .playlist-card:hover > .album-art { transform: translateY(-5px); box-shadow: 0 18px 28px #607caa30; }
@@ -134,6 +141,146 @@
   .collection-page .playlist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; }
   .collection-page .playlist-card strong { font-size: 15px; }
 }
-.profile-photo-editor { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 220px; text-align: center; }
-.profile-photo-editor > div { display: flex; gap: 14px; }
-.profile-photo-editor small, .profile-photo-editor [role='status'] { font-size: 12px; color: #7e92b2; }
+.profile-photo-editor {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  flex-shrink: 0; max-width: 260px; padding: 20px 18px; text-align: center;
+  border: 1px solid #dfeafa; border-radius: 18px; background: #ffffffe8;
+}
+/* 사진 자리는 비어 있을 때 점선으로 '여기에 넣으세요'를 보여 준다. */
+.profile-photo-pick {
+  position: relative; display: block; padding: 0; border: 0; background: none; cursor: pointer;
+}
+.profile-photo-frame {
+  display: grid; place-items: center; width: 124px; height: 124px; overflow: hidden;
+  border: 2px dashed #bdd3f2; border-radius: 50%; background: #f4f8ff;
+  transition: border-color .15s ease, background .15s ease;
+}
+.profile-photo-editor.has-photo .profile-photo-frame { border-style: solid; border-color: #dbe7f9; background: #fff; }
+.profile-photo-frame img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.profile-photo-pick:hover .profile-photo-frame { border-color: #6f93c9; background: #eef4ff; }
+.profile-photo-pick:focus-visible { outline: 3px solid #9dc0f5; outline-offset: 4px; border-radius: 50%; }
+.profile-photo-pick:disabled { opacity: .6; cursor: default; }
+.profile-photo-badge {
+  position: absolute; right: 2px; bottom: 2px;
+  display: grid; place-items: center; width: 36px; height: 36px;
+  border: 2px solid #fff; border-radius: 50%;
+  background: linear-gradient(135deg, #5b8ad6, #3f66b8); color: #fff;
+  box-shadow: 0 4px 12px #2f56a338;
+}
+.profile-photo-badge svg { width: 18px; height: 18px; }
+.profile-photo-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.profile-photo-main { min-height: 44px; padding-inline: 16px; font-weight: 600; }
+.profile-photo-remove {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 44px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid #f0c9cd; background: #fdf0f1; color: #b5535f;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.profile-photo-remove:hover:not(:disabled) { background: #fbe2e4; }
+.profile-photo-remove svg { width: 15px; height: 15px; }
+.profile-photo-remove:disabled { opacity: .45; cursor: default; }
+.profile-nickname-form { width: 100%; max-width: 420px; }
+.profile-nickname-form .inline-form { align-items: center; gap: 12px; }
+.profile-nickname-form .inline-form input { flex: 1; width: 0; min-width: 0; height: 44px; min-height: 44px; padding: 10px 12px; font-size: 16px; }
+.profile-nickname-form .primary-button { flex: 0 0 76px; width: 76px; min-width: 76px; height: 44px; min-height: 44px; padding: 0 16px; margin: 0; border-radius: 12px; white-space: nowrap; font-size: 15px; }
+.profile-photo-editor small, .profile-photo-editor output { display: block; font-size: 13px; line-height: 1.5; color: #66799a; }
+.profile-photo-editor output:empty { display: none; }
+/* 재생 목록: 칸칸이 박스로 끊지 않고 구분선만 둔 한 덩어리 목록으로 둔다.
+   왼쪽 손잡이를 끌어 순서를 바꾼다. */
+.queue-list { display: grid; gap: 0; margin-top: 4px; }
+.queue-item {
+  display: flex; align-items: center; gap: 2px; min-width: 0;
+  padding: 4px 6px 4px 0; border-radius: 14px;
+  border-bottom: 1px solid #e7eefa;
+}
+.queue-item:last-child { border-bottom: 0; }
+.queue-item > .track-row {
+  flex: 1; min-width: 0;
+  padding: 12px 4px; gap: 14px;
+  border: 0; border-radius: 0; background: transparent;
+}
+.queue-item > .track-row .album-art { width: 52px; border-radius: 12px; flex-shrink: 0; }
+.queue-item > .track-row .moment-meta { color: #90a2bd; }
+.queue-item:hover { background: #f4f8ff; }
+.queue-item:hover, .queue-item.is-dragging { border-bottom-color: transparent; }
+.queue-item.is-dragging {
+  background: #eaf1ff; box-shadow: 0 10px 26px #6f93c92e; position: relative; z-index: 1;
+}
+/* 재생 중인 곡은 왼쪽에 얇은 표시를 둔다. */
+.queue-item > .track-row.is-playing { box-shadow: inset 3px 0 0 #7fa2d4; padding-left: 12px; border-radius: 0; }
+.queue-handle {
+  display: grid; place-items: center; flex-shrink: 0;
+  width: 30px; min-width: 30px; height: 44px; padding: 0;
+  border: 0; border-radius: 10px; background: none; color: #b7c4d8;
+  touch-action: none; cursor: grab;
+}
+.queue-handle:active { cursor: grabbing; }
+.queue-handle:hover, .queue-handle:focus-visible { background: #e6eefb; color: #6a84ad; }
+.queue-handle svg { width: 17px; height: 17px; }
+/* 여러 곡 고르기: 평소에는 곡 수만, '선택'을 누르면 전체 선택과 삭제·취소가 나온다. */
+.select-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 6px 0 2px; padding: 8px 4px 10px;
+  border-bottom: 1px solid #e7eefa;
+}
+.select-count { font-size: 15px; font-weight: 700; color: #5a6f92; }
+.select-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.select-toolbar .ghost-button,
+.select-toolbar .danger-button {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 34px; padding: 0 12px;
+  border-radius: 999px; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.select-toolbar .ghost-button { border: 1px solid #d8e3f5; background: #fff; color: #5a6f92; }
+.select-toolbar .ghost-button:hover:not(:disabled) { background: #eef4ff; color: #3f5c8c; }
+.select-toolbar .danger-button { border: 1px solid #f0c9cd; background: #fdf0f1; color: #b5535f; }
+.select-toolbar .danger-button:hover:not(:disabled) { background: #fbe2e4; }
+.select-toolbar .danger-button svg { width: 15px; height: 15px; }
+.select-toolbar button:disabled { opacity: 0.45; cursor: default; }
+.select-all {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 2px; cursor: pointer;
+  font-size: 15px; font-weight: 700; color: #3f5c8c;
+}
+/* 동그란 체크 박스. 체크 표시는 배경 그림으로 그려 브라우저를 가리지 않는다. */
+.select-box, .track-check {
+  appearance: none; flex-shrink: 0; margin: 0; padding: 0;
+  border: 1.5px solid #c3d2e8; border-radius: 999px; background: #fff;
+  cursor: pointer;
+}
+.select-box:checked, .track-check:checked {
+  border-color: #6f93c9; background-color: #6f93c9;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: center; background-size: 60%;
+}
+.select-box { width: 20px; height: 20px; }
+/* 줄마다 붙는 체크 박스. 고르는 동안에는 줄 전체가 버튼처럼 눌린다. */
+.track-check { width: 26px; min-width: 26px; height: 26px; }
+.track-row.is-selectable { cursor: pointer; }
+.track-row.is-selected { background: #eef4ff; }
+.queue-list.is-picking .queue-item > .track-row { padding-left: 8px; }
+@media (max-width: 767px) {
+  .select-toolbar { gap: 8px; padding: 8px 2px 10px; }
+  .select-toolbar .ghost-button,
+  .select-toolbar .danger-button { min-height: 36px; padding: 0 11px; font-size: 12.5px; }
+  .select-all, .select-count { font-size: 14px; }
+}
+.select-limit {
+  margin-left: 6px; font-size: 13px; font-weight: 600; font-style: normal; color: #93a5c2;
+}
+/* 카드 위 더보기(⋮). 커버 오른쪽 위에 얹어 목록에서 바로 이름 바꾸기·삭제로 간다. */
+.collection-page .playlist-card-wrap { position: relative; min-width: 0; }
+.collection-page .playlist-card-wrap > .playlist-card { width: 100%; }
+.collection-page .playlist-card-menu {
+  position: absolute; top: 10px; right: 10px;
+  display: grid; place-items: center;
+  width: 36px; height: 36px; padding: 0;
+  border: 1px solid #ffffff; border-radius: 50%;
+  background: #ffffffe8; color: #4f6c99;
+  box-shadow: 0 4px 12px #4a6da01f;
+  cursor: pointer;
+  transition: background .14s ease, color .14s ease;
+}
+.collection-page .playlist-card-menu svg { width: 18px; height: 18px; }
+.collection-page .playlist-card-menu:hover { background: #eef4ff; color: #35548c; }
+.collection-page .playlist-card-menu:focus-visible { outline: 3px solid #9dc0f5; outline-offset: 2px; }

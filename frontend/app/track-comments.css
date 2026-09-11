@@ -4,38 +4,55 @@
 .wave-comment-markers > div { display:flex; justify-content:center; }
 .wave-comment-avatar { position:relative; width:36px; height:36px; border:2px solid white; border-radius:10px; background:#91a8d6; color:white; box-shadow:0 2px 8px #607ba626; font-weight:600; }
 .wave-comment-avatar[aria-expanded='true'] { background:#597bb7; outline:2px solid #afc4ec; }
-.wave-comment-avatar small { position:absolute; right:-5px; top:-5px; background:#f0e4f2; color:#805e87; border-radius:10px; padding:1px 4px; font-size:12px; }
-.wave-comment-hint { color:#7286a7; font-size:14px; margin:10px 0; }
-.wave-comment-popover { background:#fff; border:1px solid #dce6f5; border-radius:16px; padding:14px; max-height:220px; overflow-y:auto; }
-.wave-comment-popover article { padding:10px 0; border-bottom:1px solid #edf1f8; }
-.wave-comment-popover strong { margin-left:10px; font-size:14px; }
-.wave-comment-popover p { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:16px; }
+.wave-comment-avatar small { position:absolute; right:-5px; top:-5px; background:#f0e4f2; color:#805e87; border-radius:10px; padding:1px 4px; font-size:13px; }
+.wave-comment-hint { color:#7286a7; font-size:15px; margin:10px 0; }
+.wave-comment-popover { background:#fff; border:1px solid #dce6f5; border-radius:16px; padding:0 18px 16px; max-height:260px; overflow-y:auto; }
+/* 닫기는 오른쪽 아이콘으로, 시간과 작성자는 한 줄에 맞춘다. */
+.wave-comment-popover-head { display:flex; align-items:center; justify-content:space-between; gap:12px; position:sticky; top:0; padding-block:14px 8px; background:#fff; }
+.wave-comment-popover-head > span { font-size:14px; font-weight:600; color:#7d90ad; }
+.wave-comment-popover-head .icon-button { margin-right:-10px; color:#8497b5; }
+.wave-comment-popover article { padding:12px 0; border-bottom:1px solid #edf1f8; }
+.wave-comment-popover article:last-child { border-bottom:0; padding-bottom:0; }
+.wave-comment-line { display:flex; align-items:center; gap:10px; min-width:0; }
+.wave-comment-popover .comment-time { flex-shrink:0; padding:6px 11px; font-size:14px; font-variant-numeric:tabular-nums; }
+.wave-comment-popover strong { min-width:0; font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wave-comment-popover p { margin:10px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.7; font-size:15px; color:#5f739a; }
 .track-comments > .player-controls { margin-block:20px; }
 .track-comments > .moment-comment-prompt { margin-top:16px; }
 .moment-comment-prompt { display:flex; align-items:center; gap:10px; width:100%; min-height:54px; padding:14px 18px; border:1px solid #d6e2f6; border-radius:18px; background:#ffffffc9; color:#617cae; font-size:16px; text-align:left; flex-wrap:wrap; }
 .moment-comment-prompt span { font-variant-numeric:tabular-nums; color:#456bb0; }
 .moment-comment-prompt:hover { background:#edf3ff; }
 .moment-comment-list { margin-top:12px; }
-.moment-comment-list > summary { cursor:pointer; padding:12px 4px; font-size:14px; color:#617cae; }
+/* 접힘 표시를 브라우저 기본 삼각형 대신 다른 섹션과 같은 꺾쇠로 맞춘다. */
+.moment-comment-list > summary { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:44px; cursor:pointer; padding:12px 4px; font-size:15px; font-weight:600; color:#617cae; list-style:none; }
+.moment-comment-list > summary::-webkit-details-marker { display:none; }
+.moment-comment-list > summary::after { content:''; flex-shrink:0; width:9px; height:9px; margin-right:4px; border-right:2px solid currentColor; border-bottom:2px solid currentColor; rotate:45deg; translate:0 -2px; transition:rotate .15s ease; }
+.moment-comment-list[open] > summary::after { rotate:-135deg; translate:0 2px; }
 .track-comments header,.track-comments h2,.track-comments form label,.track-comments footer,.comment-meta,.comment-tools { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .track-comments header { justify-content:space-between; }
 .track-comments h2 { font-size:20px; font-weight:600; }
-.track-comments h2 span,.comment-local-note,.comment-tools,.comment-meta small { color:#7184a6; font-size:14px; }
-.comment-local-note { margin:14px 0 22px; line-height:1.7; }
+.track-comments h2 span,.comment-local-note,.comment-tools { color:#7184a6; font-size:15px; }
+.comment-local-note { margin:10px 0 4px; line-height:1.6; font-size:14px; }
 .track-comments form { padding:20px; border:1px solid #dbe5f6; border-radius:20px; background:#f8fbff; margin-bottom:24px; }
 .track-comments textarea { display:block; width:100%; margin:14px 0; padding:12px; border:1px solid #cfddf1; border-radius:12px; font-size:16px; line-height:1.6; resize:vertical; min-height:100px; }
 .track-comments footer { justify-content:flex-end; }
-.track-comments footer > span { margin-right:auto; font-size:14px; }
+.track-comments footer > span { margin-right:auto; font-size:15px; }
 .comments-empty { padding:24px 0; color:#7184a6; line-height:1.7; }
-.comment-sort { display:flex; justify-content:flex-end; gap:12px; align-items:center; margin:20px 0; }
-.comment-sort select { padding:8px 12px; border:1px solid #dce6f5; border-radius:10px; background:#fff; }
+.comment-sort { display:flex; justify-content:flex-end; gap:8px; align-items:center; margin:12px 0 4px; font-size:14px; color:#8497b5; }
+.comment-sort select { padding:6px 10px; border:1px solid #dce6f5; border-radius:10px; background:#fff; font-size:14px; }
 .track-comments ul { list-style:none; padding:0; margin:0; }
-.track-comments li { padding:20px 0; border-bottom:1px solid #e2eaf5; }
-.comment-meta { justify-content:space-between; }
-.comment-time { display:flex; align-items:center; gap:6px; padding:8px 12px; border-radius:20px; background:#edf3ff; color:#4d73b3; }
-.comment-body { white-space:pre-wrap; overflow-wrap:anywhere; margin:14px 0; line-height:1.7; font-size:16px; }
-.comment-tools time { margin-right:auto; }
-.comment-delete { margin-top:14px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+.track-comments li { padding:14px 0; border-bottom:1px solid #eaf0f8; }
+.track-comments li:last-child { border-bottom:0; }
+/* 한 줄: 작성자 + 내 댓글 배지 ... 시간 칩 */
+.comment-meta { justify-content:space-between; gap:10px; flex-wrap:nowrap; min-width:0; }
+.comment-meta > strong { display:flex; align-items:center; gap:6px; min-width:0; font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.comment-time { display:flex; align-items:center; gap:5px; flex-shrink:0; padding:5px 10px; border-radius:999px; background:#edf3ff; color:#4d73b3; font-size:14px; font-variant-numeric:tabular-nums; }
+.comment-body { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 10px; line-height:1.7; font-size:15px; color:#5f739a; }
+/* 날짜는 왼쪽, 수정·삭제는 오른쪽에 작은 알약으로 */
+.comment-tools { gap:8px; font-size:14px; }
+.comment-tools time { margin-right:auto; color:#9aa9c0; }
+.comment-tools button { padding:6px 12px; border:1px solid #dfe8f6; border-radius:999px; background:#fff; color:#6a84ad; font-size:14px; }
+.comment-tools button:hover { background:#eef3fc; }
 @media(max-width:767px) { .track-comments header { align-items:flex-start; gap:16px; } .track-comments form { padding:16px; } .comment-tools button { min-height:44px; } }
 
 /* 파형 위의 좌표는 유지하고 입력창만 겹쳐 띄워 주변 콘텐츠가 밀리지 않게 한다. */
@@ -48,9 +65,23 @@
   animation:comment-bubble-in .16s ease-out;
 }
 .wave-comment-composer::before { content:''; position:absolute; top:-7px; left:24px; width:12px; height:12px; background:white; border-left:1px solid #cfddf4; border-top:1px solid #cfddf4; transform:rotate(45deg); }
-.track-comments .wave-comment-composer textarea { min-height:64px; max-height:120px; margin:10px 0; padding:10px; resize:none; line-height:1.4; }
-.track-comments .wave-comment-composer label { font-size:14px; gap:6px; }
-.track-comments .wave-comment-composer footer { gap:8px; }
-.wave-comment-composer .primary-button { min-height:40px; padding:8px 12px; font-size:14px; }
+.track-comments .wave-comment-composer textarea { min-height:64px; max-height:120px; margin:8px 0 10px; padding:10px 12px; resize:none; line-height:1.5; font-size:15px; }
+.track-comments .wave-comment-composer label { gap:6px; font-size:14px; font-weight:600; color:#6a84ad; }
+.track-comments .wave-comment-composer footer { gap:8px; align-items:center; }
+.wave-comment-composer footer > span { font-size:13px; color:#9aa9c0; font-variant-numeric:tabular-nums; }
+.wave-comment-composer .text-link { padding:8px 10px; font-size:14px; color:#8497b5; }
+.wave-comment-composer .primary-button { min-height:38px; padding:8px 16px; border-radius:999px; font-size:15px; }
 @keyframes comment-bubble-in { from {opacity:0; transform:translateY(-5px) scale(.97);} to {opacity:1; transform:none;} }
 @media(prefers-reduced-motion:reduce) { .track-comments form.wave-comment-composer {animation:none;} }
+/* 팝오버 안에서도 수정·삭제를 바로 쓸 수 있게, 목록과 같은 알약 버튼으로 둔다. */
+.wave-comment-popover .comment-tools { justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.wave-comment-popover .comment-tools button { padding: 5px 10px; font-size: 13px; }
+
+/* 파형 아래 시간. 숫자만 있으면 무슨 값인지 몰라 작은 이름표를 함께 둔다. */
+.track-comments .time-labels em { margin-right:4px; font-style:normal; font-weight:600; color:#9aabc6; }
+/* 댓글 목록 페이지 이동. 파형 옆 팝오버가 아니라 아래 목록에만 붙는다. */
+.comment-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 14px 0 2px; }
+.comment-pagination span { font-size: 14px; font-weight: 600; color: #6a7f9f; font-variant-numeric: tabular-nums; }
+.comment-pagination .icon-button { width: 40px; height: 40px; border: 1px solid #dce6f4; border-radius: 50%; background: #fff; color: #6f8fbe; }
+.comment-pagination .icon-button:hover:not(:disabled) { background: #eef4ff; border-color: #b7cbe8; }
+.comment-pagination .icon-button:disabled { opacity: .35; cursor: default; }

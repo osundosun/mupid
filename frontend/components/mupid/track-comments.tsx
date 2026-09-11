@@ -1,6 +1,16 @@
 'use client';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Clock3 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock3, X } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
 import { Waveform, PlayerControls } from './primitives';
@@ -8,6 +18,8 @@ import { trackComments, validateComment, commentUserId, ownsComment, type TrackC
 
 // 로그인 화면을 다녀오는 동안만 새 댓글 초안을 보관한다. 새로고침하면 폐기된다.
 const pendingDrafts = new Map<number, { at: number; body: string; owner: number | null }>();
+// 댓글이 쌓여도 목록이 끝없이 길어지지 않게 한 페이지씩 보여 준다.
+const COMMENTS_PER_PAGE = 5;
 
 export function TrackComments({ model: m }: { model: MupidModel }) {
   const userId = commentUserId(m.demoSession);
@@ -15,6 +27,7 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
+  const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<{ at: number; id?: string } | null>(null);
   const [body, setBody] = useState('');
@@ -68,9 +81,17 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
     setDraft(comment ? {at, id: comment.id} : {at});
     if (!comment) pendingDrafts.set(m.active.id, {at, body: text, owner: userId});
     setBody(text);
-    requestAnimationFrame(() => input.current?.focus());
+    requestAnimationFrame(() => {
+      // 목록에서 '수정'을 누르면 작성창이 파형 옆까지 올라간다. 확실히 보여 준다.
+      bubble.current?.scrollIntoView({ block: 'center' });
+      input.current?.focus({ preventScroll: true });
+    });
   };
   const visible = items.filter(c => c.trackId === m.active.id).sort((a,b) => order === 'time' ? a.at - b.at || b.createdAt - a.createdAt : b.createdAt - a.createdAt);
+  // 댓글을 지워 마지막 장이 비면 자동으로 앞 장으로 당긴다.
+  const pageCount = Math.max(1, Math.ceil(visible.length / COMMENTS_PER_PAGE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const paged = visible.slice(currentPage * COMMENTS_PER_PAGE, (currentPage + 1) * COMMENTS_PER_PAGE);
   // 좁은 화면에서도 겹치지 않게 가까운 댓글을 8개 시간 구간으로 묶는다.
   const bucketFor = (at: number) => Math.min(7, Math.floor(Math.max(0, at) / Math.max(1, m.active.duration) * 8));
   const buckets = Array.from({length: 8}, (_, index) => visible.filter(c => bucketFor(c.at) === index).sort((a,b) => a.at - b.at));
@@ -85,14 +106,32 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
       <div className="wave-comment-markers" aria-label="시간별 댓글">
         {buckets.map((comments, index) => <div key={index}>{!!comments.length && <button className="wave-comment-avatar" aria-expanded={selectedBucket === index} aria-label={`${formatTime(comments[0].at)} ${comments[0].author}님의 댓글${comments.length > 1 ? ` 외 ${comments.length - 1}개` : ''}`} onClick={() => {setSelectedBucket(index); m.seek(Math.min(comments[0].at, m.active.duration));}}><span aria-hidden="true">{Array.from(comments[0].author)[0] || '♪'}</span>{comments.length > 1 && <small>{comments.length}</small>}</button>}</div>)}
       </div>
-      <div className="time-labels"><span>{formatTime(m.time)}</span><span>{formatTime(m.active.duration)}</span></div>
+      {/* 팝오버가 파형을 덮으면 숫자만 남아 무슨 시간인지 알 수 없다. 이름표를 붙인다. */}
+      <div className="time-labels"><span><em>지금</em> {formatTime(m.time)}</span><span><em>전체</em> {formatTime(m.active.duration)}</span></div>
       {ready && !visible.length && <p className="wave-comment-hint">파형에서 순간을 골라 첫 이야기를 남겨보세요.</p>}
-      {selectedBucket !== null && !!buckets[selectedBucket].length && <div className="wave-comment-popover"><button className="text-link" onClick={() => setSelectedBucket(null)}>댓글 닫기</button>{buckets[selectedBucket].map(c => <article key={c.id}><button className="comment-time" onClick={() => m.seek(Math.min(c.at, m.active.duration))}>{formatTime(c.at)}</button><strong>{c.author}</strong><p>{c.body}</p></article>)}</div>}
+      {selectedBucket !== null && !!buckets[selectedBucket].length && <div className="wave-comment-popover">
+        <header className="wave-comment-popover-head">
+          <span>이 순간의 댓글 · {buckets[selectedBucket].length}개</span>
+          <button className="icon-button" aria-label="댓글 닫기" onClick={() => setSelectedBucket(null)}><X size={18} /></button>
+        </header>
+        {buckets[selectedBucket].map(c => <article key={c.id}>
+          <div className="wave-comment-line">
+            <button className="comment-time" onClick={() => m.seek(Math.min(c.at, m.active.duration))}>{formatTime(c.at)}</button>
+            <strong>{c.author}</strong>
+          </div>
+          <p>{c.body}</p>
+          {/* 목록까지 내려가지 않아도 여기서 바로 고치고 지울 수 있게 둔다. */}
+          {ownsComment(c, userId) && <div className="comment-tools">
+            <button className="text-link" disabled={busy} onClick={() => { setSelectedBucket(null); start(c); }}>수정</button>
+            <button className="text-link" disabled={busy} onClick={() => setRemove(c.id)}>삭제</button>
+          </div>}
+        </article>)}
+      </div>}
     </div>
     <PlayerControls model={m} />
-    {!ready && !error && <p role="status">댓글을 불러오고 있어요…</p>}
+    {!ready && !error && <output>댓글을 불러오고 있어요…</output>}
     {error && <p role="alert">{error} {!ready && <button className="text-link" onClick={() => {setError(''); setReload(v => v + 1);}}>다시 불러오기</button>}</p>}
-    {draft && <form ref={bubble} className="wave-comment-composer" role="dialog" aria-label={`${formatTime(draft.at)} 댓글 작성`} onSubmit={async e => {
+    {draft && <form ref={bubble} className="wave-comment-composer" role="dialog" aria-label={`${formatTime(draft.at)} 댓글 ${draft.id ? '수정' : '작성'}`} onSubmit={async e => {
       e.preventDefault(); if (busy || !ready || !validateComment(body, draft.at, m.active.duration)) return;
       if (userId === null) { m.openLogin(); return; }
       if (draft.id && !items.some(c => c.id === draft.id && ownsComment(c, userId))) return;
@@ -106,12 +145,38 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
     <details className="moment-comment-list"><summary>이 순간의 이야기 · {visible.length}개</summary>
     <p className="comment-local-note">체험용 댓글 · 이 브라우저에만 저장되며 다른 사용자에게 공개되지 않아요.</p>
     {ready && !visible.length && <p className="comments-empty">아직 이야기가 없어요. 좋아하는 순간에 첫 댓글을 남겨보세요.</p>}
-    {!!visible.length && <label className="comment-sort">정렬 <select value={order} onChange={e => setOrder(e.target.value)}><option value="latest">최신순</option><option value="time">시간순</option></select></label>}
-    <ul>{visible.map(c => <li key={c.id}>
-      <div className="comment-meta"><strong>{c.author} <small>{ownsComment(c, userId) ? '내 댓글 · 로컬' : '로컬'}</small></strong><button className="comment-time" onClick={() => m.seek(Math.min(c.at, m.active.duration))} aria-label={`${formatTime(c.at)} 지점 재생`}><Clock3 size={14} /> {formatTime(c.at)}</button></div>
+    {!!visible.length && <label className="comment-sort">정렬 <select value={order} onChange={e => {setOrder(e.target.value); setPage(0);}}><option value="latest">최신순</option><option value="time">시간순</option></select></label>}
+    <ul>{paged.map(c => <li key={c.id}>
+      <div className="comment-meta"><strong>{c.author}</strong><button className="comment-time" onClick={() => m.seek(Math.min(c.at, m.active.duration))} aria-label={`${formatTime(c.at)} 지점 재생`}><Clock3 size={14} /> {formatTime(c.at)}</button></div>
       <p className="comment-body">{c.body}</p>
       <div className="comment-tools"><time dateTime={new Date(c.createdAt).toISOString()}>{new Date(c.createdAt).toLocaleDateString('ko-KR')}</time>{ownsComment(c, userId) && <><button className="text-link" disabled={busy} onClick={() => start(c)}>수정</button><button className="text-link" disabled={busy} onClick={() => setRemove(c.id)}>삭제</button></>}</div>
-      {remove === c.id && ownsComment(c, userId) && <div className="comment-delete">이 댓글을 삭제할까요? <button className="text-link" disabled={busy} onClick={async () => {if (!ownsComment(c, commentUserId(m.demoSession))) return; if (await persist(items.filter(v => v.id !== c.id))) {setRemove(null); if (draft?.id === c.id) setDraft(null);}}}>삭제하기</button><button className="text-link" disabled={busy} onClick={() => setRemove(null)}>취소</button></div>}
-    </li>)}</ul></details>
+    </li>)}</ul>
+    {pageCount > 1 && <nav className="comment-pagination" aria-label="댓글 목록 페이지">
+      <button className="icon-button" disabled={currentPage === 0} aria-label="이전 댓글 보기" onClick={() => setPage(currentPage - 1)}><ChevronLeft /></button>
+      <span aria-live="polite">{currentPage + 1} / {pageCount}</span>
+      <button className="icon-button" disabled={currentPage >= pageCount - 1} aria-label="다음 댓글 보기" onClick={() => setPage(currentPage + 1)}><ChevronRight /></button>
+    </nav>}
+    </details>
+    <AlertDialog open={remove !== null} onOpenChange={open => { if (!open) setRemove(null); }}>
+      <AlertDialogContent className="sky-dialog">
+        <AlertDialogHeader>
+          <AlertDialogTitle>댓글을 삭제할까요?</AlertDialogTitle>
+          <AlertDialogDescription>삭제한 댓글은 되돌릴 수 없어요.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>취소</AlertDialogCancel>
+          <AlertDialogAction disabled={busy} onClick={async event => {
+            // 저장이 끝난 뒤 닫아야 실패했을 때 되돌릴 수 있다.
+            event.preventDefault();
+            const target = items.find(v => v.id === remove);
+            if (!target || !ownsComment(target, commentUserId(m.demoSession))) { setRemove(null); return; }
+            if (await persist(items.filter(v => v.id !== target.id))) {
+              setRemove(null);
+              if (draft?.id === target.id) setDraft(null);
+            }
+          }}>삭제</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </section>;
 }

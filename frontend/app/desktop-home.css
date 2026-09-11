@@ -61,7 +61,7 @@
     background: none;
     border: 0;
     color: var(--ink-secondary);
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     margin: -12px 20px 14px 0;
   }
   .desktop-record-caption svg {
@@ -82,7 +82,7 @@
     padding-block: 12px;
   }
   .desktop-song-kicker {
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     color: var(--ink-secondary);
     margin-bottom: 12px;
   }
@@ -102,7 +102,7 @@
   }
   .desktop-song-meta {
     color: #7a8a9f;
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     margin-top: 4px;
     line-height: 1.65;
   }
@@ -118,7 +118,7 @@
   }
   .desktop-song-detail {
     margin-top: 0;
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
   }
   .desktop-song-playback {
     margin-top: 12px;
@@ -147,7 +147,7 @@
     accent-color: var(--home-accent);
   }
   .desktop-song .time-labels {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
   }
   .desktop-song-actions {
     display: flex;
@@ -166,7 +166,7 @@
     border-radius: 12px;
     color: #5d7ea8;
     background: #fff;
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
   }
   .desktop-moment-button:hover {
     background: #edf3fb;
@@ -212,7 +212,7 @@
     margin-bottom: 22px;
   }
   .desktop-playlists > header p {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     color: var(--ink-secondary);
     margin-bottom: 7px;
   }
@@ -282,14 +282,14 @@
   .desktop-playlist-open strong {
     display: block;
     font-weight: 500;
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
     line-height: 1.5;
     word-break: keep-all;
     overflow-wrap: anywhere;
   }
   .desktop-playlist-open small {
     display: block;
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     color: #8293ac;
     margin-top: 4px;
   }
@@ -306,7 +306,7 @@
     padding: 0;
     border: 0;
     background: none;
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     color: var(--ink-secondary);
     margin-top: 16px;
   }
@@ -326,7 +326,7 @@
     font-weight: 600;
   }
   .desktop-demo {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     color: #8c9bb0;
     margin-top: 10px;
   }
@@ -366,7 +366,7 @@
   }
   .desktop-search input::placeholder {
     color: #8395af;
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
   }
   .desktop-search .icon-button {
     color: white;
@@ -388,7 +388,7 @@
   .desktop-ai-entry small {
     display: block;
     color: var(--ink-secondary);
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     margin-bottom: 6px;
     line-height: 1.5;
   }
@@ -431,7 +431,7 @@
     margin-top: 5px;
   }
   .desktop-home-shelves .text-link {
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
   }
   .desktop-recommendation-list {
     display: grid;
@@ -454,7 +454,7 @@
   }
   .desktop-track-number {
     color: #9aaac0;
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     font-variant-numeric: tabular-nums;
   }
   .desktop-recommendation .album-art {
@@ -470,12 +470,12 @@
     display: block;
   }
   .desktop-recommendation strong {
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
     font-weight: 500;
     word-break: keep-all;
   }
   .desktop-recommendation small {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     color: var(--ink-secondary);
     margin-top: 4px;
   }
@@ -491,12 +491,12 @@
     padding: 0 44px 24px;
     gap: 16px;
     color: #8d9cb2;
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
   }
   .desktop-section-empty,
   .desktop-playlist-empty {
     color: var(--ink-secondary);
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
     line-height: 1.7;
     padding: 24px 0;
   }

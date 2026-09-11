@@ -13,6 +13,12 @@ import {
   type ChatMessage,
 } from '@/lib/mupid-data';
 
+// 반복 모드: 반복 없음 · 전체 반복 · 한곡 반복. 셔플은 이와 별개로 켜고 끈다.
+export type RepeatMode = 'off' | 'all' | 'one';
+
+// 재생 목록은 끝없이 쌓이면 훑기도, 순서를 바꾸기도 어렵다. 여기까지만 담는다.
+export const QUEUE_LIMIT = 100;
+
 export function useMupid(bootstrap: Bootstrap) {
   const router = useRouter();
   const pathname = usePathname() || '/';
@@ -27,7 +33,11 @@ export function useMupid(bootstrap: Bootstrap) {
   const [nickname, setNickname] = useState(initial.nickname);
   const [moods, setMoods] = useState(initial.moods);
   const [genres, setGenres] = useState<string[]>(initial.genres ?? []);
-  const [active, setActive] = useState<Track>(tracks[0]);
+  // 마지막으로 들은 곡을 기억해 미니 플레이어를 계속 띄워 둔다. 한 곡도 듣지 않았다면 null.
+  const [lastPlayedId, setLastPlayedId] = useState<number | null>(initial.lastPlayedId ?? null);
+  const [active, setActive] = useState<Track>(
+    tracks.find((t) => t.id === initial.lastPlayedId) ?? tracks[0],
+  );
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [volume, setVolume] = useState(0.65);
@@ -40,9 +50,10 @@ export function useMupid(bootstrap: Bootstrap) {
   const [libraryTab, setLibraryTab] = useState('playlists');
   const [query, setQuery] = useState('');
   const [moodFilter, setMoodFilter] = useState('전체');
+  // 셔플은 재생 목록 안에서 중복 없이 섞어 재생한다. 반복과 함께 켤 수 있다.
   const [shuffle, setShuffle] = useState(false);
-  const [repeat, setRepeat] = useState(false);
-  const [queueIds, setQueueIds] = useState<number[]>(tracks.map((t) => t.id));
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
+  const [queueIds, setQueueIds] = useState<number[]>(tracks.slice(0, QUEUE_LIMIT).map((t) => t.id));
   const [toast, setToast] = useState('');
   const [ready, setReady] = useState(false);
   const [demoSession, setDemoSession] = useState<AccountSession | null>(bootstrap.session ?? null);
@@ -56,15 +67,16 @@ export function useMupid(bootstrap: Bootstrap) {
     {
       id: 1,
       role: 'assistant',
-      text: '지금 듣는 곡의 좋아한 구간에서 새로운 음악을 찾아볼까요? 원하는 느낌을 들려주세요.',
+      text: '지금 듣는 곡의 저장한 순간에서 새로운 음악을 찾아볼까요? 원하는 느낌을 들려주세요.',
     },
   ]);
   const [momentRange, setMomentRange] = useState<number[]>([70, 92]);
+  // 저장한 순간을 열어 고치는 중이면 그 id를 담는다. 새로 만들 때는 null.
+  const [editingMomentId, setEditingMomentId] = useState<number | null>(null);
   const [momentSection, setMomentSection] = useState('코러스 2');
-  const [notificationOpen, setNotificationOpen] = useState(false);
   const [playlistDialog, setPlaylistDialog] = useState(false);
   const [deletePlaylist, setDeletePlaylist] = useState<number | null>(null);
-  const [queueDialog, setQueueDialog] = useState(false);
+  const [renamePlaylist, setRenamePlaylist] = useState<number | null>(null);
   const [showAllSimilar, setShowAllSimilar] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const activeRef = useRef(active);
@@ -72,15 +84,20 @@ export function useMupid(bootstrap: Bootstrap) {
   const seekOnLoad = useRef<number | null>(null);
   const previewEnd = useRef<number | null>(null);
   const advancing = useRef(false);
+  const playedInCycle = useRef<Set<number>>(new Set());
   const requestId = useRef(0);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatButtonRef = useRef<HTMLButtonElement>(null);
   const chatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 어디서 들어왔든 그 화면으로 돌아간다. 앱을 바로 열었으면 홈으로.
+  const goBack = () => {
+    if (typeof window !== 'undefined' && window.history.length > 1) router.back();
+    else router.push(pagePaths.home);
+  };
   const go = (next: Page) => {
     // URL 직접 이동과 UI 이동 모두 같은 조건으로 보호한다. 실제 접근 권한 검증은 서버 책임이다.
-    setNotificationOpen(false);
     router.push(guardPath(pagePaths[next], !!sessionRef.current, !!onboardingRef.current));
   };
   useEffect(() => {
@@ -107,15 +124,15 @@ export function useMupid(bootstrap: Bootstrap) {
   useEffect(() => {
     if (!ready || !sessionRef.current) return;
     saveQueue.current = saveQueue.current.catch(() => {}).then(() =>
-      mupidService.savePreferences({ onboardingSubmittedAt, nickname, moods, genres, liked, ignored, history, moments, playlists })
+      mupidService.savePreferences({ onboardingSubmittedAt, nickname, moods, genres, liked, ignored, history, moments, playlists, lastPlayedId })
     ).catch(() => { if (mountedRef.current) setToast('변경 내용을 저장하지 못했어요. 다시 시도해 주세요.'); });
-  }, [ready, onboardingSubmittedAt, nickname, moods, genres, liked, ignored, history, moments, playlists]);
+  }, [ready, onboardingSubmittedAt, nickname, moods, genres, liked, ignored, history, moments, playlists, lastPlayedId]);
   const completeOnboarding = async (name: string, selectedMoods: string[], selectedGenres: string[]) => {
     // 저장이 성공하기 전에는 홈으로 이동하거나 완료 표시를 남기지 않는다.
     if (!sessionRef.current) throw new Error('로그인이 필요해요.');
     if (!name.trim() || !selectedMoods.length || !selectedGenres.length || selectedGenres.some(genre => !tracks.some(t => t.genre === genre))) throw new Error('이름, 장르와 분위기를 선택해 주세요.');
     const submittedAt = new Date().toISOString();
-    const value = { onboardingSubmittedAt: submittedAt, nickname: name.trim().slice(0, 20), moods: selectedMoods, genres: selectedGenres, liked, ignored, history, moments, playlists };
+    const value = { onboardingSubmittedAt: submittedAt, nickname: name.trim().slice(0, 20), moods: selectedMoods, genres: selectedGenres, liked, ignored, history, moments, playlists, lastPlayedId };
     const save = saveQueue.current.catch(() => {}).then(() => mupidService.savePreferences(value));
     saveQueue.current = save;
     await save;
@@ -160,7 +177,6 @@ export function useMupid(bootstrap: Bootstrap) {
         ? document.activeElement
         : null;
     setChatOpen(false);
-    setNotificationOpen(false);
     setLoginDialog(true);
     router.push('/login');
   };
@@ -212,7 +228,7 @@ export function useMupid(bootstrap: Bootstrap) {
     }
   };
   const seek = (value: number) => {
-    // 내부 위치 이동 함수. 화면에서 호출하는 seek는 반환 모델에서 구간 미리듣기도 해제한다.
+    // 내부 위치 이동 함수. 화면에서 호출하는 seek는 반환 모델에서 순간 미리듣기도 해제한다.
     const next = Math.max(0, Math.min(value, activeRef.current.duration));
     setTime(next);
     const audio = audioRef.current;
@@ -239,6 +255,7 @@ export function useMupid(bootstrap: Bootstrap) {
         setToast('미리듣기를 불러오지 못했어요. 다시 재생해 주세요.');
       }
     }
+    setLastPlayedId(track.id);
     setHistory((ids) =>
       [track.id, ...ids.filter((i) => i !== track.id)].slice(0, 8),
     );
@@ -246,7 +263,10 @@ export function useMupid(bootstrap: Bootstrap) {
   const play = (track: Track = activeRef.current, fromMoment = false) => {
     const audio = audioRef.current;
     previewEnd.current = null;
-    if (!queueIds.includes(track.id)) setQueueIds(tracks.map((t) => t.id));
+    if (!queueIds.includes(track.id)) {
+      // 목록 밖의 곡을 고르면 그 곡을 맨 앞에 두고 상한까지만 다시 채운다.
+      setQueueIds([track.id, ...tracks.map((t) => t.id).filter((id) => id !== track.id)].slice(0, QUEUE_LIMIT));
+    }
     if (
       !fromMoment &&
       activeRef.current.id === track.id &&
@@ -282,16 +302,22 @@ export function useMupid(bootstrap: Bootstrap) {
   };
   const queueTracks = queueIds
     .map((id) => tracks.find((t) => t.id === id)!)
-    .filter((t) => t && !ignored.includes(t.id));
-  const playPlaylist = (playlist: Playlist) => {
+    .filter((t) => t && !ignored.includes(t.id))
+    .slice(0, QUEUE_LIMIT);
+  const playPlaylist = (playlist: Playlist, track?: Track) => {
     const playable = playlist.tracks.filter((t) => !ignored.includes(t.id));
     if (!playable.length) {
       setToast('재생할 수 있는 곡이 없어요.');
       return;
     }
-    setQueueIds(playable.map((t) => t.id));
+    // 반복 설정은 곡을 시작해도 유지한다. 랜덤은 한 바퀴 안에서 중복 없이 재생한다.
+    const first = track && playable.find(t => t.id === track.id) || (shuffle
+      ? playable[Math.floor(Math.random() * playable.length)]
+      : playable[0]);
+    playedInCycle.current = new Set([first.id]);
+    setQueueIds(playable.slice(0, QUEUE_LIMIT).map((t) => t.id));
     previewEnd.current = null;
-    void startPlayback(playable[0], 0);
+    void startPlayback(first, 0);
   };
   const onEnded = () => {
     if (advancing.current) return;
@@ -300,8 +326,20 @@ export function useMupid(bootstrap: Bootstrap) {
       return;
     }
     advancing.current = true;
-    if (repeat) void startPlayback(activeRef.current, 0);
-    else next();
+    if (repeatMode === 'one') { void startPlayback(activeRef.current, 0); return; }
+    playedInCycle.current.add(activeRef.current.id);
+    const pool = queueTracks;
+    const index = pool.findIndex(t => t.id === activeRef.current.id);
+    let remaining = pool.filter(t => !playedInCycle.current.has(t.id));
+    const finished = shuffle ? remaining.length === 0 : index >= pool.length - 1;
+    // 목록 끝에 닿았을 때, 전체 반복이면 한 바퀴를 다시 돌고 아니면 멈춘다.
+    if (!pool.length || (finished && repeatMode === 'off')) {
+      audioRef.current?.pause(); setPlaying(false); return;
+    }
+    if (finished) { playedInCycle.current.clear(); remaining = pool; }
+    const target = shuffle ? remaining[Math.floor(Math.random() * remaining.length)] : pool[(index + 1) % pool.length];
+    playedInCycle.current.add(target.id);
+    void startPlayback(target, 0);
   };
   const onTimeUpdate = () => {
     const audio = audioRef.current;
@@ -321,9 +359,23 @@ export function useMupid(bootstrap: Bootstrap) {
     loadTrack(track);
     go('player');
   };
-  const openMoment = (track = activeRef.current) => {
+  // 공유 링크는 곡만 선택하고 자동 재생하지 않는다.
+  useEffect(() => {
+    if (pathname !== '/player') return;
+    const id = Number(new URLSearchParams(window.location.search).get('track'));
+    const track = tracks.find(t => t.id === id);
+    if (track) loadTrack(track);
+  }, [pathname, tracks]);
+  const openMoment = (track = activeRef.current, editing: SavedMoment | null = null) => {
     previewEnd.current = null;
+    setEditingMomentId(editing?.id ?? null);
     loadTrack(track);
+    if (editing) {
+      setMomentRange([editing.start, editing.end]);
+      setMomentSection(editing.section);
+      go('moment');
+      return;
+    }
     const part = getSongSectionAt(
       track,
       Math.min(audioRef.current?.currentTime || track.moment, track.duration),
@@ -372,7 +424,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setLiked((ids) =>
       ids.includes(saved.track.id) ? ids : [...ids, saved.track.id],
     );
-    setToast('좋아한 순간을 저장했어요. 내 플레이리스트에서 다시 만나요.');
+    setToast('저장한 순간을 저장했어요. 내 플레이리스트에서 다시 만나요.');
   };
   const toggleLike = (id: number) =>
     setLiked((ids) =>
@@ -434,6 +486,7 @@ export function useMupid(bootstrap: Bootstrap) {
     tracks,
     page,
     go,
+    goBack,
     nickname,
     setNickname,
     displayName: demoSession ? nickname : '게스트',
@@ -448,6 +501,7 @@ export function useMupid(bootstrap: Bootstrap) {
     moods,
     genres,
     setMoods,
+    setGenres,
     active,
     playing,
     setPlaying,
@@ -458,6 +512,8 @@ export function useMupid(bootstrap: Bootstrap) {
     ignored,
     setIgnored,
     history,
+    // 한 곡이라도 재생한 적이 있으면 정지 상태여도 미니 플레이어를 유지한다.
+    hasPlayed: lastPlayedId !== null,
     moments,
     setMoments,
     playlists,
@@ -472,8 +528,8 @@ export function useMupid(bootstrap: Bootstrap) {
     setMoodFilter,
     shuffle,
     setShuffle,
-    repeat,
-    setRepeat,
+    repeatMode,
+    setRepeatMode,
     toast,
     setToast,
     chatOpen,
@@ -482,19 +538,46 @@ export function useMupid(bootstrap: Bootstrap) {
     setChatInput,
     chatLoading,
     messages,
+    editingMomentId,
+    setEditingMomentId,
     momentRange,
     setMomentRange,
     momentSection,
     setMomentSection,
-    notificationOpen,
-    setNotificationOpen,
     playlistDialog,
     setPlaylistDialog,
     deletePlaylist,
     setDeletePlaylist,
-    queueDialog,
-    setQueueDialog,
+    renamePlaylist,
+    setRenamePlaylist,
     queueTracks,
+    // 보이는 순서대로 재정렬한다. 목록에 없던 id는 뒤에 남겨 둔다.
+    setQueueOrder: (orderedIds: number[]) => {
+      setQueueIds(ids => [...orderedIds, ...ids.filter(id => !orderedIds.includes(id))].slice(0, QUEUE_LIMIT));
+    },
+    // 재생 목록에서 뺀다. 재생 중인 곡을 빼도 지금 재생은 그대로 이어진다.
+    removeFromQueue: (track: Track) => {
+      setQueueIds(ids => ids.filter(id => id !== track.id));
+      playedInCycle.current.delete(track.id);
+      setToast(`‘${track.title}’ 곡을 재생 목록에서 뺐어요.`);
+    },
+    // 고른 곡을 한 번에 뺀다. 전체 선택 후 삭제하는 흐름에 쓴다.
+    removeManyFromQueue: (ids: number[]) => {
+      if (!ids.length) return;
+      setQueueIds(list => list.filter(id => !ids.includes(id)));
+      ids.forEach(id => playedInCycle.current.delete(id));
+      setToast(`${ids.length}곡을 재생 목록에서 뺐어요.`);
+    },
+    // 재생 목록 맨 뒤에 담는다. 이미 있으면 그대로 둔다.
+    addToQueue: (track: Track) => {
+      if (queueIds.includes(track.id)) { setToast('이미 재생 목록에 있어요.'); return; }
+      if (queueIds.length >= QUEUE_LIMIT) {
+        setToast(`재생 목록은 ${QUEUE_LIMIT}곡까지 담을 수 있어요. 몇 곡을 먼저 빼주세요.`);
+        return;
+      }
+      setQueueIds(ids => [...ids, track.id]);
+      setToast(`‘${track.title}’ 곡을 재생 목록에 담았어요.`);
+    },
     playPlaylist,
     onEnded,
     showAllSimilar,
