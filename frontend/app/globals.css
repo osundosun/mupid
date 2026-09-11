@@ -25,6 +25,7 @@
 @import './explore-categories.css';
 @import './readability.css';
 @import './responsive-polish.css';
+@import './dialog-viewport.css';
 @custom-variant dark (&:is(.dark *));
 @font-face {
   font-family: 'Pretendard';
