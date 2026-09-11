@@ -1,6 +1,29 @@
 # Mupid CI/CD 구축
 
-## 현재 구성
+## 2026-09-11 백엔드 직접 배포 변경 (로컬 구현, 서버 미적용)
+
+백엔드는 JAR 아티팩트와 Generic Packages를 거치지 않고, 배포 job에서 멀티스테이지 이미지 빌드 후 SSH로 전송하도록 변경했다. MR 빌드 검증과 `build -x test`는 유지한다. 재시도는 서버에 보관된 같은 SHA의 원본을 우선 사용한다. 프런트 경로는 기존 방식이다.
+
+**CI 병합 전 서버 수신기 두 파일을 먼저 설치해야 한다.** 설치·재시도·검증 범위는 [직접 배포 전환 절차](DIRECT-DEPLOY-MIGRATION.md)를 따른다. 아래 이전 문서의 백엔드 Generic Packages 경로는 변경 전 기록이다.
+
+## 현재 기준 (2026-09-09)
+
+- 백엔드 CI는 팀 결정으로 `build -x test`만 실행한다. 애플리케이션 테스트와 테스트 전용 서비스는 재도입하지 않았다.
+- 프런트 빌드 경로는 `frontend/`, 산출물은 `frontend/dist/client/`이다.
+- MR에서 관련 변경의 빌드를 검증하고, protected develop에서 배포 허용 변수가 true일 때 관련 서비스를 배포한다. API 배포는 API 코드/이미지/배포 입력 변경으로 제한된다.
+- 서버의 Compose·수신 스크립트는 CI가 자동 갱신하지 않는다. 새 환경변수 전달 및 배포 전 `config --quiet` 검사는 아래 적용 문서를 따라 설치해야 한다.
+- API 배포 후 상태 검사·실패 롤백과 프런트 HTTPS/버전 검사·링크 복구를 유지한다. API 교체에는 짧은 중단이 있다.
+- MySQL 백업은 격리 복원 후 추가 EC2에도 보관한다. 실패 알림, 보관 기간별 정리, AI 통합 및 무중단 배포는 후속 작업이다.
+
+문서: [운영 절차](OPERATIONS.md), [배포 규약·서버 적용](DEPLOYMENT-CONTRACT.md), [09/09 작업 보고](WORKLOG-2026-09-09.md), [진행 상태](PROGRESS.md).
+
+로컬 인프라 검증은 `python -B -m unittest discover -s infra/tests -v`로 실행한다. Docker Compose CLI가 필요하며 Docker 데몬·애플리케이션·네트워크는 사용하지 않는다. CI에 추가한 job은 없다.
+
+## 09/07 구축 당시 기록
+
+아래 내용은 당시 단계별 기록이며, 테스트 실행·경로·미완료 상태 표기는 위 현재 기준과 OPERATIONS.md를 우선한다.
+
+### 당시 구성
 
 - 기본 EC2: API / MySQL / Redis / Nginx HTTPS. `/srv/mupid/config`, 비밀값 `/srv/mupid/.env` (root 600).
 - 추가 EC2: 전용 GitLab Runner #2083, job 동시성 1, CPU 2 / 메모리 4GB. 향후 데이터 처리 작업과 자원 배분 필요.

@@ -34,7 +34,7 @@ import lombok.Setter;
 @AllArgsConstructor
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ObjectStorageFile {
-    
+
     /**
      * 파일 번호
      */

@@ -75,7 +75,7 @@ docs: |-
   | `data.image_url` | string | 프로필 사진 경로. `/api/v1/storage/image/profile/{user_id}` 형태이며, 사진이 없으면 `null` 입니다 |
   | `data.birth_year` | int | 출생 연도 |
   | `data.gender` | string | `M` / `F` / `ETC` |
-  | `data.role` | string | `ROLE_GUEST` / `ROLE_USER` / `ROLE_SYSTEM` / `ROLE_ADMIN` |
+  | `data.role` | string | `ROLE_USER` / `ROLE_SYSTEM` / `ROLE_ADMIN` |
   | `data.status` | string | `PENDING` / `ACTIVE` / `WITHDRAW` |
 
   `image_url` 은 `UserImageService.getProfileImageUrl` 이 조합한 값입니다.

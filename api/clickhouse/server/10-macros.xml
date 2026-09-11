@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!--
+  노드 정체성을 환경변수에서 받는다. 그래서 이 파일 하나가 모든 노드에 그대로 쓰인다.
+
+    CH_SHARD            {shard}   ddl.sql 의 '/clickhouse/tables/{shard}/listen_events'
+    CH_REPLICA          {replica} 같은 Keeper 경로 안에서 레플리카를 구분한다
+    CH_INTERSERVER_HOST 다른 레플리카가 파트를 가져올 때 접속할 이 노드의 주소
+
+  track_sections 의 Keeper 경로에는 {shard} 가 없어서 전 노드가 같은 경로를 공유하고
+  {replica} 만 달라 서로 복제된다. 값이 비면 경로가 겹쳐 복제가 깨지므로
+  compose 에서 필수 변수로 받는다.
+
+  [운영 변경]
+  파일은 그대로 두고 서버마다 값만 다르게 준다. 로컬 컨테이너와 값이 같아도 된다.
+    서버 A : CH_SHARD=01  CH_REPLICA=ch1  CH_INTERSERVER_HOST=<서버 A 주소>
+    서버 B : CH_SHARD=02  CH_REPLICA=ch2  CH_INTERSERVER_HOST=<서버 B 주소>
+  CH_INTERSERVER_HOST 는 다른 노드에서 실제로 접속 가능한 주소여야 한다.
+  샤드를 늘릴 때는 CH_SHARD 를 새로 부여하고 00-cluster.xml 에 <shard> 를 추가한다.
+-->
+<clickhouse>
+    <macros>
+        <shard from_env="CH_SHARD"/>
+        <replica from_env="CH_REPLICA"/>
+    </macros>
+
+    <interserver_http_host from_env="CH_INTERSERVER_HOST"/>
+</clickhouse>

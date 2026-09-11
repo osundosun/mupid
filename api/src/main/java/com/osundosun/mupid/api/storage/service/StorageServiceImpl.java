@@ -48,7 +48,7 @@ public class StorageServiceImpl implements StorageService {
         s3Client.putObject(request, body);
 
         String originalFilename = file.getOriginalFilename();
-        String contentType = file.getContentType();
+        String mime = file.getContentType();
         int fileSize = Math.toIntExact(file.getSize());
 
         return getFileByKey(key)
@@ -60,6 +60,8 @@ public class StorageServiceImpl implements StorageService {
             })
             .orElseGet(() -> repository.save(
                 ObjectStorageFile.builder()
+                    .fileType(fileType)
+                    .category(category)
                     .originalFileName(originalFilename)
                     .storageObjectKey(key)
                     .mime(contentType)

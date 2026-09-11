@@ -155,7 +155,7 @@ docs:
     enum 이름이 그대로 직렬화/역직렬화 값입니다.
 
     - `gender` — `M`, `F`, `ETC`
-    - `role` / `user_role` — `ROLE_GUEST`, `ROLE_USER`, `ROLE_SYSTEM`, `ROLE_ADMIN`
+    - `role` / `user_role` — `ROLE_USER`, `ROLE_SYSTEM`, `ROLE_ADMIN`
     - `status` (user) — `PENDING`, `ACTIVE`, `WITHDRAW`
     - `codec` — `AAC`, `OPUS`
     - `status` (stream) — `PENDING`, `IN_PROGRESS`, `DONE`, `FAILED`

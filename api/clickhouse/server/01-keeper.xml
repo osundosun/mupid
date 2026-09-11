@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!--
+  Replicated*MergeTree 복제 메타데이터와 ON CLUSTER DDL 큐가 쓰는 Keeper.
+
+  [운영 변경]
+  로컬은 CH_KEEPER_HOST 가 Keeper 컨테이너 하나를 가리킨다. 운영은 Keeper 를
+  3 노드 이상(홀수)으로 두고 <node> 를 그만큼 나열해야 한다. 노드 개수가 가변이라
+  환경변수 하나로는 표현할 수 없어서, 운영에서는 이 파일의 <zookeeper> 블록을
+  Keeper 노드 수만큼 늘려 쓴다. (Keeper 서버 자체 설정은 keeper/keeper_config.xml)
+-->
+<clickhouse>
+    <zookeeper>
+        <node>
+            <host from_env="CH_KEEPER_HOST"/>
+            <port>9181</port>
+        </node>
+    </zookeeper>
+
+    <distributed_ddl>
+        <path>/clickhouse/task_queue/ddl</path>
+    </distributed_ddl>
+</clickhouse>

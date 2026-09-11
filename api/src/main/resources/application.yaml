@@ -48,6 +48,30 @@ aws:
     secret-key: ${MUPID_S3_SECRET}
     bucket-name: ${MUPID_S3_BUCKET}
 
+clickhouse:
+  url: ${MUPID_CLICKHOUSE_URL}
+  username: ${MUPID_CLICKHOUSE_USER}
+  password: ${MUPID_CLICKHOUSE_PASSWORD}
+  # 분석 쿼리는 MySQL 트랜잭션 경로와 무관하므로 풀을 작게 잡는다.
+  max-pool-size: 8
+  min-idle: 1
+  connection-timeout: 3s
+  # ClickHouse 집계 쿼리는 오래 걸릴 수 있어 검증 쿼리 타임아웃을 넉넉히 둔다.
+  validation-timeout: 3s
+
+event:
+  kafka-bootstrap-servers: ${MUPID_KAFKA_BOOTSTRAP}
+  kafka-topic: ${MUPID_KAFKA_TOPIC:mupid.listen.events}
+  # 프론트 SDK 는 20건씩 보낸다. 여유를 두되 한 요청이 너무 커지지 않게 막는다.
+  max-batch-size: 50
+  # event_id 를 기억해 두는 기간. 네트워크 재시도 간격보다 넉넉하면 된다.
+  dedup-ttl: 10m
+  # 오프라인 뒤 일괄 전송은 살리되 조작된 시각은 잘라낸다.
+  occurred-at-max-past: 72h
+  occurred-at-max-future: 5m
+  # 브로커가 죽었을 때 send 가 요청 스레드를 오래 잡지 않도록 짧게 잡는다.
+  kafka-max-block: 3s
+
 redis:
   key-prefix: ${MUPID_REDIS_KEY_PREFIX}
 
