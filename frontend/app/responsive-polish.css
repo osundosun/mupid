@@ -63,7 +63,6 @@
   .mupid-shell .sky-tabs [data-slot=tabs-list] { display:flex; width:100%; height:auto; flex-wrap:wrap; gap:4px; }
   .mupid-shell .sky-tabs [data-slot=tabs-trigger] { flex:1 1 auto; min-height:44px; font-size:15px; padding-inline:8px; }
   .mupid-shell .report-card { padding:20px 16px; min-width:0; }
-  .mupid-shell .report-story { font-size:24px!important; line-height:1.5; }
   .mupid-shell .daily-album-cell span { font-size:13px; }
   .mupid-shell .explore-category-card { padding:20px 12px; }
   .mupid-shell .explore-category-switch button { padding:10px 4px; min-height:48px; font-size:15px; }
@@ -432,10 +431,8 @@
   background-position: center;
   border-radius: 0;
 }
-.mupid-shell .report-card.listening-story .report-story { margin: 2px 0 0; font-size: 24px; line-height: 1.4; }
-@media (min-width: 768px) {
-  .mupid-shell .report-card.listening-story .report-story { font-size: 30px; }
-}
+/* 유형 이름도 옆 카드 제목과 같은 크기로 둔다. 강조는 크기가 아니라 색으로. */
+.mupid-shell .report-card.listening-story .report-story { margin: 2px 0 0; line-height: 1.45; }
 .mupid-shell .report-card.listening-story p { max-width: 34em; margin-inline: auto; }
 .mupid-shell .report-card.listening-story .demo-note { margin-top: 10px; }
 /* 섹션 제목은 한 벌로 묶는다. 화면에 따라 크기만 달라지고 굵기·색·자간은 어디서나 같다.

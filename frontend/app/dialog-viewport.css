@@ -1,0 +1,68 @@
+/* Portal dialogs use viewport constraints, not the page's layout or translate utilities. */
+.sky-dialog:is([data-slot='dialog-content'], [data-slot='alert-dialog-content']) {
+  position: fixed !important;
+  inset: 16px !important;
+  margin: auto !important;
+  width: min(430px, calc(100% - 32px)) !important;
+  max-width: calc(100% - 32px) !important;
+  height: fit-content;
+  max-height: calc(100dvh - 32px) !important;
+  min-width: 0;
+  box-sizing: border-box;
+  transform: none !important;
+  translate: none !important;
+  scale: none !important;
+  rotate: none !important;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  color: #35548c;
+}
+.sky-dialog [data-slot='dialog-header'],
+.sky-dialog [data-slot='alert-dialog-header'] {
+  padding-right: 52px;
+  overflow-wrap: anywhere;
+}
+.sky-dialog input { width: 100%; min-width: 0; box-sizing: border-box; }
+/* A dim veil keeps the page legible without magnifying its blurred shapes. */
+.sky-dialog[data-open],
+[data-slot='dialog-overlay'][data-open], [data-slot='alert-dialog-overlay'][data-open] {
+  opacity: 1 !important;
+  animation: none !important;
+}
+[data-slot='dialog-overlay'], [data-slot='alert-dialog-overlay'] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: rgb(28 42 65 / 22%) !important;
+}
+.sky-dialog > [data-slot='dialog-close'] {
+  top: 20px !important;
+  right: 20px !important;
+  width: 40px;
+  height: 40px;
+}
+.sky-dialog.track-menu-sheet [data-slot='dialog-header'] { min-height: 40px; }
+@media (max-width: 767px) {
+  .sky-dialog.track-menu-sheet[data-slot='dialog-content'] {
+    inset: auto 0 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    /* Safari must not stretch the grid to the available fixed-position height. */
+    height: auto !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 16px;
+    max-height: calc(100dvh - 24px) !important;
+    border-radius: 24px 24px 0 0 !important;
+    padding: 24px 20px max(24px, env(safe-area-inset-bottom)) !important;
+  }
+  .sky-dialog.track-menu-sheet > :not([data-slot='dialog-close']) {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+}

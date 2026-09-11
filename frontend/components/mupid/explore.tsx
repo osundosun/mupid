@@ -18,8 +18,8 @@ export function SearchView({ model: m }: { model: MupidModel }) {
   const albumRail = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const media = window.matchMedia('(max-width: 767px)');
-    // 모바일은 한 줄에 한 장씩, 대신 앨범을 크게. 한 묶음은 세 장까지만 쌓는다.
-    const update = () => setPageSize(media.matches ? 3 : 5);
+    // Keep every batch to one row: one album on mobile, five on desktop.
+    const update = () => setPageSize(media.matches ? 1 : 5);
     update(); media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
   }, []);
