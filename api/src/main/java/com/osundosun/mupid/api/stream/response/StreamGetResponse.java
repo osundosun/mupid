@@ -1,20 +1,12 @@
 package com.osundosun.mupid.api.stream.response;
 
+import java.util.List;
+
+import com.osundosun.mupid.api.stream.dto.StreamResponseItem;
+
 public record StreamGetResponse(
 
-    Integer streamId,
-
-    Integer musicId,
-
-    Integer bitrateKbps,
-
-    String codec,
-
-    Integer durationMs,
-
-    Integer chunkCount,
-
-    String status
+    List<StreamResponseItem> streams
 
 ) {
     

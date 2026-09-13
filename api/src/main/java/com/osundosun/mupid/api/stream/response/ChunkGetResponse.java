@@ -1,14 +1,12 @@
 package com.osundosun.mupid.api.stream.response;
 
+import java.util.List;
+
+import com.osundosun.mupid.api.stream.dto.ChunkResponseItem;
+
 public record ChunkGetResponse(
 
-    Integer index,
-
-    Integer durationMs,
-
-    String fileUrl,
-
-    String fileHash
+    List<ChunkResponseItem> chunks
 
 ) {
     

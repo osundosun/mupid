@@ -7,12 +7,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import com.osundosun.mupid.api.stream.entity.Chunk;
 
-public interface ChunkRepository extends JpaRepository<Chunk, Integer> {
+public interface ChunkRepository extends JpaRepository<Chunk, Chunk.ChunkId> {
 
-    List<Chunk> findByStreamId(int streamId);
+    List<Chunk> findByChunkId_StreamId(int streamId);
 
-    Optional<Chunk> findByStreamIdAndIndex(int streamId, int index);
+    Optional<Chunk> findByChunkId(Chunk.ChunkId chunkId);
 
-    List<Chunk> findByStreamIdAndIndexBetween(int streamId, int minIndex, int maxIndex);
-    
 }

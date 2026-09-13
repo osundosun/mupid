@@ -1,6 +1,6 @@
 package com.osundosun.mupid.api.stream.entity;
 
-import com.google.auto.value.AutoValue.Builder;
+import lombok.Builder;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.stream.enumerate.Codec;
 import com.osundosun.mupid.api.stream.enumerate.StreamStatus;
