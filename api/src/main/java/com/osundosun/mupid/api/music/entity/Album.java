@@ -79,7 +79,7 @@ public class Album {
      */
     @Column(nullable = false)
     @CreatedDate
-    private LocalDateTime createdat;
+    private LocalDateTime createdAt;
 
     /**
      * 수정 일시
