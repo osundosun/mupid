@@ -17,6 +17,7 @@ http:
       {
         "artist_id": {{ARTIST_ID}},
         "title": "{{ALBUM_TITLE}}",
+        "image_file_id": {{ALBUM_IMAGE_FILE_ID}},
         "release_date": "{{ALBUM_RELEASE_DATE}}"
       }
   auth: inherit
@@ -27,6 +28,8 @@ runtime:
       value: "1"
     - name: ALBUM_TITLE
       value: 첫 번째 앨범
+    - name: ALBUM_IMAGE_FILE_ID
+      value: "2"
     - name: ALBUM_RELEASE_DATE
       value: "2026-09-11T00:00:00"
   actions:

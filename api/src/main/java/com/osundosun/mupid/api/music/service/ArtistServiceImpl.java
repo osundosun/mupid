@@ -9,6 +9,10 @@ import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.music.entity.Artist;
 import com.osundosun.mupid.api.music.error.ArtistErrorCode;
 import com.osundosun.mupid.api.music.repository.ArtistRepository;
+import com.osundosun.mupid.api.music.request.ArtistCreateRequest;
+import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
+import com.osundosun.mupid.api.storage.error.StorageErrorCode;
+import com.osundosun.mupid.api.storage.service.StorageService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -18,11 +22,15 @@ import lombok.RequiredArgsConstructor;
 public class ArtistServiceImpl implements ArtistService {
 
     private final ArtistRepository repository;
+    private final StorageService storageService;
 
     @Override
-    public int createArtist(String name) {
+    public int createArtist(ArtistCreateRequest request) {
+        ObjectStorageFile imageFile = storageService.getFile(request.imageFileId())
+            .orElseThrow(() -> new BusinessException(StorageErrorCode.FILE_NOT_FOUND));
         Artist newArtist = Artist.builder()
-            .name(name)
+            .name(request.name())
+            .imageFile(imageFile)
             .build();
         return repository.save(newArtist).getArtistId();
     }

@@ -3,10 +3,11 @@ package com.osundosun.mupid.api.music.service;
 import java.util.Optional;
 
 import com.osundosun.mupid.api.music.entity.Artist;
+import com.osundosun.mupid.api.music.request.ArtistCreateRequest;
 
 public interface ArtistService {
 
-    int createArtist(String name);
+    int createArtist(ArtistCreateRequest request);
 
     Optional<Artist> getArtist(int artistId);
 

@@ -33,7 +33,7 @@ public class ArtistController {
     public ResponseEntity<BaseResponse<ArtistCreateResponse>> createArtist(
         @Valid @RequestBody ArtistCreateRequest request
     ) {
-        int artistId = artistService.createArtist(request.name());
+        int artistId = artistService.createArtist(request);
         return ResponseEntity.ok(BaseResponse.of(
             "아티스트가 생성되었습니다.",
             new ArtistCreateResponse(artistId)

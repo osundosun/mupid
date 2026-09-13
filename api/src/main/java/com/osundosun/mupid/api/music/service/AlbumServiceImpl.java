@@ -13,6 +13,9 @@ import com.osundosun.mupid.api.music.error.ArtistErrorCode;
 import com.osundosun.mupid.api.music.repository.AlbumRepository;
 import com.osundosun.mupid.api.music.request.AlbumCreateRequest;
 import com.osundosun.mupid.api.music.request.AlbumUpdateRequest;
+import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
+import com.osundosun.mupid.api.storage.error.StorageErrorCode;
+import com.osundosun.mupid.api.storage.service.StorageService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -23,14 +26,18 @@ public class AlbumServiceImpl implements AlbumService {
 
     private final ArtistService artistService;
     private final AlbumRepository repository;
+    private final StorageService storageService;
 
     @Override
     public int createAlbum(AlbumCreateRequest request) {
         Artist artist = artistService.getArtist(request.artistId())
             .orElseThrow(() -> new BusinessException(ArtistErrorCode.ARTIST_NOT_FOUND));
+        ObjectStorageFile imageFile = storageService.getFile(request.imageFileId())
+            .orElseThrow(() -> new BusinessException(StorageErrorCode.FILE_NOT_FOUND));
         Album newAlbum = Album.builder()
             .artist(artist)
             .title(request.title())
+            .imageFile(imageFile)
             .releaseDate(request.releaseDate())
             .build();
         return repository.save(newAlbum).getAlbumId();
