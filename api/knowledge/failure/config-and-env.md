@@ -70,4 +70,10 @@
 - **해결**: 런타임 영향은 없고 IDE 경고만 난다. 규칙을 지키려면 JSON 을 손으로 채운다. 수동 등록이 특히 필요한 건 `@Value` 로만 읽는 키다 — 현재 `EmailServiceImpl` 의 `@Value("${mupid-client.website}")` 가 여기 해당한다.
 - **근거**: `api/src/main/resources/META-INF/additional-spring-configuration-metadata.json`, `api/build.gradle`, `api/AGENTS.md`
 
+### 5MB 제한이라고 적힌 이미지 업로드가 1MB 에서 막힌다 — 해소됨
+
+- **원인**: `spring.servlet.multipart.max-file-size` 기본값이 **1MB** 다. `StorageImageServiceImpl.IMAGE_FILE_MAX_SIZE = 5MB` 검사는 파일이 컨트롤러에 도달해야 돌기 때문에, 그 전에 Tomcat 이 잘라낸다. 코드에 적힌 상한과 실제 상한이 다르다.
+- **해결**: `application.yaml` 에 `spring.servlet.multipart.max-file-size` / `max-request-size` 를 명시했다 (`MUPID_MAX_UPLOAD_FILE_SIZE`, 기본 20MB). 서비스 레이어 상한(이미지 5MB / 청크 10MB)은 그대로 둔다.
+- **근거**: `api/src/main/resources/application.yaml`
+
 ---
