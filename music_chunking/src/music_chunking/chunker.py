@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from .config import ChunkConfig
+from .hasher import compute_sha256
 from .ogg_parser import extract_opus_frames
 from .rtp import RTPPacketizer
 
@@ -113,9 +114,11 @@ def process_file(
 
     # ── 3단계: 메타데이터 저장 ──
     elapsed = round(time.time() - start_time, 3)
+    source_hash = compute_sha256(input_path)
     metadata = {
         "source_file": str(input_path),
         "file_stem": file_stem,
+        "sha256": source_hash,
         "bitrate": config.bitrate,
         "segment_time_sec": config.segment_time,
         "frame_duration_ms": config.frame_duration,

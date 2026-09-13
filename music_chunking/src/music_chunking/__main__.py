@@ -134,7 +134,11 @@ def _handle_batch(args: argparse.Namespace) -> None:
     if result["status"] == "completed":
         print(f"\n✅ 배치 처리 완료:")
         print(f"   성공        : {result['processed']}개")
+        print(f"     신규      : {result['new_files']}개")
+        print(f"     변경      : {result['modified_files']}개")
         print(f"   실패        : {result['errors']}개")
+        if result.get("stale_cleaned", 0) > 0:
+            print(f"   정리(삭제)  : {result['stale_cleaned']}개")
         print(f"   총 소요 시간: {result['total_time_sec']}초")
         print(f"   평균 처리   : {result['avg_time_per_file_sec']}초/파일")
         if result["errors"] > 0:
@@ -143,7 +147,11 @@ def _handle_batch(args: argparse.Namespace) -> None:
                 print(f"   - {err['file']}: {err['error']}")
             sys.exit(1)
     elif result["status"] == "up_to_date":
-        print("✅ 처리할 새 파일이 없습니다.")
+        stale = result.get("stale_cleaned", 0)
+        msg = "✅ 처리할 새/변경 파일이 없습니다."
+        if stale > 0:
+            msg += f" (삭제된 파일 {stale}개 정리)"
+        print(msg)
     else:
         print("⚠️  입력 디렉토리가 비어있습니다.")
 
