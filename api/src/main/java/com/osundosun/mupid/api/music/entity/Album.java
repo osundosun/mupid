@@ -72,7 +72,8 @@ public class Album {
      * 삭제 여부
      */
     @Column(nullable = false)
-    private Boolean isDeleted;
+    @Builder.Default
+    private Boolean isDeleted = false;
 
     /**
      * 생성 일시

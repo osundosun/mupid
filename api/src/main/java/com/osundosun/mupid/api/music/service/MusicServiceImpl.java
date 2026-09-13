@@ -47,7 +47,7 @@ public class MusicServiceImpl implements MusicService {
     public Optional<Music> getMusic(int musicId) {
         Music music = repository.findById(musicId).orElse(null);
         if (music == null || music.getIsDeleted()) {
-            return null;
+            return Optional.empty();
         }
         return Optional.of(music);
     }
