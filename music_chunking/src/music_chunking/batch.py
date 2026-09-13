@@ -10,6 +10,10 @@
   - SHA-256 해시로 파일 내용 변경을 추적
   - 새 파일 / 내용이 바뀐 파일만 재처리
   - 삭제된 파일은 로그에서 정리 (stale entry 제거)
+
+등록:
+  - config.api_base_url 이 설정돼 있으면 청킹 직후 Mupid API 에 등록한다
+  - 등록만 실패한 항목은 다음 실행에서 **재청킹 없이** 등록만 다시 시도한다
 """
 
 from __future__ import annotations
@@ -21,9 +25,11 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+from .api_client import MupidClient
 from .chunker import process_file
 from .config import ChunkConfig
 from .hasher import compute_sha256
+from .registrar import Registrar, Registry, SidecarMissingError
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +64,9 @@ def run_batch(config: ChunkConfig) -> dict:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # 등록기 준비 (설정이 없으면 None → 청킹만 한다)
+    registrar = build_registrar(config)
+
     # 처리 대상 파일 필터링 (해시 기반)
     all_files = _find_audio_files(input_dir)
     processed_log = _load_processed_log(config.processed_log)
@@ -72,12 +81,24 @@ def run_batch(config: ChunkConfig) -> dict:
         logger.info("삭제된 파일 %d개의 로그 엔트리 정리 완료", stale_count)
 
     if not pending:
-        logger.info("처리할 새/변경 파일이 없습니다.")
+        # 청킹할 것은 없어도, 지난번에 등록만 실패한 항목이 남아 있을 수 있다.
+        registration_errors: list[dict] = []
+        retried = _retry_registrations(
+            registrar, processed_log, output_dir, config, registration_errors
+        )
+        logger.info(
+            "처리할 새/변경 파일이 없습니다. (등록 재시도 %d건, 실패 %d건)",
+            retried,
+            len(registration_errors),
+        )
         return {
             "status": "up_to_date",
             "processed": 0,
             "total": len(all_files),
             "stale_cleaned": stale_count,
+            "registration_retried": retried,
+            "registration_errors": len(registration_errors),
+            "registration_error_details": registration_errors,
         }
 
     # 변경 사유 로그 출력
@@ -96,6 +117,7 @@ def run_batch(config: ChunkConfig) -> dict:
     batch_start = time.time()
     results: list[dict] = []
     errors: list[dict] = []
+    registration_errors: list[dict] = []
 
     # ── SHA-256 해시 사전 계산 (병렬 처리 전) ──
     # 각 워커 프로세스에서 해시를 다시 계산하지 않도록 미리 준비
@@ -123,15 +145,22 @@ def run_batch(config: ChunkConfig) -> dict:
                 results.append(result)
 
                 # 처리 완료 기록 (SHA-256 포함)
-                processed_log[str(file_path)] = {
+                entry = {
                     "completed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "sha256": file_hashes[str(file_path)],
                     "file_size_bytes": file_path.stat().st_size,
                     "change_reason": reason,
+                    "file_stem": result["file_stem"],
                     "chunks": result["chunk_count"],
                     "rtp_packets": result["total_rtp_packets"],
                     "processing_time_sec": result["processing_time_sec"],
                 }
+                processed_log[str(file_path)] = entry
+
+                # 등록은 실패해도 청킹 결과를 버리지 않는다. 다음 실행에서 등록만 다시 한다.
+                _register_entry(
+                    registrar, file_path, result, output_dir, entry, registration_errors
+                )
                 _save_processed_log(config.processed_log, processed_log)
 
                 reason_tag = "신규" if reason == "new" else "변경"
@@ -148,6 +177,11 @@ def run_batch(config: ChunkConfig) -> dict:
                 logger.error("실패: %s - %s", file_path.name, e)
                 errors.append({"file": str(file_path), "error": str(e)})
 
+    # 이전 실행에서 청킹만 끝나고 등록이 실패한 항목을 다시 시도한다.
+    retried = _retry_registrations(
+        registrar, processed_log, output_dir, config, registration_errors
+    )
+
     elapsed = time.time() - batch_start
 
     summary = {
@@ -156,24 +190,159 @@ def run_batch(config: ChunkConfig) -> dict:
         "new_files": new_count,
         "modified_files": modified_count,
         "errors": len(errors),
+        "registered": sum(
+            1 for e in processed_log.values() if e.get("registered")
+        ),
+        "registration_retried": retried,
+        "registration_errors": len(registration_errors),
         "stale_cleaned": stale_count,
         "total_time_sec": round(elapsed, 2),
         "avg_time_per_file_sec": (
             round(elapsed / len(results), 2) if results else 0
         ),
         "error_details": errors,
+        "registration_error_details": registration_errors,
     }
 
     logger.info(
-        "배치 완료: %d개 성공 (신규 %d, 변경 %d), %d개 실패 (%.1f초)",
+        "배치 완료: %d개 성공 (신규 %d, 변경 %d), %d개 실패, 등록 실패 %d개 (%.1f초)",
         len(results),
         new_count,
         modified_count,
         len(errors),
+        len(registration_errors),
         elapsed,
     )
 
     return summary
+
+
+# ─────────────────────────────────────────────────────────────
+# 등록
+# ─────────────────────────────────────────────────────────────
+
+
+def build_registrar(config: ChunkConfig) -> Registrar | None:
+    """설정에 API 정보가 있으면 등록기를 만든다. 없으면 None (청킹만 한다).
+
+    리프레시 토큰 파일이 없으면 바로 실패시킨다. 조용히 등록을 건너뛰면
+    크론이 몇 시간을 돌고 나서야 아무것도 등록되지 않았음을 알게 된다.
+    """
+    if not config.register_enabled:
+        logger.info("api_base_url 이 비어 있어 등록 단계를 건너뜁니다.")
+        return None
+
+    token_file = Path(config.api_refresh_token_file)
+    if not token_file.exists():
+        raise RuntimeError(
+            f"리프레시 토큰 파일이 없습니다: {token_file}. "
+            "관리자 계정으로 POST /api/v1/user/system 을 호출해 ROLE_SYSTEM 계정을 만들고, "
+            "응답의 refresh_token 을 이 파일에 저장하세요."
+        )
+
+    refresh_token = token_file.read_text(encoding="utf-8").strip()
+    if not refresh_token:
+        raise RuntimeError(f"리프레시 토큰 파일이 비어 있습니다: {token_file}")
+
+    client = MupidClient(
+        base_url=config.api_base_url,
+        refresh_token=refresh_token,
+        token_file=token_file,
+        timeout=config.api_timeout,
+        max_retries=config.api_max_retries,
+    )
+    logger.info("등록 대상 API: %s", config.api_base_url)
+    return Registrar(client, Registry(config.api_registry_log))
+
+
+def _register_entry(
+    registrar: Registrar | None,
+    audio_path: Path,
+    metadata: dict,
+    output_dir: Path,
+    entry: dict,
+    errors: list[dict],
+) -> None:
+    """청킹 결과 하나를 등록하고 결과를 processed_log 항목에 적는다."""
+    if registrar is None:
+        return
+
+    try:
+        entry["registered"] = registrar.register(
+            audio_path, metadata, output_dir / metadata["file_stem"]
+        )
+        entry.pop("registration_error", None)
+        entry.pop("registration_skipped", None)
+    except SidecarMissingError as e:
+        # 사람이 파일을 놓기 전까지는 재시도해도 같다. 크론 종료 코드를 더럽히지 않는다.
+        entry["registered"] = None
+        entry["registration_skipped"] = str(e)
+        entry.pop("registration_error", None)
+        logger.warning("등록 건너뜀: %s - %s", audio_path.name, e)
+    except Exception as e:
+        entry["registered"] = None
+        entry["registration_error"] = str(e)
+        entry.pop("registration_skipped", None)
+        errors.append({"file": str(audio_path), "error": str(e)})
+        logger.error("등록 실패: %s - %s", audio_path.name, e)
+
+
+def _retry_registrations(
+    registrar: Registrar | None,
+    processed_log: dict,
+    output_dir: Path,
+    config: ChunkConfig,
+    errors: list[dict],
+) -> int:
+    """청킹은 끝났는데 등록이 안 된 항목을 재청킹 없이 다시 등록한다.
+
+    Returns:
+        다시 시도한 항목 수 (성공·실패 합계)
+    """
+    if registrar is None:
+        return 0
+
+    targets = [
+        (Path(key), entry)
+        for key, entry in processed_log.items()
+        if not entry.get("registered")
+    ]
+    if not targets:
+        return 0
+
+    # 사이드카가 나중에 놓일 수 있으므로 보류된 항목도 매번 다시 본다.
+    # 여전히 없으면 실패가 아니라 경고로만 남는다.
+    held = sum(1 for _, entry in targets if entry.get("registration_skipped"))
+    logger.info(
+        "등록 재시도 대상 %d건 (이전에 사이드카가 없어 보류된 %d건 포함)",
+        len(targets),
+        held,
+    )
+
+    for audio_path, entry in targets:
+        metadata = _load_chunk_metadata(output_dir, entry, audio_path)
+        if metadata is None:
+            entry["registration_error"] = (
+                "metadata.json 을 찾을 수 없어 등록을 건너뜁니다. 원본을 다시 청킹하세요."
+            )
+            errors.append({"file": str(audio_path), "error": entry["registration_error"]})
+            continue
+        _register_entry(registrar, audio_path, metadata, output_dir, entry, errors)
+
+    _save_processed_log(config.processed_log, processed_log)
+    return len(targets)
+
+
+def _load_chunk_metadata(
+    output_dir: Path, entry: dict, audio_path: Path
+) -> dict | None:
+    """출력 디렉터리에 남아 있는 metadata.json 을 읽는다."""
+    file_stem = entry.get("file_stem") or audio_path.stem
+    meta_path = output_dir / file_stem / "metadata.json"
+    if not meta_path.exists():
+        return None
+    with open(meta_path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 # ─────────────────────────────────────────────────────────────

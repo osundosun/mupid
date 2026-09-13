@@ -19,8 +19,9 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
-from .batch import run_batch
+from .batch import build_registrar, run_batch
 from .chunker import process_file
 from .config import ChunkConfig
 
@@ -72,6 +73,8 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    _force_utf8_console()
+
     # 로깅 설정
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
@@ -88,6 +91,22 @@ def main() -> None:
         _handle_single(args)
     elif args.command == "batch":
         _handle_batch(args)
+
+
+def _force_utf8_console() -> None:
+    """표준 출력을 UTF-8 로 맞춘다.
+
+    Windows 기본 콘솔은 cp949 라서 이모지나 일부 한글을 찍는 순간
+    UnicodeEncodeError 로 프로세스가 죽는다. 크론으로 돌 때도 같은 문제가 난다.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -117,6 +136,9 @@ def _handle_batch(args: argparse.Namespace) -> None:
     """batch 모드: 디렉토리의 모든 파일을 병렬 처리합니다."""
     if args.config:
         config = ChunkConfig.from_file(args.config)
+        # 설정 파일보다 명령줄에 직접 준 값이 우선한다.
+        if args.api_base_url:
+            config.api_base_url = args.api_base_url
     else:
         config = ChunkConfig(
             bitrate=args.bitrate,
@@ -127,6 +149,9 @@ def _handle_batch(args: argparse.Namespace) -> None:
             input_dir=args.input_dir,
             output_dir=args.output_dir,
             processed_log=args.processed_log,
+            api_base_url=args.api_base_url,
+            api_refresh_token_file=args.api_refresh_token_file,
+            api_registry_log=args.api_registry_log,
         )
 
     result = run_batch(config)
@@ -137,6 +162,9 @@ def _handle_batch(args: argparse.Namespace) -> None:
         print(f"     신규      : {result['new_files']}개")
         print(f"     변경      : {result['modified_files']}개")
         print(f"   실패        : {result['errors']}개")
+        if "registered" in result:
+            print(f"   등록 완료   : {result['registered']}개")
+            print(f"   등록 실패   : {result['registration_errors']}개")
         if result.get("stale_cleaned", 0) > 0:
             print(f"   정리(삭제)  : {result['stale_cleaned']}개")
         print(f"   총 소요 시간: {result['total_time_sec']}초")
@@ -152,6 +180,13 @@ def _handle_batch(args: argparse.Namespace) -> None:
         if stale > 0:
             msg += f" (삭제된 파일 {stale}개 정리)"
         print(msg)
+        if result.get("registration_retried", 0) > 0:
+            print(f"   등록 재시도 : {result['registration_retried']}개")
+            print(f"   등록 실패   : {result['registration_errors']}개")
+        if result.get("registration_errors", 0) > 0:
+            for err in result["registration_error_details"]:
+                print(f"   - {err['file']}: {err['error']}")
+            sys.exit(1)
     else:
         print("⚠️  입력 디렉토리가 비어있습니다.")
 
@@ -189,6 +224,21 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=2,
         help="파일당 FFMPEG 스레드 수 (기본: 2)",
+    )
+    parser.add_argument(
+        "--api-base-url",
+        default="",
+        help="Mupid API 루트 (예: http://localhost:9900). 비우면 등록하지 않음",
+    )
+    parser.add_argument(
+        "--api-refresh-token-file",
+        default="./refresh_token.txt",
+        help="ROLE_SYSTEM 계정 리프레시 토큰 파일 (기본: ./refresh_token.txt)",
+    )
+    parser.add_argument(
+        "--api-registry-log",
+        default="./registered.json",
+        help="등록 결과 기록 파일 (기본: ./registered.json)",
     )
 
 

@@ -11,5 +11,10 @@
   "ffmpeg_threads": 2,
   "input_dir": "./input",
   "output_dir": "./output",
-  "processed_log": "./processed.json"
+  "processed_log": "./processed.json",
+  "api_base_url": "http://localhost:9900",
+  "api_refresh_token_file": "./refresh_token.txt",
+  "api_registry_log": "./registered.json",
+  "api_timeout": 30,
+  "api_max_retries": 3
 }

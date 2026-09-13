@@ -25,6 +25,11 @@ class ChunkConfig:
         input_dir: 입력 디렉토리 경로
         output_dir: 출력 디렉토리 경로
         processed_log: 처리 완료 로그 파일 경로
+        api_base_url: Mupid API 루트. 비우면 등록 단계를 건너뛴다
+        api_refresh_token_file: ROLE_SYSTEM 계정의 리프레시 토큰 파일
+        api_registry_log: 등록 결과(아티스트·앨범·곡 번호) 기록 파일
+        api_timeout: API 요청 타임아웃 (초)
+        api_max_retries: 5xx·네트워크 오류 재시도 횟수
     """
 
     # ── 오디오 인코딩 ──
@@ -48,9 +53,22 @@ class ChunkConfig:
     output_dir: str = "./output"
     processed_log: str = "./processed.json"
 
+    # ── API 등록 ──
+    # api_base_url 이 비어 있으면 청킹만 하고 등록은 하지 않는다.
+    api_base_url: str = ""
+    api_refresh_token_file: str = "./refresh_token.txt"
+    api_registry_log: str = "./registered.json"
+    api_timeout: int = 30
+    api_max_retries: int = 3
+
     def __post_init__(self) -> None:
         if self.max_workers <= 0:
             self.max_workers = max(1, multiprocessing.cpu_count())
+
+    @property
+    def register_enabled(self) -> bool:
+        """API 등록 단계를 수행할지 여부."""
+        return bool(self.api_base_url)
 
     @classmethod
     def from_file(cls, path: str) -> ChunkConfig:
@@ -75,4 +93,9 @@ class ChunkConfig:
             "input_dir": self.input_dir,
             "output_dir": self.output_dir,
             "processed_log": self.processed_log,
+            "api_base_url": self.api_base_url,
+            "api_refresh_token_file": self.api_refresh_token_file,
+            "api_registry_log": self.api_registry_log,
+            "api_timeout": self.api_timeout,
+            "api_max_retries": self.api_max_retries,
         }

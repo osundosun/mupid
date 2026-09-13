@@ -83,6 +83,7 @@ def process_file(
         ssrc = _generate_ssrc(str(input_path))
         chunk_count = 0
         total_packets = 0
+        chunks: list[dict] = []
 
         for seg_idx, seg_path in enumerate(segments):
             opus_frames = extract_opus_frames(str(seg_path))
@@ -109,6 +110,21 @@ def process_file(
             opus_out = file_output_dir / f"chunk_{seg_idx:04d}.opus"
             shutil.copy2(seg_path, opus_out)
 
+            # 청크 길이는 담긴 프레임 수로 정확히 나온다.
+            # 마지막 청크는 segment_time 보다 짧으므로 설정값을 쓰면 안 된다.
+            chunk_duration_ms = len(rtp_packets) * config.frame_duration
+
+            chunks.append(
+                {
+                    "index": seg_idx,
+                    "file": rtp_file.name,
+                    "duration_ms": chunk_duration_ms,
+                    "size_bytes": rtp_file.stat().st_size,
+                    "sha256": compute_sha256(rtp_file),
+                    "rtp_packets": len(rtp_packets),
+                }
+            )
+
             chunk_count += 1
             total_packets += len(rtp_packets)
 
@@ -123,6 +139,8 @@ def process_file(
         "segment_time_sec": config.segment_time,
         "frame_duration_ms": config.frame_duration,
         "chunk_count": chunk_count,
+        "duration_ms": sum(c["duration_ms"] for c in chunks),
+        "chunks": chunks,
         "total_rtp_packets": total_packets,
         "ssrc": ssrc,
         "rtp_payload_type": config.rtp_payload_type,
