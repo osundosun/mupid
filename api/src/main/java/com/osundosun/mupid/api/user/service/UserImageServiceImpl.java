@@ -35,7 +35,11 @@ public class UserImageServiceImpl implements UserImageService, StorageImageServi
 
     @Override
     public String getProfileImageUrl(User user) {
-        String storageKey = user.getImageFile().getStorageObjectKey();
+        String storageKey = "default";
+        ObjectStorageFile imageFile = user.getImageFile();
+        if (imageFile != null) {
+            storageKey = imageFile.getStorageObjectKey();
+        }
         return "/api/v1/storage/image/%s/%s".formatted(
             FileCategory.PROFILE.name().toLowerCase(),
             storageKey

@@ -1,0 +1,16 @@
+info:
+  name: 프로필 사진 조회
+  type: http
+  seq: 11
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/storage/image/profile/default"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
