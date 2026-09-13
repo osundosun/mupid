@@ -340,7 +340,7 @@ test "$(curl --fail --silent --show-error https://j15a204.p.ssafy.io/deployment.
 
 ## 커밋
 
-`.husky/commit-msg` 훅이 브랜치명에서 `S15P21A204-<번호>` 를 뽑아 커밋 제목 끝에 ` [S15P21A204-<번호>]` 로 붙인다.
+`.husky/commit-msg` 훅이 브랜치명에서 `S15P21A204-<번호>` 를 뽑아 커밋 제목 끝에 ` (S15P21A204-<번호>)` 로 붙인다.
 
 - 브랜치명 컨벤션: `<type>/S15P21A204-<번호>-<branch-name>`
 - 브랜치명에 티켓 번호가 없으면 **커밋이 거부된다.**

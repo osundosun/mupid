@@ -132,9 +132,9 @@ docker compose -f compose.prod.yml down -v
 ## Git
 
 - 커밋 메시지는 **한글 Conventional Commits**: `feat: …`, `fix: …`, `docs: …`, `chore: …`
-  지라 티켓은 `.husky/commit-msg` 가 제목 끝에 **대괄호**로 자동으로 붙인다 —
-  `chore: 셸 스크립트 실행 권한 부여 [S15P21A204-184]`
-  (초기 커밋에 보이는 소괄호 `(S15P21A204-42)` 는 훅 도입 전 형식이다. 따라 쓰지 않는다.)
+  지라 티켓은 `.husky/commit-msg` 가 제목 끝에 **소괄호**로 자동으로 붙인다 —
+  `chore: 셸 스크립트 실행 권한 부여 (S15P21A204-184)`
+  (과거 훅이 넣은 대괄호 `[S15P21A204-184]` 는 이력에 남아 있다. 따라 쓰지 않는다.)
 - 브랜치: `back/<type>/<티켓>-<요약>` (예: `back/chore/S15P21A204-41-create-spring-project`)
   원격에 `feat` 와 `feature` 가 섞여 있다. 브랜치명으로 필터링하는 CI rule 을 쓸 때 주의한다.
   백엔드 외 작업은 `study/<이름>/…`, `common/docs/…` 를 쓴다.
