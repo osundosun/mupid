@@ -12,7 +12,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
  */
 @Target ({ElementType.METHOD, ElementType.TYPE})
 @Retention (RetentionPolicy.RUNTIME)
-@PreAuthorize("hasRole('SYSTEM', 'ADMIN')")
+@PreAuthorize("hasAnyRole('SYSTEM', 'ADMIN')")
 public @interface SystemRole {
     
 }

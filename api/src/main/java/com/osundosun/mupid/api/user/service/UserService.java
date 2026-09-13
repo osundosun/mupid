@@ -19,5 +19,7 @@ public interface UserService {
     User updateUser(int userId, UserUpdateRequest dto);
 
     void deleteUser(int userId);
+
+    boolean isAdminUserExists();
     
 }

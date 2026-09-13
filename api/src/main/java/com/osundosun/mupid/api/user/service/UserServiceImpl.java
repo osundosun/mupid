@@ -84,5 +84,10 @@ public class UserServiceImpl implements UserService {
         User user = getUser(userId).orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
         repository.delete(user);
     }
+
+    @Override
+    public boolean isAdminUserExists() {
+        return repository.existsByRole(UserRole.ROLE_ADMIN);
+    }
     
 }
