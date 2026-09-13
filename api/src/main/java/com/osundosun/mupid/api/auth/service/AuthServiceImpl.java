@@ -8,6 +8,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import com.osundosun.mupid.api.auth.dto.AuthLoginResult;
+import com.osundosun.mupid.api.auth.dto.TokenPair;
 import com.osundosun.mupid.api.auth.error.AuthErrorCode;
 import com.osundosun.mupid.api.auth.provider.AuthProvider;
 import com.osundosun.mupid.api.auth.provider.JwtProvider;
@@ -43,7 +44,7 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    public String reissueAccessToken(String refreshToken) {
+    public TokenPair reissueToken(String refreshToken) {
         if (cacheService.exists(refreshToken, CacheKind.BlockToken)) {
             throw new BusinessException(AuthErrorCode.UNAUTHORIZED);
         }

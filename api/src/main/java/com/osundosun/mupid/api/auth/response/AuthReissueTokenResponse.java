@@ -1,6 +1,6 @@
 package com.osundosun.mupid.api.auth.response;
 
-public record AuthReissueAccessTokenResponse(
+public record AuthReissueTokenResponse(
 
     String accessToken
 

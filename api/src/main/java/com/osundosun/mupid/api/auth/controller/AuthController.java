@@ -16,10 +16,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.osundosun.mupid.api.auth.dto.AuthLoginResult;
+import com.osundosun.mupid.api.auth.dto.TokenPair;
 import com.osundosun.mupid.api.auth.provider.JwtProvider;
 import com.osundosun.mupid.api.auth.request.AuthLoginRequest;
 import com.osundosun.mupid.api.auth.response.AuthLoginResponse;
-import com.osundosun.mupid.api.auth.response.AuthReissueAccessTokenResponse;
+import com.osundosun.mupid.api.auth.response.AuthReissueTokenResponse;
 import com.osundosun.mupid.api.auth.service.AuthService;
 import com.osundosun.mupid.api.common.response.BaseResponse;
 import com.osundosun.mupid.api.user.entity.User;
@@ -65,12 +66,28 @@ public class AuthController {
     }
 
     @GetMapping
-    public ResponseEntity<BaseResponse<AuthReissueAccessTokenResponse>> reissueAccessToken(
+    public ResponseEntity<BaseResponse<AuthReissueTokenResponse>> reissueToken(
         @CookieValue(name = "refresh_token") String refreshToken
     ) {
-        String newAccessToken = authService.reissueAccessToken(refreshToken);
+        // 토큰 재발급
+        TokenPair tokenPair = authService.reissueToken(refreshToken);
+
+        // 리프레시 토큰 설정
+        ResponseCookie cookie = ResponseCookie
+            .from("refresh_token", tokenPair.refreshToken())
+            .sameSite("Strict")
+            .httpOnly(true)
+            .secure(true)
+            .maxAge(Duration.ofMillis(JwtProvider.ACCESS_TOKEN_VALIDITY_MS))
+            .build();
+
+        // 액세스 토큰 설정
+        AuthReissueTokenResponse response = new AuthReissueTokenResponse(tokenPair.accessToken());
+
+        // 응답 전송
         return ResponseEntity.ok()
-                .body(BaseResponse.of(new AuthReissueAccessTokenResponse(newAccessToken)));
+                .header(HttpHeaders.SET_COOKIE, cookie.toString())
+                .body(BaseResponse.of(response));
     }
 
     @DeleteMapping

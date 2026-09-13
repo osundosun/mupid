@@ -13,6 +13,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.stereotype.Component;
 
+import com.osundosun.mupid.api.auth.dto.TokenPair;
 import com.osundosun.mupid.api.auth.error.AuthErrorCode;
 import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.enumerate.UserRole;
@@ -75,7 +76,7 @@ public class AuthProvider {
         return new UsernamePasswordAuthenticationToken(principal, accessToken, authorities);
     }
 
-    public String refresh(String refreshToken) {
+    public TokenPair refresh(String refreshToken) {
         Claims claims = parseClaims(refreshToken);
 
         String tokenType = claims.get("token_type", String.class);
@@ -87,7 +88,10 @@ public class AuthProvider {
         User user = userRepository
                             .findByUserIdAndStatusNot(userId, UserStatus.WITHDRAW)
                             .orElseThrow(() -> new BadCredentialsException(UserErrorCode.USER_NOT_FOUND.getMessage()));
-        return jwtProvider.issueAccessToken(user);
+        return new TokenPair(
+            jwtProvider.issueAccessToken(user),
+            jwtProvider.issueRefreshToken(user)
+        );
     }
 
     public Date parseExpiration(String token) {
