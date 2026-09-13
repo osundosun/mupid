@@ -1,5 +1,6 @@
 package com.osundosun.mupid.api.user.service;
 
+import java.time.Year;
 import java.util.Optional;
 
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -7,14 +8,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.osundosun.mupid.api.common.exception.BusinessException;
+import com.osundosun.mupid.api.utils.PasswordGenerateUtils;
 import com.osundosun.mupid.api.email.entity.EmailVerification;
 import com.osundosun.mupid.api.email.service.EmailService;
+import com.osundosun.mupid.api.user.dto.SystemUserCreateResult;
 import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.enumerate.UserGender;
 import com.osundosun.mupid.api.user.enumerate.UserRole;
 import com.osundosun.mupid.api.user.enumerate.UserStatus;
 import com.osundosun.mupid.api.user.error.UserErrorCode;
 import com.osundosun.mupid.api.user.repository.UserRepository;
+import com.osundosun.mupid.api.user.request.SystemUserCreateRequest;
 import com.osundosun.mupid.api.user.request.UserCreateRequest;
 import com.osundosun.mupid.api.user.request.UserUpdateRequest;
 
@@ -24,6 +28,11 @@ import lombok.RequiredArgsConstructor;
 @Transactional
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
+
+    /**
+     * 배치 계정 비밀번호 길이. 사람이 외울 일이 없으므로 길게 잡는다.
+     */
+    public static final int SYSTEM_USER_PASSWORD_LENGTH = 32;
 
     private final PasswordEncoder passwordEncoder;
     private final UserRepository repository;
@@ -52,6 +61,31 @@ public class UserServiceImpl implements UserService {
         }
 
         return repository.save(newUser);
+    }
+
+    @Override
+    public SystemUserCreateResult createSystemUser(SystemUserCreateRequest dto) {
+        if (getUserByEmail(dto.email()).isPresent()) {
+            throw new BusinessException(UserErrorCode.DUPLICATE_EMAIL);
+        }
+
+        // 사람이 로그인할 계정이 아니라서 비밀번호를 받지 않고 서버가 만든다.
+        String password = PasswordGenerateUtils.generatePassword(SYSTEM_USER_PASSWORD_LENGTH);
+        String nickname = (dto.nickname() == null || dto.nickname().isBlank())
+            ? dto.email().split("@")[0]
+            : dto.nickname();
+
+        User newUser = repository.save(User.builder()
+            .email(dto.email())
+            .password(passwordEncoder.encode(password))
+            .nickname(nickname)
+            .birthYear(Year.now().getValue())
+            .gender(UserGender.ETC)
+            .role(UserRole.ROLE_SYSTEM)
+            .status(UserStatus.ACTIVE) /* 온보딩 대상이 아니다 */
+            .build());
+
+        return new SystemUserCreateResult(newUser, password);
     }
 
     @Override

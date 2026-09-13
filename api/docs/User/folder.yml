@@ -21,6 +21,7 @@ docs:
     | `DELETE /api/v1/user` | 회원탈퇴 | 필요 |
     | `GET /api/v1/user/reset` | 비밀번호 재설정 메일 발송 | 불필요 |
     | `POST /api/v1/user/reset` | 비밀번호 재설정 코드 제출 | 불필요 |
+    | `POST /api/v1/user/system` | 시스템 계정 발급 | **ADMIN** |
 
     ## 프로필 사진
 
@@ -29,7 +30,7 @@ docs:
 
     | 동작 | 방법 |
     | --- | --- |
-    | 등록/수정 | `POST /api/v1/storage/image/profile/{{USER_ID}}` (`multipart/form-data`) |
+    | 등록/수정 | `POST /api/v1/storage/image/PROFILE/{{USER_ID}}` (`multipart/form-data`) |
     | 조회 | `GET /api/v1/storage/image/profile/{{USER_ID}}` |
     | 삭제 | `DELETE /api/v1/storage/image/profile/{{USER_ID}}` |
 
