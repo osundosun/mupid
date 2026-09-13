@@ -19,6 +19,18 @@ http:
         description: 업로드할 이미지 파일
   auth: inherit
 
+runtime:
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.file_id
+        method: jsonq
+      variable:
+        name: IMAGE_FILE_ID
+        scope: runtime
+      description: 업로드된 파일 번호를 IMAGE_FILE_ID 변수에 저장합니다.
+
 settings:
   encodeUrl: true
   timeout: 0
@@ -39,7 +51,9 @@ examples:
         data: |-
           {
             "message": "이미지가 업로드 되었습니다.",
-            "data": null
+            "data": {
+              "file_id": 1
+            }
           }
   - name: 400 이미지 형식 오류
     response:
@@ -93,6 +107,16 @@ docs: |-
   | 필드 | 타입 | 필수 | 설명 |
   | --- | --- | --- | --- |
   | `imageFile` | file | ✅ | 이미지 파일 (`@RequestParam MultipartFile`) |
+
+  ## 응답
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `data.file_id` | int | 저장된 파일 번호 |
+
+  이 번호를 `Music / 아티스트 생성` 의 `image_file_id`,
+  `Music / 앨범 생성` 의 `image_file_id` 에 그대로 넣습니다.
+  컬렉션에서는 `IMAGE_FILE_ID` 변수에 자동 저장됩니다.
 
   ## PROFILE 카테고리 동작
 

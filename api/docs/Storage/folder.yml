@@ -16,7 +16,12 @@ docs:
     저장되고, 메타데이터는 `object_storage_files` 테이블로 관리됩니다.
 
     `PROFILE` 카테고리는 유저 프로필 사진에 연결되어 있어, 업로드 시
-    인증 사용자의 `image_file` 이 해당 파일로 설정됩니다.
+    인증 사용자의 `image_file` 이 해당 파일로 설정됩니다. `ARTIST` · `ALBUM`
+    은 콜백 없이 저장만 하고, 응답의 `file_id` 를 아티스트·앨범 생성 요청의
+    `image_file_id` 로 넘겨 연결합니다.
+
+    카테고리는 enum 이름 그대로 **대문자**로 보냅니다 (`PROFILE`, `ARTIST`,
+    `ALBUM`, `STREAMING`). 소문자로 보내면 변환에 실패합니다.
 
     | 엔드포인트 | 동작 | 인증 |
     | --- | --- | --- |
@@ -32,7 +37,7 @@ docs:
     | | `ARTIST` | 아티스트 이미지 |
     | | `ALBUM` | 앨범 이미지 |
     | | `STREAMING` | 스트리밍용 오디오 청크 |
-    | `storageKey` | int | 대상 번호 (예: 유저 번호, 앨범 번호) |
+    | `storageKey` | string | 대상 식별자. 유저 번호처럼 숫자여도 되고 아티스트명처럼 문자열이어도 된다 |
 
     실제 저장 키는 `image/{category 소문자}/{storageKey}` 형태입니다.
     예: `image/profile/1`

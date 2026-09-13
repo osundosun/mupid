@@ -43,8 +43,11 @@ public class StorageImageServiceImpl implements StorageImageService {
         String storageKey = getStorageKey(category, key);
         ObjectStorageFile storageFile = storageService.uploadFile(FileType.IMG, category, storageKey, imageFile);
 
-        // 카테고리 서비스 콜백
-        getCallbackService(category).handleUploadImageAfter(storageFile);
+        // 카테고리 서비스 콜백 (등록된 카테고리에만 있다)
+        StorageImageServiceCallback callback = getCallbackService(category);
+        if (callback != null) {
+            callback.handleUploadImageAfter(storageFile);
+        }
 
         // 파일 번호 반환
         return storageFile.getFileId();
@@ -59,8 +62,12 @@ public class StorageImageServiceImpl implements StorageImageService {
             return storageService.getFileData(storageFile.get().getFileId());
         }
 
-        // 카테고리 서비스 콜백
-        return getCallbackService(category).handleNoImageData(category, storageKey);
+        // 카테고리 서비스 콜백 (등록된 카테고리에만 있다)
+        StorageImageServiceCallback callback = getCallbackService(category);
+        if (callback == null) {
+            throw new BusinessException(StorageErrorCode.FILE_NOT_FOUND);
+        }
+        return callback.handleNoImageData(category, storageKey);
     }
 
     @Override
@@ -69,20 +76,27 @@ public class StorageImageServiceImpl implements StorageImageService {
         ObjectStorageFile storageFile = storageService.getFileByKey(storageKey)
             .orElseThrow(() -> new BusinessException(StorageErrorCode.FILE_NOT_FOUND));
 
-        // 카테고리 서비스 콜백
-        getCallbackService(category).handleDeleteImageBefore(storageFile);
+        // 카테고리 서비스 콜백 (등록된 카테고리에만 있다)
+        StorageImageServiceCallback callback = getCallbackService(category);
+        if (callback != null) {
+            callback.handleDeleteImageBefore(storageFile);
+        }
 
         storageService.deleteFile(storageFile.getFileId());
     }
 
     @Override
     public String getStorageKey(FileCategory category, String key) {
-        return "image/%s/%d".formatted(category.name().toLowerCase(), key);
+        return "image/%s/%s".formatted(category.name().toLowerCase(), key);
     }
 
+    /**
+     * 카테고리에 콜백 서비스가 없으면 null 을 반환한다.
+     * ARTIST·ALBUM 처럼 업로드 후 따로 할 일이 없는 카테고리가 있다.
+     */
     private StorageImageServiceCallback getCallbackService(FileCategory category) {
         if (category.getService() == null) {
-            throw new UnsupportedOperationException("이미지 콜백 서비스가 등록되지 않았습니다.");
+            return null;
         }
         return appContext.getBean(category.getService());
     }

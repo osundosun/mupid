@@ -16,6 +16,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.osundosun.mupid.api.common.response.BaseResponse;
 import com.osundosun.mupid.api.storage.dto.StorageFileData;
 import com.osundosun.mupid.api.storage.enumerate.FileCategory;
+import com.osundosun.mupid.api.storage.response.ImageUploadResponse;
 import com.osundosun.mupid.api.storage.service.StorageImageService;
 
 import lombok.RequiredArgsConstructor;
@@ -28,14 +29,17 @@ public class StorageImageController {
     private final StorageImageService storageImageService;
     
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<BaseResponse<Void>> uploadImage(
+    public ResponseEntity<BaseResponse<ImageUploadResponse>> uploadImage(
         Authentication auth,
         @PathVariable FileCategory category,
         @PathVariable String storageKey,
         @RequestParam MultipartFile imageFile
     ) {
-        storageImageService.uploadImage(category, storageKey, imageFile);
-        return ResponseEntity.ok(BaseResponse.message("이미지가 업로드 되었습니다."));
+        int fileId = storageImageService.uploadImage(category, storageKey, imageFile);
+        return ResponseEntity.ok(BaseResponse.of(
+            "이미지가 업로드 되었습니다.",
+            new ImageUploadResponse(fileId)
+        ));
     }
 
     @GetMapping
