@@ -1,9 +1,15 @@
-# ${API_UPSTREAM} 는 컨테이너 기동 시 envsubst 로 치환된다.
+# ${API_UPSTREAM} / ${STORAGE_UPSTREAM} 는 컨테이너 기동 시 envsubst 로 치환된다.
 #   - 운영(compose.yml)     : api:8800
 #   - 개발(compose.dev.yml) : host.docker.internal:8800  (호스트에서 직접 띄운 스프링)
 upstream mupid_api {
     server ${API_UPSTREAM};
     keepalive 32;
+}
+
+# 오브젝트 스토리지(SeaweedFS filer). 음원 바이트는 전부 여기로 오간다.
+upstream mupid_storage {
+    server ${STORAGE_UPSTREAM};
+    keepalive 16;
 }
 
 server {
@@ -22,11 +28,63 @@ server {
         return 200 "ok\n";
     }
 
-    # 스프링이 내려준 X-Accel-Redirect 를 받아 오브젝트 스토리지(SeaweedFS filer)에서
+    # ─────────────────────────────────────────────────────────────
+    # 청크 업로드 — 스프링은 인증만, 본문은 스토리지로 직행
+    #
+    #   PUT /upload/chunk/{streamId}/{index}
+    #     1. auth_request 로 스프링에 **본문 없이** 인증을 묻는다
+    #     2. 스프링이 200 + X-Storage-Path 를 주면 그 경로로 본문을 흘려보낸다
+    #
+    # 다운로드의 X-Accel-Redirect 와 짝이고 방향만 반대다. 고용량 음원이
+    # MultipartFile 로 JVM 힙에 올라오는 것을 막으려는 구조다.
+    #
+    # 정규식 location 이라 아래 `location /storage/` 프리픽스보다 먼저 매칭된다.
+    # ─────────────────────────────────────────────────────────────
+    location ~ ^/upload/chunk/(?<stream_id>[0-9]+)/(?<chunk_index>[0-9]+)$ {
+        auth_request /internal/chunk-upload-auth;
+        auth_request_set $storage_path $upstream_http_x_storage_path;
+        # 거절 사유를 살려 보낸다. nginx 가 본문을 버리고 500 으로 접어도 이 헤더는 남는다.
+        auth_request_set $mupid_error $upstream_http_x_mupid_error;
+        add_header X-Mupid-Error $mupid_error always;
+
+        # 디스크에 받아 두지 않고 받는 즉시 스토리지로 흘린다.
+        proxy_request_buffering off;
+        # 실제 상한 정책은 스프링(ChunkServiceImpl.CHUNK_FILE_MAX_SIZE)이 갖는다.
+        # 여기 값은 Content-Length 없이 오는 요청까지 막는 최후의 방어선이다.
+        client_max_body_size 100m;
+
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        # 클라이언트의 액세스 토큰이 스토리지로 새지 않게 지운다.
+        proxy_set_header Authorization "";
+
+        proxy_pass http://mupid_storage$storage_path;
+    }
+
+    # auth_request 전용. 본문 없이 스프링에 인증·경로만 묻는다.
+    #
+    # ⚠ nginx 는 이 서브요청의 401/403 만 클라이언트로 그대로 넘기고,
+    #   그 밖의 4xx(404·409·413 등)는 전부 500 으로 바꿔 버린다.
+    #   사유는 응답의 X-Mupid-Error 헤더로 살려 보낸다 (본문은 사라진다).
+    location = /internal/chunk-upload-auth {
+        internal;
+
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        # 스프링이 용량 상한을 검사할 수 있도록 원래 본문 길이를 넘긴다.
+        proxy_set_header X-Original-Content-Length $content_length;
+        proxy_set_header Host $host;
+
+        proxy_pass http://mupid_api/api/v1/chunk/$stream_id/$chunk_index/upload-auth;
+    }
+
+    # 스프링이 내려준 X-Accel-Redirect 를 받아 오브젝트 스토리지에서
     # 실제 청크 바이트를 읽어 클라이언트에 보낸다. internal 이라 외부에서 직접 못 친다.
     location /storage/ {
         internal;
-        proxy_pass http://${STORAGE_UPSTREAM}/;
+        proxy_pass http://mupid_storage/;
 
         proxy_http_version 1.1;
         proxy_set_header Connection "";

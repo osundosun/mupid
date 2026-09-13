@@ -290,7 +290,11 @@ services:
       - storage-data:/data
       - /srv/mupid/config/s3.json:/etc/seaweedfs/s3.json:ro
       - /srv/mupid/config/filer.toml:/etc/seaweedfs/filer.toml:ro
-    networks: [backend]
+    # frontend 에도 붙인다. nginx 가 음원 바이트를 스토리지와 직접 주고받기 때문이다
+    # (업로드 auth_request / 다운로드 X-Accel-Redirect → decision/0016).
+    # nginx 를 backend 에 붙이는 대신 이쪽을 frontend 에 올렸다. nginx 는 여전히
+    # mysql·redis 에 닿지 못한다. 호스트 공개 포트는 없으므로 외부 노출도 그대로 없다.
+    networks: [backend, frontend]
     healthcheck:
       test: [CMD-SHELL, "wget -S -O /dev/null http://127.0.0.1:8333/ 2>&1 | grep -q 'HTTP/1.1 403'"]
       interval: 15s
