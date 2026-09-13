@@ -65,7 +65,7 @@ public class Artist {
     /**
      * 생성 일시
      */
-    @Column(nullable = false)
+    @Column(nullable = false, updatable = false)
     @CreatedDate
     private LocalDateTime createdAt;
 

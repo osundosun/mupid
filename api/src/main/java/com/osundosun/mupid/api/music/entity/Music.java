@@ -90,7 +90,7 @@ public class Music {
     /**
      * 생성 일시
      */
-    @Column(nullable = false)
+    @Column(nullable = false, updatable = false)
     @CreatedDate
     private LocalDateTime createdAt;
 
