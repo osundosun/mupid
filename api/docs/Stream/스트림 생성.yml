@@ -1,0 +1,152 @@
+info:
+  name: 스트림 생성
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/stream"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "bitrate_kbps": {{STREAM_BITRATE_KBPS}},
+        "codec": "{{STREAM_CODEC}}",
+        "duration_ms": {{STREAM_DURATION_MS}},
+        "chunk_count": {{STREAM_CHUNK_COUNT}}
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MUSIC_ID
+      value: "1"
+    - name: STREAM_BITRATE_KBPS
+      value: "128"
+    - name: STREAM_CODEC
+      value: OPUS
+    - name: STREAM_DURATION_MS
+      value: "213000"
+    - name: STREAM_CHUNK_COUNT
+      value: "36"
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.stream_id
+        method: jsonq
+      variable:
+        name: STREAM_ID
+        scope: runtime
+      description: 생성된 스트림 번호를 STREAM_ID 변수에 저장합니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 생성 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "스트림이 생성되었습니다.",
+            "data": {
+              "stream_id": 1
+            }
+          }
+  - name: 409 중복 스트림
+    response:
+      status: 409
+      statusText: Conflict
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_DUPLICATE_STREAM",
+            "message": "같은 코덱·비트레이트의 스트림이 이미 등록되어 있습니다.",
+            "error_details": null
+          }
+  - name: 404 음악 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_MUSIC_NOT_FOUND",
+            "message": "요청한 음악을 찾을 수 없습니다.",
+            "error_details": null
+          }
+  - name: 403 권한 없음
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_FORBIDDEN",
+            "message": "접근 권한이 없습니다.",
+            "errorDetails": null
+          }
+
+docs: |-
+  # 스트림 생성
+
+  `POST /api/v1/music/{musicId}/stream` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  오디오 등록 **1단계**. 청크를 올릴 자리를 만듭니다. 상태는 `PENDING` 으로
+  시작하고, 첫 청크가 올라오면 `IN_PROGRESS` 로 바뀝니다.
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `bitrate_kbps` | int | ✅ | 비트레이트 (kbps). 양수 |
+  | `codec` | string | ✅ | `AAC` 또는 `OPUS` |
+  | `duration_ms` | int | ✅ | 전체 재생 길이 (ms). 양수 |
+  | `chunk_count` | int | ✅ | 올릴 청크 개수. 양수 |
+
+  `chunk_count` 는 완료 처리(`스트림 상태 변경` → `DONE`) 할 때 실제로 올라온
+  청크 수와 대조합니다. 숫자가 맞지 않으면 완료되지 않습니다.
+
+  ## 중복 정책
+
+  같은 음악에 같은 `codec` + `bitrate_kbps` 조합은 하나만 존재할 수 있습니다.
+  어느 쪽을 재생해야 할지 알 수 없기 때문입니다. 다시 올리려면
+  `스트림 삭제` 를 먼저 호출하세요.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FORBIDDEN` | 403 | SYSTEM/ADMIN 이 아닌 토큰 |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 검증 규칙 위반 |
+  | `MUPID_MUSIC_NOT_FOUND` | 404 | 음악 없음 또는 삭제됨 |
+  | `MUPID_DUPLICATE_STREAM` | 409 | 같은 코덱·비트레이트가 이미 있음 |

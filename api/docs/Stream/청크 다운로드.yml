@@ -1,0 +1,96 @@
+info:
+  name: 청크 다운로드
+  type: http
+  seq: 7
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/chunk/{{STREAM_ID}}/{{CHUNK_INDEX}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: STREAM_ID
+      value: "1"
+    - name: CHUNK_INDEX
+      value: "0"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 다운로드 성공 (nginx 경유)
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Length
+          value: "105098"
+        - name: Accept-Ranges
+          value: bytes
+      body:
+        type: text
+        data: (청크 바이너리)
+  - name: 404 청크 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_CHUNK_NOT_FOUND",
+            "message": "요청한 청크를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 청크 다운로드
+
+  `GET /api/v1/chunk/{streamId}/{index}` · 인증 필요
+
+  청크 바이너리를 내려받습니다.
+
+  ## X-Accel-Redirect
+
+  스프링은 **본문을 만들지 않습니다.** 인증을 확인하고 스토리지 키를 찾아
+  `X-Accel-Redirect` 헤더만 돌려줍니다.
+
+  ```
+  HTTP/1.1 200
+  X-Accel-Redirect: /storage/buckets/mupid/music/1/opus128/chunk_0000.rtp
+  Content-Type: audio/opus
+  Content-Length: 0
+  ```
+
+  nginx 가 이 헤더를 보고 오브젝트 스토리지에서 실제 바이트를 읽어 클라이언트로
+  보냅니다. 큰 음원 파일이 애플리케이션 힙을 거치지 않습니다.
+
+  **nginx 에 `internal` 로 선언된 `/storage/` location 이 필요합니다.**
+  없으면 클라이언트에는 404 가 나갑니다. 스프링을 직접(8800) 호출해도
+  본문 없는 200 만 보입니다 — 반드시 nginx 를 거쳐야 합니다.
+
+  `Content-Type` 은 스토리지 응답의 값으로 덮어써집니다. 스프링이 지정한
+  `audio/opus` 는 최종 응답에 남지 않습니다.
+
+  ## 보안
+
+  `/storage/` 는 `internal` 이라 브라우저에서 직접 치면 404 입니다. 스토리지
+  경로를 알아내도 인증 없이 음원을 받을 수 없습니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_CHUNK_NOT_FOUND` | 404 | 청크 없음 또는 음악이 삭제됨 |

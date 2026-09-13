@@ -10,6 +10,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.storage.dto.StorageFileData;
+import com.osundosun.mupid.api.storage.dto.StorageObjectStat;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
 import com.osundosun.mupid.api.storage.enumerate.FileCategory;
 import com.osundosun.mupid.api.storage.enumerate.FileType;
@@ -25,7 +26,11 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 @Slf4j
 @Service
@@ -39,18 +44,22 @@ public class StorageServiceImpl implements StorageService {
 
     @Override
     public ObjectStorageFile uploadFile(FileType fileType, FileCategory category, String key, MultipartFile file) {
+        return uploadFile(fileType, category, key, file, file.getContentType());
+    }
+
+    @Override
+    public ObjectStorageFile uploadFile(FileType fileType, FileCategory category, String key, MultipartFile file, String mime) {
         try {
         PutObjectRequest request = PutObjectRequest.builder()
             .bucket(props.bucketName())
             .key(key)
-            .contentType(file.getContentType())
+            .contentType(mime)
             .contentLength(file.getSize())
             .build();
         RequestBody body = RequestBody.fromInputStream(file.getInputStream(), file.getSize());
         s3Client.putObject(request, body);
 
         String originalFilename = file.getOriginalFilename();
-        String mime = file.getContentType();
         int fileSize = Math.toIntExact(file.getSize());
 
         return getFileByKey(key)
@@ -78,6 +87,54 @@ public class StorageServiceImpl implements StorageService {
             e.printStackTrace();
             throw new BusinessException(StorageErrorCode.FILE_PROCESSING_FAILED);
         }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<StorageObjectStat> statObject(String key) {
+        HeadObjectRequest request = HeadObjectRequest.builder()
+            .bucket(props.bucketName())
+            .key(key)
+            .build();
+        try {
+            HeadObjectResponse response = s3Client.headObject(request);
+            return Optional.of(new StorageObjectStat(response.contentLength(), response.eTag()));
+        } catch (NoSuchKeyException e) {
+            return Optional.empty();
+        } catch (S3Exception e) {
+            // SeaweedFS 는 없는 키에 404 만 주고 NoSuchKey 로 매핑되지 않을 때가 있다.
+            if (e.statusCode() == 404) {
+                return Optional.empty();
+            }
+            throw e;
+        }
+    }
+
+    @Override
+    public ObjectStorageFile registerFile(
+        FileType fileType, FileCategory category, String key,
+        String originalFileName, String mime, int fileSizeBytes
+    ) {
+        return getFileByKey(key)
+            .map(metaData -> {
+                // 같은 키를 다시 올린 경우 내용만 갱신한다.
+                metaData.setFileType(fileType);
+                metaData.setCategory(category);
+                metaData.setOriginalFileName(originalFileName);
+                metaData.setMime(mime);
+                metaData.setFileSizeBytes(fileSizeBytes);
+                return metaData;
+            })
+            .orElseGet(() -> repository.save(
+                ObjectStorageFile.builder()
+                    .fileType(fileType)
+                    .category(category)
+                    .originalFileName(originalFileName)
+                    .storageObjectKey(key)
+                    .mime(mime)
+                    .fileSizeBytes(fileSizeBytes)
+                    .build()
+            ));
     }
 
     @Override

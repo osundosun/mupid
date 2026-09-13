@@ -1,0 +1,146 @@
+info:
+  name: 스트림 목록 조회
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/stream"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MUSIC_ID
+      value: "1"
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.streams[0].stream_id
+        method: jsonq
+      variable:
+        name: STREAM_ID
+        scope: runtime
+      description: 첫 번째 스트림 번호를 STREAM_ID 변수에 저장합니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "streams": [
+                {
+                  "stream_id": 1,
+                  "music_id": 1,
+                  "bitrate_kbps": 128,
+                  "codec": "OPUS",
+                  "duration_ms": 213000,
+                  "chunk_count": 36,
+                  "status": "DONE"
+                }
+              ]
+            }
+          }
+  - name: 200 아직 완료된 스트림 없음
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "streams": []
+            }
+          }
+  - name: 404 음악 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_MUSIC_NOT_FOUND",
+            "message": "요청한 음악을 찾을 수 없습니다.",
+            "error_details": null
+          }
+  - name: 401 토큰 없음/만료
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_UNAUTHORIZED",
+            "message": "인증 정보가 유효하지 않거나 존재하지 않습니다.",
+            "errorDetails": null
+          }
+
+docs: |-
+  # 스트림 목록 조회
+
+  `GET /api/v1/music/{musicId}/stream` · 인증 필요
+
+  음악 번호로 재생 가능한 스트림 목록을 조회합니다.
+
+  ## 경로 파라미터
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `musicId` | int | 음악 번호 |
+
+  ## 응답 필드
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `data.streams[].stream_id` | int | 스트림 번호 |
+  | `data.streams[].music_id` | int | 원본 음원 번호 |
+  | `data.streams[].bitrate_kbps` | int | 비트레이트 (kbps) |
+  | `data.streams[].codec` | string | `AAC` / `OPUS` |
+  | `data.streams[].duration_ms` | int | 전체 재생 길이 (ms) |
+  | `data.streams[].chunk_count` | int | 청크 개수 |
+  | `data.streams[].status` | string | 항상 `DONE` |
+
+  **`DONE` 이 아닌 스트림은 응답에서 빠집니다.** 업로드가 끝나지 않은
+  스트림을 재생하면 도중에 끊기기 때문입니다. 그래서 음악은 있지만 아직
+  음원이 안 올라온 경우 404 가 아니라 빈 배열이 돌아옵니다.
+
+  스트림 번호를 얻었으면 `청크 목록 조회` → `청크 다운로드` 순서로 재생합니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_MUSIC_NOT_FOUND` | 404 | 음악 없음 또는 삭제됨 |

@@ -13,4 +13,6 @@ public interface ChunkRepository extends JpaRepository<Chunk, Chunk.ChunkId> {
 
     Optional<Chunk> findByChunkId(Chunk.ChunkId chunkId);
 
+    long countByChunkId_StreamId(int streamId);
+
 }
