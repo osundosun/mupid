@@ -22,10 +22,10 @@ export function Brand({ className = '' }: { className?: string }) {
   return (
     <Image
       unoptimized
-      src="/mupid-logo-cupid-black.png"
+      src="/mupid-logo-cupid-sky.png"
       alt="Mupid"
-      width={1134}
-      height={638}
+      width={1180}
+      height={600}
       className={`mupid-logo ${className}`.trim()}
     />
   );

@@ -56,7 +56,12 @@ npm run build
 
 ### 로고
 
-상단과 시작 화면은 사용자가 제공한 흑백 큐피드 로고 `public/mupid-logo-cupid-black.png`를 공통 `Brand` 컴포넌트로 표시합니다. 첨부 원본의 비율과 픽셀을 유지하며, 밝은 하늘 배경 위에서는 `mix-blend-mode: multiply`로 흰 캔버스를 자연스럽게 표시합니다. 파일 자체를 투명 이미지로 변경한 것은 아닙니다. 이전 SVG 로고 파일은 보존합니다.
+상단과 시작 화면은 사용자가 제공한 하늘색 큐피드 로고를 공통 `Brand` 컴포넌트로 표시합니다. 배경이 투명한 PNG라 별도 블렌드 없이 하늘 배경 위에 얹습니다.
+
+- `public/mupid-logo-cupid-sky-master.png`: 받은 원본 1710 × 920. 손대지 않고 보존합니다.
+- `public/mupid-logo-cupid-sky.png`: 화면에 쓰는 1180 × 600. 원본은 그림 둘레 투명 여백이 넓어 같은 로고 칸에서 글자가 작게 떠 보였습니다. `node scripts/build-logo.mjs`로 그 여백만 잘라내고 3%만 균일하게 되돌립니다. 그림 자체는 자르지 않았습니다.
+
+이전 흑백 PNG와 SVG 로고 파일은 보존합니다.
 
 ### 캐릭터 수정
 
