@@ -13,5 +13,20 @@
     "name": "gmail.client-secret",
     "type": "java.lang.String",
     "description": "A description for 'gmail.client-secret'"
+  },
+  {
+    "name": "ai.base-url",
+    "type": "java.lang.String",
+    "description": "OpenAI 호환 게이트웨이 주소. /chat/completions 앞까지."
+  },
+  {
+    "name": "ai.api-key",
+    "type": "java.lang.String",
+    "description": "게이트웨이 인증 키(MUPID_AI_GMS_KEY). 비어 있으면 AI 대화가 503."
+  },
+  {
+    "name": "ai.model",
+    "type": "java.lang.String",
+    "description": "사용할 모델 이름."
   }
 ]}

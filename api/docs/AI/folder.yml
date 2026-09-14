@@ -1,0 +1,58 @@
+info:
+  name: AI
+  type: folder
+  seq: 14
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # AI
+
+    Mupid AI 대화입니다. 화면 오른쪽의 `Mupid AI` 패널
+    (`frontend/components/mupid/chat.tsx`)이 씁니다. **인증이 필요**합니다.
+
+    | 엔드포인트 | 동작 |
+    | --- | --- |
+    | `POST /api/v1/ai/chat` | 한 번의 문답 (필요하면 곡 추천 포함) |
+
+    ## 어디로 흘러가는가
+
+    ```
+    POST /api/v1/ai/chat
+      → OpenAI 호환 게이트웨이 (gms.ssafy.io) chat/completions
+      → 모델이 recommend_music 툴을 부르면 서버가 실행하고 결과를 넣어 다시 질의
+      → 최종 답변(reply) + 추천 곡(tracks)
+    ```
+
+    대화는 LLM 이 하고 **곡 선정은 LLM 이 하지 않습니다.** 모델은 사용자가 원한
+    느낌을 한 문장으로 정리해 `recommend_music` 툴에 넘기고, 어떤 곡이 나올지는
+    추천 파이프라인이 정합니다. 없는 곡을 지어내지 않게 하려는 구조입니다.
+
+    ## ⚠ 추천은 아직 목업입니다
+
+    `recommend_music` 은 질의를 보지 않습니다. 카탈로그 앞쪽에서 몇 곡을 집어 정해진
+    사유를 붙일 뿐입니다 (`ai/tool/AiRecommendToolImpl.java`). **점수·취향·구간은
+    가짜입니다.** 다만 곡 번호는 실제 카탈로그의 것이라 화면에서 재생됩니다 — 카탈로그가
+    비어 있을 때만 재생되지 않는 고정 예시로 돌아갑니다.
+
+    지금 확인할 수 있는 것은 "모델이 툴을 부르고, 결과를 받아 한국어로 풀어 말하는가"
+    까지입니다. 진짜 추천은 `ai_server/` 의 `POST /internal/recommendations/search` 가
+    하게 됩니다. **다만 그 경로는 자연어 해석기(`MUPID_AI_NLP_URL`)가 없으면 501 입니다** —
+    지금은 `/internal/recommendations/next` 만 실제로 답합니다 (S15P21A204-219).
+    응답 필드를 그쪽 계약(`RecommendationItem`)에 맞춰 두었습니다.
+
+    ## 대화를 저장하지 않습니다
+
+    `ai_chat_sessions` · `ai_chat_messages` 표는 있지만 아직 쓰지 않습니다.
+    이전 대화는 클라이언트가 `history` 로 함께 보냅니다.
+
+    ## 설정
+
+    | 키 | 기본값 |
+    | --- | --- |
+    | `MUPID_AI_GMS_KEY` (또는 `MUPID_AI_GMS`) | 없음 — **비어 있으면 503** |
+    | `MUPID_AI_BASE_URL` | `https://gms.ssafy.io/gmsapi/api.openai.com/v1` |
+    | `MUPID_AI_MODEL` | `gpt-5-mini` |
