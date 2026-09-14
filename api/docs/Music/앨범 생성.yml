@@ -1,7 +1,7 @@
 info:
   name: 앨범 생성
   type: http
-  seq: 4
+  seq: 15
 
 http:
   method: POST

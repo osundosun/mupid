@@ -125,6 +125,16 @@
 .demo-login-dialog.is-signup form > .field-label:first-child { margin-top: 0; }
 .demo-login-dialog.is-signup .signup-verification { display: grid; justify-items: start; gap: 14px; margin: 10px 0 4px; }
 .demo-login-dialog.is-signup .signup-verification p { font-size: 15px; line-height: 1.7; color: #6a81a5; margin: 0; }
+/* 서버 검증 오류는 필드별로 여러 줄이 올 수 있다. */
+.demo-login-dialog .auth-message { white-space: pre-line; }
+/* 인증 번호 입력 + 확인 버튼. 좁은 화면에서는 버튼이 아래로 내려간다. */
+.demo-login-dialog.is-signup .signup-verification-code { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; width: 100%; }
+.demo-login-dialog.is-signup .signup-verification-code .field-label { grid-column: 1 / -1; margin: 0; }
+.demo-login-dialog.is-signup .signup-verification-code input { margin: 0; text-transform: uppercase; letter-spacing: 0.18em; }
+.demo-login-dialog.is-signup .signup-verification-code button { white-space: nowrap; }
+@media (max-width: 380px) {
+  .demo-login-dialog.is-signup .signup-verification-code { grid-template-columns: minmax(0, 1fr); }
+}
 .demo-login-dialog.is-signup .signup-gender { margin-top: 14px; }
 .demo-login-dialog.is-signup .signup-gender legend { margin: 0 0 8px; }
 .demo-login-dialog.is-signup .demo-login-art .mupid-mascot { width: 72px; height: 64px; }

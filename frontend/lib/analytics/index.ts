@@ -49,14 +49,29 @@ export {
 export { bindAudio } from './audio';
 export { createHttpTransport, type HttpTransportOptions, type Transport } from './transport';
 
+import { apiClient } from '../api/session';
 import { createTracker } from './tracker';
+import { createHttpTransport } from './transport';
 
 /**
  * 앱 전역 인스턴스.
  *
- * 수집 엔드포인트가 아직 없어서 기본 전송은 콘솔 싱크다. 백엔드 `event` 도메인이
- * 생기고 액세스 토큰 보관 위치가 정해지면(knowledge/open-questions C1) 여기를
- * `createTracker({ transport: createHttpTransport({ authorization }) })` 로 바꾼다.
- * 그때 호출부는 한 줄도 고치지 않는다.
+ * 액세스 토큰은 `ApiClient` 가 메모리에 들고 있다. SDK 는 보관 위치를 모른 채
+ * 매 배치마다 값만 받아 간다.
+ *
+ * 이 전송은 `ApiClient` 를 거치지 않는다. 페이지를 떠나는 중에도 나가야 해서
+ * `fetch(keepalive)` 가 필요한데, 그건 이 전송만의 사정이다. 대신 401 을 만나면
+ * 토큰을 새로 받지 못하고 큐에 되돌려 두었다가 다음 배치에서 재시도한다 —
+ * 그 사이 다른 요청이 토큰을 갱신해 둔다.
+ *
+ * 비로그인이면 `Authorization` 이 비어 나가고 서버가 401 을 준다. 이벤트는
+ * 큐에 남았다가 로그인 뒤 함께 나간다.
  */
-export const analytics = createTracker();
+export const analytics = createTracker({
+  transport: createHttpTransport({
+    authorization: () => {
+      const token = apiClient.getAccessToken();
+      return token ? `Bearer ${token}` : undefined;
+    },
+  }),
+});

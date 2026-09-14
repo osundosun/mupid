@@ -259,7 +259,7 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
                   className="icon-button dismiss-track"
                   aria-label={`${t.title} 관심 없음`}
                   onClick={() => {
-                    m.setIgnored((list) => [...list, t.id]);
+                    m.ignoreTrack(t.id);
                     m.setToast('앞으로 이 곡은 추천에서 숨길게요.');
                   }}
                 >
@@ -275,7 +275,7 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
           title="잠시 모든 음악을 둘러봤어요"
           description="숨긴 곡을 다시 보여드릴까요?"
         >
-          <button className="secondary-button" onClick={() => m.setIgnored([])}>
+          <button className="secondary-button" onClick={() => m.clearIgnored()}>
             추천 목록 초기화
           </button>
         </EmptyState>

@@ -51,6 +51,11 @@ export type ApiRequestOptions = {
   /** JSON 으로 직렬화할 객체. 바이너리는 `binary` 를 쓴다. */
   json?: unknown;
   binary?: ArrayBuffer | Uint8Array;
+  /**
+   * 멀티파트 본문. `Content-Type` 은 붙이지 않는다 — 경계 문자열을 브라우저가
+   * 정하므로 직접 넣으면 서버가 본문을 못 읽는다.
+   */
+  form?: FormData;
   contentType?: string;
   responseType?: ResponseType;
   /** 액세스 토큰을 붙이지 않는다 (로그인·재발급 등). */
@@ -155,7 +160,11 @@ export class ApiClient {
   async request<T = unknown>(options: ApiRequestOptions): Promise<T> {
     // 재발급이 도는 동안 들어온 요청은 줄을 선다. 토큰 없이 보내면 어차피
     // 401 이 되고, 재발급을 여러 번 돌게 만든다.
-    if (this.refreshing) await this.enqueue();
+    //
+    // **익명 요청은 줄 세우지 않는다.** 토큰이 필요 없으니 기다릴 이유가 없고,
+    // 기다리게 두면 재발급이 실패할 때 함께 실패한다. 첫 방문자가 곡 목록을
+    // 못 받는 것이 이 때문이었다 — 세션 복원이 늘 실패하는 상태라서다.
+    if (this.refreshing && !options.anonymous) await this.enqueue();
     try {
       return await this.dispatch<T>(options);
     } catch (error) {
@@ -178,11 +187,14 @@ export class ApiClient {
 
   private async dispatch<T>(options: ApiRequestOptions): Promise<T> {
     const headers: Record<string, string> = {};
-    let body: string | ArrayBuffer | Uint8Array | null = null;
+    let body: string | ArrayBuffer | Uint8Array | FormData | null = null;
 
     if (options.json !== undefined) {
       headers['Content-Type'] = 'application/json';
       body = JSON.stringify(options.json);
+    } else if (options.form) {
+      // Content-Type 을 붙이지 않는다. 브라우저가 경계 문자열과 함께 채운다.
+      body = options.form;
     } else if (options.binary) {
       headers['Content-Type'] =
         options.contentType ?? 'application/octet-stream';

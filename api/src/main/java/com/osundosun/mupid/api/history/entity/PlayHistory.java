@@ -20,6 +20,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -29,6 +30,7 @@ import lombok.Setter;
 
 @Entity
 @EntityListeners(AuditingEntityListener.class)
+@Table(name = "play_histories")
 @Getter
 @Setter
 @Builder
@@ -41,7 +43,7 @@ public class PlayHistory {
      */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Integer playHistoryId;
+    private Long playHistoryId;
 
     /**
      * 유저

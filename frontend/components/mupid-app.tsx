@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { mupidService } from '@/lib/services';
+import { fetchCatalog } from '@/lib/stream-catalog';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
 import {
@@ -69,7 +70,11 @@ export function MupidApp() {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
-    void mupidService.bootstrap().then(value => { if (live) setData(value); })
+    // 서버 카탈로그는 화면 쪽에서 받아 서비스 계층에 넘긴다.
+    // 서비스 계층은 브라우저 저장만 건드린다 (docs/server-integration.md).
+    void fetchCatalog()
+      .then((catalog) => mupidService.bootstrap(catalog))
+      .then(value => { if (live) setData(value); })
       .catch(() => { if (live) setError('음악을 불러오지 못했어요.'); });
     return () => { live = false; };
   }, [attempt]);
@@ -110,6 +115,13 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   const desktopNavPage =
     m.page === 'moment' ? 'player' : m.page === 'similar' ? 'search' : m.page;
   const navPage = desktopNavPage;
+  // 로그인 여부를 알기 전에는 아무 화면도 보여주지 않는다. 먼저 그리면 시작
+  // 화면이 깜빡였다가 바뀌고, 비로그인에게 앱 골격이 잠깐 노출된다.
+  if (!m.authReady) {
+    return <main className="mupid-shell" style={{ padding: 32 }} aria-busy="true">
+      <output>로그인 상태를 확인하고 있어요…</output>
+    </main>;
+  }
   return (
     <div className={`mupid-shell ${hideMini ? 'no-mini' : ''} page-${m.page}`}>
       <a href="#main-content" className="skip-link">

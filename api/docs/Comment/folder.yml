@@ -1,0 +1,49 @@
+info:
+  name: Comment
+  type: folder
+  seq: 12
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Comment
+
+    곡의 한 시점에 남기는 댓글입니다. 전부 **인증이 필요**합니다.
+
+    | 엔드포인트 | 동작 |
+    | --- | --- |
+    | `GET /api/v1/music/{musicId}/comment` | 한 곡의 댓글 (시점 오름차순) |
+    | `POST /api/v1/music/{musicId}/comment` | 작성 |
+    | `PATCH /api/v1/comment/{commentId}` | 내용 수정 (본인만) |
+    | `DELETE /api/v1/comment/{commentId}` | 삭제 (본인만, 소프트) |
+
+    조회도 인증이 필요합니다. 댓글은 재생 화면에서만 보이고 재생 자체가 로그인을
+    요구합니다. 응답의 `mine` 을 채우려면 누가 보는지도 알아야 합니다.
+
+    ## `mine` 은 서버가 판정합니다
+
+    화면이 `user_id` 를 비교하게 두면 로그인 정보가 화면마다 필요해지고, 비교를
+    빠뜨리면 남의 댓글에 수정 버튼이 뜹니다. 수정·삭제 버튼은 `mine` 만 보고
+    그리면 됩니다.
+
+    ## 내용은 100자입니다
+
+    `music_comments.content` 가 `varchar(100)` 입니다. 화면도 같은 값으로
+    막습니다. 더 길게 받으려면 ERD 를 고쳐야 하므로 팀에 먼저 물어야 합니다.
+
+    ## 시점은 바꿀 수 없습니다
+
+    이 순간에 남긴 말이라는 것이 댓글의 정체라, 시점이 바뀌면 다른 댓글입니다.
+    옮기고 싶으면 지우고 다시 답니다. 그래서 `PATCH` 는 `content` 만 받습니다.
+
+    ## 오류
+
+    | 코드 | 상태 | 설명 |
+    | --- | --- | --- |
+    | `MUPID_MUSIC_NOT_FOUND` | 404 | 없거나 삭제된 곡 |
+    | `MUPID_COMMENT_NOT_FOUND` | 404 | 없거나 이미 삭제된 댓글 |
+    | `MUPID_COMMENT_FORBIDDEN` | 403 | 남의 댓글을 고치거나 지우려 함 |
+    | `MUPID_INVALID_REQUEST_BODY` | 400 | 빈 내용 · 100자 초과 · 음수 시점 |

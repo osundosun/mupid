@@ -16,11 +16,21 @@ import { ApiError } from '@/lib/api/client';
 const genderOf = (value: string): 'M' | 'F' | 'ETC' =>
   value === 'MALE' ? 'M' : value === 'FEMALE' ? 'F' : 'ETC';
 
-/** 서버가 준 메시지를 그대로 보여준다. 검증 오류는 첫 필드 메시지를 쓴다. */
+/**
+ * 서버가 준 메시지를 그대로 보여준다.
+ *
+ * 필드 검증 오류는 하나만 고르지 않고 전부 보여준다. 서버가 Map 으로 주기
+ * 때문에 순서가 보장되지 않아, 첫 항목만 쓰면 엉뚱한 필드가 뽑힐 수 있다.
+ *
+ * `instanceof` 대신 모양으로 판별한다. 개발 서버가 모듈을 두 번 넘겨주면
+ * 클래스가 갈려 `instanceof` 가 어긋날 수 있는데, 그때 메시지를 통째로
+ * 잃는 것보다는 낫다.
+ */
 const describe = (error: unknown, fallback: string) => {
-  if (error instanceof ApiError) {
-    const first = error.details && Object.values(error.details)[0];
-    return first || error.message || fallback;
+  const api = error as Partial<ApiError> | null;
+  if (api?.details) {
+    const fields = Object.values(api.details).filter(Boolean);
+    if (fields.length) return fields.join('\n');
   }
   return error instanceof Error && error.message ? error.message : fallback;
 };
@@ -32,6 +42,9 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
   const [busy, setBusy] = useState(false);
   // 인증 메일 발송 응답의 번호. 회원가입 요청에 그대로 실어야 한다.
   const [verificationId, setVerificationId] = useState<number | null>(null);
+  // 메일로 온 6자리 인증 번호. 서버가 확인해 줘야 회원가입이 통과한다.
+  const [code, setCode] = useState('');
+  const [verified, setVerified] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   const form = useRef<HTMLFormElement>(null);
@@ -45,6 +58,8 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
           setMessage('');
           setName('');
           setVerificationId(null);
+          setCode('');
+          setVerified(false);
           form.current?.reset();
         }
       }}
@@ -79,8 +94,8 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
                 return;
               }
               const fields = new FormData(form.current!);
-              if (verificationId === null) {
-                setMessage('이메일 인증을 먼저 진행해 주세요.');
+              if (verificationId === null || !verified) {
+                setMessage('이메일 인증을 먼저 완료해 주세요.');
                 return;
               }
               setBusy(true);
@@ -94,7 +109,7 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
                   // 화면 값(MALE/FEMALE)과 서버 enum(M/F)이 다르다.
                   gender: genderOf(String(fields.get('gender') || '')),
                 });
-                setSignup(false); form.current?.reset(); setName(''); setVerificationId(null);
+                setSignup(false); form.current?.reset(); setName(''); setVerificationId(null); setCode(''); setVerified(false);
                 setMessage('회원가입이 완료됐어요. 로그인해 주세요.');
               } catch (error) { setMessage(describe(error, '회원가입하지 못했어요. 다시 시도해 주세요.')); }
               finally { setBusy(false); }
@@ -123,18 +138,36 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
             required
           />
           {signup && <div className="signup-verification">
-            <button type="button" className="secondary-button" disabled={busy || !name.trim()} onClick={async () => {
+            <button type="button" className="secondary-button" disabled={busy || !name.trim() || verified} onClick={async () => {
               if (!input.current?.reportValidity()) return;
               setBusy(true);
               try {
                 const result = await api.mail.sendVerification(name);
                 setVerificationId(result.verification_id);
-                setMessage('인증 메일을 확인해 주세요. 인증을 마친 뒤 회원가입을 눌러 주세요.');
+                setCode('');
+                setVerified(false);
+                setMessage('메일로 보낸 인증 번호를 입력해 주세요. 15분 안에 입력해야 해요.');
               }
               catch (error) { setMessage(describe(error, '인증 메일을 요청하지 못했어요.')); }
               finally { setBusy(false); }
-            }}>이메일 인증하기</button>
-            <p>이메일 인증 후 회원가입을 완료할 수 있어요.</p>
+            }}>{verificationId === null ? '이메일 인증하기' : '인증 메일 다시 보내기'}</button>
+            {verificationId !== null && !verified && <div className="signup-verification-code">
+              <label htmlFor="signup-code" className="field-label">인증 번호</label>
+              <input id="signup-code" type="text" value={code} inputMode="text"
+                placeholder="메일로 받은 6자리"
+                autoComplete="one-time-code" maxLength={6}
+                onChange={(event) => setCode(event.target.value.toUpperCase())} />
+              <button type="button" className="secondary-button" disabled={busy || code.length < 6} onClick={async () => {
+                setBusy(true);
+                try {
+                  await api.mail.submitCode(verificationId, code);
+                  setVerified(true);
+                  setMessage('이메일 인증이 완료됐어요. 나머지 정보를 입력해 주세요.');
+                } catch (error) { setMessage(describe(error, '인증 번호를 확인하지 못했어요.')); }
+                finally { setBusy(false); }
+              }}>인증 확인</button>
+            </div>}
+            <p>{verified ? '이메일 인증이 완료됐어요.' : '이메일 인증 후 회원가입을 완료할 수 있어요.'}</p>
           </div>}
           <label htmlFor="demo-login-password" className="field-label">
             비밀번호
@@ -170,7 +203,7 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
               </div>
             </fieldset>
           </>}
-          {message && <p role="status">{message}</p>}
+          {message && <p role="status" className="auth-message">{message}</p>}
           <div className={`auth-submit-actions ${signup ? 'is-signup' : ''}`}>
           <button
             className="primary-button wide"

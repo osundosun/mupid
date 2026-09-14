@@ -19,7 +19,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "music_moods")
+@Table(name = "music_analysis_instruments")
 @Getter
 @Setter
 @AllArgsConstructor
@@ -44,7 +44,7 @@ public class MusicAnalysisInstrument {
      */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "instrument_code_id", nullable = false)
-    private Code moodCodeId;
+    private Code instrumentCode;
 
     @Embeddable
     @Getter

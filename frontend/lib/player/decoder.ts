@@ -65,6 +65,20 @@ export function isOpusDecodingSupported(): boolean {
   );
 }
 
+/**
+ * Opus 프레임의 TOC 바이트에서 채널 수를 읽는다 (RFC 6716 §3.1).
+ *
+ * TOC = config(5비트) | s(1비트) | c(2비트). `s` 비트(0x04)가 0이면 모노,
+ * 1이면 스테레오다. 서버 메타에 채널 수가 없어도 비트스트림이 직접 알려준다.
+ *
+ * raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담을 수 있다.
+ * 그 이상(5.1 등)은 OpusHead 가 있어야 풀리므로 여기서 다룰 수 없다.
+ */
+export function channelsFromToc(frame: Uint8Array): 1 | 2 {
+  if (frame.length === 0) return 2;
+  return (frame[0] & 0x04) === 0 ? 1 : 2;
+}
+
 export class DecodeError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message);
@@ -74,6 +88,7 @@ export class DecodeError extends Error {
 }
 
 export type DecodeOptions = {
+  /** 만들어 낼 AudioBuffer 의 채널 수. 보통 2(스테레오)다. */
   channels: number;
   /** 프레임 하나의 길이(ms). 청킹 설정 기본값은 20ms 다. */
   frameDurationMs: number;
@@ -107,6 +122,11 @@ export async function decodeOpusFrames(
   );
   if (frames.length === 0) return output;
 
+  // 디코더에는 비트스트림의 실제 채널 수를 알려 준다. 서버 메타에 없어서
+  // 프레임에서 직접 읽는다. 모노여도 출력은 스테레오이고, 좌·우에 같은
+  // 소리가 들어간다(readChannel 이 같은 플레인을 양쪽에 복사한다).
+  const sourceChannels = channelsFromToc(frames[0]);
+
   const parts: AudioDataLike[] = [];
   let decodedSamples = 0;
   let failure: unknown = null;
@@ -128,7 +148,7 @@ export async function decodeOpusFrames(
     decoder.configure({
       codec: 'opus',
       sampleRate: OPUS_SAMPLE_RATE,
-      numberOfChannels: channels,
+      numberOfChannels: sourceChannels,
     });
     const frameDurationUs = frameDurationMs * 1000;
     frames.forEach((frame, index) => {

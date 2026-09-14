@@ -1,0 +1,82 @@
+info:
+  name: 설문 조회
+  type: http
+  seq: 3
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/onboarding"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 제출함
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "submitted": true,
+              "submitted_at": "2026-09-14T10:32:26",
+              "nickname": "규원",
+              "moods": [
+                { "code_id": 1, "name": "잔잔한" },
+                { "code_id": 3, "name": "몽환적인" },
+                { "code_id": 5, "name": "집중되는" }
+              ],
+              "genres": [
+                { "code_id": 12, "name": "Rock" },
+                { "code_id": 15, "name": "Jazz" }
+              ]
+            }
+          }
+  - name: 200 아직 제출 안 함
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "submitted": false,
+              "submitted_at": null,
+              "nickname": "규원",
+              "moods": [],
+              "genres": []
+            }
+          }
+
+docs: |-
+  # 설문 조회
+
+  `GET /api/v1/onboarding` · **인증 필요**
+
+  화면 진입 분기에 씁니다. `submitted` 가 거짓이면 온보딩 화면으로 보냅니다.
+
+  아직 제출하지 않았어도 **404 가 아니라 200** 입니다. `submitted: false`,
+  `submitted_at: null`, 빈 배열로 내려옵니다. `nickname` 은 계정에 있는 값이라
+  제출 전에도 채워져 있습니다.
+
+  `moods` · `genres` 는 제출한 그대로(중복 제거된 집합)입니다. 저장 형태인
+  조합은 드러나지 않습니다.
+
+  `submitted_at` 은 응답 행들 중 가장 늦은 생성 일시입니다. 다시 제출하면
+  갱신됩니다.

@@ -133,6 +133,8 @@
 .song-lyrics p { margin: 0; overflow-wrap: anywhere; word-break: keep-all; }
 .song-lyrics .song-lyrics-empty { color: #8997ac; }
 .song-lyrics .lyrics-disclaimer { font-size: 13px; line-height: 1.6; color: #8997ac; margin-top: 18px; }
+/* 서버 가사는 줄마다 시점이 있다. 숫자 폭을 고정해 줄이 흔들리지 않게 한다. */
+.song-lyrics .lyrics-time { color: #8997ac; font-variant-numeric: tabular-nums; margin-right: 8px; }
 @media (prefers-reduced-motion: no-preference) {
   .collection-page .playlist-card > .album-art { transition: transform 250ms ease, box-shadow 250ms ease; }
   .collection-page .playlist-card:hover > .album-art { transform: translateY(-5px); box-shadow: 0 18px 28px #607caa30; }

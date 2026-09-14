@@ -75,6 +75,22 @@ docs:
     청크 업로드는 multipart 가 아니라 **본문에 바이너리를 그대로 싣는 PUT** 이고,
     스프링이 아니라 nginx 가 처리합니다 (`Stream / 청크 업로드`).
 
+    ## 목록 응답 형식
+
+    목록 API 는 아래 모양으로 감싼다. `page` 는 **0부터** 센다.
+
+    ```json
+    {
+      "items": [],
+      "page": 0,
+      "size": 20,
+      "total_elements": 0,
+      "total_pages": 0
+    }
+    ```
+
+    `Music / 곡 목록 조회` 가 첫 사례이고, 이후 목록 API 도 같은 모양을 쓴다.
+
     ## 응답 형식
 
     성공 응답은 `BaseResponse` 로 감싸집니다.
@@ -152,6 +168,8 @@ docs:
     - `GET`, `POST /api/v1/mail/verification` (이메일 인증)
     - `GET /api/v1/mail/verification/**`
     - `GET /api/actuator/**`
+    - `GET /api/v1/music`, `GET /api/v1/music/{musicId}` (곡 목록·상세)
+    - `GET /api/v1/storage/image/ALBUM/*`, `.../ARTIST/*` (앨범·아티스트 이미지)
 
     스트리밍(`Stream` 폴더) 엔드포인트는 모두 액세스 토큰이 필요합니다.
 
@@ -192,6 +210,14 @@ docs:
     - `category` (storage) — `PROFILE`, `ARTIST`, `ALBUM`, `STREAMING`
 
     가입 직후에는 `status = PENDING`(온보딩 필요), `role = ROLE_USER` 입니다.
+
+    ## 공통 코드
+
+    분위기·장르는 `codes` 표의 행이고, API 는 이름이 아니라 `code_id` 로
+    주고받습니다. 목록은 `Onboarding / 설문 항목 조회` 로 받습니다.
+
+    `codes` 는 기준 데이터라 사람이 직접 넣습니다 —
+    `knowledge/domain/seed-codes.sql`. 비어 있으면 온보딩이 503 입니다.
 
     ## 프로필 사진
 

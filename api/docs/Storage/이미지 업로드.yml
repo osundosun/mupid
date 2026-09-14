@@ -5,7 +5,7 @@ info:
 
 http:
   method: POST
-  url: "{{BASE_URL}}/api/v1/storage/image/profile/{{USER_ID}}"
+  url: "{{BASE_URL}}/api/v1/storage/image/PROFILE/{{USER_ID}}"
   headers:
     - name: Authorization
       value: Bearer {{ACCESS_TOKEN}}
@@ -118,11 +118,28 @@ docs: |-
   `Music / 앨범 생성` 의 `image_file_id` 에 그대로 넣습니다.
   컬렉션에서는 `IMAGE_FILE_ID` 변수에 자동 저장됩니다.
 
+  ## 카테고리는 대문자로 씁니다
+
+  스프링의 enum 바인딩은 소문자도 받아 주지만, `SecurityConfig` 의 공개 경로가
+  대문자(`/api/v1/storage/image/ALBUM/*`)로 적혀 있습니다. 서버가 내려주는
+  `image_url` 도 대문자라 맞춰 두는 편이 헷갈리지 않습니다.
+
   ## PROFILE 카테고리 동작
 
   `PROFILE` 로 업로드하면 인증 토큰 사용자의 `image_file` 이 이 파일로
-  설정됩니다. 다른 카테고리는 아직 콜백이 연결되어 있지 않아 파일
-  저장만 수행됩니다.
+  설정되고, 바꾸는 경우 이전 파일은 삭제됩니다. 다른 카테고리는 아직 콜백이
+  연결되어 있지 않아 파일 저장만 수행됩니다.
+
+  **저장 키는 본인 유저 번호여야 합니다.** 키가 경로 변수라 그냥 두면 남의
+  프로필 파일을 덮어쓸 수 있어서, 서버가 대조하고 어긋나면
+  `MUPID_PROFILE_KEY_MISMATCH`(403) 를 냅니다.
+
+  올린 사진의 조회 주소는 `GET /api/v1/user` 의 `image_url` 로 확인합니다.
+  올린 적이 없으면 `/api/v1/storage/image/PROFILE/default` 를 가리키고,
+  그 키에는 파일이 없어 서버가 기본 이미지를 돌려줍니다.
+
+  프로필 사진은 **공개 경로가 아닙니다.** 개인 정보라 열지 않았습니다.
+  `<img src>` 로 바로 걸 수 없으니 토큰을 붙여 받아야 합니다.
 
   ## 오류
 
@@ -131,3 +148,4 @@ docs: |-
   | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
   | `MUPID_INVALID_IMAGE_FILE_FORMAT` | 400 | 허용 확장자가 아님 |
   | `MUPID_IMAGE_FILE_SIZE_EXCEEDED` | 413 | 5 MB 초과 |
+  | `MUPID_PROFILE_KEY_MISMATCH` | 403 | 프로필 키가 본인 번호가 아님 |

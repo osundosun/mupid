@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.osundosun.mupid.api.cache.enumerate.CacheKind;
 import com.osundosun.mupid.api.cache.service.CacheService;
+import com.osundosun.mupid.api.common.enumerate.Selector;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.event.dto.ListenEventMessage;
 import com.osundosun.mupid.api.event.enumerate.EntryPath;
@@ -30,6 +31,7 @@ import com.osundosun.mupid.api.event.properties.EventProperties;
 import com.osundosun.mupid.api.event.request.EventCollectRequest;
 import com.osundosun.mupid.api.event.request.EventItemRequest;
 import com.osundosun.mupid.api.event.response.EventCollectResponse;
+import com.osundosun.mupid.api.history.service.HistoryService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,7 +40,10 @@ import lombok.extern.slf4j.Slf4j;
  * 청취 이벤트 수집기. 프론트가 보낸 배치를 검증·정규화해서 Kafka 로 넘긴다.
  * 이후 경로(Kafka → ClickHouse)는 [decision/0005], 이 구조의 배경은 [decision/0014].
  *
- * 트랜잭션이 없다. MySQL 을 건드리지 않고 Redis 와 Kafka 만 다룬다.
+ * 트랜잭션이 없다. Redis 와 Kafka 가 본업이고, MySQL 은 `HistoryService` 를 통해
+ * **부수적으로** 건드린다 — `PLAY_START` · `SEARCH` 두 종류만 서비스용 사본으로
+ * 남긴다 ([decision/0018](../../knowledge/decision/0018-history-from-event-stream.md)).
+ * 그 저장이 실패해도 이벤트 수집은 계속된다.
  */
 @Slf4j
 @Service
@@ -81,6 +86,7 @@ public class EventServiceImpl implements EventService {
     private final EventProperties props;
     private final CacheService cacheService;
     private final KafkaTemplate<String, String> eventKafkaTemplate;
+    private final HistoryService historyService;
 
     @Override
     public EventCollectResponse collectEvents(Integer userId, EventCollectRequest dto) {
@@ -117,10 +123,40 @@ public class EventServiceImpl implements EventService {
             }
 
             publish(message.get(), payload.get());
+            // 서비스용 사본은 Kafka 로 보낸 뒤에 남긴다. 여기서 실패해도
+            // 분석 적재는 이미 끝났다.
+            recordHistory(userId, message.get(), item);
             accepted++;
         }
 
         return new EventCollectResponse(accepted, duplicated, rejected);
+    }
+
+    /**
+     * 화면이 바로 읽는 MySQL 사본을 남긴다.
+     *
+     * 전체 22종 중 `PLAY_START` 와 `SEARCH` 만이다. 나머지는 분석용이라
+     * ClickHouse 에만 있으면 된다. 특히 `PLAY_PROGRESS` 는 5초 하트비트라
+     * 여기에 들어오면 안 된다.
+     *
+     * 실패해도 던지지 않는다. "최근 감상" 은 편의 기능이고, 그것 때문에
+     * 이벤트 수집이 실패로 응답되면 클라이언트가 배치 전체를 재전송한다.
+     */
+    private void recordHistory(Integer userId, ListenEventMessage message, EventItemRequest item) {
+        try {
+            if (EventType.PLAY_START.name().equals(message.eventType())) {
+                // 추천을 타고 들어온 재생이면 선곡 주체가 AI 다.
+                Selector selector = EntryPath.RECOMMEND.name().equals(message.entryPath())
+                    ? Selector.AI
+                    : Selector.USER;
+                historyService.recordPlay(userId, message.trackId(), selector, item.reason());
+            } else if (EventType.SEARCH.name().equals(message.eventType())) {
+                historyService.recordSearch(userId, message.searchQuery());
+            }
+        } catch (RuntimeException e) {
+            log.warn("기록 사본 저장 실패 event_id={} event_type={}",
+                message.eventId(), message.eventType(), e);
+        }
     }
 
     /**

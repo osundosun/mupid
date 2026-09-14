@@ -71,8 +71,9 @@ public class MusicComment {
     /**
      * 삭제 여부
      */
+    @Builder.Default
     @Column(nullable = false)
-    private Boolean isDeleted;
+    private Boolean isDeleted = false;
 
     /**
      * 작성 일시

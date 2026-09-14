@@ -6,8 +6,7 @@ export type AccountSession = { kind: 'demo' | 'authenticated'; nickname: string;
 /** Frontend domain contract, not a promise about the future backend's DTOs. Times are seconds. */
 export type Preferences = {
   onboardingSubmittedAt: string | null;
-  genres?: string[];
-  nickname: string; moods: string[]; liked: number[]; ignored: number[];
+  nickname: string; moods: string[]; genres: string[]; liked: number[]; ignored: number[];
   history: number[]; moments: SavedMoment[]; playlists: Playlist[];
   /** 마지막으로 재생한 곡. null이면 아직 한 곡도 듣지 않은 계정이다. */
   lastPlayedId?: number | null;
@@ -20,7 +19,13 @@ export type SignupInput = {
 export interface MupidService {
   // 실제 API 연결 시 이 인터페이스를 구현한다. 화면 컴포넌트에서 직접 fetch를 추가하지 않는다.
   readonly mode: 'demo' | 'api';
-  bootstrap(): Promise<Bootstrap>;
+  /**
+   * 데모 저장소에서 곡·설정을 읽는다.
+   *
+   * @param catalog 서버에서 받아 온 곡 목록. 네트워크 호출은 화면 쪽에서 하고
+   *   여기서는 합치기만 한다 — 이 계층은 브라우저 저장만 건드린다.
+   */
+  bootstrap(catalog?: Track[]): Promise<Bootstrap>;
   savePreferences(value: Preferences): Promise<void>;
   login(input: { email: string; password: string }): Promise<AccountSession>;
   logout(): Promise<void>;

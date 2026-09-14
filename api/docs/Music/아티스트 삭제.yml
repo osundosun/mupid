@@ -1,7 +1,7 @@
 info:
   name: 아티스트 삭제
   type: http
-  seq: 8
+  seq: 14
 
 http:
   method: DELETE

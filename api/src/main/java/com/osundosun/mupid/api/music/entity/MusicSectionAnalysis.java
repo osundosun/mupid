@@ -52,8 +52,11 @@ public class MusicSectionAnalysis {
 
     /**
      * 섹션 순서
+     *
+     * `index` 는 MySQL 예약어라 백틱이 없으면 INSERT·SELECT 가 문법 오류로
+     * 터진다. `Chunk` 가 이미 같은 것을 밟았다.
      */
-    @Column(nullable = false)
+    @Column(name = "`index`", nullable = false)
     private Integer index;
 
     /**

@@ -1,7 +1,7 @@
 info:
   name: 음악 추가
   type: http
-  seq: 1
+  seq: 9
 
 http:
   method: POST

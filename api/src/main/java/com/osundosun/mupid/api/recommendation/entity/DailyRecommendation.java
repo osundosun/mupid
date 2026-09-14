@@ -1,5 +1,6 @@
 package com.osundosun.mupid.api.recommendation.entity;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 import org.springframework.data.annotation.CreatedDate;
@@ -40,6 +41,7 @@ public class DailyRecommendation {
      */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "daily_recommendation_id")
     private Integer recommendationId;
 
     /**
@@ -76,9 +78,11 @@ public class DailyRecommendation {
 
     /**
      * 추천 기준일
+     *
+     * 컬럼이 `DATE` 라 시각이 없다. `LocalDateTime` 으로 잡으면 쓸 때 잘린다.
      */
     @Column(nullable = false)
-    private LocalDateTime recommendationDate;
+    private LocalDate recommendationDate;
 
     /**
      * 생성 일시

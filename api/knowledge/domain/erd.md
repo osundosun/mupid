@@ -113,6 +113,8 @@ ERD 반입 시점(2026-09-11)에 기존 엔티티 3개가 ERD 와 여러 곳에�
 | `users.birth_year` | `SMALLINT` | `Integer` | 범위 안이면 무해 |
 | `email_verifications.token` | `VARCHAR(6)` + **UNIQUE** | 길이·유니크 없음 | 6자리 랜덤이 충돌하면 발송이 실패한다 |
 | 프론트엔드 | — | `frontend/` 의 회원가입 폼과 `SignupInput` 타입이 아직 `MALE`/`FEMALE` 을 쓴다 | 지금은 데모 모드라 API 를 부르지 않지만, 연동하는 사람이 반드시 함께 고쳐야 한다 |
+| `onboarding_survey` | `mood_id` · `genre_id` | 엔티티·**실제 DB 모두** `mood_code_id` · `genre_code_id` | **`erd.sql` 쪽이 낡았다.** 개발 DB 에 적용된 DDL 은 `_code_id` 다. 코드는 실제 DB 를 따랐다 |
+| `onboarding_survey` | `mood_id` · `genre_id` **NOT NULL** | 같음 | 한 줄에 답 하나를 담을 수 없다. 지금은 분위기 × 장르 조합으로 우회한다 → [decision/0017](../decision/0017-onboarding-survey-cross-product.md) |
 
 ## 곡 식별자가 둘이다
 
@@ -123,3 +125,5 @@ MySQL 도메인을 만들 때는 **`music_id` 를 쓴다.** ERD 에 `track_id` �
 ## 출처
 
 [erd.sql](erd.sql) — ERD 도구 산출 DDL (2026-09-11 반입).
+
+[seed-codes.sql](seed-codes.sql) — `codes` 기준 데이터. `ddl-auto` 가 `none` 이라 사람이 직접 넣는다. 비어 있으면 온보딩이 503 이다.

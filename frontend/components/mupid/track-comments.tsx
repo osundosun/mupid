@@ -14,7 +14,8 @@ import {
 import type { MupidModel } from '@/hooks/use-mupid';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
 import { Waveform, PlayerControls } from './primitives';
-import { trackComments, validateComment, commentUserId, ownsComment, type TrackComment } from '@/lib/track-comments';
+import { commentable, validateComment } from '@/lib/comment-rules';
+import { trackComments, commentUserId, ownsComment, type TrackComment } from '@/lib/track-comments';
 
 // 로그인 화면을 다녀오는 동안만 새 댓글 초안을 보관한다. 새로고침하면 폐기된다.
 const pendingDrafts = new Map<number, { at: number; body: string; owner: number | null }>();
@@ -23,6 +24,8 @@ const COMMENTS_PER_PAGE = 5;
 
 export function TrackComments({ model: m }: { model: MupidModel }) {
   const userId = commentUserId(m.demoSession);
+  // 데모 곡은 서버에 없어 댓글을 붙일 데가 없다.
+  const available = commentable(m.active) && m.demoSession?.kind === 'authenticated';
   const [items, setItems] = useState<TrackComment[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
@@ -59,16 +62,21 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
     } else { pendingDrafts.delete(m.active.id); setDraft(null); setBody(''); }
     setRemove(null);
   }, [userId, m.active.id]);
+  // 댓글은 곡마다 서버에서 받는다. 로그인해야 읽을 수 있고 다른 사람 것도 보인다.
   useEffect(() => {
-    let live = true;
-    void trackComments.list().then(value => { if (live) { setItems(value); setReady(true); } })
-      .catch(() => { if (live) setError('댓글을 불러오지 못했어요. 브라우저 저장 설정을 확인해 주세요.'); });
-    return () => { live = false; };
-  }, [reload]);
-  const persist = async (next: TrackComment[]) => {
+    if (!available) { setItems([]); setReady(true); return; }
+    const abort = new AbortController();
+    setReady(false); setError('');
+    void trackComments.list(m.active, abort.signal)
+      .then(value => { if (!abort.signal.aborted) { setItems(value); setReady(true); } })
+      .catch(() => { if (!abort.signal.aborted) setError('댓글을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'); });
+    return () => abort.abort();
+  }, [available, m.active.id, m.active.musicId, reload]);
+  /** 서버 호출 한 번을 감싼다. 실패하면 작성 내용을 그대로 두고 알린다. */
+  const run = async (action: () => Promise<void>) => {
     setBusy(true); setError('');
-    try { await trackComments.save(next); setItems(next); return true; }
-    catch { setError('저장하지 못했어요. 작성 내용은 그대로 있으니 다시 시도해 주세요.'); return false; }
+    try { await action(); return true; }
+    catch (e) { setError(e instanceof Error && e.message ? e.message : '저장하지 못했어요. 다시 시도해 주세요.'); return false; }
     finally { setBusy(false); }
   };
   const start = (comment?: TrackComment, selectedAt?: number) => {
@@ -95,7 +103,7 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
   // 좁은 화면에서도 겹치지 않게 가까운 댓글을 8개 시간 구간으로 묶는다.
   const bucketFor = (at: number) => Math.min(7, Math.floor(Math.max(0, at) / Math.max(1, m.active.duration) * 8));
   const buckets = Array.from({length: 8}, (_, index) => visible.filter(c => bucketFor(c.at) === index).sort((a,b) => a.at - b.at));
-  // 지금은 이 브라우저의 댓글만 존재한다. 서버 연동 후 작성자별 수정·삭제 권한을 별도로 검증해야 한다.
+  // 수정·삭제 권한은 서버가 판정한 `mine` 을 따른다. 화면이 user_id 를 비교하지 않는다.
   return <section className="track-comments" style={{'--comment-anchor': `${Math.min(100, Math.max(0, (draft?.at ?? m.time) / Math.max(1, m.active.duration) * 100))}%`} as CSSProperties} aria-labelledby="track-comments-heading">
     <h2 id="track-comments-heading" className="sr-only">이 순간의 이야기</h2>
     <div className="comment-wave-surface">
@@ -135,15 +143,21 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
       e.preventDefault(); if (busy || !ready || !validateComment(body, draft.at, m.active.duration)) return;
       if (userId === null) { m.openLogin(); return; }
       if (draft.id && !items.some(c => c.id === draft.id && ownsComment(c, userId))) return;
-      const next = draft.id ? items.map(c => c.id === draft.id ? {...c, body: body.trim()} : c) : [...items, {id: crypto.randomUUID(), trackId: m.active.id, at: draft.at, body: body.trim(), author: m.nickname || '나', authorId: userId, createdAt: Date.now()}];
-      if (await persist(next)) { pendingDrafts.delete(m.active.id); setSelectedBucket(bucketFor(draft.at)); setPoint(null); setDraft(null); setBody(''); }
+      const done = await run(async () => {
+        const saved = draft.id
+          ? await trackComments.update(m.active, draft.id, body)
+          : await trackComments.add(m.active, draft.at, body);
+        setItems(current => draft.id ? current.map(c => c.id === saved.id ? saved : c) : [...current, saved]);
+      });
+      if (done) { pendingDrafts.delete(m.active.id); setSelectedBucket(bucketFor(draft.at)); setPoint(null); setDraft(null); setBody(''); }
     }}>
       <label htmlFor="moment-comment"><Clock3 size={16} /> {formatTime(draft.at)} · {draft.id ? '댓글 수정' : '이 시점에 남기기'}</label>
       <textarea ref={input} id="moment-comment" value={body} onChange={e => {setBody(e.target.value); if (!draft.id) pendingDrafts.set(m.active.id, {at: draft.at, body: e.target.value, owner: userId});}} maxLength={500} rows={2} disabled={busy} placeholder="이 순간, 어떤 느낌이 들었나요?" required />
-      <footer><span>{body.length}/500</span><button type="button" className="text-link" disabled={busy} onClick={() => {pendingDrafts.delete(m.active.id); setDraft(null); setBody('');}}>취소</button><button className="primary-button" disabled={!ready || busy || !body.trim()}>{busy ? '저장 중…' : userId === null ? '로그인하고 등록' : draft.id ? '수정 저장' : '댓글 등록'}</button></footer>
+      <footer><span>{body.length}/500</span><button type="button" className="text-link" disabled={busy} onClick={() => {pendingDrafts.delete(m.active.id); setDraft(null); setBody('');}}>취소</button><button className="primary-button" disabled={!ready || busy || !body.trim() || (userId !== null && !available)}>{busy ? '저장 중…' : userId === null ? '로그인하고 등록' : draft.id ? '수정 저장' : '댓글 등록'}</button></footer>
     </form>}
     <details className="moment-comment-list"><summary>이 순간의 이야기 · {visible.length}개</summary>
-    <p className="comment-local-note">체험용 댓글 · 이 브라우저에만 저장되며 다른 사용자에게 공개되지 않아요.</p>
+    {!m.demoSession && <p className="comment-local-note">로그인하면 이 순간에 이야기를 남길 수 있어요.</p>}
+    {m.demoSession && !commentable(m.active) && <p className="comment-local-note">체험용 곡이라 댓글을 남길 수 없어요.</p>}
     {ready && !visible.length && <p className="comments-empty">아직 이야기가 없어요. 좋아하는 순간에 첫 댓글을 남겨보세요.</p>}
     {!!visible.length && <label className="comment-sort">정렬 <select value={order} onChange={e => {setOrder(e.target.value); setPage(0);}}><option value="latest">최신순</option><option value="time">시간순</option></select></label>}
     <ul>{paged.map(c => <li key={c.id}>
@@ -170,7 +184,11 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
             event.preventDefault();
             const target = items.find(v => v.id === remove);
             if (!target || !ownsComment(target, commentUserId(m.demoSession))) { setRemove(null); return; }
-            if (await persist(items.filter(v => v.id !== target.id))) {
+            const done = await run(async () => {
+              await trackComments.remove(target.id);
+              setItems(current => current.filter(v => v.id !== target.id));
+            });
+            if (done) {
               setRemove(null);
               if (draft?.id === target.id) setDraft(null);
             }

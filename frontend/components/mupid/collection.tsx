@@ -5,7 +5,7 @@ import { PlaylistMenu } from './playlist-menu';
 import { SelectionToolbar, useTrackSelection } from './track-selection';
 import { MupidMascot } from './mascot';
 import { ProfilePhoto } from './profile-photo';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DemoAccount } from './demo-login';
 import {
   Check,
@@ -30,7 +30,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { QUEUE_LIMIT, type MupidModel } from '@/hooks/use-mupid';
-import { formatTime, moodOptions } from '@/lib/mupid-data';
+import { formatTime, genreOptions, moodOptions } from '@/lib/mupid-data';
+import { loadOnboardingOptions, namesOf } from '@/lib/onboarding';
 import {
   AlbumArt,
   Brand,
@@ -546,13 +547,13 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
         {m.demoSession && <NicknameForm key={m.nickname} model={m} />}
         <Heading title="내가 좋아하는 장르" />
         <div className="filter-chips wrap">
-          {[...new Set(tracks.map((t) => t.genre))].map((genre) => (
+          {genreOptions.map((genre) => (
             <button
               aria-pressed={m.genres.includes(genre)}
               className={m.genres.includes(genre) ? 'selected' : ''}
               key={genre}
               onClick={() =>
-                m.setGenres((list) =>
+                m.updateGenres((list) =>
                   list.includes(genre)
                     ? list.filter((v) => v !== genre)
                     : [...list, genre],
@@ -571,7 +572,7 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
               className={m.moods.includes(mood) ? 'selected' : ''}
               key={mood}
               onClick={() =>
-                m.setMoods((list) =>
+                m.updateMoods((list) =>
                   list.includes(mood)
                     ? list.filter((v) => v !== mood)
                     : [...list, mood],
@@ -600,9 +601,21 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
   const [name, setName] = useState(m.onboardingSubmittedAt ? m.nickname : '');
   const [selectedMoods, setSelectedMoods] = useState<string[]>([]);
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
-  const genreOptions = [...new Set(m.tracks.map(track => track.genre))];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // 고를 수 있는 항목은 서버가 정한다. 못 받아 오면 화면 기본 목록으로 돌아간다.
+  const [options, setOptions] = useState<{ moods: string[]; genres: string[] }>({
+    moods: moodOptions,
+    genres: genreOptions,
+  });
+  useEffect(() => {
+    const abort = new AbortController();
+    loadOnboardingOptions(abort.signal).then((value) => {
+      if (abort.signal.aborted) return;
+      setOptions({ moods: namesOf(value.moods), genres: namesOf(value.genres) });
+    });
+    return () => { abort.abort(); };
+  }, []);
   return (
     <div className="welcome-page">
       {(step > 0 || m.onboardingSubmittedAt) && <button
@@ -614,7 +627,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
         <ChevronLeft />
       </button>}
       <Brand className="welcome-logo" />
-      {!m.demoSession || (m.onboardingSubmittedAt && m.demoSession.kind !== 'demo') ? (
+      {!m.demoSession || m.onboardingSubmittedAt ? (
         <div className="welcome-composition">
           <div className="welcome-copy">
           <p className="welcome-kicker">내 마음에 닿는 음악, 뮤피드</p>
@@ -639,7 +652,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             if (step === 1) { if (selectedGenres.length) { setError(''); setSelectedMoods([]); setStep(2); } return; }
             setBusy(true); setError('');
             try { await m.completeOnboarding(name, selectedMoods, selectedGenres); }
-            catch { setError('취향을 저장하지 못했어요. 브라우저 저장 설정을 확인하고 다시 시도해 주세요.'); }
+            catch (e) { setError(e instanceof Error && e.message ? e.message : '취향을 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.'); }
             finally { setBusy(false); }
           }}
         >
@@ -653,19 +666,20 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             id="welcome-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            maxLength={20}
+            minLength={2}
+            maxLength={10}
             required
             disabled={busy}
           />
           </>}
           {step === 1 && <fieldset key="genres" className="onboarding-choice-group">
             <legend>좋아하는 장르 <small>하나 이상 · 여러 개 선택 가능</small></legend>
-            <div className="filter-chips wrap">{genreOptions.map(genre => <button type="button" key={genre} disabled={busy} aria-pressed={selectedGenres.includes(genre)} className={selectedGenres.includes(genre) ? 'selected' : ''} onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}>{genre}</button>)}</div>
+            <div className="filter-chips wrap">{options.genres.map(genre => <button type="button" key={genre} disabled={busy} aria-pressed={selectedGenres.includes(genre)} className={selectedGenres.includes(genre) ? 'selected' : ''} onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}>{genre}</button>)}</div>
           </fieldset>}
           {step === 2 && <fieldset key="moods" className="onboarding-choice-group">
           <legend>좋아하는 분위기 <small>하나 이상 · 여러 개 선택 가능</small></legend>
           <div className="filter-chips wrap">
-            {moodOptions.map((mood) => (
+            {options.moods.map((mood) => (
               <button
                 type="button"
                 key={mood}

@@ -123,6 +123,17 @@ ClickHouse 분석 스키마는 Jamendo `track_id`, MySQL ERD 는 자체 `music.m
 
 **정할 것**: 카탈로그의 단일 기준과 두 식별자를 잇는 방법.
 
+### C6. `onboarding_survey` 한 줄에 답 하나를 담을 수 없다
+
+`mood_code_id` · `genre_code_id` 가 둘 다 NOT NULL 인데 표 주석은 "온보딩 문항별
+응답" 이다. 화면은 분위기와 장르를 짝지어 묻지 않으므로 지금은 **고른 분위기 ×
+고른 장르의 모든 조합**을 넣는다 — 손실은 없지만 한 사람 최대 64줄이다.
+배경은 [decision/0017](decision/0017-onboarding-survey-cross-product.md).
+
+**정할 것**: 두 칼럼을 NULL 허용으로 내려 한 줄에 답 하나를 담을지. 그러면 줄 수가
+M + G 로 줄고 표 주석과도 맞는다. 조합에서 각 축을 `DISTINCT` 해 옮기면 되므로
+마이그레이션에 값 손실은 없다. **ERD 변경이라 팀 합의가 먼저다.**
+
 ---
 
 ## D. 정리하면 좋은 것

@@ -14,12 +14,24 @@ docs:
     음악·앨범·아티스트·가사 관리 API 입니다. 스트리밍 서비스에 콘텐츠를
     등록할 때 쓰는 **관리자/시스템 전용** 엔드포인트입니다.
 
-    컨트롤러에 `@SystemRole` 이 붙어 있어 `ROLE_SYSTEM` 또는 `ROLE_ADMIN`
-    권한의 액세스 토큰으로만 호출할 수 있습니다. 일반 사용자
-    (`ROLE_USER`) 토큰으로 호출하면 403 (`MUPID_FORBIDDEN`) 이 반환됩니다.
+    **조회(`GET`)는 인증이 필요 없고, 나머지는 SYSTEM/ADMIN 전용입니다.**
+    첫 방문자가 로그인 전에 곡을 둘러봐야 해서 조회만 열어 두었습니다.
+    조회는 `*QueryController`, 등록 계열은 `@SystemRole` 이 붙은 컨트롤러로
+    나뉘어 있습니다.
+
+    등록 계열을 일반 사용자(`ROLE_USER`) 토큰으로 호출하면
+    403 (`MUPID_FORBIDDEN`) 이 반환됩니다.
 
     | 엔드포인트 | 동작 | 인증 |
     | --- | --- | --- |
+    | `GET /api/v1/music` | 곡 목록·검색 | **불필요** |
+    | `GET /api/v1/music/{musicId}` | 곡 상세 | **불필요** |
+    | `GET /api/v1/music/{musicId}/lyric` | 가사 | **불필요** |
+    | `GET /api/v1/music/{musicId}/analysis` | 구간·보컬·악기 | **불필요** |
+    | `GET /api/v1/artist` | 아티스트 목록·검색 | **불필요** |
+    | `GET /api/v1/artist/{artistId}` | 아티스트 상세 | **불필요** |
+    | `GET /api/v1/album` | 앨범 목록·검색 | **불필요** |
+    | `GET /api/v1/album/{albumId}` | 앨범 상세(수록곡 포함) | **불필요** |
     | `POST /api/v1/music` | 음악 추가 | SYSTEM/ADMIN |
     | `PATCH /api/v1/music/{musicId}` | 음악 수정 | SYSTEM/ADMIN |
     | `DELETE /api/v1/music/{musicId}` | 음악 삭제 | SYSTEM/ADMIN |
@@ -61,3 +73,18 @@ docs:
 
     `release_date` 는 ISO-8601 LocalDateTime 형식입니다.
     예: `2026-09-11T00:00:00`
+
+    ## 조회는 같은 표현을 씁니다
+
+    곡 표현(`곡 목록 조회` 의 항목)은 곡 상세·앨범 수록곡·좋아요 목록·최근
+    감상이 **전부 같습니다.** 화면이 목록에서 쓰던 코드를 그대로 씁니다.
+    서버에서는 `MusicSummaryAssembler` 하나가 만듭니다.
+
+    목록 응답 모양도 하나로 통일되어 있습니다 —
+    `{ items, page, size, total_elements, total_pages }`, `page` 는 0부터.
+
+    ## 아직 비어 있는 것
+
+    `genres` · `moods` 와 곡 분석(`analyzed: false`)은 분석 파이프라인이
+    돌기 전까지 비어 있습니다. 계약은 이미 정해져 있으니 화면은 미리 붙여도
+    됩니다.
