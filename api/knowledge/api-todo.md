@@ -19,7 +19,8 @@
 | 회원 | `POST /api/v1/user`, `GET`, `PATCH`, `DELETE`, `POST /system` | 연결 완료 |
 | 이메일 | `GET/POST /api/v1/mail/verification`, `GET /{id}` | 연결 완료 |
 | 비밀번호 재설정 | `GET/POST /api/v1/user/reset` | 화면 미연결 |
-| 콘텐츠 등록 | `POST/PATCH/DELETE` — music · album · artist · lyric | **쓰기 전용** |
+| 곡 조회 | `GET /api/v1/music`, `GET /api/v1/music/{musicId}` | 인증 불필요 · 연결 완료 |
+| 콘텐츠 등록 | `POST/PATCH/DELETE` — music · album · artist · lyric | **album·artist·lyric 은 쓰기 전용** |
 | 스트리밍 | 스트림·청크 생성/업로드/조회/다운로드 | 연결 완료 |
 | 이미지 | `POST/GET/DELETE /api/v1/storage/image/{category}/{key}` | 연결 완료 |
 | 이벤트 수집 | `POST /api/v1/events` | 프론트 트래커 있음 |
@@ -31,10 +32,28 @@
 
 ## P0 — 이것 때문에 화면이 막혀 있다
 
-### 1. 곡 목록·검색·상세 조회
+### 1. 곡 목록·검색·상세 조회 — ✅ 완료
 
-`MusicController` 에 조회가 하나도 없다. 화면이 어떤 `music_id` 를 재생할지
-알 방법이 없어서 지금은 **클라이언트에 곡 번호를 하드코딩**해 두었다.
+`GET /api/v1/music`(목록·검색·페이지네이션)과 `GET /api/v1/music/{musicId}`
+(상세)을 추가했다. 조회는 **인증 없이** 부를 수 있다 — 첫 방문자가 로그인 전에
+곡을 둘러보기 때문이다. 등록 계열과 컨트롤러를 나눴다(`MusicQueryController`).
+
+곡 길이는 **`music` 에 컬럼을 만들지 않고 완료된 스트림에서 끌어왔다.** ERD 를
+건드리지 않는 쪽을 택했다. 같은 곡에 스트림이 여럿이면 비트레이트가 가장 높은
+것이 기준이다. 스트림이 없으면 `duration_ms` 는 null 이고 `playable` 이 false 다.
+
+앨범·아티스트 이미지도 목록에 표지가 뜨도록 `GET` 을 열었다. 프로필 사진은
+개인 정보라 열지 않았다.
+
+프론트는 `lib/stream-catalog.ts` 의 하드코딩을 지우고 이 API 를 부른다.
+`genres`·`moods` 는 계약에는 있지만 **데이터가 아직 없어 빈 배열**이다
+(`codes`·`music_genres`·`music_moods` 가 전부 비어 있다).
+
+<details>
+<summary>원래 적었던 내용</summary>
+
+`MusicController` 에 조회가 하나도 없었다. 화면이 어떤 `music_id` 를 재생할지
+알 방법이 없어서 클라이언트에 곡 번호를 하드코딩해 두었다.
 
 - `GET /api/v1/music` — 목록·검색·페이지네이션
   - 화면이 쓰는 필터: 검색어, 분위기(mood)
@@ -53,21 +72,22 @@
 | `genre` `mood` `tags` | `music_genres` `music_moods` | |
 | `sections` | `music_section_analysis` | 구간 UI 가 이 값을 쓴다 |
 
-**곡 길이가 `music` 에 없다는 점을 먼저 정해야 한다.** 지금은 스트림 메타에만
-있어서, 목록에서 길이를 보여주려면 스트림을 조인하거나 `music` 에 컬럼을
-추가해야 한다 → [open-questions.md](open-questions.md) 에 추가할 것.
+곡 길이가 `music` 에 없어 스트림을 조인할지 컬럼을 추가할지 정해야 했다.
 
-- **막고 있는 것**: `frontend/lib/stream-catalog.ts`(하드코딩 카탈로그) 제거,
-  데모 곡 8개를 실제 카탈로그로 교체
-- **근거**: `frontend/lib/stream-catalog.ts`, `frontend/docs/player.md` 의 "남은 제약"
+</details>
 
-### 2. 스트림 메타에 채널 수
+### 2. 스트림 메타에 채널 수 — ✅ 완료 (서버 변경 없음)
 
-`StreamInfo` 에 채널 수가 없어 플레이어가 스테레오(2)로 고정해 두었다. 모노
-음원은 좌·우에 같은 소리를 넣어 처리하지만, 5.1 등이 들어오면 어긋난다.
+**API 도 ERD 도 건드리지 않았다.** Opus 프레임의 TOC 바이트가 모노/스테레오를
+직접 알려준다 (RFC 6716 §3.1 — `s` 비트 `0x04`). 플레이어가 첫 프레임에서 읽어
+디코더에 알려주고, 출력은 항상 스테레오로 만든다. 모노는 좌·우에 같은 소리가
+들어간다.
 
-- `streams` 에 `channels` 추가 또는 스트림 응답에 포함
-- 근거: `frontend/lib/player/engine.ts` 의 `channels: 2` 주석
+raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는다. 5.1 같은
+멀티채널은 `OpusHead` 가 있어야 풀리므로 `channels` 컬럼 하나로 해결되지
+않는다 — 그때 가서 컨테이너부터 다시 볼 문제다.
+
+- 근거: `frontend/lib/player/decoder.ts` 의 `channelsFromToc`
 
 ---
 
@@ -113,7 +133,9 @@
 - 근거: `frontend/hooks/use-mupid.ts` 의 `history`,
   `api/.../history/repository/`
 
-### 6. 플레이리스트 (생성만 있음)
+### 6. 플레이리스트 (생성만 있음) — 🙋 동료 담당
+
+**이 항목은 다른 사람이 맡았다. 중복 작업하지 말 것.**
 
 `POST /api/v1/playlist` 하나뿐이다. 화면은 목록·이름 변경·삭제·곡 추가/제거를
 모두 쓴다.
@@ -241,7 +263,9 @@ API 신설은 아니지만 프론트 연결에서 실제로 걸린 것들이다.
 
 ## 정할 것
 
-- 곡 길이를 `music` 에 둘 것인가, 스트림에서 조인할 것인가 (P0-1)
+- ~~곡 길이를 `music` 에 둘 것인가, 스트림에서 조인할 것인가 (P0-1)~~ →
+  스트림에서 조인하기로 했다. 목록이 커지면 다시 볼 것
+- ~~페이지네이션 규약~~ → `{ items, page, size, total_elements, total_pages }`,
+  `page` 는 0부터. `Music / 곡 목록 조회` 가 첫 사례다
 - 저장한 구간 테이블 스키마 (P1-7) — ERD 변경이라 팀 합의가 먼저다
 - 재생/검색 기록을 MySQL 테이블과 ClickHouse 이벤트 중 어디에 둘 것인가 (P1-5)
-- 페이지네이션 규약 — 지금 어떤 목록 API 도 없어서 정해진 형식이 없다
