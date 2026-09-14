@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { pickTodayMoments, todayMomentNote } from './today-moment';
 import type { MupidModel } from '@/hooks/use-mupid';
+import { VolumeSlider } from './volume-slider';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
 import { AlbumArt, LikeButton, PlayerControls, TrackRow } from './primitives';
 import { MupidMascot } from './mascot';
@@ -105,17 +106,11 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
           </div>
           </>}
           <div className="desktop-audio-options">
+            {/* 감싸개는 그대로 둔다 — `.desktop-audio-options label` 에 배치가 걸려 있다. */}
             <label>
               <Volume2 />
               <span className="sr-only">볼륨</span>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={m.volume}
-                onChange={(e) => m.setVolume(Number(e.target.value))}
-              />
+              <VolumeSlider />
             </label>
             <button
               className="icon-button"

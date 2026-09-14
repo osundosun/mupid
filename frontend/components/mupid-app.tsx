@@ -23,6 +23,7 @@ import {
 import { useMupid } from '@/hooks/use-mupid';
 import { useDesktopPlayerDock } from '@/hooks/use-home-player-dock';
 import { MiniTimeline } from '@/components/mupid/mini-timeline';
+import { VolumeSlider } from '@/components/mupid/volume-slider';
 import { PlaybackStatus } from '@/components/mupid/playback-status';
 import {
   AlbumArt,
@@ -267,15 +268,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
               <LikeButton model={m} />
               <div className="volume-control">
                 <Volume2 />
-                <input
-                  type="range"
-                  aria-label="볼륨"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={m.volume}
-                  onChange={(e) => m.setVolume(Number(e.target.value))}
-                />
+                <VolumeSlider />
               </div>
               <button
                 className="icon-button queue-button"

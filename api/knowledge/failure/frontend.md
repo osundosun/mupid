@@ -160,3 +160,14 @@
 - **주의**: `m.active` 를 지역 상수 `active` 로 받는 까닭은 JSX 안의 콜백에서는 `m.active` 의 좁히기가 풀리기 때문이다. `m.active` 를 그대로 쓰면 핸들러마다 `!` 를 붙이게 된다.
 - **곁들여 고친 것**: `MiniTimeline` 은 끌던 값과 현재 곡이 **둘 다 없으면** `undefined === undefined` 가 참이 되어 없는 `draft` 를 읽었다.
 - **근거**: `frontend/components/mupid-app.tsx`, `frontend/hooks/use-mupid.ts`, `frontend/components/mupid/*`
+
+### 볼륨 조절이 뚝뚝 끊기고 위쪽은 줄여도 그대로다 — 해소됨
+
+- **원인**: 세 가지가 겹쳤다.
+  1. **눈금이 5%** (`step={0.05}`)여서 끌면 스무 칸을 계단처럼 뛰었다.
+  2. **막대 위치를 그대로 이득에 꽂았다.** 사람은 소리 크기를 로그로 느끼는데, 1.0 → 0.5 는 -6dB 뿐이라 위쪽 절반은 줄여도 거의 그대로고 아래쪽 몇 칸에서 갑자기 사라진다. 같은 거리를 움직여도 구간마다 변화가 딴판이라 조절이 겉돈다.
+  3. **한 칸마다 앱 전체가 다시 그려졌다.** 볼륨이 `useMupid` 의 state 라 값이 바뀔 때마다 모델이 새로 나가고 화면 전체가 다시 그려졌다 — 한 칸에 **32ms**. 눈금만 촘촘하게 했다가는 오히려 더 끊긴다.
+- **해결**: 눈금을 1%로 하고, 이득은 `gainFor(position) = position²` 로 굽혀 귀와 눈금을 맞춘다. 볼륨은 원래 재생기가 들고 있는 값이므로 `usePlayerVolume()` 로 **그 막대만** 구독한다. `usePlayer()` 를 쓰면 안 된다 — 재생 위치가 0.2초마다 흘러 그걸 타는 화면이 계속 다시 그려진다.
+- **확인**: 위치 → 이득 `0→0, .25→.062, .5→.25, .75→.562, 1→1`. 100칸 끌기가 **32.07ms/칸 → 4.47ms/칸**(약 7배).
+- **건드리지 말 것**: 값을 이득에 바로 꽂지 않고 `setTargetAtTime(…, 0.02)` 로 20ms에 걸쳐 옮기는 것은 '지직' 소리를 막는 장치다. 데스크톱 홈의 `<label>` 감싸개도 `.desktop-audio-options label` 에 배치가 걸려 있어 그대로 두어야 한다.
+- **근거**: `frontend/lib/player/engine.ts`, `frontend/lib/player/index.ts`, `frontend/components/mupid/volume-slider.tsx`

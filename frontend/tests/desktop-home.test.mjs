@@ -27,7 +27,9 @@ test('main playback keeps transport, seek, volume, likes, moments and queue acce
   assert.ok(desktop.includes('<PlayerControls model={m} />'));
   assert.ok(desktop.includes('<LikeButton model={m} />'));
   assert.ok(desktop.includes('m.seek(Number(e.target.value))'));
-  assert.ok(desktop.includes('m.setVolume(Number(e.target.value))'));
+  // 볼륨은 앱 모델이 아니라 재생기에서 직접 구독한다. 끌 때 앱 전체가
+  // 다시 그려지지 않게 하려는 것이다.
+  assert.ok(desktop.includes('<VolumeSlider />'));
   assert.ok(desktop.includes('m.setQueueDialog(true)'));
   assert.ok(desktop.includes('m.openMoment()'));
   assert.ok(desktop.includes("m.go('player')"));

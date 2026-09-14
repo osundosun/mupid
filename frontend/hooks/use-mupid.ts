@@ -55,7 +55,6 @@ export function useMupid(bootstrap: Bootstrap) {
   // 청크를 기다리는 중. 화면은 이 값으로 스피너를 띄운다.
   const [buffering, setBuffering] = useState(false);
   const [time, setTime] = useState(0);
-  const [volume, setVolume] = useState(0.65);
   const [liked, setLiked] = useState(initial.liked);
   const [ignored, setIgnored] = useState<number[]>(initial.ignored);
   const [history, setHistory] = useState(initial.history);
@@ -189,9 +188,6 @@ export function useMupid(bootstrap: Bootstrap) {
     const timer = setTimeout(() => setToast(''), 3200);
     return () => clearTimeout(timer);
   }, [toast]);
-  useEffect(() => {
-    getPlayer()?.setVolume(volume);
-  }, [volume]);
   useEffect(() => {
     if (!chatOpen) return;
     chatInputRef.current?.focus({ preventScroll: true });
@@ -800,8 +796,6 @@ export function useMupid(bootstrap: Bootstrap) {
     setPlaying,
     buffering,
     time,
-    volume,
-    setVolume,
     liked,
     ignored,
     ignoreTrack,

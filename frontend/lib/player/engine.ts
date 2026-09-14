@@ -48,6 +48,19 @@ export type PlayerState = {
   supported: boolean;
 };
 
+/**
+ * 막대 위치를 실제 이득으로 바꾼다.
+ *
+ * 사람은 소리 크기를 로그로 느낀다. 위치를 그대로 이득에 넣으면 **위쪽 절반은
+ * 줄여도 거의 그대로**고(1.0 → 0.5 는 -6dB 뿐이다) 아래쪽 몇 칸에서 갑자기
+ * 사라진다. 그래서 같은 거리를 움직여도 어떤 구간이냐에 따라 변화가 딴판이라
+ * 조절이 겉돈다. 제곱을 취하면 눈금과 귀가 얼추 맞는다.
+ */
+const gainFor = (position: number) => position * position;
+
+/** 처음 볼륨. 막대 위치 기준이다. */
+export const DEFAULT_VOLUME = 0.65;
+
 /** 재생 중 유지할 예약 길이. 짧으면 끊기고 길면 Seek 반응이 굼떠진다. */
 const SCHEDULE_AHEAD_SEC = 6;
 /** 다음 곡에서 미리 받아 둘 길이. */
@@ -115,7 +128,7 @@ export class PlayerEngine {
       positionSec: 0,
       durationSec: 0,
       bufferedSec: 0,
-      volume: 1,
+      volume: DEFAULT_VOLUME,
       error: null,
       supported: isOpusDecodingSupported(),
     });
@@ -142,7 +155,7 @@ export class PlayerEngine {
     const fade = context.createGain();
     const volume = context.createGain();
     fade.gain.value = 1;
-    volume.gain.value = this.store.get().volume;
+    volume.gain.value = gainFor(this.store.get().volume);
     fade.connect(volume).connect(context.destination);
     this.context = context;
     this.fadeGain = fade;
@@ -162,11 +175,21 @@ export class PlayerEngine {
   // 공개 API
   // ─────────────────────────────────────────────────────────────
 
+  /**
+   * 볼륨을 바꾼다. `value` 는 막대 위치(0~1)이고 이득은 `gainFor` 로 굽힌다.
+   *
+   * 값을 바로 꽂지 않고 `setTargetAtTime` 으로 20ms 에 걸쳐 옮긴다. 바로 꽂으면
+   * 파형이 끊겨 '지직' 소리가 난다.
+   */
   setVolume(value: number) {
     const volume = Math.min(1, Math.max(0, value));
     this.store.set({ volume });
     if (this.volumeGain && this.context) {
-      this.volumeGain.gain.setTargetAtTime(volume, this.context.currentTime, 0.02);
+      this.volumeGain.gain.setTargetAtTime(
+        gainFor(volume),
+        this.context.currentTime,
+        0.02,
+      );
     }
   }
 
