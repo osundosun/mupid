@@ -1,5 +1,6 @@
 package com.osundosun.mupid.api.stream.service;
 
+import java.util.Collection;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
@@ -71,6 +72,19 @@ public class StreamServiceImpl implements StreamService {
             throw new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND);
         }
         return streamRepository.findAllByMusicId(musicId)
+                .stream()
+                .filter(it -> it.getStatus().equals(StreamStatus.DONE))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Stream> getStreamByMusicIds(Collection<Integer> musicIds) {
+        if (musicIds.isEmpty()) {
+            return List.of();
+        }
+        /* 곡의 존재 여부는 확인하지 않는다. 호출부가 이미 손에 쥔 곡들이다. */
+        return streamRepository.findAllByMusicIdIn(musicIds)
                 .stream()
                 .filter(it -> it.getStatus().equals(StreamStatus.DONE))
                 .toList();
