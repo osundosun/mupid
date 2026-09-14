@@ -1,6 +1,6 @@
 # 실패 사례 (failure)
 
-**막혔으면 여기부터 본다.** 팀이 이미 밟은 함정 184건을, 회고·`infra/` 운영 문서·코드 주석에 흩어져 있던 기록에서 모아 증상별로 정리했다.
+**막혔으면 여기부터 본다.** 팀이 이미 밟은 함정 185건을, 회고·`infra/` 운영 문서·코드 주석에 흩어져 있던 기록에서 모아 증상별로 정리했다.
 
 각 항목은 `### <증상>` 제목 아래 **원인 / 해결 / 근거**(파일 경로) 순이다. 제목은 실제로 겪을 때 검색해서 찾을 수 있는 말로 쓴다.
 
@@ -10,7 +10,7 @@
 |---|---:|---|
 | [build-and-spring.md](build-and-spring.md) | 14 | Gradle 빌드 실패, Spring Boot 4 스타터 이름 변경, SNAPSHOT 저장소, Lombok·빈 주입 |
 | [database-and-jpa.md](database-and-jpa.md) | 19 | 트랜잭션 경계, 더티체킹, 지연로딩, 스키마 반영 |
-| [auth-and-api.md](auth-and-api.md) | 30 | JWT·쿠키·필터, 이메일 인증, 오류 응답 규약 위반 |
+| [auth-and-api.md](auth-and-api.md) | 31 | JWT·쿠키·필터, 이메일 인증, 오류 응답 규약 위반 |
 | [config-and-env.md](config-and-env.md) | 11 | `MUPID_` 접두사, `.env` 주입 경로, 값이 컨테이너에서만 안 잡히는 경우 |
 | [docker-and-nginx.md](docker-and-nginx.md) | 17 | 베이스 이미지 차이, 레이어 캐싱, compose 파일 혼동, envsubst 치환 |
 | [clickhouse-and-kafka.md](clickhouse-and-kafka.md) | 24 | 클러스터·Keeper, 스키마 변경, Kafka 엔진 연동, 로컬 기동 |

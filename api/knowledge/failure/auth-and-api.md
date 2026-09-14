@@ -188,4 +188,10 @@
 - **해결**: 업로드는 `auth_request` 다. nginx 가 본문 없이 인증만 먼저 묻고(`proxy_pass_request_body off`), 200 과 함께 받은 경로로 본문을 스토리지에 흘린다(`proxy_request_buffering off`).
 - **근거**: `api/nginx/templates/default.conf.template`, [decision/0016](../decision/0016-audio-upload-three-step.md)
 
+### 브라우저에서 인증 메일 발송·비밀번호 재설정을 호출할 수 없다 — 해소됨
+
+- **원인**: `GET /api/v1/mail/verification` 과 `GET /api/v1/user/reset` 이 `@RequestBody` 로 이메일을 받았다. **fetch 는 GET 에 본문을 실을 수 없다**(`TypeError: Request with GET/HEAD method cannot have body`). curl 이나 Bruno 로는 되기 때문에 서버 테스트만으로는 드러나지 않는다.
+- **해결**: `@Valid @ModelAttribute` 로 바꿔 쿼리 파라미터(`?email=...`)로 받는다. 검증 실패가 `BindException` 으로 오므로 `GlobalExceptionHandler` 의 `@ExceptionHandler(MethodArgumentNotValidException.class)` 도 상위 타입인 `BindException` 으로 넓혔다. 안 넓히면 쿼리 파라미터 검증 실패만 500 이 된다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/email/controller/EmailVerificationController.java`, `api/src/main/java/com/osundosun/mupid/api/user/controller/UserPasswordResetController.java`
+
 ---
