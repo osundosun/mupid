@@ -25,9 +25,9 @@ import lombok.RequiredArgsConstructor;
  *   2. 컨슈머는 ClickHouse 의 Kafka 엔진이 맡는다. 애플리케이션에 필요한 것은
  *      프로듀서 하나뿐이라 스타터 전체를 붙일 이유가 없다.
  *
- * 값은 문자열 그대로 보낸다. 직렬화는 서비스가 애플리케이션 ObjectMapper 로 하며,
- * 그래야 `spring.jackson.property-naming-strategy: SNAKE_CASE` 가 적용돼
- * ClickHouse `kafka_listen_events` 의 컬럼명과 맞는 JSON 이 나간다.
+ * 값은 문자열 그대로 보낸다. 직렬화는 `EventServiceImpl` 이 그 클래스가 직접 들고 있는
+ * 매퍼로 한다 — 필드명이 ClickHouse `kafka_listen_events` 의 컬럼명과의 계약이라
+ * 애플리케이션 설정에 묶어두지 않는다. 그쪽 주석에 이유가 적혀 있다.
  */
 @Configuration
 @RequiredArgsConstructor
@@ -47,6 +47,13 @@ public class EventKafkaConfig {
         config.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, props.kafkaMaxBlock().toMillis());
         // 하트비트가 초당 여러 건 몰리므로 조금 모아 보낸다.
         config.put(ProducerConfig.LINGER_MS_CONFIG, 20L);
+        // linger 안에 모인 것을 한 배치에 더 많이 담는다. 기본 16KB 는 이 트래픽에서
+        // 금방 차서 linger 를 채우기 전에 끊어 보내게 된다.
+        config.put(ProducerConfig.BATCH_SIZE_CONFIG, 64 * 1024);
+        // 청취 이벤트는 필드 이름이 값보다 긴 JSON 이고, 대부분이 같은 모양의
+        // 하트비트라 압축이 잘 먹는다. lz4 는 CPU 를 거의 쓰지 않으면서 네트워크와
+        // ClickHouse 쪽 디스크 I/O 를 함께 줄인다.
+        config.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "lz4");
         // 프로듀서 내부 재시도가 같은 메시지를 두 번 넣지 않게 한다. Redis 멱등 처리는
         // "같은 event_id 로 두 번 들어온 요청" 만 막을 뿐, 이미 통과한 한 건이 전송
         // 재시도로 복제되는 것은 막지 못한다. MV 는 중복을 걸러주지 않으므로 여기서 막는다.

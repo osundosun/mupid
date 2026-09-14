@@ -219,13 +219,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                   className="secondary-button"
                   disabled={selected.tracks.some((t) => t.id === m.active?.id)}
                   onClick={() => {
-                    m.setPlaylists((list) =>
-                      list.map((p) =>
-                        p.id === selected.id
-                          ? { ...p, tracks: [...p.tracks, m.active!] }
-                          : p,
-                      ),
-                    );
+                    void m.addToPlaylist(selected.id, m.active!);
                     m.setToast('플레이리스트에 음악을 담았어요.');
                   }}
                 >
@@ -377,7 +371,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                m.setMoments((list) => list.filter((v) => v.id !== removeMoment));
+                if (removeMoment !== null) m.removeMoment(removeMoment);
                 setRemoveMoment(null);
                 m.setToast('저장한 순간을 삭제했어요.');
               }}
@@ -410,13 +404,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
               onClick={() => {
                 const gone = confirmRemove?.ids ?? [];
                 if (confirmRemove?.scope === 'playlist' && selected) {
-                  m.setPlaylists((list) =>
-                    list.map((p) =>
-                      p.id === selected.id
-                        ? { ...p, tracks: p.tracks.filter((v) => !gone.includes(v.id)) }
-                        : p,
-                    ),
-                  );
+                  void m.removeFromPlaylist(selected.id, gone);
                   m.setToast(
                     removeTargets.length === 1
                       ? `‘${removeTargets[0].title}’ 곡을 플레이리스트에서 뺐어요.`

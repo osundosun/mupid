@@ -87,9 +87,8 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
               aria-pressed={momentSaved}
               onClick={() => {
                 if (momentSaved) { setConfirmUnsave(true); return; }
-                m.setMoments((list) => [
+                m.addMoments([
                   { id: Date.now(), track: active, start: part.start, end: part.end, section: part.label },
-                  ...list,
                 ]);
                 m.setToast(`${part.label} 순간을 저장했어요.`);
               }}
@@ -144,7 +143,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                m.setMoments((list) => list.filter((v) => v.id !== savedMoment?.id));
+                if (savedMoment) m.removeMoment(savedMoment.id);
                 m.setToast('저장한 순간을 뺐어요.');
                 setConfirmUnsave(false);
               }}
@@ -223,14 +222,13 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
         <button className="primary-button wide" disabled={!parts.length || saved} onClick={() => {
           if (editing) {
             const part = parts[0];
-            m.setMoments(list => list.map(v => v.id === m.editingMomentId
-              ? { ...v, start: part.start, end: part.end, section: part.label }
-              : v));
+            if (m.editingMomentId !== null) {
+              m.replaceMoment(m.editingMomentId, { start: part.start, end: part.end, section: part.label });
+            }
             m.setToast('저장한 순간을 바꿨어요.'); setSaved(true);
             return;
           }
-          const entries = parts.map((p, i) => ({ id: Date.now() + i, track: active, start: p.start, end: p.end, section: p.label }));
-          m.setMoments(list => [...entries.filter(e => !list.some(v => v.track.id === e.track.id && v.start === e.start && v.end === e.end)), ...list]);
+          m.addMoments(parts.map((p, i) => ({ id: Date.now() + i, track: active, start: p.start, end: p.end, section: p.label })));
           m.setToast('선택한 순간을 저장했어요.'); setSaved(true);
         }}>{saved ? <Check /> : <Bookmark />}{saved ? (editing ? '수정 완료' : '저장 완료') : (editing ? '이 순간으로 바꾸기' : '선택한 순간 저장하기')}</button>
         <button className="text-link" onClick={() => { m.setLibraryTab('moments'); m.go('library'); }}>저장한 순간 모두 보기 <ChevronRight /></button>

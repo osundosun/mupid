@@ -124,6 +124,69 @@ cd api && ./clickhouse/verify.sh
 Kafka UI 는 `ui` profile 이라 `docker compose up -d` 로는 뜨지 않는다. 이름을 직접
 지정하면 profile 이 자동으로 켜진다.
 
+## 앱에서 실제로 발생시킨 이벤트 확인하기
+
+앱을 띄워 놓고 곡을 듣거나 좋아요를 누른 뒤 http://localhost:18123/play 에서 아래를
+차례로 던진다. 프론트 큐가 5초마다, 20건마다 보내고 ClickHouse 가 최대 15초 모았다
+쓰므로 **누른 직후가 아니라 20초쯤 뒤에** 보인다.
+
+> ⚠ **반드시 Distributed 테이블(`listen_events`)에 쿼리한다.** `listen_events_local`
+> 은 접속한 노드에 앉은 절반만 보여준다. 게다가 Kafka 적재 경로는 샤딩 키를 타지
+> 않아 한 사용자의 이벤트가 두 샤드에 흩어진다.
+
+```sql
+-- 1) 방금 들어온 것부터 본다. 이것만으로 "적재됐는가" 는 판정된다.
+SELECT occurred_at, ingested_at, event_type, track_id, position_ms, from_ms, entry_path
+FROM listen_events
+ORDER BY ingested_at DESC
+LIMIT 50;
+
+-- 2) 어떤 이벤트가 몇 건씩 들어왔나. 22종 중 무엇이 안 나가는지 여기서 드러난다.
+SELECT event_type, count() AS cnt, max(occurred_at) AS last_seen
+FROM listen_events
+WHERE occurred_at >= now() - INTERVAL 1 HOUR
+GROUP BY event_type
+ORDER BY cnt DESC;
+
+-- 3) 재생 하나를 통째로 따라간다. play_id 는 PLAY_START 가 발급한 값이다.
+SELECT occurred_at, event_type, position_ms, from_ms, skip_trigger, target
+FROM listen_events
+WHERE play_id = '여기에-play_id'
+ORDER BY occurred_at;
+
+-- 4) 구간 신호가 만들어졌는가. 이벤트는 들어왔는데 여기가 비면
+--    track_id = 0 이거나 position_ms = 0 이거나 구간 매핑에 실패한 것이다.
+SELECT user_id, section_uid, event_type, weight, occurred_at
+FROM user_section_signals
+ORDER BY occurred_at DESC
+LIMIT 50;
+
+-- 5) 커버리지. PLAY_PROGRESS 하트비트가 구간별로 쪼개져 쌓인다.
+--    SummingMergeTree 부분합이라 반드시 GROUP BY 로 합산해서 읽는다.
+SELECT user_id, play_id, section_uid, sum(listened_ms) AS listened_ms
+FROM play_section_coverage
+GROUP BY user_id, play_id, section_uid
+ORDER BY max(play_id) DESC
+LIMIT 50;
+```
+
+터미널에서 보고 싶으면 같은 쿼리를 이렇게 던진다.
+
+```bash
+docker exec mupid-dev-ch-01 clickhouse-client --user mupid --password "$MUPID_CLICKHOUSE_PASSWORD" \
+  --query "SELECT event_type, count() FROM listen_events GROUP BY event_type ORDER BY 2 DESC"
+```
+
+### 안 보일 때 어디를 보나
+
+| 증상 | 볼 곳 |
+| --- | --- |
+| `listen_events` 가 통째로 비었다 | Kafka UI(18080)에서 `mupid.listen.events` 토픽에 메시지가 있는지. 없으면 문제는 API 이전이다 |
+| 토픽에는 있는데 테이블이 비었다 | `SELECT * FROM system.kafka_consumers` 의 `exceptions` · `last_poll_time` |
+| API 가 이벤트를 안 받는다 | `POST /api/v1/events` 응답의 `accepted`/`duplicated`/`rejected`. `rejected` 가 있으면 값 검증에서 걸린 것이고 서버 로그에 남는다 |
+| 브라우저에서 요청 자체가 안 나간다 | 비로그인이면 401 이라 큐에 쌓여만 있다. 로그인 뒤 다음 배치에 함께 나간다 |
+| `listen_events` 는 차는데 `user_section_signals` 가 빈다 | 그 곡의 구간이 `track_sections` 에 등록됐는지. 매핑이 실패하면 이벤트만 남고 신호는 안 생긴다 |
+
 ## 손으로 데이터 흐름 확인하기
 
 Kafka 에 이벤트를 하나 넣고 ClickHouse 두 테이블에 자동으로 도착하는지 보는 절차다.

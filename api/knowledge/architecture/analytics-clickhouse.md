@@ -160,7 +160,28 @@ TTL toDateTime(<시각 컬럼>) + INTERVAL 18 MONTH
 
 `kafka_listen_events` 는 전 컬럼을 **관대한 타입**으로 받는다. `event_id` / `play_id` / `occurred_at` 이 UUID·DateTime64 가 아니라 `String` 이고, 변환은 `mv_kafka_to_events` 가 `toUUIDOrZero()` / `parseDateTime64BestEffort(…, 3, 'Asia/Seoul')` 로 처리한다. `kafka_skip_broken_messages = 100` 과 `input_format_skip_unknown_fields = 1` 을 합쳐, 스키마가 조금 어긋난 메시지 때문에 컨슈머가 멈추지 않게 한 구성이다.
 
-**아직 Spring 은 Kafka 프로듀서가 아니다.** `build.gradle` 에 Kafka 클라이언트 의존성이 없고 `api/src` 전체에 kafka 문자열이 없다. `api/.env.example` 의 `MUPID_KAFKA_BOOTSTRAP` 은 선언만 있고 읽는 곳이 없다. 현재 토픽에 이벤트를 넣는 경로는 `verify.sh` 와 README 의 수동 `kafka-console-producer.sh` 뿐이다.
+### 소비 단위 튜닝
+
+```
+kafka_max_block_size      = 65536    한 번에 쓸 행 수
+kafka_poll_max_batch_size = 8192     한 번의 poll 로 가져올 메시지 수
+kafka_flush_interval_ms   = 15000    행 수가 안 차도 이때까지는 기다린다
+```
+
+둘 중 먼저 닿는 쪽이 파트를 만든다. **기본값을 그대로 두면 사실상 7.5초마다 파트가 하나씩 생긴다** — 기본 행 수가 `max_insert_block_size`(1,048,576) 라 이 워크로드에서는 절대 차지 않고 항상 시간 쪽이 이기기 때문이다. 그 작은 파트가 계속 쌓이면 병합 압력이 올라가고, `play_section_coverage` 의 SummingMergeTree 부분합도 오래 흩어져 남는다(그래서 읽을 때 GROUP BY 로 합산해야 한다).
+
+행 수를 현실적인 크기로 낮추고 대기를 늘려, 트래픽이 많을 때는 크기로 끊고 한산할 때는 시간으로 끊게 했다. 하트비트 간격을 바꾸면(`frontend/lib/analytics/player.ts` 의 `HEARTBEAT_MS`) 이 값도 함께 본다.
+
+### 프로듀서
+
+Spring 의 `event` 도메인이 유일한 프로듀서다(`EventKafkaConfig`). `spring.kafka.*` 자동설정을 쓰지 않고 빈을 직접 만든다 — 환경변수 `MUPID_` 접두사 강제(decision/0002) 때문이고, 컨슈머는 ClickHouse Kafka 엔진이 맡아 애플리케이션에는 프로듀서 하나만 필요해서다.
+
+| 설정 | 값 | 이유 |
+|---|---|---|
+| `enable.idempotence` · `acks` | `true` · `all` | 프로듀서 내부 재시도가 같은 메시지를 두 번 넣지 않게 한다. MV 는 중복을 걸러주지 않는다 |
+| `linger.ms` · `batch.size` | `20` · `64KB` | 하트비트가 몰리므로 조금 모아 보낸다. 기본 16KB 는 금방 차서 linger 를 채우기 전에 끊긴다 |
+| `compression.type` | `lz4` | 대부분이 같은 모양의 하트비트 JSON 이라 잘 먹는다. CPU 를 거의 쓰지 않고 네트워크와 ClickHouse 쪽 디스크 I/O 를 함께 줄인다 |
+| `max.block.ms` | `3s` | 브로커가 죽어 있을 때 `send` 가 요청 스레드를 오래 잡지 않게 한다 |
 
 ## 사용자 · 권한 · 설정 파일 분리
 

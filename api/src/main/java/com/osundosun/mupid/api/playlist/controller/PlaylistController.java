@@ -7,6 +7,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,6 +21,7 @@ import com.osundosun.mupid.api.playlist.dto.PlaylistTrackResponseItem;
 import com.osundosun.mupid.api.playlist.entity.Playlist;
 import com.osundosun.mupid.api.playlist.entity.PlaylistTrack;
 import com.osundosun.mupid.api.playlist.request.PlaylistCreateRequest;
+import com.osundosun.mupid.api.playlist.request.PlaylistRenameRequest;
 import com.osundosun.mupid.api.playlist.request.PlaylistTrackAddRequest;
 import com.osundosun.mupid.api.playlist.response.PlaylistCreateResponse;
 import com.osundosun.mupid.api.playlist.response.PlaylistDetailResponse;
@@ -151,6 +153,46 @@ public class PlaylistController {
                 track.getPlaylist().getMusicCount(), /* 수록곡 수 */
                 result.duplicated(), /* 중복 여부 */
                 track.getCreatedAt() /* 추가 일시 */
+            )
+        ));
+    }
+
+    /**
+     * 플레이리스트에서 곡 한 곡을 뺀다.
+     *
+     * 곡 추가와 달리 **담겨 있지 않으면 404** 다. 추가에서 중복을 성공으로 본 것은
+     * "이미 원하는 상태" 라서인데, 빼기에서 없는 곡을 성공으로 처리하면 화면이
+     * 서버와 어긋난 것을 끝까지 모른다.
+     */
+    @DeleteMapping("/{playlistId}/track/{musicId}")
+    public ResponseEntity<BaseResponse<Void>> removeTrack(
+        Authentication auth,
+        @PathVariable int playlistId,
+        @PathVariable int musicId
+    ) {
+        User user = (User)auth.getPrincipal();
+        playlistService.removeTrack(user.getUserId(), playlistId, musicId);
+        return ResponseEntity.ok(BaseResponse.message("플레이리스트에서 곡을 뺐습니다."));
+    }
+
+    /**
+     * 플레이리스트 제목을 바꾼다. 수록곡은 그대로다.
+     */
+    @PatchMapping("/{playlistId}")
+    public ResponseEntity<BaseResponse<PlaylistCreateResponse>> renamePlaylist(
+        Authentication auth,
+        @PathVariable int playlistId,
+        @Valid @RequestBody PlaylistRenameRequest request
+    ) {
+        User user = (User)auth.getPrincipal();
+        Playlist playlist = playlistService.renamePlaylist(user.getUserId(), playlistId, request);
+        return ResponseEntity.ok(BaseResponse.of(
+            "플레이리스트 이름을 바꿨습니다.",
+            new PlaylistCreateResponse(
+                playlist.getPlaylistId(), /* 플레이리스트 번호 */
+                playlist.getTitle(), /* 제목 */
+                playlist.getMusicCount(), /* 수록곡 수 */
+                playlist.getCreatedAt() /* 생성 일시 */
             )
         ));
     }
