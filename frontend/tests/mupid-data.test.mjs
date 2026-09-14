@@ -43,6 +43,27 @@ test('every track has a continuous bounded song form and valid moment', () => {
   }
 });
 
+/*
+ * 서버가 곡 길이를 모르면(`streams` 에 행이 없어 `duration_ms` 가 null)
+ * `stream-catalog` 가 구간을 비워 넣는다. 부르는 쪽은 결과의 `.start` 를 바로
+ * 읽으므로 undefined 가 나가면 홈 화면이 통째로 죽는다.
+ */
+test('a track with no analysed sections still yields one section', () => {
+  const bare = { ...demoTracks[0], duration: 0, sections: [] };
+  for (const at of [0, 12, -1, NaN, Infinity]) {
+    const section = getSongSectionAt(bare, at);
+    assert.ok(section, `구간이 없으면 안 된다 (at=${at})`);
+    assert.equal(typeof section.start, 'number');
+    assert.equal(typeof section.end, 'number');
+    assert.ok(section.start <= section.end);
+    assert.equal(formatTime(section.start), '00:00');
+  }
+  // 길이를 아는데 구간만 비어 있으면 곡 전체를 한 구간으로 준다.
+  const whole = getSongSectionAt({ ...demoTracks[0], sections: [] }, 30);
+  assert.equal(whole.start, 0);
+  assert.equal(whole.end, demoTracks[0].duration);
+});
+
 test('calmer requests prefer a calm track relative to the current track', () => {
   const answer = deriveChatRecommendations(
     '이 곡보다 더 잔잔하게',

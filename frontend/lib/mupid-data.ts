@@ -84,7 +84,15 @@ export const formatTime = (seconds: number) => {
   return `${String(minutes).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 };
 
-export const getSongSectionAt = (track: Track, at: number) => {
+/**
+ * 위치가 걸치는 구간. **언제나 구간 하나를 준다.**
+ *
+ * 구간이 비어 있을 수 있다 — 서버가 곡 길이를 모르면(`streams` 에 행이 없어
+ * `duration_ms` 가 null) `stream-catalog` 가 나눌 기준이 없어 빈 배열을 넣는다.
+ * 부르는 쪽은 다섯 군데 모두 결과의 `.start` 를 바로 읽으므로, 여기서
+ * undefined 를 돌려주면 화면이 통째로 죽는다. 곡 전체를 한 구간으로 준다.
+ */
+export const getSongSectionAt = (track: Track, at: number): SongSection => {
   const position = Number.isFinite(at)
     ? Math.max(0, Math.min(at, track.duration))
     : 0;
@@ -93,7 +101,12 @@ export const getSongSectionAt = (track: Track, at: number) => {
       (section, index) =>
         position >= section.start &&
         (position < section.end || index === track.sections.length - 1),
-    ) ?? track.sections[0]
+    ) ??
+    track.sections[0] ?? {
+      label: '전체',
+      start: 0,
+      end: Number.isFinite(track.duration) ? Math.max(0, track.duration) : 0,
+    }
   );
 };
 

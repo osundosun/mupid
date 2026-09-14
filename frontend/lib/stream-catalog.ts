@@ -45,6 +45,9 @@ const toTrack = (music: MusicSummary): Track => {
     // 구간은 `GET /api/v1/music/{id}/analysis` 가 준다. 다만 분석 파이프라인이
     // 아직 돌지 않아 대부분 비어 있어서, 여기서는 곡을 둘로 나눠 둔다.
     // 재생 대상이 되면 `use-mupid` 가 분석 결과로 갈아 끼운다.
+    //
+    // 길이를 모르면(`streams` 에 행이 없어 `duration_ms` 가 null) 나눌 기준이
+    // 없어 비워 둔다. 읽는 쪽은 `getSongSectionAt` 이 받아 준다.
     sections: duration
       ? [
           { label: '도입', start: 0, end: duration * 0.4 },
