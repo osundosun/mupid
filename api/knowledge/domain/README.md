@@ -35,6 +35,13 @@
 | `play_section_coverage` 적재 | ✅ `mv_play_section_coverage` 구현 (채울 `PLAY_PROGRESS` 가 아직 안 들어온다) |
 | 추천 계산 · `rec_impressions` 기록 | ❌ 없음 (스키마만 있음) |
 | 온보딩 (`PENDING → ACTIVE`) | ❌ 없음 |
+| 음원 청크 스트리밍 (등록·업로드·재생) | ✅ 구현 → [decision/0016](../decision/0016-audio-upload-three-step.md) |
+| 곡 목록·검색 조회 | ❌ 없음 (등록 API 만 있다) |
+| 플레이리스트 | ⚠ 생성만 있음 |
+| 좋아요·재생 기록·저장한 구간·시점 댓글 | ❌ 없음 (브라우저 `localStorage` 에만 있다) |
+
+프론트엔드가 필요로 하는 API 를 우선순위별로 정리한 목록은
+[api-todo.md](../api-todo.md) 에 있다.
 
 ## 알려진 결함
 
