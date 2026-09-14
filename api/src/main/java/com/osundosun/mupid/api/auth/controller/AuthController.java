@@ -16,12 +16,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.osundosun.mupid.api.auth.dto.AuthLoginResult;
+import com.osundosun.mupid.api.auth.error.AuthErrorCode;
 import com.osundosun.mupid.api.auth.dto.TokenPair;
 import com.osundosun.mupid.api.auth.provider.JwtProvider;
 import com.osundosun.mupid.api.auth.request.AuthLoginRequest;
 import com.osundosun.mupid.api.auth.response.AuthLoginResponse;
 import com.osundosun.mupid.api.auth.response.AuthReissueTokenResponse;
 import com.osundosun.mupid.api.auth.service.AuthService;
+import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.common.response.BaseResponse;
 import com.osundosun.mupid.api.user.entity.User;
 
@@ -49,7 +51,8 @@ public class AuthController {
             .sameSite("Strict")
             .httpOnly(true)
             .secure(true)
-            .maxAge(Duration.ofMillis(JwtProvider.ACCESS_TOKEN_VALIDITY_MS))
+            // 쿠키가 먼저 사라지면 토큰이 살아 있어도 재발급을 못 한다.
+            .maxAge(Duration.ofMillis(JwtProvider.REFRESH_TOKEN_VALIDITY_MS))
             .build();
 
         // 액세스 토큰 설정
@@ -65,10 +68,21 @@ public class AuthController {
                 .body(BaseResponse.of(response));
     }
 
+    /**
+     * 액세스 토큰 재발급.
+     *
+     * 쿠키가 아예 없으면 **401** 이다. `required = true` 로 두면 스프링이
+     * `MissingRequestCookieException` 을 던지고 그게 500 으로 나가는데,
+     * 로그인한 적 없는 첫 방문자가 늘 밟는 길이라 서버가 고장 난 것처럼 보인다.
+     */
     @GetMapping
     public ResponseEntity<BaseResponse<AuthReissueTokenResponse>> reissueToken(
-        @CookieValue(name = "refresh_token") String refreshToken
+        @CookieValue(name = "refresh_token", required = false) String refreshToken
     ) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new BusinessException(AuthErrorCode.UNAUTHORIZED);
+        }
+
         // 토큰 재발급
         TokenPair tokenPair = authService.reissueToken(refreshToken);
 
@@ -78,7 +92,8 @@ public class AuthController {
             .sameSite("Strict")
             .httpOnly(true)
             .secure(true)
-            .maxAge(Duration.ofMillis(JwtProvider.ACCESS_TOKEN_VALIDITY_MS))
+            // 쿠키가 먼저 사라지면 토큰이 살아 있어도 재발급을 못 한다.
+            .maxAge(Duration.ofMillis(JwtProvider.REFRESH_TOKEN_VALIDITY_MS))
             .build();
 
         // 액세스 토큰 설정
