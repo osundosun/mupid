@@ -89,6 +89,10 @@ export class PlayerEngine {
   private readonly ring = new RingBuffer<{ index: number; bytes: ArrayBuffer }>(
     RING_CAPACITY,
   );
+  private seeking = false;
+  /** 옮기는 동안 새로 지정된 목적지. 막대를 끌면 쉬지 않고 들어온다. */
+  private seekPending: number | null = null;
+
   private draining = false;
   /** 디코딩이 도는 동안 새 청크가 들어왔는가. 들어왔으면 한 바퀴 더 돈다. */
   private drainPending = false;
@@ -255,6 +259,18 @@ export class PlayerEngine {
     this.store.set({ status: 'paused', positionSec: this.anchorPosition });
   }
 
+  /**
+   * 재생 위치를 옮긴다.
+   *
+   * **자리부터 옮기고 소리는 나중에 맞춘다.** 예전에는 페이드아웃을 기다린
+   * 뒤에야 위치를 바꿨는데, 그 120ms 동안 티커가 200ms 마다 옛 위치를 그대로
+   * 내보내서 화면 바가 누른 자리로 갔다가 원래 자리로 돌아왔다가 다시 튀었다.
+   * 티커를 먼저 멈추고 자리를 확정한 뒤에 소리를 맞춘다.
+   *
+   * 막대를 끄는 동안에는 `change` 가 쉬지 않고 들어온다. 이미 옮기는 중이면
+   * 목적지만 갈아 두고 돌고 있는 쪽이 마지막 자리까지 이어서 처리한다 —
+   * 여러 번이 한꺼번에 돌면 페이드와 예약이 엇갈린다.
+   */
   async seek(positionSec: number) {
     const source = this.source;
     if (!source) return;
@@ -262,16 +278,41 @@ export class PlayerEngine {
       Math.max(0, positionSec),
       Math.max(0, source.durationSec - 0.05),
     );
-    const wasPlaying = this.store.get().status === 'playing';
-    await this.fadeOut();
-    this.stopSources();
+
+    // 화면이 기다리지 않도록 자리는 지금 바로 확정한다.
+    this.stopTicker();
     this.anchorPosition = target;
     this.store.set({ positionSec: target });
-    void this.fill();
-    if (wasPlaying) {
-      await this.resumeContext();
-      this.startAt(target);
-    } else {
+
+    this.seekPending = target;
+    if (this.seeking) return;
+    this.seeking = true;
+    // 버퍼를 기다리는 중이어도 사용자에게는 '재생 중'이다. 옮긴 뒤에도 이어서
+    // 나야 한다. 끝까지 들은 곡은 그 자리에서 다시 듣겠다는 뜻이니 함께 튼다.
+    const status = this.store.get().status;
+    const wasPlaying =
+      status === 'playing' || status === 'buffering' || status === 'ended';
+    try {
+      await this.fadeOut();
+      this.stopSources();
+      for (;;) {
+        const to = this.seekPending;
+        if (to === null) break;
+        this.seekPending = null;
+        this.anchorPosition = to;
+        this.store.set({ positionSec: to });
+        void this.fill();
+        if (!wasPlaying) continue;
+        await this.resumeContext();
+        // 그 사이 또 옮겼으면 소리를 내지 않고 마지막 자리로 간다.
+        if (this.seekPending !== null) continue;
+        this.startAt(to);
+      }
+    } finally {
+      this.seeking = false;
+      this.seekPending = null;
+    }
+    if (!wasPlaying) {
       this.store.set({ status: 'paused' });
       this.fadeIn();
     }

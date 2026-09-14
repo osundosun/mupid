@@ -859,10 +859,27 @@ export function useMupid(bootstrap: Bootstrap) {
     chatButtonRef,
     play,
     next,
+    /**
+     * 화면에서 재생 위치를 옮긴다.
+     *
+     * **이미 들고 있는 곡이면 그 자리만 옮긴다.** 예전에는 `startPlayback` 을
+     * 다시 불러 곡을 통째로 다시 걸었다. 막대를 끄는 동안 `change` 가 계속
+     * 들어오는데 그때마다 청취 이벤트가 나가고 최근 감상에 쌓였고, 다시 건
+     * 재생이 옛 자리에서 시작했다가 뒤늦게 목적지로 튀어 막대가 요동쳤다.
+     */
     seek: (value: number) => {
       if (!Number.isFinite(value)) return;
       previewEnd.current = null;
-      void startPlayback(activeRef.current, value);
+      const track = activeRef.current;
+      const next = Math.max(0, Math.min(value, track.duration));
+      const player = getPlayer();
+      // 아직 이 곡을 들고 있지 않으면 그 자리에서 새로 튼다.
+      if (!player || player.store.get().musicId !== track.musicId) {
+        void startPlayback(track, next);
+        return;
+      }
+      setTime(next);
+      void player.seek(next);
     },
     openTrack,
     openMoment,
