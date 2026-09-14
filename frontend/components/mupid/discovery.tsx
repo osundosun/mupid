@@ -1,55 +1,63 @@
 'use client';
 import { VinylRecord } from './vinyl-record';
 import { Lyrics } from './lyrics';
+import { TrackMenu } from './track-menu';
 import { TrackComments } from './track-comments';
 import { MupidMascot } from './mascot';
 import { useState } from 'react';
 import {
   Check,
+  Bookmark,
+  BookmarkMinus,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
-  EllipsisVertical,
+  ListMusic,
   Heart,
   Play,
   Search,
   Sparkles,
   X,
 } from 'lucide-react';
-import { Slider } from '@/components/ui/slider';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
 import {
   EmptyState,
   LikeButton,
   PageHeader,
-  PlayerControls,
   TrackRow,
   Waveform,
 } from './primitives';
 
 export function PlayerView({ model: m }: { model: MupidModel }) {
   const part = getSongSectionAt(m.active, m.time || m.active.moment);
+  // 지금 재생 중인 순간이 이미 저장돼 있는지 본다. 저장했다면 여기서 바로 해제할 수 있다.
+  const savedMoment = m.moments.find(
+    (v) => v.track.id === m.active.id && v.start === part.start && v.end === part.end,
+  );
+  const momentSaved = !!savedMoment;
+  const [confirmUnsave, setConfirmUnsave] = useState(false);
   return (
     <div className="player-page">
       <header className="player-heading">
-        <button
-          className="icon-button"
-          aria-label="플레이어 닫고 홈으로"
-          onClick={() => m.go('home')}
-        >
-          <ChevronDown />
+        <button className="icon-button" aria-label="뒤로 가기" onClick={m.goBack}>
+          <ChevronLeft />
         </button>
         <div>
           <h1>{m.active.title}</h1>
           <p>{m.active.artist}</p>
         </div>
-        <button
-          className="icon-button"
-          aria-label="재생 목록"
-          onClick={() => m.setQueueDialog(true)}
-        >
-          <EllipsisVertical />
-        </button>
+        <TrackMenu model={m} />
       </header>
       <div className="player-body">
         <div className="player-art-area">
@@ -63,40 +71,34 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             width="440"
             height="440"
           />
+          <Lyrics track={m.active} />
         </div>
         <div className="player-detail">
           <div className="section-pill">
             {part.label} · {formatTime(part.start)} – {formatTime(part.end)}
           </div>
-          <div className="player-waveform">
-            <Waveform
-              duration={m.active.duration}
-              start={part.start}
-              end={part.end}
-              progress={m.time}
-            />
-            <input
-              className="playback-range"
-              type="range"
-              aria-label="재생 위치"
-              aria-valuetext={`${formatTime(m.time)} / ${formatTime(m.active.duration)}`}
-              min={0}
-              max={m.active.duration}
-              step={1}
-              value={m.time}
-              onChange={(e) => m.seek(Number(e.target.value))}
-            />
-          </div>
-          <div className="time-labels">
-            <span>{formatTime(m.time)}</span>
-            <span>{formatTime(m.active.duration)}</span>
-          </div>
-          <PlayerControls model={m} />
-          <Lyrics track={m.active} />
+          <TrackComments key={m.active.id} model={m} />
           <div className="player-actions">
-            <button className="secondary-button" onClick={() => m.openMoment()}>
-              <Heart className="pink" />
-              좋아한 구간
+            <button
+              className="secondary-button"
+              aria-pressed={momentSaved}
+              onClick={() => {
+                if (momentSaved) { setConfirmUnsave(true); return; }
+                m.setMoments((list) => [
+                  { id: Date.now(), track: m.active, start: part.start, end: part.end, section: part.label },
+                  ...list,
+                ]);
+                m.setToast(`${part.label} 순간을 저장했어요.`);
+              }}
+            >
+              {/* '저장됨'은 상태로만 읽혀 누를 수 있는지 알 수 없다. 누르면 무슨 일이 일어나는지 적는다. */}
+              {momentSaved ? <BookmarkMinus /> : <Bookmark />}
+              {momentSaved ? '저장 취소' : '이 순간 저장'}
+            </button>
+            <button className="secondary-button" onClick={() => { m.setLibraryTab('queue'); m.go('library'); }}><ListMusic />재생목록</button>
+            <button className="secondary-button" aria-pressed={m.liked.includes(m.active.id)} aria-label={m.liked.includes(m.active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(m.active.id)}>
+              <Heart className="pink" fill={m.liked.includes(m.active.id) ? 'currentColor' : 'none'} />
+              좋아요
             </button>
             <button
               className="secondary-button"
@@ -112,9 +114,8 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             </summary>
             <div className="player-reason">
               <p className="album-name">{m.active.album}</p>
-              <span className="eyebrow">WHY THIS MOMENT</span>
-              <h3>{m.active.reason}</h3>
-              <p>좋아한 순간의 분위기를 따라 새로운 음악을 만나보세요.</p>
+              <span className="eyebrow" lang="en">WHY THIS MOMENT</span>
+              <p>저장한 순간의 분위기를 따라 새로운 음악을 만나보세요.</p>
               <div className="tags">
                 {m.active.tags.map((t) => (
                   <span key={t}>{t}</span>
@@ -122,182 +123,114 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
               </div>
             </div>
             <button className="text-link" onClick={m.openChat}>
-              <Sparkles />이 곡을 조금 더 잔잔하게 <ChevronRight />
+              <Sparkles />AI 기능 <ChevronRight />
             </button>
           </details>
-          <TrackComments key={m.active.id} model={m} />
         </div>
       </div>
+      {/* 저장은 한 번 더 물어보고 푼다. 보관함의 순간 삭제와 같은 규칙. */}
+      <AlertDialog open={confirmUnsave} onOpenChange={(open) => { if (!open) setConfirmUnsave(false); }}>
+        <AlertDialogContent className="sky-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>저장한 순간을 뺄까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {part.label} · {formatTime(part.start)} – {formatTime(part.end)} 순간만 지워지고, 곡은 그대로예요.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                m.setMoments((list) => list.filter((v) => v.id !== savedMoment?.id));
+                m.setToast('저장한 순간을 뺐어요.');
+                setConfirmUnsave(false);
+              }}
+            >
+              빼기
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 export function MomentView({ model: m }: { model: MupidModel }) {
+  return <MomentSelection key={m.active.id} model={m} />;
+}
+function MomentSelection({ model: m }: { model: MupidModel }) {
+  const editing = m.editingMomentId !== null;
+  // 수정으로 들어왔으면 그 순간을 미리 골라 둔다.
+  const [selected, setSelected] = useState<number[]>(() => {
+    if (!editing) return [];
+    const index = m.active.sections.findIndex(
+      (s) => s.start === m.momentRange[0] && s.end === m.momentRange[1],
+    );
+    return index < 0 ? [] : [index];
+  });
   const [saved, setSaved] = useState(false);
-  return (
-    <div className="content-page moment-page">
-      <PageHeader
-        title="좋아한 구간"
-        onBack={() => m.go('player')}
-        aside={<LikeButton model={m} />}
-      />
-      <div className="moment-layout">
-        <div>
-          <div className="intro-copy">
-            <h2>좋아한 순간을 남겨요.</h2>
-            <p>구간을 고르고, 나만의 취향으로 저장하세요.</p>
-          </div>
-          <TrackRow
-            track={m.active}
-            model={m}
-            detail={`${m.momentSection} · ${formatTime(m.momentRange[0])} – ${formatTime(m.momentRange[1])}`}
-          />
-          <div className="moment-editor">
-            <div className="song-parts" aria-label="음악 구간 선택">
-              {m.active.sections.map((part, i) => (
-                <button
-                  className={m.momentSection === part.label ? 'selected' : ''}
-                  key={i}
-                  onClick={() => {
-                    m.setMomentSection(part.label);
-                    m.setMomentRange([part.start, part.end]);
-                    setSaved(false);
-                  }}
-                >
-                  {part.label}
-                </button>
-              ))}
-            </div>
-            <Waveform
-              duration={m.active.duration}
-              start={m.momentRange[0]}
-              end={m.momentRange[1]}
-            />
-            <Slider
-              aria-label="좋아한 구간 시작과 끝 조절"
-              className="moment-slider"
-              value={m.momentRange}
-              min={0}
-              max={m.active.duration}
-              minStepsBetweenValues={1}
-              step={1}
-              thumbCollisionBehavior="none"
-              onValueChange={(value) => {
-                m.setMomentRange(value as number[]);
-                m.setMomentSection('직접 선택');
-                setSaved(false);
-              }}
-            />
-            <div className="time-labels">
-              <span>00:00</span>
-              <span>{formatTime(m.active.duration)}</span>
-            </div>
-            <details className="moment-adjustments">
-              <summary>시작·종료 시간 직접 조정</summary>
-              <div className="range-fields">
-                <label>
-                  시작{' '}
-                  <span>
-                    <input
-                      aria-label="구간 시작 시간(초)"
-                      type="number"
-                      min={0}
-                      max={m.momentRange[1] - 1}
-                      value={m.momentRange[0]}
-                      onChange={(e) => {
-                        const n = Number(e.target.value);
-                        m.setMomentRange([
-                          Math.max(0, Math.min(n, m.momentRange[1] - 1)),
-                          m.momentRange[1],
-                        ]);
-                        m.setMomentSection('직접 선택');
-                        setSaved(false);
-                      }}
-                    />
-                    초
-                  </span>
-                </label>
-                <span className="range-separator">—</span>
-                <label>
-                  종료{' '}
-                  <span>
-                    <input
-                      aria-label="구간 종료 시간(초)"
-                      type="number"
-                      min={m.momentRange[0] + 1}
-                      max={m.active.duration}
-                      value={m.momentRange[1]}
-                      onChange={(e) => {
-                        const n = Number(e.target.value);
-                        m.setMomentRange([
-                          m.momentRange[0],
-                          Math.min(
-                            m.active.duration,
-                            Math.max(m.momentRange[0] + 1, n),
-                          ),
-                        ]);
-                        m.setMomentSection('직접 선택');
-                        setSaved(false);
-                      }}
-                    />
-                    초
-                  </span>
-                </label>
-                <button
-                  className="icon-button"
-                  aria-label="선택 구간 미리듣기"
-                  onClick={m.previewMoment}
-                >
-                  <Play />
-                </button>
-              </div>
-            </details>
-          </div>
+  const parts = m.active.sections.filter((_, i) => selected.includes(i));
+  return <div className="content-page moment-page">
+    <PageHeader
+      title={editing ? '순간 수정' : '저장한 순간'}
+      onBack={() => { m.setEditingMomentId(null); m.go(editing ? 'library' : 'player'); }}
+      aside={<LikeButton model={m} />}
+    />
+    <div className="moment-layout">
+      <div>
+        <div className="intro-copy">
+          <h2>{editing ? '어느 순간으로 바꿀까요?' : '마음에 드는 순간을 저장하세요.'}</h2>
+          <p>{editing ? '새로 고른 순간이 기존 순간을 대신해요.' : '인트로·벌스·코러스 등을 여러 개 선택할 수 있어요.'}</p>
         </div>
-        <div className="moment-story">
-          <span className="heart-badge">
-            <Heart fill="currentColor" />
-          </span>
-          <h2>이 순간, 마음에 들어요.</h2>
-          <p>
-            {formatTime(m.momentRange[0])}부터 {formatTime(m.momentRange[1])}
-            까지
-            <br />
-            당신의 취향을 한 겹 더 기록해요.
-          </p>
-          <div className="tags">
-            {m.active.tags.map((tag) => (
-              <span key={tag}>{tag}</span>
-            ))}
+        <TrackRow track={m.active} model={m} detail={parts.length ? parts.map(p => p.label).join(' · ') : '저장할 순간을 선택해 주세요'} />
+        <div className="moment-editor">
+          <div className="song-parts" aria-label="저장할 순간 다중 선택">
+            {m.active.sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) ? 'selected' : ''} onClick={() => {
+              setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : [...ids, i]);
+              setSaved(false);
+            }}>{part.label}</button>)}
           </div>
-          <button
-            className="primary-button wide"
-            onClick={() => {
-              m.saveMoment();
-              setSaved(true);
-            }}
-          >
-            {saved ? <Check /> : <Heart />}
-            {saved ? '좋아한 구간에 저장했어요' : '이 구간 저장하기'}
-          </button>
-          <button
-            className="secondary-button wide"
-            onClick={() => m.go('similar')}
-          >
-            <Sparkles />이 구간으로 파생곡 찾기
-          </button>
-          <button
-            className="text-link"
-            onClick={() => {
-              m.setLibraryTab('moments');
-              m.go('library');
-            }}
-          >
-            저장한 구간 모두 보기 <ChevronRight />
-          </button>
+          <Waveform duration={m.active.duration} ranges={parts} />
+          <div className="time-labels"><span>00:00</span><span>{formatTime(m.active.duration)}</span></div>
+          {/* 고른 순간은 여기서 바로 빼는 게 빠르다. 위 칩을 다시 찾아 누를 필요가 없다. */}
+          <div className="track-menu-options moment-part-list">
+            {parts.map(part => {
+              const index = m.active.sections.indexOf(part);
+              return <div className="moment-part-row" key={part.start}>
+                <button onClick={() => m.playSavedMoment({ id: part.start, track: m.active, start: part.start, end: part.end, section: part.label })} aria-label={part.label + ' 미리듣기'}>
+                  <Play /><span>{part.label}</span><small>{formatTime(part.start)} – {formatTime(part.end)}</small>
+                </button>
+                <button
+                  className="icon-button moment-part-remove"
+                  aria-label={part.label + ' 선택 해제'}
+                  onClick={() => { setSelected(ids => ids.filter(id => id !== index)); setSaved(false); }}
+                >
+                  <X />
+                </button>
+              </div>;
+            })}
+          </div>
         </div>
       </div>
+      <div className="moment-story">
+        <h2>{parts.length}개의 순간 선택</h2>
+        <p>{editing ? '한 순간만 골라 주세요. 기존에 저장한 순간을 이걸로 바꿔요.' : <>선택한 부분은 각각 따로 저장돼요.<br />선택하지 않은 부분은 포함하지 않아요.</>}</p>
+        <button className="primary-button wide" disabled={!parts.length || saved} onClick={() => {
+          if (editing) {
+            const part = parts[0];
+            m.setMoments(list => list.map(v => v.id === m.editingMomentId
+              ? { ...v, start: part.start, end: part.end, section: part.label }
+              : v));
+            m.setToast('저장한 순간을 바꿨어요.'); setSaved(true);
+            return;
+          }
+          const entries = parts.map((p, i) => ({ id: Date.now() + i, track: m.active, start: p.start, end: p.end, section: p.label }));
+          m.setMoments(list => [...entries.filter(e => !list.some(v => v.track.id === e.track.id && v.start === e.start && v.end === e.end)), ...list]);
+          m.setToast('선택한 순간을 저장했어요.'); setSaved(true);
+        }}>{saved ? <Check /> : <Bookmark />}{saved ? (editing ? '수정 완료' : '저장 완료') : (editing ? '이 순간으로 바꾸기' : '선택한 순간 저장하기')}</button>
+        <button className="text-link" onClick={() => { m.setLibraryTab('moments'); m.go('library'); }}>저장한 순간 모두 보기 <ChevronRight /></button>
+      </div>
     </div>
-  );
+  </div>;
 }
 export { SearchView } from './explore';
 export function SimilarView({ model: m }: { model: MupidModel }) {
@@ -308,12 +241,12 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
   const results = m.showAllSimilar ? pool : pool.slice(0, 4);
   return (
     <div className="content-page similar-page">
-      <PageHeader title="비슷한 구간 추천" onBack={() => m.go('moment')} />
+      <PageHeader title="비슷한 순간 추천" onBack={() => m.go('moment')} />
       <p className="eyebrow source-label">이 순간에서 시작했어요</p>
       <TrackRow model={m} track={m.active} />
       <div className="intro-copy">
-        <h2>이런 구간은 어때요?</h2>
-        <p>좋아한 순간의 분위기를 이어가 보세요.</p>
+        <h2>이런 순간은 어때요?</h2>
+        <p>저장한 순간의 분위기를 이어가 보세요.</p>
       </div>
       <div className="track-list">
         {results.map((t) => (
@@ -334,7 +267,6 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
                 </button>
               }
             />
-            <p className="recommendation-reason">{t.reason}</p>
           </div>
         ))}
       </div>
@@ -353,7 +285,7 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
           className="secondary-button wide load-more"
           onClick={() => m.setShowAllSimilar(true)}
         >
-          더 많은 구간 추천 받기 <ChevronRight />
+          더 많은 순간 추천 받기 <ChevronRight />
         </button>
       )}
       <button className="ai-prompt-card" onClick={m.openChat}>

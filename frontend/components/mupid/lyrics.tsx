@@ -11,13 +11,14 @@ const drafts: Record<string, string[]> = {
   '비 오는 날의 우리': ['우산 끝에 맺힌 이야기', '젖은 골목을 함께 걸어', '비가 그친 뒤에도 우리', '같은 속도로 걸어가자'],
 };
 
+// 접지 않고 항상 보여 준다. LP 바로 아래에 놓이는 블록이다.
 export function Lyrics({ track }: { track: Track }) {
-  return <details className="song-lyrics" key={track.id}>
-    <summary>가사 보기 <span>⌄</span></summary>
-    <div className="song-lyrics-body">
-      <p className="lyrics-disclaimer">곡 분위기로 작성한 임시 가사 · 실제 음원 가사와 다를 수 있어요</p>
-      <h3>{track.title}</h3>
-      {(drafts[track.title] ?? []).map(line => <p key={line}>{line}</p>)}
-    </div>
-  </details>;
+  const lines = drafts[track.title] ?? [];
+  return <section className="song-lyrics" key={track.id} aria-label={`${track.title} 가사`}>
+    <h3>{track.title}</h3>
+    {lines.length
+      ? lines.map(line => <p key={line}>{line}</p>)
+      : <p className="song-lyrics-empty">가사가 아직 준비되지 않았어요.</p>}
+    <p className="lyrics-disclaimer">곡 분위기로 작성한 임시 가사 · 실제 음원 가사와 다를 수 있어요</p>
+  </section>;
 }

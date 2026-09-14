@@ -15,7 +15,6 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
         ref={chatButtonRef}
         onClick={m.openChat}
       >
-        <MupidMascot size={36} className="chat-launcher-mascot" />
         <span className="chat-launcher-label">AI</span>
       </button>
     );
@@ -29,7 +28,7 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
           <h2>
             Mupid AI
           </h2>
-          <p>좋아한 순간에서, 다음 음악으로</p>
+          <p>저장한 순간에서, 다음 음악으로</p>
         </div>
         <button
           className="icon-button"
@@ -65,7 +64,7 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
               {message.tracks && (
                 <div className="chat-tracks">
                   {message.tracks.map((track) => (
-                    <TrackRow key={track.id} track={track} model={m} />
+                    <TrackRow key={track.id} track={track} model={m} queueable />
                   ))}
                 </div>
               )}

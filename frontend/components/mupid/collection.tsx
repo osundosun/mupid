@@ -1,4 +1,8 @@
 'use client';
+import { DailyAlbumTreemap } from './daily-album-treemap';
+import { QueueList } from './queue-list';
+import { PlaylistMenu } from './playlist-menu';
+import { SelectionToolbar, useTrackSelection } from './track-selection';
 import { MupidMascot } from './mascot';
 import { ProfilePhoto } from './profile-photo';
 import { useState } from 'react';
@@ -9,13 +13,23 @@ import {
   ChevronRight,
   Heart,
   Music2,
-  Play,
   Plus,
+  Pencil,
   Trash2,
   X,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import type { MupidModel } from '@/hooks/use-mupid';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { QUEUE_LIMIT, type MupidModel } from '@/hooks/use-mupid';
 import { formatTime, moodOptions } from '@/lib/mupid-data';
 import {
   AlbumArt,
@@ -24,18 +38,39 @@ import {
   Heading,
   PageHeader,
   TrackRow,
+  PlayerControls,
 } from './primitives';
 
+// 탭 이름을 그대로 화면 제목으로 쓴다. 어느 탭에 있는지 제목만 봐도 알 수 있게.
+const LIBRARY_TAB_TITLES: Record<string, string> = {
+  queue: '재생목록',
+  playlists: '플레이리스트',
+  moments: '저장한 순간',
+  liked: '좋아한 곡',
+};
 export function LibraryView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
   const selected = m.playlists.find((p) => p.id === m.selectedPlaylist);
+  // 저장한 순간은 되돌릴 수 없어서 삭제 전에 한 번 확인받는다.
+  const [removeMoment, setRemoveMoment] = useState<number | null>(null);
+  const momentToRemove = m.moments.find((v) => v.id === removeMoment);
+  // 재생목록·플레이리스트에서 여러 곡을 골라 한 번에 뺄 수 있게 한다.
+  const queuePick = useTrackSelection(m.queueTracks.map((t) => t.id));
+  const playlistPick = useTrackSelection((selected?.tracks ?? []).map((t) => t.id));
+  // 곡을 목록에서 빼는 건 한 곡이든 여러 곡이든 똑같이 한 번 확인받는다.
+  const [confirmRemove, setConfirmRemove] = useState<{
+    scope: 'queue' | 'playlist';
+    ids: number[];
+  } | null>(null);
+  const removeTargets = (confirmRemove?.scope === 'playlist' ? (selected?.tracks ?? []) : m.queueTracks)
+    .filter((t) => confirmRemove?.ids.includes(t.id));
   return (
     <div className="content-page collection-page">
       <PageHeader
         title={
           selected && m.libraryTab === 'playlists'
             ? selected.name
-            : '내 플레이리스트'
+            : (LIBRARY_TAB_TITLES[m.libraryTab] ?? '보관함')
         }
         onBack={() => {
           if (selected) m.setSelectedPlaylist(null);
@@ -43,13 +78,22 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
         }}
         aside={
           selected && m.libraryTab === 'playlists' ? (
-            <button
-              aria-label="플레이리스트 삭제"
-              className="icon-button"
-              onClick={() => m.setDeletePlaylist(selected.id)}
-            >
-              <Trash2 />
-            </button>
+            <>
+              <button
+                aria-label="플레이리스트 이름 바꾸기"
+                className="icon-button"
+                onClick={() => m.setRenamePlaylist(selected.id)}
+              >
+                <Pencil />
+              </button>
+              <button
+                aria-label="플레이리스트 삭제"
+                className="icon-button"
+                onClick={() => m.setDeletePlaylist(selected.id)}
+              >
+                <Trash2 />
+              </button>
+            </>
           ) : undefined
         }
       />
@@ -62,17 +106,50 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
         className="sky-tabs"
       >
         <TabsList>
+          <TabsTrigger value="queue">재생목록</TabsTrigger>
           <TabsTrigger value="playlists">플레이리스트</TabsTrigger>
-          <TabsTrigger value="moments">좋아한 구간</TabsTrigger>
-          <TabsTrigger value="liked">저장한 곡</TabsTrigger>
+          <TabsTrigger value="moments">저장한 순간</TabsTrigger>
+          <TabsTrigger value="liked">좋아한 곡</TabsTrigger>
         </TabsList>
+        <TabsContent value="queue">
+          <div className="intro-copy">
+            <p>
+              {queuePick.active
+                ? '뺄 곡을 고르세요. 전체 선택으로 한 번에 비울 수도 있어요.'
+                : `지금 재생 목록에 담긴 순서예요. 손잡이를 끌어 순서를 바꿀 수 있고, ${QUEUE_LIMIT}곡까지 담겨요.`}
+            </p>
+          </div>
+          {!!m.queueTracks.length && (
+            <SelectionToolbar
+              selection={queuePick}
+              total={m.queueTracks.length}
+              limit={QUEUE_LIMIT}
+              onDelete={() => setConfirmRemove({ scope: 'queue', ids: queuePick.picked })}
+            />
+          )}
+          <QueueList
+            model={m}
+            selection={queuePick}
+            onRemove={(track) => setConfirmRemove({ scope: 'queue', ids: [track.id] })}
+          />
+          {!m.queueTracks.length && (
+            <EmptyState
+              title="재생 목록이 비어 있어요"
+              description="음악을 재생하면 이어 들을 곡이 여기에 쌓여요."
+            >
+              <button className="secondary-button" onClick={() => m.go('player')}>
+                음악 들으러 가기
+              </button>
+            </EmptyState>
+          )}
+        </TabsContent>
         <TabsContent value="playlists">
           {selected ? (
             <div className="playlist-detail">
               <div className="playlist-summary">
                 {selected.tracks[0] ? <AlbumArt track={selected.tracks[0]} /> : <Music2 size={72} aria-label="비어 있는 플레이리스트" />}
                 <div>
-                  <span className="eyebrow">MY PLAYLIST</span>
+                  <span className="eyebrow">내 플레이리스트</span>
                   <h2>{selected.name}</h2>
                   <p>
                     {selected.tracks.length}곡 ·{' '}
@@ -82,42 +159,43 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                     )}
                     분
                   </p>
-                  <button
-                    className="primary-button"
-                    disabled={!selected.tracks.length}
-                    onClick={() => m.playPlaylist(selected)}
-                  >
-                    <Play fill="currentColor" />
-                    전체 재생
-                  </button>
+                  {selected.tracks.length > 0 && <div className="playlist-transport" aria-label="플레이리스트 재생">
+                    <PlayerControls model={m} onPlay={() => {
+                      const sameQueue = m.queueTracks.length === selected.tracks.length && m.queueTracks.every(t => selected.tracks.some(s => s.id === t.id));
+                      if (sameQueue) m.play();
+                      else m.playPlaylist(selected);
+                    }} />
+                    <div className="playlist-seek">
+                      <span>{formatTime(m.time)}</span>
+                      <input type="range" min={0} max={m.active.duration} step={1} value={m.time} aria-label="재생 위치" onChange={event => m.seek(Number(event.target.value))} />
+                      <span>{formatTime(m.active.duration)}</span>
+                    </div>
+                  </div>}
                 </div>
               </div>
               <div className="playlist-tracks">
-              <div className="playlist-tracks-heading"><h3>수록곡</h3><span>{selected.tracks.length}곡</span></div>
+              <div className="playlist-tracks-heading"><h3>수록곡</h3></div>
+              {!!selected.tracks.length && (
+                <SelectionToolbar
+                  selection={playlistPick}
+                  total={selected.tracks.length}
+                  onDelete={() => setConfirmRemove({ scope: 'playlist', ids: playlistPick.picked })}
+                />
+              )}
               <div className="track-list">
                 {selected.tracks.map((t) => (
                   <TrackRow
                     key={t.id}
                     track={t}
                     model={m}
+                    selected={playlistPick.has(t.id)}
+                    onSelect={playlistPick.active ? () => playlistPick.toggle(t.id) : undefined}
+                    onPlay={() => m.playPlaylist(selected, t)}
                     action={
                       <button
                         className="icon-button"
-                        aria-label={`${t.title} 플레이리스트에서 제거`}
-                        onClick={() =>
-                          m.setPlaylists((list) =>
-                            list.map((p) =>
-                              p.id === selected.id
-                                ? {
-                                    ...p,
-                                    tracks: p.tracks.filter(
-                                      (v) => v.id !== t.id,
-                                    ),
-                                  }
-                                : p,
-                            ),
-                          )
-                        }
+                        aria-label={`${t.title} 플레이리스트에서 빼기`}
+                        onClick={() => setConfirmRemove({ scope: 'playlist', ids: [t.id] })}
                       >
                         <X />
                       </button>
@@ -160,32 +238,37 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
             </div>
           ) : (
             <>
-              <button
-                className="new-playlist"
-                onClick={() => m.setPlaylistDialog(true)}
-              >
-                <Plus />새 플레이리스트
-              </button>
               <div className="playlist-grid">
+                {/* 만들기 자리도 목록의 한 칸으로 둔다. 오른쪽에 혼자 뜨면 축이 어긋난다. */}
+                <button
+                  className="new-playlist"
+                  onClick={() => m.setPlaylistDialog(true)}
+                >
+                  <span className="new-playlist-tile" aria-hidden="true"><Plus /></span>
+                  <strong>새 플레이리스트</strong>
+                </button>
                 {m.playlists.map((p) => (
-                  <button
-                    className="playlist-card"
-                    key={p.id}
-                    onClick={() => m.setSelectedPlaylist(p.id)}
-                  >
-                    {p.tracks[0] ? <AlbumArt track={p.tracks[0]} /> : <Music2 size={72} aria-label="비어 있는 플레이리스트" />}
-                    <span>
-                      <strong>{p.name}</strong>
-                      <small>
-                        {p.tracks.length}곡 ·{' '}
-                        {Math.ceil(
-                          p.tracks.reduce((sum, t) => sum + t.duration, 0) / 60,
-                        )}
-                        분
-                      </small>
-                    </span>
-                    <ChevronRight />
-                  </button>
+                  // 카드 버튼 안에 버튼을 넣을 수 없어 더보기는 옆에 두고 겹쳐 놓는다.
+                  <div className="playlist-card-wrap" key={p.id}>
+                    <button
+                      className="playlist-card"
+                      onClick={() => m.setSelectedPlaylist(p.id)}
+                    >
+                      {p.tracks[0] ? <AlbumArt track={p.tracks[0]} /> : <Music2 size={72} aria-label="비어 있는 플레이리스트" />}
+                      <span>
+                        <strong>{p.name}</strong>
+                        <small>
+                          {p.tracks.length}곡 ·{' '}
+                          {Math.ceil(
+                            p.tracks.reduce((sum, t) => sum + t.duration, 0) / 60,
+                          )}
+                          분
+                        </small>
+                      </span>
+                      <ChevronRight />
+                    </button>
+                    <PlaylistMenu model={m} playlist={p} />
+                  </div>
                 ))}
               </div>
               {!m.playlists.length && (
@@ -212,13 +295,9 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                   detail={`${moment.section} · ${formatTime(moment.start)} – ${formatTime(moment.end)}`}
                   action={
                     <button
-                      aria-label={`${moment.track.title} 저장 구간 삭제`}
+                      aria-label={`${moment.track.title} 저장 순간 삭제`}
                       className="icon-button"
-                      onClick={() =>
-                        m.setMoments((list) =>
-                          list.filter((v) => v.id !== moment.id),
-                        )
-                      }
+                      onClick={() => setRemoveMoment(moment.id)}
                     >
                       <X />
                     </button>
@@ -226,13 +305,9 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                 />
                 <button
                   className="text-link"
-                  onClick={() => {
-                    m.openMoment(moment.track);
-                    m.setMomentRange([moment.start, moment.end]);
-                    m.setMomentSection(moment.section);
-                  }}
+                  onClick={() => m.openMoment(moment.track, moment)}
                 >
-                  저장 구간 열기 <ChevronRight />
+                  순간 수정 <ChevronRight />
                 </button>
               </article>
             ))}
@@ -240,7 +315,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
           {!m.moments.length && (
             <EmptyState
               title="아직 남긴 순간이 없어요"
-              description="재생 중 하트를 눌러 좋아한 구간을 남겨보세요."
+              description="재생 중 하트를 눌러 저장한 순간을 남겨보세요."
             >
               <button
                 className="secondary-button"
@@ -282,39 +357,90 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
           )}
         </TabsContent>
       </Tabs>
+      <AlertDialog
+        open={removeMoment !== null}
+        onOpenChange={(open) => { if (!open) setRemoveMoment(null); }}
+      >
+        <AlertDialogContent className="sky-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>저장한 순간을 삭제할까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {momentToRemove
+                ? `${momentToRemove.track.title} · ${momentToRemove.section}`
+                : ''}
+              {' '}순간만 지워지고, 곡과 플레이리스트는 그대로예요.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                m.setMoments((list) => list.filter((v) => v.id !== removeMoment));
+                setRemoveMoment(null);
+                m.setToast('저장한 순간을 삭제했어요.');
+              }}
+            >
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={confirmRemove !== null}
+        onOpenChange={(open) => { if (!open) setConfirmRemove(null); }}
+      >
+        <AlertDialogContent className="sky-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {removeTargets.length === 1
+                ? `‘${removeTargets[0].title}’ 곡을 뺄까요?`
+                : `고른 ${removeTargets.length}곡을 뺄까요?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmRemove?.scope === 'playlist'
+                ? '플레이리스트에서만 빠지고, 곡 자체는 그대로 남아 있어요.'
+                : '재생 목록에서만 빠져요. 지금 듣고 있는 곡은 계속 재생돼요.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const gone = confirmRemove?.ids ?? [];
+                if (confirmRemove?.scope === 'playlist' && selected) {
+                  m.setPlaylists((list) =>
+                    list.map((p) =>
+                      p.id === selected.id
+                        ? { ...p, tracks: p.tracks.filter((v) => !gone.includes(v.id)) }
+                        : p,
+                    ),
+                  );
+                  m.setToast(
+                    removeTargets.length === 1
+                      ? `‘${removeTargets[0].title}’ 곡을 플레이리스트에서 뺐어요.`
+                      : `${gone.length}곡을 플레이리스트에서 뺐어요.`,
+                  );
+                  playlistPick.cancel();
+                } else if (removeTargets.length === 1) {
+                  m.removeFromQueue(removeTargets[0]);
+                  queuePick.cancel();
+                } else {
+                  m.removeManyFromQueue(gone);
+                  queuePick.cancel();
+                }
+                setConfirmRemove(null);
+              }}
+            >
+              빼기
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
 export function ReportView({ model: m }: { model: MupidModel }) {
-  const [period, setPeriod] = useState('week');
-  const [offset, setOffset] = useState(0);
-  const names = ['Chorus', 'Pre-Chorus', 'Verse', 'Bridge', 'Outro'];
-  const colors = ['#efacd0', '#739adc', '#b8cffa', '#c8bdea', '#d6e4fa'];
-  const counts = names.map(
-    (name) =>
-      m.moments.filter((moment) =>
-        name === 'Chorus'
-          ? /코러스/.test(moment.section) && !/프리/.test(moment.section)
-          : name === 'Pre-Chorus'
-            ? /프리/.test(moment.section)
-            : name === 'Verse'
-              ? /벌스/.test(moment.section)
-              : name === 'Bridge'
-                ? /브리지/.test(moment.section)
-                : /아웃트로|인트로|직접/.test(moment.section),
-      ).length,
-  );
-  const total = counts.reduce((a, b) => a + b, 0);
-  let cursor = 0;
-  const segments = counts
-    .map((count, i) => {
-      const start = cursor;
-      cursor += total ? (count / total) * 100 : 0;
-      return `${colors[i]} ${start}% ${cursor}%`;
-    })
-    .join(',');
-  const topIndex = counts.indexOf(Math.max(...counts));
   const moodCounts = m.moments
     .flatMap((moment) => moment.track.tags)
     .reduce<Record<string, number>>(
@@ -327,101 +453,27 @@ export function ReportView({ model: m }: { model: MupidModel }) {
   return (
     <div className="content-page">
       <PageHeader title="내 취향 리포트" onBack={() => m.go('home')} />
-      <Tabs
-        value={period}
-        onValueChange={(v) => {
-          setPeriod(String(v));
-          setOffset(0);
-        }}
-        className="sky-tabs"
-      >
-        <TabsList>
-          <TabsTrigger value="week">주간</TabsTrigger>
-          <TabsTrigger value="month">월간</TabsTrigger>
-          <TabsTrigger value="year">연간</TabsTrigger>
-        </TabsList>
-      </Tabs>
-      <div className="report-period">
-        <button
-          className="icon-button"
-          aria-label="이전 기간"
-          onClick={() => setOffset((v) => v + 1)}
-        >
-          <ChevronLeft />
-        </button>
-        <span>
-          {offset === 0
-            ? period === 'week'
-              ? '이번 주'
-              : period === 'month'
-                ? '이번 달'
-                : '올해'
-            : `${offset}${period === 'week' ? '주' : period === 'month' ? '개월' : '년'} 전`}
-        </span>
-        <button
-          className="icon-button"
-          aria-label="다음 기간"
-          disabled={!offset}
-          onClick={() => setOffset((v) => Math.max(0, v - 1))}
-        >
-          <ChevronRight />
-        </button>
-      </div>
-      {offset > 0 ? (
-        <EmptyState
-          title="이 기간에는 아직 기록이 없어요"
-          description="지금부터 좋아하는 순간을 차곡차곡 쌓아보세요."
-        />
-      ) : (
         <div className="report-grid">
-          <section className="report-card">
-            <h2>구간별 선호도</h2>
-            <p>이 기기에 저장한 구간 비중</p>
-            {total ? (
-              <>
-                <div
-                  className="donut"
-                  aria-hidden="true"
-                  style={{ background: `conic-gradient(${segments})` }}
-                >
-                  <div>
-                    <span>{names[topIndex]}</span>
-                    <strong>
-                      {Math.round((counts[topIndex] / total) * 100)}
-                      <small>%</small>
-                    </strong>
-                  </div>
-                </div>
-                <div className="chart-legend">
-                  {names.map((name, i) => (
-                    <div key={name}>
-                      <i style={{ background: colors[i] }} />
-                      <span>{name}</span>
-                      <strong>{Math.round((counts[i] / total) * 100)}%</strong>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <EmptyState
-                title="취향을 알아가는 중이에요"
-                description="좋아한 구간을 저장하면 그래프가 채워져요."
-              />
-            )}
-          </section>
+          <DailyAlbumTreemap tracks={m.tracks} />
           <div className="report-details">
             <section className="report-card listening-story">
-              <span className="eyebrow">YOUR LISTENING DNA</span>
+              {/* 유형 이름을 먼저 읽히게 두고, 그 아래 캐릭터로 분위기를 전한 뒤 설명을 잇는다. */}
+              <span className="eyebrow">MuBTI · 예시</span>
               <h2 className="report-story">
-                고요한 시작,
+                여운을 모으는
                 <br />
-                <em>벅차오르는 순간.</em>
+                <em>감성 몰입형</em>
               </h2>
+              <MupidMascot
+                size={132}
+                className="report-cupid"
+                alt="헤드폰을 끼고 구름 위에서 음악에 잠긴 뮤피드"
+              />
               <p>
-                {m.displayName}님은 음악이 한 겹씩 쌓이는
-                <br />그 순간의 여운을 좋아하는군요.
+                잔잔하게 시작해 감정이 깊어지는 음악에 빠져드는 유형이에요.
+                <br />마음에 닿은 순간은 다시 듣고, 곡이 끝난 뒤의 여운까지 즐겨요.
               </p>
-              <MupidMascot size={90} className="report-cupid" />
+              <p className="demo-note">음악 감상 취향을 표현한 예시 유형이에요. 실제 분석이나 성격 진단 결과는 아니에요.</p>
             </section>
             <section className="report-card keyword-card">
               <h2>당신의 음악 키워드</h2>
@@ -435,27 +487,8 @@ export function ReportView({ model: m }: { model: MupidModel }) {
                 )}
               </div>
             </section>
-            <div className="stat-pair">
-              <section className="report-card">
-                <Heart />
-                <strong>
-                  {m.moments.length}
-                  <small>개</small>
-                </strong>
-                <p>좋아한 순간</p>
-              </section>
-              <section className="report-card">
-                <Music2 />
-                <strong>
-                  {m.history.length}
-                  <small>곡</small>
-                </strong>
-                <p>함께한 음악</p>
-              </section>
-            </div>
           </div>
         </div>
-      )}
       <p className="demo-note">
         현재 리포트는 기기에 저장된 예시와 활동 기록을 보여줍니다. 기간별 서버
         집계는 연결 예정입니다.
@@ -467,6 +500,7 @@ function NicknameForm({ model: m }: { model: MupidModel }) {
   const [draft, setDraft] = useState(m.nickname);
   return (
     <form
+      className="profile-nickname-form"
       onSubmit={(event) => {
         event.preventDefault();
         if (draft.trim()) {
@@ -498,22 +532,37 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
   return (
     <div className="content-page">
-      <PageHeader
-        title="나의 뮤피드"
-        onBack={() => m.go('home')}
-        mascot={false}
-      />
+      <PageHeader title="마이페이지" onBack={() => m.go('home')} />
       <DemoAccount model={m} />
       <section className="profile-card">
         {m.demoSession ? <ProfilePhoto /> : <MupidMascot size={116} alt="기본 프로필" />}
         <div>
-          <p className="eyebrow">MY LITTLE MUSIC WORLD</p>
-          <h2>{m.displayName}님의 음악 하늘</h2>
-          <p>좋아한 순간으로 나를 알아가요.</p>
+          <p className="eyebrow" lang="en">MY LITTLE MUSIC WORLD</p>
+          <h2>{m.displayName}님의 음악 이야기</h2>
+          <p>저장한 순간으로 나를 알아가요.</p>
         </div>
       </section>
-      <section className="report-card">
+      <section className="report-card taste-card">
         {m.demoSession && <NicknameForm key={m.nickname} model={m} />}
+        <Heading title="내가 좋아하는 장르" />
+        <div className="filter-chips wrap">
+          {[...new Set(tracks.map((t) => t.genre))].map((genre) => (
+            <button
+              aria-pressed={m.genres.includes(genre)}
+              className={m.genres.includes(genre) ? 'selected' : ''}
+              key={genre}
+              onClick={() =>
+                m.setGenres((list) =>
+                  list.includes(genre)
+                    ? list.filter((v) => v !== genre)
+                    : [...list, genre],
+                )
+              }
+            >
+              {genre}
+            </button>
+          ))}
+        </div>
         <Heading title="내가 좋아하는 분위기" />
         <div className="filter-chips wrap">
           {moodOptions.map((mood) => (
@@ -535,41 +584,37 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
         </div>
       </section>
       <Heading title="최근 감상 기록" />
-      <div className="track-list">
+      <section className="track-list profile-history" aria-label="최근 감상 기록 목록" tabIndex={0}>
         {m.history
           .map((id) => tracks.find((t) => t.id === id)!)
           .filter(Boolean)
           .map((t) => (
-            <TrackRow key={t.id} model={m} track={t} />
+            <TrackRow key={t.id} model={m} track={t} queueable />
           ))}
-      </div>
-      <button
-        className="text-link welcome-link"
-        onClick={() => m.go('welcome')}
-      >
-        뮤피드 시작 화면 보기 <ChevronRight />
-      </button>
+      </section>
     </div>
   );
 }
 export function WelcomeView({ model: m }: { model: MupidModel }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState(m.onboardingSubmittedAt ? m.nickname : '');
-  const [selectedMoods, setSelectedMoods] = useState<string[]>(m.onboardingSubmittedAt ? m.moods : []);
+  const [selectedMoods, setSelectedMoods] = useState<string[]>([]);
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const genreOptions = [...new Set(m.tracks.map(track => track.genre))];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   return (
     <div className="welcome-page">
       {(step > 0 || m.onboardingSubmittedAt) && <button
         className="icon-button welcome-back"
-        aria-label={step > 0 ? '시작 화면으로 돌아가기' : '홈으로 돌아가기'}
+        aria-label={step > 0 ? '이전 단계로 돌아가기' : '홈으로 돌아가기'}
         disabled={busy}
-        onClick={() => step > 0 ? setStep(0) : m.go('home')}
+        onClick={() => { setError(''); if (step > 0) setStep(step - 1); else m.go('home'); }}
       >
         <ChevronLeft />
       </button>}
       <Brand className="welcome-logo" />
-      {step === 0 ? (
+      {!m.demoSession || (m.onboardingSubmittedAt && m.demoSession.kind !== 'demo') ? (
         <div className="welcome-composition">
           <div className="welcome-copy">
           <p className="welcome-kicker">내 마음에 닿는 음악, 뮤피드</p>
@@ -578,7 +623,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             <br />
             다음 음악이 되는 곳
           </h1>
-          <button className="primary-button" onClick={() => setStep(1)}>
+          <button className="primary-button" onClick={() => m.demoSession ? m.go('home') : m.openLogin()}>
             뮤피드 시작하기 <ChevronRight />
           </button>
           </div>
@@ -590,15 +635,19 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
           onSubmit={async (e) => {
             e.preventDefault();
             if (busy) return;
+            if (step === 0) { if (name.trim()) { setError(''); setSelectedGenres([]); setStep(1); } return; }
+            if (step === 1) { if (selectedGenres.length) { setError(''); setSelectedMoods([]); setStep(2); } return; }
             setBusy(true); setError('');
-            try { await m.completeOnboarding(name, selectedMoods); }
+            try { await m.completeOnboarding(name, selectedMoods, selectedGenres); }
             catch { setError('취향을 저장하지 못했어요. 브라우저 저장 설정을 확인하고 다시 시도해 주세요.'); }
             finally { setBusy(false); }
           }}
         >
-          <h1>어떤 음악을 좋아하세요?</h1>
+          <output className="onboarding-step-count">{step + 1} / 3 · {['닉네임', '장르', '분위기'][step]}</output>
+          <h1>{['어떻게 불러드릴까요?', '어떤 장르를 좋아하세요?', '어떤 분위기를 좋아하세요?'][step]}</h1>
+          {step === 0 && <>
           <label className="field-label" htmlFor="welcome-name">
-            어떻게 불러드릴까요?
+            닉네임
           </label>
           <input
             id="welcome-name"
@@ -608,6 +657,13 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             required
             disabled={busy}
           />
+          </>}
+          {step === 1 && <fieldset key="genres" className="onboarding-choice-group">
+            <legend>좋아하는 장르 <small>하나 이상 · 여러 개 선택 가능</small></legend>
+            <div className="filter-chips wrap">{genreOptions.map(genre => <button type="button" key={genre} disabled={busy} aria-pressed={selectedGenres.includes(genre)} className={selectedGenres.includes(genre) ? 'selected' : ''} onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}>{genre}</button>)}</div>
+          </fieldset>}
+          {step === 2 && <fieldset key="moods" className="onboarding-choice-group">
+          <legend>좋아하는 분위기 <small>하나 이상 · 여러 개 선택 가능</small></legend>
           <div className="filter-chips wrap">
             {moodOptions.map((mood) => (
               <button
@@ -628,10 +684,11 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
               </button>
             ))}
           </div>
-          <p>좋아하는 분위기를 하나 이상 선택해 주세요.</p>
+          </fieldset>}
+          <p>{step === 0 ? '뮤피드에서 사용할 닉네임을 입력해 주세요.' : step === 1 ? '좋아하는 장르를 하나 이상 선택해 주세요.' : '좋아하는 분위기를 하나 이상 선택해 주세요.'}</p>
           {error && <p role="alert">{error}</p>}
-          <button className="primary-button wide" disabled={busy || !name.trim() || !selectedMoods.length}>
-            {busy ? '취향 저장 중…' : '음악 둘러보기'} <ChevronRight />
+          <button className="primary-button wide" disabled={busy || (step === 0 ? !name.trim() : step === 1 ? !selectedGenres.length : !selectedMoods.length)}>
+            {busy ? '취향 저장 중…' : step < 2 ? '다음' : '음악 둘러보기'} <ChevronRight />
           </button>
         </form>
       )}
