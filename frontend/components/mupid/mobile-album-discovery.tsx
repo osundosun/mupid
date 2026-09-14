@@ -7,11 +7,11 @@ import { AlbumArt } from './primitives';
 import { FadeContent } from './fade-content';
 
 export function MobileAlbumDiscovery({ tracks, model: m }: { tracks: Track[]; model: MupidModel }) {
-  const [selectedId, setSelectedId] = useState(m.active.id);
+  const [selectedId, setSelectedId] = useState(m.active?.id ?? 0);
   const rail = useRef<HTMLDivElement>(null);
   const selected = tracks.find(t => t.id === selectedId) ?? tracks[0];
   if (!selected) return null;
-  const playing = m.active.id === selected.id && m.playing;
+  const playing = m.active?.id === selected.id && m.playing;
   const select = (track: Track) => {
     setSelectedId(track.id);
     const index = tracks.findIndex(t => t.id === track.id);

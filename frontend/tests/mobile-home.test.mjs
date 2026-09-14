@@ -20,7 +20,7 @@ void test('mobile home opens with a functional LP before search and recommendati
   assert.ok(home.includes('<AlbumDeck'));
   assert.ok(listening.includes('src="/sky-vinyl.webp"'));
   assert.ok(!listening.includes('Mascot'));
-  assert.ok(listening.includes('<h2>{m.active.title}</h2>'));
+  assert.ok(listening.includes('<h2>{active.title}</h2>'));
   assert.ok(listening.includes('<PlayerControls model={m} />'));
   assert.ok(listening.includes('<LikeButton model={m} />'));
   assert.ok(listening.includes('m.openMoment()'));
@@ -33,7 +33,7 @@ void test('inline seek uses the existing keyboard slider with a contextual acces
   assert.ok(listening.includes("from '@/components/ui/slider'"));
   assert.ok(listening.includes('<Field.Label className="sr-only">'));
   assert.ok(listening.includes('value={[m.time]}'));
-  assert.ok(listening.includes('max={m.active.duration}'));
+  assert.ok(listening.includes('max={active.duration}'));
   assert.ok(
     listening.includes('m.seek(Array.isArray(value) ? value[0] : value)'),
   );

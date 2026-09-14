@@ -79,7 +79,7 @@ examples:
 docs: |-
   # 곡 분석 조회
 
-  `GET /api/v1/music/{musicId}/analysis` · **인증 불필요**
+  `GET /api/v1/music/{musicId}/analysis` · **액세스 토큰 필요**
 
   플레이어의 구간 UI 와 "이 순간" 기능이 쓰는 값입니다.
 

@@ -34,5 +34,5 @@ export interface MupidService {
   readPhoto(): Promise<string>;
   savePhoto(data: string): Promise<void>;
   removePhoto(): Promise<void>;
-  recommend(prompt: string, current: Track, candidates: Track[]): Promise<{ text: string; tracks: Track[] }>;
+  recommend(prompt: string, current: Track | null, candidates: Track[]): Promise<{ text: string; tracks: Track[] }>;
 }

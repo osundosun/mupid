@@ -65,11 +65,11 @@ void test('sign-in only changes UI state and sign-out clears the account', () =>
   assert.ok(signIn.includes('setDemoSession({') || signIn.includes('setDemoSession(session)'));
   assert.ok(signOut.includes('setDemoSession(null)'));
   // 로그인은 저장소나 재생기를 직접 건드리지 않는다.
-  for (const prohibited of ['fetch(', 'sessionStorage', 'localStorage', 'audioRef', 'setPlaying']) {
+  for (const prohibited of ['fetch(', 'sessionStorage', 'localStorage', 'setPlaying']) {
     assert.ok(!signIn.includes(prohibited), prohibited);
   }
-  // 로그아웃은 두 재생 경로를 모두 멈추고 계정에서 끌어온 값을 비운다.
-  for (const required of ['audioRef.current?.pause()', 'getPlayer()?.stop()', 'setPlaying(false)', 'setLiked([])', 'setIgnored([])', 'setHistory([])']) {
+  // 로그아웃은 재생을 멈추고 계정에서 끌어온 값을 비운다.
+  for (const required of ['getPlayer()?.stop()', 'setPlaying(false)', 'setLiked([])', 'setIgnored([])', 'setHistory([])']) {
     assert.ok(signOut.includes(required), required);
   }
   for (const prohibited of ['fetch(', 'sessionStorage', 'localStorage']) {

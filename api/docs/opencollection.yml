@@ -168,10 +168,18 @@ docs:
     - `GET`, `POST /api/v1/mail/verification` (이메일 인증)
     - `GET /api/v1/mail/verification/**`
     - `GET /api/actuator/**`
-    - `GET /api/v1/music`, `GET /api/v1/music/{musicId}` (곡 목록·상세)
+    - `GET /api/v1/onboarding/option` (온보딩 선택지 — 무드·장르 이름 목록)
     - `GET /api/v1/storage/image/ALBUM/*`, `.../ARTIST/*` (앨범·아티스트 이미지)
 
     스트리밍(`Stream` 폴더) 엔드포인트는 모두 액세스 토큰이 필요합니다.
+
+    곡 목록·상세·가사·분석·아티스트·앨범 조회는 **더 이상 공개가 아닙니다.**
+    첫 방문자가 로그인 전에 곡을 둘러본다고 보아 열어 두었으나, 로그인해야만
+    서비스를 쓸 수 있게 되면서(비로그인이 갈 수 있는 화면은 `/`·`/login`·
+    `/signup` 뿐) 근거가 사라졌습니다. 앨범·아티스트 이미지만 예외로 남습니다 —
+    `<img src>` 에는 Authorization 헤더를 붙일 수 없어 닫으면 표지가 깨지고,
+    키가 앨범·아티스트 이름이라 개인 정보도 아닙니다. 프로필 사진(`PROFILE`)은
+    개인 정보라 닫혀 있고, 토큰을 붙여 바이트를 받아 씁니다.
 
     ### `/api/` 밖에 있는 엔드포인트
 

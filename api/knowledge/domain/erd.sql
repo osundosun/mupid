@@ -43,18 +43,22 @@ CREATE TABLE IF NOT EXISTS `albums` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`album_id`)
 ) COMMENT='앨범 정보';
-CREATE TABLE IF NOT EXISTS `analysis_reports` (
+CREATE TABLE IF NOT EXISTS `reports` (
   `report_id` INT AUTO_INCREMENT NOT NULL COMMENT '분석 리포트 PK',
   `user_id` INT NOT NULL COMMENT '유저 FK',
-  `started_date` DATE NOT NULL COMMENT '집계 시작일',
-  `ended_date` DATE NOT NULL COMMENT '집계 종료일',
-  `music_like_count` INT NOT NULL COMMENT '리포트 기간동안 좋아요한 곡 수',
-  `music_listening_count` INT NOT NULL COMMENT '리포트 기간동안 청취한 곡 수',
-  `mbti_id` INT NOT NULL,
+  `mubti_id` INT NOT NULL COMMENT '취향 유형 FK',
+  `start_date` DATETIME NOT NULL COMMENT '집계 시작 일시',
+  `end_date` DATETIME NOT NULL COMMENT '집계 종료 일시',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 일시',
   PRIMARY KEY (`report_id`)
 ) COMMENT='취향 분석 리포트';
-CREATE UNIQUE INDEX `analysis_reports_copy_uq_analysis_report_period` ON `analysis_reports` (`user_id`, `started_date`);
+CREATE UNIQUE INDEX `uq_report_period` ON `reports` (`user_id`, `start_date`);
+CREATE TABLE IF NOT EXISTS `listening` (
+  `report_id` INT NOT NULL COMMENT '분석 리포트 FK',
+  `music_id` INT NOT NULL COMMENT '음악 FK',
+  `listening_ms` INT NOT NULL COMMENT '해당 기간 곡별 청취 시간(ms)',
+  PRIMARY KEY (`music_id`, `report_id`)
+) COMMENT='리포트 기간의 곡별 청취량';
 CREATE TABLE IF NOT EXISTS `artists` (
   `artist_id` INT AUTO_INCREMENT NOT NULL COMMENT '아티스트 PK',
   `name` VARCHAR(200) NOT NULL COMMENT '아티스트명',
@@ -80,8 +84,8 @@ CREATE TABLE IF NOT EXISTS `codes` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`code_id`)
 );
-CREATE TABLE IF NOT EXISTS `comments` (
-  `comment_id` INT AUTO_INCREMENT NOT NULL COMMENT '댓글 PK',
+CREATE TABLE IF NOT EXISTS `music_comments` (
+  `music_comment_id` INT AUTO_INCREMENT NOT NULL COMMENT '댓글 PK',
   `music_id` INT NOT NULL COMMENT '음악 FK (?song={song_id})',
   `user_id` INT NOT NULL COMMENT '작성자 FK',
   `content` VARCHAR(100) NOT NULL COMMENT '댓글 내용',
@@ -89,30 +93,29 @@ CREATE TABLE IF NOT EXISTS `comments` (
   `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '삭제 여부',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '작성 일시',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '수정 일시',
-  PRIMARY KEY (`comment_id`)
+  PRIMARY KEY (`music_comment_id`)
 ) COMMENT='음악 타임스탬프 댓글';
-CREATE TABLE IF NOT EXISTS `daily_recommendation_songs` (
-  `recommendation_song_id` INT AUTO_INCREMENT NOT NULL COMMENT '추천곡 PK',
-  `recommendation_id` BIGINT NOT NULL COMMENT '오늘의 추천 FK',
-  `music_id` INT NOT NULL COMMENT '음악 FK',
+CREATE TABLE IF NOT EXISTS `daily_recommendation_tracks` (
+  `daily_recommendation_id` INT NOT NULL COMMENT '오늘의 추천 FK',
   `rank_order` INT NOT NULL COMMENT '추천 순위',
+  `music_id` INT NOT NULL COMMENT '음악 FK',
   `reason` VARCHAR(100) NOT NULL COMMENT '곡별 추천 사유',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성일시',
-  PRIMARY KEY (`recommendation_song_id`)
+  PRIMARY KEY (`daily_recommendation_id`, `rank_order`)
 ) COMMENT='오늘의 모먼트 추천곡';
-CREATE UNIQUE INDEX `uq_daily_recommendation_song` ON `daily_recommendation_songs` (`recommendation_id`, `music_id`);
+CREATE UNIQUE INDEX `uq_daily_recommendation_track` ON `daily_recommendation_tracks` (`daily_recommendation_id`, `music_id`);
 CREATE TABLE IF NOT EXISTS `daily_recommendations` (
-  `recommendation_id` BIGINT AUTO_INCREMENT NOT NULL COMMENT '오늘의 추천 PK',
+  `daily_recommendation_id` INT AUTO_INCREMENT NOT NULL COMMENT '오늘의 추천 PK',
   `user_id` INT NOT NULL COMMENT '유저 FK',
   `title` VARCHAR(100) NOT NULL COMMENT '모먼트 타이틀',
   `music_count` SMALLINT UNSIGNED NOT NULL,
   `reason` VARCHAR(100) NOT NULL COMMENT '추천 사유 문구 (AI 생성)',
-  `mood_id` INT COMMENT '모먼트 무드 FK',
-  `recommend_date` DATE NOT NULL COMMENT '추천 기준일',
+  `mood_code_id` INT NOT NULL COMMENT '모먼트 무드 FK (codes.code_id)',
+  `recommendation_date` DATE NOT NULL COMMENT '추천 기준일',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 일시',
-  PRIMARY KEY (`recommendation_id`)
+  PRIMARY KEY (`daily_recommendation_id`)
 ) COMMENT='오늘의 모먼트 추천';
-CREATE UNIQUE INDEX `uq_daily_recommendation_user_date` ON `daily_recommendations` (`user_id`, `recommend_date`);
+CREATE UNIQUE INDEX `uq_daily_recommendation_user_date` ON `daily_recommendations` (`user_id`, `recommendation_date`);
 CREATE TABLE IF NOT EXISTS `email_verifications` (
   `verification_id` INT AUTO_INCREMENT NOT NULL COMMENT '이메일 인증 PK',
   `user_id` INT,
@@ -147,13 +150,19 @@ CREATE TABLE IF NOT EXISTS `lyrics` (
   `end_time_ms` INT UNSIGNED NOT NULL,
   PRIMARY KEY (`lyric_id`)
 );
-CREATE TABLE IF NOT EXISTS `mbti` (
-  `listening_dna_id` INT AUTO_INCREMENT NOT NULL,
-  `title` VARCHAR(20) NOT NULL,
-  `description` VARCHAR(100) NOT NULL,
-  `icon_file_id` INT NOT NULL,
-  PRIMARY KEY (`listening_dna_id`)
+CREATE TABLE IF NOT EXISTS `mubti` (
+  `mubti_id` INT AUTO_INCREMENT NOT NULL COMMENT '취향 유형 PK',
+  `title` VARCHAR(20) NOT NULL COMMENT '유형 이름',
+  `subtitle` VARCHAR(50) NOT NULL COMMENT '유형 한 줄 소개',
+  `description` VARCHAR(100) NOT NULL COMMENT '유형 설명',
+  `image_file_id` INT COMMENT '유형 아이콘 FK',
+  `classa` ENUM('I', 'V') NOT NULL COMMENT '축 A',
+  `classb` ENUM('M', 'T') NOT NULL COMMENT '축 B',
+  `classc` ENUM('F', 'S') NOT NULL COMMENT '축 C',
+  `classd` ENUM('C', 'E') NOT NULL COMMENT '축 D',
+  PRIMARY KEY (`mubti_id`)
 ) COMMENT='사용자의 취향을 분류';
+CREATE UNIQUE INDEX `uq_mubti_image` ON `mubti` (`image_file_id`);
 CREATE TABLE IF NOT EXISTS `moods` (
   `mood_id` INT AUTO_INCREMENT NOT NULL COMMENT '무드 PK',
   `name` VARCHAR(20) NOT NULL COMMENT '무드명 (모먼트 추천/분석 기준)',

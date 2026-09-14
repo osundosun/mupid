@@ -38,7 +38,8 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
           <X />
         </button>
       </header>
-      <div className="chat-source">
+      {/* 아직 고른 곡이 없으면 이 줄은 비운다. 대화 자체는 그대로 쓸 수 있다. */}
+      {m.active && <div className="chat-source">
         <AlbumArt track={m.active} />
         <div>
           <span>지금 함께 듣는 곡</span>
@@ -47,7 +48,7 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
           </strong>
         </div>
         <span className="live-dot" />
-      </div>
+      </div>}
       <div
         className="chat-messages"
         aria-live="polite"

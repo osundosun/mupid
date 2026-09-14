@@ -48,14 +48,13 @@ export function useMupid(bootstrap: Bootstrap) {
   const [genres, setGenres] = useState<string[]>(initial.genres ?? []);
   // 마지막으로 들은 곡을 기억해 미니 플레이어를 계속 띄워 둔다. 한 곡도 듣지 않았다면 null.
   const [lastPlayedId, setLastPlayedId] = useState<number | null>(initial.lastPlayedId ?? null);
-  const [active, setActive] = useState<Track>(
-    tracks.find((t) => t.id === initial.lastPlayedId) ?? tracks[0],
+  const [active, setActive] = useState<Track | null>(
+    tracks.find((t) => t.id === initial.lastPlayedId) ?? tracks[0] ?? null,
   );
   const [playing, setPlaying] = useState(false);
   // 청크를 기다리는 중. 화면은 이 값으로 스피너를 띄운다.
   const [buffering, setBuffering] = useState(false);
   const [time, setTime] = useState(0);
-  const [volume, setVolume] = useState(0.65);
   const [liked, setLiked] = useState(initial.liked);
   const [ignored, setIgnored] = useState<number[]>(initial.ignored);
   const [history, setHistory] = useState(initial.history);
@@ -95,12 +94,11 @@ export function useMupid(bootstrap: Bootstrap) {
   const [deletePlaylist, setDeletePlaylist] = useState<number | null>(null);
   const [renamePlaylist, setRenamePlaylist] = useState<number | null>(null);
   const [showAllSimilar, setShowAllSimilar] = useState(false);
-  const audioRef = useRef<HTMLAudioElement>(null);
   const activeRef = useRef(active);
   const mountedRef = useRef(true);
-  const seekOnLoad = useRef<number | null>(null);
   const previewEnd = useRef<number | null>(null);
-  const advancing = useRef(false);
+  /** 종료를 처리한 곡. 한 곡의 종료로 두 번 넘어가지 않게 한다. */
+  const endedFor = useRef<number | null>(null);
   const playedInCycle = useRef<Set<number>>(new Set());
   const requestId = useRef(0);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -190,10 +188,6 @@ export function useMupid(bootstrap: Bootstrap) {
     const timer = setTimeout(() => setToast(''), 3200);
     return () => clearTimeout(timer);
   }, [toast]);
-  useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = volume;
-    getPlayer()?.setVolume(volume);
-  }, [volume]);
   useEffect(() => {
     if (!chatOpen) return;
     chatInputRef.current?.focus({ preventScroll: true });
@@ -371,7 +365,6 @@ export function useMupid(bootstrap: Bootstrap) {
     sessionRef.current = null;
     onboardingRef.current = null;
     setOnboardingSubmittedAt(null);
-    audioRef.current?.pause();
     getPlayer()?.stop();
     setPlaying(false);
     // 계정에서 끌어온 값은 계정과 함께 놓는다.
@@ -387,27 +380,10 @@ export function useMupid(bootstrap: Bootstrap) {
   };
 
   const loadTrack = (track: Track) => {
-    // 곡이 바뀌면 이전 곡의 지연된 재생 요청과 예약된 탐색 위치를 무효화한다.
-    const audio = audioRef.current;
-    if (activeRef.current.id !== track.id) {
-      requestId.current++;
-      seekOnLoad.current = null;
-      audio?.pause();
-      activeRef.current = track;
-      setActive(track);
-      setTime(0);
-      // 두 재생 경로가 동시에 소리를 내지 않도록 반대쪽을 끈다.
-      if (isStreamed(track)) {
-        if (audio) audio.removeAttribute('src');
-        return;
-      }
-      getPlayer()?.stop();
-      setBuffering(false);
-      if (audio) {
-        audio.src = track.audio;
-        audio.load();
-      }
-    }
+    if (activeRef.current?.id === track.id) return;
+    activeRef.current = track;
+    setActive(track);
+    setTime(0);
   };
   /**
    * 재생 대상이 바뀌면 서버가 분석한 구간으로 갈아 끼운다.
@@ -420,22 +396,30 @@ export function useMupid(bootstrap: Bootstrap) {
     const abort = new AbortController();
     void fetchSections(active, abort.signal).then((sections) => {
       if (!sections || abort.signal.aborted || !mountedRef.current) return;
-      setActive((current) => (current.id === active.id ? { ...current, sections } : current));
-      activeRef.current = { ...activeRef.current, sections };
+      setActive((current) => (current && current.id === active.id ? { ...current, sections } : current));
+      if (activeRef.current) activeRef.current = { ...activeRef.current, sections };
     });
     return () => abort.abort();
-  }, [active.id]);
+  }, [active?.id]);
+  /*
+   * 로그인 뒤에 곡 목록이 들어오면 고를 곡을 잡아 둔다.
+   *
+   * 목록은 로그인한 사람만 받을 수 있어서, 비로그인으로 앱이 열릴 때는 비어
+   * 있다가 로그인 뒤에 채워진다. `active` 는 처음 한 번만 정해지므로 여기서
+   * 뒤늦게 들어온 목록을 받아 준다. 재생을 시작하지는 않는다.
+   */
+  useEffect(() => {
+    if (active || !tracks.length) return;
+    const pick = tracks.find((t) => t.id === lastPlayedId) ?? tracks[0];
+    activeRef.current = pick;
+    setActive(pick);
+  }, [tracks, active, lastPlayedId]);
   const seek = (value: number) => {
     // 내부 위치 이동 함수. 화면에서 호출하는 seek는 반환 모델에서 순간 미리듣기도 해제한다.
+    if (!activeRef.current) return;
     const next = Math.max(0, Math.min(value, activeRef.current.duration));
     setTime(next);
-    if (isStreamed(activeRef.current)) {
-      void getPlayer()?.seek(next);
-      return;
-    }
-    const audio = audioRef.current;
-    if (audio && audio.readyState >= 1) audio.currentTime = next;
-    else seekOnLoad.current = next;
+    void getPlayer()?.seek(next);
   };
   /**
    * 이 재생이 어디서 왔는가. 청취 이벤트의 `entry_path` 다.
@@ -449,83 +433,55 @@ export function useMupid(bootstrap: Bootstrap) {
     if (page === 'library') return 'PLAYLIST';
     return 'RECOMMEND';
   };
+  /**
+   * 곡을 튼다. 재생 경로는 청크 스트리밍 하나뿐이다.
+   *
+   * 요청마다 번호를 매겨, 빠르게 곡을 바꿨을 때 **뒤늦게 끝난 이전 요청이
+   * 지금 곡을 덮어쓰지 않게** 한다. 곡 변경이 간혹 먹지 않던 것이 이것 때문이다.
+   */
   const startPlayback = async (track: Track, start?: number) => {
-    const audio = audioRef.current;
-    // 데모 곡은 서버에 없다. 있지도 않은 곡 번호로 청취 기록을 남길 수 없다.
-    if (typeof track.musicId === 'number') {
-      analytics.startPlay({ trackId: track.musicId, entryPath: entryPathOf() }, start ?? 0);
-    }
-    if (isStreamed(track)) {
-      loadTrack(track);
-      const player = getPlayer();
-      if (!player) return;
-      advancing.current = false;
-      try {
-        await player.load(track.musicId, { autoplay: true });
-        if (start !== undefined && start > 0) await player.seek(start);
-      } catch {
-        setToast('음원을 불러오지 못했어요. 다시 재생해 주세요.');
-      }
-      setHistory((ids) =>
-        [track.id, ...ids.filter((i) => i !== track.id)].slice(0, HISTORY_LIMIT),
-      );
-      return;
-    }
-    if (!audio) return;
-    loadTrack(track);
-    if (start !== undefined) seek(start);
+    if (typeof track.musicId !== 'number') return;
+    analytics.startPlay({ trackId: track.musicId, entryPath: entryPathOf() }, start ?? 0);
     const id = ++requestId.current;
-    try {
-      await audio.play();
-      if (id === requestId.current) advancing.current = false;
-    } catch (error) {
-      if (
-        id === requestId.current &&
-        mountedRef.current &&
-        !(error instanceof DOMException && error.name === 'AbortError')
-      ) {
-        setPlaying(false);
-        advancing.current = false;
-        setToast('미리듣기를 불러오지 못했어요. 다시 재생해 주세요.');
-      }
-    }
+    loadTrack(track);
     setLastPlayedId(track.id);
     setHistory((ids) =>
       [track.id, ...ids.filter((i) => i !== track.id)].slice(0, HISTORY_LIMIT),
     );
+    const player = getPlayer();
+    if (!player) return;
+    try {
+      await player.load(track.musicId, { autoplay: true });
+      if (id !== requestId.current) return;
+      if (start !== undefined && start > 0) await player.seek(start);
+    } catch {
+      if (id === requestId.current && mountedRef.current) {
+        setToast('음원을 불러오지 못했어요. 다시 재생해 주세요.');
+      }
+    }
   };
-  const play = (track: Track = activeRef.current, fromMoment = false) => {
-    const audio = audioRef.current;
+  const play = (track: Track | null = activeRef.current, fromMoment = false) => {
+    // 곡이 하나도 없으면 누를 것도 없다.
+    if (!track) return;
     previewEnd.current = null;
     if (!queueIds.includes(track.id)) {
       // 목록 밖의 곡을 고르면 그 곡을 맨 앞에 두고 상한까지만 다시 채운다.
       setQueueIds([track.id, ...tracks.map((t) => t.id).filter((id) => id !== track.id)].slice(0, QUEUE_LIMIT));
     }
-    if (!fromMoment && activeRef.current.id === track.id && isStreamed(track)) {
-      const player = getPlayer();
-      if (player && player.store.get().status === 'playing') {
+    const player = getPlayer();
+    // 지금 울리는 곡을 다시 누르면 멈춘다. 멈춘 곡을 누르면 이어서 튼다.
+    if (!fromMoment && activeRef.current?.id === track.id && player) {
+      const status = player.store.get().status;
+      if (status === 'playing' || status === 'buffering') {
         player.pause();
         return;
       }
+      if (status === 'paused') {
+        void player.play();
+        return;
+      }
     }
-    if (
-      !fromMoment &&
-      activeRef.current.id === track.id &&
-      audio &&
-      !audio.paused
-    ) {
-      requestId.current++;
-      audio.pause();
-      return;
-    }
-    void startPlayback(
-      track,
-      fromMoment
-        ? track.moment
-        : audio && audio.currentTime >= track.duration
-          ? 0
-          : undefined,
-    );
+    void startPlayback(track, fromMoment ? track.moment : undefined);
   };
   const next = (direction = 1) => {
     previewEnd.current = null;
@@ -533,8 +489,8 @@ export function useMupid(bootstrap: Bootstrap) {
       .map((id) => tracks.find((t) => t.id === id)!)
       .filter((t) => t && !ignored.includes(t.id));
     if (!pool.length) return;
-    const index = pool.findIndex((t) => t.id === activeRef.current.id);
-    const candidates = pool.filter((t) => t.id !== activeRef.current.id);
+    const index = pool.findIndex((t) => t.id === activeRef.current?.id);
+    const candidates = pool.filter((t) => t.id !== activeRef.current?.id);
     const target =
       shuffle && candidates.length
         ? candidates[Math.floor(Math.random() * candidates.length)]
@@ -548,22 +504,36 @@ export function useMupid(bootstrap: Bootstrap) {
 
   // 스트리밍 엔진은 React 밖에서 돈다. 상태를 훅의 값으로 옮겨 화면이 기존과
   // 똑같은 모양(playing / time)을 보게 한다.
-  const advanceRef = useRef<() => void>(() => {});
-  advanceRef.current = () => next(1);
+  const onEndedRef = useRef<() => void>(() => {});
   useEffect(() => {
     const player = getPlayer();
     if (!player) return;
     return player.store.subscribe(() => {
-      if (!isStreamed(activeRef.current)) return;
       const state = player.store.get();
       setBuffering(state.status === 'loading' || state.status === 'buffering');
       // 버퍼를 기다리는 동안에도 사용자 입장에서는 '재생 중'이다.
       setPlaying(state.status === 'playing' || state.status === 'buffering');
       setTime(state.positionSec);
       if (state.status === 'error' && state.error) setToast(state.error);
-      if (state.status === 'ended' && !advancing.current) {
-        advancing.current = true;
-        advanceRef.current();
+
+      // 구간 미리듣기는 끝 지점에서 멈춘다. 곡이 끝난 것이 아니므로
+      // 다음 곡으로 넘어가지 않는다.
+      const stopAt = previewEnd.current;
+      if (stopAt !== null && state.status === 'playing' && state.positionSec >= stopAt) {
+        previewEnd.current = null;
+        player.pause();
+        setTime(stopAt);
+        return;
+      }
+
+      // 새로 재생이 시작되면 다음 종료는 새 사건이다.
+      if (state.status === 'playing') endedFor.current = null;
+      // **한 곡의 종료로는 한 번만 넘어간다.** 예전에는 불리언 한 개로 막았는데,
+      // 다음 곡을 불러오는 동안 상태가 다시 흘러나오면 두 번 넘어가 곡을
+      // 건너뛰거나 로딩이 뒤엉켜 멈췄다.
+      if (state.status === 'ended' && endedFor.current !== state.musicId) {
+        endedFor.current = state.musicId;
+        onEndedRef.current();
       }
     });
   }, []);
@@ -580,11 +550,11 @@ export function useMupid(bootstrap: Bootstrap) {
       return;
     }
     const upcoming = queueTracks
-      .filter((track) => isStreamed(track) && track.id !== active.id)
+      .filter((track) => isStreamed(track) && track.id !== active?.id)
       .map((track) => track.musicId!)
       .slice(0, 3);
     getPlayer()?.setQueue(upcoming);
-  }, [queueIds, active.id, ignored, demoSession]);
+  }, [queueIds, active?.id, ignored, demoSession]);
   const playPlaylist = (playlist: Playlist, track?: Track) => {
     const playable = playlist.tracks.filter((t) => !ignored.includes(t.id));
     if (!playable.length) {
@@ -600,41 +570,37 @@ export function useMupid(bootstrap: Bootstrap) {
     previewEnd.current = null;
     void startPlayback(first, 0);
   };
+  /**
+   * 곡이 끝났다. 반복·셔플 규칙에 따라 다음 곡을 고른다.
+   *
+   * 재생 경로가 하나뿐이라 이 함수도 한 곳에서만 불린다 — 재생기의 `ended`
+   * 상태를 보는 구독자다. 두 경로가 각자 끝을 판정하던 때는 서로 겹쳐
+   * 곡을 건너뛰곤 했다.
+   */
   const onEnded = () => {
-    if (advancing.current) return;
     if (previewEnd.current !== null) {
       previewEnd.current = null;
       return;
     }
-    advancing.current = true;
-    if (repeatMode === 'one') { void startPlayback(activeRef.current, 0); return; }
-    playedInCycle.current.add(activeRef.current.id);
+    const current = activeRef.current;
+    if (!current) return;
+    if (repeatMode === 'one') { void startPlayback(current, 0); return; }
+    playedInCycle.current.add(current.id);
     const pool = queueTracks;
-    const index = pool.findIndex(t => t.id === activeRef.current.id);
+    const index = pool.findIndex(t => t.id === current.id);
     let remaining = pool.filter(t => !playedInCycle.current.has(t.id));
     const finished = shuffle ? remaining.length === 0 : index >= pool.length - 1;
     // 목록 끝에 닿았을 때, 전체 반복이면 한 바퀴를 다시 돌고 아니면 멈춘다.
     if (!pool.length || (finished && repeatMode === 'off')) {
-      audioRef.current?.pause(); setPlaying(false); return;
+      getPlayer()?.pause(); setPlaying(false); return;
     }
     if (finished) { playedInCycle.current.clear(); remaining = pool; }
     const target = shuffle ? remaining[Math.floor(Math.random() * remaining.length)] : pool[(index + 1) % pool.length];
     playedInCycle.current.add(target.id);
     void startPlayback(target, 0);
   };
-  const onTimeUpdate = () => {
-    const audio = audioRef.current;
-    if (!audio || advancing.current || audio.readyState < 1) return;
-    const mediaEnd = Number.isFinite(audio.duration) ? audio.duration : activeRef.current.duration;
-    const boundary = previewEnd.current ?? Math.min(activeRef.current.duration, mediaEnd);
-    if (audio.currentTime >= boundary) {
-      if (previewEnd.current !== null) {
-        audio.pause();
-        setTime(boundary);
-        previewEnd.current = null;
-      } else onEnded();
-    } else setTime(audio.currentTime);
-  };
+  // 구독자는 한 번만 등록되므로 최신 규칙을 참조로 넘긴다.
+  onEndedRef.current = onEnded;
   const openTrack = (track: Track) => {
     previewEnd.current = null;
     loadTrack(track);
@@ -647,7 +613,8 @@ export function useMupid(bootstrap: Bootstrap) {
     const track = tracks.find(t => t.id === id);
     if (track) loadTrack(track);
   }, [pathname, tracks]);
-  const openMoment = (track = activeRef.current, editing: SavedMoment | null = null) => {
+  const openMoment = (track: Track | null = activeRef.current, editing: SavedMoment | null = null) => {
+    if (!track) return;
     previewEnd.current = null;
     setEditingMomentId(editing?.id ?? null);
     loadTrack(track);
@@ -659,34 +626,38 @@ export function useMupid(bootstrap: Bootstrap) {
     }
     const part = getSongSectionAt(
       track,
-      Math.min(audioRef.current?.currentTime || track.moment, track.duration),
+      Math.min(activeRef.current?.id === track.id ? time : track.moment, track.duration),
     );
     setMomentRange([part.start, part.end]);
     setMomentSection(part.label);
     go('moment');
   };
   const previewMoment = () => {
+    if (!activeRef.current) return;
     previewEnd.current = momentRange[1];
     void startPlayback(activeRef.current, momentRange[0]);
   };
   const playSavedMoment = (moment: SavedMoment) => {
-    const audio = audioRef.current;
+    const player = getPlayer();
+    // 듣고 있던 그 구간을 다시 누르면 멈춘다.
     if (
-      activeRef.current.id === moment.track.id &&
+      activeRef.current?.id === moment.track.id &&
       previewEnd.current === moment.end &&
-      audio &&
-      !audio.paused
+      player?.store.get().status === 'playing'
     ) {
-      audio.pause();
+      previewEnd.current = null;
+      player.pause();
       return;
     }
     previewEnd.current = moment.end;
     void startPlayback(moment.track, moment.start);
   };
   const saveMoment = () => {
+    const current = activeRef.current;
+    if (!current) return;
     const saved: SavedMoment = {
       id: Date.now(),
-      track: activeRef.current,
+      track: current,
       start: momentRange[0],
       end: momentRange[1],
       section: momentSection,
@@ -759,12 +730,6 @@ export function useMupid(bootstrap: Bootstrap) {
     setChatOpen(false);
     requestAnimationFrame(() => chatButtonRef.current?.focus());
   };
-  const onLoadedMetadata = () => {
-    if (seekOnLoad.current !== null) {
-      seek(seekOnLoad.current);
-      seekOnLoad.current = null;
-    }
-  };
   const sendMessage = (prompt = chatInput) => {
     if (!prompt.trim() || chatLoading) return;
     const text = prompt.trim().slice(0, 500),
@@ -831,8 +796,6 @@ export function useMupid(bootstrap: Bootstrap) {
     setPlaying,
     buffering,
     time,
-    volume,
-    setVolume,
     liked,
     ignored,
     ignoreTrack,
@@ -905,22 +868,36 @@ export function useMupid(bootstrap: Bootstrap) {
       setToast(`‘${track.title}’ 곡을 재생 목록에 담았어요.`);
     },
     playPlaylist,
-    onEnded,
     showAllSimilar,
     setShowAllSimilar,
-    audioRef,
     messageEndRef,
     chatInputRef,
     chatButtonRef,
     play,
     next,
+    /**
+     * 화면에서 재생 위치를 옮긴다.
+     *
+     * **이미 들고 있는 곡이면 그 자리만 옮긴다.** 예전에는 `startPlayback` 을
+     * 다시 불러 곡을 통째로 다시 걸었다. 막대를 끄는 동안 `change` 가 계속
+     * 들어오는데 그때마다 청취 이벤트가 나가고 최근 감상에 쌓였고, 다시 건
+     * 재생이 옛 자리에서 시작했다가 뒤늦게 목적지로 튀어 막대가 요동쳤다.
+     */
     seek: (value: number) => {
       if (!Number.isFinite(value)) return;
       previewEnd.current = null;
-      void startPlayback(activeRef.current, value);
+      const track = activeRef.current;
+      if (!track) return;
+      const next = Math.max(0, Math.min(value, track.duration));
+      const player = getPlayer();
+      // 아직 이 곡을 들고 있지 않으면 그 자리에서 새로 튼다.
+      if (!player || player.store.get().musicId !== track.musicId) {
+        void startPlayback(track, next);
+        return;
+      }
+      setTime(next);
+      void player.seek(next);
     },
-    onTimeUpdate,
-    onLoadedMetadata,
     openTrack,
     openMoment,
     previewMoment,

@@ -48,6 +48,19 @@ export type PlayerState = {
   supported: boolean;
 };
 
+/**
+ * 막대 위치를 실제 이득으로 바꾼다.
+ *
+ * 사람은 소리 크기를 로그로 느낀다. 위치를 그대로 이득에 넣으면 **위쪽 절반은
+ * 줄여도 거의 그대로**고(1.0 → 0.5 는 -6dB 뿐이다) 아래쪽 몇 칸에서 갑자기
+ * 사라진다. 그래서 같은 거리를 움직여도 어떤 구간이냐에 따라 변화가 딴판이라
+ * 조절이 겉돈다. 제곱을 취하면 눈금과 귀가 얼추 맞는다.
+ */
+const gainFor = (position: number) => position * position;
+
+/** 처음 볼륨. 막대 위치 기준이다. */
+export const DEFAULT_VOLUME = 0.65;
+
 /** 재생 중 유지할 예약 길이. 짧으면 끊기고 길면 Seek 반응이 굼떠진다. */
 const SCHEDULE_AHEAD_SEC = 6;
 /** 다음 곡에서 미리 받아 둘 길이. */
@@ -89,7 +102,13 @@ export class PlayerEngine {
   private readonly ring = new RingBuffer<{ index: number; bytes: ArrayBuffer }>(
     RING_CAPACITY,
   );
+  private seeking = false;
+  /** 옮기는 동안 새로 지정된 목적지. 막대를 끌면 쉬지 않고 들어온다. */
+  private seekPending: number | null = null;
+
   private draining = false;
+  /** 디코딩이 도는 동안 새 청크가 들어왔는가. 들어왔으면 한 바퀴 더 돈다. */
+  private drainPending = false;
 
   private playing: AudioBufferSourceNode[] = [];
   /** 이 시각(컨텍스트 시계)에 `anchorPosition` 이 들린다. */
@@ -109,7 +128,7 @@ export class PlayerEngine {
       positionSec: 0,
       durationSec: 0,
       bufferedSec: 0,
-      volume: 1,
+      volume: DEFAULT_VOLUME,
       error: null,
       supported: isOpusDecodingSupported(),
     });
@@ -136,7 +155,7 @@ export class PlayerEngine {
     const fade = context.createGain();
     const volume = context.createGain();
     fade.gain.value = 1;
-    volume.gain.value = this.store.get().volume;
+    volume.gain.value = gainFor(this.store.get().volume);
     fade.connect(volume).connect(context.destination);
     this.context = context;
     this.fadeGain = fade;
@@ -156,11 +175,21 @@ export class PlayerEngine {
   // 공개 API
   // ─────────────────────────────────────────────────────────────
 
+  /**
+   * 볼륨을 바꾼다. `value` 는 막대 위치(0~1)이고 이득은 `gainFor` 로 굽힌다.
+   *
+   * 값을 바로 꽂지 않고 `setTargetAtTime` 으로 20ms 에 걸쳐 옮긴다. 바로 꽂으면
+   * 파형이 끊겨 '지직' 소리가 난다.
+   */
   setVolume(value: number) {
     const volume = Math.min(1, Math.max(0, value));
     this.store.set({ volume });
     if (this.volumeGain && this.context) {
-      this.volumeGain.gain.setTargetAtTime(volume, this.context.currentTime, 0.02);
+      this.volumeGain.gain.setTargetAtTime(
+        gainFor(volume),
+        this.context.currentTime,
+        0.02,
+      );
     }
   }
 
@@ -179,6 +208,10 @@ export class PlayerEngine {
    */
   async load(musicId: number, options: { autoplay?: boolean } = {}) {
     if (this.source?.musicId === musicId) {
+      // 이미 들고 있는 곡이면 다시 받지 않는다. 다만 **끝까지 들은 곡이면
+      // 처음으로 되돌린다** — 그러지 않으면 재생 위치가 끝에 붙어 있어
+      // 눌러도 아무 일이 없다. 한곡 반복이 안 되던 것이 이것 때문이다.
+      if (this.store.get().status === 'ended') this.anchorPosition = 0;
       if (options.autoplay) await this.play();
       return;
     }
@@ -234,7 +267,11 @@ export class PlayerEngine {
       return;
     }
     await this.resumeContext();
-    this.startAt(this.anchorPosition);
+    // 재생할 청크가 없는 자리(=끝)에 서 있으면 처음부터 튼다. 그대로 시작하면
+    // 곧바로 `ended` 만 다시 나가서 눌러도 아무 일이 없다. 끝까지 들은 뒤든,
+    // 끝에서 멈춰 둔 뒤든 같다.
+    const at = this.indexAt(this.anchorPosition) < 0 ? 0 : this.anchorPosition;
+    this.startAt(at);
   }
 
   pause() {
@@ -245,6 +282,18 @@ export class PlayerEngine {
     this.store.set({ status: 'paused', positionSec: this.anchorPosition });
   }
 
+  /**
+   * 재생 위치를 옮긴다.
+   *
+   * **자리부터 옮기고 소리는 나중에 맞춘다.** 예전에는 페이드아웃을 기다린
+   * 뒤에야 위치를 바꿨는데, 그 120ms 동안 티커가 200ms 마다 옛 위치를 그대로
+   * 내보내서 화면 바가 누른 자리로 갔다가 원래 자리로 돌아왔다가 다시 튀었다.
+   * 티커를 먼저 멈추고 자리를 확정한 뒤에 소리를 맞춘다.
+   *
+   * 막대를 끄는 동안에는 `change` 가 쉬지 않고 들어온다. 이미 옮기는 중이면
+   * 목적지만 갈아 두고 돌고 있는 쪽이 마지막 자리까지 이어서 처리한다 —
+   * 여러 번이 한꺼번에 돌면 페이드와 예약이 엇갈린다.
+   */
   async seek(positionSec: number) {
     const source = this.source;
     if (!source) return;
@@ -252,16 +301,41 @@ export class PlayerEngine {
       Math.max(0, positionSec),
       Math.max(0, source.durationSec - 0.05),
     );
-    const wasPlaying = this.store.get().status === 'playing';
-    await this.fadeOut();
-    this.stopSources();
+
+    // 화면이 기다리지 않도록 자리는 지금 바로 확정한다.
+    this.stopTicker();
     this.anchorPosition = target;
     this.store.set({ positionSec: target });
-    void this.fill();
-    if (wasPlaying) {
-      await this.resumeContext();
-      this.startAt(target);
-    } else {
+
+    this.seekPending = target;
+    if (this.seeking) return;
+    this.seeking = true;
+    // 버퍼를 기다리는 중이어도 사용자에게는 '재생 중'이다. 옮긴 뒤에도 이어서
+    // 나야 한다. 끝까지 들은 곡은 그 자리에서 다시 듣겠다는 뜻이니 함께 튼다.
+    const status = this.store.get().status;
+    const wasPlaying =
+      status === 'playing' || status === 'buffering' || status === 'ended';
+    try {
+      await this.fadeOut();
+      this.stopSources();
+      for (;;) {
+        const to = this.seekPending;
+        if (to === null) break;
+        this.seekPending = null;
+        this.anchorPosition = to;
+        this.store.set({ positionSec: to });
+        void this.fill();
+        if (!wasPlaying) continue;
+        await this.resumeContext();
+        // 그 사이 또 옮겼으면 소리를 내지 않고 마지막 자리로 간다.
+        if (this.seekPending !== null) continue;
+        this.startAt(to);
+      }
+    } finally {
+      this.seeking = false;
+      this.seekPending = null;
+    }
+    if (!wasPlaying) {
       this.store.set({ status: 'paused' });
       this.fadeIn();
     }
@@ -543,42 +617,58 @@ export class PlayerEngine {
   }
 
   /** 링버퍼에서 하나씩 꺼내 PCM 으로 바꾼다. 한 번에 하나만 돈다. */
+  /**
+   * 링버퍼에 쌓인 청크를 디코딩해 재생 가능한 상태로 옮긴다.
+   *
+   * 도는 동안 새 청크가 들어오면 **그 사실을 적어 두고 같은 실행에서 이어
+   * 처리한다.** 예전에는 `draining` 이 켜져 있으면 그냥 돌아갔는데, 마침
+   * 루프가 막 끝난 참이면 그 청크를 아무도 집지 않아 버퍼링 상태로 굳었다.
+   * 버퍼링 중에는 타이머도 돌지 않아 스스로 빠져나오지 못했고, 곡이 끝나지
+   * 않으니 다음 곡으로도 넘어가지 않았다.
+   */
   private async drain(source: TrackSource) {
-    if (this.draining) return;
+    if (this.draining) {
+      this.drainPending = true;
+      return;
+    }
     this.draining = true;
     try {
       this.prepare();
       const context = this.context;
       if (!context) return;
-      for (;;) {
-        const item = this.ring.shift();
-        if (!item) break;
-        const slot = source.chunks[item.index];
-        if (!slot) continue;
-        try {
-          const { frames } = parseChunk(item.bytes);
-          const buffer = await decodeOpusFrames(context, frames, {
-            channels: source.channels,
-            frameDurationMs: 20,
-            expectedSamples: Math.round(
-              (slot.duration_ms / 1000) * OPUS_SAMPLE_RATE,
-            ),
-          });
-          source.decoded.set(item.index, buffer);
-        } catch (error) {
-          if (this.source === source) {
-            this.fail(
-              error instanceof Error
-                ? error.message
-                : '음원을 디코딩하지 못했어요.',
-            );
+      do {
+        this.drainPending = false;
+        for (;;) {
+          const item = this.ring.shift();
+          if (!item) break;
+          const slot = source.chunks[item.index];
+          if (!slot) continue;
+          try {
+            const { frames } = parseChunk(item.bytes);
+            const buffer = await decodeOpusFrames(context, frames, {
+              channels: source.channels,
+              frameDurationMs: 20,
+              expectedSamples: Math.round(
+                (slot.duration_ms / 1000) * OPUS_SAMPLE_RATE,
+              ),
+            });
+            source.decoded.set(item.index, buffer);
+          } catch (error) {
+            if (this.source === source) {
+              this.fail(
+                error instanceof Error
+                  ? error.message
+                  : '음원을 디코딩하지 못했어요.',
+              );
+            }
+          } finally {
+            source.inflight.delete(item.index);
           }
-        } finally {
-          source.inflight.delete(item.index);
         }
-      }
+      } while (this.drainPending);
     } finally {
       this.draining = false;
+      this.drainPending = false;
     }
     // 버퍼링 때문에 멈춰 있었다면 여기서 이어서 시작한다.
     if (this.source === source && this.store.get().status === 'buffering') {

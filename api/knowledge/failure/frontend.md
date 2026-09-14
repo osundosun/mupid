@@ -106,3 +106,68 @@
 - **원인**: `bootstrap` 이 `localStorage['mupid.demo-session.v1']` 를 보고 세션을 만들어 돌려줬다. 그 값만 넣으면 로그인 없이 서비스가 열린다. 표시를 되살리는 것과 인증은 다른 일이다.
 - **해결**: 브라우저 저장에서 세션을 복원하지 않는다. 남아 있던 값은 지운다. 세션은 쿠키의 리프레시 토큰으로 서버에 물어 복원한다.
 - **근거**: `frontend/lib/services/index.ts`
+
+### 곡이 끝나도 다음 곡으로 넘어가지 않을 때가 있다 — 해소됨
+
+- **원인**: `lib/player/engine.ts` 의 `drain()` 이 **이미 돌고 있으면 그냥 돌아갔다**(`if (this.draining) return`). 루프가 링 버퍼를 다 비운 직후에 도착한 청크는 아무도 처리하지 않는다. 그 자리가 마지막 청크였다면 재생은 `buffering` 에서 멈춘 채 `ended` 에 닿지 못하고, `ended` 가 없으니 다음 곡으로 넘어가는 일도 일어나지 않는다. 청크가 도착하는 시점에 달린 문제라 **간헐적으로만** 보였다.
+- **해결**: 돌아가지 말고 `drainPending = true` 로 표시해 두고, 진행 중이던 루프가 `do … while (this.drainPending)` 로 한 번 더 돌게 한다. 끝난 뒤 `buffering` 이면 이어서 `play()` 한다.
+- **근거**: `frontend/lib/player/engine.ts` 의 `drain()`
+
+### 끝까지 들은 곡은 다시 눌러도 아무 일이 없다 — 해소됨
+
+- **원인**: 재생 위치(`anchorPosition`)가 곡 끝에 붙어 있는데 그 자리에서 그대로 시작하니 곧바로 `ended` 만 다시 나갔다. 한곡 반복이 안 되던 것도 같은 이유다 — 같은 곡을 다시 `load()` 해도 위치가 끝이라 재생이 시작되지 않는다.
+- **해결**: `load()` 는 같은 곡이고 상태가 `ended` 면 위치를 0 으로 되돌린다. `play()` 는 현재 위치에 재생할 청크가 없으면 처음부터 튼다.
+- **근거**: `frontend/lib/player/engine.ts` 의 `load()`, `play()`
+
+### 한 곡이 끝났는데 두 곡이 넘어간다 — 해소됨
+
+- **원인**: 다음 곡으로 넘기는 것을 불리언 `advancing` 으로 막았는데, 비동기 `load()` **앞에서** 풀어 버려 같은 종료 신호가 두 번 들어오면 두 번 넘어갔다. 게다가 종료 판정을 `<audio>` 의 `ended` 와 재생기 상태 두 곳에서 따로 하고 있었다.
+- **해결**: `<audio>` 경로를 없애 재생 경로를 청크 재생기 하나로 모으고, 넘김 방지를 곡 단위(`endedFor.current === musicId`)로 바꾼다. 다시 `playing` 이 되면 푼다.
+- **근거**: `frontend/hooks/use-mupid.ts`
+
+### 화면에 서버에 없는 곡이 섞여 보인다 — 해소됨
+
+- **원인**: `lib/mupid-data.ts` 가 데모 곡 8개와 재생목록·저장한 구간을 상수로 들고 있었고, 서버 카탈로그는 그 위에 얹혔다. 눌러도 음원이 없으니 재생되지 않는다.
+- **해결**: `tracks`·`initialPlaylists`·`initialMoments` 를 모두 빈 배열로 둔다. 곡 목록은 `lib/stream-catalog.ts` 가 `GET /api/v1/music` 으로 받아온 것만 쓴다. `Track.audio`(정적 파일 경로) 필드와 `public/demo-covers/` 50장도 함께 지웠다. 테스트가 쓰던 데모 곡은 `tests/fixtures/tracks.mjs` 로 옮겼다.
+- **근거**: `frontend/lib/mupid-data.ts`, `frontend/lib/services/index.ts`, `frontend/tests/fixtures/tracks.mjs`
+
+### 상단바에 프로필 사진이 끝내 안 보인다 — 해소됨
+
+- **원인**: 사진을 보여 주는 자리가 둘인데(상단바의 동그란 아이콘, 마이페이지의 편집 자리) 각자 다른 데서 읽었다. 마이페이지는 `lib/profile-photo.ts` 로 로그인 여부에 따라 계정/브라우저를 갈라 읽었지만, 상단바는 `mupidService.readPhoto()` — **브라우저 저장만** 봤다. 계정에 올린 사진은 브라우저에 없으니 상단바에는 영영 나오지 않는다. `mupid-app.tsx` 의 `setPhoto` 는 그 값만 받아 늘 빈 문자열이었다.
+- **해결**: 사진 상태를 `lib/profile-photo.ts` 의 `profilePhotoStore` 한 곳에 두고 두 자리가 함께 본다. 마이페이지에서 바꾸면 상단바도 그 자리에서 같이 바뀌고, 로그아웃하면 `clear()` 로 지운다. object URL 의 수명도 스토어가 쥔다 — 화면마다 만들고 놓다 보면 새는 자리가 생긴다.
+- **근거**: `frontend/lib/profile-photo.ts`, `frontend/components/mupid-app.tsx`, `frontend/components/mupid/profile-photo.tsx`
+
+### 재생 막대를 누르면 그 자리로 갔다가 되돌아왔다가 요동친다 — 해소됨
+
+- **원인**: 두 가지가 겹쳤다.
+  1. `engine.seek()` 가 **페이드아웃을 기다린 뒤에야** 위치를 바꿨다. 그 120ms 동안 티커가 200ms 마다 옛 위치를 그대로 내보내서, 막대가 누른 자리로 갔다가 원래 자리로 돌아왔다가 다시 튀었다.
+  2. 화면의 `seek` 이 `startPlayback` 을 불러 **곡을 통째로 다시 걸었다.** 막대를 끄는 동안 `change` 가 쉬지 않고 들어오는데 그때마다 청취 이벤트가 나가고 최근 감상에 쌓였으며, 다시 건 재생이 옛 자리에서 시작했다가 뒤늦게 목적지로 튀었다.
+- **해결**: 티커를 먼저 멈추고 자리를 확정한 뒤에 소리를 맞춘다. 옮기는 중에 또 들어오면 목적지만 갈아 두고 돌고 있는 쪽이 마지막 자리까지 이어서 처리한다(`seekPending`) — 여러 번이 한꺼번에 돌면 페이드와 예약이 엇갈린다. 화면 쪽은 이미 들고 있는 곡이면 위치만 옮기고, 그 곡을 아직 안 들고 있을 때만 새로 튼다.
+- **근거**: `frontend/lib/player/engine.ts` 의 `seek()`, `frontend/hooks/use-mupid.ts`
+
+### 서버 장애를 "아직 등록된 음악이 없어요" 로 알린다 — 해소됨
+
+- **원인**: `fetchCatalog` 이 실패를 빈 배열로 삼켰다. 데모 곡 위에 얹는 값이던 시절에는 앱이 열리기만 하면 됐으니 맞는 판단이었지만, 데모 곡을 없앤 뒤로는 이것이 곡 목록의 전부다. `MupidApp` 은 "0곡" 과 "못 받아옴" 을 구별할 수 없어 서버가 죽어도 **"아직 등록된 음악이 없어요"** 라고 알렸다. 사용자는 다시 불러올 일이 아니라고 여기고 떠난다.
+- **해결**: 취소(`signal.aborted`)가 아닌 실패는 그대로 던진다. 화면이 "음악을 불러오지 못했어요" 로 갈라 알린다.
+- **덧붙임**: 곡이 0개여도 화면은 깨지지 않는다. `MupidApp` 의 `if (!data || !data.tracks.length)` 가 `LoadedMupidApp` 을 아예 띄우지 않아서, `useMupid` 의 `active = tracks[0]`(빈 목록이면 `undefined`)에 닿지 않는다. **다만 이 가드가 유일한 방벽이다** — 그 검사를 지나 곡 없는 `bootstrap` 이 들어오면 `active.title` 부터 터진다.
+- **근거**: `frontend/lib/stream-catalog.ts`, `frontend/components/mupid-app.tsx:83`
+
+### 곡이 하나도 없으면 앱 전체가 막힌다 — 해소됨
+
+- **원인**: `MupidApp` 의 가드가 `if (!data || !data.tracks.length)` 였다. 곡이 0개면 `LoadedMupidApp` 을 아예 띄우지 않아, 곡이 필요 없는 마이페이지·플레이리스트·탐색 필터·리포트까지 함께 막혔다. 음악이 없는 것과 앱이 고장 난 것은 다른 일인데 화면은 똑같이 보였다.
+- **왜 그렇게 되어 있었나**: `useMupid` 의 `active` 가 `tracks[0]` 로 시작하는데 타입은 `Track` 이다. 곡이 없으면 `undefined` 라 `active.title` 부터 터진다. 저 가드가 그걸 막는 **유일한 방벽**이었다.
+- **해결**: `active` 를 `Track | null` 로 바꾸고 가드는 "아직 못 받아왔을 때" 만 남긴다. 곡을 다루는 화면(`PlayerView`·`MomentSelection`·`SimilarView`·`MobileListening`·`TrackComments`)은 첫 줄에서 지역 상수로 받아 없으면 빈 화면을 돌려주고, 홈의 "지금 듣는 곡" 카드·미니 플레이어·플레이리스트 담기처럼 **화면의 일부**인 자리는 그 조각만 접는다. `AlbumArt`·`VinylRecord`·`LikeButton` 은 곡이 없으면 빈 커버를 그리거나 아무것도 그리지 않는다.
+- **주의**: `m.active` 를 지역 상수 `active` 로 받는 까닭은 JSX 안의 콜백에서는 `m.active` 의 좁히기가 풀리기 때문이다. `m.active` 를 그대로 쓰면 핸들러마다 `!` 를 붙이게 된다.
+- **곁들여 고친 것**: `MiniTimeline` 은 끌던 값과 현재 곡이 **둘 다 없으면** `undefined === undefined` 가 참이 되어 없는 `draft` 를 읽었다.
+- **근거**: `frontend/components/mupid-app.tsx`, `frontend/hooks/use-mupid.ts`, `frontend/components/mupid/*`
+
+### 볼륨 조절이 뚝뚝 끊기고 위쪽은 줄여도 그대로다 — 해소됨
+
+- **원인**: 세 가지가 겹쳤다.
+  1. **눈금이 5%** (`step={0.05}`)여서 끌면 스무 칸을 계단처럼 뛰었다.
+  2. **막대 위치를 그대로 이득에 꽂았다.** 사람은 소리 크기를 로그로 느끼는데, 1.0 → 0.5 는 -6dB 뿐이라 위쪽 절반은 줄여도 거의 그대로고 아래쪽 몇 칸에서 갑자기 사라진다. 같은 거리를 움직여도 구간마다 변화가 딴판이라 조절이 겉돈다.
+  3. **한 칸마다 앱 전체가 다시 그려졌다.** 볼륨이 `useMupid` 의 state 라 값이 바뀔 때마다 모델이 새로 나가고 화면 전체가 다시 그려졌다 — 한 칸에 **32ms**. 눈금만 촘촘하게 했다가는 오히려 더 끊긴다.
+- **해결**: 눈금을 1%로 하고, 이득은 `gainFor(position) = position²` 로 굽혀 귀와 눈금을 맞춘다. 볼륨은 원래 재생기가 들고 있는 값이므로 `usePlayerVolume()` 로 **그 막대만** 구독한다. `usePlayer()` 를 쓰면 안 된다 — 재생 위치가 0.2초마다 흘러 그걸 타는 화면이 계속 다시 그려진다.
+- **확인**: 위치 → 이득 `0→0, .25→.062, .5→.25, .75→.562, 1→1`. 100칸 끌기가 **32.07ms/칸 → 4.47ms/칸**(약 7배).
+- **건드리지 말 것**: 값을 이득에 바로 꽂지 않고 `setTargetAtTime(…, 0.02)` 로 20ms에 걸쳐 옮기는 것은 '지직' 소리를 막는 장치다. 데스크톱 홈의 `<label>` 감싸개도 `.desktop-audio-options label` 에 배치가 걸려 있어 그대로 두어야 한다.
+- **근거**: `frontend/lib/player/engine.ts`, `frontend/lib/player/index.ts`, `frontend/components/mupid/volume-slider.tsx`

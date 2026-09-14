@@ -9,7 +9,7 @@
 
 import { useEffect } from 'react';
 import { useStore } from '../store';
-import { getPlayer, type PlayerState, type PlayerStatus } from './engine';
+import { DEFAULT_VOLUME, getPlayer, type PlayerState, type PlayerStatus } from './engine';
 
 export { getPlayer, PlayerEngine } from './engine';
 export type { PlayerState, PlayerStatus } from './engine';
@@ -23,7 +23,7 @@ const idle: PlayerState = {
   positionSec: 0,
   durationSec: 0,
   bufferedSec: 0,
-  volume: 1,
+  volume: DEFAULT_VOLUME,
   error: null,
   supported: false,
 };
@@ -42,6 +42,26 @@ export type PlayerApi = PlayerState & {
 };
 
 const noop = async () => {};
+
+/** 플레이어가 없을 때(SSR·미지원) 쓰는 읽기 전용 스토어. */
+const idleStore = {
+  get: () => idle,
+  set: () => {},
+  subscribe: () => () => {},
+};
+
+/**
+ * 볼륨만 구독한다.
+ *
+ * `usePlayer()` 는 상태 전체를 보므로 재생 위치가 0.2초마다 흐르는 동안 계속
+ * 다시 그린다. 볼륨 막대가 그걸 타면 **앱 전체가 매 칸마다 다시 그려져** 끄는
+ * 손이 뚝뚝 끊긴다. 볼륨은 엔진이 들고 있는 값이니 여기만 따로 구독한다.
+ */
+export function usePlayerVolume(): [number, (value: number) => void] {
+  const player = getPlayer();
+  const volume = useStore(player?.store ?? idleStore, (state) => state.volume);
+  return [volume, player ? player.setVolume.bind(player) : () => {}];
+}
 
 /**
  * 플레이어 상태를 구독한다.

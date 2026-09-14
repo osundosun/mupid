@@ -46,7 +46,7 @@ export function TodayMoment({ model: m }: { model: MupidModel }) {
         {moments.map((track) => {
           const section = getSongSectionAt(track, track.moment);
           const playing =
-            m.active.id === track.id && m.playing && m.time >= section.start && m.time < section.end;
+            m.active?.id === track.id && m.playing && m.time >= section.start && m.time < section.end;
           const moment = { id: track.id, track, start: section.start, end: section.end, section: section.label };
           return (
             <article className={`today-moment-row ${playing ? 'is-current' : ''}`} key={track.id}>

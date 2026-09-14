@@ -72,7 +72,10 @@ docs: |-
 
   ## 필요한 인증 정보
 
-  - `Cookie: refresh_token=...` — `@CookieValue(name = "refresh_token")` 로 읽습니다. 없으면 400.
+  - `Cookie: refresh_token=...` — `@CookieValue(..., required = false)` 로 읽고
+    비어 있으면 **401** 입니다. `required = true` 로 두면 스프링이
+    `MissingRequestCookieException` 을 던져 500 이 나가는데, 로그인한 적 없는
+    첫 방문자가 늘 밟는 길이라 서버가 고장 난 것처럼 보입니다.
   - **액세스 토큰은 필요 없습니다.** 액세스 토큰이 만료된 뒤에 부르는
     엔드포인트라 액세스 토큰을 요구하면 재발급 자체가 불가능해집니다.
     자격증명은 쿠키의 리프레시 토큰이고, `AuthService` 가 서명·만료·차단목록을
@@ -94,4 +97,10 @@ docs: |-
 
   | 코드 | 상태 | 설명 |
   | --- | --- | --- |
-  | `MUPID_UNAUTHORIZED` | 401 | 리프레시 토큰이 만료·위조되었거나 로그아웃으로 차단됨 |
+  | `MUPID_UNAUTHORIZED` | 401 | 쿠키가 없거나, 리프레시 토큰이 만료·위조·모양이 깨졌거나, 로그아웃으로 차단됐거나, 탈퇴·삭제된 사용자를 가리킴 |
+
+  위 경우는 한때 **500** 이었습니다. 재발급은 필터가 아니라 컨트롤러에서
+  토큰을 푸는데, JJWT 의 `JwtException` 과 `BadCredentialsException` 에
+  핸들러가 없어 `@ExceptionHandler(Exception.class)` 에 먹혔습니다. 브라우저에
+  낡은 쿠키가 하나 남아 있으면 첫 화면부터 서버 장애처럼 보였습니다.
+  지금은 `GlobalExceptionHandler` 가 401 로 되돌립니다.

@@ -462,27 +462,23 @@ export function createEndpoints(client: ApiClient) {
         client.request<MusicPage>({
           path: '/api/v1/music',
           query: { q: options.q, page: options.page, size: options.size },
-          anonymous: true,
           signal,
         }),
       get: (musicId: number, signal?: AbortSignal) =>
         client.request<MusicSummary>({
           path: `/api/v1/music/${musicId}`,
-          anonymous: true,
           signal,
         }),
       /** 가사. 시간 오름차순. 가사가 없으면 `lines` 가 빈 배열이다. */
       lyrics: (musicId: number, signal?: AbortSignal) =>
         client.request<MusicLyrics>({
           path: `/api/v1/music/${musicId}/lyric`,
-          anonymous: true,
           signal,
         }),
       /** 구간·보컬·악기. 분석 전이면 `analyzed` 가 false 다. */
       analysis: (musicId: number, signal?: AbortSignal) =>
         client.request<MusicAnalysis>({
           path: `/api/v1/music/${musicId}/analysis`,
-          anonymous: true,
           signal,
         }),
     },
@@ -496,13 +492,11 @@ export function createEndpoints(client: ApiClient) {
         client.request<ArtistPage>({
           path: '/api/v1/artist',
           query: { q: options.q, page: options.page, size: options.size },
-          anonymous: true,
           signal,
         }),
       get: (artistId: number, signal?: AbortSignal) =>
         client.request<ArtistSummary>({
           path: `/api/v1/artist/${artistId}`,
-          anonymous: true,
           signal,
         }),
     },
@@ -522,14 +516,12 @@ export function createEndpoints(client: ApiClient) {
             page: options.page,
             size: options.size,
           },
-          anonymous: true,
           signal,
         }),
       /** 수록곡이 함께 온다. */
       get: (albumId: number, signal?: AbortSignal) =>
         client.request<AlbumDetail>({
           path: `/api/v1/album/${albumId}`,
-          anonymous: true,
           signal,
         }),
     },

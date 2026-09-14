@@ -46,7 +46,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
           onClickCapture={event => { if (blockClick.current) { event.preventDefault(); event.stopPropagation(); blockClick.current = false; } }}>
           {Array.from({ length: pageCount }, (_, batch) => <div key={batch} className="vertical-album-grid album-scroll-batch" aria-label={`${batch + 1}번째 음악 묶음`}>
           {results.slice(batch * pageSize, (batch + 1) * pageSize).map((track, index) => {
-          const playing = m.active.id === track.id && m.playing;
+          const playing = m.active?.id === track.id && m.playing;
           return <article className="vertical-album" key={track.id} aria-label={`${batch * pageSize + index + 1} / ${results.length}: ${track.title}`}>
             <div className="keyword-cover"><button className="keyword-detail" aria-label={`${track.title} ${playing ? '일시정지' : '재생'}`} onClick={() => m.play(track)}><AlbumArt track={track} /><span className="keyword-play" aria-hidden="true">{playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}</span></button></div>
             <div className="keyword-card-copy"><h3>{track.title}</h3><p>{track.artist}</p><button aria-label={`${track.title} 곡 상세`} onClick={() => m.openTrack(track)}><ArrowUpRight size={18} /></button></div>

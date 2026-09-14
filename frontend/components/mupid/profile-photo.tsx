@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Camera, Trash2 } from 'lucide-react';
 import { MupidMascot } from './mascot';
-import { profilePhoto, releasePhoto } from '@/lib/profile-photo';
+import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
 import { sessionStore } from '@/lib/api/session';
 import { useStore } from '@/lib/store';
 
@@ -10,31 +10,17 @@ import { useStore } from '@/lib/store';
 const EDGE = 256;
 
 export function ProfilePhoto() {
-  const [photo, setPhoto] = useState('');
+  const photo = useStore(profilePhotoStore, (s) => s.url);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(true);
   const input = useRef<HTMLInputElement>(null);
   // 로그인 상태가 바뀌면 저장 위치가 바뀐다. 사진을 다시 읽어야 한다.
   const account = useStore(sessionStore, (s) => `${s.status}:${s.user?.user_id ?? ''}`);
-  // 지금 화면에 걸린 object URL. 바꾸거나 화면을 떠날 때 놓아 주어야 한다.
-  const shown = useRef('');
-  const replace = (next: string) => {
-    if (shown.current !== next) releasePhoto(shown.current);
-    shown.current = next;
-    setPhoto(next);
-  };
   useEffect(() => {
     const abort = new AbortController();
     setBusy(true);
     void profilePhoto
-      .read(abort.signal)
-      .then((value) => {
-        if (abort.signal.aborted) {
-          releasePhoto(value);
-          return;
-        }
-        replace(value);
-      })
+      .refresh(abort.signal)
       .catch(() => {
         if (!abort.signal.aborted) setMessage('사진을 불러오지 못했어요.');
       })
@@ -43,8 +29,6 @@ export function ProfilePhoto() {
       });
     return () => abort.abort();
   }, [account]);
-  // 화면을 떠날 때 마지막 URL 을 놓는다.
-  useEffect(() => () => releasePhoto(shown.current), []);
   return <div className={`profile-photo-editor ${photo ? 'has-photo' : ''}`}>
     {/* 눌러서 바꾸는 자리라는 걸 알 수 있게 사진 위에 카메라 배지를 얹는다. */}
     <button type="button" className="profile-photo-pick" aria-label={photo ? '프로필 사진 바꾸기' : '프로필 사진 등록하기'} onClick={() => input.current?.click()} disabled={busy}>
@@ -70,7 +54,7 @@ export function ProfilePhoto() {
         // 서버로는 Blob 을 올린다. 브라우저 저장은 예전처럼 data URL 을 쓴다.
         const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', .85));
         if (!blob) throw new Error('blob');
-        replace(await profilePhoto.save(blob, canvas.toDataURL('image/jpeg', .85)));
+        await profilePhoto.save(blob, canvas.toDataURL('image/jpeg', .85));
         setMessage('프로필 사진을 저장했어요.');
       } catch { setMessage('사진을 저장하지 못했어요. 다른 사진으로 다시 시도해 주세요.'); }
       finally { URL.revokeObjectURL(url); setBusy(false); }
@@ -79,7 +63,7 @@ export function ProfilePhoto() {
       <button className="secondary-button profile-photo-main" disabled={busy} onClick={() => input.current?.click()}>
         <Camera />{busy ? '저장 중…' : photo ? '사진 변경' : '사진 등록'}
       </button>
-      {photo && <button className="profile-photo-remove" disabled={busy} onClick={async () => { setBusy(true); try { await profilePhoto.remove(); replace(''); setMessage('기본 프로필로 변경했어요.'); } catch { setMessage('삭제하지 못했어요. 다시 시도해 주세요.'); } finally { setBusy(false); } }}>
+      {photo && <button className="profile-photo-remove" disabled={busy} onClick={async () => { setBusy(true); try { await profilePhoto.remove(); setMessage('기본 프로필로 변경했어요.'); } catch { setMessage('삭제하지 못했어요. 다시 시도해 주세요.'); } finally { setBusy(false); } }}>
         <Trash2 />삭제
       </button>}
     </div>
