@@ -1,0 +1,69 @@
+info:
+  name: Admin
+  type: folder
+  seq: 15
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Admin
+
+    관리자 화면(`/api/admin`)이 쓰는 데이터 API 입니다. **전부 `ROLE_ADMIN` 전용**이고
+    (`AdminApiController` 의 `@AdminRole`), 아니면 403 `MUPID_FORBIDDEN` 입니다.
+
+    | 엔드포인트 | 동작 |
+    | --- | --- |
+    | `GET /api/v1/admin/dashboard` | 자원별 행 수 + JVM + 외부 저장소 상태 |
+    | `GET /api/v1/admin/resource` | 관리 대상 자원 목록 |
+    | `GET /api/v1/admin/resource/{resource}/schema` | 자원 하나의 컬럼 구성 |
+    | `GET /api/v1/admin/resource/{resource}` | 목록 조회 (페이징·정렬·검색·필터) |
+    | `GET /api/v1/admin/resource/{resource}/{id}` | 단건 조회 |
+    | `POST /api/v1/admin/resource/{resource}` | 생성 |
+    | `PATCH /api/v1/admin/resource/{resource}/{id}` | 수정 |
+    | `DELETE /api/v1/admin/resource/{resource}/{id}` | 삭제 |
+
+    ## 자원 이름과 목록
+
+    **자원 목록은 손으로 관리하지 않습니다.** `AdminResourceRegistry` 가 기동할 때
+    JPA 메타모델을 읽어 `@Entity` 전부를 자원으로 만듭니다. 엔티티를 추가하면 관리자
+    화면에도 저절로 나타나므로, 이 컬렉션에 자원별 요청을 따로 만들지 않습니다.
+
+    `{resource}` 는 엔티티 이름의 첫 글자를 내린 것입니다 — `MusicComment` →
+    `musicComment`. 실제 목록은 `GET /api/v1/admin/resource` 로 확인하세요.
+
+    ## 식별자
+
+    `{id}` 는 행 응답의 `_id` 값입니다. 복합키(`@EmbeddedId`)면 구성 요소를 선언 순서대로
+    `,` 로 이은 것입니다 — `MusicReaction` 은 `5,3` (userId=5, musicId=3).
+
+    ## 행의 모양
+
+    행은 엔티티가 아니라 평평한 `Map` 입니다.
+
+    - 복합키 구성 요소는 바깥으로 펼쳐집니다 (`userId`, `musicId`).
+    - 연관 필드는 대상 엔티티가 아니라 **대상의 식별자**입니다 (`"album": 1`).
+    - 비밀번호처럼 민감한 필드는 **언제나 `null`** 로 나갑니다. 쓰기만 가능합니다.
+    - `_id` 키가 하나 더 붙습니다. 위의 `{id}` 입니다.
+
+    필드 이름은 자바 필드명 그대로(camelCase)입니다. `Map` 의 키는
+    `spring.jackson.property-naming-strategy: SNAKE_CASE` 의 적용 대상이 아니기
+    때문입니다. 반면 `BaseResponse`·스키마 응답 같은 record 는 snake_case 로 나갑니다 —
+    한 응답 안에서 표기가 섞입니다.
+
+    ## 오류
+
+    | 코드 | 상태 | 설명 |
+    | --- | --- | --- |
+    | `MUPID_RESOURCE_NOT_FOUND` | 404 | `{resource}` 가 관리 대상에 없음 |
+    | `MUPID_RECORD_NOT_FOUND` | 404 | `{id}` 행이 없거나, 연관으로 지정한 대상이 없음 |
+    | `MUPID_UNKNOWN_FIELD` | 400 | 본문·필터에 스키마에 없는 필드 |
+    | `MUPID_INVALID_FIELD_VALUE` | 400 | 값을 그 필드의 타입으로 바꾸지 못함 |
+    | `MUPID_INVALID_RECORD_ID` | 400 | `{id}` 의 구성 요소 수가 맞지 않음 |
+    | `MUPID_RECORD_WRITE_FAILED` | 400 | DB 가 쓰기를 거부 (제약 위반 등). 사유는 서버 로그 |
+    | `MUPID_RESOURCE_QUERY_FAILED` | 500 | 조회 자체가 실패. 엔티티 매핑과 실제 테이블이 어긋난 경우. 사유는 서버 로그 |
+    | `MUPID_SELF_MODIFICATION_NOT_ALLOWED` | 400 | 자기 계정의 권한·상태 변경, 자기 계정 삭제 |
+    | `MUPID_LAST_ADMIN_PROTECTED` | 400 | 마지막 관리자의 권한 강등·탈퇴·삭제 |
+    | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

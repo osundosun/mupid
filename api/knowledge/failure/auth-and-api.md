@@ -1,6 +1,6 @@
 # 인증 · 보안 · 오류 응답
 
-29건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+33건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -172,7 +172,7 @@
 
 ### `@SystemRole` / `@AdminRole` 이 거부하면 403 이 아니라 500 이 나온다 — 해소됨
 
-- **원인**: `@PreAuthorize` 거부는 컨트롤러 **메서드 호출 지점**에서 `AuthorizationDeniedException`(= `AccessDeniedException`) 으로 터진다. 필터에서 나는 게 아니라 `SecurityConfig` 의 `AuthForbiddenHandler` 를 타지 않고, `GlobalExceptionHandler` 의 `@ExceptionHandler(Exception.class)` 에 먹혀 `MUPID_INTERNAL_SERVER_ERROR` 가 나갔다. `/admin/**` 처럼 필터가 막는 경로만 403 이 제대로 나왔다. Bruno 문서는 줄곧 403 이라고 적어 두고 있었다.
+- **원인**: `@PreAuthorize` 거부는 컨트롤러 **메서드 호출 지점**에서 `AuthorizationDeniedException`(= `AccessDeniedException`) 으로 터진다. 필터에서 나는 게 아니라 `SecurityConfig` 의 `AuthForbiddenHandler` 를 타지 않고, `GlobalExceptionHandler` 의 `@ExceptionHandler(Exception.class)` 에 먹혀 `MUPID_INTERNAL_SERVER_ERROR` 가 나갔다. `authorizeHttpRequests` 가 직접 막는 경로만 403 이 제대로 나왔다. Bruno 문서는 줄곧 403 이라고 적어 두고 있었다.
 - **해결**: `GlobalExceptionHandler` 에 `@ExceptionHandler(AccessDeniedException.class)` 를 추가해 `AuthErrorCode.FORBIDDEN` 으로 매핑한다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/common/exception/GlobalExceptionHandler.java`
 
@@ -253,3 +253,42 @@
 - **열어 둔 것**: `/api/v1/storage/image/ALBUM|ARTIST/*` 는 **닫으면 안 된다.** `<img src>` 에는 Authorization 헤더를 붙일 수 없어 목록의 표지가 전부 깨진다. 키가 앨범·아티스트 이름이라 개인 정보도 아니다. 프로필 사진(PROFILE)은 개인 정보라 닫힌 채로 두고 토큰을 붙여 바이트를 받는다.
 - **확인**: 비로그인 `curl` 로 목록·상세·가사·분석·아티스트·앨범 모두 401, 앨범 이미지 200. 쿠키를 지운 첫 방문은 `/login` 이 뜨고 오류 문구가 없다. 폼으로 로그인하면 새로고침 없이 `/home` 에 곡과 표지 15장이 그대로 뜬다.
 - **근거**: `api/.../common/config/SecurityConfig.java`, `frontend/components/mupid-app.tsx`, `frontend/lib/api/endpoints.ts`
+
+## 관리자 화면
+
+### 관리자 화면을 `/admin` 에 만들면 배포하면 사라진다
+
+- **원인**: 운영 nginx(`infra/deploy/nginx.conf`)가 스프링으로 넘기는 것은 `location /api/` 하나뿐이다. 나머지는 `root /srv/web/current` 의 정적 프런트엔드로 떨어지므로 `/admin` 은 `try_files` 에 걸려 **404** 가 된다. 로컬 `bootRun` 에서는 nginx 를 거치지 않아 멀쩡히 열리기 때문에 배포하기 전까지 드러나지 않는다.
+- **해결**: 스프링이 직접 서빙해야 하는 것은 `/api/` 아래에 둔다 — 관리자 화면은 `/api/admin`. 액추에이터가 `management.endpoints.web.base-path: /api/actuator` 로 옮겨져 있는 것이 같은 대응이다. nginx 에 `location /admin/` 을 새로 뚫는 방법도 있지만, 배포 설정은 `infra/` 소관이라 손이 더 간다 ([decision/0008](../decision/0008-deploy-image-from-infra.md)).
+- **근거**: `infra/deploy/nginx.conf`, `api/src/main/resources/application.yaml`, `api/src/main/java/com/osundosun/mupid/api/admin/controller/AdminController.java`
+
+### 관리자 화면 경로를 `hasRole("ADMIN")` 으로 닫으면 관리자도 못 들어온다
+
+- **원인**: `SecurityConfig` 에 `.requestMatchers("/admin/**").hasRole("ADMIN")` 이 있었지만 **아무도 통과할 수 없었다.** `AuthFilter.resolveAccessToken` 은 `Authorization` 헤더의 Bearer 토큰만 보는데, 브라우저 주소창으로 들어오는 최초 요청에는 그 헤더를 붙일 방법이 없다. 인증이 세팅되지 않은 채 인가에 도달하므로 늘 401 이다. 쿠키의 리프레시 토큰은 필터가 보지 않는다.
+- **해결**: HTML 골격만 `permitAll` 로 열고(`GET /api/admin`, `GET /api/admin/login`), 데이터는 전부 `fetch` 로 받게 한다. 화면이 부르는 `/api/v1/admin/**` 는 `@AdminRole` 로 막혀 있고 실제 방어선은 그쪽 하나다. **그 HTML 에 `th:` 로 서버 데이터를 심는 순간 이 구조가 깨진다** — 로그인하지 않은 사람이 데이터를 보게 된다.
+- **대안이 아닌 것**: 세션 로그인을 따로 붙이는 것. `SessionCreationPolicy.STATELESS` 를 깨야 하고 인증 경로가 둘로 갈린다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/auth/filter/AuthFilter.java`, `api/src/main/java/com/osundosun/mupid/api/common/config/SecurityConfig.java`, [architecture/admin-console.md](../architecture/admin-console.md)
+
+### `MusicGenre` · `MusicMood` · `MusicAnalysisInstrument` · `MusicSectionAnalysisMood` 는 JPA 로 INSERT 할 수 없다
+
+- **증상**: `persist` 하면 `could not execute statement [No value specified for parameter 3]` 과 함께 컬럼이 중복된 SQL 이 찍힌다.
+
+  ```sql
+  insert into music_genres (genre_code_id, music_id, genre_code_id, music_id) values (?,?,?,?)
+  ```
+
+- **원인**: 네 엔티티가 **같은 컬럼을 두 번 매핑**한다. `@EmbeddedId` 안의 구성 요소가 `@Column(name = "music_id", insertable = false, updatable = false)` 이고, 같은 컬럼을 `@ManyToOne @JoinColumn(name = "music_id")` 가 또 가리킨다. Hibernate 가 INSERT 컬럼 목록에 둘 다 넣으면서 바인딩할 파라미터는 두 개만 만든다. 파생 식별자(derived identity)를 `@MapsId` 없이 흉내 낸 매핑이다.
+- **드러나지 않았던 이유**: 애플리케이션 코드에 이 네 엔티티를 **저장하는 곳이 한 군데도 없다.** `MusicServiceImpl`·`MusicSummaryAssembler` 는 조회만 하고, 행은 분석 파이프라인이 SQL 로 직접 넣는다. 관리자 화면의 제네릭 생성이 이 경로를 처음 밟았다.
+- **해결(미적용)**: 정석은 `@MapsId` 다. 구성 요소의 `insertable = false, updatable = false` 를 지우고 연관에 `@MapsId("musicId")` 를 붙인다. DDL 은 바뀌지 않는다. **엔티티 매핑 변경이라 팀 합의가 필요해 손대지 않았다.**
+- **지금 동작**: 생성만 실패하고(`MUPID_RECORD_WRITE_FAILED`, 400) 조회·수정·삭제는 정상이다. 실패 사유는 서버 로그에 남는다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/music/mapping/entity/MusicGenre.java`, `api/src/main/java/com/osundosun/mupid/api/admin/service/AdminResourceServiceImpl.java`
+
+### 필드 이름이 대문자 한 글자로 끝나면 컬럼명에 밑줄이 안 붙는다
+
+- **증상**: `Mubti` 조회가 `Unknown column 'm1_0.classa' in 'field list'` 로 500 이었다. 실제 컬럼은 `class_a` 다.
+- **원인**: 하이버네이트의 기본 네이밍 전략(`CamelCaseToUnderscoresNamingStrategy`)은 **대문자의 앞뒤가 모두 소문자일 때만** 밑줄을 넣는다. `classA` 는 대문자가 **맨 끝**이라 규칙에 걸리지 않아 `class_a` 가 아니라 `classa` 가 된다. `imageFileId`(`image_file_id`)처럼 대문자 뒤에 소문자가 오는 이름은 멀쩡해서, 같은 엔티티 안에서도 일부 컬럼만 깨진다.
+- **해결**: 그런 필드는 `@Column(name = "class_a")` 로 **이름을 적는다.** 전략을 바꾸면 다른 30개 엔티티의 컬럼명이 전부 흔들리므로 건드리지 않는다.
+- **드러나지 않았던 이유**: `MubtiRepository` 를 쓰는 앱 코드가 없고 행도 0건이었다. `COUNT(*)` 는 컬럼을 안 읽어서 화면 왼쪽의 행 수는 정상으로 보였다. 관리자 화면의 목록 조회가 이 경로를 처음 밟았다.
+- **찾는 법**: `grep -rnE "private [A-Za-z.<>]+ [a-z][A-Za-z]*[a-z][A-Z];" src/main/java` — 현재 걸리는 것은 `Mubti` 의 넷뿐이다.
+- **함께 드러난 것**: `knowledge/domain/erd.sql` 은 `classa` 라고 적어 실제 DB(`class_a`)와 다르다 → [open-questions B7](../open-questions.md).
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/report/entity/Mubti.java`

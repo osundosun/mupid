@@ -1,0 +1,162 @@
+info:
+  name: 자원 스키마 조회
+  type: http
+  seq: 3
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/admin/resource/{{ADMIN_RESOURCE}}/schema"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: ADMIN_RESOURCE
+      value: user
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "name": "user",
+              "label": "회원",
+              "table": "users",
+              "category": "회원",
+              "composite": false,
+              "ids": ["userId"],
+              "fields": [
+                {
+                  "name": "userId",
+                  "label": "userId",
+                  "type": "number",
+                  "id": true,
+                  "nullable": false,
+                  "insertable": false,
+                  "updatable": false,
+                  "generated": true,
+                  "sensitive": false,
+                  "options": null,
+                  "relation": null
+                },
+                {
+                  "name": "password",
+                  "label": "password",
+                  "type": "string",
+                  "id": false,
+                  "nullable": false,
+                  "insertable": true,
+                  "updatable": true,
+                  "generated": false,
+                  "sensitive": true,
+                  "options": null,
+                  "relation": null
+                },
+                {
+                  "name": "imageFile",
+                  "label": "imageFile",
+                  "type": "relation",
+                  "id": false,
+                  "nullable": true,
+                  "insertable": true,
+                  "updatable": true,
+                  "generated": false,
+                  "sensitive": false,
+                  "options": null,
+                  "relation": "objectStorageFile"
+                },
+                {
+                  "name": "role",
+                  "label": "role",
+                  "type": "enum",
+                  "id": false,
+                  "nullable": false,
+                  "insertable": true,
+                  "updatable": true,
+                  "generated": false,
+                  "sensitive": false,
+                  "options": ["ROLE_USER", "ROLE_SYSTEM", "ROLE_ADMIN"],
+                  "relation": null
+                }
+              ]
+            }
+          }
+  - name: 404 없는 자원
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_RESOURCE_NOT_FOUND",
+            "message": "관리 대상 자원을 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 자원 스키마 조회
+
+  `GET /api/v1/admin/resource/{resource}/schema` · `ROLE_ADMIN`
+
+  자원 하나의 컬럼 구성입니다. 관리자 화면은 **이것만 보고** 표와 입력 폼을 그립니다.
+  화면에 하드코딩된 컬럼 목록이 없습니다.
+
+  ## 필드 하나의 모양
+
+  | 필드 | 설명 |
+  | --- | --- |
+  | `name` | 행 `Map` 의 키. 정렬·필터 파라미터에도 이 이름을 씁니다 |
+  | `type` | `string` `text` `number` `boolean` `datetime` `date` `time` `enum` `relation` `other` |
+  | `id` | 식별자를 이루는 필드인가 |
+  | `nullable` | `null` 허용 여부 |
+  | `insertable` | 생성(`POST`) 때 넣을 수 있는가 |
+  | `updatable` | 수정(`PATCH`) 때 고칠 수 있는가 |
+  | `generated` | DB 가 만들어 주는 값인가 (`@GeneratedValue`) |
+  | `sensitive` | 조회 응답에서 언제나 `null`. 쓰기만 가능 |
+  | `options` | `enum` 이면 고를 수 있는 값 전부 |
+  | `relation` | 연관 필드면 가리키는 자원 이름 |
+
+  쓸 수 없는 필드에 값을 보내면 **오류가 아니라 조용히 무시**됩니다. 화면이 행을
+  통째로 되돌려 보내는 흐름을 허용하기 위해서입니다.
+
+  ## 읽기 전용이 되는 경우
+
+  - 식별자 (`id: true`)
+  - `@Column(insertable = false)` · `@Column(updatable = false)`
+  - `@CreatedDate` · `@LastModifiedDate` — `AuditingEntityListener` 가 저장 직전에
+    덮어쓰므로 입력칸을 내주면 적어 넣은 값이 조용히 사라집니다
+
+  ## 복합키
+
+  `composite: true` 면 `@EmbeddedId` 의 구성 요소가 바깥으로 펼쳐져 각자 `id: true`
+  필드가 됩니다. `ids` 가 그 순서이고, 레코드 URL 의 `{id}` 는 이 순서대로 `,` 로
+  이은 것입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_RESOURCE_NOT_FOUND` | 404 | `{resource}` 가 관리 대상에 없음 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

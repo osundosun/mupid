@@ -40,6 +40,7 @@ docs:
     | `Music` | 음악/앨범/아티스트/가사 관리 (SYSTEM/ADMIN 전용) |
     | `Stream` | 스트림/청크 조회·다운로드, 오디오 등록 (업로드는 SYSTEM/ADMIN 전용) |
     | `Storage` | 범용 이미지 스토리지 (프로필 사진 포함) |
+    | `Admin` | 관리자 화면이 쓰는 자원 CRUD·대시보드 (ADMIN 전용) |
     | `Actuator` / `Error` | 헬스체크, 오류 응답 확인 |
 
     ## 환경 변수
@@ -196,7 +197,7 @@ docs:
     | --- | --- |
     | `ROLE_USER` | 일반 API (User, Auth, Email, Storage) + `Stream` 조회·다운로드 |
     | `ROLE_SYSTEM` / `ROLE_ADMIN` | 위 + `Music` 폴더 전체, `Stream` 의 등록·삭제 |
-    | `ROLE_ADMIN` | 위 + `User / 시스템 계정 생성`, `/admin/**` 관리자 페이지 |
+    | `ROLE_ADMIN` | 위 + `User / 시스템 계정 생성`, `Admin` 폴더 전체 |
 
     `Music` 폴더 엔드포인트와 `Stream` 의 등록 계열은 `@SystemRole`
     (`hasAnyRole('SYSTEM', 'ADMIN')`) 이 붙어 있어 일반 사용자 토큰으로
@@ -205,6 +206,14 @@ docs:
 
     `ROLE_SYSTEM` 계정은 `User / 시스템 계정 생성` 으로 관리자가 발급합니다.
     `music_chunking` 배치가 이 계정의 리프레시 토큰으로 동작합니다.
+
+    관리자 화면의 **HTML 골격**(`GET /api/admin`, `GET /api/admin/login`)만
+    `permitAll` 입니다. 브라우저 주소창으로 들어오는 요청에는 `Authorization`
+    헤더를 붙일 수 없는데 `AuthFilter` 는 헤더의 Bearer 토큰만 보기 때문입니다.
+    그 HTML 에는 데이터가 없고, 화면이 fetch 로 부르는 `Admin` 폴더의
+    `/api/v1/admin/**` 가 `@AdminRole` 로 막혀 있습니다 — 실제 방어선은 그쪽입니다.
+    `/admin` 이 아니라 `/api/admin` 인 것은 운영 nginx 가 `/api/` 만 스프링으로
+    넘기기 때문입니다 (액추에이터를 `/api/actuator` 로 옮긴 것과 같은 이유).
 
     ## 코드 값
 

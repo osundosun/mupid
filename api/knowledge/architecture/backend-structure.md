@@ -60,6 +60,7 @@ api/src/test/java/com/osundosun/mupid/api/ApiApplicationTests.java   (1)
 | `cache` | Redis 래퍼. `CacheKind` enum 이 키 접두사(`block:token`)를 들고, `CacheServiceImpl.buildKey` 가 `"%s:%s".formatted(kind.getRedisKey(), key)` 로 조립 |
 | `analytics` | ClickHouse. 아직 `config`+`properties` 뿐이고 컨트롤러·서비스가 없다 |
 | `event` | 청취 이벤트 수집. 엔티티·리포지터리 없음 — MySQL 을 건드리지 않고 Redis(멱등)와 Kafka(발행)만 쓴다. `enumerate` 5개가 이벤트 값 집합을 들고 있고, `dto/ListenEventMessage` 가 Kafka 로 나가는 JSON 이다 |
+| `admin` | 관리자 화면. **엔티티도 리포지터리도 없다** — `AdminResourceRegistry` 가 기동할 때 JPA 메타모델을 읽어 `@Entity` 전부를 관리 대상으로 만들고, `AdminResourceServiceImpl` 이 `EntityManager` 로 제네릭 CRUD 를 한다. `controller` 에 `@RestController`(`AdminApiController`) 와 **`@Controller`(`AdminController`, Thymeleaf HTML)** 가 함께 있는 유일한 도메인이다. 자세한 것은 [관리자 화면](admin-console.md) |
 | `common` | 여러 도메인이 공유하는 것만. `response`(`BaseResponse`, `ErrorResponse`), `error`(`ErrorCode`, `GlobalErrorCode`), `exception`(`BusinessException`, `GlobalExceptionHandler`), `config`(`SecurityConfig`, `JdbcTemplateConfig`), `gmail` |
 | `utils` | `MultipartFileUtils` 하나. static 메서드만 있는 public 클래스 |
 

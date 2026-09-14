@@ -66,6 +66,14 @@
 
 **정할 것**: 뷰 교체가 정식 절차인지, 다른 전환 방식을 쓸지.
 
+### B7. `mubti` 컬럼 이름이 ERD 와 실제 DB 에서 다르다
+
+로컬 MySQL 은 `class_a`~`class_d` 인데 [domain/erd.sql](domain/erd.sql) 은 `classa`~`classd` 로 적는다. 엔티티는 이름을 적지 않아 하이버네이트가 `classa` 로 유도했고(대문자가 맨 끝이라 밑줄이 안 붙는다 — [함정](failure/auth-and-api.md)), 그래서 **조회가 통째로 실패했다.** 관리자 화면을 만들며 처음 드러났다.
+
+당장은 실제 DB 에 맞춰 엔티티에 `@Column(name = "class_a")` 를 명시해 두었다. 행이 0건이고 이 엔티티를 읽는 앱 코드가 없어 지금은 영향이 없다. `subtitle`·`description` 길이와 `image_file_id` 의 NOT NULL 여부도 ERD 와 실제 DB 가 다르다.
+
+**정할 것**: 어느 쪽을 기준으로 맞출 것인가. ERD 를 실제 DB 에 맞춰 고칠지, DB 를 ERD 에 맞춰 바꿀지. (ERD 수정은 팀 합의가 필요하다 — `api/AGENTS.md`)
+
 ### B5. 가중치를 저장할 것인가
 
 수집 계층에는 가중치가 없다 — 어떤 행동이 얼마나 긍정인지는 분석·모델의 판단이고, 해석은 쿼리 시점에 계산해야 소급된다 ([decision/0015](decision/0015-derive-interpretation-at-query-time.md)). 그런데 `mv_user_section_signals` 는 이벤트가 들어오는 순간 가중치를 계산해 `user_section_signals.weight` 에 **저장한다.** 값을 바꿔도 과거 행에는 반영되지 않아 옛 신호와 새 신호가 섞인다.

@@ -1,0 +1,103 @@
+info:
+  name: 레코드 삭제
+  type: http
+  seq: 8
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/admin/resource/{{ADMIN_RESOURCE}}/{{ADMIN_RECORD_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: ADMIN_RESOURCE
+      value: user
+    - name: ADMIN_RECORD_ID
+      value: "130"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 삭제 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "삭제되었습니다.",
+            "data": null
+          }
+  - name: 400 자기 계정 삭제
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_SELF_MODIFICATION_NOT_ALLOWED",
+            "message": "자기 자신의 계정은 이 화면에서 바꿀 수 없습니다.",
+            "error_details": null
+          }
+  - name: 400 다른 행이 참조 중
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_RECORD_WRITE_FAILED",
+            "message": "레코드를 저장하지 못했습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 레코드 삭제
+
+  `DELETE /api/v1/admin/resource/{resource}/{id}` · `ROLE_ADMIN`
+
+  **행을 실제로 지웁니다.** `DELETE /api/v1/user` 의 탈퇴 처리(`status = WITHDRAW`)와
+  다릅니다. 상태만 바꾸려면 [레코드 수정](레코드%20수정.yml) 으로 `status` 를
+  고치세요.
+
+  FK 로 참조하는 행이 남아 있으면 DB 가 거부합니다 — `MUPID_RECORD_WRITE_FAILED`.
+  참조하는 쪽을 먼저 지워야 합니다.
+
+  ## 되돌릴 수 없는 것은 막습니다
+
+  `user` 자원에만 걸립니다.
+
+  - 자기 계정은 지울 수 없습니다.
+  - 마지막으로 남은 관리자 계정은 지울 수 없습니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_RESOURCE_NOT_FOUND` | 404 | `{resource}` 가 관리 대상에 없음 |
+  | `MUPID_RECORD_NOT_FOUND` | 404 | 그 행이 없음 |
+  | `MUPID_INVALID_RECORD_ID` | 400 | 복합키 구성 요소 수가 맞지 않음 |
+  | `MUPID_SELF_MODIFICATION_NOT_ALLOWED` | 400 | 자기 계정 |
+  | `MUPID_LAST_ADMIN_PROTECTED` | 400 | 마지막 관리자 |
+  | `MUPID_RECORD_WRITE_FAILED` | 400 | 다른 행이 참조 중 등. 사유는 서버 로그 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |
