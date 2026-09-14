@@ -1,7 +1,7 @@
 info:
   name: 가사 수정
   type: http
-  seq: 13
+  seq: 19
 
 http:
   method: PATCH

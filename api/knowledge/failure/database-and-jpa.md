@@ -1,6 +1,6 @@
 # 데이터베이스 · JPA · 트랜잭션
 
-18건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+19건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -152,3 +152,9 @@
 - **원인**: `getProfileImageUrl` 이 principal 의 `user.getImageFile()` 을 읽었다. 그 프록시는 인증 필터가 쓰던 **이미 닫힌 세션**에 묶여 있어, 호출부에 `@Transactional` 을 붙여도 초기화되지 않는다. `GET /api/v1/user` 가 통째로 500 이 됐다.
 - **해결**: 지금 세션에서 `userService.getUser(userId)` 로 다시 읽는다. principal 은 식별자만 쓰고 연관은 건드리지 않는다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserImageServiceImpl.java`
+
+### 구간 분석을 넣으면 `index` 근처에서 문법 오류가 난다 — 해소됨
+
+- **원인**: `MusicSectionAnalysis.index` 가 컬럼명 그대로 `index` 로 내려가는데 MySQL 예약어다. `Chunk.index` 가 이미 같은 것을 밟았는데 이쪽은 그대로 남아 있었다.
+- **해결**: `@Column(name = "\`index\`")`. 예약어는 엔티티 쪽에서 백틱으로 못 박는다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/music/entity/MusicSectionAnalysis.java`

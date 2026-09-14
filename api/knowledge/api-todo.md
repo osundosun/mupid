@@ -29,6 +29,8 @@
 | 최근 감상 | `GET /api/v1/user/history` (적재는 이벤트 수집기가) | 연결 완료 |
 | 시점 댓글 | `GET/POST /api/v1/music/{id}/comment`, `PATCH/DELETE /api/v1/comment/{id}` | 연결 완료 |
 | 프로필 사진 | `POST/GET/DELETE /api/v1/storage/image/PROFILE/{userId}` | 연결 완료 |
+| 아티스트·앨범 | `GET /api/v1/artist[/{id}]`, `GET /api/v1/album[/{id}]` | 인증 불필요 |
+| 가사·분석 | `GET /api/v1/music/{id}/lyric`, `.../analysis` | 인증 불필요 |
 | 플레이리스트 | `POST /api/v1/playlist` | **생성만** |
 
 근거: `api/src/main/java/com/osundosun/mupid/api/**/controller/`
@@ -272,26 +274,49 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 
 ## P2 — 관리 기능의 빈 구멍
 
-### 10. 아티스트 · 앨범 · 가사 조회
-
-셋 다 `POST`/`PATCH`/`DELETE` 만 있고 조회가 없다. 관리 화면을 만들거나 곡
-상세를 그리려면 필요하다.
+### 10. 아티스트 · 앨범 · 가사 조회 — ✅ 완료
 
 - `GET /api/v1/artist`, `GET /api/v1/artist/{artistId}`
-- `GET /api/v1/album`, `GET /api/v1/album/{albumId}` (수록곡 포함)
+- `GET /api/v1/album`(`q`·`artist_id` 필터), `GET /api/v1/album/{albumId}` (수록곡 포함)
 - `GET /api/v1/music/{musicId}/lyric`
-- 근거: `api/.../music/controller/`, `frontend/components/mupid/lyrics.tsx`
-  (지금은 곡 분위기로 만든 **가짜 가사**를 보여준다)
 
-### 11. 곡 분석 메타 조회
+전부 **인증 불필요**다. 곡 조회와 같은 이유다.
 
-`music_analysis` · `music_section_analysis` · 장르/무드/악기 매핑 테이블은 모두
-엔티티가 있는데 노출하는 API 가 없다. 플레이어의 구간 UI·"이 곡이 추천된 이유"가
-이 값을 필요로 한다.
+앨범 상세의 수록곡은 `곡 목록 조회` 와 **완전히 같은 표현**이라 화면이 목록에서
+쓰던 코드를 그대로 쓴다.
 
-- `GET /api/v1/music/{musicId}/analysis`
-- 근거: `api/.../music/entity/MusicAnalysis.java`,
-  `frontend/components/mupid/discovery.tsx`
+따라온 것:
+
+- 프론트의 **가짜 가사를 걷어냈다.** `components/mupid/lyrics.tsx` 가 곡 분위기로
+  지어낸 문장을 보여주고 있었다. 이제 서버 가사를 시간과 함께 보여주고, 없으면
+  "아직 등록된 가사가 없어요" 라고 말한다.
+- `MusicSummaryAssembler` 를 갈라냈다. 곡 표현을 만드는 코드가 `MusicService` 에
+  있으면 앨범 서비스가 곡 서비스를, 곡 서비스가 앨범 서비스를 부르는 **순환
+  의존**이 된다. 조립기는 리포지토리만 알면 되므로 누구나 부를 수 있다.
+- 쿼리 파라미터 이름은 `artist_id` 로 snake_case 다. SNAKE_CASE 설정은 JSON
+  본문에만 걸려서 컨트롤러가 직접 적어 준다.
+
+### 11. 곡 분석 메타 조회 — ✅ 완료
+
+- `GET /api/v1/music/{musicId}/analysis` — 구간·보컬·악기
+
+**분석 파이프라인이 아직 없어 대부분 `analyzed: false`** 로 온다. 404 가 아니다 —
+곡은 있는데 분석만 없는 것은 오류가 아니다. 화면은 이 값을 보고 구간 UI 를
+띄울지 정한다.
+
+악기는 곡이 아니라 **구간**에 달린다(`music_analysis_instruments` 의 외래키가
+`music_section_analysis_id` 다).
+
+따라온 것:
+
+- `MusicSectionAnalysis.index` 가 MySQL 예약어인데 백틱이 없었다. 넣지 않으면
+  INSERT·SELECT 가 문법 오류로 터진다. `Chunk` 가 밟았던 것과 같다.
+- `MusicAnalysisInstrument` 의 필드 이름이 `moodCodeId` 였다(복사 실수).
+  `instrumentCode` 로 고쳤다.
+- 프론트가 재생 대상이 바뀔 때 분석을 받아 구간을 갈아 끼운다. 분석 전이면
+  임시 구간(곡을 둘로 나눈 것)이 그대로 남는다.
+- `codes` 에 `INSTRUMENT` 가 하나도 없다. 악기 목록은 분석 파이프라인이
+  정할 몫이라 시드에 넣지 않았다.
 
 ---
 

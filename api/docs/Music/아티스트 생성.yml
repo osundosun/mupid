@@ -1,7 +1,7 @@
 info:
   name: 아티스트 생성
   type: http
-  seq: 9
+  seq: 12
 
 http:
   method: POST
