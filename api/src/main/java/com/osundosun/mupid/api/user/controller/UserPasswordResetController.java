@@ -2,6 +2,7 @@ package com.osundosun.mupid.api.user.controller;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -31,9 +32,12 @@ public class UserPasswordResetController {
     private final UserService userService;
     private final EmailService emailService;
 
+    /**
+     * 재설정 메일 발송. GET 이므로 쿼리 파라미터로 받는다 (`?email=...`).
+     */
     @GetMapping
     public ResponseEntity<BaseResponse<UserPasswordResetResponse>> sendReseteMail(
-        @Valid @RequestBody UserPasswordResetRequest request
+        @Valid @ModelAttribute UserPasswordResetRequest request
     ) {
         User user = userService
                         .getUserByEmail(request.email())

@@ -6,7 +6,7 @@ import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
-import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.validation.BindException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.security.access.AccessDeniedException;
@@ -53,8 +53,13 @@ public class GlobalExceptionHandler {
         return businessError(new BusinessException(GlobalErrorCode.NOT_READABLE_MESSAGE));
     }
 
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ErrorResponse<Map<String, String>>> invalidArgs(MethodArgumentNotValidException e) {
+    /*
+     * MethodArgumentNotValidException(JSON 본문)은 BindException 의 하위 타입이다.
+     * 상위로 잡아 두면 @ModelAttribute 로 받는 쿼리 파라미터 검증 실패도 같은
+     * 형식으로 나간다. 안 그러면 그쪽만 500 이 된다.
+     */
+    @ExceptionHandler(BindException.class)
+    public ResponseEntity<ErrorResponse<Map<String, String>>> invalidArgs(BindException e) {
         // 데이터가 잘못 입력되었습니다.
         Map<String, String> errorBody = new HashMap<>();
         for (FieldError fieldError : e.getFieldErrors()) {
