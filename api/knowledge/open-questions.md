@@ -122,8 +122,16 @@ JPA 와 DDL 을 건드리지 않으므로 대상만 적는다. `ddl-auto` 가 `n
 `DailyRecommendation.moodCode → Code`). 별도 테이블 기준으로 옮기는 일은 백엔드 몫이다.
 
 **이름 표준**: 과거 `song`·`songId`·`songs` 표기는 `music`·`musicId`·`music_id` 로 통일한다
-(2026-09-14 확정). ERD 의 `playlist_songs`·`daily_recommendation_songs`,
-JPA 의 `PlaylistTrack`·`DailyRecommendationTrack` 이 아직 어긋나 있다.
+(2026-09-14 확정). 2026-09-14 최신 `origin/develop` 기준 재대조 결과는 다음과 같다.
+
+| 대상 | ERD | JPA | 상태 |
+|---|---|---|---|
+| 플레이리스트 수록곡 | `playlist_tracks` | `playlist_tracks` | **해소됨** — S15P21A204-174 에서 `playlist_songs` → `playlist_tracks` 로 정리 |
+| 오늘의 추천 수록곡 | `daily_recommendation_songs` | `daily_recommendation_tracks` | **불일치 유지** |
+
+플레이리스트 쪽은 `tracks` 로 통일됐다. 위 이름 표준(`music`)과는 다른 낱말이지만 ERD 와
+JPA 가 서로 맞았으므로 이 항목에서는 해소로 본다. `tracks` 를 다시 `music` 으로 바꿀지는
+별도 판단이 필요하며 여기서 임의로 바꾸지 않는다.
 
 **정할 것**: 1~8 각각을 ERD 기준으로 맞출지, 코드 기준으로 ERD 를 고칠지. ERD 수정은
 팀 합의가 선행된다([domain/erd.md](domain/erd.md)).
