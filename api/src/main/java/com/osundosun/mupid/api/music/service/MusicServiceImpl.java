@@ -1,7 +1,5 @@
 package com.osundosun.mupid.api.music.service;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -27,7 +25,7 @@ import com.osundosun.mupid.api.music.mapping.repository.MusicGenreRepository;
 import com.osundosun.mupid.api.music.mapping.repository.MusicMoodRepository;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
-import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
+import com.osundosun.mupid.api.storage.service.StorageImageService;
 import com.osundosun.mupid.api.stream.entity.Stream;
 import com.osundosun.mupid.api.stream.enumerate.StreamStatus;
 import com.osundosun.mupid.api.stream.repository.StreamRepository;
@@ -165,26 +163,13 @@ public class MusicServiceImpl implements MusicService {
                 music.getPlayCount(),
                 music.getLikeCount(),
                 new MusicSummary.ArtistSummary(
-                    artist.getArtistId(), artist.getName(), imageUrlOf(artist.getImageFile())),
+                    artist.getArtistId(), artist.getName(), StorageImageService.imageUrl(artist.getImageFile())),
                 new MusicSummary.AlbumSummary(
                     album.getAlbumId(), album.getTitle(),
-                    imageUrlOf(album.getImageFile()), album.getReleaseDate()),
+                    StorageImageService.imageUrl(album.getImageFile()), album.getReleaseDate()),
                 genres.getOrDefault(music.getMusicId(), List.of()),
                 moods.getOrDefault(music.getMusicId(), List.of()));
         }).toList();
-    }
-
-    /**
-     * 저장 키(`image/album/커버`)를 화면이 그대로 쓸 수 있는 조회 URL 로 바꾼다.
-     * 키 형식은 StorageImageService.getStorageKey 와 짝이다.
-     */
-    private String imageUrlOf(ObjectStorageFile file) {
-        if (file == null || file.getIsDeleted()) return null;
-        String[] parts = file.getStorageObjectKey().split("/", 3);
-        if (parts.length < 3) return null;
-        return "/api/v1/storage/image/%s/%s".formatted(
-            parts[1].toUpperCase(),
-            URLEncoder.encode(parts[2], StandardCharsets.UTF_8).replace("+", "%20"));
     }
 
     @Override
