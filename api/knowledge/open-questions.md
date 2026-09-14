@@ -85,6 +85,49 @@
 
 **정할 것**: 탈퇴 플로우에 ClickHouse 삭제를 넣을지, TTL 만료에 맡길지 → [decision/0013](decision/0013-soft-delete-policy.md)
 
+### B7. `daily_recommendation_songs` 에 구간 컬럼이 없다 — 정해짐
+
+`daily_recommendations` 주석은 "오늘의 **모먼트** 추천" 인데 수록곡 테이블에는 `music_id` 만
+있고 어느 구간인지가 없다.
+
+> 2026-09-11 결정: **ERD 를 그대로 둔다.** "모먼트" 는 이름일 뿐 오늘의 추천은 **곡 목록**이고
+> 구간을 영속할 필요가 없다. `music_section_id` 컬럼을 추가하지 않는다.
+>
+> 구간이 필요한 화면(핵심 구간부터 재생)은 저장된 값이 아니라 **재생 시점에 추천 서비스가
+> 돌려주는 값**을 쓴다. 노출 이력은 ClickHouse `rec_impressions.section_uids` 에 이미 남는다.
+
+---
+
+### B8. ERD 와 JPA 가 어긋난 곳 — 백엔드 수정 필요
+
+2026-09-14 에 `music` 도메인 엔티티를 ERD(`domain/erd.sql`)와 대조한 결과다. AI 담당은
+JPA 와 DDL 을 건드리지 않으므로 대상만 적는다. `ddl-auto` 가 `none` 이라
+([decision/0011](decision/0011-jpa-manages-schema.md)) 어느 쪽으로 맞추든 **수동 DDL 이
+필요하다.**
+
+| # | 대상 엔티티 | 현재 JPA | ERD | 권장 |
+|---|---|---|---|---|
+| 1 | `MusicSectionAnalysis` | `musicSectionAnalysisId` → `music_section_analysis_id` | `music_section_id` | `@Column(name = "music_section_id")` |
+| 2 | `MusicSectionAnalysis` | `externalId` → `external_id` | `embedding_id VARCHAR(50)` | 필드명을 `embeddingId` 로 맞춘다 |
+| 3 | `MusicSectionAnalysis` | `mood_id` 미매핑 | `mood_id INT **NOT NULL**` | 컬럼을 NULL 허용으로 바꾸거나 필드를 추가한다. **지금 그대로면 INSERT 가 실패한다** |
+| 4 | `MusicSectionAnalysisMood` | `@Table(name = "music_moods")` | `music_section_analysis_mood` | 테이블명을 ERD 에 맞춘다 |
+| 5 | `MusicAnalysis` | `@Id @Column(name = "music_id")` (공유 PK) | `music_analysis_id INT AUTO_INCREMENT` | PK 구조 자체가 다르다. 어느 쪽이 맞는지 먼저 정한다 |
+| 6 | `DailyRecommendation` | `Integer recommendationId` | `recommendation_id **BIGINT**` | `Long` 으로 바꾼다 — 공개 JSON 도 `recommendationId` 는 64비트다 |
+| 7 | `DailyRecommendationTrack` | `@Table(name = "daily_recommendation_tracks")` | `daily_recommendation_songs` | 이름이 셋(`tracks`/`songs`/표준 `music`)으로 갈려 있다. 아래 참조 |
+| 8 | `DailyRecommendationTrack` | 복합키 `(daily_recommendation_id, rank_order)` | `recommendation_song_id INT AUTO_INCREMENT` 단일 PK | 키 구조가 다르다 |
+
+**장르·무드·악기는 `codes` 가 아니라 별도 테이블을 쓴다** (2026-09-14 확정). ERD 에는
+`codes(code_type ENUM('MOOD','INSTRUMENT','GENRE'))` 와 `genres`·`moods`·`instruments` 가
+**둘 다** 있는데, 현재 JPA 는 `codes` 쪽을 쓴다 (`MusicSectionAnalysisMood.moodCodeId → Code`,
+`DailyRecommendation.moodCode → Code`). 별도 테이블 기준으로 옮기는 일은 백엔드 몫이다.
+
+**이름 표준**: 과거 `song`·`songId`·`songs` 표기는 `music`·`musicId`·`music_id` 로 통일한다
+(2026-09-14 확정). ERD 의 `playlist_songs`·`daily_recommendation_songs`,
+JPA 의 `PlaylistTrack`·`DailyRecommendationTrack` 이 아직 어긋나 있다.
+
+**정할 것**: 1~8 각각을 ERD 기준으로 맞출지, 코드 기준으로 ERD 를 고칠지. ERD 수정은
+팀 합의가 선행된다([domain/erd.md](domain/erd.md)).
+
 ---
 
 ## C. 미구현 영역의 주인
@@ -123,6 +166,42 @@ ClickHouse 분석 스키마는 Jamendo `track_id`, MySQL ERD 는 자체 `music.m
 
 **정할 것**: 카탈로그의 단일 기준과 두 식별자를 잇는 방법.
 
+구간 식별자도 같은 문제가 있다. MySQL `music_section_analysis.embedding_id`(VARCHAR 50)와
+ClickHouse `section_uid`(String)가 같은 대상을 가리키는데 이름도 생성 주체도 정해지지 않았다.
+곡 식별자는 AI 쪽 문자열(`T000001`)까지 더해 세 가지다. 하나로 통일하면 키 하나로
+MySQL·ClickHouse·벡터스토어가 연결된다.
+→ [infra/AI-INTEGRATION-2026-09-11.md](../../infra/AI-INTEGRATION-2026-09-11.md) §4-B
+
+### C6. 청취 이벤트 프로듀서는 누가 만드는가
+
+`infra/deploy/compose.yml` 주석이 "서버 B(FastAPI)" 를 언급하지만 **그런 서비스가 이 저장소에 없다.** Kafka `mupid.listen.events` 에 이벤트를 넣는 주체와 스키마 계약을 관리할 곳이 정해지지 않았다.
+
+**정할 것**: 백엔드에서 발행할지, 별도 서비스인지. 이게 정해져야 [domain/listening-events.md](domain/listening-events.md) 의 나머지가 굴러간다.
+
+> 2026-09-11: 주석이 말하는 "서버 B(FastAPI)" 는 AI 추천 서비스다. 현재는 Kafka 가 아니라
+> 파일에 쓴다. AI 담당자는 **백엔드 발행(1번)** 을 권한다 — AI 가 무상태가 되어 다중화·복구가
+> 단순해진다. → [infra/AI-INTEGRATION-2026-09-11.md](../../infra/AI-INTEGRATION-2026-09-11.md) §4-C
+
+### C7. AI 산출물을 어떻게 전달할 것인가
+
+추천 서빙에 필요한 파일은 약 515MB 이고(2026-09-14 실측, 이전 120MB 는 오기) 곡이 늘 때마다 바뀐다. 이미지에 넣으면 곡 추가마다
+재배포해야 하고, SeaweedFS 에 두면 배포와 분리되지만 운영 가동 확인이 선행된다.
+
+네 파일(`moments.parquet`·`moments_emb.npy`·`features_v1.npz`·`stage1_section.npy`)은
+**행 번호로 서로를 가리켜** 버전이 섞이면 엉뚱한 곡을 추천하고, 그 상태로도 서비스가
+정상 기동한다. 2026-09-09~10 에 실제로 두 번 발생했다.
+
+**정할 것**: 전달 경로(이미지 / SeaweedFS)와, 묶음 단위 배포·기동 시 검증을 규약으로 넣을지.
+→ [infra/AI-INTEGRATION-2026-09-11.md](../../infra/AI-INTEGRATION-2026-09-11.md) §4-H
+
+### C8. `music` 적재에 필요한 앨범·아티스트
+
+`music.album_id`·`music.artist_id` 가 NOT NULL 이다. 자체 생성 음원에는 둘 다 없고 Jamendo
+곡에는 아티스트만 있다.
+
+**정할 것**: 더미 아티스트·앨범을 만들지, 두 컬럼을 NULL 허용으로 바꿀지.
+→ [infra/AI-INTEGRATION-2026-09-11.md](../../infra/AI-INTEGRATION-2026-09-11.md) §4-F
+
 ---
 
 ## D. 정리하면 좋은 것
@@ -142,3 +221,7 @@ ClickHouse 분석 스키마는 Jamendo `track_id`, MySQL ERD 는 자체 `music.m
 | D11 | `aws.s3.region: "SeaweedFS"` | 운영이 실제 S3 인지 SeaweedFS 인지. 하드코딩된 채로 전환 가능한지 |
 | D12 | ClickHouse `validation-timeout: 3s` | 주석은 "넉넉히 둔다" 인데 값이 `connection-timeout` 과 같다 |
 | D13 | `PLAY_PROGRESS` 5초 하트비트 | 전체 이벤트의 90% 이상을 차지한다. 간격을 늘릴지, 별도 토픽·테이블로 뺄지 |
+| D14 | `music_analysis_instruments.music_analysis_id` | 연결 테이블의 FK 인데 `AUTO_INCREMENT` 가 붙어 있다. `INT NOT NULL` 이 맞아 보인다 |
+| D15 | `ai_chat_sessions.ai_chat_session_id` | 다른 PK 와 달리 `AUTO_INCREMENT` 가 없다. 의도인지 누락인지 |
+| D16 | `codes` 테이블 | `moods`·`genres`·`instruments` 와 같은 정보를 중복 관리한다. 하나로 정리할지 |
+| D17 | `daily_recommendations.reason VARCHAR(100)` | AI 가 만드는 추천 사유 문구가 이보다 길다. 컬럼을 늘릴지 문구를 줄일지 |
