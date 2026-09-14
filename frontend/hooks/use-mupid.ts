@@ -5,7 +5,8 @@ import { login, logout, restoreSession } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
 import { fetchOnboarding, saveOnboarding } from '@/lib/onboarding';
-import { fetchReactions, pushReaction } from '@/lib/reactions';
+import { fetchHistory, fetchReactions, pushReaction } from '@/lib/reactions';
+import { analytics, type EntryPath } from '@/lib/analytics';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
   getSongSectionAt,
@@ -15,6 +16,12 @@ import {
   type SavedMoment,
   type ChatMessage,
 } from '@/lib/mupid-data';
+
+/** 검색어 입력이 멎었다고 볼 시간. 이벤트를 글자마다 보내지 않으려는 값이다. */
+const SEARCH_EVENT_DELAY_MS = 900;
+
+/** 화면이 들고 있는 최근 감상 개수. */
+const HISTORY_LIMIT = 8;
 
 const pageNames: Page[] = [
   'home',
@@ -149,6 +156,18 @@ export function useMupid(bootstrap: Bootstrap) {
     window.history.replaceState({ mupid: true }, '', '/');
     window.scrollTo(0, 0);
   };
+  /**
+   * 검색 이벤트.
+   *
+   * 화면이 입력할 때마다 걸러 주므로 제출 버튼이 없다. 글자마다 이벤트를 보내면
+   * "ㅁ", "무", "무피" 가 전부 검색어로 남으므로 손이 멎은 뒤에 한 번만 보낸다.
+   */
+  useEffect(() => {
+    const keyword = query.trim();
+    if (!keyword || demoSession?.kind !== 'authenticated') return;
+    const timer = setTimeout(() => analytics.search(keyword), SEARCH_EVENT_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [query, demoSession]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(''), 3200);
@@ -239,6 +258,20 @@ export function useMupid(bootstrap: Bootstrap) {
     setLiked(saved.liked);
     setIgnored(saved.ignored);
   };
+  /**
+   * 계정에 저장된 최근 감상을 화면 상태로 가져온다.
+   *
+   * 계정 기록을 앞에 놓고, 이 기기에만 있던 것(데모 곡 등)을 뒤에 붙인다.
+   * 좋아요와 달리 덮지 않는 이유는 방금 들은 곡이 사라지면 화면이 뒤로 가는
+   * 것처럼 보이기 때문이다.
+   */
+  const adoptServerHistory = async (signal?: AbortSignal) => {
+    const saved = await fetchHistory(tracks, signal);
+    if (!saved?.length || signal?.aborted || !mountedRef.current) return;
+    setHistory((current) =>
+      [...saved, ...current.filter((id) => !saved.includes(id))].slice(0, HISTORY_LIMIT),
+    );
+  };
   // 액세스 토큰은 메모리에만 있다. 새로고침 뒤에는 쿠키의 리프레시 토큰으로
   // 한 번만 복원을 시도하고, 실패하면 비로그인 상태로 둔다.
   useEffect(() => {
@@ -249,6 +282,7 @@ export function useMupid(bootstrap: Bootstrap) {
       setDemoSession({ kind: 'authenticated', nickname: session.user.nickname, userId: session.user.user_id });
       void adoptServerOnboarding(abort.signal);
       void adoptServerReactions(abort.signal);
+      void adoptServerHistory(abort.signal);
     });
     return () => { abort.abort(); };
   }, []);
@@ -260,6 +294,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setToast('뮤피드에 오신 걸 환영해요.');
     void adoptServerOnboarding();
     void adoptServerReactions();
+    void adoptServerHistory();
     return true;
   };
   const signOutDemo = async () => {
@@ -302,8 +337,24 @@ export function useMupid(bootstrap: Bootstrap) {
     if (audio && audio.readyState >= 1) audio.currentTime = next;
     else seekOnLoad.current = next;
   };
+  /**
+   * 이 재생이 어디서 왔는가. 청취 이벤트의 `entry_path` 다.
+   *
+   * 정확한 출처를 따로 들고 다니지 않으므로 지금 보고 있는 화면으로 갈음한다.
+   * 인플레이어 다음곡 추천이 없어서 검색 결과를 이어 듣는 것도 `SEARCH` 다
+   * (decision/0014).
+   */
+  const entryPathOf = (): EntryPath => {
+    if (page === 'search') return 'SEARCH';
+    if (page === 'library') return 'PLAYLIST';
+    return 'RECOMMEND';
+  };
   const startPlayback = async (track: Track, start?: number) => {
     const audio = audioRef.current;
+    // 데모 곡은 서버에 없다. 있지도 않은 곡 번호로 청취 기록을 남길 수 없다.
+    if (typeof track.musicId === 'number') {
+      analytics.startPlay({ trackId: track.musicId, entryPath: entryPathOf() }, start ?? 0);
+    }
     if (isStreamed(track)) {
       loadTrack(track);
       const player = getPlayer();
@@ -316,7 +367,7 @@ export function useMupid(bootstrap: Bootstrap) {
         setToast('음원을 불러오지 못했어요. 다시 재생해 주세요.');
       }
       setHistory((ids) =>
-        [track.id, ...ids.filter((i) => i !== track.id)].slice(0, 8),
+        [track.id, ...ids.filter((i) => i !== track.id)].slice(0, HISTORY_LIMIT),
       );
       return;
     }
@@ -339,7 +390,7 @@ export function useMupid(bootstrap: Bootstrap) {
       }
     }
     setHistory((ids) =>
-      [track.id, ...ids.filter((i) => i !== track.id)].slice(0, 8),
+      [track.id, ...ids.filter((i) => i !== track.id)].slice(0, HISTORY_LIMIT),
     );
   };
   const play = (track: Track = activeRef.current, fromMoment = false) => {

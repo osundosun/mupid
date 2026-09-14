@@ -12,6 +12,9 @@ import { api } from './api/session';
 import type { ReactionType } from './api/endpoints';
 import type { Track } from './mupid-data';
 
+/** 화면이 "최근 감상" 에 보여 주는 곡 수. 홈은 4개, 프로필은 더 본다. */
+const HISTORY_SIZE = 20;
+
 /** 서버에 보낼 수 있는 곡인가. 데모 곡은 `musicId` 가 없다. */
 const musicIdOf = (tracks: Track[], trackId: number): number | undefined =>
   tracks.find((t) => t.id === trackId)?.musicId;
@@ -40,6 +43,31 @@ export async function pushReaction(
  * 지금 불러온 카탈로그에 없는 곡은 버린다 — 화면에 그릴 수 없는 번호를 들고
  * 있어 봐야 쓸 데가 없다.
  */
+/**
+ * 계정에 저장된 최근 감상을 `Track.id` 로 바꿔 온다.
+ *
+ * 실패하면 `null`. 편의 기능이라 화면을 막지 않는다.
+ */
+export async function fetchHistory(
+  tracks: Track[],
+  signal?: AbortSignal,
+): Promise<number[] | null> {
+  try {
+    const page = await api.history.list({ size: HISTORY_SIZE }, signal);
+    const byMusicId = new Map<number, number>();
+    for (const track of tracks) {
+      if (typeof track.musicId === 'number') byMusicId.set(track.musicId, track.id);
+    }
+    return (page?.items ?? [])
+      .map((item) => byMusicId.get(item.music_id))
+      .filter((id): id is number => typeof id === 'number');
+  } catch (error) {
+    if (signal?.aborted) return null;
+    console.warn('[mupid] 최근 감상을 불러오지 못했어요.', error);
+    return null;
+  }
+}
+
 export async function fetchReactions(
   tracks: Track[],
   signal?: AbortSignal,

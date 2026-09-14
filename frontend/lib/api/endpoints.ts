@@ -188,6 +188,21 @@ export function createEndpoints(client: ApiClient) {
         }),
     },
 
+    history: {
+      /**
+       * 최근 들은 곡. 같은 곡은 한 번만, 최신순.
+       *
+       * 적재 API 는 없다. 청취 이벤트(`POST /api/v1/events`)의 `PLAY_START` 를
+       * 서버가 이 표에도 남긴다.
+       */
+      list: (options: { page?: number; size?: number } = {}, signal?: AbortSignal) =>
+        client.request<MusicPage>({
+          path: '/api/v1/user/history',
+          query: { page: options.page, size: options.size },
+          signal,
+        }),
+    },
+
     reaction: {
       /** 좋아요·관심없음 설정. 같은 값을 다시 보내도 결과가 같다. */
       set: (musicId: number, type: ReactionType) =>
