@@ -1,7 +1,7 @@
 info:
   name: 앨범 삭제
   type: http
-  seq: 5
+  seq: 8
 
 http:
   method: DELETE

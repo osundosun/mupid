@@ -14,12 +14,18 @@ docs:
     음악·앨범·아티스트·가사 관리 API 입니다. 스트리밍 서비스에 콘텐츠를
     등록할 때 쓰는 **관리자/시스템 전용** 엔드포인트입니다.
 
-    컨트롤러에 `@SystemRole` 이 붙어 있어 `ROLE_SYSTEM` 또는 `ROLE_ADMIN`
-    권한의 액세스 토큰으로만 호출할 수 있습니다. 일반 사용자
-    (`ROLE_USER`) 토큰으로 호출하면 403 (`MUPID_FORBIDDEN`) 이 반환됩니다.
+    **조회(`GET`)는 인증이 필요 없고, 나머지는 SYSTEM/ADMIN 전용입니다.**
+    첫 방문자가 로그인 전에 곡을 둘러봐야 해서 조회만 열어 두었습니다.
+    조회는 `MusicQueryController`, 등록 계열은 `@SystemRole` 이 붙은
+    `MusicController` 로 컨트롤러가 나뉘어 있습니다.
+
+    등록 계열을 일반 사용자(`ROLE_USER`) 토큰으로 호출하면
+    403 (`MUPID_FORBIDDEN`) 이 반환됩니다.
 
     | 엔드포인트 | 동작 | 인증 |
     | --- | --- | --- |
+    | `GET /api/v1/music` | 곡 목록·검색 | **불필요** |
+    | `GET /api/v1/music/{musicId}` | 곡 상세 | **불필요** |
     | `POST /api/v1/music` | 음악 추가 | SYSTEM/ADMIN |
     | `PATCH /api/v1/music/{musicId}` | 음악 수정 | SYSTEM/ADMIN |
     | `DELETE /api/v1/music/{musicId}` | 음악 삭제 | SYSTEM/ADMIN |

@@ -1,7 +1,7 @@
 info:
   name: 가사 추가
   type: http
-  seq: 9
+  seq: 12
 
 http:
   method: POST

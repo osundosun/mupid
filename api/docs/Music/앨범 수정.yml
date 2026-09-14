@@ -1,7 +1,7 @@
 info:
   name: 앨범 수정
   type: http
-  seq: 5
+  seq: 7
 
 http:
   method: PATCH
