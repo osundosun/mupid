@@ -54,7 +54,7 @@ public class AiChatMessage {
     /**
      * 채팅 순서
      */
-    @Column(nullable = false)
+    @Column(name = "`index`", nullable = false)
     private Integer index;
 
     /**
