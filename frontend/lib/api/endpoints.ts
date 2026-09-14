@@ -56,6 +56,62 @@ export type MusicCommentPage = {
   total_pages: number;
 };
 
+export type ArtistSummary = {
+  artist_id: number;
+  name: string;
+  image_url: string | null;
+};
+
+export type AlbumSummary = {
+  album_id: number;
+  title: string;
+  image_url: string | null;
+  release_date: string;
+  artist: ArtistSummary;
+};
+
+export type ArtistPage = {
+  items: ArtistSummary[];
+  page: number;
+  size: number;
+  total_elements: number;
+  total_pages: number;
+};
+
+export type AlbumPage = {
+  items: AlbumSummary[];
+  page: number;
+  size: number;
+  total_elements: number;
+  total_pages: number;
+};
+
+export type AlbumDetail = { album: AlbumSummary; tracks: MusicSummary[] };
+
+export type LyricLine = { lyric_id: number; time_ms: number; text: string };
+
+export type MusicLyrics = { music_id: number; lines: LyricLine[] };
+
+export type MusicSection = {
+  section_id: number;
+  index: number;
+  /** INTRO · VERSE · PRE_CHORUS · CHORUS · BRIDGE · BREAK · INST · SOLO · OUTRO */
+  label: string;
+  start_ms: number;
+  end_ms: number;
+  moods: string[];
+  instruments: string[];
+};
+
+export type MusicAnalysis = {
+  music_id: number;
+  /** 분석 결과가 있는가. 없으면 아래는 전부 비어 있다. */
+  analyzed: boolean;
+  has_vocal: boolean | null;
+  vocal_gender: 'M' | 'F' | 'ETC' | null;
+  sections: MusicSection[];
+};
+
 export type ReactionType = 'LIKE' | 'DISLIKE';
 
 /** 내가 반응한 곡 번호. 하트 상태를 그리려면 전부 필요해서 페이징이 없다. */
@@ -366,6 +422,67 @@ export function createEndpoints(client: ApiClient) {
       get: (musicId: number, signal?: AbortSignal) =>
         client.request<MusicSummary>({
           path: `/api/v1/music/${musicId}`,
+          anonymous: true,
+          signal,
+        }),
+      /** 가사. 시간 오름차순. 가사가 없으면 `lines` 가 빈 배열이다. */
+      lyrics: (musicId: number, signal?: AbortSignal) =>
+        client.request<MusicLyrics>({
+          path: `/api/v1/music/${musicId}/lyric`,
+          anonymous: true,
+          signal,
+        }),
+      /** 구간·보컬·악기. 분석 전이면 `analyzed` 가 false 다. */
+      analysis: (musicId: number, signal?: AbortSignal) =>
+        client.request<MusicAnalysis>({
+          path: `/api/v1/music/${musicId}/analysis`,
+          anonymous: true,
+          signal,
+        }),
+    },
+
+    artist: {
+      /** 이름 오름차순. `q` 는 이름 부분 일치. */
+      search: (
+        options: { q?: string; page?: number; size?: number } = {},
+        signal?: AbortSignal,
+      ) =>
+        client.request<ArtistPage>({
+          path: '/api/v1/artist',
+          query: { q: options.q, page: options.page, size: options.size },
+          anonymous: true,
+          signal,
+        }),
+      get: (artistId: number, signal?: AbortSignal) =>
+        client.request<ArtistSummary>({
+          path: `/api/v1/artist/${artistId}`,
+          anonymous: true,
+          signal,
+        }),
+    },
+
+    album: {
+      /** 발매일 내림차순. `artistId` 를 주면 그 아티스트의 앨범만. */
+      search: (
+        options: { q?: string; artistId?: number; page?: number; size?: number } = {},
+        signal?: AbortSignal,
+      ) =>
+        client.request<AlbumPage>({
+          path: '/api/v1/album',
+          // 쿼리 이름은 서버 규약대로 snake_case 다.
+          query: {
+            q: options.q,
+            artist_id: options.artistId,
+            page: options.page,
+            size: options.size,
+          },
+          anonymous: true,
+          signal,
+        }),
+      /** 수록곡이 함께 온다. */
+      get: (albumId: number, signal?: AbortSignal) =>
+        client.request<AlbumDetail>({
+          path: `/api/v1/album/${albumId}`,
           anonymous: true,
           signal,
         }),

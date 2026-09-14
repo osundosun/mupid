@@ -7,6 +7,7 @@ import { isStreamed } from '@/lib/stream-catalog';
 import { fetchOnboarding, saveOnboarding } from '@/lib/onboarding';
 import { fetchHistory, fetchReactions, pushReaction } from '@/lib/reactions';
 import { analytics, type EntryPath } from '@/lib/analytics';
+import { fetchSections } from '@/lib/music-analysis';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
   getSongSectionAt,
@@ -326,6 +327,22 @@ export function useMupid(bootstrap: Bootstrap) {
       }
     }
   };
+  /**
+   * 재생 대상이 바뀌면 서버가 분석한 구간으로 갈아 끼운다.
+   *
+   * 분석 전이면 그대로 둔다 — `lib/stream-catalog.ts` 가 넣어 둔 임시 구간이
+   * 남는다. 구간 UI 는 `m.active.sections` 만 보므로 여기만 고치면 된다.
+   */
+  useEffect(() => {
+    if (!isStreamed(active)) return;
+    const abort = new AbortController();
+    void fetchSections(active, abort.signal).then((sections) => {
+      if (!sections || abort.signal.aborted || !mountedRef.current) return;
+      setActive((current) => (current.id === active.id ? { ...current, sections } : current));
+      activeRef.current = { ...activeRef.current, sections };
+    });
+    return () => abort.abort();
+  }, [active.id]);
   const seek = (value: number) => {
     const next = Math.max(0, Math.min(value, activeRef.current.duration));
     setTime(next);
