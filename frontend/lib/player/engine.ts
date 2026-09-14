@@ -90,6 +90,8 @@ export class PlayerEngine {
     RING_CAPACITY,
   );
   private draining = false;
+  /** 디코딩이 도는 동안 새 청크가 들어왔는가. 들어왔으면 한 바퀴 더 돈다. */
+  private drainPending = false;
 
   private playing: AudioBufferSourceNode[] = [];
   /** 이 시각(컨텍스트 시계)에 `anchorPosition` 이 들린다. */
@@ -179,6 +181,10 @@ export class PlayerEngine {
    */
   async load(musicId: number, options: { autoplay?: boolean } = {}) {
     if (this.source?.musicId === musicId) {
+      // 이미 들고 있는 곡이면 다시 받지 않는다. 다만 **끝까지 들은 곡이면
+      // 처음으로 되돌린다** — 그러지 않으면 재생 위치가 끝에 붙어 있어
+      // 눌러도 아무 일이 없다. 한곡 반복이 안 되던 것이 이것 때문이다.
+      if (this.store.get().status === 'ended') this.anchorPosition = 0;
       if (options.autoplay) await this.play();
       return;
     }
@@ -234,7 +240,11 @@ export class PlayerEngine {
       return;
     }
     await this.resumeContext();
-    this.startAt(this.anchorPosition);
+    // 재생할 청크가 없는 자리(=끝)에 서 있으면 처음부터 튼다. 그대로 시작하면
+    // 곧바로 `ended` 만 다시 나가서 눌러도 아무 일이 없다. 끝까지 들은 뒤든,
+    // 끝에서 멈춰 둔 뒤든 같다.
+    const at = this.indexAt(this.anchorPosition) < 0 ? 0 : this.anchorPosition;
+    this.startAt(at);
   }
 
   pause() {
@@ -543,42 +553,58 @@ export class PlayerEngine {
   }
 
   /** 링버퍼에서 하나씩 꺼내 PCM 으로 바꾼다. 한 번에 하나만 돈다. */
+  /**
+   * 링버퍼에 쌓인 청크를 디코딩해 재생 가능한 상태로 옮긴다.
+   *
+   * 도는 동안 새 청크가 들어오면 **그 사실을 적어 두고 같은 실행에서 이어
+   * 처리한다.** 예전에는 `draining` 이 켜져 있으면 그냥 돌아갔는데, 마침
+   * 루프가 막 끝난 참이면 그 청크를 아무도 집지 않아 버퍼링 상태로 굳었다.
+   * 버퍼링 중에는 타이머도 돌지 않아 스스로 빠져나오지 못했고, 곡이 끝나지
+   * 않으니 다음 곡으로도 넘어가지 않았다.
+   */
   private async drain(source: TrackSource) {
-    if (this.draining) return;
+    if (this.draining) {
+      this.drainPending = true;
+      return;
+    }
     this.draining = true;
     try {
       this.prepare();
       const context = this.context;
       if (!context) return;
-      for (;;) {
-        const item = this.ring.shift();
-        if (!item) break;
-        const slot = source.chunks[item.index];
-        if (!slot) continue;
-        try {
-          const { frames } = parseChunk(item.bytes);
-          const buffer = await decodeOpusFrames(context, frames, {
-            channels: source.channels,
-            frameDurationMs: 20,
-            expectedSamples: Math.round(
-              (slot.duration_ms / 1000) * OPUS_SAMPLE_RATE,
-            ),
-          });
-          source.decoded.set(item.index, buffer);
-        } catch (error) {
-          if (this.source === source) {
-            this.fail(
-              error instanceof Error
-                ? error.message
-                : '음원을 디코딩하지 못했어요.',
-            );
+      do {
+        this.drainPending = false;
+        for (;;) {
+          const item = this.ring.shift();
+          if (!item) break;
+          const slot = source.chunks[item.index];
+          if (!slot) continue;
+          try {
+            const { frames } = parseChunk(item.bytes);
+            const buffer = await decodeOpusFrames(context, frames, {
+              channels: source.channels,
+              frameDurationMs: 20,
+              expectedSamples: Math.round(
+                (slot.duration_ms / 1000) * OPUS_SAMPLE_RATE,
+              ),
+            });
+            source.decoded.set(item.index, buffer);
+          } catch (error) {
+            if (this.source === source) {
+              this.fail(
+                error instanceof Error
+                  ? error.message
+                  : '음원을 디코딩하지 못했어요.',
+              );
+            }
+          } finally {
+            source.inflight.delete(item.index);
           }
-        } finally {
-          source.inflight.delete(item.index);
         }
-      }
+      } while (this.drainPending);
     } finally {
       this.draining = false;
+      this.drainPending = false;
     }
     // 버퍼링 때문에 멈춰 있었다면 여기서 이어서 시작한다.
     if (this.source === source && this.store.get().status === 'buffering') {
