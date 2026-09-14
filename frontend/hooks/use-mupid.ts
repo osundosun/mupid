@@ -4,6 +4,7 @@ import { mupidService } from '@/lib/services';
 import { login, logout, restoreSession } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
+import { fetchOnboarding, saveOnboarding } from '@/lib/onboarding';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
   getSongSectionAt,
@@ -32,6 +33,7 @@ export function useMupid(bootstrap: Bootstrap) {
   const [page, setPage] = useState<Page>(initial.onboardingSubmittedAt ? 'home' : 'welcome');
   const [nickname, setNickname] = useState(initial.nickname);
   const [moods, setMoods] = useState(initial.moods);
+  const [genres, setGenres] = useState(initial.genres);
   const [active, setActive] = useState<Track>(tracks[0]);
   const [playing, setPlaying] = useState(false);
   // 청크를 기다리는 중. 화면은 이 값으로 스피너를 띄운다.
@@ -119,17 +121,28 @@ export function useMupid(bootstrap: Bootstrap) {
   useEffect(() => {
     if (!ready) return;
     saveQueue.current = saveQueue.current.catch(() => {}).then(() =>
-      mupidService.savePreferences({ onboardingSubmittedAt, nickname, moods, liked, ignored, history, moments, playlists })
+      mupidService.savePreferences({ onboardingSubmittedAt, nickname, moods, genres, liked, ignored, history, moments, playlists })
     ).catch(() => { if (mountedRef.current) setToast('변경 내용을 저장하지 못했어요. 다시 시도해 주세요.'); });
-  }, [ready, onboardingSubmittedAt, nickname, moods, liked, ignored, history, moments, playlists]);
-  const completeOnboarding = async (name: string, selectedMoods: string[]) => {
-    if (!name.trim() || !selectedMoods.length) throw new Error('이름과 좋아하는 분위기를 선택해 주세요.');
+  }, [ready, onboardingSubmittedAt, nickname, moods, genres, liked, ignored, history, moments, playlists]);
+  /**
+   * 온보딩 결과를 저장한다.
+   *
+   * 로그인했으면 계정에도 남긴다. 서버 저장이 실패하면 던져서 화면이 알리게 한다 —
+   * 브라우저에만 남고 기기를 바꾸면 사라지는 걸 조용히 넘기면 안 된다.
+   * 비로그인이면 예전처럼 브라우저 저장만 한다.
+   */
+  const completeOnboarding = async (name: string, selectedMoods: string[], selectedGenres: string[]) => {
+    if (!name.trim() || !selectedMoods.length || !selectedGenres.length)
+      throw new Error('이름과 좋아하는 분위기·장르를 선택해 주세요.');
     const submittedAt = new Date().toISOString();
-    const value = { onboardingSubmittedAt: submittedAt, nickname: name.trim().slice(0, 20), moods: selectedMoods, liked, ignored, history, moments, playlists };
+    const value = { onboardingSubmittedAt: submittedAt, nickname: name.trim().slice(0, 10), moods: selectedMoods, genres: selectedGenres, liked, ignored, history, moments, playlists };
     const save = saveQueue.current.catch(() => {}).then(() => mupidService.savePreferences(value));
     saveQueue.current = save;
     await save;
-    setNickname(value.nickname); setMoods(selectedMoods); setOnboardingSubmittedAt(submittedAt);
+    if (demoSession?.kind === 'authenticated') {
+      await saveOnboarding({ nickname: value.nickname, moods: selectedMoods, genres: selectedGenres });
+    }
+    setNickname(value.nickname); setMoods(selectedMoods); setGenres(selectedGenres); setOnboardingSubmittedAt(submittedAt);
     onboardingRef.current = submittedAt;
     setPage('home');
     window.history.replaceState({ mupid: true }, '', '/');
@@ -173,16 +186,57 @@ export function useMupid(bootstrap: Bootstrap) {
     setNotificationOpen(false);
     setLoginDialog(true);
   };
+  /**
+   * 프로필 화면에서 선호 분위기를 바꾼다.
+   *
+   * 온보딩과 같은 데이터라 계정에도 같이 반영한다. 서버가 거절하면 화면 상태를
+   * 되돌린다 — 눌린 채로 두면 저장된 줄 알게 된다.
+   */
+  const updateMoods = (next: (list: string[]) => string[]) => {
+    const before = moods;
+    const after = next(before);
+    setMoods(after);
+    if (demoSession?.kind !== 'authenticated' || !onboardingRef.current) return;
+    if (!after.length || !genres.length) {
+      setMoods(before);
+      setToast('분위기는 하나 이상 골라야 해요.');
+      return;
+    }
+    saveOnboarding({ nickname, moods: after, genres }).catch(() => {
+      if (!mountedRef.current) return;
+      setMoods(before);
+      setToast('선호 분위기를 저장하지 못했어요. 다시 시도해 주세요.');
+    });
+  };
+  /**
+   * 계정에 저장된 온보딩을 화면 상태로 가져온다.
+   *
+   * 다른 기기에서 제출했으면 여기서 따라온다. 계정에 아직 없으면 브라우저에
+   * 있던 값을 그대로 두고 온보딩 화면으로도 보내지 않는다 — 이 기기에서 이미
+   * 답한 사람을 다시 묻는 꼴이 되기 때문이다.
+   */
+  const adoptServerOnboarding = async (signal?: AbortSignal) => {
+    const saved = await fetchOnboarding(signal);
+    if (!saved || signal?.aborted || !mountedRef.current) return;
+    setNickname(saved.nickname);
+    setMoods(saved.moods);
+    setGenres(saved.genres);
+    setOnboardingSubmittedAt(saved.submittedAt);
+    onboardingRef.current = saved.submittedAt;
+    // 이 기기에는 기록이 없어 온보딩 화면에 서 있다. 계정에 답이 있으니 통과시킨다.
+    setPage((current) => (current === 'welcome' ? 'home' : current));
+  };
   // 액세스 토큰은 메모리에만 있다. 새로고침 뒤에는 쿠키의 리프레시 토큰으로
   // 한 번만 복원을 시도하고, 실패하면 비로그인 상태로 둔다.
   useEffect(() => {
-    let alive = true;
+    const abort = new AbortController();
     restoreSession().then((session) => {
-      if (!alive || session.status !== 'authenticated' || !session.user) return;
+      if (abort.signal.aborted || session.status !== 'authenticated' || !session.user) return;
       setNickname(session.user.nickname);
       setDemoSession({ kind: 'authenticated', nickname: session.user.nickname, userId: session.user.user_id });
+      void adoptServerOnboarding(abort.signal);
     });
-    return () => { alive = false; };
+    return () => { abort.abort(); };
   }, []);
   const signInDemo = async (email: string, password: string) => {
     const user = await login(email, password);
@@ -190,6 +244,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setDemoSession({ kind: 'authenticated', nickname: user.nickname, userId: user.user_id });
     setLoginDialog(false);
     setToast('뮤피드에 오신 걸 환영해요.');
+    void adoptServerOnboarding();
     return true;
   };
   const signOutDemo = async () => {
@@ -513,7 +568,8 @@ export function useMupid(bootstrap: Bootstrap) {
     signInDemo,
     signOutDemo,
     moods,
-    setMoods,
+    genres,
+    updateMoods,
     active,
     playing,
     setPlaying,

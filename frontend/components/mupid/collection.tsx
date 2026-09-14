@@ -1,7 +1,7 @@
 'use client';
 import { MupidMascot } from './mascot';
 import { ProfilePhoto } from './profile-photo';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DemoAccount } from './demo-login';
 import {
   Check,
@@ -16,7 +16,8 @@ import {
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import type { MupidModel } from '@/hooks/use-mupid';
-import { formatTime, moodOptions } from '@/lib/mupid-data';
+import { formatTime, genreOptions, moodOptions } from '@/lib/mupid-data';
+import { loadOnboardingOptions, namesOf } from '@/lib/onboarding';
 import {
   AlbumArt,
   Brand,
@@ -522,7 +523,7 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
               className={m.moods.includes(mood) ? 'selected' : ''}
               key={mood}
               onClick={() =>
-                m.setMoods((list) =>
+                m.updateMoods((list) =>
                   list.includes(mood)
                     ? list.filter((v) => v !== mood)
                     : [...list, mood],
@@ -556,8 +557,22 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState(m.onboardingSubmittedAt ? m.nickname : '');
   const [selectedMoods, setSelectedMoods] = useState<string[]>(m.onboardingSubmittedAt ? m.moods : []);
+  const [selectedGenres, setSelectedGenres] = useState<string[]>(m.onboardingSubmittedAt ? m.genres : []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // 고를 수 있는 항목은 서버가 정한다. 못 받아 오면 화면 기본 목록으로 돌아간다.
+  const [options, setOptions] = useState<{ moods: string[]; genres: string[] }>({
+    moods: moodOptions,
+    genres: genreOptions,
+  });
+  useEffect(() => {
+    const abort = new AbortController();
+    loadOnboardingOptions(abort.signal).then((value) => {
+      if (abort.signal.aborted) return;
+      setOptions({ moods: namesOf(value.moods), genres: namesOf(value.genres) });
+    });
+    return () => { abort.abort(); };
+  }, []);
   return (
     <div className="welcome-page">
       {(step > 0 || m.onboardingSubmittedAt) && <button
@@ -591,8 +606,8 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             e.preventDefault();
             if (busy) return;
             setBusy(true); setError('');
-            try { await m.completeOnboarding(name, selectedMoods); }
-            catch { setError('취향을 저장하지 못했어요. 브라우저 저장 설정을 확인하고 다시 시도해 주세요.'); }
+            try { await m.completeOnboarding(name, selectedMoods, selectedGenres); }
+            catch (e) { setError(e instanceof Error && e.message ? e.message : '취향을 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.'); }
             finally { setBusy(false); }
           }}
         >
@@ -604,12 +619,13 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             id="welcome-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            maxLength={20}
+            minLength={2}
+            maxLength={10}
             required
             disabled={busy}
           />
           <div className="filter-chips wrap">
-            {moodOptions.map((mood) => (
+            {options.moods.map((mood) => (
               <button
                 type="button"
                 key={mood}
@@ -629,8 +645,32 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             ))}
           </div>
           <p>좋아하는 분위기를 하나 이상 선택해 주세요.</p>
+          <label className="field-label" id="welcome-genre-label">
+            자주 듣는 장르는 무엇인가요?
+          </label>
+          <div className="filter-chips wrap" aria-labelledby="welcome-genre-label">
+            {options.genres.map((genre) => (
+              <button
+                type="button"
+                key={genre}
+                aria-pressed={selectedGenres.includes(genre)}
+                className={selectedGenres.includes(genre) ? 'selected' : ''}
+                disabled={busy}
+                onClick={() =>
+                  setSelectedGenres((list) =>
+                    list.includes(genre)
+                      ? list.filter((v) => v !== genre)
+                      : [...list, genre],
+                  )
+                }
+              >
+                {genre}
+              </button>
+            ))}
+          </div>
+          <p>장르도 하나 이상 골라 주세요.</p>
           {error && <p role="alert">{error}</p>}
-          <button className="primary-button wide" disabled={busy || !name.trim() || !selectedMoods.length}>
+          <button className="primary-button wide" disabled={busy || !name.trim() || !selectedMoods.length || !selectedGenres.length}>
             {busy ? '취향 저장 중…' : '음악 둘러보기'} <ChevronRight />
           </button>
         </form>

@@ -35,6 +35,27 @@ export type SignupBody = {
   gender: 'M' | 'F' | 'ETC';
 };
 
+export type CodeOption = { code_id: number; name: string };
+
+export type OnboardingOptions = {
+  moods: CodeOption[];
+  genres: CodeOption[];
+};
+
+export type OnboardingStatus = {
+  submitted: boolean;
+  submitted_at: string | null;
+  nickname: string;
+  moods: CodeOption[];
+  genres: CodeOption[];
+};
+
+export type OnboardingBody = {
+  nickname: string;
+  mood_code_ids: number[];
+  genre_code_ids: number[];
+};
+
 export type MusicSummary = {
   music_id: number;
   title: string;
@@ -159,6 +180,30 @@ export function createEndpoints(client: ApiClient) {
         client.request<{ is_valid: boolean }>({
           path: `/api/v1/mail/verification/${verificationId}`,
           anonymous: true,
+        }),
+    },
+
+    onboarding: {
+      /** 고를 수 있는 분위기·장르. 마스터 데이터라 로그인 전에도 부를 수 있다. */
+      options: (signal?: AbortSignal) =>
+        client.request<OnboardingOptions>({
+          path: '/api/v1/onboarding/option',
+          anonymous: true,
+          signal,
+        }),
+      /** 제출 여부와 제출한 내용. */
+      status: (signal?: AbortSignal) =>
+        client.request<OnboardingStatus>({
+          path: '/api/v1/onboarding',
+          signal,
+        }),
+      /** 제출. 이미 제출했으면 서버가 갈아 끼운다. */
+      submit: (body: OnboardingBody) =>
+        client.request<void>({
+          method: 'POST',
+          path: '/api/v1/onboarding',
+          json: body,
+          responseType: 'none',
         }),
     },
 

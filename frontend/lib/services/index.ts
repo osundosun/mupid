@@ -5,7 +5,7 @@ import type { Track } from '../mupid-data';
 const preferencesKey = 'mupid.sky.preferences.v1';
 const photoKey = 'mupid-profile-photo';
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object';
-const defaults: Preferences = { onboardingSubmittedAt: null, nickname: '규원', moods: ['몽환적인', '감성적인'],
+const defaults: Preferences = { onboardingSubmittedAt: null, nickname: '규원', moods: ['몽환적인', '감성적인'], genres: ['Indie', 'R&B'],
   liked: [1, 3, 7], ignored: [], history: [1, 3, 2], moments: initialMoments, playlists: initialPlaylists };
 const unavailable = async (): Promise<never> => {
   throw new Error('서버가 아직 연결되지 않았어요. 입력한 정보는 저장·전송되지 않았습니다.');
@@ -24,6 +24,7 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
           if (typeof saved.onboardingSubmittedAt === 'string' && Number.isFinite(Date.parse(saved.onboardingSubmittedAt))) preferences.onboardingSubmittedAt = saved.onboardingSubmittedAt;
           if (typeof saved.nickname === 'string' && saved.nickname.trim()) preferences.nickname = saved.nickname.slice(0, 20);
           if (Array.isArray(saved.moods)) preferences.moods = saved.moods.filter((v: unknown) => typeof v === 'string');
+          if (Array.isArray(saved.genres)) preferences.genres = saved.genres.filter((v: unknown) => typeof v === 'string');
           for (const key of ['liked', 'ignored', 'history'] as const) {
             if (Array.isArray(saved[key])) preferences[key] = saved[key].filter((id: unknown) => allTracks.some(t => t.id === id));
           }
