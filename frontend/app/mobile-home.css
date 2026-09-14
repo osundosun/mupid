@@ -15,7 +15,7 @@
     margin-bottom: 4px;
   }
   .page-home .greeting p {
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
   }
   .mobile-listening {
     display: grid;
@@ -36,8 +36,8 @@
     align-items: center;
     gap: 8px;
     color: var(--ink-secondary);
-    font-size: 0.75rem;
-    letter-spacing: 0.12em;
+    font-size: 0.8125rem;
+    letter-spacing: 0.02em;
   }
   .mobile-listening-topline i {
     width: 5px;
@@ -50,7 +50,7 @@
     box-shadow: 0 0 0 4px #e4edf9;
   }
   .mobile-listening-topline .text-link {
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
     min-height: 44px;
   }
   .mobile-record-stage {
@@ -98,12 +98,12 @@
     overflow-wrap: anywhere;
   }
   .mobile-song-heading p {
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
     color: var(--ink-secondary);
     overflow-wrap: anywhere;
   }
   .mobile-song-heading .mobile-album-name {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     color: #7890b2;
   }
   .mobile-song-heading .like-button {
@@ -134,7 +134,7 @@
     justify-content: space-between;
     margin-top: -6px;
     color: #7b8da8;
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     font-variant-numeric: tabular-nums;
   }
   .mobile-listening-controls .player-controls {
@@ -167,7 +167,7 @@
     background: none;
     border: 0;
     border-radius: 10px;
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
     color: #617ca8;
     white-space: nowrap;
   }
@@ -205,11 +205,11 @@
     margin-bottom: 14px;
   }
   .page-home .section-heading > .text-link {
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
     min-height: 44px;
   }
   .page-home .mix-card strong {
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
   }
   .page-home .recent-grid {
     display: grid;
@@ -256,7 +256,10 @@
     width: min(90%, 312px);
   }
 }
-@media (min-width: 768px) and (max-width: 1023px) {
+/* 가로로 여유가 생기면 LP와 곡 정보를 좌우로 나눈다.
+   768px부터 나누던 걸 600px로 낮춘다. 이보다 좁으면 오른쪽 칸이 250px 아래로 내려가
+   재생 버튼 줄이 두 줄로 접혀서, 나누지 않는 편이 낫다. */
+@media (min-width: 600px) and (max-width: 1023px) {
   .mobile-listening {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     column-gap: 24px;
@@ -295,3 +298,101 @@
     }
   }
 }
+/* 모바일 홈의 '오늘의 Moment'. 다른 섹션과 같은 결로 두고 카드 테두리는 없앤다. */
+.today-moment {
+  margin: 28px 0 0;
+}
+.today-moment-head {
+  margin-bottom: 4px;
+}
+.today-moment-head .text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.today-moment-head .text-link svg {
+  width: 16px;
+  height: 16px;
+}
+.today-moment-note {
+  margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #7185a7;
+}
+.today-moment-list {
+  display: grid;
+}
+.today-moment-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid #eaf0f8;
+}
+.today-moment-row:last-child {
+  border-bottom: 0;
+}
+.today-moment-row.is-current {
+  box-shadow: inset 3px 0 0 #7fa2d4;
+  padding-left: 10px;
+}
+.today-moment-open {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+.today-moment-open .album-art {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 12px;
+}
+.today-moment-open span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.today-moment-open strong {
+  font-size: 15px;
+  color: var(--ink-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.today-moment-open small {
+  font-size: 15px;
+  color: #8497b5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.today-moment-empty {
+  padding: 18px 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #8497b5;
+}
+.today-moment-saved {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #6a84ad;
+  font-size: 15px;
+}
+.today-moment-saved svg { width: 18px; height: 18px; color: #e884ab; }
+.today-moment-saved span { margin-right: auto; }
+.today-moment-saved strong { color: var(--ink-strong); }

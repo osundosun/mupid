@@ -13,6 +13,18 @@ const memory = () => { const values = new Map(); return {
   getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key), values,
 }; };
 
+test('public demo account accepts only the configured credentials', async () => {
+  const service = createDemoService(memory());
+  const session = await service.login({ email:'demo@naver.com', password:'1234' });
+  assert.equal(session.kind, 'demo'); assert.equal(session.userId, -1);
+  assert.equal(session.onboardingSubmittedAt, null);
+  assert.equal((await service.bootstrap()).session.kind, 'demo');
+  await service.logout();
+  assert.equal((await service.bootstrap()).session, null);
+  await assert.rejects(service.login({email:'demo@naver.com', password:'wrong'}));
+  await assert.rejects(service.login({email:'other@naver.com', password:'1234'}));
+});
+
 test('bootstrap returns independent demo snapshots', async () => {
   const service = createDemoService(memory());
   const first = await service.bootstrap(); first.tracks.length = 0; first.preferences.playlists.length = 0;
@@ -44,9 +56,9 @@ test('corrupt storage recovers and invalid track references are removed', async 
   storage.setItem('mupid.sky.preferences.v1', JSON.stringify({ liked: [1, 999], playlists: [{id: 3, name: '목록', tracks: [null, {id: 999}]}] }));
   const data = await service.bootstrap(); assert.deepEqual(data.preferences.liked, [1]); assert.deepEqual(data.preferences.playlists[0].tracks, []);
 });
-test('unconnected login never authenticates or stores credentials', async () => {
+test('invalid demo login and unconnected signup never authenticate or store credentials', async () => {
   const storage = memory(); const service = createDemoService(storage);
-  await assert.rejects(service.login({email:'demo@example.test', password:'test-only'}), /서버/);
+  await assert.rejects(service.login({email:'demo@example.test', password:'test-only'}), /데모 이메일 또는 비밀번호/);
   await assert.rejects(service.signup({}), /서버/);
   await assert.rejects(service.requestEmailVerification('demo@example.test'), /서버/);
   assert.equal(storage.values.size, 0);

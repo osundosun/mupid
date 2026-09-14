@@ -1,7 +1,9 @@
 -- Mupid ERD 스키마 (MySQL 8.4)
 --
--- ERD 도구가 산출한 DDL 원문이다. 이 파일을 손으로 고치지 않는다.
+-- ERD 도구가 산출한 DDL 원문이다. 원칙적으로 손으로 고치지 않는다.
 -- 스키마를 바꾸려면 ERD 를 먼저 고치고 산출물을 다시 받아 이 파일을 교체한다.
+-- 다만 엔티티와 어긋난 것이 확인되면 산출물이 뒤처진 쪽이므로 엔티티를 기준으로 맞춘다
+-- (playlist_tracks 는 그렇게 고쳤다).
 -- 배경·규칙·코드와 어긋난 지점은 erd.md 를 본다.
 
 CREATE TABLE IF NOT EXISTS `ai_chat_messages` (
@@ -253,17 +255,17 @@ CREATE TABLE IF NOT EXISTS `play_histories` (
 ) COMMENT='최근 들은 음악 히스토리 (GET /api/v1/song/history)';
 CREATE INDEX `ix_play_histories_` ON `play_histories` (`user_id`, `music_id`);
 CREATE UNIQUE INDEX `ux_play_histories_play_history_id` ON `play_histories` (`play_history_id`);
-CREATE TABLE IF NOT EXISTS `playlist_songs` (
-  `playlist_song_id` INT AUTO_INCREMENT NOT NULL COMMENT '수록곡 PK',
+CREATE TABLE IF NOT EXISTS `playlist_tracks` (
   `playlist_id` INT NOT NULL COMMENT '플레이리스트 FK',
+  `track_order` INT NOT NULL COMMENT '트랙 순서 (1부터)',
   `music_id` INT NOT NULL COMMENT '음악 FK',
-  `track_order` SMALLINT UNSIGNED NOT NULL COMMENT '트랙 순서',
-  `selector` ENUM('USER', 'AI') NOT NULL,
-  `user_id` INT COMMENT '추가한 유저 FK (NULL이면 시스템 생성)',
+  `selector` ENUM('USER', 'AI') NOT NULL COMMENT '선곡 주체',
+  `user_id` INT NOT NULL COMMENT '추가한 유저 FK',
   `created_at` DATETIME NOT NULL COMMENT '추가 일시',
-  PRIMARY KEY (`playlist_song_id`)
+  PRIMARY KEY (`playlist_id`, `track_order`)
 ) COMMENT='플레이리스트 수록곡 (N:M)';
-CREATE UNIQUE INDEX `uq_playlist_song` ON `playlist_songs` (`playlist_id`, `music_id`);
+-- 같은 곡이 한 플레이리스트에 두 번 담기지 않게 막는다 (곡 추가 API 의 중복 검사 최후 방어선)
+CREATE UNIQUE INDEX `uq_playlist_track_music` ON `playlist_tracks` (`playlist_id`, `music_id`);
 CREATE TABLE IF NOT EXISTS `playlists` (
   `playlist_id` INT AUTO_INCREMENT NOT NULL COMMENT '플레이리스트 PK',
   `user_id` INT COMMENT '소유 유저 FK (NULL이면 시스템/추천 생성)',
@@ -384,11 +386,11 @@ ALTER TABLE `play_histories` ADD CONSTRAINT `fk_play_history_song` FOREIGN KEY (
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `play_histories` ADD CONSTRAINT `fk_play_history_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `playlist_songs` ADD CONSTRAINT `fk_playlist_song_playlist` FOREIGN KEY (`playlist_id`) REFERENCES `playlists` (`playlist_id`);
+ALTER TABLE `playlist_tracks` ADD CONSTRAINT `fk_playlist_track_playlist` FOREIGN KEY (`playlist_id`) REFERENCES `playlists` (`playlist_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `playlist_songs` ADD CONSTRAINT `fk_playlist_song_song` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
+ALTER TABLE `playlist_tracks` ADD CONSTRAINT `fk_playlist_track_music` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `playlist_songs` ADD CONSTRAINT `fk_playlist_song_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
+ALTER TABLE `playlist_tracks` ADD CONSTRAINT `fk_playlist_track_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `playlists` ADD CONSTRAINT `fk_playlist_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다

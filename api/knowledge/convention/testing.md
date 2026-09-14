@@ -10,7 +10,14 @@
 
 ### 백엔드
 
-테스트는 `api/src/test/java/com/osundosun/mupid/api/ApiApplicationTests.java` 의 `contextLoads()` 하나뿐이다 (`@SpringBootTest`). `api/build.gradle` 에 `tasks.named('test') { useJUnitPlatform() }` 가 걸려 있다.
+테스트는 둘이다 (둘 다 `@SpringBootTest`).
+
+- `ApiApplicationTests.contextLoads()` — 컨텍스트가 뜨는지만 본다.
+- `playlist/PlaylistTrackAddTest` — 곡 추가 서비스의 정상/중복/권한/404 경로 8건. `@Transactional` 로 매번 롤백한다.
+
+**두 테스트 다 로컬 MySQL 이 떠 있어야 한다.** `.env` 의 `MUPID_MYSQL_URL` 이 가리키는 DB 에 스키마가 있어야 하고, 컨텍스트가 뜨면서 관리자 계정이 없으면 하나 만든다(`users` 에 행이 생긴다 — 테스트 롤백과 무관하다). Redis·Kafka·ClickHouse 는 기동 시점에 연결하지 않아 없어도 통과한다.
+
+`api/build.gradle` 에 `tasks.named('test') { useJUnitPlatform() }` 가 걸려 있다.
 
 ```bash
 ./gradlew build   # 빌드 + 테스트

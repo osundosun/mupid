@@ -1,0 +1,125 @@
+.explore-category-card { margin: 12px 0 32px; padding: 28px; border: 1px solid #dce7f7; border-radius: 24px; background: linear-gradient(135deg,#ffffffed,#f2f7ffdd); color: #4a6496; }
+.explore-category-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.explore-category-heading span { font-size: 11.5px; letter-spacing: .16em; color: #8b9fc0; }
+.explore-category-heading h2 { font-size: clamp(19px,2vw,25px); margin-top: 6px; font-weight: 650; }
+.category-reset { display: flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 13px; min-height: 40px; }
+.category-reset:disabled { opacity: .4; }
+.explore-category-switch { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.explore-category-switch button { display: flex; align-items: center; justify-content: center; gap: 9px; padding: 15px 8px; background: #fff9; border: 1px solid #dce6f6; border-radius: 14px; font-size: 15px; }
+.explore-category-switch button[aria-pressed=true] { background: #668bc8; border-color: #668bc8; color: white; box-shadow: 0 5px 14px #7899cc24; }
+.category-description { font-size: 14px; color: #8498b9; margin: 20px 0 24px; }
+.category-groups { display: grid; gap: 20px; }
+.category-groups fieldset { min-width: 0; border: 0; padding: 0; }
+.category-groups legend { margin-bottom: 10px; font-size: 14px; font-weight: 600; }
+.category-groups fieldset > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.category-groups button { border: 1px solid #dbe5f6; border-radius: 22px; background: #fff; padding: 10px 17px; min-height: 40px; font-size: 14px; color: #7088af; }
+.category-groups button[aria-pressed=true] { background: #e6edfc; border-color: #91aad6; color: #365d9b; }
+.category-selected { margin-top: 24px; padding-top: 16px; border-top: 1px solid #e0e9f5; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.category-selected button { display: flex; gap: 6px; align-items: center; padding: 7px 10px; background: #e8effb; border-radius: 8px; }
+.category-preview-note { color: #8595ae; font-size: 13px; line-height: 1.6; margin-top: 18px; }
+@media(max-width:767px) { .explore-category-card { padding: 20px 16px; border-radius: 20px; } .explore-category-switch { gap: 6px; } .explore-category-switch button { gap: 5px; font-size: 14px; } .category-groups button { padding-inline: 13px; } }
+.keyword-idle { padding: 46px 16px; text-align: center; color: #8a9cbc; }
+.keyword-idle > svg { margin: 0 auto 16px; }
+.keyword-idle h2 { font-size: 19px; color: #637ea8; margin-bottom: 10px; }
+.keyword-idle p, .keyword-preview { font-size: 14px; line-height: 1.8; color: #889bb7; }
+.keyword-results { margin: 28px 0; }
+.keyword-results > header { display: flex; justify-content: space-between; align-items: center; gap: 16px; color: #6a84ad; }
+.keyword-results h2 { font-size: 22px; margin: 6px 0; }
+.keyword-preview { margin: 8px 0 22px; }
+.keyword-card-track { position: relative; display: flex; gap: 24px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 24px max(16px,calc((100% - 340px) / 2)); margin-top: 20px; scrollbar-width: thin; scrollbar-color: #c7d6ec transparent; }
+.keyword-card-track .keyword-music-card { flex: 0 0 340px; scroll-snap-align: center; transform: scale(.9); opacity: .58; }
+.keyword-card-track .keyword-music-card.is-focused { transform: scale(1); opacity: 1; box-shadow: 0 16px 36px #7897bf24; }
+.keyword-carousel-controls { display: flex; justify-content: center; align-items: center; gap: 24px; color: #6c87b3; font-size: 14px; margin: 16px 0; }
+.keyword-carousel-controls button { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: #edf3fd; border: 1px solid #d9e5f5; }
+.keyword-carousel-controls button:disabled { opacity: .3; }
+.keyword-music-card { min-width: 0; padding: 12px; border: 1px solid #e1e9f6; border-radius: 22px; background: #ffffffb8; box-shadow: 0 8px 26px #7c9ac00d; }
+.keyword-cover { position: relative; }
+.keyword-detail { display: block; width: 100%; }
+.keyword-detail .album-art { width: 100%; height: auto; aspect-ratio: 1; border-radius: 15px; overflow: hidden; }
+.keyword-play { position: absolute; right: 12px; bottom: 12px; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: #fff; color: #6288c6; box-shadow: 0 4px 12px #34527a20; }
+.keyword-card-copy { position: relative; padding: 16px 30px 8px 4px; }
+.keyword-card-copy h3 { font-size: 16px; color: #48638e; }
+.keyword-card-copy p { font-size: 14px; color: #91a1bb; margin-top: 5px; }
+.keyword-card-copy button { position: absolute; right: 0; top: 15px; color: #7c97bf; padding: 6px; }
+@media(prefers-reduced-motion:no-preference) {
+  .keyword-music-card { transition: transform .35s ease, opacity .35s ease, box-shadow .35s ease; }
+  @keyframes keyword-rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+}
+@media(max-width:767px) {
+  .keyword-card-track { gap: 14px; padding: 16px 12%; }
+  .keyword-card-track .keyword-music-card { flex-basis: 100%; }
+  .keyword-results h2 { font-size: 19px; }
+}
+.floating-album-stage { position: relative; padding: 0 48px; }
+.floating-album-window { position: relative; height: 460px; overflow: hidden; }
+.floating-album { position: absolute; top: 30px; left: 50%; width: min(320px, 70%); transform: translateX(calc(-50% + var(--offset) * 110%)); }
+.floating-album.is-focused { transform: translateX(-50%); }
+.floating-album .album-art { box-shadow: 0 16px 32px #597da52b; border-radius: 24px; }
+.floating-album:not(.is-focused) .keyword-card-copy, .floating-album:not(.is-focused) .keyword-play { visibility: hidden; }
+.floating-album .keyword-card-copy { text-align: center; padding-top: 20px; }
+.album-side-arrow { position: absolute; top: 42%; z-index: 5; display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid #dbe6f6; border-radius: 50%; background: #f8fbff; color: #6388bf; }
+.album-side-arrow.previous { left: 0; }
+.album-side-arrow.next { right: 0; }
+.album-side-arrow:disabled { opacity: .3; }
+@media(prefers-reduced-motion:no-preference) { .floating-album { transition: transform .45s ease, opacity .45s ease; } }
+@media(max-width:767px) { .floating-album-stage { padding: 0 34px; } .floating-album-window { height: 360px; } .floating-album { width: 88%; max-width: 260px; } .album-side-arrow { width: 36px; height: 44px; } }
+.swipe-albums { padding-inline: 0; touch-action: pan-y; cursor: grab; user-select: none; }
+.swipe-albums.is-dragging { cursor: grabbing; }
+.swipe-albums .floating-album { transform: translateX(calc(-50% + var(--offset) * 110% + var(--drag-x, 0px))); }
+.swipe-albums.is-dragging .floating-album { transition: none; }
+.swipe-albums .floating-album-window { height: auto; aspect-ratio: 5 / 1; padding-bottom: 125px; box-sizing: content-box; }
+.swipe-albums .floating-album { left: 0; top: 16px; width: calc((100% - 64px) / 5); max-width: none; opacity: 1; transform: translateX(calc(var(--offset) * (100% + 16px) + var(--drag-x, 0px))); }
+.swipe-albums .floating-album .keyword-card-copy { visibility: visible; padding: 14px 24px 8px 0; }
+.swipe-albums .floating-album .keyword-play { visibility: visible; }
+.swipe-albums .floating-album .album-art { border-radius: 16px; }
+@media(max-width:767px) {
+  .swipe-albums .floating-album-window { aspect-ratio: 1 / 1; padding-bottom: 110px; }
+  .swipe-albums .floating-album { left: 8%; width: 84%; transform: translateX(calc(var(--mobile-offset) * 120% + var(--drag-x, 0px))); }
+}
+.vertical-album-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 32px 20px; margin-top: 24px; padding-bottom: 24px; }
+.vertical-album { min-width: 0; }
+.vertical-album .album-art { aspect-ratio: 1; width: 100%; height: auto; border-radius: 16px; box-shadow: 0 8px 20px #7897bf18; }
+.vertical-album .keyword-card-copy { padding: 14px 28px 8px 0; }
+.vertical-album .keyword-card-copy h3, .vertical-album .keyword-card-copy p { overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: no-preference) {
+  .vertical-album.has-entered { animation: vertical-album-reveal .35s ease-out both; }
+  @keyframes vertical-album-reveal { from { opacity: .35; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+}
+/* 모바일은 한 줄에 한 장. 화면을 꽉 채우면 한 곡 보려고 한 화면을 다 써서 폭을 줄인다. */
+@media (max-width: 767px) {
+  .vertical-album-grid { grid-template-columns: minmax(0, 1fr); gap: 26px; justify-items: center; }
+  .vertical-album { width: 100%; max-width: 220px; }
+  .vertical-album .keyword-card-copy { padding: 16px 30px 8px 2px; }
+}
+.album-pagination { display: flex; align-items: center; justify-content: center; gap: 24px; margin: 20px 0 32px; color: #6b85ac; font-size: 15px; }
+.album-pagination button { min-height: 44px; padding: 10px 24px; border-radius: 24px; border: 1px solid #dbe5f5; background: #f7faff; }
+.album-pagination button:disabled { opacity: .35; cursor: default; }
+.album-swipe-pages { touch-action: pan-x pinch-zoom; cursor: grab; user-select: none; }
+.album-swipe-pages:active { cursor: grabbing; }
+.album-swipe-pages .vertical-album-grid { min-height: 360px; }
+.album-natural-scroll { position: relative; max-height: 72dvh; overflow-y: auto; overflow-x: hidden; touch-action: pan-y pinch-zoom; scroll-snap-type: y proximity; scrollbar-width: thin; scrollbar-color: #94add4 #edf3fb; scrollbar-gutter: stable; padding-right: 10px; cursor: grab; }
+.album-natural-scroll::-webkit-scrollbar { display: block; width: 6px; }
+.album-natural-scroll::-webkit-scrollbar-track { background: #edf3fb; border-radius: 10px; }
+.album-natural-scroll::-webkit-scrollbar-thumb { background: #94add4; border: 0; border-radius: 10px; min-height: 36px; }
+.album-natural-scroll::-webkit-scrollbar-thumb:hover { background: #6d90c5; }
+.album-natural-scroll:active { cursor: grabbing; }
+.album-natural-scroll .album-scroll-batch { scroll-snap-align: start; min-height: 72dvh; margin: 0; padding: 16px 4px 32px; align-content: start; }
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .album-scroll-batch .vertical-album { animation: album-scroll-fade linear both; animation-timeline: view(); animation-range: entry 0% exit 100%; }
+    @keyframes album-scroll-fade { 0%,100% { opacity: .3; } 15%,85% { opacity: 1; } }
+  }
+}
+.category-search-action { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 24px; }
+.category-search-action p { color: #8498b9; font-size: 14px; }
+.category-search-action .primary-button { min-width: 140px; min-height: 44px; padding: 12px 24px; white-space: nowrap; font-size: 15px; }
+.album-horizontal-scroll { position: relative; display: flex; gap: 20px; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; touch-action: pan-x pan-y pinch-zoom; scrollbar-width: thin; scrollbar-color: #94add4 #edf3fb; cursor: grab; }
+.album-horizontal-scroll:active { cursor: grabbing; }
+.album-horizontal-scroll::-webkit-scrollbar { height: 6px; }
+.album-horizontal-scroll::-webkit-scrollbar-thumb { background: #94add4; border: 0; border-radius: 10px; }
+.album-horizontal-scroll .album-scroll-batch { flex: 0 0 100%; min-width: 0; grid-template-columns: repeat(5,minmax(0,1fr)); align-content: start; scroll-snap-align: start; margin: 0; padding: 16px 4px 24px; }
+.album-horizontal-scroll .vertical-album { animation: none; }
+/* 한 페이지에 앨범 하나만 꽉 채우면 답답하다. 모바일도 2열로 둔다. */
+@media(max-width:767px) { .album-horizontal-scroll .album-scroll-batch { grid-template-columns: minmax(0,1fr); gap: 26px; padding-inline: 12px; justify-items: center; } }
+.keyword-explore .album-horizontal-scroll { scrollbar-width: none; }
+.keyword-explore .album-horizontal-scroll::-webkit-scrollbar { display: none; }

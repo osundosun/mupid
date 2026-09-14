@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { mupidService } from '@/lib/services';
 import { fetchCatalog } from '@/lib/stream-catalog';
 import type { Bootstrap } from '@/lib/services/contracts';
@@ -18,7 +18,7 @@ import {
   Volume2,
 } from 'lucide-react';
 import { useMupid } from '@/hooks/use-mupid';
-import { useHomePlayerDock, useDesktopPlayerDock } from '@/hooks/use-home-player-dock';
+import { useDesktopPlayerDock } from '@/hooks/use-home-player-dock';
 import { MiniTimeline } from '@/components/mupid/mini-timeline';
 import { PlaybackStatus } from '@/components/mupid/playback-status';
 import {
@@ -27,7 +27,7 @@ import {
   LikeButton,
   PlayerControls,
 } from '@/components/mupid/primitives';
-import { HomeView, HomeNotifications } from '@/components/mupid/home';
+import { HomeView } from '@/components/mupid/home';
 import {
   MomentView,
   PlayerView,
@@ -47,9 +47,8 @@ import { DemoLoginDialog } from '@/components/mupid/demo-login';
 const navigation = [
   { id: 'home', label: '메인', mobileLabel: '메인', icon: Home },
   { id: 'search', label: '탐색', mobileLabel: '탐색', icon: Search },
-  { id: 'library', label: '플레이리스트', mobileLabel: '플리', icon: Library },
+  { id: 'library', label: '보관함', mobileLabel: '보관함', icon: Library },
   { id: 'report', label: '내 취향', mobileLabel: '내 취향', icon: ChartPie },
-  { id: 'profile', label: '프로필', mobileLabel: '프로필', icon: UserRound },
 ] as const;
 const desktopNavigation = [
   navigation[0],
@@ -87,11 +86,32 @@ export function MupidApp() {
 }
 function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   const m = useMupid(bootstrap);
-  const homeControlsVisible = useHomePlayerDock(m.page);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [photo, setPhoto] = useState('');
+  const accountRef = useRef<HTMLDivElement>(null);
+  const accountButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    setAccountOpen(false);
+    let live = true;
+    void mupidService.readPhoto().then(value => { if (live) setPhoto(value); }).catch(() => {});
+    return () => { live = false; };
+  }, [m.page, m.demoSession]);
+  useEffect(() => {
+    if (!accountOpen) return;
+    const outside = (event: PointerEvent) => { if (!accountRef.current?.contains(event.target as Node)) setAccountOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setAccountOpen(false); accountButton.current?.focus(); } };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [accountOpen]);
   const desktopDock = useDesktopPlayerDock();
   const { audioRef } = m;
   const hideMini =
-    m.page === 'welcome' || (!desktopDock && (m.page === 'player' || homeControlsVisible));
+    m.page === 'welcome' ||
+    // 가입 직후처럼 아직 한 곡도 듣지 않았다면 띄우지 않는다.
+    !m.hasPlayed ||
+    // 플레이어 화면에는 큰 컨트롤이 있으니 미니 플레이어를 겹치지 않는다.
+    (!desktopDock && m.page === 'player');
   const desktopNavPage =
     m.page === 'moment' ? 'player' : m.page === 'similar' ? 'search' : m.page;
   const navPage = desktopNavPage;
@@ -142,35 +162,24 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
                 </button>
               ))}
             </nav>
-            <span className="brand-caption">Music for your sky</span>
-            <div className="desktop-app-notification">
-              <HomeNotifications model={m} />
+            <form className="nav-search" role="search" onSubmit={event => { event.preventDefault(); m.go('search'); }}>
+              <input aria-label="곡 또는 아티스트 검색" placeholder="곡, 아티스트 검색" value={m.query} onChange={event => m.setQuery(event.target.value)} />
+              <button type="submit" aria-label="검색"><Search size={20} /></button>
+            </form>
+            <div className="nav-account" ref={accountRef}>
+              <button ref={accountButton} className="nav-avatar" aria-label={m.demoSession ? '내 계정 메뉴' : '로그인'} aria-expanded={accountOpen} aria-controls="nav-account-panel" disabled={!m.authReady} onClick={() => m.demoSession ? setAccountOpen(value => !value) : m.openLogin()}>
+                {m.demoSession ? photo ? <img src={photo} alt="내 프로필" /> : <UserRound size={22} aria-hidden="true" /> : <LogIn size={22} />}
+              </button>
+              {accountOpen && <div id="nav-account-panel" className="nav-account-panel">
+                <button onClick={() => { setAccountOpen(false); m.go('profile'); }}>마이페이지</button>
+                <button onClick={() => { setAccountOpen(false); void m.signOutDemo(); }}>로그아웃</button>
+              </div>}
             </div>
-            <button
-              className="header-profile"
-              aria-label={m.demoSession ? `${m.nickname}님의 프로필` : '로그인'}
-              disabled={!m.authReady}
-              onClick={() => (m.demoSession ? m.go('profile') : m.openLogin())}
-            >
-              <span aria-hidden="true">
-                {m.demoSession ? m.nickname.slice(0, 1) : <LogIn />}
-              </span>
-              <span>{m.demoSession ? `${m.nickname}님` : '로그인'}</span>
-            </button>
-            <button
-              className="mobile-profile-link"
-              aria-label="프로필 및 계정"
-              aria-current={m.page === 'profile' ? 'page' : undefined}
-              onClick={() => m.go('profile')}
-            >
-              <UserRound aria-hidden="true" />
-              <span>프로필</span>
-            </button>
           </header>
           <div className="app-layout">
             <aside className="side-nav">
               <div className="side-sticky">
-                <div className="side-label">MY MUSIC SPACE</div>
+                <div className="side-label">내 음악 공간</div>
                 {navigation.map(({ id, label, icon: Icon }) => (
                   <button
                     className={`nav-item ${navPage === id ? 'active' : ''}`}
@@ -191,7 +200,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
                   }}
                 >
                   <Heart />
-                  좋아한 구간
+                  저장한 순간
                 </button>
                 <button className="nav-item" onClick={m.openChat}>
                   <MessageCircle />
@@ -251,8 +260,8 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
               </div>
               <button
                 className="icon-button queue-button"
-                aria-label="재생 목록 열기"
-                onClick={() => m.setQueueDialog(true)}
+                aria-label="재생목록 열기"
+                onClick={() => { m.setLibraryTab('queue'); m.go('library'); }}
               >
                 <ListMusic />
               </button>

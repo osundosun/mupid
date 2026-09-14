@@ -1,0 +1,484 @@
+/* Mobile overrides live together; desktop layouts remain unchanged. */
+.mupid-shell .collection-page .playlist-summary > .album-art,
+.mupid-shell .collection-page .playlist-summary > .album-art:hover,
+.mupid-shell .album-deck-slide .album-art { transform:none; }
+/* Keep native touch/trackpad scrolling without a visible horizontal bar. */
+.mupid-shell :is(.album-horizontal-scroll, .keyword-card-track, .discovery-album-rail, .song-parts, .filter-chips) {
+  scrollbar-width:none;
+  overscroll-behavior-x:contain;
+}
+.mupid-shell :is(.album-horizontal-scroll, .keyword-card-track, .discovery-album-rail, .song-parts, .filter-chips)::-webkit-scrollbar { display:none; }
+@media (max-width: 767px) {
+  .mupid-shell .app-layout, .mupid-shell .main-content { width:100%; min-width:0; max-width:100%; }
+  .mupid-shell .main-content { padding-inline:16px; padding-bottom:calc(var(--dock-height, 170px) + 32px + env(safe-area-inset-bottom, 0px)); }
+  .mupid-shell .content-page, .mupid-shell .player-page { width:100%; min-width:0; }
+  .mupid-shell .page-heading { gap:10px; margin-bottom:24px; }
+  .mupid-shell .page-title-group { min-width:0; gap:8px; }
+  .mupid-shell .page-heading h1 { font-size:22px; text-align:left; overflow-wrap:anywhere; }
+  .mupid-shell .page-heading .icon-button { margin-left:0; flex-shrink:0; }
+  .mupid-shell .page-title-mascot { width:44px; height:44px; flex-shrink:0; }
+  .mupid-shell .intro-copy h2 { font-size:22px; line-height:1.5; }
+  .mupid-shell .intro-copy p, .mupid-shell .report-card > p { font-size:15px; line-height:1.7; }
+  .mupid-shell .icon-button { min-width:44px; min-height:44px; }
+  .mupid-shell input:not([type=range]), .mupid-shell textarea, .sky-dialog input { font-size:16px; max-width:100%; }
+  .mupid-shell .track-row { gap:10px; min-width:0; }
+  .mupid-shell .track-row .album-art { width:48px; height:48px; flex:0 0 48px; }
+  .mupid-shell .track-info { min-width:0; }
+  .mupid-shell .track-info strong, .mupid-shell .track-info > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* 재생바를 한 줄 아래 붙여 미니 플레이어 높이를 최소로 줄인다.
+     컨트롤 오른쪽에 재생 목록 버튼 자리를 하나 더 둔다. */
+  .mupid-shell .mini-player {
+    column-gap:6px; row-gap:0;
+    grid-template-columns:40px minmax(0,1fr) auto auto;
+    grid-template-areas:'cover track controls queue' 'timeline timeline timeline timeline';
+  }
+  .mupid-shell .mini-player .queue-button { display:inline-flex; grid-area:queue; }
+  /* 버튼이 하나 늘어난 만큼 40px로 줄여 곡 제목 자리를 확보한다. */
+  .mupid-shell .mini-player :is(.player-controls .icon-button, .queue-button) {
+    width:40px; min-width:40px; height:40px; padding:8px;
+  }
+  .mupid-shell .mini-player .mini-cover { width:40px; height:40px; }
+  .mupid-shell .mini-player .compact-controls { gap:0; }
+  .mupid-shell .mini-player .track-info strong { font-size:16px; }
+  .mupid-shell .player-heading h1 { font-size:20px; line-height:1.4; }
+  .mupid-shell .player-heading p { font-size:15px; }
+  .mupid-shell .player-body, .mupid-shell .moment-layout, .mupid-shell .report-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:24px; }
+  .mupid-shell .player-detail, .mupid-shell .moment-layout > *, .mupid-shell .report-details { min-width:0; }
+  .mupid-shell .player-actions { display:flex; flex-wrap:wrap; gap:10px; }
+  .mupid-shell .player-actions button { flex:1 1 130px; min-height:48px; font-size:15px; }
+  .mupid-shell .song-parts { display:flex; flex-wrap:wrap; gap:8px; }
+  .mupid-shell .song-parts button { min-height:44px; padding:10px 12px; font-size:15px; }
+  .mupid-shell .moment-editor { padding:16px 8px; }
+  .mupid-shell .moment-story { padding:24px 16px; }
+  .mupid-shell .moment-story h2 { font-size:22px; }
+  .mupid-shell .moment-story p { font-size:15px; }
+  .mupid-shell .playlist-summary { display:flex; flex-direction:column; align-items:center; gap:20px; text-align:center; }
+  .mupid-shell .playlist-summary > div { width:100%; min-width:0; }
+  .mupid-shell .playlist-summary .album-art { width:min(55vw,200px); height:auto; aspect-ratio:1; }
+  .mupid-shell .playlist-transport { margin-inline:auto; }
+  .mupid-shell .playlist-transport .player-controls { gap:6px; }
+  .mupid-shell .playlist-card strong { font-size:17px; overflow-wrap:anywhere; }
+  .mupid-shell .playlist-card small { font-size:15px; }
+  .mupid-shell .add-current { flex-wrap:wrap; }
+  .mupid-shell .sky-tabs [data-slot=tabs-list] { display:flex; width:100%; height:auto; flex-wrap:wrap; gap:4px; }
+  .mupid-shell .sky-tabs [data-slot=tabs-trigger] { flex:1 1 auto; min-height:44px; font-size:15px; padding-inline:8px; }
+  .mupid-shell .report-card { padding:20px 16px; min-width:0; }
+  .mupid-shell .daily-album-cell span { font-size:13px; }
+  .mupid-shell .explore-category-card { padding:20px 12px; }
+  .mupid-shell .explore-category-switch button { padding:10px 4px; min-height:48px; font-size:15px; }
+  .mupid-shell .category-selected { flex-wrap:wrap; }
+  .mupid-shell .welcome-form { width:100%; min-width:0; padding:24px 16px; }
+  .sky-dialog:not(.track-menu-sheet) { width:calc(100% - 24px); max-height:85dvh; overflow-y:auto; padding:24px 18px; }
+  .track-menu-sheet { padding-inline:20px; }
+  .track-menu-options > button { min-width:0; }
+  .track-menu-options > button span { min-width:0; overflow-wrap:anywhere; }
+  .track-menu-options > button small { flex-shrink:0; }
+}
+@media (max-width:359px) {
+  .mupid-shell .main-content { padding-inline:12px; }
+  .mupid-shell .app-header { gap:6px; padding-inline:8px; }
+  .mupid-shell .app-header .brand { width:46px; flex-basis:46px; }
+  /* 이전·재생·다음은 한 벌이라 하나만 빠지면 고장난 것처럼 보인다.
+     좁을 때는 전송 버튼을 지키고, 보관함 탭으로도 갈 수 있는 재생목록 버튼을 접는다. */
+  .mupid-shell .mini-player .queue-button { display:none; }
+  .mupid-shell .page-title-mascot { display:none; }
+}
+/* Mobile gutters. The phone frame kept ~38px of dead space per side (22px of
+   sky + 16px of page padding, plus 14px more inside the explore card), so only
+   ~246px of 375px was usable. Drive every horizontal inset from two tokens
+   instead: the card stays, the content reaches wider. */
+@media (max-width: 767px) {
+  .mupid-shell {
+    --frame-gutter: clamp(6px, 2.4vw, 12px); /* sky margin outside the card */
+    --page-gutter: clamp(12px, 3.8vw, 18px); /* content gutter inside it */
+  }
+  .mupid-shell:not(.page-welcome) { padding:14px var(--frame-gutter) 0; }
+  .mupid-shell .app-header, .page-home .app-header { padding-inline:var(--page-gutter); }
+  .mupid-shell .main-content { padding-inline:var(--page-gutter); }
+  /* Pages sit inside the main gutter already; a second inset only narrows them. */
+  .mupid-shell .content-page, .mupid-shell .player-page, .mupid-shell .keyword-explore { padding-inline:0; }
+  /* Docked elements track the frame so they line up with the card edge. */
+  .mupid-shell .mini-player { width:calc(100% - 2 * (var(--frame-gutter) + 8px)); }
+  .mupid-shell .chat-launcher { right:max(calc((100% - 504px) / 2), calc(var(--frame-gutter) + 8px)); }
+  /* Rebalance the inner padding against the wider column. */
+  .mupid-shell .page-heading { margin-bottom:20px; }
+  .mupid-shell .explore-category-card { padding:20px 16px; }
+  /* Icon over label: across three columns a row could not fit "보컬·악기". */
+  .mupid-shell .explore-category-switch button { flex-direction:column; gap:5px; padding:11px 6px; font-size:15px; white-space:nowrap; }
+  /* Korean headings should wrap between words, not mid-word. */
+  .mupid-shell .explore-category-heading h2, .mupid-shell .keyword-results h2, .mupid-shell .keyword-idle h2 { word-break:keep-all; }
+  .mupid-shell .report-card { padding:20px 16px; }
+  .mupid-shell .moment-editor { padding:16px 14px; }
+  .mupid-shell .moment-story { padding:22px 16px; }
+  .mupid-shell .welcome-form { padding:24px 18px; }
+  /* Artwork is sized off the column, so cap it now that the column is wider —
+     otherwise the home transport controls drop below the fold. */
+  .mupid-shell .mobile-record-art { width:min(80%, 286px); }
+  .mupid-shell .playlist-summary .album-art { width:min(62vw, 236px); }
+  /* The tab panel already pads the top; 36px above the button was too much. */
+  /* A grid item defaults to min-width:auto, so the saved-moment row refused
+     to shrink and its play button was clipped by the card edge. */
+  .mupid-shell .saved-moment { min-width:0; }
+  .mupid-shell .saved-moment .track-row { gap:8px; }
+  .mupid-shell .saved-moment .track-info .moment-meta { white-space:normal; word-break:keep-all; font-size:14px; }
+  /* The track-detail arrow on a result card drew at 30px; widen the hit area
+     to 44px without moving the icon. */
+  .mupid-shell .keyword-card-copy button::after { content:''; position:absolute; inset:-7px; }
+  /* Collapsed detail sections read as plain text, so make them look tappable. */
+  .mupid-shell .player-detail > details > summary,
+  .mupid-shell .player-detail details.moment-comment-list > summary { min-height:48px; }
+}
+@media (max-width: 767px) and (max-height: 740px) {
+  .mupid-shell .mobile-record-art { width:min(74%, 252px); }
+}
+/* The clamps above already shrink on small phones; only the header row, with
+   its logo and search field side by side, still needs extra tightening. */
+@media (max-width: 359px) {
+  .mupid-shell .main-content { padding-inline:var(--page-gutter); }
+  .mupid-shell .app-header { gap:8px; padding-inline:var(--page-gutter); }
+}
+@media (prefers-reduced-motion:reduce) {
+  .mupid-shell *, .track-menu-sheet { scroll-behavior:auto!important; animation-duration:0.01ms!important; animation-iteration-count:1!important; transition-duration:0.01ms!important; }
+}
+/* 재생바는 가운데 정렬을 유지한다. 다만 폭이 되는 화면에서는 좌우를 조금 좁혀,
+   스크롤 중 떠 있는 AI 버튼이 맨 오른쪽 반복 버튼을 덮지 않게 한다. */
+@media (min-width: 360px) and (max-width: 767px) {
+  .mupid-shell.page-player .player-controls.full-controls {
+    width:100%; max-width:calc(100% - 80px); min-width:236px; margin-inline:auto;
+  }
+}
+/* 프로필 카드: 사진 패널과 글이 나란히 서면 둘 다 좁아진다. 모바일에서는 위아래로 쌓는다. */
+@media (max-width: 767px) {
+  .mupid-shell .profile-card { flex-direction:column; align-items:stretch; gap:16px; text-align:center; }
+  .mupid-shell .profile-card .profile-photo-editor { max-width:none; align-self:center; width:100%; }
+  .mupid-shell .profile-card .mupid-mascot { align-self:center; }
+}
+/* '지금 재생 중' 표시는 재생 중에만 나오므로, 플레이어 링크가 항상 오른쪽에 있게 한다. */
+.mupid-shell .mobile-listening-topline .text-link { margin-left: auto; }
+/* 모바일 홈이 위아래로 너무 붙어 있었다. 블록 사이 간격을 확보한다.
+   이 레이아웃은 1023px까지 쓰이므로 태블릿 폭에서도 같이 적용한다. */
+@media (max-width: 1023px) {
+  .mupid-shell.page-home .greeting { margin-bottom:22px; }
+  .mupid-shell .mobile-listening { padding-bottom: 24px; margin-bottom: 24px; }
+  .mupid-shell .mobile-listening-topline { margin-bottom: 6px; }
+  .mupid-shell .mobile-record-stage { padding-bottom: 22px; }
+  .mupid-shell .mobile-home-seek { margin-top: 16px; }
+  .mupid-shell .mobile-listening-controls { margin-top: 6px; }
+  .mupid-shell .mobile-listening-actions { margin-top: 14px; padding-top: 14px; border-top: 1px solid #e9eff9; }
+  .mupid-shell .today-moment { margin-top: 8px; }
+  .mupid-shell .home-feed > .section-heading { margin-top: 34px; }
+}
+/* AI 버튼: 뒤에 깔린 옅은 색 규칙에 묻혀 버튼으로 안 보였다.
+   진한 파랑 + 흰 테두리 + 그림자로 띄우고, 누르면 눌린 느낌을 준다. */
+.mupid-shell .chat-launcher {
+  background: linear-gradient(135deg, #5b8ad6, #3f66b8);
+  color: #fff;
+  border: 2px solid #ffffff;
+  box-shadow: 0 6px 18px #2f56a340, 0 0 0 1px #ffffff66;
+  transition: transform .14s ease, box-shadow .14s ease, filter .14s ease;
+}
+.mupid-shell .chat-launcher .chat-launcher-label { color: #fff; font-weight: 800; }
+.mupid-shell .chat-launcher:hover { filter: brightness(1.06); box-shadow: 0 9px 24px #2f56a352, 0 0 0 1px #ffffff80; }
+.mupid-shell .chat-launcher:active { transform: scale(.94); box-shadow: 0 3px 10px #2f56a344; }
+.mupid-shell .chat-launcher:focus-visible { outline: 3px solid #9dc0f5; outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  .mupid-shell .chat-launcher { transition: none; }
+  .mupid-shell .chat-launcher:active { transform: none; }
+}
+/* 취향 칩: 진한 파랑은 눈이 아파서 톤을 낮춘다.
+   고른 칩은 옅은 파랑 면 + 또렷한 테두리로, 안 고른 칩은 흰 면으로 구분한다. */
+.mupid-shell .filter-chips button {
+  border: 1px solid #dbe5f4;
+  background: #fff;
+  color: #5b6f8f;
+  font-weight: 500;
+  transition: background .14s ease, border-color .14s ease, color .14s ease;
+}
+.mupid-shell .filter-chips button:hover { border-color: #b6cbe9; background: #f6f9ff; color: #46608c; }
+.mupid-shell .filter-chips button:focus-visible { outline: 2px solid #9dc0f5; outline-offset: 2px; }
+.mupid-shell .filter-chips button.selected,
+.mupid-shell .filter-chips button[aria-pressed='true'] {
+  border-color: #8fb0e0;
+  background: #eaf2fd;
+  color: #3c6099;
+  font-weight: 700;
+  box-shadow: none;
+}
+.mupid-shell .filter-chips button.selected:hover,
+.mupid-shell .filter-chips button[aria-pressed='true']:hover {
+  border-color: #7ba2da;
+  background: #e1ecfc;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mupid-shell .filter-chips button { transition: none; }
+}
+/* 닉네임 · 장르 · 분위기가 한 덩어리로 붙어 보여서 사이에 가는 선을 둔다. */
+.mupid-shell .taste-card .section-heading {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid #e7eefa;
+}
+/* 폰 카드는 화면에 꽉 찰 때만 틀로 보인다. 창이 카드(520px)보다 넓어지면
+   가운데 떠서 하늘색 여백과 테두리가 겹쳐 보이므로, 그 구간에서는 폭 제한을 푼다. */
+@media (min-width: 521px) and (max-width: 767px) {
+  .mupid-shell:not(.page-welcome) .app-layout,
+  .mupid-shell .app-header,
+  .mupid-shell .page-home .app-header,
+  .mupid-shell .main-content,
+  .mupid-shell .mobile-nav,
+  .mupid-shell .mini-player { max-width: none; }
+  /* 가운데 정렬이 풀렸으니 AI 버튼도 화면 오른쪽 끝을 기준으로 잡는다. */
+  .mupid-shell .chat-launcher { right: calc(var(--frame-gutter) + 8px); }
+}
+/* 확인 팝업 버튼은 한 줄로. 마크업 순서가 취소 → 삭제라 row-reverse로 뒤집어
+   화면에서는 왼쪽부터 삭제 · 취소로 읽히게 한다. */
+.sky-dialog [data-slot='alert-dialog-footer'],
+.sky-dialog [data-slot='dialog-footer'] {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: stretch;
+  gap: 10px;
+  /* 기본 테마의 회색 띠와 윗선을 걷어내고 본문과 같은 바탕으로 둔다. */
+  margin: 6px 0 0;
+  padding: 0;
+  border-top: 0;
+  background: none;
+}
+.sky-dialog [data-slot='alert-dialog-footer'] > *,
+.sky-dialog [data-slot='dialog-footer'] > * {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  min-height: 48px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 700;
+}
+/* 한글은 단어 중간에서 끊으면 읽기 어렵다. '좋아요한 음/악과'처럼 갈라지지 않게. */
+.sky-dialog [data-slot='alert-dialog-title'],
+.sky-dialog [data-slot='alert-dialog-description'],
+.sky-dialog [data-slot='dialog-title'],
+.sky-dialog [data-slot='dialog-description'] {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.sky-dialog [data-slot='alert-dialog-description'],
+.sky-dialog [data-slot='dialog-description'] {
+  margin-top: 6px;
+  font-size: 15px;
+  line-height: 1.65;
+  color: #6c809f;
+}
+/* 지우는 동작이라 확인 버튼은 파랑 대신 차분한 붉은색으로 둔다. */
+.sky-dialog [data-slot='alert-dialog-action'] {
+  border: 0;
+  background: #c9636e;
+  color: #fff;
+  box-shadow: 0 4px 12px #a84a5526;
+}
+.sky-dialog [data-slot='alert-dialog-action']:hover:not(:disabled) { background: #b9545f; }
+.sky-dialog [data-slot='alert-dialog-cancel'],
+.sky-dialog [data-slot='dialog-close'] {
+  border: 1px solid #d8e3f5;
+  background: #fff;
+  color: #5a6f92;
+}
+.sky-dialog [data-slot='alert-dialog-cancel']:hover { background: #f1f6ff; color: #3f5c8c; }
+/* 제목 오른쪽 자리는 버튼 하나(44px) 기준이라, 이름 바꾸기·삭제 두 개가 오면
+   한 개가 제목 아래로 밀려 들어가 안 보였다. 내용만큼 늘어나게 둔다. */
+.mupid-shell .page-heading { grid-template-columns: 44px minmax(0, 1fr) minmax(44px, auto); }
+.mupid-shell .page-heading > div:last-child { gap: 4px; }
+/* 고른 구간 줄: 미리듣기 버튼 옆에 빼기 버튼을 붙인다. */
+.mupid-shell .moment-part-row { display: flex; align-items: center; gap: 4px; }
+.mupid-shell .moment-part-row > button:first-child {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 14px;
+  min-height: 52px; padding: 12px; text-align: left;
+  border: 0; border-radius: 12px; background: none;
+  font-size: 16px; cursor: pointer;
+}
+.mupid-shell .moment-part-row > button:first-child:hover { background: #edf3ff; }
+.mupid-shell .moment-part-remove {
+  flex-shrink: 0; width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%; background: none; color: #a0adc4; cursor: pointer;
+  transition: background .14s ease, color .14s ease;
+}
+.mupid-shell .moment-part-remove svg { width: 18px; height: 18px; }
+.mupid-shell .moment-part-remove:hover { background: #fdf0f1; color: #b5535f; }
+.mupid-shell .moment-part-remove:focus-visible { outline: 3px solid #9dc0f5; outline-offset: 2px; }
+
+/* 하단 탭: 지금 어디인지 한눈에 들어오게. 위쪽 표시선 + 또렷한 색으로 바꾸고,
+   누르는 순간 살짝 눌리는 느낌을 준다. */
+.mupid-shell .mobile-nav button { position: relative; transition: color .16s ease; }
+.mupid-shell .mobile-nav button .mobile-nav-icon { transition: background .16s ease, border-color .16s ease, transform .16s ease; }
+.mupid-shell .mobile-nav button:active .mobile-nav-icon { transform: scale(.9); }
+.mupid-shell .mobile-nav button[aria-current='page']::before {
+  content: '';
+  position: absolute; top: 0; left: 50%; translate: -50% 0;
+  width: 26px; height: 3px; border-radius: 0 0 3px 3px;
+  background: #4f7cc4;
+}
+.mupid-shell .mobile-nav button[aria-current='page'] .mobile-nav-icon {
+  background: #dfeafc;
+  border-color: #c3d8f4;
+}
+.mupid-shell .mobile-nav button[aria-current='page'] svg { stroke-width: 2.1; color: #2f5aa8; }
+.mupid-shell .mobile-nav button.active,
+.mupid-shell .mobile-nav button[aria-current='page'] .mobile-nav-label { color: #2f5aa8; font-weight: 700; }
+@media (prefers-reduced-motion: reduce) {
+  .mupid-shell .mobile-nav button .mobile-nav-icon { transition: none; }
+  .mupid-shell .mobile-nav button:active .mobile-nav-icon { transform: none; }
+}
+@media (min-width: 768px) {
+  /* 데스크톱 메인만 본문 아래 여백이 0이라, 끝까지 내리면 마지막 줄이
+     고정된 미니 플레이어에 가려졌다. 플레이어 높이만큼 자리를 비워 둔다. */
+  .mupid-shell.page-home:not(.no-mini) .main-content {
+    padding-bottom: calc(var(--player-height) + 36px);
+  }
+  /* 취향 칩이 1080px를 9칸으로 쪼개 실처럼 얇아졌다.
+     닉네임 입력칸과 비슷한 폭으로 묶고 칸을 키운다. */
+  .mupid-shell .taste-card .filter-chips.wrap {
+    max-width: 720px;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  }
+}
+/* 플레이리스트 수록곡: 좌우 여백이 4px뿐이라 앨범과 버튼이 카드 테두리에 붙어 있었다.
+   안쪽 여백과 앨범-글자 사이를 벌리고, 줄 사이도 조금 띄운다. */
+.mupid-shell .collection-page .playlist-tracks .track-list { gap: 12px; }
+.mupid-shell .collection-page .playlist-tracks .track-row { padding: 18px 16px; gap: 16px; }
+.mupid-shell .collection-page .playlist-tracks .track-info > span { margin-top: 5px; }
+@media (max-width: 767px) {
+  .mupid-shell .collection-page .playlist-tracks .track-row { padding: 16px 14px; gap: 14px; }
+  .mupid-shell .collection-page .playlist-tracks .album-art { width: 52px; height: 52px; }
+}
+/* 섹션 제목: 데스크톱처럼 '무엇을 모아 둔 자리'를 작은 윗줄로 먼저 보여 준다. */
+.mupid-shell .section-heading-copy { display: grid; gap: 3px; min-width: 0; }
+.mupid-shell .section-heading-copy .eyebrow { font-size: 13px; color: #8095b7; letter-spacing: 0.01em; }
+.mupid-shell .section-heading-copy h2 { margin: 0; }
+/* 보관함 탭: 좁은 화면에서 '좋아한 곡'이 아래로 접혀 두 줄이 됐다.
+   줄바꿈을 막고, 정말 안 들어갈 때만 옆으로 밀어서 본다. */
+.mupid-shell .sky-tabs > [role='tablist'] {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.mupid-shell .sky-tabs > [role='tablist']::-webkit-scrollbar { display: none; }
+.mupid-shell .sky-tabs [role='tab'] {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+@media (max-width: 767px) {
+  .mupid-shell .sky-tabs > [role='tablist'] { gap: 0; }
+  .mupid-shell .sky-tabs [role='tab'] { padding-inline: 6px; }
+}
+@media (max-width: 359px) {
+  .mupid-shell .sky-tabs [role='tab'] { font-size: 13px; padding-inline: 4px; }
+}
+/* 미니 플레이어 재생 버튼: 주 동작이라 원으로 띄우되 두툼해 보이지 않게 한다.
+   투명 테두리로 눌리는 영역은 44px로 남기고, 칠해지는 원만 34px로 그린다. */
+.mupid-shell .mini-player .player-controls .play-main {
+  box-sizing: border-box;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 5px solid transparent;
+  border-radius: 50%;
+  background-color: #5883cf;
+  background-clip: padding-box;
+  color: #fff;
+  box-shadow: none;
+}
+.mupid-shell .mini-player .player-controls .play-main:hover { background-color: #446eba; }
+.mupid-shell .mini-player .player-controls .play-main svg { width: 15px; height: 15px; }
+/* 옆 버튼은 배경이 없으니 아이콘을 조금 키워 균형을 맞춘다. */
+.mupid-shell .mini-player .player-controls .icon-button:not(.play-main) svg { width: 18px; height: 18px; }
+/* 플레이리스트 격자: 세로 간격(격자 24~28px + 카드 아래 20px)이 겹쳐 너무 벌어졌다. */
+.mupid-shell .collection-page .playlist-grid { row-gap: 18px; }
+.mupid-shell .collection-page .playlist-card,
+.mupid-shell .collection-page .new-playlist { padding-bottom: 8px; }
+.mupid-shell .collection-page .playlist-card,
+.mupid-shell .collection-page .new-playlist { gap: 12px; }
+@media (max-width: 900px) {
+  .mupid-shell .collection-page .playlist-grid { row-gap: 16px; }
+}
+/* MuBTI 유형 카드: 결과지처럼 가운데 정렬하고, 대표 캐릭터를 위에 세운다.
+   구름 위에서 헤드폰을 낀 모습이 '여운을 모으는 감성 몰입형'과 맞는다. */
+.mupid-shell .report-card.listening-story {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 6px;
+  padding-right: 20px;
+  overflow: visible;
+}
+.mupid-shell .report-card.listening-story .report-cupid {
+  position: static;
+  z-index: auto;
+  opacity: 1;
+  /* 그림이 가로로 긴데 정사각 원에 넣으니 위아래가 비고 캐릭터만 작아졌다.
+     원을 걷어내고 원본 비율대로 크게 싣는다. */
+  width: min(230px, 78%);
+  height: auto;
+  aspect-ratio: 1391 / 1123;
+  margin: 16px 0 10px;
+  background-color: transparent;
+  background-size: contain;
+  background-position: center;
+  border-radius: 0;
+}
+/* 유형 이름도 옆 카드 제목과 같은 크기로 둔다. 강조는 크기가 아니라 색으로. */
+.mupid-shell .report-card.listening-story .report-story { margin: 2px 0 0; line-height: 1.45; }
+.mupid-shell .report-card.listening-story p { max-width: 34em; margin-inline: auto; }
+.mupid-shell .report-card.listening-story .demo-note { margin-top: 10px; }
+/* 섹션 제목은 한 벌로 묶는다. 화면에 따라 크기만 달라지고 굵기·색·자간은 어디서나 같다.
+   PC의 '오늘의 Moment'만 36px 연한 파랑으로 혼자 튀고 있었다. */
+.mupid-shell .section-heading h2,
+.mupid-shell .today-moment-head h2,
+.mupid-shell .desktop-home-shelves h2,
+.mupid-shell .desktop-playlists h2,
+.mupid-shell .report-card > h2 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.35;
+  color: #293d60;
+}
+.mupid-shell .section-heading .eyebrow,
+.mupid-shell .desktop-home-shelves .eyebrow,
+.mupid-shell .listening-story .eyebrow,
+.mupid-shell .desktop-playlists > header .eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #7b90b4;
+}
+@media (min-width: 768px) {
+  .mupid-shell .section-heading h2,
+  .mupid-shell .today-moment-head h2,
+  .mupid-shell .desktop-home-shelves h2,
+  .mupid-shell .desktop-playlists h2,
+  .mupid-shell .report-card > h2 {
+    font-size: 23px;
+  }
+  .mupid-shell .section-heading .eyebrow,
+  .mupid-shell .desktop-home-shelves .eyebrow,
+  .mupid-shell .listening-story .eyebrow,
+  .mupid-shell .desktop-playlists > header .eyebrow {
+    font-size: 15px;
+  }
+}
+/* 저장된 상태는 버튼을 눌린 모양으로 바꿔, 라벨(저장 취소)과 함께
+   '지금 저장돼 있고, 누르면 풀린다'가 같이 읽히게 한다. */
+.mupid-shell .player-actions .secondary-button[aria-pressed='true'] {
+  border-color: #a9c4ea;
+  background: #e9f1fd;
+  color: #35548c;
+  font-weight: 600;
+}

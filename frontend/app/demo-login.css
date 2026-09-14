@@ -9,7 +9,7 @@
   border-radius: 6px;
   color: #557ab6;
   background: #e8f1ff;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   letter-spacing: 0.06em;
 }
@@ -35,7 +35,7 @@
   overflow-wrap: anywhere;
 }
 .demo-account p {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.6;
   margin-top: 4px;
   color: var(--ink-secondary);
@@ -75,11 +75,11 @@
   text-align: center;
 }
 .demo-login-dialog [data-slot='dialog-description'] {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   line-height: 1.7;
 }
 .demo-login-note {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.7;
   color: #6982a8;
 }
@@ -124,7 +124,7 @@
 .demo-login-dialog.is-signup form > .field-label { margin: 22px 0 0; }
 .demo-login-dialog.is-signup form > .field-label:first-child { margin-top: 0; }
 .demo-login-dialog.is-signup .signup-verification { display: grid; justify-items: start; gap: 14px; margin: 10px 0 4px; }
-.demo-login-dialog.is-signup .signup-verification p { font-size: 14px; line-height: 1.7; color: #6a81a5; margin: 0; }
+.demo-login-dialog.is-signup .signup-verification p { font-size: 15px; line-height: 1.7; color: #6a81a5; margin: 0; }
 /* 서버 검증 오류는 필드별로 여러 줄이 올 수 있다. */
 .demo-login-dialog .auth-message { white-space: pre-line; }
 /* 인증 번호 입력 + 확인 버튼. 좁은 화면에서는 버튼이 아래로 내려간다. */

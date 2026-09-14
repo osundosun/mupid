@@ -46,7 +46,7 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 | 음원 분석 | `music_analysis`, `music_analysis_instruments`, `music_section_analysis`, `music_section_analysis_mood` |
 | 스트리밍 | `streams`, `chunks` |
 | 사용자 행동 | `music_reactions`, `play_histories`, `comments` |
-| 플레이리스트 | **`playlists`**, `playlist_songs` |
+| 플레이리스트 | **`playlists`**, **`playlist_tracks`** |
 | 추천·분석 | `daily_recommendations`, `daily_recommendation_songs`, `analysis_reports`, `mbti` |
 | AI 채팅 | `ai_chat_sessions`, `ai_chat_messages` |
 | 뷰 | `user_auth` — `SELECT user_id, email, password FROM users WHERE status != 'WITHDRAW'` |
@@ -118,7 +118,7 @@ ERD 반입 시점(2026-09-11)에 기존 엔티티 3개가 ERD 와 여러 곳에�
 
 ## 곡 식별자가 둘이다
 
-ClickHouse 쪽 분석 스키마는 곡을 **Jamendo 카탈로그의 `track_id`** 로 식별하고([glossary.md](glossary.md)), MySQL ERD 는 자체 **`music.music_id`** 로 식별한다. `listen_events.track_id` 와 `playlist_songs.music_id` 가 같은 곡을 가리키는지, 둘을 잇는 매핑이 어디에 있는지는 아직 정해지지 않았다 → [open-questions.md](../open-questions.md).
+ClickHouse 쪽 분석 스키마는 곡을 **Jamendo 카탈로그의 `track_id`** 로 식별하고([glossary.md](glossary.md)), MySQL ERD 는 자체 **`music.music_id`** 로 식별한다. `listen_events.track_id` 와 `playlist_tracks.music_id` 가 같은 곡을 가리키는지, 둘을 잇는 매핑이 어디에 있는지는 아직 정해지지 않았다 → [open-questions.md](../open-questions.md).
 
 MySQL 도메인을 만들 때는 **`music_id` 를 쓴다.** ERD 에 `track_id` 컬럼은 없다.
 

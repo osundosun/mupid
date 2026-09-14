@@ -1,0 +1,192 @@
+info:
+  name: 플레이리스트 곡 추가
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/playlist/{{PLAYLIST_ID}}/track"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "music_id": {{MUSIC_ID}}
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: PLAYLIST_ID
+      value: "12"
+    - name: MUSIC_ID
+      value: "42"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 추가 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "플레이리스트에 곡을 추가했습니다.",
+            "data": {
+              "playlist_id": 12,
+              "music_id": 42,
+              "track_order": 3,
+              "music_count": 3,
+              "duplicated": false,
+              "created_at": "2026-09-14T09:31:20"
+            }
+          }
+  - name: 200 이미 담긴 곡
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "이미 플레이리스트에 담긴 곡입니다.",
+            "data": {
+              "playlist_id": 12,
+              "music_id": 42,
+              "track_order": 1,
+              "music_count": 3,
+              "duplicated": true,
+              "created_at": "2026-09-14T08:02:11"
+            }
+          }
+  - name: 400 음악 번호 미입력
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_REQUEST_BODY",
+            "message": "데이터가 잘못 입력되었습니다.",
+            "error_details": {
+              "musicId": "음악 번호가 입력되지 않았습니다."
+            }
+          }
+  - name: 403 내 플레이리스트가 아님
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_PLAYLIST_ACCESS_DENIED",
+            "message": "플레이리스트에 접근할 권한이 없습니다.",
+            "error_details": null
+          }
+  - name: 404 플레이리스트 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_PLAYLIST_NOT_FOUND",
+            "message": "요청한 플레이리스트를 찾을 수 없습니다.",
+            "error_details": null
+          }
+  - name: 404 음악 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_MUSIC_NOT_FOUND",
+            "message": "요청한 음악을 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 플레이리스트 곡 추가
+
+  `POST /api/v1/playlist/{playlist_id}/track` · 인증 필요
+
+  내 플레이리스트의 **맨 뒤에 곡 한 곡**을 추가합니다. 여러 곡을 한 번에 넣을 수는 없습니다.
+
+  ## 경로 변수
+
+  | 변수 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `playlist_id` | int | 곡을 넣을 플레이리스트 번호 |
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 규칙 |
+  | --- | --- | --- | --- |
+  | `music_id` | int | ✅ | 1 이상. 삭제된 곡은 넣을 수 없습니다 |
+
+  ## 중복은 오류가 아닙니다
+
+  이미 담긴 곡을 다시 추가하면 **200 으로 응답**하고 `duplicated: true` 를 내려 줍니다.
+  아무것도 저장하지 않으므로 `track_order` · `created_at` 은 **기존 수록곡의 값**이고
+  `music_count` 도 그대로입니다. 클라이언트는 `duplicated` 만 보고 안내 문구를 바꾸면 됩니다.
+
+  > 중복을 4xx 로 만들지 않은 이유: 요청한 상태(“이 곡이 이 플레이리스트에 있다”)가
+  > 이미 이뤄져 있어 실패가 아니고, 오류로 내려보내면 클라이언트가 재시도·롤백 경로를 타게 됩니다.
+
+  ## 응답 데이터
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `playlist_id` | int | 플레이리스트 번호 |
+  | `music_id` | int | 추가한(또는 이미 있던) 곡 번호 |
+  | `track_order` | int | 트랙 순서. 새로 추가하면 마지막 순서 + 1 |
+  | `music_count` | int | 추가 후 수록곡 수. 중복이면 변하지 않음 |
+  | `duplicated` | bool | 이미 담겨 있던 곡이면 `true` |
+  | `created_at` | datetime | 수록곡이 추가된 일시 |
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | `music_id` 누락 또는 0 이하. `error_details` 의 키는 **자바 필드명 `musicId`** 다 — 전역 핸들러가 `FieldError.getField()` 를 그대로 쓰고, Jackson 의 snake_case 는 Map 키에 적용되지 않는다 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 404 | 요청 본문 누락/파싱 실패 |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_PLAYLIST_ACCESS_DENIED` | 403 | 내 플레이리스트가 아님 (소유자 없는 시스템 플레이리스트 포함) |
+  | `MUPID_PLAYLIST_NOT_FOUND` | 404 | 없거나 이미 삭제된 플레이리스트 |
+  | `MUPID_MUSIC_NOT_FOUND` | 404 | 없거나 삭제된 곡 |
+  | `MUPID_USER_NOT_FOUND` | 404 | 토큰의 사용자가 없음 |
+  | `MUPID_PLAYLIST_TRACK_CONFLICT` | 409 | 같은 곡을 동시에 추가해 유니크 제약에 걸림. 재시도하면 중복 응답이 됩니다 |

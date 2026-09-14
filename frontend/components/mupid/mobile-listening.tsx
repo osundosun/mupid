@@ -1,7 +1,7 @@
 'use client';
 import { VinylRecord } from './vinyl-record';
 import { Field } from '@base-ui/react/field';
-import { ArrowUpRight, AudioWaveform, ListMusic, Sparkles } from 'lucide-react';
+import { AudioWaveform, ListMusic, Sparkles } from 'lucide-react';
 import { Slider } from '@/components/ui/slider';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { formatTime } from '@/lib/mupid-data';
@@ -11,15 +11,15 @@ import { PlaybackStatus } from './playback-status';
 export function MobileListening({ model: m }: { model: MupidModel }) {
   return (
     <section className="mobile-listening" aria-label="지금 듣는 음악">
-      <div className="mobile-listening-topline">
-        <span>
-          <PlaybackStatus playing={m.playing} />
-          NOW PLAYING
-        </span>
-        <button className="text-link" onClick={() => m.go('player')}>
-          플레이어 <ArrowUpRight aria-hidden="true" />
-        </button>
-      </div>
+{/* 재생 중일 때만 표시한다. 플레이어는 하단 탭과 레코드 탭으로 갈 수 있다. */}
+      {m.playing && (
+        <div className="mobile-listening-topline">
+          <span>
+            <PlaybackStatus playing />
+            지금 재생 중
+          </span>
+        </div>
+      )}
       <button
         className="mobile-record-stage"
         aria-label={`${m.active.title} 플레이어 열기`}
@@ -69,16 +69,16 @@ export function MobileListening({ model: m }: { model: MupidModel }) {
         <div className="mobile-listening-actions">
           <button onClick={() => m.openMoment()}>
             <AudioWaveform aria-hidden="true" />
-            좋아한 구간
+            저장한 순간
           </button>
           <button onClick={m.openChat}>
             <Sparkles aria-hidden="true" />
-            AI로 이어듣기
+            AI로 추천받기
           </button>
           <button
             className="icon-button"
-            aria-label="재생 목록 열기"
-            onClick={() => m.setQueueDialog(true)}
+            aria-label="재생목록 열기"
+            onClick={() => { m.setLibraryTab('queue'); m.go('library'); }}
           >
             <ListMusic />
           </button>

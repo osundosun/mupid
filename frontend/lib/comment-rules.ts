@@ -27,3 +27,30 @@ export function validateComment(body: string, at: number, duration: number) {
 export const commentable = (
   track: Pick<Track, 'musicId'> | null | undefined,
 ): track is Track & { musicId: number } => typeof track?.musicId === 'number';
+
+/**
+ * 지금 로그인한 사람의 번호.
+ *
+ * 화면이 "로그인했는가" 를 묻는 데 쓴다. 닉네임이 같다고 같은 사람으로 보면
+ * 안 되고, 체험용 계정의 번호를 서버 회원 번호와 섞어서도 안 된다.
+ */
+export function commentUserId(
+  session: { kind: string; userId?: number } | null | undefined,
+): number | null {
+  return session?.kind === 'authenticated'
+    && Number.isSafeInteger(session.userId)
+    && (session.userId as number) > 0
+    ? (session.userId as number)
+    : null;
+}
+
+/**
+ * 이 댓글을 고치고 지울 수 있는가.
+ *
+ * **서버가 판정한 `mine` 만 본다.** 화면이 `user_id` 를 비교하게 두면 비교를
+ * 빠뜨렸을 때 남의 댓글에 수정 버튼이 뜬다. `userId` 는 비로그인 상태에서
+ * 버튼이 뜨지 않게 하는 안전장치로만 쓴다.
+ */
+export function ownsComment(comment: { mine?: boolean }, userId: number | null) {
+  return userId !== null && comment.mine === true;
+}

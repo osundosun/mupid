@@ -21,6 +21,11 @@
 @import './long-heart-mascot.css';
 @import './welcome-redesign.css';
 @import './track-comments.css';
+@import './nav-account.css';
+@import './explore-categories.css';
+@import './readability.css';
+@import './responsive-polish.css';
+@import './dialog-viewport.css';
 @custom-variant dark (&:is(.dark *));
 @font-face {
   font-family: 'Pretendard';
