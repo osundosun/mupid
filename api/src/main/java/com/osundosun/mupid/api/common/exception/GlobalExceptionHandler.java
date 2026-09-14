@@ -69,6 +69,9 @@ public class GlobalExceptionHandler {
         }
         return ResponseEntity
                 .status(GlobalErrorCode.INVALID_REQUEST_BODY.getStatus())
+                // businessError 와 같은 규약을 지킨다. 오류 코드는 모든 오류 응답의
+                // 헤더에도 실린다 (본문이 사라지는 경로 대비).
+                .header(ERROR_CODE_HEADER, GlobalErrorCode.INVALID_REQUEST_BODY.getCode())
                 .body(ErrorResponse.of(GlobalErrorCode.INVALID_REQUEST_BODY, errorBody));
     }
 

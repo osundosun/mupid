@@ -34,6 +34,13 @@ export type TransportResponse = {
 };
 
 export interface Transport {
+  /**
+   * 요청을 보내고 응답을 돌려준다.
+   *
+   * **오류 응답(2xx 아님)의 본문은 `responseType` 과 무관하게 JSON 으로 파싱해
+   * `data` 에 담아야 한다.** 서버 오류는 항상 JSON 이고, 화면이 보여줄 메시지가
+   * 거기 들어 있다. 다른 구현으로 갈아끼울 때도 이 규칙을 지켜야 한다.
+   */
   send(request: TransportRequest): Promise<TransportResponse>;
 }
 
@@ -47,13 +54,7 @@ export class TransportError extends Error {
   }
 }
 
-const readBody = async (
-  response: Response,
-  responseType: ResponseType,
-): Promise<unknown> => {
-  if (responseType === 'none' || response.status === 204) return undefined;
-  if (responseType === 'arraybuffer') return response.arrayBuffer();
-  if (responseType === 'text') return response.text();
+const parseJson = async (response: Response): Promise<unknown> => {
   const text = await response.text();
   if (!text) return undefined;
   try {
@@ -63,6 +64,21 @@ const readBody = async (
     // 본문을 통째로 메시지에 싣지 않고 상위에서 상태 코드로 판단하게 둔다.
     return undefined;
   }
+};
+
+const readBody = async (
+  response: Response,
+  responseType: ResponseType,
+): Promise<unknown> => {
+  if (response.status === 204) return undefined;
+  // 오류 응답은 responseType 과 무관하게 JSON 으로 읽는다. 'none' 이나
+  // 'arraybuffer' 로 선언했다고 서버가 준 오류 메시지까지 버리면, 화면에
+  // "요청에 실패했어요" 같은 빈 문구밖에 못 보여준다.
+  if (!response.ok) return parseJson(response);
+  if (responseType === 'none') return undefined;
+  if (responseType === 'arraybuffer') return response.arrayBuffer();
+  if (responseType === 'text') return response.text();
+  return parseJson(response);
 };
 
 export function createFetchTransport(): Transport {
