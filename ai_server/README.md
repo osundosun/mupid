@@ -1,222 +1,190 @@
-# AI 추천 서비스 인수인계서
+# AI 추천 서비스
 
-2026-09-14 · `S15P21A204-218`
+`S15P21A204-218` · 2026-09-14
 
-백엔드 담당자가 추천 서비스를 이어받아 **실행하고 연결하고 검증**하는 데 필요한 것만 적는다.
+기존 Jupyter 서버의 추천 서비스를 옮겨 온 FastAPI 서비스다. **BE 는 GPU 서버에 접속하지 않고
+이 저장소만으로 실행할 수 있다.**
 
-ID·오류·재시도·타임아웃 계약은 아래가 기준이며 여기서 되풀이하지 않는다.
-`origin/ai/docs/S15P21A204-231-integration-contract` 브랜치의
-`infra/AI-SPRING-CONTRACT.md` · `infra/DEPLOYMENT-CONTRACT.md` ·
-`infra/AI-INTEGRATION-2026-09-11.md`
+추천 점수·가중치·필터·랭킹은 원본 그대로다. 재학습하지 않는다.
 
 ---
 
-## 1. 범위와 담당
+## 실행
 
-```
-React → Spring Boot → FastAPI → 추천 모델·색인
+```bash
+python -m venv .venv && . .venv/Scripts/activate      # Linux: . .venv/bin/activate
+pip install -r ai_server/requirements.txt
+pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0
+
+export MUPID_AI_ARTIFACT_DIR=/모델·색인을/둔/경로
+uvicorn ai_server.app.main:app --host 0.0.0.0 --port 8100
 ```
 
-| | 담당 |
+Python **3.12**. GPU 는 필요 없다 — `torch` 는 반드시 CPU 빌드로 받는다. 기본 PyPI 판은
+CUDA 라이브러리를 끌고 와 수 GB 가 된다.
+
+### 환경변수
+
+| 변수 | 뜻 |
 |---|---|
-| 백엔드 | FastAPI 실행 환경, Spring 호출, MySQL ID 연결, 운영 적용 |
-| AI | 원본 코드·모델·색인 전달, 알고리즘·산출물 검증 지원 |
+| `MUPID_AI_ARTIFACT_DIR` | 모델·색인 루트 (**필수**) |
+| `MUPID_AI_PORT` | 포트. 기본 8100 |
+| `MUPID_ID_MAP` | 숫자 ID 매핑표. 비우면 `<ARTIFACT_DIR>/data/proc/mupid/id_map.parquet` |
+| `MUPID_AI_NLP_URL` | 자연어 해석기 주소. 비우면 `search` 가 501 |
 
-React 는 FastAPI 를 직접 호출하지 않는다.
+값은 `.env.example` 을 보고 배포 환경에 넣는다. 실제 값은 커밋하지 않는다.
 
-**Docker 적용은 보류다.** 우선 Python 3.12 가상환경에서 FastAPI 를 직접 실행한다.
+## 모델·색인
 
-이 디렉터리에는 **이 문서만 둔다.** FastAPI 코드·Dockerfile·requirements·모델·색인·`.env`·
-테스트는 아직 만들지 않는다.
-
-## 2. 전달할 코드
-
-GPU 서버 `~/rec_mupid` 기준.
-
-| 파일 | 역할 |
-|---|---|
-| `src/m16_service.py` | 추천 계산 |
-| `src/internal_api.py` | Spring 용 내부 API |
-| `src/ids.py` | 레거시 ↔ MySQL ID 매핑 |
-| `src/m09_labels.py` | 행동 라벨 |
-| `src/m10_features.py` | 특징 구성 |
-| `src/m11_stage1.py` | 랭킹 모델 로드 |
-
-뒤 세 개는 함수 안에서 지연 import 된다(6장). 여섯 개를 한 묶음으로 가져간다.
-
-데모 UI, Jupyter 노트북, 로그·캐시, 원본 음원은 전달하지 않는다.
-
-## 3. 전달할 모델·색인
+**Git 에 넣지 않는다.** 별도로 전달받아 `MUPID_AI_ARTIFACT_DIR` 아래에 이 구조로 둔다.
 
 ```
-moments.parquet        구간 메타
-moments_emb.npy        MERT 임베딩
-features_v1.npz        랭킹 입력 특징
-stage1_section.npy     구간 랭킹 표현
-stage1.pt              랭킹 모델 가중치
+<ARTIFACT_DIR>/
+└─ data/
+   ├─ proc/mupid/
+   │  ├─ moments.parquet            구간 메타
+   │  ├─ moments_emb.npy            MERT 임베딩
+   │  ├─ features_v1.npz            랭킹 입력 특징
+   │  ├─ stage1_section.npy         구간 랭킹 표현
+   │  ├─ stage1.pt                  랭킹 모델
+   │  ├─ content.parquet            곡 특징 (BPM 등)
+   │  ├─ flow_meta.parquet          곡 메타
+   │  ├─ labels_service.parquet     사용자 선호 구간
+   │  ├─ logistic_flow_stage1.json  결합기
+   │  ├─ clap_moments.npz           (선택) 자연어 의미 점수
+   │  ├─ serve/                     prefs · onboarding
+   │  └─ logs/                      행동 이벤트
+   └─ test_pipeline/                jamendo_catalog 등
 ```
 
-**앞의 네 색인은 같은 행 번호로 서로를 가리킨다.** 한 파일만 교체하면 엉뚱한 곡을
-추천하면서도 서비스는 정상처럼 뜬다. 묶음 단위로 전달하고 묶음 단위로 교체한다.
+앞의 네 색인은 **같은 행 번호로 서로를 가리킨다.** 하나만 교체하면 엉뚱한 곡을 추천하면서도
+서비스는 정상처럼 뜬다. 반드시 묶음으로 교체한다.
 
-전달 전에 `manifest.json` 을 함께 만든다. 없으면 받는 쪽이 무결성을 확인할 수 없다.
+`labels_service.parquet` 을 빠뜨리면 오류 없이 **모든 사용자가 콜드스타트 추천**을 받는다.
+이식 중 실제로 겪었다. 기동 로그의 곡·구간 수와 추천 `reason_code` 를 확인할 것.
 
-| 항목 | 내용 |
-|---|---|
-| `filename` | 파일명 |
-| `bytes` | 바이트 크기 |
-| `sha256` | SHA-256 |
-| `rows` / `dims` | 행 수와 차원 |
-| `model_version` / `data_version` | 모델·데이터 버전 |
+## API
 
-## 4. 실행 조건
+BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 
-| | |
-|---|---|
-| Python | 3.12 |
-| 웹 | FastAPI, Uvicorn |
-| 데이터 | NumPy, Pandas, PyArrow |
-| 모델 | **CPU** PyTorch |
-| 군집 | SciPy |
+| 메서드 | 경로 | 뜻 |
+|---|---|---|
+| GET | `/health` | 프로세스 생존 |
+| GET | `/internal/ready` | 요청을 받을 수 있는가 |
+| POST | `/internal/recommendations/daily` | 오늘의 추천 |
+| POST | `/internal/recommendations/next` | 이어 듣기 |
+| POST | `/internal/recommendations/search` | 자연어 검색 |
 
-- 모든 모듈의 산출물 경로를 **`MUPID_AI_ARTIFACT_DIR` 하나로 통일**한다(6장·8장).
-- 비밀값과 대용량 산출물은 Git 에 넣지 않는다.
+### 요청
 
-## 5. API · ID · 준비 상태
-
-### 필수 API
-
-```
-GET  /health
-GET  /internal/ready
-POST /internal/recommendations/daily
-POST /internal/recommendations/next
-POST /internal/recommendations/search
+```json
+{ "recommendation_id": 5001, "user_id": 15, "limit": 10,
+  "exclude_music_ids": [], "current_music_id": 148,
+  "current_music_section_id": 1204, "position_ms": 58000 }
 ```
 
-`search` 는 자연어 해석기가 있어야 조건을 뽑는다. 해석기 없이 열면 사용자가 적은 조건을
-말없이 무시하게 된다 → `S15P21A204-219`.
+`recommendation_id`·`user_id` 만 필수. 뒤 세 개는 `next` 전용, `query` 는 `search` 전용이다.
+타입이 엄격하다 — `"5001"` 같은 문자열이나 실수 `limit` 은 400 으로 거부한다.
 
-### 추천 결과 최소 필드
+### 응답
 
+```json
+{ "recommendation_id": 5001,
+  "items": [
+    { "music_id": 900108, "music_section_id": 9001318,
+      "start_time_ms": 79490, "end_time_ms": 92740,
+      "section_label": "VERSE", "rank_order": 1, "score": 1.0,
+      "reason_code": "COLD_START", "reason": "…" }
+  ],
+  "shortfall": 0, "model_version": "mupid-stage1-v1" }
 ```
-music_id  music_section_id  start_time_ms  end_time_ms  section_label
-rank_order  score  reason_code  reason
-```
 
-`section_label` 은 ERD ENUM 과 같은 대문자다(`CHORUS`, `VERSE` …). `reason` 은 저장된 특징과
-`reason_code` 로 만드는 정해진 문장이며 자유 생성하지 않는다.
+- 같은 `music_id` 는 한 번만 나온다
+- 후보가 모자라면 임의로 채우지 않고 `shortfall` 에 부족분을 적는다
+- `section_label` 은 ERD ENUM 과 같은 대문자
+- `reason_code` 4종: `SIMILAR_PREFERRED_MOMENT` · `QUERY_SEMANTIC_MATCH` · `EXPLORE_NEW` ·
+  `COLD_START`. 늘 수 있으니 모르는 값에서 실패하지 말 것
 
-### ID 규칙
+### 오류
+
+| `error_code` | HTTP | 뜻 |
+|---|---|---|
+| `INVALID_REQUEST` | 400 | 타입·범위·미정의 필드 |
+| `MUSIC_ID_MAPPING_NOT_FOUND` | 404 | 숫자 ID 매핑 없음 |
+| `SECTION_ID_MAPPING_NOT_FOUND` | 404 | 〃 (구간) |
+| `NO_CANDIDATES` | 404 | **조건에 맞는 곡이 없음 — 장애가 아니다.** 빈 목록으로 전달 |
+| `SEARCH_NOT_CONFIGURED` | 501 | 자연어 해석기 미설정 → `S15P21A204-219` |
+| `INDEX_NOT_READY` | 503 | 색인·매핑 미완. 재시도 대상 |
+| `INTERNAL_ERROR` | 500 | 그 밖. 재시도 대상 |
+
+읽기 타임아웃 **5초**, 재시도는 `503`·`500`·타임아웃에만 1회. `400`·`404` 는 재시도하지 않는다.
+
+### `/internal/ready`
+
+`/health` 가 200 이어도 트래픽을 받지 않는다. 아래가 모두 맞아야 200 이다.
+
+1. 모델 로드 2. 색인 4종 행 수 일치 3. `emb_row` 0부터 연속
+4. 매핑 1:1 5. 추천 풀 전체가 숫자 ID 로 매핑됨
+
+**MySQL 매핑이 없으면 503 이 정상이다.** 가짜 ID 로 통과시키지 않는다.
+
+## ID 규칙
 
 | 대상 | 타입 |
 |---|---|
 | `music_id` | MySQL `INT` |
 | `music_section_id` | MySQL `INT` |
 | `recommendation_id` | MySQL `BIGINT` |
-| Pinecone vector ID | `moment:{music_section_id}:mert-v1` |
 
-- **AI 는 숫자 ID 를 만들지 않는다.** MySQL 이 발급한 값을 받아 쓴다.
-- 레거시 문자열 ID 와 MySQL 숫자 ID 는 **1:1** 이어야 한다.
+AI 는 숫자 ID 를 만들지 않는다. MySQL 이 발급한 값을 `id_map.parquet` 으로 받아 쓰며, 레거시
+문자열 ID 와 **1:1** 이어야 한다. 위반하면 적재를 거부한다.
 
-### `/internal/ready` 200 조건
+전체 계약은 `origin/ai/docs/S15P21A204-231-integration-contract` 의
+`infra/AI-SPRING-CONTRACT.md` 를 본다.
 
-`/health` 가 200 이어도 트래픽을 받지 않는다. 아래가 **모두** 맞아야 한다.
+## 테스트
 
-1. 모델 로드 성공
-2. 색인 4종 행 수·순서 일치
-3. `emb_row` 가 0부터 연속
-4. ID 매핑 1:1
-5. 추천 풀 전체가 숫자 ID 로 매핑됨
-
-## 6. 확인된 이식 문제
-
-원본은 **파일 위치를 기준으로 경로와 모듈을 계산한다.** 그대로 복사하면 아래 순서로 실패한다.
-
-| 증상 | 원인 | 조치 |
-|---|---|---|
-| `ModuleNotFoundError: m10_features` | 함수 안 지연 import | `m09`·`m10`·`m11` 을 함께 두고 import 경로 고정 |
-| 엉뚱한 경로 조회 | 모듈마다 ROOT 를 따로 계산 | 전부 `MUPID_AI_ARTIFACT_DIR` 하나만 보게 한다 |
-| `ModuleNotFoundError: scipy` | `build_dna` 의 계층 군집 | 런타임 의존성에 `scipy` 포함 |
-
-**세 건 모두 정적 검사로는 안 잡힌다.** 실제 추천 API 를 호출해야 드러난다.
-
-### 응답 시간
-
-| 사용자 | p50 | p95 |
-|---|---|---|
-| 청취 이력 없음 | 0.30초 | 0.30초 |
-| 청취 이력 있음 | **2.22초** | 2.23초 |
-
-초기 Spring 읽기 타임아웃은 **5초**로 둔다. 이력 사용자가 느린 원인은 요청마다 행동 로그를
-전수 스캔하는 구조다. 개선은 `S15P21A204-217`, Pinecone 실제 연결은 `S15P21A204-214`.
-
-## 7. 백엔드 진행 순서
-
-1. 원본 코드와 모델·색인 수령
-2. manifest 검증 (크기·SHA-256·행 수)
-3. Python 3.12 가상환경 구성
-4. 산출물 경로 통일
-5. `/health` 확인
-6. MySQL ID 매핑 생성·1:1 검증
-7. `/internal/ready` 확인
-8. daily·next·search 실제 응답 확인
-9. 기존 8100 과 고정 입력 결과 비교
-10. Spring 연결 및 실패 대체 처리
-
-## 8. 배포 위치와 연결
-
-확인한 현재 구성(`infra/deploy/compose.yml`, `infra/deploy/nginx.conf`).
-
-- Spring 은 **컨테이너**로 돈다 (`mupid-api`, 네트워크 `frontend`·`backend`)
-- nginx 업스트림은 `api:8800` 과 `storage:8888` 뿐이다
-- `MUPID_AI_*` 환경변수는 compose 에도 `api` 에도 **아직 없다**
-
-그래서 FastAPI 를 호스트 가상환경에서 맨 프로세스로 띄우면 **컨테이너 안의 Spring 이
-`ai-server:8100` 으로 닿지 못한다.** 둘 중 하나를 골라야 한다.
-
-| 안 | 방법 | 비고 |
-|---|---|---|
-| A. 호스트 실행 | `api` 에 `extra_hosts: ["host.docker.internal:host-gateway"]` 를 주고 `MUPID_AI_BASE_URL=http://host.docker.internal:8100` | Docker 보류와 맞는다 |
-| B. compose 서비스 | AI 를 `backend` 네트워크에 올리고 `MUPID_AI_BASE_URL=http://ai:8100` | Docker 결정이 선행 |
-
-어느 쪽이든 `api.environment` 에 아래를 넣어야 한다. 계약 권장 타임아웃은 5초다.
-
-```
-MUPID_AI_BASE_URL
-MUPID_AI_REQUEST_TIMEOUT_SECONDS
+```bash
+export MUPID_AI_ARTIFACT_DIR=/경로
+pytest ai_server/tests -q
 ```
 
-**nginx 에 AI 를 노출하지 않는다.** `/internal` 은 인증이 없고 Spring 만 부르는 전제다.
-외부 포트를 열면 누구나 추천을 호출할 수 있다.
+모델·색인이 없으면 통과로 위장하지 않고 건너뛴다. 시험용 ID 매핑은 임시 디렉터리에만
+만들고 운영 파일로 남기지 않는다.
 
-모델·색인은 호스트 경로에 두고 `MUPID_AI_ARTIFACT_DIR` 로 가리킨다. 어느 경로에 둘지와
-백업 대상에 넣을지는 인프라 담당과 정한다.
+### 확인한 것 (2026-09-14)
 
-## 9. 완료 조건과 미완료 항목
-
-### 완료 조건
-
-- `/health`, `/internal/ready` 200
-- 색인·manifest·ID 오류 0건
-- 추천 응답 필드 정상 (5장 목록)
-- 한 응답에서 같은 `music_id` 중복 0건
-- **결과 없음과 서버 장애를 구분** — 조건에 맞는 곡이 없으면 임의로 채우지 않고 빈 결과와 사유
-- 기존 8100 과 회귀 비교 기록
-- 이력 유무별 응답 시간 측정
-- 비밀값·음원·대용량 산출물 Git 포함 0건
-- React 가 FastAPI 를 직접 호출하지 않음
-
-### 아직 미완료
-
-| 항목 | 막고 있는 것 |
+| 항목 | 결과 |
 |---|---|
-| 원본 코드 전달 위치 | 어디에 둘지 미정 |
-| 모델·색인 전달 위치와 manifest | manifest 미생성 |
-| SciPy 포함 후 실제 추천 응답 | **한 번도 성공 확인 못 함** |
-| MySQL 숫자 ID 연결 | 적재 전 |
-| 8100 회귀 비교 | 위 두 건에 막힘 |
-| Spring 통합 호출 | 백엔드 착수 전 |
-| 운영 재시작·종료·롤백 | 실행 방식 확정 전 |
+| 깨끗한 Python 3.12 환경 설치·전체 import | 통과 |
+| `/health` 200 · 색인 65,540행 4종 일치 | 통과 |
+| 시험 매핑으로 `/internal/ready` 200 | 통과 |
+| `daily`·`next` 실제 추천 응답 | 통과 |
+| 응답 필드·시간 범위·`music_id` 중복 0건 | 통과 |
+| 잘못된 요청 400 · 후보 없음과 장애 구분 | 통과 |
+| **기존 8100 과 고정 입력 3건 비교** | **곡·점수까지 완전 일치** |
+| `search` (해석기 없음) 501 | 통과 |
 
-이 항목을 통과하기 전에는 이식을 완료로 처리하지 않는다.
+pytest 11건 전부 통과.
+
+### 아직 확인하지 않은 것
+
+- `search` 의 실제 자연어 추천 — 해석기가 없어 501 만 확인했다 → `S15P21A204-219`
+- MySQL 실데이터 ID 매핑 — 시험용 임시 매핑으로만 검증
+- Spring 통합 호출, 운영 재시작·종료·롤백
+- Pinecone 연결 → `S15P21A204-214`
+
+이력이 있는 사용자는 응답이 p50 **2.22초**다(콜드스타트 0.30초). 요청마다 행동 로그를 전수
+스캔하는 구조이며 개선은 `S15P21A204-217`.
+
+## BE 가 이어서 할 일
+
+1. 모델·색인 수령 후 `MUPID_AI_ARTIFACT_DIR` 배치
+2. 서비스 기동, `/health` 확인
+3. MySQL 적재 후 `id_map.parquet` 생성 → `/internal/ready` 200
+4. Spring 내부 클라이언트 연결 (5초 타임아웃, 1회 재시도, 장애 시 대체 동작)
+5. 공개 API 에서 `snake_case` → `camelCase` 변환
+
+Spring 은 컨테이너로 돈다. 이 서비스를 호스트에서 직접 실행하면 컨테이너가 닿도록
+`extra_hosts` 와 `MUPID_AI_BASE_URL` 을 맞춰야 한다. **nginx 에 노출하지 않는다** —
+`/internal` 은 인증이 없고 Spring 만 호출하는 전제다.
