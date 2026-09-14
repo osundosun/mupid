@@ -160,7 +160,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                     )}
                     분
                   </p>
-                  {selected.tracks.length > 0 && <div className="playlist-transport" aria-label="플레이리스트 재생">
+                  {selected.tracks.length > 0 && m.active && <div className="playlist-transport" aria-label="플레이리스트 재생">
                     <PlayerControls model={m} onPlay={() => {
                       const sameQueue = m.queueTracks.length === selected.tracks.length && m.queueTracks.every(t => selected.tracks.some(s => s.id === t.id));
                       if (sameQueue) m.play();
@@ -211,31 +211,32 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                   description="현재 듣는 곡부터 플레이리스트를 채워보세요."
                 />
               )}
-              <div className="add-current">
+              {/* 듣고 있는 곡이 없으면 담을 것도 없다. */}
+              {m.active && <div className="add-current">
                 <span>현재 재생 중인 곡</span>
                 <strong>{m.active.title}</strong>
                 <button
                   className="secondary-button"
-                  disabled={selected.tracks.some((t) => t.id === m.active.id)}
+                  disabled={selected.tracks.some((t) => t.id === m.active?.id)}
                   onClick={() => {
                     m.setPlaylists((list) =>
                       list.map((p) =>
                         p.id === selected.id
-                          ? { ...p, tracks: [...p.tracks, m.active] }
+                          ? { ...p, tracks: [...p.tracks, m.active!] }
                           : p,
                       ),
                     );
                     m.setToast('플레이리스트에 음악을 담았어요.');
                   }}
                 >
-                  {selected.tracks.some((t) => t.id === m.active.id) ? (
+                  {selected.tracks.some((t) => t.id === m.active?.id) ? (
                     <Check />
                   ) : (
                     <Plus />
                   )}
                   추가
                 </button>
-              </div>
+              </div>}
             </div>
           ) : (
             <>

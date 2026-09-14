@@ -80,9 +80,14 @@ export function MupidApp() {
       .catch(() => { if (live) setError('음악을 불러오지 못했어요.'); });
     return () => { live = false; };
   }, [attempt]);
-  if (!data || !data.tracks.length) return <main className="mupid-shell" style={{ padding: 32 }} aria-busy={!error && !data}>
-    <output>{error || (data ? '아직 등록된 음악이 없어요.' : '음악을 준비하고 있어요…')}</output>
-    {(error || data) && <button className="secondary-button" onClick={() => { setError(''); setData(null); setAttempt(v => v + 1); }}>다시 불러오기</button>}
+  /*
+   * 곡이 한 곡도 없어도 앱은 그대로 연다 — 음악이 없을 뿐이지 고장이 아니다.
+   * 마이페이지·플레이리스트처럼 곡이 필요 없는 화면은 평소처럼 써야 한다.
+   * 여기서 막는 것은 **아직 못 받아온 동안** 과 **못 받아온 경우** 뿐이다.
+   */
+  if (!data) return <main className="mupid-shell" style={{ padding: 32 }} aria-busy={!error}>
+    <output>{error || '음악을 준비하고 있어요…'}</output>
+    {error && <button className="secondary-button" onClick={() => { setError(''); setAttempt(v => v + 1); }}>다시 불러오기</button>}
   </main>;
   return <LoadedMupidApp bootstrap={data} />;
 }
@@ -112,6 +117,8 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   const desktopDock = useDesktopPlayerDock();
   const hideMini =
     m.page === 'welcome' ||
+    // 들을 곡이 없으면 띄울 것도 없다.
+    !m.active ||
     // 가입 직후처럼 아직 한 곡도 듣지 않았다면 띄우지 않는다.
     !m.hasPlayed ||
     // 플레이어 화면에는 큰 컨트롤이 있으니 미니 플레이어를 겹치지 않는다.
@@ -229,14 +236,14 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
                 onClick={() => m.go('player')}
                 aria-label="현재 곡 플레이어 열기"
               >
-                <AlbumArt track={m.active} />
+                <AlbumArt track={m.active!} />
               </button>
               <button className="track-info" onClick={() => m.go('player')}>
                 <span className="mini-title">
-                  <strong>{m.active.title}</strong>
+                  <strong>{m.active!.title}</strong>
                   <PlaybackStatus playing={m.playing} />
                 </span>
-                <span>{m.active.artist}</span>
+                <span>{m.active!.artist}</span>
               </button>
               <MiniTimeline model={m} />
               <PlayerControls model={m} compact />

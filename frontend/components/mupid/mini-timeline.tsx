@@ -7,7 +7,11 @@ import type { MupidModel } from '@/hooks/use-mupid';
 
 export function MiniTimeline({ model: m }: { model: MupidModel }) {
   const [draft, setDraft] = useState<{ id: number; time: number } | null>(null);
-  const position = draft?.id === m.active.id ? draft.time : m.time;
+  const active = m.active;
+  // 들을 곡이 없으면 막대도 없다. 곡과 끌던 값이 둘 다 없으면 `undefined ===
+  // undefined` 가 참이 되어 없는 `draft` 를 읽으려 들기도 했다.
+  if (!active) return null;
+  const position = draft?.id === active.id ? draft.time : m.time;
   return (
     <Field.Root className="mini-timeline">
       <Field.Label className="sr-only">미니 플레이어 재생 위치</Field.Label>
@@ -15,16 +19,16 @@ export function MiniTimeline({ model: m }: { model: MupidModel }) {
       <Slider
         className="mini-seek"
         min={0}
-        max={m.active.duration}
+        max={active.duration}
         value={[position]}
         step={1}
-        onValueChange={(value) => setDraft({ id: m.active.id, time: Array.isArray(value) ? value[0] : value })}
+        onValueChange={(value) => setDraft({ id: active.id, time: Array.isArray(value) ? value[0] : value })}
         onValueCommitted={(value) => {
           m.seek(Array.isArray(value) ? value[0] : value);
           setDraft(null);
         }}
       />
-      <span aria-label="전체 재생 시간">{formatTime(m.active.duration)}</span>
+      <span aria-label="전체 재생 시간">{formatTime(active.duration)}</span>
     </Field.Root>
   );
 }

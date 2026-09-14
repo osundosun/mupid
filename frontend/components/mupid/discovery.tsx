@@ -40,10 +40,13 @@ import {
 } from './primitives';
 
 export function PlayerView({ model: m }: { model: MupidModel }) {
-  const part = getSongSectionAt(m.active, m.time || m.active.moment);
+  // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
+  const active = m.active;
+  if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
+  const part = getSongSectionAt(active, m.time || active.moment);
   // 지금 재생 중인 순간이 이미 저장돼 있는지 본다. 저장했다면 여기서 바로 해제할 수 있다.
   const savedMoment = m.moments.find(
-    (v) => v.track.id === m.active.id && v.start === part.start && v.end === part.end,
+    (v) => v.track.id === active.id && v.start === part.start && v.end === part.end,
   );
   const momentSaved = !!savedMoment;
   const [confirmUnsave, setConfirmUnsave] = useState(false);
@@ -54,8 +57,8 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
           <ChevronLeft />
         </button>
         <div>
-          <h1>{m.active.title}</h1>
-          <p>{m.active.artist}</p>
+          <h1>{active.title}</h1>
+          <p>{active.artist}</p>
         </div>
         <TrackMenu model={m} />
       </header>
@@ -63,7 +66,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
         <div className="player-art-area">
           <VinylRecord
             playing={m.playing}
-            track={m.active}
+            track={active}
             unoptimized
             className="vinyl-record"
             src="/sky-vinyl.webp"
@@ -71,13 +74,13 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             width="440"
             height="440"
           />
-          <Lyrics track={m.active} />
+          <Lyrics track={active} />
         </div>
         <div className="player-detail">
           <div className="section-pill">
             {part.label} · {formatTime(part.start)} – {formatTime(part.end)}
           </div>
-          <TrackComments key={m.active.id} model={m} />
+          <TrackComments key={active.id} model={m} />
           <div className="player-actions">
             <button
               className="secondary-button"
@@ -85,7 +88,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
               onClick={() => {
                 if (momentSaved) { setConfirmUnsave(true); return; }
                 m.setMoments((list) => [
-                  { id: Date.now(), track: m.active, start: part.start, end: part.end, section: part.label },
+                  { id: Date.now(), track: active, start: part.start, end: part.end, section: part.label },
                   ...list,
                 ]);
                 m.setToast(`${part.label} 순간을 저장했어요.`);
@@ -96,8 +99,8 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
               {momentSaved ? '저장 취소' : '이 순간 저장'}
             </button>
             <button className="secondary-button" onClick={() => { m.setLibraryTab('queue'); m.go('library'); }}><ListMusic />재생목록</button>
-            <button className="secondary-button" aria-pressed={m.liked.includes(m.active.id)} aria-label={m.liked.includes(m.active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(m.active.id)}>
-              <Heart className="pink" fill={m.liked.includes(m.active.id) ? 'currentColor' : 'none'} />
+            <button className="secondary-button" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
+              <Heart className="pink" fill={m.liked.includes(active.id) ? 'currentColor' : 'none'} />
               좋아요
             </button>
             <button
@@ -113,11 +116,11 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
               이 곡이 추천된 이유 <ChevronDown />
             </summary>
             <div className="player-reason">
-              <p className="album-name">{m.active.album}</p>
+              <p className="album-name">{active.album}</p>
               <span className="eyebrow" lang="en">WHY THIS MOMENT</span>
               <p>저장한 순간의 분위기를 따라 새로운 음악을 만나보세요.</p>
               <div className="tags">
-                {m.active.tags.map((t) => (
+                {active.tags.map((t) => (
                   <span key={t}>{t}</span>
                 ))}
               </div>
@@ -155,20 +158,23 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
   );
 }
 export function MomentView({ model: m }: { model: MupidModel }) {
-  return <MomentSelection key={m.active.id} model={m} />;
+  return <MomentSelection key={m.active?.id ?? 0} model={m} />;
 }
 function MomentSelection({ model: m }: { model: MupidModel }) {
+  // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
+  const active = m.active;
+  if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
   const editing = m.editingMomentId !== null;
   // 수정으로 들어왔으면 그 순간을 미리 골라 둔다.
   const [selected, setSelected] = useState<number[]>(() => {
     if (!editing) return [];
-    const index = m.active.sections.findIndex(
+    const index = active.sections.findIndex(
       (s) => s.start === m.momentRange[0] && s.end === m.momentRange[1],
     );
     return index < 0 ? [] : [index];
   });
   const [saved, setSaved] = useState(false);
-  const parts = m.active.sections.filter((_, i) => selected.includes(i));
+  const parts = active.sections.filter((_, i) => selected.includes(i));
   return <div className="content-page moment-page">
     <PageHeader
       title={editing ? '순간 수정' : '저장한 순간'}
@@ -181,22 +187,22 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
           <h2>{editing ? '어느 순간으로 바꿀까요?' : '마음에 드는 순간을 저장하세요.'}</h2>
           <p>{editing ? '새로 고른 순간이 기존 순간을 대신해요.' : '인트로·벌스·코러스 등을 여러 개 선택할 수 있어요.'}</p>
         </div>
-        <TrackRow track={m.active} model={m} detail={parts.length ? parts.map(p => p.label).join(' · ') : '저장할 순간을 선택해 주세요'} />
+        <TrackRow track={active} model={m} detail={parts.length ? parts.map(p => p.label).join(' · ') : '저장할 순간을 선택해 주세요'} />
         <div className="moment-editor">
           <div className="song-parts" aria-label="저장할 순간 다중 선택">
-            {m.active.sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) ? 'selected' : ''} onClick={() => {
+            {active.sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) ? 'selected' : ''} onClick={() => {
               setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : [...ids, i]);
               setSaved(false);
             }}>{part.label}</button>)}
           </div>
-          <Waveform duration={m.active.duration} ranges={parts} />
-          <div className="time-labels"><span>00:00</span><span>{formatTime(m.active.duration)}</span></div>
+          <Waveform duration={active.duration} ranges={parts} />
+          <div className="time-labels"><span>00:00</span><span>{formatTime(active.duration)}</span></div>
           {/* 고른 순간은 여기서 바로 빼는 게 빠르다. 위 칩을 다시 찾아 누를 필요가 없다. */}
           <div className="track-menu-options moment-part-list">
             {parts.map(part => {
-              const index = m.active.sections.indexOf(part);
+              const index = active.sections.indexOf(part);
               return <div className="moment-part-row" key={part.start}>
-                <button onClick={() => m.playSavedMoment({ id: part.start, track: m.active, start: part.start, end: part.end, section: part.label })} aria-label={part.label + ' 미리듣기'}>
+                <button onClick={() => m.playSavedMoment({ id: part.start, track: active, start: part.start, end: part.end, section: part.label })} aria-label={part.label + ' 미리듣기'}>
                   <Play /><span>{part.label}</span><small>{formatTime(part.start)} – {formatTime(part.end)}</small>
                 </button>
                 <button
@@ -223,7 +229,7 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
             m.setToast('저장한 순간을 바꿨어요.'); setSaved(true);
             return;
           }
-          const entries = parts.map((p, i) => ({ id: Date.now() + i, track: m.active, start: p.start, end: p.end, section: p.label }));
+          const entries = parts.map((p, i) => ({ id: Date.now() + i, track: active, start: p.start, end: p.end, section: p.label }));
           m.setMoments(list => [...entries.filter(e => !list.some(v => v.track.id === e.track.id && v.start === e.start && v.end === e.end)), ...list]);
           m.setToast('선택한 순간을 저장했어요.'); setSaved(true);
         }}>{saved ? <Check /> : <Bookmark />}{saved ? (editing ? '수정 완료' : '저장 완료') : (editing ? '이 순간으로 바꾸기' : '선택한 순간 저장하기')}</button>
@@ -234,16 +240,19 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
 }
 export { SearchView } from './explore';
 export function SimilarView({ model: m }: { model: MupidModel }) {
+  // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
+  const active = m.active;
+  if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
   const tracks = m.tracks;
   const pool = tracks.filter(
-    (t) => t.id !== m.active.id && !m.ignored.includes(t.id),
+    (t) => t.id !== active.id && !m.ignored.includes(t.id),
   );
   const results = m.showAllSimilar ? pool : pool.slice(0, 4);
   return (
     <div className="content-page similar-page">
       <PageHeader title="비슷한 순간 추천" onBack={() => m.go('moment')} />
       <p className="eyebrow source-label">이 순간에서 시작했어요</p>
-      <TrackRow model={m} track={m.active} />
+      <TrackRow model={m} track={active} />
       <div className="intro-copy">
         <h2>이런 순간은 어때요?</h2>
         <p>저장한 순간의 분위기를 이어가 보세요.</p>

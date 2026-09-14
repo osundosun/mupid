@@ -151,3 +151,12 @@
 - **해결**: 취소(`signal.aborted`)가 아닌 실패는 그대로 던진다. 화면이 "음악을 불러오지 못했어요" 로 갈라 알린다.
 - **덧붙임**: 곡이 0개여도 화면은 깨지지 않는다. `MupidApp` 의 `if (!data || !data.tracks.length)` 가 `LoadedMupidApp` 을 아예 띄우지 않아서, `useMupid` 의 `active = tracks[0]`(빈 목록이면 `undefined`)에 닿지 않는다. **다만 이 가드가 유일한 방벽이다** — 그 검사를 지나 곡 없는 `bootstrap` 이 들어오면 `active.title` 부터 터진다.
 - **근거**: `frontend/lib/stream-catalog.ts`, `frontend/components/mupid-app.tsx:83`
+
+### 곡이 하나도 없으면 앱 전체가 막힌다 — 해소됨
+
+- **원인**: `MupidApp` 의 가드가 `if (!data || !data.tracks.length)` 였다. 곡이 0개면 `LoadedMupidApp` 을 아예 띄우지 않아, 곡이 필요 없는 마이페이지·플레이리스트·탐색 필터·리포트까지 함께 막혔다. 음악이 없는 것과 앱이 고장 난 것은 다른 일인데 화면은 똑같이 보였다.
+- **왜 그렇게 되어 있었나**: `useMupid` 의 `active` 가 `tracks[0]` 로 시작하는데 타입은 `Track` 이다. 곡이 없으면 `undefined` 라 `active.title` 부터 터진다. 저 가드가 그걸 막는 **유일한 방벽**이었다.
+- **해결**: `active` 를 `Track | null` 로 바꾸고 가드는 "아직 못 받아왔을 때" 만 남긴다. 곡을 다루는 화면(`PlayerView`·`MomentSelection`·`SimilarView`·`MobileListening`·`TrackComments`)은 첫 줄에서 지역 상수로 받아 없으면 빈 화면을 돌려주고, 홈의 "지금 듣는 곡" 카드·미니 플레이어·플레이리스트 담기처럼 **화면의 일부**인 자리는 그 조각만 접는다. `AlbumArt`·`VinylRecord`·`LikeButton` 은 곡이 없으면 빈 커버를 그리거나 아무것도 그리지 않는다.
+- **주의**: `m.active` 를 지역 상수 `active` 로 받는 까닭은 JSX 안의 콜백에서는 `m.active` 의 좁히기가 풀리기 때문이다. `m.active` 를 그대로 쓰면 핸들러마다 `!` 를 붙이게 된다.
+- **곁들여 고친 것**: `MiniTimeline` 은 끌던 값과 현재 곡이 **둘 다 없으면** `undefined === undefined` 가 참이 되어 없는 `draft` 를 읽었다.
+- **근거**: `frontend/components/mupid-app.tsx`, `frontend/hooks/use-mupid.ts`, `frontend/components/mupid/*`

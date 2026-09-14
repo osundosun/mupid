@@ -117,7 +117,8 @@ export const chatSuggestions = [
 
 export function deriveChatRecommendations(
   prompt: string,
-  currentTrack: Track,
+  // 아직 한 곡도 고르지 않았을 수 있다. 그때는 기준 곡 없이 고른다.
+  currentTrack: Track | null,
   pool: Track[],
 ) {
   const normalized = prompt.toLowerCase();
@@ -126,21 +127,21 @@ export function deriveChatRecommendations(
   const wantsVocal = /보컬|목소리|노래|감성|여운/.test(normalized);
   const wantsRhythm = /집중|비트|리듬|그루브|베이스/.test(normalized);
   const wantsSimilar = /비슷|유사|같은|유지/.test(normalized);
-  const currentEnergy = moodEnergy[currentTrack.mood] ?? 3;
+  const currentEnergy = (currentTrack ? moodEnergy[currentTrack.mood] : undefined) ?? 3;
   const targetEnergy = wantsCalm
     ? Math.max(1, currentEnergy - 1.5)
     : wantsEnergy
       ? Math.min(5, currentEnergy + 1.5)
       : currentEnergy;
-  const candidates = pool.filter((track) => track.id !== currentTrack.id);
+  const candidates = pool.filter((track) => track.id !== currentTrack?.id);
   const ranked = candidates
     .map((track) => {
       const energy = moodEnergy[track.mood] ?? 3;
-      const sharedTags = track.tags.filter((tag) =>
-        currentTrack.tags.includes(tag),
-      ).length;
+      const sharedTags = currentTrack
+        ? track.tags.filter((tag) => currentTrack.tags.includes(tag)).length
+        : 0;
       let score = 100 - Math.abs(energy - targetEnergy) * 16 + track.match / 12;
-      if (track.genre === currentTrack.genre) score += wantsSimilar ? 14 : 6;
+      if (currentTrack && track.genre === currentTrack.genre) score += wantsSimilar ? 14 : 6;
       score += sharedTags * (wantsSimilar ? 9 : 4);
       if (
         wantsVocal &&
@@ -180,9 +181,11 @@ export function deriveChatRecommendations(
             : '요청한 분위기와 현재 곡의 청취 맥락이 잘 이어지는 곡';
 
   return {
-    text: ranked.length
-      ? `${currentTrack.title}의 ${currentTrack.mood} 무드를 기준으로, ${direction}을 골랐어요. 추천 순간부터 들어보세요.`
-      : '지금 추천할 수 있는 다른 곡이 없어요. 다른 음악을 선택하거나 탐색에서 더 찾아보세요.',
+    text: !ranked.length
+      ? '지금 추천할 수 있는 다른 곡이 없어요. 다른 음악을 선택하거나 탐색에서 더 찾아보세요.'
+      : currentTrack
+        ? `${currentTrack.title}의 ${currentTrack.mood} 무드를 기준으로, ${direction}을 골랐어요. 추천 순간부터 들어보세요.`
+        : `${direction}을 골랐어요. 마음에 드는 곡부터 들어보세요.`,
     tracks: ranked,
   };
 }

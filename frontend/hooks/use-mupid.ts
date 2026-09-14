@@ -48,8 +48,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const [genres, setGenres] = useState<string[]>(initial.genres ?? []);
   // 마지막으로 들은 곡을 기억해 미니 플레이어를 계속 띄워 둔다. 한 곡도 듣지 않았다면 null.
   const [lastPlayedId, setLastPlayedId] = useState<number | null>(initial.lastPlayedId ?? null);
-  const [active, setActive] = useState<Track>(
-    tracks.find((t) => t.id === initial.lastPlayedId) ?? tracks[0],
+  const [active, setActive] = useState<Track | null>(
+    tracks.find((t) => t.id === initial.lastPlayedId) ?? tracks[0] ?? null,
   );
   const [playing, setPlaying] = useState(false);
   // 청크를 기다리는 중. 화면은 이 값으로 스피너를 띄운다.
@@ -384,7 +384,7 @@ export function useMupid(bootstrap: Bootstrap) {
   };
 
   const loadTrack = (track: Track) => {
-    if (activeRef.current.id === track.id) return;
+    if (activeRef.current?.id === track.id) return;
     activeRef.current = track;
     setActive(track);
     setTime(0);
@@ -400,13 +400,14 @@ export function useMupid(bootstrap: Bootstrap) {
     const abort = new AbortController();
     void fetchSections(active, abort.signal).then((sections) => {
       if (!sections || abort.signal.aborted || !mountedRef.current) return;
-      setActive((current) => (current.id === active.id ? { ...current, sections } : current));
-      activeRef.current = { ...activeRef.current, sections };
+      setActive((current) => (current && current.id === active.id ? { ...current, sections } : current));
+      if (activeRef.current) activeRef.current = { ...activeRef.current, sections };
     });
     return () => abort.abort();
-  }, [active.id]);
+  }, [active?.id]);
   const seek = (value: number) => {
     // 내부 위치 이동 함수. 화면에서 호출하는 seek는 반환 모델에서 순간 미리듣기도 해제한다.
+    if (!activeRef.current) return;
     const next = Math.max(0, Math.min(value, activeRef.current.duration));
     setTime(next);
     void getPlayer()?.seek(next);
@@ -450,7 +451,9 @@ export function useMupid(bootstrap: Bootstrap) {
       }
     }
   };
-  const play = (track: Track = activeRef.current, fromMoment = false) => {
+  const play = (track: Track | null = activeRef.current, fromMoment = false) => {
+    // 곡이 하나도 없으면 누를 것도 없다.
+    if (!track) return;
     previewEnd.current = null;
     if (!queueIds.includes(track.id)) {
       // 목록 밖의 곡을 고르면 그 곡을 맨 앞에 두고 상한까지만 다시 채운다.
@@ -458,7 +461,7 @@ export function useMupid(bootstrap: Bootstrap) {
     }
     const player = getPlayer();
     // 지금 울리는 곡을 다시 누르면 멈춘다. 멈춘 곡을 누르면 이어서 튼다.
-    if (!fromMoment && activeRef.current.id === track.id && player) {
+    if (!fromMoment && activeRef.current?.id === track.id && player) {
       const status = player.store.get().status;
       if (status === 'playing' || status === 'buffering') {
         player.pause();
@@ -477,8 +480,8 @@ export function useMupid(bootstrap: Bootstrap) {
       .map((id) => tracks.find((t) => t.id === id)!)
       .filter((t) => t && !ignored.includes(t.id));
     if (!pool.length) return;
-    const index = pool.findIndex((t) => t.id === activeRef.current.id);
-    const candidates = pool.filter((t) => t.id !== activeRef.current.id);
+    const index = pool.findIndex((t) => t.id === activeRef.current?.id);
+    const candidates = pool.filter((t) => t.id !== activeRef.current?.id);
     const target =
       shuffle && candidates.length
         ? candidates[Math.floor(Math.random() * candidates.length)]
@@ -538,11 +541,11 @@ export function useMupid(bootstrap: Bootstrap) {
       return;
     }
     const upcoming = queueTracks
-      .filter((track) => isStreamed(track) && track.id !== active.id)
+      .filter((track) => isStreamed(track) && track.id !== active?.id)
       .map((track) => track.musicId!)
       .slice(0, 3);
     getPlayer()?.setQueue(upcoming);
-  }, [queueIds, active.id, ignored, demoSession]);
+  }, [queueIds, active?.id, ignored, demoSession]);
   const playPlaylist = (playlist: Playlist, track?: Track) => {
     const playable = playlist.tracks.filter((t) => !ignored.includes(t.id));
     if (!playable.length) {
@@ -570,10 +573,12 @@ export function useMupid(bootstrap: Bootstrap) {
       previewEnd.current = null;
       return;
     }
-    if (repeatMode === 'one') { void startPlayback(activeRef.current, 0); return; }
-    playedInCycle.current.add(activeRef.current.id);
+    const current = activeRef.current;
+    if (!current) return;
+    if (repeatMode === 'one') { void startPlayback(current, 0); return; }
+    playedInCycle.current.add(current.id);
     const pool = queueTracks;
-    const index = pool.findIndex(t => t.id === activeRef.current.id);
+    const index = pool.findIndex(t => t.id === current.id);
     let remaining = pool.filter(t => !playedInCycle.current.has(t.id));
     const finished = shuffle ? remaining.length === 0 : index >= pool.length - 1;
     // 목록 끝에 닿았을 때, 전체 반복이면 한 바퀴를 다시 돌고 아니면 멈춘다.
@@ -599,7 +604,8 @@ export function useMupid(bootstrap: Bootstrap) {
     const track = tracks.find(t => t.id === id);
     if (track) loadTrack(track);
   }, [pathname, tracks]);
-  const openMoment = (track = activeRef.current, editing: SavedMoment | null = null) => {
+  const openMoment = (track: Track | null = activeRef.current, editing: SavedMoment | null = null) => {
+    if (!track) return;
     previewEnd.current = null;
     setEditingMomentId(editing?.id ?? null);
     loadTrack(track);
@@ -611,13 +617,14 @@ export function useMupid(bootstrap: Bootstrap) {
     }
     const part = getSongSectionAt(
       track,
-      Math.min(activeRef.current.id === track.id ? time : track.moment, track.duration),
+      Math.min(activeRef.current?.id === track.id ? time : track.moment, track.duration),
     );
     setMomentRange([part.start, part.end]);
     setMomentSection(part.label);
     go('moment');
   };
   const previewMoment = () => {
+    if (!activeRef.current) return;
     previewEnd.current = momentRange[1];
     void startPlayback(activeRef.current, momentRange[0]);
   };
@@ -625,7 +632,7 @@ export function useMupid(bootstrap: Bootstrap) {
     const player = getPlayer();
     // 듣고 있던 그 구간을 다시 누르면 멈춘다.
     if (
-      activeRef.current.id === moment.track.id &&
+      activeRef.current?.id === moment.track.id &&
       previewEnd.current === moment.end &&
       player?.store.get().status === 'playing'
     ) {
@@ -637,9 +644,11 @@ export function useMupid(bootstrap: Bootstrap) {
     void startPlayback(moment.track, moment.start);
   };
   const saveMoment = () => {
+    const current = activeRef.current;
+    if (!current) return;
     const saved: SavedMoment = {
       id: Date.now(),
-      track: activeRef.current,
+      track: current,
       start: momentRange[0],
       end: momentRange[1],
       section: momentSection,
@@ -871,6 +880,7 @@ export function useMupid(bootstrap: Bootstrap) {
       if (!Number.isFinite(value)) return;
       previewEnd.current = null;
       const track = activeRef.current;
+      if (!track) return;
       const next = Math.max(0, Math.min(value, track.duration));
       const player = getPlayer();
       // 아직 이 곡을 들고 있지 않으면 그 자리에서 새로 튼다.

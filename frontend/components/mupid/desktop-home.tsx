@@ -59,6 +59,11 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
         </div>
         <section className="desktop-song" aria-label="현재 곡">
           <p className="desktop-song-kicker">지금, 당신의 음악</p>
+          {/* 들을 곡이 없으면 제목 자리에 그 사실만 적고 조작부는 접는다. */}
+          {!m.active ? <>
+            <h1>아직 들을 곡이 없어요</h1>
+            <p className="desktop-song-artist">음악이 등록되면 여기에서 바로 들을 수 있어요.</p>
+          </> : <>
           <h1>{m.active.title}</h1>
           <p className="desktop-song-artist">{m.active.artist}</p>
           <p className="desktop-song-meta">
@@ -98,6 +103,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             </button>
             <LikeButton model={m} />
           </div>
+          </>}
           <div className="desktop-audio-options">
             <label>
               <Volume2 />
@@ -129,7 +135,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
           <div className="desktop-playlist-list">
             {todayMoments.map(track => {
               const section = getSongSectionAt(track, track.moment);
-              const playing = m.active.id === track.id && m.playing && m.time >= section.start && m.time < section.end;
+              const playing = m.active?.id === track.id && m.playing && m.time >= section.start && m.time < section.end;
               return <article className={`desktop-playlist-row ${playing ? 'is-current' : ''}`} key={track.id}>
                 <button className="desktop-playlist-open" aria-label={`${track.title} ${formatTime(section.start)} 추천 순간 듣기`} onClick={() => m.playSavedMoment({id: track.id, track, start: section.start, end: section.end, section: section.label})}>
                   <AlbumArt track={track} />
