@@ -189,7 +189,6 @@ Spring 은 컨테이너로 돈다. 이 서비스를 호스트에서 직접 실�
 `extra_hosts` 와 `MUPID_AI_BASE_URL` 을 맞춰야 한다. **nginx 에 노출하지 않는다** —
 `/internal` 은 인증이 없고 Spring 만 호출하는 전제다.
 
-표만 드립니다. 다만 **파일은 이미 올라가 있습니다** — 커밋 `253d591`, 원격 `ai/feature/S15P21A204-218-add-recommend-service`. 그래서 "실제 이식은 다음 작업"은 지금은 맞지 않고, 표의 파일명도 저장소 실제 경로로 맞췄습니다(`m16_service.py` → `app/recommender.py`).
 
 | 파일 | 용도 |
 |---|---|
