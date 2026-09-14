@@ -1,6 +1,6 @@
 # 문서가 코드와 어긋난 곳
 
-8건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+9건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -55,3 +55,9 @@
 - **원인**: "파일이 두 벌" 이라며 `compose.yml`/`compose.prod.yml` 만 적고 `compose.prod.yml` 을 "운영" 으로 표기했으며, nginx 템플릿을 "개발·운영이 공유" 한다고 적었다. 실제 EC2 운영은 `infra/deploy/compose.yml` + `infra/deploy/nginx.conf` 이고 compose 는 네 벌이다.
 - **해결**: `api/AGENTS.md` 의 Docker/Compose 표와 nginx 절을 **수정 완료.** 상세 구분은 [architecture/deployment.md](../architecture/deployment.md), 배경은 [decision/0008](../decision/0008-deploy-image-from-infra.md).
 - **근거**: `api/AGENTS.md`, `infra/deploy/compose.yml`, `infra/deploy/nginx.conf`
+
+### `erd.sql` 이 엔티티보다 뒤처져 있다 — 플레이리스트 수록곡은 해소됨
+
+- **원인**: `knowledge/domain/erd.sql` 은 ERD 도구 산출물이라 엔티티가 먼저 바뀌면 그대로 뒤처진다. 수록곡 테이블이 그랬다 — SQL 은 `playlist_songs`(단일 PK `playlist_song_id`, `user_id` NULL 허용)인데 `PlaylistTrack` 엔티티는 `playlist_tracks`(`playlist_id` + `track_order` 복합키, `user_id` NOT NULL)다. `@Table` 이름을 SQL 과 대조하면 더 있다: 엔티티에만 있는 `daily_recommendation_tracks` · `listening` · `mubti` · `music_comments` · `music_moods` · `reports`, SQL 에만 있는 `comments` · `daily_recommendation_songs` · `mbti` · `play_histories` · `analysis_reports` 등.
+- **해결**: **둘이 어긋나면 엔티티가 기준이다.** `playlist_tracks` 는 엔티티에 맞춰 `erd.sql` 을 고쳤다(복합키 PK + `uq_playlist_track_music` 유니크). 나머지 테이블은 각 기능 티켓에서 같은 방식으로 맞춘다. `ddl-auto` 가 `none` 이라([decision/0011](../decision/0011-jpa-manages-schema.md)) 실제 DB 에 DDL 이 적용됐는지는 별도로 확인해야 한다.
+- **근거**: `api/knowledge/domain/erd.sql` vs `api/src/main/java/com/osundosun/mupid/api/playlist/entity/PlaylistTrack.java`

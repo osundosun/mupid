@@ -1,6 +1,6 @@
 # 데이터베이스 · JPA · 트랜잭션
 
-13건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+14건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -97,7 +97,8 @@
 
 - **원인**: `@EmbeddedId` 안의 FK 컬럼을 `insertable = false, updatable = false` 로 막고 `@ManyToOne @JoinColumn` 을 따로 두면, Hibernate 가 INSERT 문에 같은 컬럼을 **두 번** 넣는다 (`insert into chunks (...,stream_id,index,stream_id) values (?,?,?,?,?,?)`).
 - **해결**: 파생 식별자는 `@MapsId("streamId")` 를 연관에 붙이고, 임베디드 id 쪽 컬럼은 평범한 `@Column(name = "stream_id")` 로 둔다.
-- **근거**: `api/src/main/java/com/osundosun/mupid/api/stream/entity/Chunk.java:47`
+- **다시 밟았다**: `PlaylistTrack` 을 같은 모양(`insertable = false`)으로 만들어 곡 추가 INSERT 가 똑같이 깨졌다. 복합키 엔티티를 새로 만들면 `Chunk` 를 먼저 베껴 온다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/stream/entity/Chunk.java:47`, `api/src/main/java/com/osundosun/mupid/api/playlist/entity/PlaylistTrack.java:54`
 
 ### `object_storage_files` INSERT 가 `Data too long for column 'mime'` 로 깨진다 — 해소됨
 
@@ -122,3 +123,9 @@
 - **원인**: `MusicServiceImpl.getMusic` 이 `Optional<Music>` 을 반환한다고 선언해 놓고 삭제된 곡에 대해 `return null` 을 했다. 호출부의 `.orElseThrow(...)` 가 NPE 로 터진다.
 - **해결**: `Optional.empty()` 를 반환한다. `Optional` 반환 메서드는 절대 null 을 돌려주지 않는다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/music/service/MusicServiceImpl.java`
+
+### `@EmbeddedId` 엔티티를 저장했는데 감사 필드(`createdAt`)가 null 이다
+
+- **원인**: 복합키를 코드에서 직접 채워 넣으므로 `SimpleJpaRepository.save()` 의 "새 엔티티인가" 판단(id 가 null 인가)이 **false** 가 되어 `persist` 가 아니라 `merge` 가 돈다. `merge` 는 관리 상태의 **복사본**을 돌려주고, `@CreatedDate` 는 그 복사본에만 채워진다. 내가 넘긴 인스턴스는 준영속 상태 그대로라 `getCreatedAt()` 이 null 이다. 응답 DTO 를 그 인스턴스로 만들면 `created_at: null` 이 나간다.
+- **해결**: `save()` / `saveAndFlush()` 의 **반환값**을 쓴다. 넘긴 인스턴스를 계속 쓰지 않는다. (근본 해결은 `Persistable` 구현이지만, 이 프로젝트의 복합키 엔티티는 아직 그렇게 하지 않는다.)
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/playlist/service/PlaylistServiceImpl.java:91`, `api/src/test/java/com/osundosun/mupid/api/playlist/PlaylistTrackAddTest.java`
