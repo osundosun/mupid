@@ -105,7 +105,6 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [accountOpen]);
   const desktopDock = useDesktopPlayerDock();
-  const { audioRef } = m;
   const hideMini =
     m.page === 'welcome' ||
     // 가입 직후처럼 아직 한 곡도 듣지 않았다면 띄우지 않는다.
@@ -127,22 +126,6 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
       <a href="#main-content" className="skip-link">
         본문으로 이동
       </a>
-      {/* Instrumental demo audio has no spoken content to caption. */}
-      {/* oxlint-disable-next-line jsx-a11y/media-has-caption -- Instrumental music sample. */}
-      <audio
-        ref={audioRef}
-        src={m.active.audio}
-        preload="none"
-        onPlay={() => m.setPlaying(true)}
-        onPause={() => m.setPlaying(false)}
-        onTimeUpdate={m.onTimeUpdate}
-        onEnded={m.onEnded}
-        onLoadedMetadata={m.onLoadedMetadata}
-        onError={() => {
-          m.setPlaying(false);
-          m.setToast('음원을 불러오지 못했어요. 다른 곡을 선택해 주세요.');
-        }}
-      />
       {m.page === 'welcome' ? (
         <main id="main-content">
           <WelcomeView model={m} />

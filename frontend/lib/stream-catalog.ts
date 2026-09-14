@@ -1,20 +1,23 @@
 /**
  * 서버 곡 카탈로그.
  *
- * `GET /api/v1/music` 로 받아 화면이 쓰는 `Track` 으로 옮긴다.
- * `musicId` 가 있는 곡은 `<audio>` 데모 음원이 아니라 청크 스트리밍으로
- * 재생된다 (`lib/player/`).
+ * `GET /api/v1/music` 로 받아 화면이 쓰는 `Track` 으로 옮긴다. 화면에 보이는
+ * 곡은 **이것이 전부다** — 데모 곡은 없앴다. 없는 곡을 틀려다 실패하고,
+ * 좋아요·기록도 서버에 남길 수 없는 번호를 갖게 되기 때문이다.
  *
- * 데모 곡 8개는 아직 함께 보여준다. 서버 카탈로그에 시연용 곡 몇 개뿐이라
- * 화면이 비어 보이기 때문이다. 카탈로그가 채워지면 `lib/mupid-data.ts` 의
- * 데모 목록을 지우면 된다.
+ * 재생은 청크 스트리밍 한 경로뿐이다 (`lib/player/`).
  */
 
 import { api } from './api/session';
 import type { MusicSummary } from './api/endpoints';
 import type { Track } from './mupid-data';
 
-/** 데모 곡(1~8)과 겹치지 않는 번호대. */
+/**
+ * 화면용 곡 번호는 서버 번호에 이 값을 더해 만든다.
+ *
+ * 저장해 둔 예전 데이터(데모 곡 번호 1~8)와 섞이지 않게 하려는 것이다.
+ * 서버로 보낼 때는 언제나 `musicId` 를 쓴다.
+ */
 const ID_OFFSET = 1000;
 
 /** 한 번에 받아 올 곡 수. 카탈로그가 커지면 화면별 페이징으로 바꾼다. */
@@ -38,8 +41,6 @@ const toTrack = (music: MusicSummary): Track => {
     match: 100,
     reason: '',
     image: music.album.image_url ?? '/sky-background.webp',
-    // 스트리밍 곡은 이 URL 을 쓰지 않는다. <audio> 경로로 새지 않도록 비워 둔다.
-    audio: '',
     tags: tags.length ? tags : ['스트리밍'],
     // 구간은 `GET /api/v1/music/{id}/analysis` 가 준다. 다만 분석 파이프라인이
     // 아직 돌지 않아 대부분 비어 있어서, 여기서는 곡을 둘로 나눠 둔다.

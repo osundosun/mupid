@@ -1,4 +1,4 @@
-import { tracks, initialMoments, initialPlaylists, deriveChatRecommendations } from '../mupid-data';
+import { initialMoments, initialPlaylists, deriveChatRecommendations } from '../mupid-data';
 import type { MupidService, Preferences } from './contracts';
 import type { Track } from '../mupid-data';
 
@@ -7,8 +7,9 @@ const photoKey = 'mupid-profile-photo';
 /** 예전 체험 로그인 표시. 남아 있으면 지우기만 한다. */
 const DEMO_SESSION_KEY = 'mupid.demo-session.v1';
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object';
-const defaults: Preferences = { onboardingSubmittedAt: null, nickname: '규원', moods: ['몽환적인', '감성적인'], genres: ['Indie', 'R&B'],
-  liked: [1, 3, 7], ignored: [], history: [1, 3, 2], moments: initialMoments, playlists: initialPlaylists,
+// 데모 곡이 없으므로 미리 좋아 둔 곡도, 들어 둔 기록도 없다.
+const defaults: Preferences = { onboardingSubmittedAt: null, nickname: '규원', moods: [], genres: [],
+  liked: [], ignored: [], history: [], moments: initialMoments, playlists: initialPlaylists,
   lastPlayedId: null };
 const unavailable = async (): Promise<never> => {
   // 미연결 인증은 성공으로 위장하지 않는다. 입력 비밀번호도 로컬 저장소에 보관하지 않는다.
@@ -21,7 +22,7 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
     async bootstrap(catalog: Track[] = []) {
       const preferences = structuredClone(defaults);
       // 저장된 좋아요·기록이 서버 곡을 가리킬 수도 있다. 검증은 합친 목록으로 한다.
-      const allTracks = [...tracks, ...catalog];
+      const allTracks = catalog;
       // Corrupt/blocked device storage must not prevent opening the demo.
       try {
         const saved: unknown = JSON.parse(storage.getItem(preferencesKey) || 'null');
@@ -55,13 +56,10 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
       const session: import('./contracts').AccountSession | null = null;
       // 예전 체험 로그인 흔적이 남아 있으면 지운다.
       try { storage.removeItem(DEMO_SESSION_KEY); } catch {}
-      // 데모 곡 + 서버 카탈로그. 후자는 `GET /api/v1/music` 이 준 곡이고
-      // 청크 스트리밍으로 재생된다 (`lib/stream-catalog.ts`).
-      return {
-        tracks: [...structuredClone(tracks), ...catalog],
-        preferences,
-        session,
-      };
+      // 서버에 등록된 곡만 보여 준다. 데모 곡은 없앴다.
+      // 넘겨받은 배열을 그대로 돌려주지 않는다. 호출자가 고치면 다음 호출까지
+      // 흔들린다.
+      return { tracks: [...catalog], preferences, session };
     },
     async savePreferences(value) { storage.setItem(preferencesKey, JSON.stringify(value)); },
     // 체험 로그인은 없앴다. 로그인하지 않으면 서비스를 쓸 수 없고, 로그인은
