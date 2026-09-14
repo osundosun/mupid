@@ -24,6 +24,7 @@ import com.osundosun.mupid.api.playlist.error.PlaylistErrorCode;
 import com.osundosun.mupid.api.playlist.repository.PlaylistRepository;
 import com.osundosun.mupid.api.playlist.repository.PlaylistTrackRepository;
 import com.osundosun.mupid.api.playlist.request.PlaylistCreateRequest;
+import com.osundosun.mupid.api.playlist.request.PlaylistRenameRequest;
 import com.osundosun.mupid.api.playlist.request.PlaylistTrackAddRequest;
 import com.osundosun.mupid.api.stream.entity.Stream;
 import com.osundosun.mupid.api.stream.service.StreamService;
@@ -146,6 +147,32 @@ public class PlaylistServiceImpl implements PlaylistService {
         playlist.setMusicCount(playlist.getMusicCount() + 1);
 
         return new PlaylistTrackAddResult(savedTrack, false);
+    }
+
+    @Override
+    public void removeTrack(int userId, int playlistId, int musicId) {
+        Playlist playlist = getMyPlaylist(userId, playlistId);
+
+        Music music = musicService.getMusic(musicId)
+            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+
+        PlaylistTrack track = trackRepository.findByPlaylistAndMusic(playlist, music)
+            .orElseThrow(() -> new BusinessException(PlaylistErrorCode.PLAYLIST_TRACK_NOT_FOUND));
+
+        trackRepository.delete(track);
+
+        /*
+         * 수록곡 수는 음수가 될 수 없다. 곡 행과 이 숫자가 어긋난 적이 있으면
+         * (동시 요청·과거 데이터) 0 아래로 내려가 목록 화면이 "-1곡" 을 보여 준다.
+         */
+        playlist.setMusicCount(Math.max(0, playlist.getMusicCount() - 1));
+    }
+
+    @Override
+    public Playlist renamePlaylist(int userId, int playlistId, PlaylistRenameRequest dto) {
+        Playlist playlist = getMyPlaylist(userId, playlistId);
+        playlist.setTitle(dto.title().trim());
+        return playlist;
     }
 
     /**
