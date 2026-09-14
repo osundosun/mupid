@@ -35,6 +35,27 @@ export type SignupBody = {
   gender: 'M' | 'F' | 'ETC';
 };
 
+export type MusicComment = {
+  comment_id: number;
+  music_id: number;
+  timestamp_ms: number;
+  content: string;
+  user_id: number;
+  nickname: string;
+  /** 서버가 판정한다. 화면이 user_id 를 비교하지 않는다. */
+  mine: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MusicCommentPage = {
+  items: MusicComment[];
+  page: number;
+  size: number;
+  total_elements: number;
+  total_pages: number;
+};
+
 export type ReactionType = 'LIKE' | 'DISLIKE';
 
 /** 내가 반응한 곡 번호. 하트 상태를 그리려면 전부 필요해서 페이징이 없다. */
@@ -185,6 +206,35 @@ export function createEndpoints(client: ApiClient) {
         client.request<{ is_valid: boolean }>({
           path: `/api/v1/mail/verification/${verificationId}`,
           anonymous: true,
+        }),
+    },
+
+    comment: {
+      /** 한 곡의 댓글. 시점 오름차순. */
+      list: (musicId: number, options: { page?: number; size?: number } = {}, signal?: AbortSignal) =>
+        client.request<MusicCommentPage>({
+          path: `/api/v1/music/${musicId}/comment`,
+          query: { page: options.page, size: options.size },
+          signal,
+        }),
+      add: (musicId: number, body: { timestamp_ms: number; content: string }) =>
+        client.request<MusicComment>({
+          method: 'POST',
+          path: `/api/v1/music/${musicId}/comment`,
+          json: body,
+        }),
+      /** 내용만 바꾼다. 시점은 바꿀 수 없다. */
+      update: (commentId: number, content: string) =>
+        client.request<MusicComment>({
+          method: 'PATCH',
+          path: `/api/v1/comment/${commentId}`,
+          json: { content },
+        }),
+      remove: (commentId: number) =>
+        client.request<void>({
+          method: 'DELETE',
+          path: `/api/v1/comment/${commentId}`,
+          responseType: 'none',
         }),
     },
 
