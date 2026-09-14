@@ -19,7 +19,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "music_moods")
+@Table(name = "music_genres")
 @Getter
 @Setter
 @AllArgsConstructor

@@ -51,6 +51,15 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/mail/verification").permitAll() // 이메일 인증
                 .requestMatchers(HttpMethod.GET, "/api/v1/mail/verification/**").permitAll() // 이메일 인증 확인
                 .requestMatchers(HttpMethod.GET, "/api/actuator/**").permitAll() // Health Check
+                // 곡 카탈로그는 로그인 전에도 보인다. 첫 방문자가 온보딩 전에
+                // 곡을 둘러보기 때문이다. `*` 는 한 세그먼트만 먹으므로
+                // `/api/v1/music/{id}/stream` 은 그대로 인증이 필요하다.
+                .requestMatchers(HttpMethod.GET, "/api/v1/music").permitAll() // 곡 목록·검색
+                .requestMatchers(HttpMethod.GET, "/api/v1/music/*").permitAll() // 곡 상세
+                // 앨범·아티스트 이미지도 같이 열어야 목록에 표지가 뜬다.
+                // 프로필 사진(PROFILE)은 개인 정보라 열지 않는다.
+                .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/ALBUM/*").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/ARTIST/*").permitAll()
                 .requestMatchers("/admin/**").hasRole("ADMIN") // 관리자 전용
                 .anyRequest().authenticated())
             .addFilterBefore(
