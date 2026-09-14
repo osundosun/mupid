@@ -21,9 +21,9 @@ http:
 runtime:
   variables:
     - name: USER_EMAIL
-      value: yejunjung98@gmail.com
+      value: admin@ssafy
     - name: USER_PASSWORD
-      value: password123
+      value: 9o3dmox}.hwB#$qb*gGD
   actions:
     - type: set-variable
       phase: after-response

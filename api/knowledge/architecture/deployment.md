@@ -190,7 +190,21 @@ Docker bridge 네트워크는 호스트를 넘지 못하므로 ClickHouse 9000(n
 실제 EC2 는 템플릿을 쓰지 않는다. `/srv/mupid/config/nginx.conf` 를 `conf.d/default.conf` 로 통째로 마운트한다. server 블록이 2개다.
 
 - **80** — `location = /healthz`, ACME webroot `location /.well-known/acme-challenge/ { root /var/www/acme; }`, 나머지 `return 308 https://j15a204.p.ssafy.io$request_uri`.
-- **443** — letsencrypt 인증서, `ssl_protocols TLSv1.2 TLSv1.3`, `server_tokens off`, `client_max_body_size 20m`, `/healthz`, `/api/` 프록시(템플릿과 달리 `X-Forwarded-Host` 와 `proxy_send_timeout` 이 없다), `root /srv/web/current` 와 `location / { try_files $uri $uri.html $uri/index.html =404; }`.
+- **443** — letsencrypt 인증서, `ssl_protocols TLSv1.2 TLSv1.3`, `server_tokens off`, `client_max_body_size 20m`, `/healthz`, `/api/` 프록시(템플릿과 달리 `X-Forwarded-Host` 와 `proxy_send_timeout` 이 없다), 음원 경로 3종(아래), `root /srv/web/current` 와 `location / { try_files $uri $uri.html $uri/index.html =404; }`.
+
+#### 음원 경로 — 바이트는 스프링을 거치지 않는다
+
+개발 템플릿과 운영 설정 **양쪽에** 같은 블록이 있어야 한다. 없으면 업로드·다운로드가 통째로 404 다 ([decision/0016](../decision/0016-audio-upload-three-step.md)).
+
+| location | 성격 | 하는 일 |
+|---|---|---|
+| `~ ^/upload/chunk/(\d+)/(\d+)$` | 공개 | `auth_request` 로 스프링에 인증만 묻고(본문 없음), 받은 `X-Storage-Path` 로 본문을 스토리지에 흘린다 |
+| `= /internal/chunk-upload-auth` | `internal` | 위 서브요청 전용. `proxy_pass_request_body off`, `X-Original-Content-Length` 전달 |
+| `/storage/` | `internal` | 다운로드 `X-Accel-Redirect` 대상 |
+
+`upstream mupid_storage { server storage:8888; }` 가 필요하고, 그러려면 **`storage` 컨테이너가 `frontend` 네트워크에도 붙어 있어야 한다.** nginx 는 `frontend` 에만 있고 storage 는 원래 `backend` 에만 있었다. nginx 를 `backend` 에 붙이는 대신 storage 를 `frontend` 에 올리는 쪽을 택했다 — nginx 는 여전히 mysql·redis 에 닿지 못한다.
+
+nginx 는 업스트림 호스트명을 **기동 시점에 한 번만** 해석한다. `storage` 컨테이너를 재생성하면 IP 가 바뀌므로 nginx 도 함께 재생성해야 한다. `receive.sh` 가 api 교체 뒤 nginx 를 `--force-recreate` 하는 것과 같은 이유다.
 
 TLS 종료·ACME 예외·308 리다이렉트·정적 프런트가 들어가면서 "환경변수 하나 차이" 라는 전제가 깨졌다. 동시에 `infra/README.md` 의 원칙("Compose와 nginx 설정은 root가 관리한다. CI는 API 이미지 버전을 배포하며 서버 설정 파일 자체를 자동 교체하지 않는다")과 맞물린다. 설정 교체를 배포 파이프라인에서 떼어내 사람이 승인하도록 남긴 선택이다. 대신 `receive.sh` 가 배포마다 `/srv/mupid/config` 를 `releases/<SHA>/config-snapshot/` 으로 복사해, 그 버전이 어떤 설정으로 떴는지는 남긴다.
 

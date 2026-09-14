@@ -8,7 +8,7 @@ import lombok.Getter;
 public enum UserRole {
     
     ROLE_USER(1, "사용자"),
-    ROLE_SYSTEM(50, "시스템"),
+    ROLE_SYSTEM(50, "배치 프로그램"),
     ROLE_ADMIN(99, "관리자");
 
     private final Integer level;

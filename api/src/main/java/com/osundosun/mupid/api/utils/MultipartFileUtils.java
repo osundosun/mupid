@@ -4,7 +4,7 @@ import java.util.Set;
 
 import org.springframework.web.multipart.MultipartFile;
 
-public class MultipartFileUtils {
+public final class MultipartFileUtils {
 
     private static final Set<String> IMAGE_EXT = Set.of(
         "jpg", "jpeg", "png", "gif", "webp"

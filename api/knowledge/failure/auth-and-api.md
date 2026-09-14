@@ -140,4 +140,58 @@
 - **해결**: 커밋 `d6309af` 에서 제거. 현재 `isValid`(100-115행)는 null 검사를 먼저 한다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/email/service/EmailServiceImpl.java:98-115`
 
+### `@SystemRole` 이 붙은 API 가 전부 500 을 뱉는다 — 해소됨
+
+- **원인**: `@PreAuthorize("hasRole('SYSTEM', 'ADMIN')")`. `hasRole` 은 인자를 **하나만** 받는다. SpEL 평가 단계에서 `EL1004E: Method call: Method hasRole(java.lang.String,java.lang.String) cannot be found` 로 실패하고 `IllegalArgumentException` 이 `@ExceptionHandler(Exception.class)` 에 잡혀 `MUPID_INTERNAL_SERVER_ERROR` 가 나간다. **403 이 아니라 500 이라** 권한 문제로 보이지 않는다.
+- **해결**: 여러 역할은 `hasAnyRole('SYSTEM', 'ADMIN')` 이다. 메서드 시큐리티는 컨트롤러 메서드 진입 시점에 평가되므로 잘못된 본문으로 호출하면 `@Valid` 검증이 먼저 돌아 400 이 나간다 — 그래서 검증 실패 케이스만 테스트하면 이 버그가 안 보인다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/common/annotation/SystemRole.java:15`
+
+### 액세스 토큰이 만료되면 재발급도 못 받는다 — 해소됨
+
+- **원인**: `SecurityConfig` 가 `POST /api/v1/auth`(로그인)만 `permitAll` 이라, 재발급인 `GET /api/v1/auth` 가 `anyRequest().authenticated()` 에 걸렸다. **액세스 토큰이 만료된 뒤에 부르는 엔드포인트인데 액세스 토큰을 요구**하니 재발급 경로 자체가 죽어 있었다.
+- **해결**: `GET /api/v1/auth` 도 `permitAll` 로 둔다. 자격증명은 쿠키의 리프레시 토큰이고 `AuthService.reissueToken` 이 서명·만료·차단목록을 검증한다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/common/config/SecurityConfig.java`
+
+### `@PathVariable` 이름이 URL 템플릿과 다르면 500 이 난다 — 해소됨
+
+- **원인**: `@RequestMapping("/api/v1/music/{musicID}/stream")` + `@PathVariable int musicId`. 대소문자가 달라 Spring 이 값을 못 찾는다. 기동 시점에는 안 걸리고 **그 엔드포인트를 처음 호출할 때** 터진다.
+- **해결**: 템플릿 이름과 파라미터명을 맞추거나 `@PathVariable("musicID")` 로 명시한다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/stream/controller/MusicStreamController.java:26`
+
+### 멀티파트 폼 필드를 snake_case 로 보내면 400 이 난다
+
+- **원인**: `spring.jackson.property-naming-strategy: SNAKE_CASE` 는 **JSON 본문 역직렬화에만** 적용된다. `@RequestParam` 이름은 Jackson 을 거치지 않으므로 Java 파라미터명 그대로 camelCase 다.
+- **해결**: 멀티파트 필드는 `imageFile` 처럼 camelCase 로 보낸다. JSON 본문만 snake_case 다. (청크 업로드는 멀티파트를 쓰지 않는다 — 본문에 바이너리를 그대로 싣는 PUT 이고 nginx 가 처리한다.)
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/controller/StorageImageController.java`, `api/src/main/resources/application.yaml`
+
+### `@NotBlank` 를 숫자 필드에 붙이면 400 이 아니라 500 이 난다 — 해소됨
+
+- **원인**: `@NotBlank(message = "아티스트가 입력되지 않았습니다.") Integer artistId`. `@NotBlank` 는 `CharSequence` 전용이라 `jakarta.validation.UnexpectedTypeException: HV000030: No validator could be found for constraint '@NotBlank' validating type 'java.lang.Integer'` 가 난다.
+- **해결**: 숫자·객체는 `@NotNull`, 문자열은 `@NotBlank`.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/music/request/AlbumCreateRequest.java`
+
+### `@SystemRole` / `@AdminRole` 이 거부하면 403 이 아니라 500 이 나온다 — 해소됨
+
+- **원인**: `@PreAuthorize` 거부는 컨트롤러 **메서드 호출 지점**에서 `AuthorizationDeniedException`(= `AccessDeniedException`) 으로 터진다. 필터에서 나는 게 아니라 `SecurityConfig` 의 `AuthForbiddenHandler` 를 타지 않고, `GlobalExceptionHandler` 의 `@ExceptionHandler(Exception.class)` 에 먹혀 `MUPID_INTERNAL_SERVER_ERROR` 가 나갔다. `/admin/**` 처럼 필터가 막는 경로만 403 이 제대로 나왔다. Bruno 문서는 줄곧 403 이라고 적어 두고 있었다.
+- **해결**: `GlobalExceptionHandler` 에 `@ExceptionHandler(AccessDeniedException.class)` 를 추가해 `AuthErrorCode.FORBIDDEN` 으로 매핑한다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/common/exception/GlobalExceptionHandler.java`
+
+### 업로드가 거절됐는데 응답이 500 이고 본문이 비어 있다
+
+- **원인**: 청크 업로드(`PUT /upload/chunk/...`)는 nginx `auth_request` 를 거친다. nginx 는 인증 서브요청의 **401·403 만** 클라이언트로 넘기고, 그 밖의 4xx(404·409·413 등)는 전부 500 으로 바꾸며 본문도 버린다. 스프링이 `MUPID_INVALID_CHUNK_INDEX` 를 400 으로 돌려줘도 클라이언트는 빈 500 을 본다.
+- **해결**: `GlobalExceptionHandler` 가 오류 코드를 `X-Mupid-Error` 헤더로도 내보내고, nginx 가 `auth_request_set` + `add_header ... always` 로 그 헤더를 살려 보낸다. **상태 코드가 아니라 이 헤더를 보고 사유를 판단한다.**
+- **근거**: `api/nginx/templates/default.conf.template`, `api/src/main/java/com/osundosun/mupid/api/common/exception/GlobalExceptionHandler.java`
+
+### 업로드도 X-Accel-Redirect 로 되겠거니 하고 짠다
+
+- **원인**: `X-Accel-Redirect` 는 **응답** 헤더를 보고 nginx 가 내부 리다이렉트를 거는 기능이다. 내부 리다이렉트에는 원 요청의 본문이 실리지 않으므로 업로드에는 쓸 수 없다. 스프링이 응답을 만들 시점엔 이미 본문이 스프링 쪽으로 넘어온 뒤이기도 하다.
+- **해결**: 업로드는 `auth_request` 다. nginx 가 본문 없이 인증만 먼저 묻고(`proxy_pass_request_body off`), 200 과 함께 받은 경로로 본문을 스토리지에 흘린다(`proxy_request_buffering off`).
+- **근거**: `api/nginx/templates/default.conf.template`, [decision/0016](../decision/0016-audio-upload-three-step.md)
+
+### 브라우저에서 인증 메일 발송·비밀번호 재설정을 호출할 수 없다 — 해소됨
+
+- **원인**: `GET /api/v1/mail/verification` 과 `GET /api/v1/user/reset` 이 `@RequestBody` 로 이메일을 받았다. **fetch 는 GET 에 본문을 실을 수 없다**(`TypeError: Request with GET/HEAD method cannot have body`). curl 이나 Bruno 로는 되기 때문에 서버 테스트만으로는 드러나지 않는다.
+- **해결**: `@Valid @ModelAttribute` 로 바꿔 쿼리 파라미터(`?email=...`)로 받는다. 검증 실패가 `BindException` 으로 오므로 `GlobalExceptionHandler` 의 `@ExceptionHandler(MethodArgumentNotValidException.class)` 도 상위 타입인 `BindException` 으로 넓혔다. 안 넓히면 쿼리 파라미터 검증 실패만 500 이 된다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/email/controller/EmailVerificationController.java`, `api/src/main/java/com/osundosun/mupid/api/user/controller/UserPasswordResetController.java`
+
 ---

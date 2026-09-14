@@ -18,6 +18,12 @@ spring:
       timeout: 3000ms
   jackson:
     property-naming-strategy: SNAKE_CASE
+  servlet:
+    multipart:
+      # 기본값(파일 1MB)으로는 이미지 5MB 제한도, 오디오 청크 업로드도 통과하지 못한다.
+      # 실제 상한은 각 서비스가 따로 검사한다 (이미지 5MB / 청크 10MB).
+      max-file-size: ${MUPID_MAX_UPLOAD_FILE_SIZE:20MB}
+      max-request-size: ${MUPID_MAX_UPLOAD_REQUEST_SIZE:20MB}
 
 management:
   endpoints:

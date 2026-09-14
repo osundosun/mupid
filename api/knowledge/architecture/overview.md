@@ -32,10 +32,14 @@ Mupid 가 어떤 조각으로 이루어져 있고, 요청과 데이터가 그 �
   │      /                             308 → https
   │
   └─ https://j15a204.p.ssafy.io ──► nginx :443  (letsencrypt, TLSv1.2/1.3)
-         /healthz     200 "ok"                       ← 백엔드와 무관
-         /api/    ──► upstream mupid_api = api:8800  ← keepalive 32, proxy_buffering off
-         /        ──► root /srv/web/current          ← try_files, 정적 프런트
+         /healthz        200 "ok"                          ← 백엔드와 무관
+         /api/       ──► upstream mupid_api = api:8800     ← keepalive 32, proxy_buffering off
+         /upload/chunk/… ─► auth_request → api, 본문은 storage:8888 로 직행
+         /storage/   ──► upstream mupid_storage = storage:8888  ← internal, X-Accel-Redirect 대상
+         /           ──► root /srv/web/current             ← try_files, 정적 프런트
 ```
+
+음원 바이트(업로드·다운로드)는 nginx 와 오브젝트 스토리지 사이에서만 오간다. 스프링은 인증과 스토리지 경로 결정만 한다 → [decision/0016](../decision/0016-audio-upload-three-step.md).
 
 `/api/` 로 들어온 요청이 컨테이너 안에서 거치는 경로:
 

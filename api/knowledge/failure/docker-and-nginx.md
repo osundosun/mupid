@@ -92,4 +92,30 @@
 - **해결**: `spring.servlet.multipart.max-file-size` 쪽을 본다.
 - **근거**: `api/nginx/templates/default.conf.template:13`
 
+### 음원 업로드·다운로드가 nginx 에서 404 로 떨어진다 — 해소됨
+
+- **원인**: 스프링이 `X-Accel-Redirect: /storage/buckets/...` 를 내려주는데 **nginx 설정에 `/storage/` location 이 아예 없었다.** 업로드 쪽 `/upload/chunk/` 와 `auth_request` 도 마찬가지다. 스프링을 직접 호출하면 헤더가 정상으로 보여서 원인을 찾기 어렵다.
+- **해결**: 개발 템플릿과 운영 설정 **양쪽에** 같은 블록을 넣는다. 개발은 `${STORAGE_UPSTREAM}` 을 envsubst 로 치환하므로 `NGINX_ENVSUBST_FILTER` 도 `^(API|STORAGE)_UPSTREAM$$` 로 넓혀야 한다. 운영은 템플릿이 없으므로 `server storage:8888` 을 그대로 적는다.
+- **주의**: 서버의 `/srv/mupid/config/nginx.conf` 는 CI 가 자동 교체하지 않는다. `infra/deploy/nginx.conf` 를 고쳤으면 **사람이 서버에 옮겨야** 반영된다.
+- **근거**: `api/nginx/templates/default.conf.template`, `api/compose.yml`, `infra/deploy/nginx.conf`
+
+### nginx 가 storage 컨테이너를 이름으로 못 부른다 — 해소됨
+
+- **원인**: compose 에서 nginx 는 `frontend` 네트워크에만, storage 는 `backend` 에만 붙어 있었다. [AGENTS.md](../../AGENTS.md) 는 nginx 를 `backend` 에 붙이지 말라고 못박고 있어서 `proxy_pass http://storage:8888` 이 안 됐다. 운영 storage 는 호스트 공개 포트도 없어 우회할 구멍조차 없었다.
+- **해결**: 운영은 **storage 를 `frontend` 에도 붙였다**(`networks: [backend, frontend]`). nginx 를 backend 에 붙이는 것과 달리 nginx 는 여전히 mysql·redis 에 닿지 못한다. 개발 스택은 호스트에 열린 filer 포트로 우회한다(`host.docker.internal:8888`).
+- **근거**: `infra/deploy/compose.yml`, `api/compose.yml`
+
+### storage 컨테이너를 재생성했더니 업로드·다운로드가 502 가 된다
+
+- **원인**: nginx 는 `upstream` 의 호스트명을 **기동 시점에 한 번만** 해석하고 그 IP 를 계속 쓴다. 컨테이너를 재생성하면 IP 가 바뀌는데 nginx 는 옛 IP 를 붙잡고 있다. api 에 대해서는 `receive.sh` 가 배포마다 nginx 를 `--force-recreate` 해서 이미 이 문제를 피하고 있다.
+- **해결**: `storage` 를 재생성했으면 nginx 도 함께 재생성한다.
+  `docker compose up -d --no-deps --force-recreate nginx`
+- **근거**: `infra/deploy/receive.sh` 의 "Resolve API's new container address after each replacement" 주석, `infra/deploy/nginx.conf`
+
+### X-Accel-Redirect 응답의 Content-Type 이 스프링이 지정한 값과 다르다
+
+- **원인**: 최종 Content-Type 은 nginx 가 스토리지에서 받은 응답 헤더를 쓴다. 스프링이 붙인 `audio/opus` 는 남지 않고 `application/octet-stream` 이 나간다.
+- **해결**: Content-Type 에 의존하는 클라이언트 로직을 만들지 않는다. `ChunkStorageUrl.contentType()` 은 사실상 쓰이지 않는다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/stream/controller/ChunkController.java`
+
 ---

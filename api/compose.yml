@@ -7,7 +7,10 @@ services:
     restart: unless-stopped
     environment:
       API_UPSTREAM: host.docker.internal:${MUPID_PORT:-8800}
-      NGINX_ENVSUBST_FILTER: "^API_UPSTREAM$$"
+      # X-Accel-Redirect 대상. nginx 는 frontend 네트워크에만 붙어 있어서 storage 컨테이너를
+      # 직접 못 부른다. 개발 스택에서는 호스트에 열린 filer 포트(8888)로 우회한다.
+      STORAGE_UPSTREAM: host.docker.internal:8888
+      NGINX_ENVSUBST_FILTER: "^(API|STORAGE)_UPSTREAM$$"
       TZ: Asia/Seoul
     volumes:
       - ./nginx/templates:/etc/nginx/templates:ro

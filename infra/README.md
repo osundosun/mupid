@@ -47,6 +47,31 @@
 - DB/Redis 볼륨을 보존한다. `down -v` 금지. 이미지 롤백은 DB 스키마/데이터를 되돌리지 않는다.
 - 애플리케이션 DB 계정은 mupid DB에만 권한을 부여한다. root 비밀번호는 API에 전달하지 않는다.
 
+## 음원 경로 적용 (서버에서 사람이 해야 하는 작업)
+
+`infra/deploy/nginx.conf` 와 `infra/deploy/compose.yml` 에 음원 업로드·다운로드
+경로가 추가됐다. **두 파일 모두 CI가 자동 교체하지 않으므로 서버에 직접 반영해야
+한다.** 반영 전까지 업로드는 404, 다운로드는 404 다.
+
+1. `infra/deploy/nginx.conf` → `/srv/mupid/config/nginx.conf` (기존 파일 백업 후)
+2. `infra/deploy/compose.yml` → `/srv/mupid/config/compose.yml`
+   - `storage` 서비스가 `networks: [backend, frontend]` 로 바뀐다. nginx 가
+     스토리지와 직접 바이트를 주고받기 때문이다. nginx 는 여전히 mysql·redis 에
+     닿지 못하고, storage 의 호스트 공개 포트도 그대로 없다.
+3. 적용:
+
+```bash
+docker compose --env-file /srv/mupid/.env -f /srv/mupid/config/compose.yml up -d storage
+docker compose --env-file /srv/mupid/.env -f /srv/mupid/config/compose.yml   up -d --no-deps --force-recreate nginx
+docker exec mupid-nginx nginx -t
+```
+
+`storage` 를 재생성하면 IP 가 바뀌고 nginx 는 업스트림 주소를 기동 시점에 한 번만
+해석하므로, **nginx 를 반드시 함께 재생성한다.** 순서를 바꾸면 502 가 난다.
+(`receive.sh` 가 API 교체 뒤 nginx 를 `--force-recreate` 하는 것과 같은 이유다.)
+
+배경과 설계는 `api/knowledge/decision/0016-audio-upload-three-step.md` 에 있다.
+
 ## GitLab 변수 연결 (남은 작업)
 
 | Key | Type | Protected | Environment | 값 |

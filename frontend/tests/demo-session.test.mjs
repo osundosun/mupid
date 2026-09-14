@@ -58,7 +58,7 @@ void test('login and logout only change preview UI, not playback or music record
     hook.indexOf('const signOutDemo'),
     hook.indexOf('const loadTrack'),
   );
-  assert.ok(signIn.includes('setDemoSession(session)'));
+  assert.ok(signIn.includes('setDemoSession({'));
   assert.ok(signOut.includes('setDemoSession(null)'));
   for (const source of [signIn, signOut]) {
     for (const prohibited of [

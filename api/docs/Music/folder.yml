@@ -1,0 +1,63 @@
+info:
+  name: Music
+  type: folder
+  seq: 7
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Music
+
+    음악·앨범·아티스트·가사 관리 API 입니다. 스트리밍 서비스에 콘텐츠를
+    등록할 때 쓰는 **관리자/시스템 전용** 엔드포인트입니다.
+
+    컨트롤러에 `@SystemRole` 이 붙어 있어 `ROLE_SYSTEM` 또는 `ROLE_ADMIN`
+    권한의 액세스 토큰으로만 호출할 수 있습니다. 일반 사용자
+    (`ROLE_USER`) 토큰으로 호출하면 403 (`MUPID_FORBIDDEN`) 이 반환됩니다.
+
+    | 엔드포인트 | 동작 | 인증 |
+    | --- | --- | --- |
+    | `POST /api/v1/music` | 음악 추가 | SYSTEM/ADMIN |
+    | `PATCH /api/v1/music/{musicId}` | 음악 수정 | SYSTEM/ADMIN |
+    | `DELETE /api/v1/music/{musicId}` | 음악 삭제 | SYSTEM/ADMIN |
+    | `POST /api/v1/album` | 앨범 생성 | SYSTEM/ADMIN |
+    | `PATCH /api/v1/album/{albumId}` | 앨범 수정 | SYSTEM/ADMIN |
+    | `DELETE /api/v1/album/{albumId}` | 앨범 삭제 | SYSTEM/ADMIN |
+    | `POST /api/v1/artist` | 아티스트 생성 | SYSTEM/ADMIN |
+    | `PATCH /api/v1/artist/{artistId}` | 아티스트 수정 | SYSTEM/ADMIN |
+    | `DELETE /api/v1/artist/{artistId}` | 아티스트 삭제 | SYSTEM/ADMIN |
+    | `POST /api/v1/lyric` | 가사 추가 | SYSTEM/ADMIN |
+    | `PATCH /api/v1/lyric/{lyricId}` | 가사 수정 | SYSTEM/ADMIN |
+    | `DELETE /api/v1/lyric/{lyricId}` | 가사 삭제 | SYSTEM/ADMIN |
+
+    ## 등록 순서
+
+    아티스트·앨범은 이미지가 **필수**(`image_file_id`)입니다. 먼저
+    `Storage / 이미지 업로드` 로 파일을 올려 `file_id` 를 받아야 합니다.
+
+    1. `Storage / 이미지 업로드` (`ARTIST`) → `file_id` 획득
+    2. `아티스트 생성` (`image_file_id` 필요) → `artist_id` 획득
+    3. `Storage / 이미지 업로드` (`ALBUM`) → `file_id` 획득
+    4. `앨범 생성` (`artist_id`, `image_file_id` 필요) → `album_id` 획득
+    5. `음악 추가` (`album_id`, `artist_id` 필요) → `music_id` 획득
+    6. `가사 추가` (`music_id` 필요)
+    7. `Stream / 스트림 생성` → `청크 업로드` → `스트림 상태 변경(DONE)`
+
+    1~7 전체를 `music_chunking` 배치가 자동으로 수행합니다. Bruno 로는 같은
+    순서를 수동으로 호출하면 됩니다.
+
+    ## 삭제 정책
+
+    - 음악·앨범·아티스트는 **소프트 삭제**(`is_deleted = true`) 입니다.
+      삭제된 대상을 다시 조회/수정/삭제하면 404 로 취급됩니다.
+    - 음악이 삭제되면 해당 음악의 스트림·청크도 조회되지 않습니다
+      (`MUPID_MUSIC_NOT_FOUND` / `MUPID_CHUNK_NOT_FOUND`).
+    - 가사는 **하드 삭제**(행 자체 삭제) 됩니다.
+
+    ## 발매일 형식
+
+    `release_date` 는 ISO-8601 LocalDateTime 형식입니다.
+    예: `2026-09-11T00:00:00`

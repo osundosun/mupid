@@ -23,6 +23,7 @@
 | [0013](0013-soft-delete-policy.md) | 삭제는 soft delete 로 한다 | 채택 · **코드가 미준수** |
 | [0014](0014-event-collector-in-api.md) | 청취 이벤트 수집기를 API 안에 둔다 | 채택 · 구현 완료 |
 | [0015](0015-derive-interpretation-at-query-time.md) | 해석(분류·가중치)은 저장하지 않고 쿼리 시점에 계산한다 | 채택 · **기존 MV 1개가 미준수** |
+| [0016](0016-audio-upload-three-step.md) | 오디오 등록은 3단계 프로토콜로 하고, 바이트는 스프링을 거치지 않는다 | 채택 · 구현 완료 |
 
 ## 먼저 볼 것
 

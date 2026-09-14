@@ -87,3 +87,38 @@
 - **해결**: 인증코드 관련 버그를 Redis 에서 찾지 않는다. 정리 배치가 필요하면 별도로 만든다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/email/entity/EmailVerification.java`, `api/src/main/java/com/osundosun/mupid/api/email/service/EmailServiceImpl.java:37-38`
 
+### `chunks` INSERT 가 SQL 문법 오류로 깨진다 — 해소됨
+
+- **원인**: `index` 가 MySQL 예약어다. SELECT 는 `c1_0.index` 처럼 별칭이 붙어 통과하지만 INSERT 컬럼 목록에서는 그대로 쓰면 `You have an error in your SQL syntax ... near 'index,stream_id)'` 가 난다. **조회만 해서는 드러나지 않아** 업로드 API 를 만들고서야 터졌다. [erd.md](../domain/erd.md) 가 이미 경고해 둔 지점이다.
+- **해결**: `@Column(name = "``index``")` 로 백틱을 붙인다. `AiChatMessage.index`, `MusicSectionAnalysis.index` 는 **아직 그대로다.** 그 테이블에 INSERT 를 처음 쓰는 사람이 같은 데서 넘어진다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/stream/entity/Chunk.java:94`
+
+### 복합키 엔티티 INSERT 에서 `No value specified for parameter N` 이 난다 — 해소됨
+
+- **원인**: `@EmbeddedId` 안의 FK 컬럼을 `insertable = false, updatable = false` 로 막고 `@ManyToOne @JoinColumn` 을 따로 두면, Hibernate 가 INSERT 문에 같은 컬럼을 **두 번** 넣는다 (`insert into chunks (...,stream_id,index,stream_id) values (?,?,?,?,?,?)`).
+- **해결**: 파생 식별자는 `@MapsId("streamId")` 를 연관에 붙이고, 임베디드 id 쪽 컬럼은 평범한 `@Column(name = "stream_id")` 로 둔다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/stream/entity/Chunk.java:47`
+
+### `object_storage_files` INSERT 가 `Data too long for column 'mime'` 로 깨진다 — 해소됨
+
+- **원인**: `mime` 이 `varchar(15)` 다. 브라우저가 아닌 클라이언트(curl·배치)가 멀티파트를 보내면 Content-Type 이 `application/octet-stream`(24자)으로 와서 그대로 저장하다 잘린다.
+- **해결**: 호출부가 mime 을 지정하는 `StorageService.uploadFile(..., String mime)` 오버로드를 쓴다. 청크는 `audio/opus` 로 고정한다. **클라이언트가 보낸 Content-Type 을 그대로 컬럼에 넣지 않는다.**
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/service/StorageServiceImpl.java`, `api/src/main/java/com/osundosun/mupid/api/stream/service/ChunkServiceImpl.java:48`
+
+### 앨범 생성이 `Column 'is_deleted' cannot be null` 로 깨진다 — 해소됨
+
+- **원인**: `Album.isDeleted` 에 `@Builder.Default` 가 없어서 빌더로 만들면 null 이다. 같은 자리에 `Artist` 는 `@Builder.Default private Boolean isDeleted = false;` 로 되어 있어 둘을 나란히 보면 눈치채기 어렵다.
+- **해결**: NOT NULL + 기본값 컬럼은 엔티티 쪽에도 `@Builder.Default` 를 붙인다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/music/entity/Album.java`
+
+### 앨범 조회 SQL 에 `a1_0.createdat` 이라는 없는 컬럼이 나온다 — 해소됨
+
+- **원인**: `Album.createdat` 필드명 오타. Hibernate 암묵 네이밍이 그대로 내려가 `Unknown column 'a1_0.createdat' in 'field list'` 가 난다. 다른 엔티티는 모두 `createdAt` 이라 `created_at` 으로 변환된다.
+- **해결**: `createdAt` 으로 고쳤다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/music/entity/Album.java`
+
+### 삭제된 음악을 수정·삭제하면 500 이 난다 — 해소됨
+
+- **원인**: `MusicServiceImpl.getMusic` 이 `Optional<Music>` 을 반환한다고 선언해 놓고 삭제된 곡에 대해 `return null` 을 했다. 호출부의 `.orElseThrow(...)` 가 NPE 로 터진다.
+- **해결**: `Optional.empty()` 를 반환한다. `Optional` 반환 메서드는 절대 null 을 돌려주지 않는다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/music/service/MusicServiceImpl.java`

@@ -76,6 +76,12 @@ public class User {
     private ObjectStorageFile imageFile;
 
     /**
+     * 프로필 이미지 파일 번호 (조회 전용)
+     */
+    @Column(name = "image_file_id", insertable = false, updatable = false)
+    private Integer imageFileId;
+
+    /**
      * 출생 연도
      */
     @Column(nullable = false)

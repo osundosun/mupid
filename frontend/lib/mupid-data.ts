@@ -6,6 +6,11 @@ export type SongSection = {
 
 export type Track = {
   id: number;
+  /**
+   * 서버의 음악 번호. 있으면 청크 스트리밍으로 재생하고, 없으면 데모 음원
+   * (`audio` URL)을 <audio> 로 재생한다. → lib/stream-catalog.ts
+   */
+  musicId?: number;
   title: string;
   artist: string;
   album: string;

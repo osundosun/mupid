@@ -1,6 +1,9 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { mupidService } from '@/lib/services';
+import { login, logout, restoreSession } from '@/lib/api/session';
+import { getPlayer } from '@/lib/player';
+import { isStreamed } from '@/lib/stream-catalog';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
   getSongSectionAt,
@@ -31,6 +34,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const [moods, setMoods] = useState(initial.moods);
   const [active, setActive] = useState<Track>(tracks[0]);
   const [playing, setPlaying] = useState(false);
+  // 청크를 기다리는 중. 화면은 이 값으로 스피너를 띄운다.
+  const [buffering, setBuffering] = useState(false);
   const [time, setTime] = useState(0);
   const [volume, setVolume] = useState(0.65);
   const [liked, setLiked] = useState(initial.liked);
@@ -137,6 +142,7 @@ export function useMupid(bootstrap: Bootstrap) {
   }, [toast]);
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
+    getPlayer()?.setVolume(volume);
   }, [volume]);
   useEffect(() => {
     if (!chatOpen) return;
@@ -167,16 +173,27 @@ export function useMupid(bootstrap: Bootstrap) {
     setNotificationOpen(false);
     setLoginDialog(true);
   };
+  // 액세스 토큰은 메모리에만 있다. 새로고침 뒤에는 쿠키의 리프레시 토큰으로
+  // 한 번만 복원을 시도하고, 실패하면 비로그인 상태로 둔다.
+  useEffect(() => {
+    let alive = true;
+    restoreSession().then((session) => {
+      if (!alive || session.status !== 'authenticated' || !session.user) return;
+      setNickname(session.user.nickname);
+      setDemoSession({ kind: 'authenticated', nickname: session.user.nickname, userId: session.user.user_id });
+    });
+    return () => { alive = false; };
+  }, []);
   const signInDemo = async (email: string, password: string) => {
-    const session = await mupidService.login({ email, password });
-    setNickname(session.nickname);
-    setDemoSession(session);
+    const user = await login(email, password);
+    setNickname(user.nickname);
+    setDemoSession({ kind: 'authenticated', nickname: user.nickname, userId: user.user_id });
     setLoginDialog(false);
     setToast('뮤피드에 오신 걸 환영해요.');
     return true;
   };
   const signOutDemo = async () => {
-    try { await mupidService.logout(); } catch { setToast('로그아웃하지 못했어요. 다시 시도해 주세요.'); return; }
+    try { await logout(); } catch { setToast('로그아웃하지 못했어요. 다시 시도해 주세요.'); return; }
     setDemoSession(null);
     setLoginDialog(false);
     setToast('로그아웃 화면으로 전환했어요. 음악과 저장 기록은 그대로예요.');
@@ -191,6 +208,13 @@ export function useMupid(bootstrap: Bootstrap) {
       activeRef.current = track;
       setActive(track);
       setTime(0);
+      // 두 재생 경로가 동시에 소리를 내지 않도록 반대쪽을 끈다.
+      if (isStreamed(track)) {
+        if (audio) audio.removeAttribute('src');
+        return;
+      }
+      getPlayer()?.stop();
+      setBuffering(false);
       if (audio) {
         audio.src = track.audio;
         audio.load();
@@ -200,12 +224,32 @@ export function useMupid(bootstrap: Bootstrap) {
   const seek = (value: number) => {
     const next = Math.max(0, Math.min(value, activeRef.current.duration));
     setTime(next);
+    if (isStreamed(activeRef.current)) {
+      void getPlayer()?.seek(next);
+      return;
+    }
     const audio = audioRef.current;
     if (audio && audio.readyState >= 1) audio.currentTime = next;
     else seekOnLoad.current = next;
   };
   const startPlayback = async (track: Track, start?: number) => {
     const audio = audioRef.current;
+    if (isStreamed(track)) {
+      loadTrack(track);
+      const player = getPlayer();
+      if (!player) return;
+      advancing.current = false;
+      try {
+        await player.load(track.musicId, { autoplay: true });
+        if (start !== undefined && start > 0) await player.seek(start);
+      } catch {
+        setToast('음원을 불러오지 못했어요. 다시 재생해 주세요.');
+      }
+      setHistory((ids) =>
+        [track.id, ...ids.filter((i) => i !== track.id)].slice(0, 8),
+      );
+      return;
+    }
     if (!audio) return;
     loadTrack(track);
     if (start !== undefined) seek(start);
@@ -232,6 +276,13 @@ export function useMupid(bootstrap: Bootstrap) {
     const audio = audioRef.current;
     previewEnd.current = null;
     if (!queueIds.includes(track.id)) setQueueIds(tracks.map((t) => t.id));
+    if (!fromMoment && activeRef.current.id === track.id && isStreamed(track)) {
+      const player = getPlayer();
+      if (player && player.store.get().status === 'playing') {
+        player.pause();
+        return;
+      }
+    }
     if (
       !fromMoment &&
       activeRef.current.id === track.id &&
@@ -268,6 +319,37 @@ export function useMupid(bootstrap: Bootstrap) {
   const queueTracks = queueIds
     .map((id) => tracks.find((t) => t.id === id)!)
     .filter((t) => t && !ignored.includes(t.id));
+
+  // 스트리밍 엔진은 React 밖에서 돈다. 상태를 훅의 값으로 옮겨 화면이 기존과
+  // 똑같은 모양(playing / time)을 보게 한다.
+  const advanceRef = useRef<() => void>(() => {});
+  advanceRef.current = () => next(1);
+  useEffect(() => {
+    const player = getPlayer();
+    if (!player) return;
+    return player.store.subscribe(() => {
+      if (!isStreamed(activeRef.current)) return;
+      const state = player.store.get();
+      setBuffering(state.status === 'loading' || state.status === 'buffering');
+      // 버퍼를 기다리는 동안에도 사용자 입장에서는 '재생 중'이다.
+      setPlaying(state.status === 'playing' || state.status === 'buffering');
+      setTime(state.positionSec);
+      if (state.status === 'error' && state.error) setToast(state.error);
+      if (state.status === 'ended' && !advancing.current) {
+        advancing.current = true;
+        advanceRef.current();
+      }
+    });
+  }, []);
+
+  // 대기열에서 다음에 올 스트리밍 곡들의 앞 5초를 미리 받아 둔다.
+  useEffect(() => {
+    const upcoming = queueTracks
+      .filter((track) => isStreamed(track) && track.id !== active.id)
+      .map((track) => track.musicId!)
+      .slice(0, 3);
+    getPlayer()?.setQueue(upcoming);
+  }, [queueIds, active.id, ignored]);
   const playPlaylist = (playlist: Playlist) => {
     const playable = playlist.tracks.filter((t) => !ignored.includes(t.id));
     if (!playable.length) {
@@ -435,6 +517,7 @@ export function useMupid(bootstrap: Bootstrap) {
     active,
     playing,
     setPlaying,
+    buffering,
     time,
     volume,
     setVolume,

@@ -6,8 +6,8 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import com.osundosun.mupid.api.storage.enumerate.StorageFileCategory;
-import com.osundosun.mupid.api.storage.enumerate.StorageFileType;
+import com.osundosun.mupid.api.storage.enumerate.FileCategory;
+import com.osundosun.mupid.api.storage.enumerate.FileType;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -43,18 +43,18 @@ public class ObjectStorageFile {
     private Integer fileId;
 
     /**
-     * 파일 종류
+     * 파일 유형
      */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private StorageFileType fileType;
+    private FileType fileType;
 
     /**
-     * 파일 분류
+     * 사용 용도
      */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private StorageFileCategory category;
+    private FileCategory category;
 
     /**
      * 원 파일 명

@@ -23,7 +23,7 @@ runtime:
     - name: VERIFICATION_ID
       value: "9"
     - name: VERIFICATION_TOKEN
-      value: K5MUOV
+      value: EP5HM0
 
 settings:
   encodeUrl: true

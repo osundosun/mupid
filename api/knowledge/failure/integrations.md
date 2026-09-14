@@ -23,7 +23,7 @@
 ### 1MB 를 넘는 프로필 사진이 413 이 아니라 500 을 낸다
 
 - **원인**: `UserImageServiceImpl.USER_IMAGE_FILE_MAX_SIZE` 는 5MB 이고 `USER_IMAGE_FILE_SIZE_EXCEEDED`(413)를 던지도록 돼 있지만, `application.yaml` 에 `spring.servlet.multipart.*` 설정이 하나도 없다. 스프링 기본 `max-file-size` 는 5MB 보다 작으므로 파일이 **컨트롤러에 닿기 전에** 거절되고, `MaxUploadSizeExceededException` 전용 핸들러가 없어 `@ExceptionHandler(Exception.class)` 로 떨어져 500 `MUPID_INTERNAL_SERVER_ERROR` 가 나간다. nginx 의 `client_max_body_size 20m` 은 병목이 아니다.
-- **해결**: 5MB 정책을 실제로 적용하려면 `spring.servlet.multipart.max-file-size`(와 `max-request-size`)를 명시하거나 전용 핸들러를 추가한다.
+- **해결**: `application.yaml` 에 `spring.servlet.multipart.max-file-size` / `max-request-size` 를 명시해 해소했다 (`MUPID_MAX_UPLOAD_FILE_SIZE`, 기본 20MB). 5MB 검사는 이제 컨트롤러에 도달한다. — 해소됨
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserImageServiceImpl.java`, `api/src/main/resources/application.yaml`
 
 ### Content-Type 헤더 없는 멀티파트 파트가 NOT NULL 제약에 걸린다
@@ -73,5 +73,17 @@
 - **원인**: `EmailVerificationController.sendAddressVerificationMail`(GET `/api/v1/mail/verification`)과 `UserPasswordResetController.sendReseteMail`(GET `/api/v1/user/reset`)이 `@GetMapping` 에 `@Valid @RequestBody` 를 함께 쓴다. Bruno 컬렉션에도 GET + JSON 바디로 기록돼 있어 의도된 구현이지만, 프록시·브라우저 `fetch`·일부 HTTP 클라이언트가 본문을 버려 `MUPID_NOT_READABLE_MESSAGE` 로 떨어질 수 있다.
 - **해결**: 클라이언트를 붙이기 전에 POST 로 바꿀지 결정한다. **새 조회 엔드포인트를 만들 때 이 두 개를 본보기로 삼지 않는다.**
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/email/controller/EmailVerificationController.java`, `api/docs/Email/folder.yml`
+
+### 이미지 업로드·조회·삭제가 전부 500 이었다 — 해소됨
+
+- **원인**: `StorageImageServiceImpl.getStorageKey` 가 `"image/%s/%d".formatted(category.name().toLowerCase(), key)`. `key` 는 `String` 인데 `%d` 로 포맷해 `IllegalFormatConversionException` 이 난다. 세 메서드가 모두 이 함수를 거치므로 **프로필 사진 기능 전체가 죽어 있었다.**
+- **해결**: `%s` 로 고쳤다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/service/StorageImageServiceImpl.java:90`
+
+### `ARTIST` / `ALBUM` 카테고리로 이미지를 올리면 `UnsupportedOperationException` 이 난다 — 해소됨
+
+- **원인**: `FileCategory` 의 콜백 서비스가 `PROFILE` 에만 등록돼 있는데, `getCallbackService` 가 없으면 예외를 던졌다. 콜백이 필요 없는 카테고리까지 업로드가 막혔다.
+- **해결**: 콜백이 없으면 null 을 돌려주고 호출부가 건너뛴다. 조회 경로에서만 `FILE_NOT_FOUND` 로 바꾼다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/service/StorageImageServiceImpl.java`
 
 ---

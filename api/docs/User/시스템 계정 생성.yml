@@ -1,0 +1,149 @@
+info:
+  name: 시스템 계정 생성
+  type: http
+  seq: 7
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/user/system"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "email": "{{SYSTEM_USER_EMAIL}}",
+        "nickname": "{{SYSTEM_USER_NICKNAME}}"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: SYSTEM_USER_EMAIL
+      value: chunker@ssafy
+    - name: SYSTEM_USER_NICKNAME
+      value: 청킹 배치
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.refresh_token
+        method: jsonq
+      variable:
+        name: SYSTEM_REFRESH_TOKEN
+        scope: runtime
+      description: 배치에 넣을 리프레시 토큰을 SYSTEM_REFRESH_TOKEN 변수에 저장합니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 생성 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "시스템 계정이 생성되었습니다. 비밀번호와 리프레시 토큰은 다시 확인할 수 없습니다.",
+            "data": {
+              "user_id": 3,
+              "email": "chunker@ssafy",
+              "password": "…32자 무작위…",
+              "refresh_token": "eyJhbGciOiJIUzI1NiJ9…"
+            }
+          }
+  - name: 400 이메일 중복
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_DUPLICATE_EMAIL",
+            "message": "이메일이 중복되었습니다.",
+            "error_details": null
+          }
+  - name: 403 관리자 아님
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_FORBIDDEN",
+            "message": "접근 권한이 없습니다.",
+            "errorDetails": null
+          }
+
+docs: |-
+  # 시스템 계정 생성
+
+  `POST /api/v1/user/system` · **`ROLE_ADMIN` 전용**
+
+  배치 프로그램(`music_chunking`) 이 쓸 `ROLE_SYSTEM` 계정을 발급합니다.
+  일반 회원가입(`POST /api/v1/user`) 과 달리 이메일 인증이 필요 없고,
+  비밀번호를 받지 않고 서버가 32자 무작위로 만듭니다.
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `email` | string | ✅ | 로그인 식별자. 메일을 보내지는 않는다 |
+  | `nickname` | string | | 표시용 이름. 비우면 이메일 앞부분을 쓴다 |
+
+  ## 응답 필드
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `data.user_id` | int | 생성된 유저 번호 |
+  | `data.email` | string | 이메일 |
+  | `data.password` | string | 자동 생성된 비밀번호 |
+  | `data.refresh_token` | string | 배치가 보관할 리프레시 토큰 |
+
+  **비밀번호와 리프레시 토큰은 이 응답에서만 평문으로 나옵니다.** 다시 볼 수
+  없습니다. 잃어버리면 계정을 새로 만드세요.
+
+  ## 배치 운영 방식
+
+  배치는 **리프레시 토큰 하나만** 파일로 들고 있습니다.
+
+  1. `data.refresh_token` 을 `music_chunking/refresh_token.txt` 에 저장한다
+  2. 배치는 액세스 토큰이 필요할 때 `Auth / 액세스 토큰 재발급`
+     (`GET /api/v1/auth`) 을 쿠키로 호출해 받는다
+  3. 서버가 **새 리프레시 토큰**을 `Set-Cookie` 로 주므로 배치가 파일을
+     갱신한다 → 7일 만료가 계속 밀려 재발급이 끊기지 않는다
+
+  비밀번호는 토큰을 잃어버렸을 때 `Auth / 로그인` 으로 다시 받기 위한
+  백업 수단입니다. 배치 서버에는 두지 않는 편이 낫습니다.
+
+  `refresh_token.txt` 는 시스템 권한 그 자체이므로 저장소에 커밋하면 안 됩니다
+  (`.gitignore` 에 등록되어 있습니다).
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FORBIDDEN` | 403 | 관리자 토큰이 아님 |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 이메일 누락 또는 형식 오류 |
+  | `MUPID_DUPLICATE_EMAIL` | 400 | 이미 있는 이메일 |

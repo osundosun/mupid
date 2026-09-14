@@ -1,0 +1,70 @@
+info:
+  name: 가사 삭제
+  type: http
+  seq: 11
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/lyric/{{LYRIC_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: LYRIC_ID
+      value: "1"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 삭제 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "가사가 삭제되었습니다.",
+            "data": null
+          }
+  - name: 404 가사 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_LYRIC_NOT_FOUND",
+            "message": "요청한 가사를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 가사 삭제
+
+  `DELETE /api/v1/lyric/{lyricId}` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  가사는 다른 엔티티와 달리 **하드 삭제** 됩니다(행 자체가 사라짐).
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FORBIDDEN` | 403 | SYSTEM/ADMIN 이 아닌 토큰 |
+  | `MUPID_LYRIC_NOT_FOUND` | 404 | 가사 없음 또는 이미 삭제됨 |

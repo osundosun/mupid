@@ -101,9 +101,9 @@ docs: |-
   | `gender` | string | ✅ | `M` / `F` / `ETC` |
 
   > 필드명은 snake_case 입니다 (`spring.jackson.property-naming-strategy: SNAKE_CASE`).
-  > `gender` 에 `M`, `F` 같은 값을 넣으면 `UserGender.fromCode` 에서 실패합니다.
+  > `gender` 는 `UserGender.valueOf` 로 파싱되므로 enum 이름(`M`, `F`, `ETC`)을 그대로 보내야 합니다.
 
-  가입 직후 상태는 `PENDING`(온보딩 필요), 권한은 `USER` 입니다.
+  가입 직후 상태는 `PENDING`(온보딩 필요), 권한은 `ROLE_USER` 입니다.
 
   ## 오류
 

@@ -1,0 +1,76 @@
+info:
+  name: 음악 삭제
+  type: http
+  seq: 3
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MUSIC_ID
+      value: "1"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 삭제 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "음악이 삭제되었습니다.",
+            "data": null
+          }
+  - name: 404 음악 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_MUSIC_NOT_FOUND",
+            "message": "요청한 음악을 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 음악 삭제
+
+  `DELETE /api/v1/music/{musicId}` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  음악을 소프트 삭제합니다 (`is_deleted = true`). 삭제된 음악은
+
+  - `Stream / 스트림 정보 조회` → `MUPID_MUSIC_NOT_FOUND`
+  - `Stream / 청크 조회` → `MUPID_CHUNK_NOT_FOUND`
+
+  로 조회되지 않습니다. 다시 삭제하거나, 삭제된 음악을 수정하려 하면
+  `MUPID_MUSIC_NOT_FOUND` 가 반환됩니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FORBIDDEN` | 403 | SYSTEM/ADMIN 이 아닌 토큰 |
+  | `MUPID_MUSIC_NOT_FOUND` | 404 | 음악 없음 또는 이미 삭제됨 |

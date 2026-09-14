@@ -1,7 +1,10 @@
 import { tracks, initialMoments, initialPlaylists, deriveChatRecommendations } from '../mupid-data';
+import { streamTracks } from '../stream-catalog';
 import type { MupidService, Preferences } from './contracts';
 
 const preferencesKey = 'mupid.sky.preferences.v1';
+// 저장된 좋아요·기록이 서버 곡을 가리킬 수도 있다. 검증은 합친 목록으로 한다.
+const allTracks = [...tracks, ...streamTracks];
 const photoKey = 'mupid-profile-photo';
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object';
 const defaults: Preferences = { onboardingSubmittedAt: null, nickname: '규원', moods: ['몽환적인', '감성적인'],
@@ -22,24 +25,29 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
           if (typeof saved.nickname === 'string' && saved.nickname.trim()) preferences.nickname = saved.nickname.slice(0, 20);
           if (Array.isArray(saved.moods)) preferences.moods = saved.moods.filter((v: unknown) => typeof v === 'string');
           for (const key of ['liked', 'ignored', 'history'] as const) {
-            if (Array.isArray(saved[key])) preferences[key] = saved[key].filter((id: unknown) => tracks.some(t => t.id === id));
+            if (Array.isArray(saved[key])) preferences[key] = saved[key].filter((id: unknown) => allTracks.some(t => t.id === id));
           }
           if (Array.isArray(saved.playlists)) preferences.playlists = saved.playlists.flatMap((p: unknown) => {
             if (!record(p) || typeof p.id !== 'number' || !Number.isFinite(p.id) || typeof p.name !== 'string' || !Array.isArray(p.tracks)) return [];
             return [{ id: p.id, name: p.name, tracks: p.tracks.flatMap((t: unknown) => {
-              const found = record(t) ? tracks.find(v => v.id === t.id) : undefined;
+              const found = record(t) ? allTracks.find(v => v.id === t.id) : undefined;
               return found ? [found] : [];
             }) }];
           });
           if (Array.isArray(saved.moments)) preferences.moments = saved.moments.flatMap((m: unknown) => {
             if (!record(m) || !record(m.track)) return [];
-            const id = m.track.id, track = tracks.find(t => t.id === id);
+            const id = m.track.id, track = allTracks.find(t => t.id === id);
             if (!track || typeof m.id !== 'number' || !Number.isFinite(m.id) || typeof m.start !== 'number' || typeof m.end !== 'number' || !Number.isFinite(m.start) || !Number.isFinite(m.end) || m.start < 0 || m.end <= m.start || m.end > track.duration) return [];
             return [{ id: m.id, track, start: m.start, end: m.end, section: typeof m.section === 'string' ? m.section : '' }];
           });
         }
       } catch { /* Recover using demo defaults; never clear the user's stored value here. */ }
-      return { tracks: structuredClone(tracks), preferences };
+      // 데모 곡 + 서버에 실제로 올라간 곡. 후자는 청크 스트리밍으로 재생된다.
+      // 곡 목록 API 가 생기면 streamTracks 를 서버 응답으로 갈아끼운다.
+      return {
+        tracks: [...structuredClone(tracks), ...structuredClone(streamTracks)],
+        preferences,
+      };
     },
     async savePreferences(value) { storage.setItem(preferencesKey, JSON.stringify(value)); },
     login: unavailable,
