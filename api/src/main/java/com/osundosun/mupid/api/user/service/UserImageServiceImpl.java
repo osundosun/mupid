@@ -42,8 +42,13 @@ public class UserImageServiceImpl implements UserImageService, StorageImageServi
      * 프로필 사진 조회 URL.
      *
      * 사진을 올린 적이 없으면 `default` 키를 가리킨다. 그 키에는 파일이 없고
-     * `handleNoImageData` 가 기본 이미지를 돌려주므로, 화면은 null 검사 없이
-     * 이 URL 을 그대로 `<img src>` 에 넣으면 된다.
+     * `handleNoImageData` 가 기본 이미지를 돌려주므로, **항상 받아올 것이 있는
+     * URL 이다.** 화면은 null 검사 없이 그대로 쓰면 된다.
+     *
+     * 다만 `<img src>` 에 바로 걸 수는 없다 — PROFILE 은 공개 경로가 아니라
+     * (`SecurityConfig`) 토큰이 있어야 하고 `<img>` 는 헤더를 달지 못한다.
+     * 화면은 받아 온 바이트를 object URL 로 바꿔 쓴다
+     * (`frontend/lib/profile-photo.ts`).
      */
     @Override
     @Transactional(readOnly = true)
