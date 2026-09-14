@@ -46,11 +46,18 @@ def containers(workload):
 class NginxCopyTest(unittest.TestCase):
     """The edge must serve the audited production config, not a fork of it."""
 
-    def test_copy_is_byte_identical_to_the_compose_one(self):
-        original = (ROOT / "infra" / "deploy" / "nginx.conf").read_bytes()
-        copy = (K8S / "base" / "nginx" / "default.conf").read_bytes()
+    @staticmethod
+    def _normalised(path):
+        # Line endings differ by design and are not drift. infra_k8s/.gitattributes
+        # pins this tree to LF because it is consumed on Linux; infra/ has no such
+        # rule for .conf, so on Windows that file checks out CRLF. Comparing raw
+        # bytes fails on a fresh checkout even when the content is identical.
+        return path.read_bytes().replace(b"\r\n", b"\n")
+
+    def test_copy_matches_the_compose_one(self):
         self.assertEqual(
-            original, copy,
+            self._normalised(ROOT / "infra" / "deploy" / "nginx.conf"),
+            self._normalised(K8S / "base" / "nginx" / "default.conf"),
             "infra_k8s/base/nginx/default.conf has drifted from "
             "infra/deploy/nginx.conf. Re-copy it; do not edit one side only.",
         )
