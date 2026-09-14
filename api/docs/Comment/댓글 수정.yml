@@ -1,0 +1,78 @@
+info:
+  name: 댓글 수정
+  type: http
+  seq: 3
+
+http:
+  method: PATCH
+  url: "{{BASE_URL}}/api/v1/comment/{{COMMENT_ID}}"
+  body: json
+  auth: inherit
+
+body:
+  json: |-
+    {
+      "content": "고쳐 적었습니다"
+    }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 수정 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "댓글을 수정했습니다.",
+            "data": {
+              "comment_id": 3,
+              "music_id": 2,
+              "timestamp_ms": 5000,
+              "content": "고쳐 적었습니다",
+              "user_id": 13,
+              "nickname": "cmta",
+              "mine": true,
+              "created_at": "2026-09-14T11:40:12.104882",
+              "updated_at": "2026-09-14T11:42:31.552104"
+            }
+          }
+  - name: 403 남의 댓글
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_COMMENT_FORBIDDEN",
+            "message": "본인이 작성한 댓글만 수정·삭제할 수 있습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 댓글 수정
+
+  `PATCH /api/v1/comment/{commentId}` · **인증 필요**
+
+  내용만 바꿉니다. **시점은 바꿀 수 없습니다** — 옮기고 싶으면 지우고 다시 답니다.
+
+  남의 댓글이면 404 가 아니라 **403** 입니다. 댓글이 있다는 사실은 목록에서 이미
+  보이므로 숨길 것이 없습니다.
+
+  경로에 곡 번호가 없습니다. 댓글 번호만으로 찾을 수 있습니다.
+
+  `updated_at` 은 수정된 값으로 내려옵니다.

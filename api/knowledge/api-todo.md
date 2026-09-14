@@ -27,6 +27,7 @@
 | 온보딩 | `GET /api/v1/onboarding/option`, `GET`, `POST /api/v1/onboarding` | 연결 완료 |
 | 좋아요·관심없음 | `PUT/DELETE /api/v1/music/{id}/reaction`, `GET /api/v1/user/reaction[/music]` | 연결 완료 |
 | 최근 감상 | `GET /api/v1/user/history` (적재는 이벤트 수집기가) | 연결 완료 |
+| 시점 댓글 | `GET/POST /api/v1/music/{id}/comment`, `PATCH/DELETE /api/v1/comment/{id}` | 연결 완료 |
 | 플레이리스트 | `POST /api/v1/playlist` | **생성만** |
 
 근거: `api/src/main/java/com/osundosun/mupid/api/**/controller/`
@@ -208,17 +209,31 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 - 근거: `frontend/hooks/use-mupid.ts` 의 `moments` · `saveMoment` ·
   `playSavedMoment`, `frontend/lib/services/contracts.ts` 의 `SavedMoment`
 
-### 8. 곡 시점 댓글
-
-`music_comments` 테이블과 `MusicComment` 엔티티는 있는데 API 가 없다. 프론트는
-`localStorage` 에 직접 넣고 있고, 서비스 계층도 우회한다.
+### 8. 곡 시점 댓글 — ✅ 완료
 
 - `GET /api/v1/music/{musicId}/comment` — 시점 오름차순
-- `POST /api/v1/music/{musicId}/comment` — `at_ms` · 본문
-- `PATCH`/`DELETE /api/v1/comment/{commentId}` — 본인 것만
-- 근거: `frontend/lib/track-comments.ts`(파일 주석이 "실제 작성자 신원과 인가는
-  나중에 서버에서 와야 한다"고 인정한다),
-  `frontend/components/mupid/track-comments.tsx`
+- `POST /api/v1/music/{musicId}/comment` — `timestamp_ms` · `content`
+- `PATCH /api/v1/comment/{commentId}` — 내용만. 시점은 못 바꾼다
+- `DELETE /api/v1/comment/{commentId}` — 소프트 삭제
+
+`mine` 은 **서버가 판정한다.** 화면이 `user_id` 를 비교하게 두면 비교를
+빠뜨렸을 때 남의 댓글에 수정 버튼이 뜬다.
+
+조회도 인증이 필요하다. 댓글은 재생 화면에서만 보이고 재생이 로그인을 요구한다.
+
+따라온 것:
+
+- 프론트가 `localStorage` 를 쓰지 않는다. 이제 **다른 사람의 댓글도 보인다.**
+- **댓글 길이가 500자에서 100자로 줄었다.** `music_comments.content` 가
+  `varchar(100)` 이다. 화면이 500자를 받아 놓고 서버가 거절하는 것보다 낫다.
+  더 길게 받으려면 ERD 변경이라 팀에 물어야 한다.
+- 순수 규칙(`validateComment`·`commentable`)을 `lib/comment-rules.ts` 로 뺐다.
+  `lib/track-comments.ts` 가 API 를 부르게 되어 통신 없이 규칙만 쓰려는 곳이
+  그쪽을 끌어오지 않게 하려는 것이다.
+- `MusicComment.isDeleted` 에 `@Builder.Default` 가 없어 NOT NULL 위반이 날
+  자리였다. `Album` 이 밟았던 것과 같다.
+- 시점이 곡 길이를 넘는지는 **검사하지 않는다.** 곡 길이가 스트림에서 오는
+  값이라(P0-1) 스트림 없는 곡에는 기준이 없다. 화면이 먼저 막는다.
 
 ### 9. 프로필 사진
 
