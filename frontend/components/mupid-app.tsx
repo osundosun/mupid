@@ -1,6 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { mupidService } from '@/lib/services';
+import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
+import { useStore } from '@/lib/store';
 import { fetchCatalog } from '@/lib/stream-catalog';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
@@ -87,15 +89,18 @@ export function MupidApp() {
 function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   const m = useMupid(bootstrap);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [photo, setPhoto] = useState('');
+  const photo = useStore(profilePhotoStore, s => s.url);
   const accountRef = useRef<HTMLDivElement>(null);
   const accountButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => { setAccountOpen(false); }, [m.page]);
+  // 상단바 사진. 예전에는 브라우저 저장(`readPhoto`)만 봐서 **계정에 올린
+  // 사진이 끝내 안 보였다.** 이제 마이페이지와 같은 자리에서 읽는다.
   useEffect(() => {
-    setAccountOpen(false);
-    let live = true;
-    void mupidService.readPhoto().then(value => { if (live) setPhoto(value); }).catch(() => {});
-    return () => { live = false; };
-  }, [m.page, m.demoSession]);
+    if (!m.demoSession) { profilePhoto.clear(); return; }
+    const abort = new AbortController();
+    void profilePhoto.refresh(abort.signal).catch(() => {});
+    return () => abort.abort();
+  }, [m.demoSession]);
   useEffect(() => {
     if (!accountOpen) return;
     const outside = (event: PointerEvent) => { if (!accountRef.current?.contains(event.target as Node)) setAccountOpen(false); };
