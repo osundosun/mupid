@@ -188,3 +188,29 @@ pytest 11건 전부 통과.
 Spring 은 컨테이너로 돈다. 이 서비스를 호스트에서 직접 실행하면 컨테이너가 닿도록
 `extra_hosts` 와 `MUPID_AI_BASE_URL` 을 맞춰야 한다. **nginx 에 노출하지 않는다** —
 `/internal` 은 인증이 없고 Spring 만 호출하는 전제다.
+
+표만 드립니다. 다만 **파일은 이미 올라가 있습니다** — 커밋 `253d591`, 원격 `ai/feature/S15P21A204-218-add-recommend-service`. 그래서 "실제 이식은 다음 작업"은 지금은 맞지 않고, 표의 파일명도 저장소 실제 경로로 맞췄습니다(`m16_service.py` → `app/recommender.py`).
+
+| 파일 | 용도 |
+|---|---|
+| `app/recommender.py` | 모델·색인을 불러오고 추천 점수를 계산하는 핵심 코드 |
+| `app/internal_api.py` | daily·next·search 요청을 받아 추천 계산을 호출하고 JSON 반환 |
+| `app/ids.py` | MySQL 숫자 ID와 기존 AI 문자열 ID 연결·검증 |
+| `app/legacy/m09_labels.py` | 재생·스킵·반복 같은 행동 로그를 선호 신호로 변환 |
+| `app/legacy/m10_features.py` | MERT 특징과 BPM·태그 등 부가 특징을 모델 입력 형태로 구성 |
+| `app/legacy/m11_stage1.py` | Dual Encoder 모델을 불러오고 구간별 점수를 계산 |
+| `app/main.py` | FastAPI 앱 시작, `/health`, `/internal/ready` 제공 |
+
+| 순서 | 단계 |
+|---|---|
+| 1 | BE가 `internal_api` 호출 |
+| 2 | `ids` 가 숫자 ID 변환 |
+| 3 | `m09_labels` 가 사용자 취향 계산 |
+| 4 | `m10_features` 가 모델 입력 구성 |
+| 5 | `m11_stage1`·`recommender` 가 추천 계산 |
+| 6 | `internal_api` 가 결과 반환 |
+
+| 구분 | 내용 |
+|---|---|
+| BE가 쓰는 것 | HTTP API (`/health`, `/internal/ready`, daily·next·search) |
+| BE가 쓰지 않는 것 | 위 Python 파일 — FastAPI 서버 **내부에서만** 실행 |
