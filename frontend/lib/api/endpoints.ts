@@ -35,6 +35,25 @@ export type SignupBody = {
   gender: 'M' | 'F' | 'ETC';
 };
 
+export type PlaylistSummary = {
+  playlist_id: number;
+  title: string;
+  music_count: number;
+  created_at: string;
+};
+
+/** 곡 추가 결과. `duplicated` 가 true 면 아무것도 추가되지 않았다. */
+export type PlaylistTrackAdded = {
+  playlist_id: number;
+  music_id: number;
+  /** 수록곡의 트랙 순서. 새로 담았으면 마지막 순서 + 1. */
+  track_order: number;
+  /** 추가 후 수록곡 수. 중복이면 변하지 않는다. */
+  music_count: number;
+  duplicated: boolean;
+  created_at: string;
+};
+
 export type StreamInfo = {
   stream_id: number;
   music_id: number;
@@ -131,6 +150,30 @@ export function createEndpoints(client: ApiClient) {
         client.request<{ is_valid: boolean }>({
           path: `/api/v1/mail/verification/${verificationId}`,
           anonymous: true,
+        }),
+    },
+
+    playlist: {
+      /** 빈 플레이리스트를 만든다. 수록곡은 따로 추가한다. */
+      create: (title: string) =>
+        client.request<PlaylistSummary>({
+          method: 'POST',
+          path: '/api/v1/playlist',
+          json: { title },
+        }),
+      /**
+       * 플레이리스트 맨 뒤에 곡 한 곡을 추가한다.
+       *
+       * 이미 담긴 곡이어도 성공(200)이다. 중복은 실패가 아니라 "이미 원하는 상태"라
+       * 서버가 오류 대신 `duplicated: true` 로 알려 준다. 이때는 아무것도 저장되지
+       * 않았으므로 `track_order` · `created_at` 은 기존 수록곡의 값이고
+       * `music_count` 도 그대로다.
+       */
+      addTrack: (playlistId: number, musicId: number) =>
+        client.request<PlaylistTrackAdded>({
+          method: 'POST',
+          path: `/api/v1/playlist/${playlistId}/track`,
+          json: { music_id: musicId },
         }),
     },
 
