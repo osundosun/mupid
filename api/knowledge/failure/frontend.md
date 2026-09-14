@@ -130,3 +130,17 @@
 - **원인**: `lib/mupid-data.ts` 가 데모 곡 8개와 재생목록·저장한 구간을 상수로 들고 있었고, 서버 카탈로그는 그 위에 얹혔다. 눌러도 음원이 없으니 재생되지 않는다.
 - **해결**: `tracks`·`initialPlaylists`·`initialMoments` 를 모두 빈 배열로 둔다. 곡 목록은 `lib/stream-catalog.ts` 가 `GET /api/v1/music` 으로 받아온 것만 쓴다. `Track.audio`(정적 파일 경로) 필드와 `public/demo-covers/` 50장도 함께 지웠다. 테스트가 쓰던 데모 곡은 `tests/fixtures/tracks.mjs` 로 옮겼다.
 - **근거**: `frontend/lib/mupid-data.ts`, `frontend/lib/services/index.ts`, `frontend/tests/fixtures/tracks.mjs`
+
+### 상단바에 프로필 사진이 끝내 안 보인다 — 해소됨
+
+- **원인**: 사진을 보여 주는 자리가 둘인데(상단바의 동그란 아이콘, 마이페이지의 편집 자리) 각자 다른 데서 읽었다. 마이페이지는 `lib/profile-photo.ts` 로 로그인 여부에 따라 계정/브라우저를 갈라 읽었지만, 상단바는 `mupidService.readPhoto()` — **브라우저 저장만** 봤다. 계정에 올린 사진은 브라우저에 없으니 상단바에는 영영 나오지 않는다. `mupid-app.tsx` 의 `setPhoto` 는 그 값만 받아 늘 빈 문자열이었다.
+- **해결**: 사진 상태를 `lib/profile-photo.ts` 의 `profilePhotoStore` 한 곳에 두고 두 자리가 함께 본다. 마이페이지에서 바꾸면 상단바도 그 자리에서 같이 바뀌고, 로그아웃하면 `clear()` 로 지운다. object URL 의 수명도 스토어가 쥔다 — 화면마다 만들고 놓다 보면 새는 자리가 생긴다.
+- **근거**: `frontend/lib/profile-photo.ts`, `frontend/components/mupid-app.tsx`, `frontend/components/mupid/profile-photo.tsx`
+
+### 재생 막대를 누르면 그 자리로 갔다가 되돌아왔다가 요동친다 — 해소됨
+
+- **원인**: 두 가지가 겹쳤다.
+  1. `engine.seek()` 가 **페이드아웃을 기다린 뒤에야** 위치를 바꿨다. 그 120ms 동안 티커가 200ms 마다 옛 위치를 그대로 내보내서, 막대가 누른 자리로 갔다가 원래 자리로 돌아왔다가 다시 튀었다.
+  2. 화면의 `seek` 이 `startPlayback` 을 불러 **곡을 통째로 다시 걸었다.** 막대를 끄는 동안 `change` 가 쉬지 않고 들어오는데 그때마다 청취 이벤트가 나가고 최근 감상에 쌓였으며, 다시 건 재생이 옛 자리에서 시작했다가 뒤늦게 목적지로 튀었다.
+- **해결**: 티커를 먼저 멈추고 자리를 확정한 뒤에 소리를 맞춘다. 옮기는 중에 또 들어오면 목적지만 갈아 두고 돌고 있는 쪽이 마지막 자리까지 이어서 처리한다(`seekPending`) — 여러 번이 한꺼번에 돌면 페이드와 예약이 엇갈린다. 화면 쪽은 이미 들고 있는 곡이면 위치만 옮기고, 그 곡을 아직 안 들고 있을 때만 새로 튼다.
+- **근거**: `frontend/lib/player/engine.ts` 의 `seek()`, `frontend/hooks/use-mupid.ts`

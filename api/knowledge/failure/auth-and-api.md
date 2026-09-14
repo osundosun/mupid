@@ -237,3 +237,10 @@
 - **원인**: `ApiClient.request` 가 재발급이 도는 동안 들어온 요청을 **익명 요청까지** 줄 세웠다. 첫 방문자는 세션 복원(재발급)이 항상 실패하므로, 그 사이 나간 곡 목록·온보딩 선택지 요청이 큐와 함께 401 로 실패했다. 서버는 200 을 주는데 화면에는 곡이 하나도 없었다.
 - **해결**: `if (this.refreshing && !options.anonymous)`. 토큰이 필요 없는 요청은 기다릴 이유가 없다.
 - **근거**: `frontend/lib/api/client.ts`
+
+### 낡은 쿠키 하나로 `GET /api/v1/auth` 가 500 이 된다 — 해소됨
+
+- **원인**: 재발급은 필터가 아니라 **컨트롤러에서** 토큰을 푼다. 모양이 깨졌거나 서명이 안 맞거나 만료된 토큰은 JJWT 가 `JwtException` 을 던지고, 탈퇴·삭제된 사람을 가리키는 토큰은 `BadCredentialsException` 이 난다. 둘 다 핸들러가 없어 `@ExceptionHandler(Exception.class)` 에 먹혀 **500** 으로 나갔다. 쿠키가 아예 없는 경우만 401 로 고쳐 두었던 터라, 브라우저에 낡은 쿠키가 남아 있으면 첫 화면부터 서버가 고장 난 것처럼 보였다.
+- **해결**: `GlobalExceptionHandler` 에 `JwtException`·`BadCredentialsException` → `MUPID_UNAUTHORIZED`(401) 를 더한다. 401 이어야 프런트가 로그인으로 보낸다.
+- **확인**: 쿠키 없음·`garbage`·`aaa.bbb.ccc` 모두 401.
+- **근거**: `api/.../common/exception/GlobalExceptionHandler.java`
