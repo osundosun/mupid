@@ -106,3 +106,27 @@
 - **원인**: `bootstrap` 이 `localStorage['mupid.demo-session.v1']` 를 보고 세션을 만들어 돌려줬다. 그 값만 넣으면 로그인 없이 서비스가 열린다. 표시를 되살리는 것과 인증은 다른 일이다.
 - **해결**: 브라우저 저장에서 세션을 복원하지 않는다. 남아 있던 값은 지운다. 세션은 쿠키의 리프레시 토큰으로 서버에 물어 복원한다.
 - **근거**: `frontend/lib/services/index.ts`
+
+### 곡이 끝나도 다음 곡으로 넘어가지 않을 때가 있다 — 해소됨
+
+- **원인**: `lib/player/engine.ts` 의 `drain()` 이 **이미 돌고 있으면 그냥 돌아갔다**(`if (this.draining) return`). 루프가 링 버퍼를 다 비운 직후에 도착한 청크는 아무도 처리하지 않는다. 그 자리가 마지막 청크였다면 재생은 `buffering` 에서 멈춘 채 `ended` 에 닿지 못하고, `ended` 가 없으니 다음 곡으로 넘어가는 일도 일어나지 않는다. 청크가 도착하는 시점에 달린 문제라 **간헐적으로만** 보였다.
+- **해결**: 돌아가지 말고 `drainPending = true` 로 표시해 두고, 진행 중이던 루프가 `do … while (this.drainPending)` 로 한 번 더 돌게 한다. 끝난 뒤 `buffering` 이면 이어서 `play()` 한다.
+- **근거**: `frontend/lib/player/engine.ts` 의 `drain()`
+
+### 끝까지 들은 곡은 다시 눌러도 아무 일이 없다 — 해소됨
+
+- **원인**: 재생 위치(`anchorPosition`)가 곡 끝에 붙어 있는데 그 자리에서 그대로 시작하니 곧바로 `ended` 만 다시 나갔다. 한곡 반복이 안 되던 것도 같은 이유다 — 같은 곡을 다시 `load()` 해도 위치가 끝이라 재생이 시작되지 않는다.
+- **해결**: `load()` 는 같은 곡이고 상태가 `ended` 면 위치를 0 으로 되돌린다. `play()` 는 현재 위치에 재생할 청크가 없으면 처음부터 튼다.
+- **근거**: `frontend/lib/player/engine.ts` 의 `load()`, `play()`
+
+### 한 곡이 끝났는데 두 곡이 넘어간다 — 해소됨
+
+- **원인**: 다음 곡으로 넘기는 것을 불리언 `advancing` 으로 막았는데, 비동기 `load()` **앞에서** 풀어 버려 같은 종료 신호가 두 번 들어오면 두 번 넘어갔다. 게다가 종료 판정을 `<audio>` 의 `ended` 와 재생기 상태 두 곳에서 따로 하고 있었다.
+- **해결**: `<audio>` 경로를 없애 재생 경로를 청크 재생기 하나로 모으고, 넘김 방지를 곡 단위(`endedFor.current === musicId`)로 바꾼다. 다시 `playing` 이 되면 푼다.
+- **근거**: `frontend/hooks/use-mupid.ts`
+
+### 화면에 서버에 없는 곡이 섞여 보인다 — 해소됨
+
+- **원인**: `lib/mupid-data.ts` 가 데모 곡 8개와 재생목록·저장한 구간을 상수로 들고 있었고, 서버 카탈로그는 그 위에 얹혔다. 눌러도 음원이 없으니 재생되지 않는다.
+- **해결**: `tracks`·`initialPlaylists`·`initialMoments` 를 모두 빈 배열로 둔다. 곡 목록은 `lib/stream-catalog.ts` 가 `GET /api/v1/music` 으로 받아온 것만 쓴다. `Track.audio`(정적 파일 경로) 필드와 `public/demo-covers/` 50장도 함께 지웠다. 테스트가 쓰던 데모 곡은 `tests/fixtures/tracks.mjs` 로 옮겼다.
+- **근거**: `frontend/lib/mupid-data.ts`, `frontend/lib/services/index.ts`, `frontend/tests/fixtures/tracks.mjs`

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { filterExploreTracks, getExploreWindow } from '../lib/explore.ts';
-import { tracks } from '../lib/mupid-data.ts';
+import { demoTracks as tracks } from './fixtures/tracks.mjs';
 
 test('explore search preserves title, artist, genre, mood, tag and hidden-track filtering', () => {
   assert.deepEqual(filterExploreTracks(tracks, '', '전체', []), tracks);
