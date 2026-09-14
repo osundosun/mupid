@@ -6,13 +6,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.osundosun.mupid.api.common.exception.BusinessException;
+import com.osundosun.mupid.api.music.dto.LyricLine;
 import com.osundosun.mupid.api.music.entity.Lyric;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.error.LyricErrorCode;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
 import com.osundosun.mupid.api.music.repository.LyricRepository;
+import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.request.LyricAddRequest;
 import com.osundosun.mupid.api.music.request.LyricUpdateRequest;
+import com.osundosun.mupid.api.music.response.LyricResponse;
 
 import lombok.RequiredArgsConstructor;
 
@@ -22,7 +25,23 @@ import lombok.RequiredArgsConstructor;
 public class LyricServiceImpl implements LyricService {
 
     private final MusicService musicService;
+    private final MusicRepository musicRepository;
     private final LyricRepository repository;
+
+    @Override
+    @Transactional(readOnly = true)
+    public LyricResponse getLyrics(int musicId) {
+        if (!musicRepository.existsByMusicIdAndIsDeletedFalse(musicId)) {
+            throw new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND);
+        }
+        // 가사가 없는 곡이 많다. 빈 목록으로 돌려준다 — 곡은 있는데 가사만 없는
+        // 것은 오류가 아니다.
+        return new LyricResponse(musicId, repository
+            .findByMusic_MusicIdOrderByTimeMsAscLyricIdAsc(musicId)
+            .stream()
+            .map(lyric -> new LyricLine(lyric.getLyricId(), lyric.getTimeMs(), lyric.getText()))
+            .toList());
+    }
 
     @Override
     public int addLyric(LyricAddRequest request) {

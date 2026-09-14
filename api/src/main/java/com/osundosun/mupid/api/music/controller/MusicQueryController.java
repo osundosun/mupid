@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.osundosun.mupid.api.common.response.BaseResponse;
 import com.osundosun.mupid.api.music.dto.MusicSummary;
+import com.osundosun.mupid.api.music.response.MusicAnalysisResponse;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
 import com.osundosun.mupid.api.music.service.MusicService;
 import com.osundosun.mupid.api.music.service.MusicServiceImpl;
@@ -50,6 +51,18 @@ public class MusicQueryController {
         @PathVariable int musicId
     ) {
         return ResponseEntity.ok(BaseResponse.of(musicService.getMusicSummary(musicId)));
+    }
+
+    /**
+     * 곡 분석 결과(구간·보컬·악기).
+     *
+     * 분석 파이프라인이 아직 없어 대부분 `analyzed: false` 로 온다.
+     */
+    @GetMapping("/{musicId}/analysis")
+    public ResponseEntity<BaseResponse<MusicAnalysisResponse>> getAnalysis(
+        @PathVariable int musicId
+    ) {
+        return ResponseEntity.ok(BaseResponse.of(musicService.getAnalysis(musicId)));
     }
 
 }

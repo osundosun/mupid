@@ -16,7 +16,7 @@ import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
-import com.osundosun.mupid.api.music.service.MusicService;
+import com.osundosun.mupid.api.music.service.MusicSummaryAssembler;
 import com.osundosun.mupid.api.music.service.MusicServiceImpl;
 import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.repository.UserRepository;
@@ -45,7 +45,7 @@ public class HistoryServiceImpl implements HistoryService {
     private final SearchHistoryRepository searchRepository;
     private final MusicRepository musicRepository;
     private final UserRepository userRepository;
-    private final MusicService musicService;
+    private final MusicSummaryAssembler assembler;
 
     @Override
     public boolean recordPlay(Integer userId, int musicId, Selector selector, String reason) {
@@ -84,7 +84,7 @@ public class HistoryServiceImpl implements HistoryService {
 
         Page<Integer> ids = playRepository.findRecentMusicIds(
             user.getUserId(), PageRequest.of(safePage, safeSize));
-        List<MusicSummary> items = musicService.getMusicSummaries(ids.getContent());
+        List<MusicSummary> items = assembler.byIds(ids.getContent());
 
         return new MusicPageResponse(
             items,

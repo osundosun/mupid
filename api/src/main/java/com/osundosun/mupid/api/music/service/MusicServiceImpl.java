@@ -12,7 +12,10 @@ import org.springframework.transaction.annotation.Transactional;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.music.entity.Album;
 import com.osundosun.mupid.api.music.entity.Artist;
+import com.osundosun.mupid.api.music.dto.MusicSectionSummary;
 import com.osundosun.mupid.api.music.entity.Music;
+import com.osundosun.mupid.api.music.entity.MusicAnalysis;
+import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.error.AlbumErrorCode;
 import com.osundosun.mupid.api.music.error.ArtistErrorCode;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
@@ -23,7 +26,12 @@ import org.springframework.data.domain.Sort;
 import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.mapping.repository.MusicGenreRepository;
 import com.osundosun.mupid.api.music.mapping.repository.MusicMoodRepository;
+import com.osundosun.mupid.api.music.mapping.repository.MusicAnalysisInstrumentRepository;
+import com.osundosun.mupid.api.music.mapping.repository.MusicSectionAnalysisMoodRepository;
+import com.osundosun.mupid.api.music.repository.MusicAnalysisRepository;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
+import com.osundosun.mupid.api.music.repository.MusicSectionAnalysisRepository;
+import com.osundosun.mupid.api.music.response.MusicAnalysisResponse;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
 import com.osundosun.mupid.api.storage.service.StorageImageService;
 import com.osundosun.mupid.api.stream.entity.Stream;
@@ -46,9 +54,11 @@ public class MusicServiceImpl implements MusicService {
     public static final int DEFAULT_PAGE_SIZE = 20;
 
     private final MusicRepository repository;
-    private final StreamRepository streamRepository;
-    private final MusicGenreRepository genreRepository;
-    private final MusicMoodRepository moodRepository;
+    private final MusicSummaryAssembler assembler;
+    private final MusicAnalysisRepository analysisRepository;
+    private final MusicSectionAnalysisRepository sectionRepository;
+    private final MusicSectionAnalysisMoodRepository sectionMoodRepository;
+    private final MusicAnalysisInstrumentRepository instrumentRepository;
 
     @Override
     public int addMusic(MusicAddRequest request) {
@@ -86,7 +96,7 @@ public class MusicServiceImpl implements MusicService {
             trimmed,
             PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "musicId")));
 
-        List<MusicSummary> items = toSummaries(found.getContent());
+        List<MusicSummary> items = assembler.assemble(found.getContent());
         return new MusicPageResponse(
             items,
             found.getNumber(),
@@ -100,76 +110,59 @@ public class MusicServiceImpl implements MusicService {
     public MusicSummary getMusicSummary(int musicId) {
         Music music = repository.findDetail(musicId)
             .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
-        return toSummaries(List.of(music)).get(0);
+        return assembler.assemble(List.of(music)).get(0);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<MusicSummary> getMusicSummaries(List<Integer> musicIds) {
-        if (musicIds == null || musicIds.isEmpty()) return List.of();
-        Map<Integer, Music> found = repository.findDetailAllByIds(musicIds).stream()
-            .collect(Collectors.toMap(Music::getMusicId, Function.identity()));
-        // 넘긴 순서를 지킨다. IN 절은 순서를 보장하지 않는다.
-        List<Music> ordered = musicIds.stream()
-            .map(found::get)
-            .filter(music -> music != null)
+    public MusicAnalysisResponse getAnalysis(int musicId) {
+        if (!repository.existsByMusicIdAndIsDeletedFalse(musicId)) {
+            throw new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND);
+        }
+        MusicAnalysis analysis = analysisRepository.findById(musicId).orElse(null);
+        List<MusicSectionAnalysis> sections =
+            sectionRepository.findByMusic_MusicIdOrderByIndexAsc(musicId);
+
+        // 분석 행도 없고 구간도 없으면 아직 분석 전이다.
+        if (analysis == null && sections.isEmpty()) {
+            return new MusicAnalysisResponse(musicId, false, null, null, List.of());
+        }
+
+        List<Integer> sectionIds = sections.stream()
+            .map(MusicSectionAnalysis::getMusicSectionAnalysisId)
             .toList();
-        return toSummaries(ordered);
-    }
 
-    /**
-     * 곡 목록을 화면용 표현으로 바꾼다.
-     *
-     * 재생 길이·장르·분위기는 곡마다 조회하면 N+1 이라 페이지 단위로 한 번에
-     * 가져와 메모리에서 묶는다.
-     */
-    private List<MusicSummary> toSummaries(List<Music> musics) {
-        if (musics.isEmpty()) return List.of();
-        List<Integer> ids = musics.stream().map(Music::getMusicId).toList();
+        Map<Integer, List<String>> moods = sectionIds.isEmpty() ? Map.of()
+            : sectionMoodRepository
+                .findByMusicSectionAnalysisMoodId_MusicSectionAnalysisIdIn(sectionIds)
+                .stream()
+                .collect(Collectors.groupingBy(
+                    it -> it.getMusicSectionAnalysisMoodId().getMusicSectionAnalysisId(),
+                    Collectors.mapping(it -> it.getMoodCodeId().getCodeName(), Collectors.toList())));
 
-        // 같은 곡에 여러 스트림이 있으면 비트레이트가 가장 높은 것을 기준으로 둔다.
-        Map<Integer, Stream> bestStream = streamRepository
-            .findAllByMusicIdInAndStatus(ids, StreamStatus.DONE)
-            .stream()
-            .collect(Collectors.toMap(
-                Stream::getMusicId,
-                Function.identity(),
-                (a, b) -> a.getBitrateKbps() >= b.getBitrateKbps() ? a : b));
+        Map<Integer, List<String>> instruments = sectionIds.isEmpty() ? Map.of()
+            : instrumentRepository
+                .findByMusicAnalysisInstrumentId_MusicSectionAnalysisIdIn(sectionIds)
+                .stream()
+                .collect(Collectors.groupingBy(
+                    it -> it.getMusicAnalysisInstrumentId().getMusicSectionAnalysisId(),
+                    Collectors.mapping(it -> it.getInstrumentCode().getCodeName(), Collectors.toList())));
 
-        Map<Integer, List<String>> genres = genreRepository
-            .findByMusicGenreId_MusicIdIn(ids)
-            .stream()
-            .collect(Collectors.groupingBy(
-                it -> it.getMusicGenreId().getMusicId(),
-                Collectors.mapping(it -> it.getGenreCode().getCodeName(), Collectors.toList())));
-
-        Map<Integer, List<String>> moods = moodRepository
-            .findByMusicMoodId_MusicIdIn(ids)
-            .stream()
-            .collect(Collectors.groupingBy(
-                it -> it.getMusicMoodId().getMusicId(),
-                Collectors.mapping(it -> it.getMoodCode().getCodeName(), Collectors.toList())));
-
-        return musics.stream().map(music -> {
-            Stream stream = bestStream.get(music.getMusicId());
-            Artist artist = music.getArtist();
-            Album album = music.getAlbum();
-            return new MusicSummary(
-                music.getMusicId(),
-                music.getTitle(),
-                music.getReleaseDate(),
-                stream == null ? null : stream.getDurationMs(),
-                stream != null,
-                music.getPlayCount(),
-                music.getLikeCount(),
-                new MusicSummary.ArtistSummary(
-                    artist.getArtistId(), artist.getName(), StorageImageService.imageUrl(artist.getImageFile())),
-                new MusicSummary.AlbumSummary(
-                    album.getAlbumId(), album.getTitle(),
-                    StorageImageService.imageUrl(album.getImageFile()), album.getReleaseDate()),
-                genres.getOrDefault(music.getMusicId(), List.of()),
-                moods.getOrDefault(music.getMusicId(), List.of()));
-        }).toList();
+        return new MusicAnalysisResponse(
+            musicId,
+            true,
+            analysis == null ? null : analysis.getHasVocal(),
+            analysis == null || analysis.getVocalGender() == null
+                ? null : analysis.getVocalGender().name(),
+            sections.stream().map(section -> new MusicSectionSummary(
+                section.getMusicSectionAnalysisId(),
+                section.getIndex(),
+                section.getSectionLabel().name(),
+                section.getStartTimeMs(),
+                section.getEndTimeMs(),
+                moods.getOrDefault(section.getMusicSectionAnalysisId(), List.of()),
+                instruments.getOrDefault(section.getMusicSectionAnalysisId(), List.of())
+            )).toList());
     }
 
     @Override

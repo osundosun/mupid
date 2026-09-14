@@ -38,7 +38,7 @@ public class MusicReactionServiceImpl implements MusicReactionService {
 
     private final MusicReactionRepository repository;
     private final MusicRepository musicRepository;
-    private final MusicService musicService;
+    private final MusicSummaryAssembler assembler;
 
     @Override
     public void setReaction(User user, int musicId, ReactionType type) {
@@ -91,7 +91,7 @@ public class MusicReactionServiceImpl implements MusicReactionService {
 
         Page<Integer> ids = repository.findMusicIdPage(
             user.getUserId(), type, PageRequest.of(safePage, safeSize));
-        List<MusicSummary> items = musicService.getMusicSummaries(ids.getContent());
+        List<MusicSummary> items = assembler.byIds(ids.getContent());
 
         return new MusicPageResponse(
             items,

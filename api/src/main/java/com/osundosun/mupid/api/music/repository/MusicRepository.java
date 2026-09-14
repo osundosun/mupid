@@ -57,6 +57,14 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         """)
     List<Music> findDetailAllByIds(@Param("musicIds") List<Integer> musicIds);
 
+    /** 앨범의 수록곡 번호. 발매 순서를 따로 들고 있지 않아 등록 순으로 준다. */
+    @Query("""
+        SELECT m.musicId FROM Music m
+        WHERE m.album.albumId = :albumId AND m.isDeleted = false
+        ORDER BY m.musicId ASC
+        """)
+    List<Integer> findTrackIds(@Param("albumId") int albumId);
+
     /** 곡이 살아 있는지만 본다. 엔티티를 영속성 컨텍스트에 올리지 않는다. */
     boolean existsByMusicIdAndIsDeletedFalse(int musicId);
 
