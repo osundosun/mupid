@@ -108,15 +108,14 @@ export function createEndpoints(client: ApiClient) {
       /**
        * 인증 메일 발송.
        *
-       * ⚠ 서버가 `GET /api/v1/mail/verification` + `@RequestBody` 로 선언돼 있어
-       * 브라우저에서는 호출할 수 없다 (fetch 는 GET 에 본문을 싣지 못한다).
-       * 서버가 POST 나 쿼리 파라미터로 바뀌면 아래 한 줄만 고치면 된다.
+       * GET 이라 본문을 쓸 수 없다 (fetch 는 GET 에 본문을 싣지 못한다).
+       * 서버도 `@ModelAttribute` 로 쿼리 파라미터를 받는다.
        */
       sendVerification: (email: string) =>
         client.request<{ verification_id: number }>({
           method: 'GET',
           path: '/api/v1/mail/verification',
-          json: { email },
+          query: { email },
           anonymous: true,
         }),
       submitCode: (verificationId: number, token: string) =>
