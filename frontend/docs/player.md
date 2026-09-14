@@ -1,0 +1,151 @@
+# API 클라이언트와 스트리밍 플레이어
+
+## 구성
+
+```
+lib/store.ts              관찰 가능한 최소 스토어 (useSyncExternalStore)
+lib/api/transport.ts      전송 계층 추상화 + fetch 구현
+lib/api/client.ts         ApiClient — 토큰·오류 정규화·재발급 큐
+lib/api/endpoints.ts      엔드포인트 래퍼 (경로와 응답 모양)
+lib/api/session.ts        세션 스토어 · login/logout/restoreSession
+lib/player/rtp.ts         .rtp 컨테이너 파서 (RTP 헤더 제거)
+lib/player/decoder.ts     Opus → PCM (WebCodecs AudioDecoder)
+lib/player/ring-buffer.ts 수신 ↔ 디코딩 완충
+lib/player/engine.ts      스케줄러 · Seek · 페이드 · 프리로드
+lib/player/index.ts       usePlayer() 훅
+```
+
+## 전송 계층을 바꾸려면
+
+`ApiClient` 는 `Transport` 인터페이스만 안다. fetch 의 `Request`/`Response`
+타입은 상위 계층에 새어 나가지 않는다.
+
+```ts
+const client = new ApiClient({ transport: createAxiosTransport() });
+```
+
+`Transport` 는 `send(TransportRequest): Promise<TransportResponse>` 하나다.
+응답 본문은 `responseType`(`json` / `text` / `arraybuffer` / `none`)에 맞춰
+파싱해 돌려주면 된다. 헤더 키는 소문자로 정규화한다.
+
+## 토큰 재발급 큐
+
+액세스 토큰은 **메모리에만** 둔다. 새로고침하면 사라지고, HttpOnly 쿠키의
+리프레시 토큰으로 다시 받는다.
+
+401 이 오면:
+
+1. 재발급(`GET /api/v1/auth`)을 시작한다. 여러 요청이 동시에 401 이어도
+   실제 재발급은 **한 번만** 돈다.
+2. 재발급이 도는 동안 들어온 요청은 FIFO 로 줄을 선다. 토큰 없이 내보내면
+   어차피 401 이 되고 재발급을 여러 번 돌게 만든다.
+3. 성공하면 밀려 있던 요청을 들어온 순서대로 내보내고, 401 이던 요청도
+   새 토큰으로 한 번 더 보낸다.
+4. 실패하면 대기열 전체를 같은 오류로 거절하고 `onSessionExpired` 를 부른다.
+   같은 세션에서 재발급을 다시 시도하지 않는다.
+
+검증: 일부러 토큰을 망가뜨리고 세 요청을 동시에 보내면 재발급 1회 · 세 요청
+모두 재시도 성공.
+
+## 스트리밍 재생
+
+### 왜 `<audio>` 나 `decodeAudioData` 가 아닌가
+
+서버가 주는 청크는 컨테이너가 아니라 **RTP 에서 벗겨낸 raw Opus 프레임**이다
+(`RTPK` 자체 포맷, 12바이트 RTP 헤더 + 20ms Opus 프레임). `<audio>` 도
+`decodeAudioData` 도 Ogg/WebM/MP4 같은 컨테이너만 받는다. 그래서 WebCodecs
+`AudioDecoder` 로 직접 푼다.
+
+**WebCodecs 가 없으면 재생할 수 없다.** `state.supported` 가 false 면 화면에서
+안내해야 한다 (Chrome 94+ / Edge / Safari 16.4+ / Firefox 130+).
+
+### 흐름
+
+```
+GET /api/v1/music/{id}/stream    재생 가능한 스트림 (DONE 만)
+GET /api/v1/chunk/{streamId}     청크 메타 (index · duration_ms · file_hash)
+GET /api/v1/chunk/{sid}/{index}  청크 바이트
+      ↓
+   링버퍼 (8칸)
+      ↓ 하나씩 꺼내
+   RTP 헤더 제거 → Opus 프레임
+      ↓
+   AudioDecoder → PCM → AudioBuffer
+      ↓
+   AudioBufferSourceNode 를 시각에 맞춰 예약
+```
+
+청크 길이는 **서버 메타의 `duration_ms`** 로 잡는다. Opus 인코더가 세그먼트
+앞에 넣는 프리스킵(보통 6.5ms)은 디코딩 후 앞에서 잘라낸다. 그대로 두면
+청크를 이어붙인 자리마다 몇 ms 씩 밀려 소리가 튄다.
+
+### 버퍼 수명
+
+| 시점 | 동작 |
+|---|---|
+| 재생이 끝난 청크 | **버리지 않는다.** 뒤로 Seek 하면 바로 쓴다 |
+| 곡이 바뀔 때 | 현재 곡의 PCM 을 통째로 비운다 |
+| 대기열 곡 | 앞 5초만 미리 받아 둔다 (`setQueue`) |
+
+### 상태
+
+`usePlayer()` 가 돌려주는 `status`:
+
+- `loading` — 스트림·청크 메타를 받는 중
+- `buffering` — 재생할 지점의 버퍼가 아직 없다. **화면은 스피너**
+- `playing` / `paused` / `ended` / `error` / `idle`
+
+`isBusy` 는 `loading || buffering` 이다. 스피너 조건으로 그대로 쓰면 된다.
+
+### 페이드
+
+Seek 과 곡 전환은 120ms 페이드 아웃 → 전환 → 페이드 인으로 이어진다.
+페이드용 GainNode 와 볼륨용 GainNode 를 나눠 둔다. 하나로 합치면 페이드 도중
+볼륨을 바꿀 때 서로의 램프를 덮어써 소리가 튄다.
+
+### AudioContext
+
+`getPlayer()` 는 브라우저에서 처음 불릴 때 AudioContext 와 게인 그래프를
+만든다. `usePlayer()` 를 쓰는 컴포넌트가 마운트되는 순간 준비가 끝난다.
+브라우저 정책상 **소리는 사용자 제스처가 있어야** 나므로 `play()` 안에서
+`resume()` 한다. 컨텍스트를 미리 만들어 두었기 때문에 첫 재생 지연이 없다.
+
+## 사용 예
+
+```tsx
+const player = usePlayer();
+
+// 다음 곡들의 앞 5초를 미리 받아 둔다
+useEffect(() => player.setQueue([12, 13]), [player]);
+
+<button onClick={() => player.load(11, { autoplay: true })}>재생</button>
+{player.isBusy && <Spinner />}
+{!player.supported && <p>이 브라우저는 스트리밍 재생을 지원하지 않아요.</p>}
+<input type="range" max={player.durationSec} value={player.positionSec}
+       onChange={(e) => player.seek(Number(e.target.value))} />
+```
+
+## 개발 환경
+
+`vite.config.ts` 가 `/api` 를 `MUPID_API_ORIGIN`(기본 `http://localhost:9900`)
+으로 프록시한다. 서버에 CORS 설정이 없고 리프레시 토큰 쿠키가 `SameSite=Strict`
++ `Secure` 라, 브라우저에게 같은 출처로 보이게 하는 것이 가장 단순하다.
+
+운영 배포는 프런트와 API 가 이미 같은 도메인을 쓰므로 추가 설정이 필요 없다.
+
+## 남은 제약
+
+1. **곡 목록 API 가 없어 `music_id` 를 하드코딩했다.** `lib/stream-catalog.ts` 에
+   서버에 올라간 곡을 적어 둔다. `Track.musicId` 가 있는 곡만 청크 스트리밍으로
+   재생되고, 없는 곡(데모 8곡)은 기존 `<audio>` 로 재생된다.
+   `GET /api/v1/music` 이 생기면 이 파일을 서버 응답으로 갈아끼우면 된다.
+
+   ⚠ `musicId` 는 개발 DB 기준이다. DB 를 비우고 배치를 다시 돌리면 번호가
+   바뀐다. "아직 재생할 수 있는 음원이 없어요" 가 뜨면
+   `SELECT music_id, title FROM music` 부터 확인한다.
+
+2. **곡 길이는 서버 스트림의 `duration_ms` 를 그대로 쓴다.** 하드코딩한 카탈로그의
+   `duration` 이 서버와 다르면 탐색 바가 어긋난다. 둘을 같이 고쳐야 한다.
+
+3. 모노 음원은 좌·우에 같은 소리를 넣는다. 실제 모노 파일로 확인했다
+   (양 채널 샘플이 완전히 동일, 무음 아님).
