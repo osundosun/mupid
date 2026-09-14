@@ -35,6 +35,11 @@ export type SignupBody = {
   gender: 'M' | 'F' | 'ETC';
 };
 
+export type ReactionType = 'LIKE' | 'DISLIKE';
+
+/** 내가 반응한 곡 번호. 하트 상태를 그리려면 전부 필요해서 페이징이 없다. */
+export type Reactions = { like: number[]; dislike: number[] };
+
 export type CodeOption = { code_id: number; name: string };
 
 export type OnboardingOptions = {
@@ -180,6 +185,37 @@ export function createEndpoints(client: ApiClient) {
         client.request<{ is_valid: boolean }>({
           path: `/api/v1/mail/verification/${verificationId}`,
           anonymous: true,
+        }),
+    },
+
+    reaction: {
+      /** 좋아요·관심없음 설정. 같은 값을 다시 보내도 결과가 같다. */
+      set: (musicId: number, type: ReactionType) =>
+        client.request<void>({
+          method: 'PUT',
+          path: `/api/v1/music/${musicId}/reaction`,
+          json: { reaction_type: type },
+          responseType: 'none',
+        }),
+      /** 해제. 원래 없었어도 오류가 아니다. */
+      clear: (musicId: number) =>
+        client.request<void>({
+          method: 'DELETE',
+          path: `/api/v1/music/${musicId}/reaction`,
+          responseType: 'none',
+        }),
+      /** 반응한 곡 번호 전부. */
+      list: (signal?: AbortSignal) =>
+        client.request<Reactions>({ path: '/api/v1/user/reaction', signal }),
+      /** 반응한 곡을 곡 정보까지. 최근에 누른 순. */
+      music: (
+        options: { type?: ReactionType; page?: number; size?: number } = {},
+        signal?: AbortSignal,
+      ) =>
+        client.request<MusicPage>({
+          path: '/api/v1/user/reaction/music',
+          query: { type: options.type, page: options.page, size: options.size },
+          signal,
         }),
     },
 

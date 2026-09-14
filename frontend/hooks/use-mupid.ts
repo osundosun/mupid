@@ -5,6 +5,7 @@ import { login, logout, restoreSession } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
 import { fetchOnboarding, saveOnboarding } from '@/lib/onboarding';
+import { fetchReactions, pushReaction } from '@/lib/reactions';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
   getSongSectionAt,
@@ -226,6 +227,18 @@ export function useMupid(bootstrap: Bootstrap) {
     // 이 기기에는 기록이 없어 온보딩 화면에 서 있다. 계정에 답이 있으니 통과시킨다.
     setPage((current) => (current === 'welcome' ? 'home' : current));
   };
+  /**
+   * 계정에 저장된 좋아요·관심없음을 화면 상태로 가져온다.
+   *
+   * 브라우저에 있던 값은 덮는다. 계정 쪽이 기준이다 — 기기를 바꿔도 따라오는
+   * 것이 이 API 의 목적이다. 지금 카탈로그에 없는 곡은 버려진다.
+   */
+  const adoptServerReactions = async (signal?: AbortSignal) => {
+    const saved = await fetchReactions(tracks, signal);
+    if (!saved || signal?.aborted || !mountedRef.current) return;
+    setLiked(saved.liked);
+    setIgnored(saved.ignored);
+  };
   // 액세스 토큰은 메모리에만 있다. 새로고침 뒤에는 쿠키의 리프레시 토큰으로
   // 한 번만 복원을 시도하고, 실패하면 비로그인 상태로 둔다.
   useEffect(() => {
@@ -235,6 +248,7 @@ export function useMupid(bootstrap: Bootstrap) {
       setNickname(session.user.nickname);
       setDemoSession({ kind: 'authenticated', nickname: session.user.nickname, userId: session.user.user_id });
       void adoptServerOnboarding(abort.signal);
+      void adoptServerReactions(abort.signal);
     });
     return () => { abort.abort(); };
   }, []);
@@ -245,6 +259,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setLoginDialog(false);
     setToast('뮤피드에 오신 걸 환영해요.');
     void adoptServerOnboarding();
+    void adoptServerReactions();
     return true;
   };
   const signOutDemo = async () => {
@@ -491,15 +506,58 @@ export function useMupid(bootstrap: Bootstrap) {
           ),
       ),
     ]);
-    setLiked((ids) =>
-      ids.includes(saved.track.id) ? ids : [...ids, saved.track.id],
-    );
+    // 구간을 저장하면 그 곡을 좋아한 것으로 본다. 계정에도 같이 남겨야 한다.
+    if (!liked.includes(saved.track.id)) toggleLike(saved.track.id);
     setToast('좋아한 순간을 저장했어요. 내 플레이리스트에서 다시 만나요.');
   };
-  const toggleLike = (id: number) =>
-    setLiked((ids) =>
-      ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id],
-    );
+  /**
+   * 좋아요를 켜고 끈다.
+   *
+   * 화면을 먼저 바꾸고 서버에 보낸다. 하트는 누르자마자 반응해야 한다.
+   * 서버가 거절하면 되돌린다 — 저장된 줄 알면 안 된다.
+   *
+   * 한 곡에 반응은 하나라 좋아요를 켜면 "관심 없음" 은 풀린다.
+   */
+  const toggleLike = (id: number) => {
+    const wasLiked = liked.includes(id);
+    const wasIgnored = ignored.includes(id);
+    setLiked((ids) => (wasLiked ? ids.filter((i) => i !== id) : [...ids, id]));
+    if (!wasLiked && wasIgnored) setIgnored((ids) => ids.filter((i) => i !== id));
+    if (demoSession?.kind !== 'authenticated') return;
+    pushReaction(tracks, id, wasLiked ? null : 'LIKE').catch(() => {
+      if (!mountedRef.current) return;
+      setLiked((ids) => (wasLiked ? [...ids, id] : ids.filter((i) => i !== id)));
+      if (!wasLiked && wasIgnored) setIgnored((ids) => (ids.includes(id) ? ids : [...ids, id]));
+      setToast('좋아요를 저장하지 못했어요. 다시 시도해 주세요.');
+    });
+  };
+
+  /** 추천에서 숨긴다. 좋아요와 같은 자리를 쓰므로 좋아요는 풀린다. */
+  const ignoreTrack = (id: number) => {
+    if (ignored.includes(id)) return;
+    const wasLiked = liked.includes(id);
+    setIgnored((ids) => [...ids, id]);
+    if (wasLiked) setLiked((ids) => ids.filter((i) => i !== id));
+    if (demoSession?.kind !== 'authenticated') return;
+    pushReaction(tracks, id, 'DISLIKE').catch(() => {
+      if (!mountedRef.current) return;
+      setIgnored((ids) => ids.filter((i) => i !== id));
+      if (wasLiked) setLiked((ids) => (ids.includes(id) ? ids : [...ids, id]));
+      setToast('이 곡을 숨기지 못했어요. 다시 시도해 주세요.');
+    });
+  };
+
+  /** 숨긴 곡을 모두 되돌린다. */
+  const clearIgnored = () => {
+    const before = ignored;
+    setIgnored([]);
+    if (demoSession?.kind !== 'authenticated' || !before.length) return;
+    Promise.all(before.map((id) => pushReaction(tracks, id, null))).catch(() => {
+      if (!mountedRef.current) return;
+      setIgnored(before);
+      setToast('숨긴 곡을 되돌리지 못했어요. 다시 시도해 주세요.');
+    });
+  };
   const openChat = () => setChatOpen(true);
   const closeChat = () => {
     setChatOpen(false);
@@ -579,7 +637,8 @@ export function useMupid(bootstrap: Bootstrap) {
     setVolume,
     liked,
     ignored,
-    setIgnored,
+    ignoreTrack,
+    clearIgnored,
     history,
     moments,
     setMoments,
