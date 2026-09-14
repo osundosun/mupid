@@ -60,6 +60,9 @@ public class SecurityConfig {
                 // 프로필 사진(PROFILE)은 개인 정보라 열지 않는다.
                 .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/ALBUM/*").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/ARTIST/*").permitAll()
+                // 온보딩 선택지는 마스터 데이터다. 온보딩 화면이 로그인 전에도
+                // 떠야 해서 목록만 열어 둔다. 제출·조회는 인증이 필요하다.
+                .requestMatchers(HttpMethod.GET, "/api/v1/onboarding/option").permitAll()
                 .requestMatchers("/admin/**").hasRole("ADMIN") // 관리자 전용
                 .anyRequest().authenticated())
             .addFilterBefore(
