@@ -40,7 +40,7 @@ export function AppDialogs({ model: m }: { model: MupidModel }) {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              m.createPlaylist(name);
+              void m.createPlaylist(name);
               setName('');
             }}
           >
@@ -81,11 +81,8 @@ export function AppDialogs({ model: m }: { model: MupidModel }) {
               e.preventDefault();
               const input = e.currentTarget.elements.namedItem('playlist-rename');
               const trimmed = input instanceof HTMLInputElement ? input.value.trim() : '';
-              if (!trimmed) return;
-              m.setPlaylists((list) =>
-                list.map((p) => (p.id === m.renamePlaylist ? { ...p, name: trimmed } : p)),
-              );
-              m.setToast('플레이리스트 이름을 바꿨어요.');
+              if (!trimmed || m.renamePlaylist === null) return;
+              void m.applyPlaylistRename(m.renamePlaylist, trimmed);
               m.setRenamePlaylist(null);
             }}
           >
@@ -122,12 +119,8 @@ export function AppDialogs({ model: m }: { model: MupidModel }) {
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                m.setPlaylists((list) =>
-                  list.filter((p) => p.id !== m.deletePlaylist),
-                );
-                m.setSelectedPlaylist(null);
+                if (m.deletePlaylist !== null) void m.removePlaylist(m.deletePlaylist);
                 m.setDeletePlaylist(null);
-                m.setToast('플레이리스트를 삭제했어요.');
               }}
             >
               삭제
