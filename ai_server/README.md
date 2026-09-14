@@ -79,7 +79,7 @@ stage1.pt              랭킹 모델 가중치
 | 모델 | **CPU** PyTorch |
 | 군집 | SciPy |
 
-- 모든 모듈의 산출물 경로를 **`MUPID_AI_ARTIFACT_DIR` 하나로 통일**한다(6장).
+- 모든 모듈의 산출물 경로를 **`MUPID_AI_ARTIFACT_DIR` 하나로 통일**한다(6장·8장).
 - 비밀값과 대용량 산출물은 Git 에 넣지 않는다.
 
 ## 5. API · ID · 준비 상태
@@ -164,7 +164,36 @@ rank_order  score  reason_code  reason
 9. 기존 8100 과 고정 입력 결과 비교
 10. Spring 연결 및 실패 대체 처리
 
-## 8. 완료 조건과 미완료 항목
+## 8. 배포 위치와 연결
+
+확인한 현재 구성(`infra/deploy/compose.yml`, `infra/deploy/nginx.conf`).
+
+- Spring 은 **컨테이너**로 돈다 (`mupid-api`, 네트워크 `frontend`·`backend`)
+- nginx 업스트림은 `api:8800` 과 `storage:8888` 뿐이다
+- `MUPID_AI_*` 환경변수는 compose 에도 `api` 에도 **아직 없다**
+
+그래서 FastAPI 를 호스트 가상환경에서 맨 프로세스로 띄우면 **컨테이너 안의 Spring 이
+`ai-server:8100` 으로 닿지 못한다.** 둘 중 하나를 골라야 한다.
+
+| 안 | 방법 | 비고 |
+|---|---|---|
+| A. 호스트 실행 | `api` 에 `extra_hosts: ["host.docker.internal:host-gateway"]` 를 주고 `MUPID_AI_BASE_URL=http://host.docker.internal:8100` | Docker 보류와 맞는다 |
+| B. compose 서비스 | AI 를 `backend` 네트워크에 올리고 `MUPID_AI_BASE_URL=http://ai:8100` | Docker 결정이 선행 |
+
+어느 쪽이든 `api.environment` 에 아래를 넣어야 한다. 계약 권장 타임아웃은 5초다.
+
+```
+MUPID_AI_BASE_URL
+MUPID_AI_REQUEST_TIMEOUT_SECONDS
+```
+
+**nginx 에 AI 를 노출하지 않는다.** `/internal` 은 인증이 없고 Spring 만 부르는 전제다.
+외부 포트를 열면 누구나 추천을 호출할 수 있다.
+
+모델·색인은 호스트 경로에 두고 `MUPID_AI_ARTIFACT_DIR` 로 가리킨다. 어느 경로에 둘지와
+백업 대상에 넣을지는 인프라 담당과 정한다.
+
+## 9. 완료 조건과 미완료 항목
 
 ### 완료 조건
 
