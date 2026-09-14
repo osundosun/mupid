@@ -26,6 +26,7 @@
 | 이벤트 수집 | `POST /api/v1/events` | 프론트 트래커 있음 |
 | 온보딩 | `GET /api/v1/onboarding/option`, `GET`, `POST /api/v1/onboarding` | 연결 완료 |
 | 좋아요·관심없음 | `PUT/DELETE /api/v1/music/{id}/reaction`, `GET /api/v1/user/reaction[/music]` | 연결 완료 |
+| 최근 감상 | `GET /api/v1/user/history` (적재는 이벤트 수집기가) | 연결 완료 |
 | 플레이리스트 | `POST /api/v1/playlist` | **생성만** |
 
 근거: `api/src/main/java/com/osundosun/mupid/api/**/controller/`
@@ -156,16 +157,28 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 - 데모 곡(1~8)은 서버에 없어 브라우저에만 남는다. 로그인하면 계정 쪽이
   기준이 되어 브라우저 값을 덮는다.
 
-### 5. 재생 기록 · 검색 기록
+### 5. 재생 기록 · 검색 기록 — ✅ 완료
 
-`play_histories` · `search_histories` 테이블·엔티티 있음, API 없음.
+- `GET /api/v1/user/history` — 최근 들은 곡. 같은 곡은 한 번만, 최신순
 
-- `GET /api/v1/user/history` — 최근 감상(홈 화면 "최근 감상")
-- 기록 적재는 `POST /api/v1/events` 로 대신할 수 있는지 먼저 정한다.
-  이벤트 수집기는 ClickHouse 로 가고 이 테이블들은 MySQL 이라 **같은 사실이
-  두 곳에 쌓이게 된다.** → 정할 것
-- 근거: `frontend/hooks/use-mupid.ts` 의 `history`,
-  `api/.../history/repository/`
+**적재 API 는 만들지 않았다.** 청취 이벤트(`POST /api/v1/events`)의 `PLAY_START`
+· `SEARCH` 를 서버가 MySQL 사본으로도 남긴다. 화면이 같은 사실을 두 번 보내지
+않게 하려는 것이다 →
+[decision/0018](decision/0018-history-from-event-stream.md).
+
+MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분석용이다.
+중복이 아니라 용도가 다른 사본이다.
+
+따라온 것:
+
+- **프론트의 청취 이벤트 SDK 를 실제로 붙였다.** `lib/analytics` 는 만들어져만
+  있고 어디서도 불리지 않았다. 전송을 콘솔 싱크에서 HTTP 로 바꾸고
+  `PLAY_START`·`SEARCH` 를 연결했다. **나머지 20종은 아직 호출부가 없다.**
+- `PlayHistory` 에 `@Table` 이 없어 `play_history` 라는 없는 표를 가리키고
+  있었다. PK 타입도 어긋나 있었다 →
+  [failure/database-and-jpa.md](failure/database-and-jpa.md)
+- `PLAY_START` 는 곡을 튼 순간이지 들은 것이 아니다. 3초 만에 넘긴 곡도 남는다.
+  즉시성을 택한 결과이고, 다시 볼 여지는 ADR 에 적었다.
 
 ### 6. 플레이리스트 (생성만 있음) — 🙋 동료 담당
 
@@ -302,4 +315,8 @@ API 신설은 아니지만 프론트 연결에서 실제로 걸린 것들이다.
 - ~~페이지네이션 규약~~ → `{ items, page, size, total_elements, total_pages }`,
   `page` 는 0부터. `Music / 곡 목록 조회` 가 첫 사례다
 - 저장한 구간 테이블 스키마 (P1-7) — ERD 변경이라 팀 합의가 먼저다
-- 재생/검색 기록을 MySQL 테이블과 ClickHouse 이벤트 중 어디에 둘 것인가 (P1-5)
+- ~~재생/검색 기록을 MySQL 테이블과 ClickHouse 이벤트 중 어디에 둘 것인가 (P1-5)~~
+  → 둘 다 둔다. 화면은 한 번만 보내고 수집기가 갈라 쓴다. MySQL 은 서비스용,
+  ClickHouse 는 분석용 → [decision/0018](decision/0018-history-from-event-stream.md)
+- 온보딩 설문을 한 줄에 답 하나로 담을 것인가 (P1-3) — ERD 변경이라 팀 합의가
+  먼저다 → [decision/0017](decision/0017-onboarding-survey-cross-product.md)

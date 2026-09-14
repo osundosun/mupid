@@ -1,6 +1,6 @@
 # 데이터베이스 · JPA · 트랜잭션
 
-15건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+16건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -134,3 +134,9 @@
 - **원인**: `MusicReaction.MusicReactionId` 의 `user_id`·`music_id` 가 `@Column(insertable = false, updatable = false)` 였다. 그 값을 채워 줄 `@ManyToOne` 연관도 없어서 **어느 경로로도 INSERT 에 실릴 수 없었다.** `Chunk` 가 밟은 것과 같은 종류다.
 - **해결**: 두 컬럼에서 `insertable`·`updatable` 를 뺐다. 연관 매핑이 따로 없는 `@EmbeddedId` 는 키 컬럼이 쓰기 가능해야 한다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/music/entity/MusicReaction.java`
+
+### `PlayHistory` 를 저장하면 `play_history` 테이블이 없다고 한다 — 해소됨
+
+- **원인**: 엔티티에 `@Table` 이 없어 Hibernate 암묵 네이밍이 클래스명 그대로 `play_history` 로 내려갔다. 실제 표는 `play_histories` 다. 같은 패키지의 `SearchHistory` 에는 `@Table(name = "search_histories")` 가 붙어 있어 한쪽만 빠진 것이었다. 덤으로 PK 가 DB 에서는 `bigint` 인데 엔티티는 `Integer` 였다.
+- **해결**: `@Table(name = "play_histories")` 를 붙이고 `playHistoryId` 를 `Long` 으로, 리포지토리도 `JpaRepository<PlayHistory, Long>` 으로 바꿨다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/history/entity/PlayHistory.java`
