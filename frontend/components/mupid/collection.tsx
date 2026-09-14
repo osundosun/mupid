@@ -627,7 +627,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
         <ChevronLeft />
       </button>}
       <Brand className="welcome-logo" />
-      {!m.demoSession || (m.onboardingSubmittedAt && m.demoSession.kind !== 'demo') ? (
+      {!m.demoSession || m.onboardingSubmittedAt ? (
         <div className="welcome-composition">
           <div className="welcome-copy">
           <p className="welcome-kicker">내 마음에 닿는 음악, 뮤피드</p>

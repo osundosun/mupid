@@ -160,7 +160,11 @@ export class ApiClient {
   async request<T = unknown>(options: ApiRequestOptions): Promise<T> {
     // 재발급이 도는 동안 들어온 요청은 줄을 선다. 토큰 없이 보내면 어차피
     // 401 이 되고, 재발급을 여러 번 돌게 만든다.
-    if (this.refreshing) await this.enqueue();
+    //
+    // **익명 요청은 줄 세우지 않는다.** 토큰이 필요 없으니 기다릴 이유가 없고,
+    // 기다리게 두면 재발급이 실패할 때 함께 실패한다. 첫 방문자가 곡 목록을
+    // 못 받는 것이 이 때문이었다 — 세션 복원이 늘 실패하는 상태라서다.
+    if (this.refreshing && !options.anonymous) await this.enqueue();
     try {
       return await this.dispatch<T>(options);
     } catch (error) {

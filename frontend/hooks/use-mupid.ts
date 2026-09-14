@@ -38,9 +38,9 @@ export function useMupid(bootstrap: Bootstrap) {
   // 화면들은 이 훅의 모델을 공유한다. 재생기나 로그인 상태를 화면마다 별도로 만들지 않는다.
   const { tracks, preferences: initial } = bootstrap;
   // Local preferences are not proof of authentication or account onboarding.
-  const [onboardingSubmittedAt, setOnboardingSubmittedAt] = useState<string | null>(bootstrap.session?.onboardingSubmittedAt ?? null);
-  const onboardingRef = useRef<string | null>(bootstrap.session?.onboardingSubmittedAt ?? null);
-  const sessionRef = useRef<AccountSession | null>(bootstrap.session ?? null);
+  const [onboardingSubmittedAt, setOnboardingSubmittedAt] = useState<string | null>(null);
+  const onboardingRef = useRef<string | null>(null);
+  const sessionRef = useRef<AccountSession | null>(null);
   // 새로고침 시 세션 복원은 아직 미연결이다. 추후 서버의 세션 확인 응답으로 초기화해야 한다.
   const [page, setPage] = useState<Page>('welcome');
   const [nickname, setNickname] = useState(initial.nickname);
@@ -71,7 +71,9 @@ export function useMupid(bootstrap: Bootstrap) {
   const [queueIds, setQueueIds] = useState<number[]>(tracks.slice(0, QUEUE_LIMIT).map((t) => t.id));
   const [toast, setToast] = useState('');
   const [ready, setReady] = useState(false);
-  const [demoSession, setDemoSession] = useState<AccountSession | null>(bootstrap.session ?? null);
+  // 세션 복원이 끝났는가. 끝나기 전에는 화면 가드를 돌리지 않는다.
+  const [authChecked, setAuthChecked] = useState(false);
+  const [demoSession, setDemoSession] = useState<AccountSession | null>(null);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const [loginDialog, setLoginDialog] = useState(false);
   const loginTriggerRef = useRef<HTMLElement | null>(null);
@@ -116,15 +118,17 @@ export function useMupid(bootstrap: Bootstrap) {
     router.push(guardPath(pagePaths[next], !!sessionRef.current, !!onboardingRef.current));
   };
   useEffect(() => {
+    // 로그인 여부를 알기 전에는 판정하지 않는다. 알기도 전에 보내면 주소를 잃는다.
+    if (!authChecked) return;
     // 예전 ?view= 링크는 호환하되 새로운 화면 이동은 경로 주소를 사용한다.
     const legacy = new URLSearchParams(window.location.search).get('view');
     const requested = legacy && Object.hasOwn(pagePaths, legacy)
       ? pagePaths[legacy as keyof typeof pagePaths] : pathname === '/mupid' ? '/home' : pathname;
-    const target = guardPath(requested, !!demoSession, !!onboardingSubmittedAt, demoSession?.kind === 'demo');
+    const target = guardPath(requested, !!demoSession, !!onboardingSubmittedAt);
     setPage(pageForPath(target));
     setLoginDialog(target === '/login' || target === '/signup');
     if (target !== pathname || legacy) router.replace(target);
-  }, [pathname, demoSession, onboardingSubmittedAt, router]);
+  }, [authChecked, pathname, demoSession, onboardingSubmittedAt, router]);
   useEffect(() => {
     mountedRef.current = true;
     queueMicrotask(() => {
@@ -304,22 +308,34 @@ export function useMupid(bootstrap: Bootstrap) {
       [...saved, ...current.filter((id) => !saved.includes(id))].slice(0, HISTORY_LIMIT),
     );
   };
-  // 액세스 토큰은 메모리에만 있다. 새로고침 뒤에는 쿠키의 리프레시 토큰으로
-  // 한 번만 복원을 시도하고, 실패하면 비로그인 상태로 둔다.
+  /**
+   * 세션 복원.
+   *
+   * 액세스 토큰은 메모리에만 있다. 새로고침 뒤에는 쿠키의 리프레시 토큰으로
+   * 한 번만 복원을 시도하고, 실패하면 비로그인 상태로 둔다.
+   *
+   * 끝나기 전에는 화면 가드를 돌리지 않는다. 먼저 돌리면 로그인한 사람이
+   * `/explore` 를 새로고침했을 때 비로그인으로 판정돼 `/login` 으로 밀리고,
+   * 복원이 끝난 뒤에는 원래 주소가 아니라 `/home` 으로 떨어진다.
+   * 온보딩 여부까지 확인해야 `/onboarding` 으로 잘못 보내지 않는다.
+   */
   useEffect(() => {
     const abort = new AbortController();
-    restoreSession().then((session) => {
-      if (abort.signal.aborted || session.status !== 'authenticated' || !session.user) return;
-      const restored: AccountSession = { kind: 'authenticated', nickname: session.user.nickname, userId: session.user.user_id };
-      // sessionRef 를 채워야 설정 저장과 온보딩 제출이 열린다.
-      sessionRef.current = restored;
-      setNickname(session.user.nickname);
-      setDemoSession(restored);
-      // 계정에 남아 있는 것들을 화면 상태로 끌어온다.
-      void adoptServerOnboarding(abort.signal);
-      void adoptServerReactions(abort.signal);
-      void adoptServerHistory(abort.signal);
-    });
+    restoreSession()
+      .then(async (session) => {
+        if (abort.signal.aborted || session.status !== 'authenticated' || !session.user) return;
+        const restored: AccountSession = { kind: 'authenticated', nickname: session.user.nickname, userId: session.user.user_id };
+        // sessionRef 를 채워야 설정 저장과 온보딩 제출이 열린다.
+        sessionRef.current = restored;
+        setNickname(session.user.nickname);
+        setDemoSession(restored);
+        // 온보딩 여부는 가드가 쓰므로 기다린다. 나머지는 화면을 막지 않는다.
+        await adoptServerOnboarding(abort.signal);
+        void adoptServerReactions(abort.signal);
+        void adoptServerHistory(abort.signal);
+      })
+      .catch(() => {})
+      .finally(() => { if (!abort.signal.aborted) setAuthChecked(true); });
     return () => { abort.abort(); };
   }, []);
   const signInDemo = async (email: string, password: string) => {
@@ -341,6 +357,14 @@ export function useMupid(bootstrap: Bootstrap) {
     void adoptServerHistory();
     return true;
   };
+  /**
+   * 로그아웃.
+   *
+   * 로그인해야 쓸 수 있는 서비스라 나갈 때는 **재생을 멈추고 계정에서 끌어온
+   * 것을 모두 비운다.** 남겨 두면 다음 사람이 앞사람의 좋아요와 감상 기록을
+   * 보게 된다. 스트리밍 재생기도 따로 멈춰야 한다 — `<audio>` 만 멈추면
+   * 청크로 재생 중이던 소리는 계속 난다.
+   */
   const signOutDemo = async () => {
     try { await logout(); } catch { setToast('로그아웃하지 못했어요. 다시 시도해 주세요.'); return; }
     setDemoSession(null);
@@ -348,11 +372,18 @@ export function useMupid(bootstrap: Bootstrap) {
     onboardingRef.current = null;
     setOnboardingSubmittedAt(null);
     audioRef.current?.pause();
+    getPlayer()?.stop();
     setPlaying(false);
+    // 계정에서 끌어온 값은 계정과 함께 놓는다.
+    setLiked([]);
+    setIgnored([]);
+    setHistory([]);
+    setMoods([]);
+    setGenres([]);
     setPage('welcome');
-    router.replace('/');
-    setLoginDialog(false);
-    setToast('로그아웃 화면으로 전환했어요. 음악과 저장 기록은 그대로예요.');
+    // 보던 화면이 보호된 곳이라 가드가 어차피 로그인으로 보낸다. 코드도 그렇게 적는다.
+    router.replace('/login');
+    setToast('로그아웃했어요. 다시 로그인하면 이어서 들을 수 있어요.');
   };
 
   const loadTrack = (track: Track) => {
@@ -537,14 +568,23 @@ export function useMupid(bootstrap: Bootstrap) {
     });
   }, []);
 
-  // 대기열에서 다음에 올 스트리밍 곡들의 앞 5초를 미리 받아 둔다.
+  /**
+   * 대기열에서 다음에 올 스트리밍 곡들의 앞 5초를 미리 받아 둔다.
+   *
+   * 로그인 전에는 받지 않는다. 스트림 API 가 인증을 요구하므로 401 만 쌓이고,
+   * 애초에 로그인 전에는 재생 화면에 들어갈 수도 없다.
+   */
   useEffect(() => {
+    if (demoSession?.kind !== 'authenticated') {
+      getPlayer()?.setQueue([]);
+      return;
+    }
     const upcoming = queueTracks
       .filter((track) => isStreamed(track) && track.id !== active.id)
       .map((track) => track.musicId!)
       .slice(0, 3);
     getPlayer()?.setQueue(upcoming);
-  }, [queueIds, active.id, ignored]);
+  }, [queueIds, active.id, ignored, demoSession]);
   const playPlaylist = (playlist: Playlist, track?: Track) => {
     const playable = playlist.tracks.filter((t) => !ignored.includes(t.id));
     if (!playable.length) {
@@ -775,7 +815,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setNickname,
     displayName: demoSession ? nickname : '게스트',
     demoSession,
-    authReady: ready,
+    authReady: authChecked,
     loginDialog,
     setLoginDialog,
     loginTriggerRef,

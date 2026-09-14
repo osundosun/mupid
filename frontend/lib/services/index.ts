@@ -4,6 +4,8 @@ import type { Track } from '../mupid-data';
 
 const preferencesKey = 'mupid.sky.preferences.v1';
 const photoKey = 'mupid-profile-photo';
+/** 예전 체험 로그인 표시. 남아 있으면 지우기만 한다. */
+const DEMO_SESSION_KEY = 'mupid.demo-session.v1';
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object';
 const defaults: Preferences = { onboardingSubmittedAt: null, nickname: '규원', moods: ['몽환적인', '감성적인'], genres: ['Indie', 'R&B'],
   liked: [1, 3, 7], ignored: [], history: [1, 3, 2], moments: initialMoments, playlists: initialPlaylists,
@@ -47,9 +49,12 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
           });
         }
       } catch { /* Recover using demo defaults; never clear the user's stored value here. */ }
-      // 공개 데모 표시만 복원한다. 실제 회원 토큰이나 비밀번호는 저장하지 않는다.
-      let session: import('./contracts').AccountSession | null = null;
-      try { if (storage.getItem('mupid.demo-session.v1') === 'active') session = {kind: 'demo', userId: -1, nickname: preferences.nickname, onboardingSubmittedAt: preferences.onboardingSubmittedAt}; } catch {}
+      // 로그인 상태는 브라우저 저장으로 복원하지 않는다. 표시를 되살리는 것만으로
+      // 서비스가 열리면 그건 인증이 아니다. 세션은 쿠키의 리프레시 토큰으로
+      // `lib/api/session` 이 서버에 물어 복원한다.
+      const session: import('./contracts').AccountSession | null = null;
+      // 예전 체험 로그인 흔적이 남아 있으면 지운다.
+      try { storage.removeItem(DEMO_SESSION_KEY); } catch {}
       // 데모 곡 + 서버 카탈로그. 후자는 `GET /api/v1/music` 이 준 곡이고
       // 청크 스트리밍으로 재생된다 (`lib/stream-catalog.ts`).
       return {
@@ -59,16 +64,10 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
       };
     },
     async savePreferences(value) { storage.setItem(preferencesKey, JSON.stringify(value)); },
-    // 공개 체험 전용 계정이다. 서버 회원이나 실제 인증 토큰으로 취급하지 않는다.
-    async login({ email, password }) {
-      if (email.trim().toLowerCase() !== 'demo@naver.com' || password !== '1234') {
-        throw new Error('데모 이메일 또는 비밀번호를 확인해 주세요.');
-      }
-      const { preferences } = await this.bootstrap();
-      storage.setItem('mupid.demo-session.v1', 'active');
-      return { kind: 'demo', userId: -1, nickname: '데모', onboardingSubmittedAt: preferences.onboardingSubmittedAt };
-    },
-    async logout() { storage.removeItem('mupid.demo-session.v1'); },
+    // 체험 로그인은 없앴다. 로그인하지 않으면 서비스를 쓸 수 없고, 로그인은
+    // 서버 인증(`lib/api/session`)만을 거친다.
+    login: unavailable,
+    async logout() { storage.removeItem(DEMO_SESSION_KEY); },
     signup: unavailable,
     requestEmailVerification: unavailable,
     async readPhoto() { const value = storage.getItem(photoKey); return value?.startsWith('data:image/jpeg;base64,') ? value : ''; },

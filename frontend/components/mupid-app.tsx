@@ -115,6 +115,13 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   const desktopNavPage =
     m.page === 'moment' ? 'player' : m.page === 'similar' ? 'search' : m.page;
   const navPage = desktopNavPage;
+  // 로그인 여부를 알기 전에는 아무 화면도 보여주지 않는다. 먼저 그리면 시작
+  // 화면이 깜빡였다가 바뀌고, 비로그인에게 앱 골격이 잠깐 노출된다.
+  if (!m.authReady) {
+    return <main className="mupid-shell" style={{ padding: 32 }} aria-busy="true">
+      <output>로그인 상태를 확인하고 있어요…</output>
+    </main>;
+  }
   return (
     <div className={`mupid-shell ${hideMini ? 'no-mini' : ''} page-${m.page}`}>
       <a href="#main-content" className="skip-link">
