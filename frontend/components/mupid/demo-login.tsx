@@ -10,14 +10,28 @@ import {
 } from '@/components/ui/dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { MupidMascot } from './mascot';
-import { mupidService } from '@/lib/services';
-import type { SignupInput } from '@/lib/services/contracts';
+import { api } from '@/lib/api/session';
+import { ApiError } from '@/lib/api/client';
+
+const genderOf = (value: string): 'M' | 'F' | 'ETC' =>
+  value === 'MALE' ? 'M' : value === 'FEMALE' ? 'F' : 'ETC';
+
+/** 서버가 준 메시지를 그대로 보여준다. 검증 오류는 첫 필드 메시지를 쓴다. */
+const describe = (error: unknown, fallback: string) => {
+  if (error instanceof ApiError) {
+    const first = error.details && Object.values(error.details)[0];
+    return first || error.message || fallback;
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
+};
 
 export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
   const [name, setName] = useState('');
   const [signup, setSignup] = useState(false);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  // 인증 메일 발송 응답의 번호. 회원가입 요청에 그대로 실어야 한다.
+  const [verificationId, setVerificationId] = useState<number | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   const form = useRef<HTMLFormElement>(null);
@@ -30,6 +44,7 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
           setSignup(false);
           setMessage('');
           setName('');
+          setVerificationId(null);
           form.current?.reset();
         }
       }}
@@ -64,13 +79,24 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
                 return;
               }
               const fields = new FormData(form.current!);
+              if (verificationId === null) {
+                setMessage('이메일 인증을 먼저 진행해 주세요.');
+                return;
+              }
               setBusy(true);
               try {
-                await mupidService.signup({ email: name, password: passwordValue,
-                  nickname: (form.current?.querySelector<HTMLInputElement>('#signup-nickname')?.value || '').trim(), birthYear: Number(fields.get('birth_year')),
-                  gender: fields.get('gender') as SignupInput['gender'] });
-                setSignup(false); form.current?.reset(); setName(''); setMessage('회원가입이 완료됐어요. 로그인해 주세요.');
-              } catch (error) { setMessage(error instanceof Error ? error.message : '회원가입하지 못했어요. 다시 시도해 주세요.'); }
+                await api.user.signup({
+                  email: name,
+                  email_verification_id: verificationId,
+                  password: passwordValue,
+                  nickname: (form.current?.querySelector<HTMLInputElement>('#signup-nickname')?.value || '').trim(),
+                  birth_year: Number(fields.get('birth_year')),
+                  // 화면 값(MALE/FEMALE)과 서버 enum(M/F)이 다르다.
+                  gender: genderOf(String(fields.get('gender') || '')),
+                });
+                setSignup(false); form.current?.reset(); setName(''); setVerificationId(null);
+                setMessage('회원가입이 완료됐어요. 로그인해 주세요.');
+              } catch (error) { setMessage(describe(error, '회원가입하지 못했어요. 다시 시도해 주세요.')); }
               finally { setBusy(false); }
               return;
             }
@@ -78,7 +104,7 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
             try {
               await m.signInDemo(name, passwordValue);
               form.current?.reset(); setName('');
-            } catch { setMessage(mupidService.mode === 'demo' ? '로그인 서버 연결 준비 중이에요. 로그인 없이 취향을 선택하고 음악을 둘러볼 수 있어요.' : '로그인하지 못했어요. 입력 정보와 연결 상태를 확인해 주세요.'); }
+            } catch (error) { setMessage(describe(error, '로그인하지 못했어요. 입력 정보와 연결 상태를 확인해 주세요.')); }
             finally { setBusy(false); }
           }}
         >
@@ -100,8 +126,12 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
             <button type="button" className="secondary-button" disabled={busy || !name.trim()} onClick={async () => {
               if (!input.current?.reportValidity()) return;
               setBusy(true);
-              try { await mupidService.requestEmailVerification(name); setMessage('인증 메일을 확인해 주세요.'); }
-              catch (error) { setMessage(error instanceof Error ? error.message : '인증 메일을 요청하지 못했어요.'); }
+              try {
+                const result = await api.mail.sendVerification(name);
+                setVerificationId(result.verification_id);
+                setMessage('인증 메일을 확인해 주세요. 인증을 마친 뒤 회원가입을 눌러 주세요.');
+              }
+              catch (error) { setMessage(describe(error, '인증 메일을 요청하지 못했어요.')); }
               finally { setBusy(false); }
             }}>이메일 인증하기</button>
             <p>이메일 인증 후 회원가입을 완료할 수 있어요.</p>
