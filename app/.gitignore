@@ -1,0 +1,8 @@
+# Rust 빌드 산출물
+/target/
+
+# Tauri 가 빌드마다 다시 만드는 것들. 손으로 고칠 파일이 아니다.
+/gen/schemas/
+
+# 안드로이드 프로젝트(gen/android)는 커밋한다 — AndroidManifest 와 Gradle 설정을
+# 손볼 일이 생기고, 그때부터는 생성물이 아니라 소스다.

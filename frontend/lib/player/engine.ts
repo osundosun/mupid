@@ -68,6 +68,23 @@ const PRELOAD_HEAD_SEC = 5;
 /** 수신 ↔ 디코딩 사이 완충. 청크 하나가 6초라 8개면 약 48초. */
 const RING_CAPACITY = 8;
 const FADE_SEC = 0.12;
+/**
+ * 청크를 풀기 전에 디코더를 덥히는 데 쓸 앞 청크 프레임 수. 20ms × 24 = 480ms.
+ *
+ * RFC 7845 는 Seek 때 80ms 를 권하지만, 그걸로는 이음새가 들린다. 실측하면
+ * 이 음원의 디코더 상태는 훨씬 천천히 수렴한다 — 같은 구간을 끊지 않고
+ * 해독한 파형과의 오차(RMS, 신호 RMS 는 0.02~0.08):
+ *
+ *   프리롤   80ms   160ms    240ms     320ms     480ms
+ *   오차   0.0020  0.00014  0.0000067  0.0000005  0  (비트 단위로 동일)
+ *
+ * 80ms 는 신호의 5% 까지 어긋나 조용한 대목에서 또렷이 들린다. 480ms 면
+ * 이어붙인 자리가 원본과 완전히 같아진다. 값은 청크 하나(300프레임)의 8% 라
+ * 디코딩 비용도 그만큼만 는다.
+ */
+const PRE_ROLL_FRAMES = 24;
+/** 꼬리를 들고 있을 청크 수. 받는 순서가 조금 뒤섞여도 프리롤이 남아 있게 한다. */
+const TAIL_KEEP = 4;
 
 type ChunkSlot = ChunkInfo & { startSec: number; endSec: number };
 
@@ -81,6 +98,13 @@ type TrackSource = {
   decoded: Map<number, AudioBuffer>;
   /** 지금 받는 중이거나 링버퍼에 들어 있는 청크. 중복 요청을 막는다. */
   inflight: Set<number>;
+  /**
+   * 청크마다 마지막 프레임 몇 개. 다음 청크를 풀 때 프리롤로 쓴다.
+   *
+   * 청크 본문은 들고 있지 않는다 — 프레임은 원본 버퍼를 가리키는 뷰라서,
+   * 그대로 두면 127KB 짜리 청크가 통째로 메모리에 남는다. 복사해서 담는다.
+   */
+  frameTails: Map<number, Uint8Array[]>;
 };
 
 const isAbort = (error: unknown) =>
@@ -99,7 +123,7 @@ export class PlayerEngine {
   private queue: number[] = [];
 
   /** 네트워크에서 막 받은 청크 바이트. 디코더가 하나씩 꺼내 간다. */
-  private readonly ring = new RingBuffer<{ index: number; bytes: ArrayBuffer }>(
+  private readonly ring = new RingBuffer<{ index: number; frames: Uint8Array[] }>(
     RING_CAPACITY,
   );
   private seeking = false;
@@ -408,6 +432,28 @@ export class PlayerEngine {
     this.playing.push(node);
   }
 
+  /**
+   * 청크의 프레임을 꺼내고, 다음 청크가 쓸 꼬리를 기억해 둔다.
+   *
+   * **받는 즉시** 부른다. 디코딩할 때 부르면, 받는 순서와 푸는 순서가 어긋난
+   * 사이에 앞 청크의 꼬리가 아직 없을 수 있다 (`fill` 이 여러 청크를 동시에
+   * 받는다). 그러면 그 이음새만 프리롤 없이 풀려 소리가 튄다.
+   */
+  private keepFrames(source: TrackSource, index: number, bytes: ArrayBuffer) {
+    const { frames } = parseChunk(bytes);
+    source.frameTails.set(
+      index,
+      // 원본 버퍼를 붙잡지 않도록 복사한다. 뷰를 그대로 두면 청크 하나가
+      // 통째로(127KB) 메모리에 남는다.
+      frames.slice(-PRE_ROLL_FRAMES).map((frame) => new Uint8Array(frame)),
+    );
+    // 오래된 꼬리는 버린다. 받는 순서가 조금 뒤섞여도 되도록 몇 개는 남긴다.
+    for (const kept of source.frameTails.keys()) {
+      if (kept < index - TAIL_KEEP) source.frameTails.delete(kept);
+    }
+    return frames;
+  }
+
   /** 예약이 모자라면 채우고, 데이터가 없으면 버퍼링으로 떨어뜨린다. */
   private pump() {
     const source = this.source;
@@ -571,6 +617,7 @@ export class PlayerEngine {
       channels: 2,
       decoded: new Map(),
       inflight: new Set(),
+      frameTails: new Map(),
     };
   }
 
@@ -598,7 +645,8 @@ export class PlayerEngine {
         this.abort?.signal,
       );
       if (this.source !== source && !this.preloaded.has(source.musicId)) return;
-      if (!this.ring.push({ index, bytes })) {
+      const frames = this.keepFrames(source, index, bytes);
+      if (!this.ring.push({ index, frames })) {
         // 링버퍼가 가득 찼다. 이 청크는 잊고 나중에 다시 요청한다.
         source.inflight.delete(index);
         return;
@@ -644,13 +692,13 @@ export class PlayerEngine {
           const slot = source.chunks[item.index];
           if (!slot) continue;
           try {
-            const { frames } = parseChunk(item.bytes);
-            const buffer = await decodeOpusFrames(context, frames, {
+            const buffer = await decodeOpusFrames(context, item.frames, {
               channels: source.channels,
               frameDurationMs: 20,
               expectedSamples: Math.round(
                 (slot.duration_ms / 1000) * OPUS_SAMPLE_RATE,
               ),
+              preRoll: source.frameTails.get(item.index - 1),
             });
             source.decoded.set(item.index, buffer);
           } catch (error) {
@@ -698,7 +746,7 @@ export class PlayerEngine {
             source.stream.stream_id,
             slot.index,
           );
-          const { frames } = parseChunk(bytes);
+          const frames = this.keepFrames(source, slot.index, bytes);
           source.decoded.set(
             slot.index,
             await decodeOpusFrames(context, frames, {
@@ -707,6 +755,7 @@ export class PlayerEngine {
               expectedSamples: Math.round(
                 (slot.duration_ms / 1000) * OPUS_SAMPLE_RATE,
               ),
+              preRoll: source.frameTails.get(slot.index - 1),
             }),
           );
         }

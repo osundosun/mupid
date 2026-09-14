@@ -1,0 +1,134 @@
+# 앱 셸 (Tauri) 연결
+
+같은 화면 코드가 웹과 앱 양쪽에서 돈다. 웹 배포는 지금까지와 똑같다 — 이 문서는
+**앱일 때만 달라지는 것**과, 그 갈림길이 어디에 있는지를 적는다.
+
+셸 자체(Rust·SQLite·안드로이드 빌드)는 [`app/README.md`](../../app/README.md).
+
+## 갈림길은 네 군데뿐
+
+| 무엇 | 웹 | 앱 | 고르는 곳 |
+| --- | --- | --- | --- |
+| HTTP | `fetch` | Rust 커맨드 | `lib/platform/index.ts` → `createPlatformTransport()` |
+| 저장소 | `localStorage` | SQLite | `lib/services/index.ts` → `mupidService` |
+| 이벤트 전송 | `fetch(keepalive)` | Rust 커맨드 | `lib/analytics/index.ts` |
+| 앨범 아트 | 서버가 준 경로 그대로 | `mupidimg` 스킴 | `lib/platform/image.ts` → `toImageSource()` |
+
+화면 컴포넌트에는 플랫폼 분기가 없다. **새로 넣지 말 것** — 분기가 퍼지면 웹에서만
+되는 화면, 앱에서만 되는 화면이 생긴다. 갈라야 할 일이 생기면 `lib/platform/` 안에서
+가른다.
+
+판별은 `isTauri()` 하나다 (`lib/platform/bridge.ts`). Tauri 가 웹뷰에 심는
+`window.__TAURI_INTERNALS__` 를 본다 — 사용자 에이전트 문자열로는 안드로이드 크롬과
+구분되지 않는다.
+
+## HTTP
+
+`ApiClient` 는 무엇이 요청을 보내는지 모른다. `Transport` 하나만 갈아 끼웠다
+(`lib/platform/transport.ts`). 그래서 재발급 큐·오류 규약·청크 스트리밍은 웹과 앱이
+같은 코드를 쓴다.
+
+앱에서 달라지는 것:
+
+- **주소**: `ApiClient` 는 `/api/v1/...` 까지만 만들고, 원본 주소는 Rust 가 붙인다.
+  그래서 `VITE_MUPID_API_BASE` 는 앱에서 쓰지 않는다.
+- **쿠키**: `withCredentials` 를 보지 않는다. 리프레시 토큰 쿠키는 Rust 의 쿠키
+  항아리가 들고 SQLite 에 적는다 — 앱을 껐다 켜도 로그인이 유지되는 것이 이 때문이다.
+- **본문**: 바이너리와 첨부는 base64 로 넘긴다. 배열로 넘기면 IPC 직렬화가 파일
+  크기에 비례해 느려진다.
+- **응답**: `[4바이트 길이][메타 JSON][본문]` 한 덩어리로 온다. JSON 과 바이너리에
+  같은 경로를 쓰려는 것이다 — 둘로 나누면 오류 응답 규약이 조용히 어긋난다.
+
+취소는 그대로 `AbortSignal` 이다. 신호가 붙은 요청에만 식별자를 만들어 Rust 쪽
+`http_abort` 로 끊는다.
+
+## 저장소
+
+`MupidService` 계약은 그대로다 (`lib/services/contracts.ts`). 앱 구현은
+`lib/platform/service.ts` 이고, `localStorage` 자리에 SQLite 가 들어간다.
+
+곡은 **번호로만** 저장한다. 곡 정보는 서버 카탈로그의 것이고, 복사해 두면 제목이
+바뀐 곡이 그 기기에서만 옛 이름으로 남는다. 읽을 때 카탈로그에 없는 번호는 버린다.
+
+계정 전환은 `lib/api/session.ts` 가 맡는다 — 로그인·세션 복원에 성공하면
+`setStoredAccount(user_id)` 로 어느 계정 몫인지 먼저 알리고, 그 다음에 취향을 읽는다.
+로그아웃하면 그 계정 몫과 쿠키·캐시를 지운다.
+
+`lib/services/index.ts` 는 구현을 **부를 때** 불러온다. 정적 import 로 두면 웹
+번들에도 `@tauri-apps/api` 가 섞이고, 이 모듈만 떼어 검사하는
+`tests/services.test.mjs` 가 상대 경로를 풀지 못한다.
+
+## 캐시
+
+`withCache(scope, key, load, options)` (`lib/platform/cache.ts`). 웹에서는 `load()` 를
+그대로 통과시킨다.
+
+**언제나 서버를 먼저 부른다.** 실패했을 때만 저장해 둔 값으로 내려앉는다. 반대로 하면
+새로 올라온 곡이 하루 동안 보이지 않는다.
+
+지금 쓰는 곳: 곡 카탈로그(`lib/stream-catalog.ts`), 구간 분석(`lib/music-analysis.ts`).
+분석은 `analyzed: true` 인 응답만 남긴다 — 아직 분석 전인 답을 저장하면 파이프라인이
+돌고 난 뒤에도 앱만 계속 빈 답을 내놓는다.
+
+## 앱에서만 부딪히는 것들
+
+웹에서는 서버가 조용히 해 주던 일이 앱에는 없다. 실제로 부딪혀 고친 것들이다.
+
+### 앨범 아트가 전부 깨졌다
+
+서버는 이미지 주소를 `/api/v1/storage/image/ALBUM/...` 처럼 **경로로** 준다. 웹에서는
+같은 출처라 그대로 열리지만, 앱의 출처는 `http://tauri.localhost` 라 그 경로에는
+아무것도 없다. `toImageSource()` 가 `http(s)://` 뿐 아니라 `/api/` 로 시작하는 주소도
+`mupidimg` 스킴으로 넘긴다. 앱이 들고 있는 파일(`/sky-vinyl.webp`)은 건드리지 않는다.
+
+### 탭을 누를 때마다 화면 전체가 다시 떴다
+
+라우터는 화면을 옮길 때 `<경로>?_rsc` 로 RSC 페이로드를 받아 간다. 자산 프로토콜은
+그 표시를 모른 채 `explore.html` 을 그대로 줬고, 라우터는 "RSC 응답이 아니다" 라고
+보고 문서를 통째로 다시 읽었다.
+
+셸이 그 요청을 가로채 같은 경로의 `.rsc` 파일로 갈아 끼우고, 서버가 붙여 주던 헤더
+둘을 대신 붙인다 (`app/src/lib.rs` 의 `serve_rsc`).
+
+ - `Content-Type: text/x-component`
+ - `X-Vinext-RSC-Compatibility-Id` — vinext 가 빌드마다 새로 만드는 값이라, 앱 빌드에서는
+   `vite.config.ts` 의 `pinRscCompatibilityId` 로 **고정**한다. 셸의 상수와 같아야 하며,
+   어긋나면 `npm run build:static` 이 빌드를 실패시킨다.
+
+`ec2` 정적 배포도 같은 처지다 — nginx 도 `?_rsc` 표시를 모르니 화면을 옮길 때마다
+전체를 다시 읽는다. 깨지지는 않고 느릴 뿐이라 이번에는 손대지 않았다. 고치려면 nginx
+에서 그 표시를 보고 `.rsc` 파일을 위 두 헤더와 함께 내주면 된다.
+
+### 글꼴이 시스템 기본값으로 떨어졌다
+
+Pretendard 를 jsdelivr 에서 받고 있었는데 앱의 CSP 가 외부 폰트를 막는다. 실제로 쓰는
+굵기(400·500·600·700·800)만 `public/fonts/pretendard/` 에 담아 자체 호스팅으로 바꿨다.
+웹도 CDN 에 기대지 않게 되었다.
+
+### 상태바·내비게이션 바
+
+CSS 는 이미 `env(safe-area-inset-*)` 로 여백을 잡고 있었다. 문제는 네이티브 쪽이었다 —
+밝은 배경 위에 흰 시스템 아이콘이 올라와 보이지 않았고, 3버튼 내비게이션 뒤에 회색
+띠가 깔렸다. `MainActivity.kt` 에서 `SystemBarStyle.light` 에 투명 스크림으로 지정해
+해결했다. 웹뷰는 그대로 화면 끝까지 쓴다.
+
+## 빌드
+
+앱은 `output: 'export'` 정적 번들을 쓴다. 서버가 없으니 RSC 서버 런타임을 태울 수 없다.
+
+```bash
+npm run build:static   # dist/client/ ← Tauri 의 frontendDist
+npm run build:ec2      # 같은 산출물, EC2/nginx 배포용
+npm run dev:app        # Cloudflare 플러그인 없이 개발 서버만
+npm run build          # 지금까지의 Cloudflare Worker 배포 (그대로)
+```
+
+`MUPID_DEPLOY_TARGET` 이 `ec2` 또는 `app` 이면 정적 export 로 간다
+(`next.config.ts` · `vite.config.ts`). 대상 이름은 두 파일에 같은 목록으로 있다.
+
+## 아직 안 한 것
+
+- 오디오 청크는 캐시하지 않는다. 오프라인 재생을 하려면 용량 상한과 만료 정책이
+  먼저 필요하다.
+- 이벤트 큐 백업은 앱에서도 웹뷰 `localStorage` 를 쓴다 (`lib/analytics/tracker.ts`).
+  보내고 나면 사라지는 값이라 그대로 두었다.

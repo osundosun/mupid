@@ -11,6 +11,7 @@
 import { api } from './api/session';
 import type { MusicSummary } from './api/endpoints';
 import type { Track } from './mupid-data';
+import { toImageSource, withCache } from './platform';
 
 /**
  * 화면용 곡 번호는 서버 번호에 이 값을 더해 만든다.
@@ -40,7 +41,8 @@ const toTrack = (music: MusicSummary): Track => {
     // 추천 점수·추천 이유는 아직 서버가 주지 않는다 (api-todo P3).
     match: 100,
     reason: '',
-    image: music.album.image_url ?? '/sky-background.webp',
+    // 앱에서는 앨범 아트도 Rust 가 받아 온다 (`lib/platform/image.ts`).
+    image: toImageSource(music.album.image_url) || '/sky-background.webp',
     tags: tags.length ? tags : ['스트리밍'],
     // 구간은 `GET /api/v1/music/{id}/analysis` 가 준다. 다만 분석 파이프라인이
     // 아직 돌지 않아 대부분 비어 있어서, 여기서는 곡을 둘로 나눠 둔다.
@@ -64,11 +66,20 @@ const toTrack = (music: MusicSummary): Track => {
  * 사정이니 다르게 알려야 한다.
  *
  * 중간에 취소된 것은 실패가 아니다. 빈 배열로 조용히 끝낸다.
+ *
+ * 앱에서는 마지막으로 받은 목록을 SQLite 에 남긴다. 서버가 응답하지 않으면 그
+ * 값으로 화면을 연다 — 지하철에서 앱을 열었을 때 목록이 통째로 비는 것보다
+ * 낫다. **캐시를 먼저 보지는 않는다.** 그러면 새로 올라온 곡이 하루 동안
+ * 보이지 않는다. 서버 응답을 저장하는 것은 DTO 그대로다 — 화면용 변환은
+ * `toTrack` 한 곳에서만 일어나야 한다.
  */
 export async function fetchCatalog(signal?: AbortSignal): Promise<Track[]> {
   try {
-    const page = await api.music.search({ size: CATALOG_SIZE }, signal);
-    return page.items.map(toTrack);
+    const items = await withCache('catalog', `size:${CATALOG_SIZE}`, async () => {
+      const page = await api.music.search({ size: CATALOG_SIZE }, signal);
+      return page.items;
+    });
+    return items.map(toTrack);
   } catch (error) {
     if (signal?.aborted) return [];
     console.warn('[mupid] 곡 카탈로그를 불러오지 못했어요.', error);

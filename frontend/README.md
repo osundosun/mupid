@@ -9,6 +9,17 @@ npm install
 npm run dev
 ```
 
+웹 배포는 지금까지와 같습니다. 모바일 앱은 같은 화면 코드를 Tauri 로 감싼 것이고,
+셸은 저장소 루트의 `app/` 에 있습니다.
+
+```bash
+npm run build:static   # 정적 번들 (dist/client) — 앱과 EC2 배포가 함께 씁니다
+cd ../app && cargo tauri android dev
+```
+
+화면 코드에는 플랫폼 분기가 없습니다. HTTP·저장소·이벤트 전송·앨범 아트 네 군데만
+`lib/platform/` 에서 갈립니다 — [docs/app-shell.md](docs/app-shell.md).
+
 ## 프로젝트 경계
 
 - 기존 공개 프로토타입과 별도의 Git 저장소로 관리합니다.
@@ -30,9 +41,9 @@ npm run dev
 
 ## 구현 범위
 
-음원 미리듣기·이전/다음 곡·셔플·반복·구간 선택과 저장·좋아요·플레이리스트 편집·검색을 사용할 수 있습니다. 선호도와 저장 목록은 이 브라우저의 `localStorage`에 저장됩니다.
+음원 미리듣기·이전/다음 곡·셔플·반복·구간 선택과 저장·좋아요·플레이리스트 편집·검색을 사용할 수 있습니다. 선호도와 저장 목록은 웹에서는 이 브라우저의 `localStorage`에, 앱에서는 기기의 SQLite에 저장됩니다.
 
-음원과 곡 정보·송폼·파형은 데모입니다. **AI 채팅은 서버에 연결되어 있습니다** — `POST /api/v1/ai/chat` 이 LLM 과 대화하고, 곡 추천은 서버의 tool calling 이 돌려줍니다(`lib/ai-chat.ts`). 다만 **추천 자체는 아직 목업**이라 요청 내용과 무관하게 카탈로그 앞쪽 곡이 옵니다. 서버 쪽 준비가 없으면(키 미설정 등) 채팅은 서버가 준 사유를 그대로 알립니다. 회원 인증, 실제 음악 카탈로그/분석, 서버 동기화, 기간별 리포트 집계, 하이브리드 앱 패키징은 아직 연결되지 않았습니다.
+음원과 곡 정보·송폼·파형은 데모입니다. **AI 채팅은 서버에 연결되어 있습니다** — `POST /api/v1/ai/chat` 이 LLM 과 대화하고, 곡 추천은 서버의 tool calling 이 돌려줍니다(`lib/ai-chat.ts`). 다만 **추천 자체는 아직 목업**이라 요청 내용과 무관하게 카탈로그 앞쪽 곡이 옵니다. 서버 쪽 준비가 없으면(키 미설정 등) 채팅은 서버가 준 사유를 그대로 알립니다. 회원 인증, 실제 음악 카탈로그/분석, 서버 동기화, 기간별 리포트 집계는 아직 연결되지 않았습니다. 모바일 앱 패키징은 Tauri 로 연결했습니다 — [docs/app-shell.md](docs/app-shell.md).
 
 ## 코드 구조와 검증
 
@@ -49,8 +60,11 @@ npm run dev
 npx tsc --noEmit --incremental false
 npx oxlint hooks/use-mupid.ts components/mupid-app.tsx components/mupid lib/mupid-data.ts
 node --experimental-strip-types --test
-npm run build
+npm run build          # Cloudflare Worker 배포
+npm run build:static   # 정적 번들 (앱 · EC2)
 ```
+
+앱 셸(Rust·SQLite)은 `cd ../app && cargo test`.
 
 `public/sky-*.png`는 레퍼런스의 분위기를 바탕으로 생성한 원본 이미지입니다. 실제 화면에서는 모바일 전송량을 줄인 WebP 버전을 사용합니다. `scripts/optimize-assets.mjs`는 원본을 보존한 채 배포용 파일을 다시 생성합니다.
 

@@ -47,11 +47,17 @@ export {
   type TrackerOptions,
 } from './tracker';
 export { bindAudio } from './audio';
-export { createHttpTransport, type HttpTransportOptions, type Transport } from './transport';
+export {
+  createHttpTransport,
+  createNativeTransport,
+  type HttpTransportOptions,
+  type Transport,
+} from './transport';
 
 import { apiClient } from '../api/session';
+import { isTauri } from '../platform';
 import { createTracker } from './tracker';
-import { createHttpTransport } from './transport';
+import { createHttpTransport, createNativeTransport } from './transport';
 
 /**
  * 앱 전역 인스턴스.
@@ -66,12 +72,16 @@ import { createHttpTransport } from './transport';
  *
  * 비로그인이면 `Authorization` 이 비어 나가고 서버가 401 을 준다. 이벤트는
  * 큐에 남았다가 로그인 뒤 함께 나간다.
+ *
+ * 앱에서는 같은 일을 Rust 가 한다 — 웹뷰는 인터넷에 직접 나가지 않는다.
  */
+const authorization = () => {
+  const token = apiClient.getAccessToken();
+  return token ? `Bearer ${token}` : undefined;
+};
+
 export const analytics = createTracker({
-  transport: createHttpTransport({
-    authorization: () => {
-      const token = apiClient.getAccessToken();
-      return token ? `Bearer ${token}` : undefined;
-    },
-  }),
+  transport: isTauri()
+    ? createNativeTransport({ authorization })
+    : createHttpTransport({ authorization }),
 });

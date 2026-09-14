@@ -5,9 +5,10 @@
  * 이라 `decodeAudioData` 로는 풀 수 없다(그쪽은 Ogg/WebM/MP4 같은 컨테이너만
  * 받는다). WebCodecs `AudioDecoder` 가 raw Opus 패킷을 그대로 받는다.
  *
- * 청크마다 디코더를 비운다. 청크 하나하나가 ffmpeg 세그먼트로 따로 인코딩된
- * 것이라 인코더 상태가 이어지지 않고, Seek 때문에 순서를 건너뛰어 디코딩해야
- * 하기 때문이다.
+ * 청크마다 디코더를 새로 만든다. Seek 때문에 순서를 건너뛰어 풀어야 해서다.
+ * 다만 **비트스트림 자체는 청크 경계에서 끊기지 않는다** — ffmpeg 의 segment
+ * 먹서는 한 번 인코딩한 스트림을 자르기만 한다. 그래서 앞 청크의 마지막
+ * 프레임 몇 개를 프리롤로 먹여 디코더 상태를 이어 준다 (`decodeOpusFrames`).
  *
  * 출력은 항상 스테레오다. 모노 음원은 좌·우에 같은 소리를 넣는다 — libopus 가
  * 2채널 설정으로 디코딩하면서 복제하고, 혹시 디코더가 1채널을 돌려주더라도
@@ -92,17 +93,40 @@ export type DecodeOptions = {
   channels: number;
   /** 프레임 하나의 길이(ms). 청킹 설정 기본값은 20ms 다. */
   frameDurationMs: number;
-  /** 이 청크가 차지해야 하는 정확한 샘플 수. 넘치면 앞에서 잘라낸다. */
+  /** 이 청크가 차지해야 하는 정확한 샘플 수. */
   expectedSamples: number;
+  /**
+   * 앞 청크의 마지막 프레임들. 디코더를 덥히는 데만 쓰고 출력은 버린다.
+   *
+   * **이것이 청크 이음새의 잡음을 없애는 핵심이다.** 아래 주석을 보라.
+   */
+  preRoll?: Uint8Array[];
 };
 
 /**
  * Opus 프레임 묶음을 하나의 AudioBuffer 로 만든다.
  *
- * 길이를 `expectedSamples` 에 정확히 맞춘다. Opus 인코더는 세그먼트마다 앞에
- * 프리스킵(보통 6.5ms)을 넣는데, 그대로 두면 청크마다 몇 ms 씩 밀려 이어붙인
- * 자리에서 소리가 튄다. 넘치는 만큼을 앞에서 버리고, 모자라면 뒤를 0으로
- * 채운다.
+ * ## 왜 프리롤이 필요한가
+ *
+ * 청크는 **하나의 연속된 Opus 비트스트림**을 6초씩 자른 조각이다(ffmpeg 의
+ * segment 먹서는 인코더를 끊지 않는다). 그런데 재생은 청크마다 디코더를 새로
+ * 만들어 푼다 — Seek 때문에 순서를 건너뛸 수 있어서다.
+ *
+ * 그래서 청크마다 디코더가 **처음부터 켜진다.** Opus 는 프레임 간 예측을 쓰고
+ * 인코더가 앞에 지연(프리스킵, 보통 6.5ms)을 넣으므로, 새 디코더의 첫 수백
+ * 샘플은 0 에서 올라오는 워밍업 구간이다. 실측하면 이렇다.
+ *
+ *   청크 앞 312샘플 RMS 0.0099 · 그 다음 312샘플 0.0146 · 중간 0.0465
+ *   이음새 최대 단차 0.0269  vs  청크 내부 0.0043  (6배)
+ *
+ * 앞 청크의 마지막 프레임 몇 개를 먼저 먹여 디코더 상태를 만들어 둔 뒤, 그
+ * 출력만 버리고 이 청크 몫을 꺼내면 이음새가 사라진다. RFC 7845 가 Seek 때
+ * 프리롤을 권하는 것과 같은 이야기인데, 거기서 말하는 80ms 로는 모자란다 —
+ * 필요한 길이는 실측으로 정했다 (`PRE_ROLL_FRAMES`, `lib/player/engine.ts`).
+ *
+ * 프리스킵 값 자체는 몰라도 된다. 모든 청크에서 같은 기준으로 창을 잡으면
+ * 조각들은 비트스트림 상에서 정확히 맞닿는다 — 어긋나는 것은 타임라인 전체가
+ * 6.5ms 밀리는 것뿐이고, 그건 들리지 않는다.
  */
 export async function decodeOpusFrames(
   context: BaseAudioContext,
@@ -114,7 +138,7 @@ export async function decodeOpusFrames(
       '이 브라우저는 Opus 스트리밍 재생을 지원하지 않아요. 최신 Chrome·Edge 를 사용해 주세요.',
     );
   }
-  const { channels, frameDurationMs, expectedSamples } = options;
+  const { channels, frameDurationMs, expectedSamples, preRoll = [] } = options;
   const output = context.createBuffer(
     channels,
     Math.max(1, expectedSamples),
@@ -122,10 +146,15 @@ export async function decodeOpusFrames(
   );
   if (frames.length === 0) return output;
 
+  // 프리롤 프레임이 먼저 들어가고, 그만큼의 출력은 버린다.
+  const samplesPerFrame = Math.round((frameDurationMs / 1000) * OPUS_SAMPLE_RATE);
+  const warmup = preRoll.length * samplesPerFrame;
+  const feed = preRoll.length > 0 ? [...preRoll, ...frames] : frames;
+
   // 디코더에는 비트스트림의 실제 채널 수를 알려 준다. 서버 메타에 없어서
   // 프레임에서 직접 읽는다. 모노여도 출력은 스테레오이고, 좌·우에 같은
   // 소리가 들어간다(readChannel 이 같은 플레인을 양쪽에 복사한다).
-  const sourceChannels = channelsFromToc(frames[0]);
+  const sourceChannels = channelsFromToc(feed[0]);
 
   const parts: AudioDataLike[] = [];
   let decodedSamples = 0;
@@ -151,10 +180,12 @@ export async function decodeOpusFrames(
       numberOfChannels: sourceChannels,
     });
     const frameDurationUs = frameDurationMs * 1000;
-    frames.forEach((frame, index) => {
+    feed.forEach((frame, index) => {
       decoder.decode(
         new EncodedAudioChunkImpl({
-          type: 'key', // Opus 는 프레임마다 독립적으로 디코딩된다.
+          // 모든 프레임을 key 로 넣는다. Opus 에는 키프레임 개념이 없고,
+          // 프레임 간 예측으로 생기는 앞머리 손실은 프리롤이 메운다.
+          type: 'key',
           timestamp: index * frameDurationUs,
           duration: frameDurationUs,
           // 뷰를 그대로 넘기면 근본 ArrayBuffer 전체가 복사될 수 있다.
@@ -173,8 +204,8 @@ export async function decodeOpusFrames(
     throw new DecodeError('청크를 디코딩하지 못했어요.', { cause: failure });
   }
 
-  // 채널별로 이어 붙인 뒤 한 번에 잘라낸다. 조각마다 나눠 세면 프리스킵
-  // 경계가 조각 중간에 걸릴 때 계산이 틀리기 쉽다.
+  // 채널별로 이어 붙인 뒤 한 번에 잘라낸다. 조각마다 나눠 세면 프리롤 경계가
+  // 조각 중간에 걸릴 때 계산이 틀리기 쉽다.
   try {
     const joined: Float32Array[] = [];
     for (let channel = 0; channel < channels; channel += 1) {
@@ -186,10 +217,10 @@ export async function decodeOpusFrames(
       }
       joined.push(merged);
     }
-    // Opus 인코더가 세그먼트 앞에 넣는 프리스킵(보통 6.5ms)을 버린다.
-    // 그대로 두면 청크를 이어붙인 자리마다 몇 ms 씩 밀려 소리가 튄다.
-    const skip = Math.max(0, decodedSamples - expectedSamples);
-    const take = Math.min(expectedSamples, decodedSamples - skip);
+    // 프리롤 몫을 버리고 이 청크의 창을 꺼낸다. 프리롤이 없으면(첫 청크,
+    // 혹은 앞 청크를 아직 안 받은 Seek 직후) 앞에서부터 그대로 쓴다.
+    const skip = Math.min(warmup, decodedSamples);
+    const take = Math.max(0, Math.min(expectedSamples, decodedSamples - skip));
     for (let channel = 0; channel < channels; channel += 1) {
       output
         .getChannelData(channel)
