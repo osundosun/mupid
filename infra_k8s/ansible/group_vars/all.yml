@@ -1,0 +1,37 @@
+---
+# Pin this after the first install. Leave empty and get.k3s.io picks the stable
+# channel, which means the two nodes can end up on different versions if they
+# are installed on different days.
+#   ansible-playbook ... -e k3s_version=v1.31.5+k3s1
+k3s_version: ''
+
+# k3s defaults. Referenced by the firewall rules, so they are named once here.
+pod_cidr: 10.42.0.0/16
+service_cidr: 10.43.0.0/16
+cni_interfaces: [cni0, flannel.1]
+
+k3s_apiserver_port: 6443
+k3s_kubelet_port: 10250
+k3s_flannel_port: 8472
+
+# Ports the parallel-run overlay binds on the edge node. Checked by preflight so
+# the Compose stack's 80/443 are not disturbed and nothing else took these.
+edge_parallel_ports: [8080, 8443]
+
+# kubelet cannot see the processes that are already on these hosts — the Docker
+# Compose stack on the edge node, the GitLab Runner and its job containers on the
+# AI node. Reserving keeps the scheduler from handing out memory they are using.
+# Accounting only: no system-reserved-cgroup, so nothing is enforced as a cgroup.
+system_reserved:
+  edge: {cpu: 1000m, memory: 3Gi}
+  ai: {cpu: 1000m, memory: 2Gi}
+
+# Default is 100Mi, too tight for a host shared with a Docker stack.
+eviction_hard: memory.available<500Mi
+
+# The address the peer node uses to reach this one.
+k3s_peer_ip: >-
+  {{ hostvars[groups['k3s_agent'][0]].k3s_node_ip
+     if inventory_hostname in groups['k3s_server']
+     else hostvars[groups['k3s_server'][0]].k3s_node_ip }}
+k3s_server_ip: "{{ hostvars[groups['k3s_server'][0]].k3s_node_ip }}"

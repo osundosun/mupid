@@ -1,0 +1,18 @@
+# Parallel run: the Compose stack keeps 80/443 and keeps serving production.
+# This overlay takes 8080/8443 so both can be up at once.
+#
+# Nothing here touches the Compose deployment's data. The PVCs below are new
+# volumes under /var/lib/rancher/k3s/storage, created empty and filled from a
+# verified backup. mupid-mysql-data and friends are not mounted anywhere in this
+# overlay — two mysqld processes on one data directory corrupt it.
+#
+# 8080/8443 are not opened in the AWS security group. Verify from inside the node
+# or over an SSH tunnel; see OPERATIONS-K8S.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mupid
+resources:
+  - ../../base
+patches:
+  - path: edge-ports.yaml
+    target: {kind: Deployment, name: edge}

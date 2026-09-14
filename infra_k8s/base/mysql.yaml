@@ -1,0 +1,56 @@
+# Single instance. local-path PVC with WaitForFirstConsumer, so the volume is
+# created on whichever node the pod lands — pinned to the edge node below.
+#
+# This is NOT the volume the Compose stack uses. mupid-mysql-data stays where it
+# is; two mysqld processes on one data directory corrupt it. The k8s copy is
+# filled from a verified backup (see OPERATIONS-K8S.md).
+apiVersion: v1
+kind: Service
+metadata: {name: mysql, namespace: mupid}
+spec:
+  selector: {app: mysql}
+  ports: [{port: 3306, targetPort: 3306}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: mysql, namespace: mupid}
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector: {matchLabels: {app: mysql}}
+  template:
+    metadata: {labels: {app: mysql}}
+    spec:
+      nodeSelector: {mupid.io/role: edge}
+      securityContext: {fsGroup: 999}
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          args: [--character-set-server=utf8mb4, --collation-server=utf8mb4_unicode_ci]
+          env:
+            - {name: TZ, value: Asia/Seoul}
+            - {name: MYSQL_DATABASE, value: mupid}
+            # Root password never reaches the API pod. Same split as the Compose file.
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_MYSQL_ROOT_PASSWORD}}
+          ports: [{containerPort: 3306}]
+          resources:
+            requests: {cpu: 500m, memory: 600Mi}
+            limits: {memory: 2Gi}
+          volumeMounts: [{name: data, mountPath: /var/lib/mysql}]
+          readinessProbe:
+            exec: {command: [bash, -c, 'mysqladmin ping -h 127.0.0.1 -p"$MYSQL_ROOT_PASSWORD" --silent']}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 15
+          livenessProbe:
+            exec: {command: [bash, -c, 'mysqladmin ping -h 127.0.0.1 -p"$MYSQL_ROOT_PASSWORD" --silent']}
+            initialDelaySeconds: 120
+            periodSeconds: 20
+            failureThreshold: 6
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 20Gi}}

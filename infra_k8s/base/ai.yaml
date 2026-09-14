@@ -1,0 +1,65 @@
+# ai_server. Not exposed through nginx — /internal has no authentication and
+# only the Spring API is meant to call it.
+#
+# Pinned to the AI node: the model and index files are a host directory placed
+# there by an administrator, and the image is imported per node.
+apiVersion: v1
+kind: Service
+metadata: {name: ai, namespace: mupid}
+spec:
+  selector: {app: ai}
+  ports: [{port: 8100, targetPort: 8100}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: ai, namespace: mupid}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: ai}}
+  strategy:
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata: {labels: {app: ai}}
+    spec:
+      nodeSelector: {mupid.io/role: ai}
+      containers:
+        - name: ai
+          image: mupid-ai:placeholder
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8100}]
+          env:
+            - {name: MUPID_AI_ARTIFACT_DIR, value: /artifacts}
+            - {name: MUPID_AI_PORT, value: '8100'}
+            # Empty leaves /internal/recommendations/search answering 501, which
+            # is the defined behaviour until the resolver exists (S15P21A204-219).
+            - {name: MUPID_AI_NLP_URL, value: ''}
+            # torch and numpy start one thread per HOST core by default. This node
+            # has 4 vCPU and the CPU limit below is 3, so without these the pod
+            # oversubscribes its own quota and gets slower, not faster.
+            - {name: OMP_NUM_THREADS, value: '3'}
+            - {name: OPENBLAS_NUM_THREADS, value: '3'}
+            - {name: MKL_NUM_THREADS, value: '3'}
+          resources:
+            requests: {cpu: 1500m, memory: 2Gi}
+            limits: {cpu: 3000m, memory: 8Gi}
+          volumeMounts:
+            - {name: artifacts, mountPath: /artifacts, readOnly: true}
+          # /health is process liveness. /internal/ready additionally checks that
+          # the four indexes agree row-for-row and that every candidate maps to a
+          # numeric ID. It answers 503 until the MySQL mapping is loaded — that is
+          # correct, and it keeps this pod out of the Service until then.
+          startupProbe:
+            httpGet: {path: /health, port: 8100}
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /internal/ready, port: 8100}
+            periodSeconds: 15
+            failureThreshold: 4
+          livenessProbe:
+            httpGet: {path: /health, port: 8100}
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: artifacts
+          hostPath: {path: /srv/mupid-k8s/ai-artifacts, type: Directory}

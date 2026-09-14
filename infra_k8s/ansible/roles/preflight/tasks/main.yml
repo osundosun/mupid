@@ -1,0 +1,86 @@
+---
+# Read-only. Every task is changed_when: false and safe under --check.
+# Replaces the one-off collection script: the same facts, but as assertions that
+# can be re-run before every install rather than a report someone has to read.
+
+- name: Assert the distribution is the one the other infra assumes
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Ubuntu'
+      - ansible_distribution_version == '24.04'
+    fail_msg: "expected Ubuntu 24.04, found {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+- name: Assert the node has the resources the manifests were sized against
+  ansible.builtin.assert:
+    that:
+      - ansible_processor_vcpus >= 4
+      - ansible_memtotal_mb >= 15000
+    fail_msg: >-
+      BASELINE.md sized requests against 4 vCPU / 15.4GB. This node reports
+      {{ ansible_processor_vcpus }} vCPU / {{ ansible_memtotal_mb }}MB.
+
+- name: Read the cgroup filesystem type
+  ansible.builtin.command: stat -fc %T /sys/fs/cgroup
+  register: cgroup_fs
+  changed_when: false
+
+- name: Assert cgroup v2
+  ansible.builtin.assert:
+    that: cgroup_fs.stdout == 'cgroup2fs'
+    fail_msg: "cgroup v2 required for the memory limits to behave, found {{ cgroup_fs.stdout }}"
+
+- name: Check the kernel modules flannel needs
+  ansible.builtin.command: "modinfo {{ item }}"
+  loop: [br_netfilter, overlay, vxlan, iptable_nat]
+  register: modules
+  changed_when: false
+  failed_when: false
+
+- name: Assert every module is available
+  ansible.builtin.assert:
+    that: item.rc == 0
+    fail_msg: "kernel module {{ item.item }} is not available"
+  loop: "{{ modules.results }}"
+  loop_control: {label: "{{ item.item }}"}
+
+- name: List listening TCP and UDP ports
+  ansible.builtin.command: ss -lntu
+  register: listening
+  changed_when: false
+
+- name: Assert the ports k3s and the edge overlay need are free
+  ansible.builtin.assert:
+    that: "listening.stdout is not search(':' ~ item ~ '\\s')"
+    fail_msg: "port {{ item }} is already in use on this node"
+  loop: >-
+    {{ [k3s_kubelet_port, k3s_flannel_port] + edge_parallel_ports
+       + ([k3s_apiserver_port] if inventory_hostname in groups['k3s_server'] else []) }}
+
+- name: Check whether k3s is already installed
+  ansible.builtin.stat: {path: /usr/local/bin/k3s}
+  register: k3s_binary
+
+- name: Read the host firewall state
+  ansible.builtin.command: ufw status verbose
+  register: ufw_state
+  changed_when: false
+
+- name: Report
+  ansible.builtin.debug:
+    msg:
+      - "node          {{ inventory_hostname }} ({{ node_role }})"
+      - "private ip    {{ k3s_node_ip }}  peer {{ k3s_peer_ip }}"
+      - "resources     {{ ansible_processor_vcpus }} vCPU / {{ ansible_memtotal_mb }}MB / swap {{ ansible_swaptotal_mb }}MB"
+      - "root free     {{ (ansible_mounts | selectattr('mount','eq','/') | first).size_available // 1073741824 }}GB"
+      - "cgroup        {{ cgroup_fs.stdout }}"
+      - "k3s installed {{ k3s_binary.stat.exists }}"
+      - "ufw routed    {{ 'deny' if 'deny (routed)' in ufw_state.stdout else 'allow' }}"
+
+- name: Warn when ufw would drop pod traffic
+  ansible.builtin.debug:
+    msg: >-
+      ufw default is `deny (routed)`. Every pod-to-pod and pod-to-service packet
+      crosses FORWARD, so k3s will come up Ready while pod networking silently
+      fails. The firewall role opens FORWARD on the CNI interfaces; run it before
+      installing k3s.
+  when: "'deny (routed)' in ufw_state.stdout"

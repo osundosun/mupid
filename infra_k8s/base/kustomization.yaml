@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mupid
+resources:
+  - namespace.yaml
+  - config.yaml
+  - mysql.yaml
+  - redis.yaml
+  - storage.yaml
+  - api.yaml
+  - ai.yaml
+  - edge.yaml
+# The hash suffix is deliberate: editing nginx.conf produces a new ConfigMap name
+# and therefore a new pod. Without it the file would change on disk while the
+# running nginx kept the old configuration.
+configMapGenerator:
+  - name: edge-nginx
+    files:
+      - default.conf=nginx/default.conf
+# Both are created on the server from /srv/mupid-k8s/.env by an administrator and
+# are never committed. Declaring them here makes `kustomize build` fail loudly if
+# a manifest references a key that was not planned for.
+#   kubectl -n mupid create secret generic mupid-secrets --from-env-file=/srv/mupid-k8s/.env
+#   kubectl -n mupid create secret generic mupid-storage-s3 --from-file=s3.json=/srv/mupid-k8s/s3.json

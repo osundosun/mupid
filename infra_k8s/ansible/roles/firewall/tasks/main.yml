@@ -1,0 +1,53 @@
+---
+# Opens the host firewall for k3s. The AWS security group is a separate layer and
+# must allow the same traffic — see cluster/security-group.md. If only one of the
+# two is open the symptom is identical: nodes Ready, pod networking dead.
+#
+# Existing rules (22, 80/tcp, 443/tcp) are left alone. This only adds.
+
+- name: Allow the peer to reach kube-apiserver
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ k3s_peer_ip }}"
+    to_port: "{{ k3s_apiserver_port }}"
+    proto: tcp
+    comment: k3s apiserver
+  when: inventory_hostname in groups['k3s_server']
+
+- name: Allow the peer to reach kubelet
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ k3s_peer_ip }}"
+    to_port: "{{ k3s_kubelet_port }}"
+    proto: tcp
+    comment: k3s kubelet
+
+- name: Allow flannel VXLAN from the peer
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ k3s_peer_ip }}"
+    to_port: "{{ k3s_flannel_port }}"
+    proto: udp
+    comment: k3s flannel vxlan
+
+# The default policy is `deny (routed)`. Rather than opening FORWARD wholesale
+# with `ufw default allow routed`, this scopes it to the CNI interfaces.
+# cni0 and flannel.1 do not exist until k3s starts; ufw accepts interface rules
+# for absent interfaces, so these can be applied first.
+- name: Allow forwarding on the CNI interfaces
+  community.general.ufw:
+    rule: allow
+    route: true
+    direction: "{{ item.1 }}"
+    interface: "{{ item.0 }}"
+    comment: "k3s cni {{ item.0 }}"
+  loop: "{{ cni_interfaces | product(['in', 'out']) | list }}"
+  loop_control: {label: "{{ item.1 }} on {{ item.0 }}"}
+
+- name: Show the resulting rules
+  ansible.builtin.command: ufw status verbose
+  register: ufw_after
+  changed_when: false
+
+- name: Report
+  ansible.builtin.debug: {var: ufw_after.stdout_lines}

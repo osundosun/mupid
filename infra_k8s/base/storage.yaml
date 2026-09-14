@@ -1,0 +1,68 @@
+# SeaweedFS. The -ip=storage flag is the address it advertises to itself; the
+# Service below makes that name resolve inside the namespace, so the flag is
+# unchanged from the Compose file.
+#
+# No host port. nginx reaches the filer on 8888 through the Service, and the S3
+# gateway on 8333 stays internal.
+apiVersion: v1
+kind: Service
+metadata: {name: storage, namespace: mupid}
+spec:
+  selector: {app: storage}
+  ports:
+    - {name: filer, port: 8888, targetPort: 8888}
+    - {name: s3, port: 8333, targetPort: 8333}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: storage, namespace: mupid}
+spec:
+  serviceName: storage
+  replicas: 1
+  selector: {matchLabels: {app: storage}}
+  template:
+    metadata: {labels: {app: storage}}
+    spec:
+      nodeSelector: {mupid.io/role: edge}
+      containers:
+        - name: storage
+          image: chrislusf/seaweedfs@sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62
+          args:
+            - server
+            - -ip=storage
+            - -dir=/data
+            - -filer
+            - -s3
+            - -s3.config=/etc/seaweedfs/s3.json
+            - -master.volumeSizeLimitMB=1024
+            - -volume.max=5
+          ports:
+            - {containerPort: 8888}
+            - {containerPort: 8333}
+          resources:
+            requests: {cpu: 200m, memory: 200Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: s3-config, mountPath: /etc/seaweedfs/s3.json, subPath: s3.json, readOnly: true}
+            - {name: filer-config, mountPath: /etc/seaweedfs/filer.toml, subPath: filer.toml, readOnly: true}
+          readinessProbe:
+            # An unauthenticated request to the S3 gateway must be refused. The
+            # Compose healthcheck asserts 403; an HTTP probe treats 403 as failure,
+            # so this checks the filer port instead and leaves the 403 assertion to
+            # the verification step in OPERATIONS-K8S.md.
+            httpGet: {path: /, port: 8888}
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 10
+      volumes:
+        - name: s3-config
+          secret: {secretName: mupid-storage-s3}
+        - name: filer-config
+          configMap: {name: storage-filer}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 50Gi}}

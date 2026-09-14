@@ -1,0 +1,14 @@
+---
+# Read-only. Changes nothing on either node, and is safe to run against the live
+# server at any time.
+#
+#   ansible-playbook -i inventory.ini preflight.yml
+#
+# Checks the same things the Phase 0 collection did, but as assertions, so it can
+# be re-run before every install instead of producing a report someone has to
+# read. The original snapshot is recorded in ../BASELINE.md.
+- name: Phase 0 preflight
+  hosts: k3s
+  gather_facts: true
+  become: true
+  roles: [preflight]

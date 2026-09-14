@@ -1,0 +1,74 @@
+# Spring API. The image tag is the commit SHA, imported into k3s containerd by
+# the deployment receiver — there is no registry, hence IfNotPresent and a node
+# pin so only one node ever needs the image.
+#
+# Every secret is referenced by name. Deliberately no envFrom for the Secret: it
+# also carries MUPID_MYSQL_ROOT_PASSWORD, which must never reach this pod. Same
+# split the Compose file makes, for the same reason.
+apiVersion: v1
+kind: Service
+metadata: {name: api, namespace: mupid}
+spec:
+  selector: {app: api}
+  ports: [{port: 8800, targetPort: 8800}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api, namespace: mupid}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: api}}
+  strategy:
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata: {labels: {app: api}}
+    spec:
+      nodeSelector: {mupid.io/role: edge}
+      containers:
+        - name: api
+          image: mupid-api:placeholder
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8800}]
+          envFrom:
+            - configMapRef: {name: api-config}
+          env:
+            - name: MUPID_MYSQL_PASSWORD
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_MYSQL_PASSWORD}}
+            - name: MUPID_JWT_SECRET
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_JWT_SECRET}}
+            - name: MUPID_GMAIL_CLIENT_ID
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_GMAIL_CLIENT_ID}}
+            - name: MUPID_GMAIL_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_GMAIL_CLIENT_SECRET}}
+            - name: MUPID_GMAIL_TOKEN
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_GMAIL_TOKEN}}
+            - name: MUPID_S3_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_S3_ACCESS_KEY}}
+            - name: MUPID_S3_SECRET
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_S3_SECRET}}
+            # Not credentials, but their values are not public either, so they
+            # live in the Secret rather than in a ConfigMap committed to git.
+            # MUPID_S3_ENDPOINT may be empty; the SDK default is then selected.
+            - name: MUPID_S3_ENDPOINT
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_S3_ENDPOINT}}
+            - name: MUPID_S3_BUCKET
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_S3_BUCKET}}
+            - name: MUPID_GMAIL_SEND_ADDRESS
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_GMAIL_SEND_ADDRESS}}
+          resources:
+            requests: {cpu: 500m, memory: 700Mi}
+            limits: {memory: 2Gi}
+          # The image sets MaxRAMPercentage=75, so the heap follows the limit
+          # above rather than the node's 15GB.
+          startupProbe:
+            httpGet: {path: /api/actuator/health, port: 8800}
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /api/actuator/health, port: 8800}
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: {path: /api/actuator/health, port: 8800}
+            periodSeconds: 20
+            failureThreshold: 5
