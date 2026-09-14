@@ -73,7 +73,19 @@ public class SecurityConfig {
                 // 아니고 가입 흐름을 건드리지 않으려 열어 둔다. 제출·조회는
                 // 인증이 필요하다.
                 .requestMatchers(HttpMethod.GET, "/api/v1/onboarding/option").permitAll()
-                .requestMatchers("/admin/**").hasRole("ADMIN") // 관리자 전용
+                /*
+                 * 관리자 화면의 **HTML 골격만** 연다 (`AdminController`).
+                 *
+                 * 브라우저 주소창으로 들어오는 요청에는 Authorization 헤더를 붙일 수
+                 * 없고, `AuthFilter` 는 헤더의 Bearer 토큰만 본다. 그래서 이 경로를
+                 * 닫아 두면 관리자도 화면에 들어올 수 없다 — 늘 401 이다.
+                 *
+                 * 대신 이 HTML 에는 데이터가 한 줄도 없다. 화면이 fetch 로 부르는
+                 * `/api/v1/admin/**` 는 아래 anyRequest().authenticated() 에 걸리고
+                 * `AdminApiController` 의 @AdminRole 이 ROLE_ADMIN 을 요구한다.
+                 * 실제 방어선은 그쪽 하나다.
+                 */
+                .requestMatchers(HttpMethod.GET, "/api/admin", "/api/admin/login").permitAll()
                 .anyRequest().authenticated())
             .addFilterBefore(
                 authFilter,

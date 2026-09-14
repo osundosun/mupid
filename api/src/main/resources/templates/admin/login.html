@@ -1,1 +1,162 @@
-관리자 로그인 페이지
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Mupid 관리자 로그인</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0f1115;
+            --panel: #171a21;
+            --line: #272b35;
+            --text: #e6e8ee;
+            --muted: #8b93a7;
+            --accent: #7aa2ff;
+            --danger: #ff6b6b;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            background: var(--bg);
+            color: var(--text);
+            font: 14px/1.6 "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                  "Malgun Gothic", sans-serif;
+        }
+
+        .card {
+            width: min(100%, 380px);
+            padding: 32px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+        }
+
+        h1 { margin: 0 0 24px; font-size: 20px; letter-spacing: -0.01em; }
+
+        label { display: block; margin-bottom: 16px; font-size: 13px; color: var(--muted); }
+
+        input {
+            width: 100%;
+            margin-top: 6px;
+            padding: 10px 12px;
+            background: #0f1218;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            color: var(--text);
+            font: inherit;
+        }
+
+        input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+
+        button {
+            width: 100%;
+            padding: 11px;
+            background: var(--accent);
+            border: 0;
+            border-radius: 8px;
+            color: #0b0d12;
+            font: 600 14px/1 inherit;
+            cursor: pointer;
+        }
+
+        button:disabled { opacity: 0.6; cursor: progress; }
+
+        .error {
+            margin: 16px 0 0;
+            padding: 10px 12px;
+            background: rgba(255, 107, 107, 0.12);
+            border: 1px solid rgba(255, 107, 107, 0.35);
+            border-radius: 8px;
+            color: var(--danger);
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+<main class="card">
+    <h1>Mupid 관리자</h1>
+
+    <form id="login-form" novalidate>
+        <label>이메일
+            <input id="email" type="email" autocomplete="username" required>
+        </label>
+        <label>비밀번호
+            <input id="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button id="submit" type="submit">로그인</button>
+    </form>
+
+    <p id="error" class="error" hidden></p>
+</main>
+
+<script>
+    (function () {
+        'use strict';
+
+        var TOKEN_KEY = 'mupid.admin.token';
+        var USER_KEY = 'mupid.admin.user';
+
+        var form = document.getElementById('login-form');
+        var submit = document.getElementById('submit');
+        var errorBox = document.getElementById('error');
+
+        function fail(message) {
+            errorBox.textContent = message;
+            errorBox.hidden = false;
+        }
+
+        form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            errorBox.hidden = true;
+            submit.disabled = true;
+            submit.textContent = '확인 중…';
+
+            var email = document.getElementById('email').value.trim();
+            var password = document.getElementById('password').value;
+
+            fetch('/api/v1/auth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // 리프레시 토큰 쿠키를 받아 두어야 한 시간 뒤 액세스 토큰을 갱신할 수 있다.
+                credentials: 'include',
+                body: JSON.stringify({ email: email, password: password })
+            }).then(function (response) {
+                return response.json().catch(function () {
+                    return null;
+                }).then(function (body) {
+                    if (!response.ok) {
+                        throw new Error((body && body.message) || '로그인에 실패했습니다.');
+                    }
+                    return body.data;
+                });
+            }).then(function (data) {
+                if (data.user_role !== 'ROLE_ADMIN') {
+                    // 서버도 막지만, 여기서 걸러야 "들어갔는데 전부 403" 이 되지 않는다.
+                    throw new Error('관리자 권한이 없는 계정입니다.');
+                }
+                sessionStorage.setItem(TOKEN_KEY, data.access_token);
+                sessionStorage.setItem(USER_KEY, JSON.stringify({
+                    userId: data.user_id,
+                    email: email,
+                    role: data.user_role
+                }));
+                location.replace('/api/admin');
+            }).catch(function (error) {
+                fail(error.message || '로그인에 실패했습니다.');
+            }).then(function () {
+                submit.disabled = false;
+                submit.textContent = '로그인';
+            });
+        });
+    }());
+</script>
+</body>
+</html>
