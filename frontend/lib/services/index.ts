@@ -1,10 +1,8 @@
 import { tracks, initialMoments, initialPlaylists, deriveChatRecommendations } from '../mupid-data';
-import { streamTracks } from '../stream-catalog';
 import type { MupidService, Preferences } from './contracts';
+import type { Track } from '../mupid-data';
 
 const preferencesKey = 'mupid.sky.preferences.v1';
-// 저장된 좋아요·기록이 서버 곡을 가리킬 수도 있다. 검증은 합친 목록으로 한다.
-const allTracks = [...tracks, ...streamTracks];
 const photoKey = 'mupid-profile-photo';
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object';
 const defaults: Preferences = { onboardingSubmittedAt: null, nickname: '규원', moods: ['몽환적인', '감성적인'],
@@ -15,8 +13,10 @@ const unavailable = async (): Promise<never> => {
 export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>): MupidService {
   return {
     mode: 'demo',
-    async bootstrap() {
+    async bootstrap(catalog: Track[] = []) {
       const preferences = structuredClone(defaults);
+      // 저장된 좋아요·기록이 서버 곡을 가리킬 수도 있다. 검증은 합친 목록으로 한다.
+      const allTracks = [...tracks, ...catalog];
       // Corrupt/blocked device storage must not prevent opening the demo.
       try {
         const saved: unknown = JSON.parse(storage.getItem(preferencesKey) || 'null');
@@ -42,12 +42,8 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
           });
         }
       } catch { /* Recover using demo defaults; never clear the user's stored value here. */ }
-      // 데모 곡 + 서버에 실제로 올라간 곡. 후자는 청크 스트리밍으로 재생된다.
-      // 곡 목록 API 가 생기면 streamTracks 를 서버 응답으로 갈아끼운다.
-      return {
-        tracks: [...structuredClone(tracks), ...structuredClone(streamTracks)],
-        preferences,
-      };
+      // 데모 곡 + 서버 카탈로그. 후자는 청크 스트리밍으로 재생된다.
+      return { tracks: [...structuredClone(tracks), ...catalog], preferences };
     },
     async savePreferences(value) { storage.setItem(preferencesKey, JSON.stringify(value)); },
     login: unavailable,

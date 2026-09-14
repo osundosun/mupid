@@ -14,7 +14,13 @@ export type SignupInput = {
 };
 export interface MupidService {
   readonly mode: 'demo' | 'api';
-  bootstrap(): Promise<Bootstrap>;
+  /**
+   * 데모 저장소에서 곡·설정을 읽는다.
+   *
+   * @param catalog 서버에서 받아 온 곡 목록. 네트워크 호출은 화면 쪽에서 하고
+   *   여기서는 합치기만 한다 — 이 계층은 브라우저 저장만 건드린다.
+   */
+  bootstrap(catalog?: Track[]): Promise<Bootstrap>;
   savePreferences(value: Preferences): Promise<void>;
   login(input: { email: string; password: string }): Promise<AccountSession>;
   logout(): Promise<void>;

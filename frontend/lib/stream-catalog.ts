@@ -1,61 +1,74 @@
 /**
- * 서버에 실제로 올라가 있는 곡 목록 (임시 하드코딩).
+ * 서버 곡 카탈로그.
  *
- * 곡 검색·목록 API 가 아직 없어서 화면이 `music_id` 를 알 방법이 없다.
- * 그때까지만 여기에 적어 둔다. `GET /api/v1/music` 이 생기면 이 파일을 지우고
- * 서버 응답을 `Track` 으로 정규화해 쓰면 된다.
- *
+ * `GET /api/v1/music` 로 받아 화면이 쓰는 `Track` 으로 옮긴다.
  * `musicId` 가 있는 곡은 `<audio>` 데모 음원이 아니라 청크 스트리밍으로
  * 재생된다 (`lib/player/`).
  *
- * ⚠ 여기 값은 개발 DB 기준이다. DB 를 비우고 배치를 다시 돌리면 `musicId` 가
- * 바뀐다. 재생이 "아직 재생할 수 있는 음원이 없어요" 로 실패하면 먼저
- * `SELECT music_id, title FROM music` 을 확인한다.
+ * 데모 곡 8개는 아직 함께 보여준다. 서버 카탈로그에 시연용 곡 몇 개뿐이라
+ * 화면이 비어 보이기 때문이다. 카탈로그가 채워지면 `lib/mupid-data.ts` 의
+ * 데모 목록을 지우면 된다.
  */
 
+import { api } from './api/session';
+import type { MusicSummary } from './api/endpoints';
 import type { Track } from './mupid-data';
 
-/** 데모 곡(1~8)과 겹치지 않는 번호대를 쓴다. */
-const FIRST_ID = 1001;
+/** 데모 곡(1~8)과 겹치지 않는 번호대. */
+const ID_OFFSET = 1000;
 
-type StreamSeed = {
-  musicId: number;
-  title: string;
-  /** 서버 스트림의 duration_ms 를 초로 옮긴 값. */
-  duration: number;
+/** 한 번에 받아 올 곡 수. 카탈로그가 커지면 화면별 페이징으로 바꾼다. */
+const CATALOG_SIZE = 100;
+
+const toTrack = (music: MusicSummary): Track => {
+  const duration = (music.duration_ms ?? 0) / 1000;
+  const tags = [...music.genres, ...music.moods];
+  return {
+    id: ID_OFFSET + music.music_id,
+    musicId: music.music_id,
+    title: music.title,
+    artist: music.artist.name,
+    album: music.album.title,
+    genre: music.genres[0] ?? '',
+    mood: music.moods[0] ?? '',
+    // 구간 UI 가 duration 안쪽 값을 기대한다. 곡 길이에 맞춰 잡는다.
+    moment: Math.max(0, duration * 0.3),
+    duration,
+    // 추천 점수·추천 이유는 아직 서버가 주지 않는다 (api-todo P3).
+    match: 100,
+    reason: '',
+    image: music.album.image_url ?? '/sky-background.webp',
+    // 스트리밍 곡은 이 URL 을 쓰지 않는다. <audio> 경로로 새지 않도록 비워 둔다.
+    audio: '',
+    tags: tags.length ? tags : ['스트리밍'],
+    // 구간 분석은 아직 API 가 없다 (api-todo P2-11). 임시로 곡을 둘로 나눈다.
+    sections: duration
+      ? [
+          { label: '도입', start: 0, end: duration * 0.4 },
+          { label: '전개', start: duration * 0.4, end: duration },
+        ]
+      : [],
+  };
 };
 
-const seeds: StreamSeed[] = [
-  { musicId: 2, title: '첫 번째 곡', duration: 13.02 },
-  { musicId: 1, title: '두 번째 곡', duration: 7.02 },
-  { musicId: 3, title: '모노 테스트 곡', duration: 8.02 },
-];
-
-export const streamTracks: Track[] = seeds.map((seed, index) => ({
-  id: FIRST_ID + index,
-  musicId: seed.musicId,
-  title: seed.title,
-  artist: '무피드 테스트 아티스트',
-  album: '무피드 테스트 앨범',
-  genre: 'Test',
-  mood: '실험적인',
-  // 구간 UI 가 duration 안쪽 값을 기대한다. 곡 길이에 맞춰 잡는다.
-  moment: Math.max(0, seed.duration * 0.3),
-  duration: seed.duration,
-  match: 100,
-  reason: '서버에서 청크 스트리밍으로 받아오는 곡이에요.',
-  image: '/sky-background.webp',
-  // 스트리밍 곡은 이 URL 을 쓰지 않는다. <audio> 경로로 새지 않도록 비워 둔다.
-  audio: '',
-  tags: ['스트리밍'],
-  sections: [
-    { label: '도입', start: 0, end: seed.duration * 0.4 },
-    { label: '전개', start: seed.duration * 0.4, end: seed.duration },
-  ],
-}));
+/**
+ * 서버 곡 목록을 가져온다.
+ *
+ * 실패해도 예외를 던지지 않는다. 카탈로그는 데모 곡 위에 얹는 값이라,
+ * 못 받아 왔다고 앱이 열리지 않으면 안 된다. 대신 콘솔에 남긴다.
+ */
+export async function fetchCatalog(signal?: AbortSignal): Promise<Track[]> {
+  try {
+    const page = await api.music.search({ size: CATALOG_SIZE }, signal);
+    return page.items.map(toTrack);
+  } catch (error) {
+    if (signal?.aborted) return [];
+    console.warn('[mupid] 곡 카탈로그를 불러오지 못했어요.', error);
+    return [];
+  }
+}
 
 /** 이 곡을 청크 스트리밍으로 재생해야 하는가. */
 export const isStreamed = (
   track: Pick<Track, 'musicId'> | null | undefined,
-): track is Track & { musicId: number } =>
-  typeof track?.musicId === 'number';
+): track is Track & { musicId: number } => typeof track?.musicId === 'number';

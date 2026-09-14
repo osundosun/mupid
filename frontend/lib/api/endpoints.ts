@@ -35,6 +35,35 @@ export type SignupBody = {
   gender: 'M' | 'F' | 'ETC';
 };
 
+export type MusicSummary = {
+  music_id: number;
+  title: string;
+  release_date: string;
+  /** 완료된 스트림이 없으면 null. */
+  duration_ms: number | null;
+  /** 재생 가능한 스트림이 있는가. */
+  playable: boolean;
+  play_count: number;
+  like_count: number;
+  artist: { artist_id: number; name: string; image_url: string | null };
+  album: {
+    album_id: number;
+    title: string;
+    image_url: string | null;
+    release_date: string;
+  };
+  genres: string[];
+  moods: string[];
+};
+
+export type MusicPage = {
+  items: MusicSummary[];
+  page: number;
+  size: number;
+  total_elements: number;
+  total_pages: number;
+};
+
 export type StreamInfo = {
   stream_id: number;
   music_id: number;
@@ -130,6 +159,30 @@ export function createEndpoints(client: ApiClient) {
         client.request<{ is_valid: boolean }>({
           path: `/api/v1/mail/verification/${verificationId}`,
           anonymous: true,
+        }),
+    },
+
+    music: {
+      /**
+       * 곡 목록·검색. 로그인 없이도 부를 수 있다.
+       *
+       * @param q 제목·아티스트명·앨범명 부분 일치
+       */
+      search: (
+        options: { q?: string; page?: number; size?: number } = {},
+        signal?: AbortSignal,
+      ) =>
+        client.request<MusicPage>({
+          path: '/api/v1/music',
+          query: { q: options.q, page: options.page, size: options.size },
+          anonymous: true,
+          signal,
+        }),
+      get: (musicId: number, signal?: AbortSignal) =>
+        client.request<MusicSummary>({
+          path: `/api/v1/music/${musicId}`,
+          anonymous: true,
+          signal,
         }),
     },
 

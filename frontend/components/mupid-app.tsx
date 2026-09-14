@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { mupidService } from '@/lib/services';
+import { fetchCatalog } from '@/lib/stream-catalog';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
 import {
@@ -70,7 +71,11 @@ export function MupidApp() {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
-    void mupidService.bootstrap().then(value => { if (live) setData(value); })
+    // 서버 카탈로그는 화면 쪽에서 받아 서비스 계층에 넘긴다.
+    // 서비스 계층은 브라우저 저장만 건드린다 (docs/server-integration.md).
+    void fetchCatalog()
+      .then((catalog) => mupidService.bootstrap(catalog))
+      .then(value => { if (live) setData(value); })
       .catch(() => { if (live) setError('음악을 불러오지 못했어요.'); });
     return () => { live = false; };
   }, [attempt]);

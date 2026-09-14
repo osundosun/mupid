@@ -172,20 +172,23 @@ useEffect(() => player.setQueue([12, 13]), [player]);
 
 ## 남은 제약
 
-1. **곡 목록 API 가 없어 `music_id` 를 하드코딩했다.** `lib/stream-catalog.ts` 에
-   서버에 올라간 곡을 적어 둔다. `Track.musicId` 가 있는 곡만 청크 스트리밍으로
-   재생되고, 없는 곡(데모 8곡)은 기존 `<audio>` 로 재생된다.
-   `GET /api/v1/music` 이 생기면 이 파일을 서버 응답으로 갈아끼우면 된다.
+1. **곡 목록은 `GET /api/v1/music` 에서 받는다.** `lib/stream-catalog.ts` 의
+   `fetchCatalog()` 가 서버 응답을 `Track` 으로 옮긴다. `Track.musicId` 가 있는
+   곡만 청크 스트리밍으로 재생되고, 없는 곡(데모 8곡)은 기존 `<audio>` 로
+   재생된다. 카탈로그가 채워지면 데모 목록을 지우면 된다.
 
-   ⚠ `musicId` 는 개발 DB 기준이다. DB 를 비우고 배치를 다시 돌리면 번호가
-   바뀐다. "아직 재생할 수 있는 음원이 없어요" 가 뜨면
-   `SELECT music_id, title FROM music` 부터 확인한다.
+2. **장르·분위기·구간은 아직 빈 값이다.** 서버 응답에 필드는 있지만
+   `codes`·`music_genres`·`music_moods`·`music_section_analysis` 가 전부 비어
+   있다. 구간은 임시로 곡을 둘로 나눠 만든다 — 분석 메타 API 가 생기면
+   교체한다 (api-todo P2-11).
 
-2. **곡 길이는 서버 스트림의 `duration_ms` 를 그대로 쓴다.** 하드코딩한 카탈로그의
-   `duration` 이 서버와 다르면 탐색 바가 어긋난다. 둘을 같이 고쳐야 한다.
+3. 채널 수는 **Opus 프레임의 TOC 바이트에서 읽는다** (RFC 6716 §3.1, `s` 비트
+   `0x04`). 서버 메타에 채널 수가 없어도 비트스트림이 알려주므로 스키마를
+   건드릴 필요가 없다. 출력은 항상 스테레오이고 모노는 좌·우에 같은 소리를
+   넣는다. 실제 모노 파일로 확인했다 (TOC=1채널 → 출력 2채널, 양쪽 샘플 동일).
 
-3. 모노 음원은 좌·우에 같은 소리를 넣는다. 실제 모노 파일로 확인했다
-   (양 채널 샘플이 완전히 동일, 무음 아님).
+   raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는다. 5.1 등은
+   `OpusHead` 가 있어야 하므로 지금 구조로는 재생할 수 없다.
 
 4. **메일 링크는 아직 죽어 있다.** 서버가 넣는 경로는 `/verify/email`
    (`EmailVerificationPurpose.mailUrl`)인데 프런트 라우트는 `/email/verify` 다.
