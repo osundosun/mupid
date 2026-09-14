@@ -1,5 +1,7 @@
 package com.osundosun.mupid.api.playlist.service;
 
+import java.util.List;
+
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +47,15 @@ public class PlaylistServiceImpl implements PlaylistService {
             .build(); /* 수록곡 수는 0, 삭제 일시는 null */
 
         return repository.save(newPlaylist);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Playlist> getPlaylistAll(int userId) {
+        User user = userService.getUser(userId)
+            .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+
+        return repository.findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(user);
     }
 
     @Override

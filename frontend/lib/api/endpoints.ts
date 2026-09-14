@@ -40,6 +40,8 @@ export type PlaylistSummary = {
   title: string;
   music_count: number;
   created_at: string;
+  /** 목록 조회에만 있다. 생성 응답에는 없다. */
+  updated_at?: string;
 };
 
 /** 곡 추가 결과. `duplicated` 가 true 면 아무것도 추가되지 않았다. */
@@ -154,6 +156,19 @@ export function createEndpoints(client: ApiClient) {
     },
 
     playlist: {
+      /**
+       * 내 플레이리스트 목록. 최근에 만든 것부터 온다.
+       *
+       * 수록곡은 들어 있지 않다 — 곡 수(`music_count`)만 온다. 화면에 곡을 채우려면
+       * 플레이리스트별 수록곡 조회 API 가 따로 필요하다.
+       */
+      list: (signal?: AbortSignal) =>
+        client
+          .request<{ playlists: PlaylistSummary[] }>({
+            path: '/api/v1/playlist',
+            signal,
+          })
+          .then((value) => value?.playlists ?? []),
       /** 빈 플레이리스트를 만든다. 수록곡은 따로 추가한다. */
       create: (title: string) =>
         client.request<PlaylistSummary>({
