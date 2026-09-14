@@ -176,6 +176,31 @@ export type PlaylistSummary = {
   updated_at?: string;
 };
 
+/** 플레이리스트에 담긴 곡 하나. */
+export type PlaylistTrackItem = {
+  /** 1부터. 플레이리스트 안에서의 재생 순서다. */
+  track_order: number;
+  music_id: number;
+  title: string;
+  artist_name: string;
+  album_title: string;
+  /** 재생 길이(ms). 아직 인코딩되지 않은 곡은 null 이다. */
+  duration_ms: number | null;
+  /** 누가 골랐는지. AI 추천으로 담긴 곡과 구분한다. */
+  selector: 'USER' | 'AI';
+  added_at: string;
+};
+
+/** 플레이리스트 하나 + 수록곡 전부. */
+export type PlaylistDetail = PlaylistSummary & {
+  updated_at: string;
+  /**
+   * 트랙 순서 오름차순. 삭제된 곡은 빠지므로 길이가 `music_count` 와
+   * 다를 수 있다 — 화면에 보이는 곡 수는 이 배열의 길이를 쓴다.
+   */
+  tracks: PlaylistTrackItem[];
+};
+
 /** 곡 추가 결과. `duplicated` 가 true 면 아무것도 추가되지 않았다. */
 export type PlaylistTrackAdded = {
   playlist_id: number;
@@ -523,6 +548,22 @@ export function createEndpoints(client: ApiClient) {
             signal,
           })
           .then((value) => value?.playlists ?? []),
+      /** 플레이리스트 하나와 수록곡 전부. 곡은 트랙 순서대로 온다. */
+      detail: (playlistId: number, signal?: AbortSignal) =>
+        client.request<PlaylistDetail>({
+          path: `/api/v1/playlist/${playlistId}`,
+          signal,
+        }),
+      /**
+       * 플레이리스트를 지운다. 서버는 소프트 삭제라 되살릴 수 있지만
+       * 목록·상세에서는 즉시 사라진다. 이미 지운 것을 또 지우면 404 다.
+       */
+      remove: (playlistId: number) =>
+        client.request<void>({
+          method: 'DELETE',
+          path: `/api/v1/playlist/${playlistId}`,
+          responseType: 'none',
+        }),
       /** 빈 플레이리스트를 만든다. 수록곡은 따로 추가한다. */
       create: (title: string) =>
         client.request<PlaylistSummary>({

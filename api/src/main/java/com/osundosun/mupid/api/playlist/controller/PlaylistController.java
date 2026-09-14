@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -12,13 +13,16 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.osundosun.mupid.api.common.response.BaseResponse;
+import com.osundosun.mupid.api.playlist.dto.PlaylistDetail;
 import com.osundosun.mupid.api.playlist.dto.PlaylistResponseItem;
 import com.osundosun.mupid.api.playlist.dto.PlaylistTrackAddResult;
+import com.osundosun.mupid.api.playlist.dto.PlaylistTrackResponseItem;
 import com.osundosun.mupid.api.playlist.entity.Playlist;
 import com.osundosun.mupid.api.playlist.entity.PlaylistTrack;
 import com.osundosun.mupid.api.playlist.request.PlaylistCreateRequest;
 import com.osundosun.mupid.api.playlist.request.PlaylistTrackAddRequest;
 import com.osundosun.mupid.api.playlist.response.PlaylistCreateResponse;
+import com.osundosun.mupid.api.playlist.response.PlaylistDetailResponse;
 import com.osundosun.mupid.api.playlist.response.PlaylistGetResponse;
 import com.osundosun.mupid.api.playlist.response.PlaylistTrackAddResponse;
 import com.osundosun.mupid.api.playlist.service.PlaylistService;
@@ -55,6 +59,51 @@ public class PlaylistController {
                 it.getCreatedAt(), /* 생성 일시 */
                 it.getUpdatedAt())) /* 수정 일시 */
             .toList())));
+    }
+
+    /**
+     * 플레이리스트 하나와 수록곡 전부. 트랙 순서대로 나온다.
+     */
+    @GetMapping("/{playlistId}")
+    public ResponseEntity<BaseResponse<PlaylistDetailResponse>> getPlaylist(
+        Authentication auth,
+        @PathVariable int playlistId
+    ) {
+        User user = (User)auth.getPrincipal();
+        PlaylistDetail detail = playlistService.getPlaylist(user.getUserId(), playlistId);
+        Playlist playlist = detail.playlist();
+
+        return ResponseEntity.ok(BaseResponse.of(new PlaylistDetailResponse(
+            playlist.getPlaylistId(), /* 플레이리스트 번호 */
+            playlist.getTitle(), /* 제목 */
+            playlist.getMusicCount(), /* 수록곡 수 */
+            playlist.getCreatedAt(), /* 생성 일시 */
+            playlist.getUpdatedAt(), /* 수정 일시 */
+            detail.tracks().stream()
+                .map(it -> new PlaylistTrackResponseItem(
+                    it.track().getTrackOrder(), /* 트랙 순서 */
+                    it.track().getMusic().getMusicId(), /* 음악 번호 */
+                    it.track().getMusic().getTitle(), /* 곡명 */
+                    it.track().getMusic().getArtist().getName(), /* 아티스트명 */
+                    it.track().getMusic().getAlbum().getTitle(), /* 앨범명 */
+                    it.durationMs(), /* 재생 길이 */
+                    it.track().getSelector(), /* 선곡 주체 */
+                    it.track().getCreatedAt())) /* 추가 일시 */
+                .toList()
+        )));
+    }
+
+    /**
+     * 플레이리스트를 지운다. 소프트 삭제라 되살릴 수 있다.
+     */
+    @DeleteMapping("/{playlistId}")
+    public ResponseEntity<BaseResponse<Void>> deletePlaylist(
+        Authentication auth,
+        @PathVariable int playlistId
+    ) {
+        User user = (User)auth.getPrincipal();
+        playlistService.deletePlaylist(user.getUserId(), playlistId);
+        return ResponseEntity.ok(BaseResponse.message("플레이리스트가 삭제되었습니다."));
     }
 
     @PostMapping

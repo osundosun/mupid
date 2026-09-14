@@ -1,0 +1,102 @@
+info:
+  name: 플레이리스트 삭제
+  type: http
+  seq: 5
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/playlist/{{PLAYLIST_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: PLAYLIST_ID
+      value: "12"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 삭제 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "플레이리스트가 삭제되었습니다.",
+            "data": null
+          }
+  - name: 403 내 플레이리스트가 아님
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_PLAYLIST_ACCESS_DENIED",
+            "message": "플레이리스트에 접근할 권한이 없습니다.",
+            "error_details": null
+          }
+  - name: 404 이미 삭제됨
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_PLAYLIST_NOT_FOUND",
+            "message": "요청한 플레이리스트를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 플레이리스트 삭제
+
+  `DELETE /api/v1/playlist/{playlist_id}` · 인증 필요
+
+  내 플레이리스트를 지웁니다. 성공하면 `data` 없이 메시지만 옵니다.
+
+  ## 소프트 삭제입니다
+
+  `playlists.deleted_at` 에 시각을 남길 뿐 행은 지우지 않습니다.
+
+  - **수록곡(`playlist_tracks`) 행도 그대로 둡니다.** 되살릴 때 필요하고, 목록·상세가
+    이미 삭제된 플레이리스트를 404 로 막기 때문에 굳이 지울 이유가 없습니다.
+  - 되살리는 API 는 없습니다. 실수로 지운 것을 되돌리려면 DB 에서 `deleted_at` 을
+    NULL 로 바꿔야 합니다.
+  - 이미 지운 것을 또 지우면 **404** 입니다 (200 이 아닙니다). 화면에서 목록을
+    새로 고치지 않고 같은 카드를 두 번 누르면 만날 수 있습니다.
+
+  ## 권한
+
+  소유자 본인만 지울 수 있습니다. 남의 것과 소유자가 없는 시스템/추천
+  플레이리스트는 403 입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_PLAYLIST_ACCESS_DENIED` | 403 | 내 플레이리스트가 아님 |
+  | `MUPID_PLAYLIST_NOT_FOUND` | 404 | 없거나 이미 삭제된 플레이리스트 |
+  | `MUPID_USER_NOT_FOUND` | 404 | 토큰의 사용자가 없음 |
