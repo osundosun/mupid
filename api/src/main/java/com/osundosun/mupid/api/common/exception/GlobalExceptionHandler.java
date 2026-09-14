@@ -13,12 +13,15 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import com.osundosun.mupid.api.auth.error.AuthErrorCode;
 import com.osundosun.mupid.api.common.error.ErrorCode;
 import com.osundosun.mupid.api.common.error.GlobalErrorCode;
 import com.osundosun.mupid.api.common.response.ErrorResponse;
+
+import io.jsonwebtoken.JwtException;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -113,6 +116,20 @@ public class GlobalExceptionHandler {
          * 아래 Exception 핸들러에 먹혀 500 이 나갔다. 여기서 403 으로 되돌린다.
          */
         return businessError(new BusinessException(AuthErrorCode.FORBIDDEN));
+    }
+
+    /**
+     * 토큰이 못 쓸 물건이면 **401** 이다.
+     *
+     * 재발급(`GET /api/v1/auth`)은 필터가 아니라 컨트롤러에서 토큰을 푼다. 그래서
+     * 모양이 깨졌거나(`MalformedJwtException`) 서명이 안 맞거나 만료된 토큰,
+     * 탈퇴·삭제된 사람을 가리키는 토큰이 그대로 아래 Exception 핸들러에 먹혀
+     * **500** 으로 나갔다. 브라우저에 남아 있던 낡은 쿠키 하나면 첫 화면부터
+     * 서버가 고장 난 것처럼 보인다. 401 이어야 프런트가 로그인으로 보낸다.
+     */
+    @ExceptionHandler({ JwtException.class, BadCredentialsException.class })
+    public ResponseEntity<ErrorResponse<Void>> unauthorized(Exception e) {
+        return businessError(new BusinessException(AuthErrorCode.UNAUTHORIZED));
     }
 
     @ExceptionHandler(Exception.class)
