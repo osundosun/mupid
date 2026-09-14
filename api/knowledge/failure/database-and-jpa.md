@@ -1,6 +1,6 @@
 # 데이터베이스 · JPA · 트랜잭션
 
-13건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+15건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -122,3 +122,15 @@
 - **원인**: `MusicServiceImpl.getMusic` 이 `Optional<Music>` 을 반환한다고 선언해 놓고 삭제된 곡에 대해 `return null` 을 했다. 호출부의 `.orElseThrow(...)` 가 NPE 로 터진다.
 - **해결**: `Optional.empty()` 를 반환한다. `Optional` 반환 메서드는 절대 null 을 돌려주지 않는다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/music/service/MusicServiceImpl.java`
+
+### `@Modifying` UPDATE 를 쓰면 같은 트랜잭션의 다른 저장이 사라진다 — 해소됨
+
+- **원인**: `@Modifying(clearAutomatically = true)` 는 쿼리를 **보낸 뒤** 영속성 컨텍스트를 비운다. 그런데 `flushAutomatically` 의 기본값이 `false` 라 **아직 반영되지 않은 변경은 내보내지 않는다.** 그래서 `save()` 로 대기 중이던 INSERT 나 엔티티의 dirty 변경이 그대로 **버려진다.** 좋아요를 켤 때 반응 행 저장과 `music.like_count` UPDATE 가 한 트랜잭션에 있었는데, 같은 요청을 두 번 보내면 카운트가 계속 오르고 좋아요→관심없음 전환에서는 카운트가 줄지 않았다.
+- **해결**: `@Modifying(flushAutomatically = true, clearAutomatically = true)`. 그리고 곡 존재 확인을 `findById` 대신 `existsBy...` 로 바꿔 `Music` 엔티티를 아예 컨텍스트에 올리지 않게 했다 — 올려 두면 UPDATE 뒤 낡은 값이 남는다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/music/repository/MusicRepository.java`, `api/.../music/service/MusicReactionServiceImpl.java`
+
+### 복합키 엔티티를 저장하면 키 컬럼이 NOT NULL 위반으로 터진다 — 해소됨
+
+- **원인**: `MusicReaction.MusicReactionId` 의 `user_id`·`music_id` 가 `@Column(insertable = false, updatable = false)` 였다. 그 값을 채워 줄 `@ManyToOne` 연관도 없어서 **어느 경로로도 INSERT 에 실릴 수 없었다.** `Chunk` 가 밟은 것과 같은 종류다.
+- **해결**: 두 컬럼에서 `insertable`·`updatable` 를 뺐다. 연관 매핑이 따로 없는 `@EmbeddedId` 는 키 컬럼이 쓰기 가능해야 한다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/music/entity/MusicReaction.java`

@@ -25,6 +25,7 @@
 | 이미지 | `POST/GET/DELETE /api/v1/storage/image/{category}/{key}` | 연결 완료 |
 | 이벤트 수집 | `POST /api/v1/events` | 프론트 트래커 있음 |
 | 온보딩 | `GET /api/v1/onboarding/option`, `GET`, `POST /api/v1/onboarding` | 연결 완료 |
+| 좋아요·관심없음 | `PUT/DELETE /api/v1/music/{id}/reaction`, `GET /api/v1/user/reaction[/music]` | 연결 완료 |
 | 플레이리스트 | `POST /api/v1/playlist` | **생성만** |
 
 근거: `api/src/main/java/com/osundosun/mupid/api/**/controller/`
@@ -131,14 +132,29 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 - 비로그인은 예전처럼 브라우저 저장만 쓴다. 온보딩은 앱에 들어가는 관문이라
   서버가 없다고 막히면 안 된다.
 
-### 4. 좋아요 / 관심 없음
+### 4. 좋아요 / 관심 없음 — ✅ 완료
 
-`music_reactions` 테이블·엔티티 있음, API 없음.
+- `PUT /api/v1/music/{musicId}/reaction` — `LIKE` / `DISLIKE`
+- `DELETE /api/v1/music/{musicId}/reaction` — 해제
+- `GET /api/v1/user/reaction` — 반응한 곡 **번호**(페이징 없음)
+- `GET /api/v1/user/reaction/music` — 반응한 곡 **목록**(곡 정보 포함)
 
-- `PUT /api/v1/music/{musicId}/reaction` — `LIKE` / `DISLIKE` / 해제
-- `GET /api/v1/user/reactions` — 좋아요 목록(라이브러리 화면)
-- 근거: `frontend/hooks/use-mupid.ts` 의 `liked` · `ignored` · `toggleLike`,
-  `api/.../music/entity/MusicReaction.java`
+조회를 둘로 나눈 이유: 화면이 어느 목록에서든 하트를 칠하려면 번호 전부가
+필요하고(`int` 배열이라 가볍다), 라이브러리 화면은 곡 정보까지 필요하다.
+
+한 곡에 반응은 하나다(`music_reactions` 의 복합키). 좋아요를 켜면 관심없음이
+풀린다. `music.like_count` 는 반응과 함께 움직인다.
+
+따라온 것:
+
+- `MusicReaction.MusicReactionId` 의 키 컬럼이 `insertable = false` 라
+  **INSERT 자체가 불가능**했다. 고쳤다 → [failure/database-and-jpa.md](failure/database-and-jpa.md)
+- `@Modifying` 의 `flushAutomatically` 기본값(false) 때문에 같은 트랜잭션의
+  저장이 사라졌다. 같은 문서에 기록했다.
+- 타입이 안 맞는 쿼리 파라미터(`?page=abc`, `?type=LOVE`)가 500 이던 것을
+  400 으로 고쳤다 → [failure/auth-and-api.md](failure/auth-and-api.md)
+- 데모 곡(1~8)은 서버에 없어 브라우저에만 남는다. 로그인하면 계정 쪽이
+  기준이 되어 브라우저 값을 덮는다.
 
 ### 5. 재생 기록 · 검색 기록
 

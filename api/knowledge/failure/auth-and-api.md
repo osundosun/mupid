@@ -1,6 +1,6 @@
 # 인증 · 보안 · 오류 응답
 
-22건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+23건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -195,3 +195,9 @@
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/email/controller/EmailVerificationController.java`, `api/src/main/java/com/osundosun/mupid/api/user/controller/UserPasswordResetController.java`
 
 ---
+
+### 쿼리 파라미터 타입이 안 맞으면 500 이 난다 — 해소됨
+
+- **원인**: `?page=abc`, `?type=LOVE`(enum 에 없는 값), `/api/v1/music/abc` 같은 요청은 `MethodArgumentTypeMismatchException` 을 던지는데 `GlobalExceptionHandler` 에 핸들러가 없어 `Exception` 핸들러가 먹고 500 으로 나갔다. 보낸 쪽 잘못인데 서버가 고장 난 것처럼 보인다.
+- **해결**: `@ExceptionHandler(MethodArgumentTypeMismatchException.class)` 를 추가해 400(`MUPID_INVALID_REQUEST_BODY`)으로 돌린다. enum 이면 고를 수 있는 값을 `error_details` 에 적어 준다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/common/exception/GlobalExceptionHandler.java`
