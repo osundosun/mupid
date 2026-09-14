@@ -51,23 +51,27 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/mail/verification").permitAll() // 이메일 인증
                 .requestMatchers(HttpMethod.GET, "/api/v1/mail/verification/**").permitAll() // 이메일 인증 확인
                 .requestMatchers(HttpMethod.GET, "/api/actuator/**").permitAll() // Health Check
-                // 곡 카탈로그는 로그인 전에도 보인다. 첫 방문자가 온보딩 전에
-                // 곡을 둘러보기 때문이다. `*` 는 한 세그먼트만 먹으므로
-                // `/api/v1/music/{id}/stream` 은 그대로 인증이 필요하다.
-                .requestMatchers(HttpMethod.GET, "/api/v1/music").permitAll() // 곡 목록·검색
-                .requestMatchers(HttpMethod.GET, "/api/v1/music/*").permitAll() // 곡 상세
-                // 아티스트·앨범·가사 조회도 카탈로그의 일부다.
-                // `/api/v1/music/*` 는 한 세그먼트만 먹으므로 가사는 따로 적는다.
-                .requestMatchers(HttpMethod.GET, "/api/v1/artist", "/api/v1/artist/*").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/v1/album", "/api/v1/album/*").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/v1/music/*/lyric").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/v1/music/*/analysis").permitAll()
-                // 앨범·아티스트 이미지도 같이 열어야 목록에 표지가 뜬다.
-                // 프로필 사진(PROFILE)은 개인 정보라 열지 않는다.
+                /*
+                 * 곡 카탈로그(목록·상세·아티스트·앨범·가사·분석)는 **열지 않는다.**
+                 *
+                 * 한때 열어 두었던 까닭은 첫 방문자가 로그인 전에 곡을 둘러본다고
+                 * 보았기 때문이다. 지금은 로그인하지 않으면 서비스를 쓸 수 없고
+                 * (`frontend/lib/routes.ts` 의 publicPaths 는 `/`·`/login`·`/signup`
+                 * 뿐이다) 데모 곡도 없앴다. 비로그인이 곡을 보는 화면 자체가 없으니
+                 * 열어 둘 이유가 사라졌다. 열어 두면 곡·가사·분석이 통째로 공개된다.
+                 *
+                 * 다만 **앨범·아티스트 이미지는 연다.** `<img src>` 에는
+                 * Authorization 헤더를 붙일 수 없어서, 닫으면 목록의 표지가 전부
+                 * 깨진다. 키가 앨범·아티스트 이름이라 개인 정보도 아니다.
+                 * 프로필 사진(PROFILE)은 개인 정보라 열지 않는다 — 그쪽은 토큰을
+                 * 붙여 바이트를 받아 object URL 로 쓴다(`lib/profile-photo.ts`).
+                 */
                 .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/ALBUM/*").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/ARTIST/*").permitAll()
-                // 온보딩 선택지는 마스터 데이터다. 온보딩 화면이 로그인 전에도
-                // 떠야 해서 목록만 열어 둔다. 제출·조회는 인증이 필요하다.
+                // 온보딩 선택지(무드·장르 이름)는 마스터 데이터다. 지금은 온보딩
+                // 화면이 로그인한 사람에게만 뜨므로 닫아도 되지만, 개인 정보가
+                // 아니고 가입 흐름을 건드리지 않으려 열어 둔다. 제출·조회는
+                // 인증이 필요하다.
                 .requestMatchers(HttpMethod.GET, "/api/v1/onboarding/option").permitAll()
                 .requestMatchers("/admin/**").hasRole("ADMIN") // 관리자 전용
                 .anyRequest().authenticated())

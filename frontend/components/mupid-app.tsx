@@ -4,6 +4,7 @@ import { mupidService } from '@/lib/services';
 import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
 import { useStore } from '@/lib/store';
 import { fetchCatalog } from '@/lib/stream-catalog';
+import { restoreSession, sessionStore } from '@/lib/api/session';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
 import {
@@ -70,16 +71,32 @@ export function MupidApp() {
   const [data, setData] = useState<Bootstrap | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  /*
+   * 곡 목록은 **로그인한 사람만** 받을 수 있다(`SecurityConfig`). 그래서 세션을
+   * 먼저 복원하고 그 다음에 받는다. 순서가 뒤집히면 첫 방문자의 요청이 401 로
+   * 떨어져 로그인 화면에 "음악을 불러오지 못했어요" 가 뜬다.
+   *
+   * 비로그인이면 빈 목록으로 연다 — 곡이 없어도 앱은 그대로 돌아간다. 로그인
+   * 하면 계정이 바뀐 것을 보고 여기서 다시 받는다.
+   */
+  const accountId = useStore(sessionStore, s =>
+    s.status === 'authenticated' ? s.user?.user_id ?? 0 : 0);
   useEffect(() => {
     let live = true;
-    // 서버 카탈로그는 화면 쪽에서 받아 서비스 계층에 넘긴다.
-    // 서비스 계층은 브라우저 저장만 건드린다 (docs/server-integration.md).
-    void fetchCatalog()
-      .then((catalog) => mupidService.bootstrap(catalog))
-      .then(value => { if (live) setData(value); })
-      .catch(() => { if (live) setError('음악을 불러오지 못했어요.'); });
+    void (async () => {
+      try {
+        const session = await restoreSession();
+        const catalog = session.status === 'authenticated' ? await fetchCatalog() : [];
+        // 서버 카탈로그는 화면 쪽에서 받아 서비스 계층에 넘긴다.
+        // 서비스 계층은 브라우저 저장만 건드린다 (docs/server-integration.md).
+        const value = await mupidService.bootstrap(catalog);
+        if (live) setData(value);
+      } catch {
+        if (live) setError('음악을 불러오지 못했어요.');
+      }
+    })();
     return () => { live = false; };
-  }, [attempt]);
+  }, [attempt, accountId]);
   /*
    * 곡이 한 곡도 없어도 앱은 그대로 연다 — 음악이 없을 뿐이지 고장이 아니다.
    * 마이페이지·플레이리스트처럼 곡이 필요 없는 화면은 평소처럼 써야 한다.

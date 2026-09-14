@@ -405,6 +405,19 @@ export function useMupid(bootstrap: Bootstrap) {
     });
     return () => abort.abort();
   }, [active?.id]);
+  /*
+   * 로그인 뒤에 곡 목록이 들어오면 고를 곡을 잡아 둔다.
+   *
+   * 목록은 로그인한 사람만 받을 수 있어서, 비로그인으로 앱이 열릴 때는 비어
+   * 있다가 로그인 뒤에 채워진다. `active` 는 처음 한 번만 정해지므로 여기서
+   * 뒤늦게 들어온 목록을 받아 준다. 재생을 시작하지는 않는다.
+   */
+  useEffect(() => {
+    if (active || !tracks.length) return;
+    const pick = tracks.find((t) => t.id === lastPlayedId) ?? tracks[0];
+    activeRef.current = pick;
+    setActive(pick);
+  }, [tracks, active, lastPlayedId]);
   const seek = (value: number) => {
     // 내부 위치 이동 함수. 화면에서 호출하는 seek는 반환 모델에서 순간 미리듣기도 해제한다.
     if (!activeRef.current) return;

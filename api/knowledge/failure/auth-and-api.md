@@ -244,3 +244,12 @@
 - **해결**: `GlobalExceptionHandler` 에 `JwtException`·`BadCredentialsException` → `MUPID_UNAUTHORIZED`(401) 를 더한다. 401 이어야 프런트가 로그인으로 보낸다.
 - **확인**: 쿠키 없음·`garbage`·`aaa.bbb.ccc` 모두 401.
 - **근거**: `api/.../common/exception/GlobalExceptionHandler.java`
+
+### 곡 카탈로그를 비로그인에게 열어 두었다 — 해소됨
+
+- **원인**: `SecurityConfig` 에 곡 목록·상세·아티스트·앨범·가사·분석을 `permitAll` 로 두었다. 근거는 "첫 방문자가 온보딩 전에 곡을 둘러본다" 였는데, 그 뒤 **로그인해야만 서비스를 쓸 수 있게** 바뀌면서(`frontend/lib/routes.ts` 의 publicPaths 는 `/`·`/login`·`/signup` 뿐) 비로그인이 곡을 보는 화면 자체가 없어졌다. 데모 곡도 없앴다. 근거가 사라졌는데 규칙만 남아 곡·가사·분석이 통째로 공개돼 있었다.
+- **해결**: 카탈로그 조회를 전부 닫는다. 프런트의 해당 호출에서 `anonymous: true` 를 걷어내 토큰을 싣는다.
+- **함께 고쳐야 하는 것**: `MupidApp` 이 **세션 복원보다 먼저** 카탈로그를 받고 있었다. 그대로 닫으면 첫 방문자의 요청이 401 로 떨어져 로그인 화면에 "음악을 불러오지 못했어요" 가 뜬다. 세션을 먼저 복원하고, 비로그인이면 빈 목록으로 연 뒤, 로그인해서 계정이 잡히면 그때 다시 받는다. 뒤늦게 들어온 목록에서 곡을 고르는 일은 `useMupid` 가 맡는다.
+- **열어 둔 것**: `/api/v1/storage/image/ALBUM|ARTIST/*` 는 **닫으면 안 된다.** `<img src>` 에는 Authorization 헤더를 붙일 수 없어 목록의 표지가 전부 깨진다. 키가 앨범·아티스트 이름이라 개인 정보도 아니다. 프로필 사진(PROFILE)은 개인 정보라 닫힌 채로 두고 토큰을 붙여 바이트를 받는다.
+- **확인**: 비로그인 `curl` 로 목록·상세·가사·분석·아티스트·앨범 모두 401, 앨범 이미지 200. 쿠키를 지운 첫 방문은 `/login` 이 뜨고 오류 문구가 없다. 폼으로 로그인하면 새로고침 없이 `/home` 에 곡과 표지 15장이 그대로 뜬다.
+- **근거**: `api/.../common/config/SecurityConfig.java`, `frontend/components/mupid-app.tsx`, `frontend/lib/api/endpoints.ts`
