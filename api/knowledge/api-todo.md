@@ -31,6 +31,7 @@
 | 프로필 사진 | `POST/GET/DELETE /api/v1/storage/image/PROFILE/{userId}` | 연결 완료 |
 | 아티스트·앨범 | `GET /api/v1/artist[/{id}]`, `GET /api/v1/album[/{id}]` | 인증 불필요 |
 | 가사·분석 | `GET /api/v1/music/{id}/lyric`, `.../analysis` | 인증 불필요 |
+| 일일 추천 | `GET /api/v1/recommendation/daily` | 조회만 (데이터 없음) |
 | 플레이리스트 | `POST /api/v1/playlist` | **생성만** |
 
 근거: `api/src/main/java/com/osundosun/mupid/api/**/controller/`
@@ -322,15 +323,32 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 
 ## P3 — 분석·추천 파이프라인이 준비되어야 붙는다
 
-### 12. 일일 추천
+### 12. 일일 추천 — ✅ 조회만 완료
 
-`daily_recommendations` · `daily_recommendation_tracks` 엔티티 있음, API 없음.
-홈의 "오늘의 Mupid Mix" 가 이 자리다.
+- `GET /api/v1/recommendation/daily?date=YYYY-MM-DD`
 
-- `GET /api/v1/recommendation/daily`
-- 근거: `api/.../recommendation/repository/`, `frontend/components/mupid/home.tsx`
+**만드는 경로는 없다.** `daily_recommendations` 를 채우는 것은 추천
+파이프라인의 몫이고 아직 없다. 지금은 `groups` 가 빈 배열로 온다 — 404 가
+아니다.
 
-### 13. 취향 리포트 · MUBTI
+요청한 날짜에 추천이 없으면 **가장 최근 추천이 있는 날**로 되돌아간다.
+파이프라인이 매일 도는 보장이 없는데 빈 홈을 보여주면 곤란해서다. 응답의
+`date` 가 실제로 무엇을 돌려줬는지 말한다.
+
+따라온 것:
+
+- `DailyRecommendation` 의 PK 필드가 `recommendationId` 인데 컬럼은
+  `daily_recommendation_id` 다. `@Column` 이 없어 **없는 컬럼을 가리키고
+  있었다.**
+- `recommendation_date` 가 `DATE` 인데 엔티티는 `LocalDateTime` 이었다.
+  `LocalDate` 로 고쳤다 — 그대로 두면 쓸 때 잘린다.
+- 화면 연결은 아직이다. 넣을 데이터가 없어 붙여도 빈 화면이다.
+
+> **13~15 는 지금 만들 수 없다.** 없는 인프라와 정해지지 않은 것에 걸려 있다.
+> 아래 각 항목에 무엇이 막고 있는지 적어 두었다. 껍데기만 먼저 만들면
+> 계약이 잘못 굳는다.
+
+### 13. 취향 리포트 · MUBTI — ⛔ 막힘
 
 `reports` · `mubti` · `listening` 엔티티 있음, API 없음. 리포트 화면은 지금
 `moments`/`history` 길이로 **로컬에서 계산**한다.
@@ -339,9 +357,13 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
   이미 쓰고 있다
 - 구간별 선호도·키워드·MUBTI 가 응답에 필요하다
 - 집계는 ClickHouse 쪽이다 → [architecture/analytics-clickhouse.md](architecture/analytics-clickhouse.md)
+- **막는 것**: API 서버에 ClickHouse **조회** 계층이 없다. 설정
+  (`analytics/config/ClickHouseConfig.java`)만 있고 읽는 코드가 없다. 서비스
+  경로에서 분석 클러스터를 어떻게 읽을지(직접 조회 · 집계 테이블 복제 ·
+  배치로 MySQL 에 적재)는 팀이 정할 일이다 → 정할 것
 - 근거: `frontend/components/mupid/collection.tsx:329-460`
 
-### 14. AI 채팅 추천
+### 14. AI 채팅 추천 — ⛔ 막힘
 
 `ai_chat_sessions` · `ai_chat_messages` 엔티티 있음, API 없음. 프론트는 외부
 AI 를 부르지 않고 로컬 규칙으로 목록을 정렬한다.
@@ -350,14 +372,19 @@ AI 를 부르지 않고 로컬 규칙으로 목록을 정렬한다.
 - `GET /api/v1/ai/chat/{sessionId}` — 대화 이력
 - **브라우저를 내부 FastAPI/Kafka/DB 에 직접 붙이지 않는다.** 추천 어댑터는
   Spring API 만 호출한다 → `frontend/docs/server-integration.md`
+- **막는 것**: 어떤 모델을 어디서 부를지 정해진 것이 없다. 키 보관·비용·
+  지연·실패 시 동작까지 함께 정해야 한다 → 정할 것
 - 근거: `frontend/lib/mupid-data.ts` 의 `deriveChatRecommendations`,
   `frontend/hooks/use-mupid.ts` 의 `messages` · `sendMessage`
 
-### 15. 비슷한 구간 · 파생곡
+### 15. 비슷한 구간 · 파생곡 — ⛔ 막힘
 
 "이 구간으로 파생곡 찾기" 가 지금은 데모 데이터 정렬이다.
 
 - `GET /api/v1/music/{musicId}/similar?start_ms=&end_ms=`
+- **막는 것**: 벡터 DB 가 없다. `music_section_analysis.external_id` 가
+  "벡터DB ID" 라고 적혀 있지만 그런 저장소가 어디에도 설정돼 있지 않고,
+  구간 분석 자체도 비어 있다 → 정할 것
 - 근거: `frontend/components/mupid/discovery.tsx:286,308`
 
 ---
@@ -384,3 +411,9 @@ API 신설은 아니지만 프론트 연결에서 실제로 걸린 것들이다.
   ClickHouse 는 분석용 → [decision/0018](decision/0018-history-from-event-stream.md)
 - 온보딩 설문을 한 줄에 답 하나로 담을 것인가 (P1-3) — ERD 변경이라 팀 합의가
   먼저다 → [decision/0017](decision/0017-onboarding-survey-cross-product.md)
+- 서비스 경로에서 ClickHouse 집계를 어떻게 읽을 것인가 (P3-13) — 직접 조회 ·
+  집계 테이블 복제 · 배치로 MySQL 적재 중 무엇인지
+- AI 추천을 어떤 모델로 어디서 부를 것인가 (P3-14) — 키 보관·비용·지연·
+  실패 시 동작까지
+- 벡터 DB 를 무엇으로 둘 것인가 (P3-15) — `music_section_analysis.external_id`
+  가 무엇을 가리키는지부터 정해야 한다

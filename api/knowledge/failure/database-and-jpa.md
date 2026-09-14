@@ -1,6 +1,6 @@
 # 데이터베이스 · JPA · 트랜잭션
 
-19건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+20건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -158,3 +158,9 @@
 - **원인**: `MusicSectionAnalysis.index` 가 컬럼명 그대로 `index` 로 내려가는데 MySQL 예약어다. `Chunk.index` 가 이미 같은 것을 밟았는데 이쪽은 그대로 남아 있었다.
 - **해결**: `@Column(name = "\`index\`")`. 예약어는 엔티티 쪽에서 백틱으로 못 박는다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/music/entity/MusicSectionAnalysis.java`
+
+### 일일 추천을 읽으면 `recommendation_id` 라는 없는 컬럼이 나온다 — 해소됨
+
+- **원인**: `DailyRecommendation` 의 PK 필드가 `recommendationId` 인데 실제 컬럼은 `daily_recommendation_id` 다. `@Column` 이 없어 Hibernate 암묵 네이밍이 `recommendation_id` 로 내려갔다. 덤으로 `recommendation_date` 가 DB 에서는 `DATE` 인데 엔티티는 `LocalDateTime` 이라, 쓸 때 시각이 잘린다.
+- **해결**: `@Column(name = "daily_recommendation_id")` 를 붙이고 날짜는 `LocalDate` 로 바꿨다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/recommendation/entity/DailyRecommendation.java`
