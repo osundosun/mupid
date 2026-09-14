@@ -57,8 +57,13 @@ const toTrack = (music: MusicSummary): Track => {
 /**
  * 서버 곡 목록을 가져온다.
  *
- * 실패해도 예외를 던지지 않는다. 카탈로그는 데모 곡 위에 얹는 값이라,
- * 못 받아 왔다고 앱이 열리지 않으면 안 된다. 대신 콘솔에 남긴다.
+ * **못 받아 오면 예외를 던진다.** 예전에는 빈 배열로 삼켰는데, 데모 곡 위에
+ * 얹는 값이라 앱이 열리기만 하면 됐기 때문이다. 이제는 이것이 곡 목록의
+ * 전부라, 삼키면 화면이 서버 장애를 "아직 등록된 음악이 없어요" 로 잘못
+ * 알린다 — 사용자는 다시 불러올 일이 아니라고 여기고 떠난다. 둘은 다른
+ * 사정이니 다르게 알려야 한다.
+ *
+ * 중간에 취소된 것은 실패가 아니다. 빈 배열로 조용히 끝낸다.
  */
 export async function fetchCatalog(signal?: AbortSignal): Promise<Track[]> {
   try {
@@ -67,7 +72,7 @@ export async function fetchCatalog(signal?: AbortSignal): Promise<Track[]> {
   } catch (error) {
     if (signal?.aborted) return [];
     console.warn('[mupid] 곡 카탈로그를 불러오지 못했어요.', error);
-    return [];
+    throw error;
   }
 }
 
