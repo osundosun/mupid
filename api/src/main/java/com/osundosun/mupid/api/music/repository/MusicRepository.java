@@ -6,6 +6,7 @@ import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -44,5 +45,36 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
     Optional<Music> findDetail(@Param("musicId") int musicId);
 
     List<Music> findByMusicIdInAndIsDeletedFalse(List<Integer> musicIds);
+
+    /** 목록 표현에 필요한 연관까지 한 번에 끌어온다. 순서는 호출 쪽이 다시 잡는다. */
+    @Query("""
+        SELECT m FROM Music m
+        JOIN FETCH m.artist a
+        JOIN FETCH a.imageFile
+        JOIN FETCH m.album al
+        JOIN FETCH al.imageFile
+        WHERE m.musicId IN :musicIds AND m.isDeleted = false
+        """)
+    List<Music> findDetailAllByIds(@Param("musicIds") List<Integer> musicIds);
+
+    /** 곡이 살아 있는지만 본다. 엔티티를 영속성 컨텍스트에 올리지 않는다. */
+    boolean existsByMusicIdAndIsDeletedFalse(int musicId);
+
+    /**
+     * 좋아요 수는 읽고-고쳐-쓰면 동시 요청에서 하나가 사라진다. DB 에서 바로 올린다.
+     *
+     * `flushAutomatically` 를 켜 둔 이유: 기본값(false)이면 아직 반영되지 않은
+     * 변경이 남은 채 UPDATE 가 나가고, 뒤이은 `clearAutomatically` 가 그 변경을
+     * **버린다.** 반응 행 저장과 좋아요 수 갱신이 한 트랜잭션에 있으므로 반드시
+     * 먼저 내보내야 한다.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Music m SET m.likeCount = m.likeCount + 1 WHERE m.musicId = :musicId")
+    void increaseLikeCount(@Param("musicId") int musicId);
+
+    /** 0 아래로는 내려가지 않는다. 과거에 어긋난 값이 있어도 음수가 되지 않게 막는다. */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Music m SET m.likeCount = m.likeCount - 1 WHERE m.musicId = :musicId AND m.likeCount > 0")
+    void decreaseLikeCount(@Param("musicId") int musicId);
 
 }

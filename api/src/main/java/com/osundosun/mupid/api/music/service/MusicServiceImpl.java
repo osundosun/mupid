@@ -105,6 +105,20 @@ public class MusicServiceImpl implements MusicService {
         return toSummaries(List.of(music)).get(0);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<MusicSummary> getMusicSummaries(List<Integer> musicIds) {
+        if (musicIds == null || musicIds.isEmpty()) return List.of();
+        Map<Integer, Music> found = repository.findDetailAllByIds(musicIds).stream()
+            .collect(Collectors.toMap(Music::getMusicId, Function.identity()));
+        // 넘긴 순서를 지킨다. IN 절은 순서를 보장하지 않는다.
+        List<Music> ordered = musicIds.stream()
+            .map(found::get)
+            .filter(music -> music != null)
+            .toList();
+        return toSummaries(ordered);
+    }
+
     /**
      * 곡 목록을 화면용 표현으로 바꾼다.
      *

@@ -1,13 +1,16 @@
 package com.osundosun.mupid.api.common.exception;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.validation.BindException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -73,6 +76,32 @@ public class GlobalExceptionHandler {
                 // 헤더에도 실린다 (본문이 사라지는 경로 대비).
                 .header(ERROR_CODE_HEADER, GlobalErrorCode.INVALID_REQUEST_BODY.getCode())
                 .body(ErrorResponse.of(GlobalErrorCode.INVALID_REQUEST_BODY, errorBody));
+    }
+
+    /**
+     * 쿼리 파라미터·경로 변수의 타입이 안 맞을 때.
+     *
+     * `?page=abc`, `?type=LOVE`(enum 에 없는 값) 같은 것이다. 그냥 두면 500 으로
+     * 나가서 서버가 고장 난 것처럼 보인다. 보낸 쪽 잘못이므로 400 으로 돌린다.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse<Map<String, String>>> typeMismatch(MethodArgumentTypeMismatchException e) {
+        Map<String, String> errorBody = new HashMap<>();
+        errorBody.put(e.getName(), describeMismatch(e));
+        return ResponseEntity
+                .status(GlobalErrorCode.INVALID_REQUEST_BODY.getStatus())
+                .header(ERROR_CODE_HEADER, GlobalErrorCode.INVALID_REQUEST_BODY.getCode())
+                .body(ErrorResponse.of(GlobalErrorCode.INVALID_REQUEST_BODY, errorBody));
+    }
+
+    /** enum 이면 고를 수 있는 값을 알려 준다. 그 편이 고치기 쉽다. */
+    private String describeMismatch(MethodArgumentTypeMismatchException e) {
+        Class<?> required = e.getRequiredType();
+        if (required != null && required.isEnum()) {
+            return "%s 중 하나여야 합니다.".formatted(
+                Arrays.stream(required.getEnumConstants()).map(Object::toString).collect(Collectors.joining(", ")));
+        }
+        return "값의 형식이 올바르지 않습니다.";
     }
 
     @ExceptionHandler(AccessDeniedException.class)

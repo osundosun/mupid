@@ -69,15 +69,15 @@ public class MusicReaction {
     public static class MusicReactionId {
         
         /**
-         * 유저 번호 (조회 전용)
+         * 유저 번호
          */
-        @Column(name = "user_id", insertable = false, updatable = false)
+        @Column(name = "user_id")
         private Integer userId;
 
         /**
-         * 음악 번호 (조회 전용)
+         * 음악 번호
          */
-        @Column(name = "music_id", insertable = false, updatable = false)
+        @Column(name = "music_id")
         private Integer musicId;
 
     }
