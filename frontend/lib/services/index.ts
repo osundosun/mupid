@@ -1,4 +1,4 @@
-import { initialMoments, initialPlaylists, deriveChatRecommendations } from '../mupid-data';
+import { initialMoments, initialPlaylists } from '../mupid-data';
 import type { MupidService, Preferences } from './contracts';
 import type { Track } from '../mupid-data';
 
@@ -71,7 +71,6 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
     async readPhoto() { const value = storage.getItem(photoKey); return value?.startsWith('data:image/jpeg;base64,') ? value : ''; },
     async savePhoto(value) { storage.setItem(photoKey, value); },
     async removePhoto() { storage.removeItem(photoKey); },
-    async recommend(prompt, current, candidates) { return deriveChatRecommendations(prompt, current, candidates); },
   };
 }
 
