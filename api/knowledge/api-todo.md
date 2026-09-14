@@ -399,6 +399,18 @@ API 신설은 아니지만 프론트 연결에서 실제로 걸린 것들이다.
 | 잘못된 이메일이 500 | Gmail 이 `Invalid To header` 로 거절하면 `GmailException` 이 도메인 오류로 매핑되지 않아 `MUPID_INTERNAL_SERVER_ERROR` 가 나간다 → [failure/auth-and-api.md](failure/auth-and-api.md) |
 | 회원 탈퇴가 하드 삭제 | 정책은 soft delete → [decision/0013](decision/0013-soft-delete-policy.md) |
 
+## 로그인하지 않으면 서비스를 쓸 수 없다
+
+화면 가드(`frontend/lib/routes.ts`)가 `/`·`/login`·`/signup` 말고는 전부 막는다.
+곡 목록도 재생도 로그인한 뒤의 일이다. 브라우저 저장으로 세션을 되살리던
+체험 로그인은 없앴다.
+
+> **서버는 아직 곡 조회를 공개로 둔다.** `GET /api/v1/music` · `/artist` ·
+> `/album` · `/music/{id}/lyric` · `/music/{id}/analysis` · `/onboarding/option`
+> 은 permitAll 이다. 사용자 데이터가 아니고, 화면이 로그인 전에 카탈로그를
+> 미리 받아 두기 때문이다. 계정 없이 카탈로그를 긁어가는 것까지 막으려면
+> 이들을 닫고 **로그인 뒤 카탈로그를 다시 받도록** 화면을 고쳐야 한다 → 정할 것
+
 ## 정할 것
 
 - ~~곡 길이를 `music` 에 둘 것인가, 스트림에서 조인할 것인가 (P0-1)~~ →
@@ -415,5 +427,7 @@ API 신설은 아니지만 프론트 연결에서 실제로 걸린 것들이다.
   집계 테이블 복제 · 배치로 MySQL 적재 중 무엇인지
 - AI 추천을 어떤 모델로 어디서 부를 것인가 (P3-14) — 키 보관·비용·지연·
   실패 시 동작까지
+- 곡 조회 API 를 로그인 뒤에만 열 것인가 — 화면은 이미 로그인을 요구한다.
+  닫으려면 로그인 시점에 카탈로그를 다시 받는 처리가 함께 필요하다
 - 벡터 DB 를 무엇으로 둘 것인가 (P3-15) — `music_section_analysis.external_id`
   가 무엇을 가리키는지부터 정해야 한다

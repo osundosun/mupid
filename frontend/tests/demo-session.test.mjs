@@ -22,9 +22,11 @@ void test('UI preview normalizes display names, rejects blanks and limits their 
   assert.equal(createDemoSession('가'.repeat(50)).nickname.length, 20);
 });
 
-void test('login preview stays in memory and never restores a browser login session', () => {
+void test('login stays in memory and never restores a browser login session', () => {
   assert.ok(hook.includes('useState<AccountSession | null>(null)'));
   assert.ok(hook.includes("displayName: demoSession ? nickname : '게스트'"));
+  // 브라우저 저장으로 세션을 되살리지 않는다.
+  assert.ok(!hook.includes('bootstrap.session'));
   assert.ok(!hook.includes('sessionStorage'));
   assert.ok(!hook.includes('readDemoSession'));
   assert.ok(!state.includes('Storage'));
@@ -49,7 +51,9 @@ void test('account UI passes credentials only to the service and resets the form
   assert.ok(dialog.includes('type="email"'));
 });
 
-void test('login and logout only change preview UI, not playback or music records', () => {
+// 로그인해야 쓸 수 있는 서비스다. 로그인은 화면 상태만 건드리고, 로그아웃은
+// 재생을 멈추고 계정에서 끌어온 값을 모두 비운다.
+void test('sign-in only changes UI state and sign-out clears the account', () => {
   const signIn = hook.slice(
     hook.indexOf('const signInDemo'),
     hook.indexOf('const signOutDemo'),
@@ -58,22 +62,18 @@ void test('login and logout only change preview UI, not playback or music record
     hook.indexOf('const signOutDemo'),
     hook.indexOf('const loadTrack'),
   );
-  assert.ok(signIn.includes('setDemoSession({'));
+  assert.ok(signIn.includes('setDemoSession({') || signIn.includes('setDemoSession(session)'));
   assert.ok(signOut.includes('setDemoSession(null)'));
-  for (const source of [signIn, signOut]) {
-    for (const prohibited of [
-      'fetch(',
-      'sessionStorage',
-      'localStorage',
-      'audioRef',
-      'setPlaying',
-      "go('home')",
-      'setLiked',
-      'setMoments',
-      'setPlaylists',
-    ]) {
-      assert.ok(!source.includes(prohibited), prohibited);
-    }
+  // 로그인은 저장소나 재생기를 직접 건드리지 않는다.
+  for (const prohibited of ['fetch(', 'sessionStorage', 'localStorage', 'audioRef', 'setPlaying']) {
+    assert.ok(!signIn.includes(prohibited), prohibited);
+  }
+  // 로그아웃은 두 재생 경로를 모두 멈추고 계정에서 끌어온 값을 비운다.
+  for (const required of ['audioRef.current?.pause()', 'getPlayer()?.stop()', 'setPlaying(false)', 'setLiked([])', 'setIgnored([])', 'setHistory([])']) {
+    assert.ok(signOut.includes(required), required);
+  }
+  for (const prohibited of ['fetch(', 'sessionStorage', 'localStorage']) {
+    assert.ok(!signOut.includes(prohibited), prohibited);
   }
 });
 

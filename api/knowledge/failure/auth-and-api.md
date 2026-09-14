@@ -1,6 +1,6 @@
 # 인증 · 보안 · 오류 응답
 
-26건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+29건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -219,3 +219,21 @@
 - **원인**: 저장 키가 경로 변수(`/api/v1/storage/image/PROFILE/{storageKey}`)라 아무 값이나 넣을 수 있었다. `image/profile/{남의 번호}` 로 올리면 그 사람 프로필 파일을 덮어쓰고, 업로드한 사람에게 연결됐다.
 - **해결**: `handleUploadImageAfter` 가 키의 마지막 마디를 본인 유저 번호와 대조한다. 어긋나면 `MUPID_PROFILE_KEY_MISMATCH`(403) 다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserImageServiceImpl.java`
+
+### 로그인한 적 없는 첫 방문자에게 `GET /api/v1/auth` 가 500 을 준다 — 해소됨
+
+- **원인**: `@CookieValue(name = "refresh_token")` 이 필수라 쿠키가 없으면 `MissingRequestCookieException` 이 나고, 핸들러가 없어 `Exception` 핸들러가 먹고 500 이 됐다. 세션 복원은 **첫 방문자가 늘 밟는 길**이라 열 때마다 서버 오류가 찍혔다.
+- **해결**: `required = false` 로 받고 없으면 `AuthErrorCode.UNAUTHORIZED`(401)를 던진다. "재발급할 세션이 없다" 는 오류가 아니라 상태다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/auth/controller/AuthController.java`
+
+### 로그인이 1시간 만에 풀린다 — 해소됨
+
+- **원인**: 리프레시 토큰 쿠키의 `maxAge` 가 `ACCESS_TOKEN_VALIDITY_MS`(1시간)였다. 토큰 자체는 7일짜리인데 쿠키가 먼저 사라져 재발급을 못 한다. 로그인과 재발급 **두 곳 모두** 같은 값을 쓰고 있어서 재발급을 해도 수명이 늘지 않았다.
+- **해결**: 두 곳 다 `REFRESH_TOKEN_VALIDITY_MS`. 이미 `failure` 목록에 올라와 있던 건인데 재발급 경로가 빠져 있었다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/auth/controller/AuthController.java`
+
+### 로그인 전에는 공개 API 도 실패한다 — 해소됨
+
+- **원인**: `ApiClient.request` 가 재발급이 도는 동안 들어온 요청을 **익명 요청까지** 줄 세웠다. 첫 방문자는 세션 복원(재발급)이 항상 실패하므로, 그 사이 나간 곡 목록·온보딩 선택지 요청이 큐와 함께 401 로 실패했다. 서버는 200 을 주는데 화면에는 곡이 하나도 없었다.
+- **해결**: `if (this.refreshing && !options.anonymous)`. 토큰이 필요 없는 요청은 기다릴 이유가 없다.
+- **근거**: `frontend/lib/api/client.ts`
