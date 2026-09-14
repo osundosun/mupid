@@ -51,6 +51,11 @@ export type ApiRequestOptions = {
   /** JSON 으로 직렬화할 객체. 바이너리는 `binary` 를 쓴다. */
   json?: unknown;
   binary?: ArrayBuffer | Uint8Array;
+  /**
+   * 멀티파트 본문. `Content-Type` 은 붙이지 않는다 — 경계 문자열을 브라우저가
+   * 정하므로 직접 넣으면 서버가 본문을 못 읽는다.
+   */
+  form?: FormData;
   contentType?: string;
   responseType?: ResponseType;
   /** 액세스 토큰을 붙이지 않는다 (로그인·재발급 등). */
@@ -178,11 +183,14 @@ export class ApiClient {
 
   private async dispatch<T>(options: ApiRequestOptions): Promise<T> {
     const headers: Record<string, string> = {};
-    let body: string | ArrayBuffer | Uint8Array | null = null;
+    let body: string | ArrayBuffer | Uint8Array | FormData | null = null;
 
     if (options.json !== undefined) {
       headers['Content-Type'] = 'application/json';
       body = JSON.stringify(options.json);
+    } else if (options.form) {
+      // Content-Type 을 붙이지 않는다. 브라우저가 경계 문자열과 함께 채운다.
+      body = options.form;
     } else if (options.binary) {
       headers['Content-Type'] =
         options.contentType ?? 'application/octet-stream';

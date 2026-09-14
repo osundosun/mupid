@@ -156,7 +156,7 @@ export function createEndpoints(client: ApiClient) {
     },
 
     user: {
-      me: () => client.request<UserInfo>({ path: '/api/v1/user' }),
+      me: (signal?: AbortSignal) => client.request<UserInfo>({ path: '/api/v1/user', signal }),
       signup: (body: SignupBody) =>
         client.request<void>({
           method: 'POST',
@@ -206,6 +206,45 @@ export function createEndpoints(client: ApiClient) {
         client.request<{ is_valid: boolean }>({
           path: `/api/v1/mail/verification/${verificationId}`,
           anonymous: true,
+        }),
+    },
+
+    storage: {
+      /**
+       * 프로필 사진 업로드.
+       *
+       * 저장 키는 **본인 유저 번호**여야 한다. 남의 번호를 쓰면 403 이다 —
+       * 키가 경로 변수라 그대로 두면 남의 사진 파일을 덮어쓸 수 있다.
+       *
+       * 멀티파트 필드 이름은 `imageFile` 로 camelCase 다. SNAKE_CASE 설정은
+       * JSON 본문에만 걸린다.
+       */
+      uploadProfileImage: (userId: number, file: Blob, filename = 'profile.jpg') => {
+        const form = new FormData();
+        form.append('imageFile', file, filename);
+        return client.request<{ file_id: number }>({
+          method: 'POST',
+          path: `/api/v1/storage/image/PROFILE/${userId}`,
+          form,
+        });
+      },
+      deleteProfileImage: (userId: number) =>
+        client.request<void>({
+          method: 'DELETE',
+          path: `/api/v1/storage/image/PROFILE/${userId}`,
+          responseType: 'none',
+        }),
+      /**
+       * 이미지 바이트.
+       *
+       * 프로필 사진은 공개 경로가 아니라 `<img src>` 로 바로 못 건다. 토큰을
+       * 달아 받아 온 뒤 object URL 로 바꿔 쓴다.
+       */
+      image: (url: string, signal?: AbortSignal) =>
+        client.request<ArrayBuffer>({
+          path: url,
+          responseType: 'arraybuffer',
+          signal,
         }),
     },
 

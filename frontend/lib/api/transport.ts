@@ -16,8 +16,13 @@ export type TransportRequest = {
   /** 절대 URL. baseUrl 결합은 ApiClient 가 끝낸 뒤 넘긴다. */
   url: string;
   headers: Record<string, string>;
-  /** 이미 직렬화된 본문. 문자열(JSON)이거나 바이너리다. */
-  body?: string | ArrayBuffer | Uint8Array | null;
+  /**
+   * 이미 직렬화된 본문. 문자열(JSON)이거나 바이너리다.
+   *
+   * `FormData` 도 받는다 — 멀티파트는 경계 문자열이 필요해서 직접 만들 수 없고,
+   * 브라우저가 `Content-Type` 까지 붙여 준다. 그래서 이때는 헤더를 비워 둔다.
+   */
+  body?: string | ArrayBuffer | Uint8Array | FormData | null;
   responseType: ResponseType;
   /** 쿠키(리프레시 토큰)를 함께 보낼지. 기본은 same-origin. */
   withCredentials?: boolean;
