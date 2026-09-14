@@ -24,6 +24,7 @@
 | 스트리밍 | 스트림·청크 생성/업로드/조회/다운로드 | 연결 완료 |
 | 이미지 | `POST/GET/DELETE /api/v1/storage/image/{category}/{key}` | 연결 완료 |
 | 이벤트 수집 | `POST /api/v1/events` | 프론트 트래커 있음 |
+| 온보딩 | `GET /api/v1/onboarding/option`, `GET`, `POST /api/v1/onboarding` | 연결 완료 |
 | 플레이리스트 | `POST /api/v1/playlist` | **생성만** |
 
 근거: `api/src/main/java/com/osundosun/mupid/api/**/controller/`
@@ -46,8 +47,9 @@
 개인 정보라 열지 않았다.
 
 프론트는 `lib/stream-catalog.ts` 의 하드코딩을 지우고 이 API 를 부른다.
-`genres`·`moods` 는 계약에는 있지만 **데이터가 아직 없어 빈 배열**이다
-(`codes`·`music_genres`·`music_moods` 가 전부 비어 있다).
+`genres`·`moods` 는 계약에는 있지만 **데이터가 아직 없어 빈 배열**이다.
+`codes` 는 온보딩 때문에 채웠지만(P1-3), 곡에 장르·분위기를 붙이는
+`music_genres`·`music_moods` 는 여전히 비어 있다.
 
 <details>
 <summary>원래 적었던 내용</summary>
@@ -102,16 +104,32 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 > 옮길 때는 항목별 API 로 쪼개야 한다 —
 > `frontend/docs/server-integration.md` 4번 항목.
 
-### 3. 온보딩 설문
+### 3. 온보딩 설문 — ✅ 완료
 
-`onboarding_survey` 테이블과 `OnboardingSurvey` 엔티티·리포지토리는 있는데
-컨트롤러가 없다. 첫 방문자는 온보딩을 마쳐야 앱에 들어가는데, 그 결과가
-서버에 남지 않는다.
+- `GET /api/v1/onboarding/option` — 고를 수 있는 분위기·장르 (**인증 불필요**)
+- `POST /api/v1/onboarding` — 닉네임·분위기·장르 제출 (재제출 시 교체)
+- `GET /api/v1/onboarding` — 제출 여부·제출 내용
 
-- `POST /api/v1/onboarding` — 닉네임·선호 분위기 제출
-- `GET /api/v1/onboarding` — 제출 여부(화면 진입 분기에 쓴다)
-- 근거: `frontend/hooks/use-mupid.ts` 의 `completeOnboarding` ·
-  `onboardingSubmittedAt`, `api/.../onboarding/repository/OnboardingSurveyRepository.java`
+분위기·장르는 이름이 아니라 `codes` 표의 **번호**로 주고받는다. `codes` 는 기준
+데이터라 사람이 넣어야 한다 → [domain/seed-codes.sql](domain/seed-codes.sql).
+비어 있으면 `GET /option` 이 503 이다.
+
+저장 형태는 **분위기 × 장르 조합**이다. 표의 두 코드 칼럼이 모두 NOT NULL 이라
+집합 두 개를 그대로 담을 수 없어서다 —
+[decision/0017](decision/0017-onboarding-survey-cross-product.md).
+더 나은 스키마는 ERD 변경이 필요해 팀에 물어야 한다
+([open-questions C6](open-questions.md)).
+
+따라온 것:
+
+- 온보딩 화면에 **장르 선택**을 추가했다. 장르 없이는 행을 만들 수 없다.
+- 제출한 닉네임이 계정 닉네임(`users.nickname`)에도 반영된다.
+- 프로필 화면의 "내가 좋아하는 분위기" 도 계정에 반영된다
+  (`useMupid` 의 `updateMoods`).
+- 로그인·세션 복원 시 계정에 있는 설문을 화면 상태로 끌어온다. 다른 기기에서
+  답했으면 온보딩 화면을 건너뛴다.
+- 비로그인은 예전처럼 브라우저 저장만 쓴다. 온보딩은 앱에 들어가는 관문이라
+  서버가 없다고 막히면 안 된다.
 
 ### 4. 좋아요 / 관심 없음
 

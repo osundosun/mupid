@@ -211,6 +211,14 @@ docs:
 
     가입 직후에는 `status = PENDING`(온보딩 필요), `role = ROLE_USER` 입니다.
 
+    ## 공통 코드
+
+    분위기·장르는 `codes` 표의 행이고, API 는 이름이 아니라 `code_id` 로
+    주고받습니다. 목록은 `Onboarding / 설문 항목 조회` 로 받습니다.
+
+    `codes` 는 기준 데이터라 사람이 직접 넣습니다 —
+    `knowledge/domain/seed-codes.sql`. 비어 있으면 온보딩이 503 입니다.
+
     ## 프로필 사진
 
     유저 프로필 사진 전용 엔드포인트는 없어지고 `Storage` 폴더의 범용 API 로

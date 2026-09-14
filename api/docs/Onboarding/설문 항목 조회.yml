@@ -1,0 +1,80 @@
+info:
+  name: 설문 항목 조회
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/onboarding/option"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "moods": [
+                { "code_id": 1, "name": "잔잔한" },
+                { "code_id": 2, "name": "벅찬" },
+                { "code_id": 3, "name": "몽환적인" },
+                { "code_id": 4, "name": "신나는" },
+                { "code_id": 5, "name": "집중되는" },
+                { "code_id": 6, "name": "감성적인" },
+                { "code_id": 7, "name": "강렬한" },
+                { "code_id": 8, "name": "설레는" }
+              ],
+              "genres": [
+                { "code_id": 9, "name": "Electronic" },
+                { "code_id": 10, "name": "Indie" },
+                { "code_id": 11, "name": "R&B" },
+                { "code_id": 12, "name": "Rock" },
+                { "code_id": 13, "name": "Pop" },
+                { "code_id": 14, "name": "Hip-hop" },
+                { "code_id": 15, "name": "Jazz" },
+                { "code_id": 16, "name": "Classical" }
+              ]
+            }
+          }
+  - name: 503 항목 없음
+    response:
+      status: 503
+      statusText: Service Unavailable
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_ONBOARDING_OPTION_EMPTY",
+            "message": "온보딩 설문 항목이 준비되지 않았습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 설문 항목 조회
+
+  `GET /api/v1/onboarding/option` · **인증 불필요**
+
+  온보딩 화면이 뿌릴 선택지입니다. 등록 순서(`code_id` 오름차순)로 내려옵니다.
+  바뀌지 않는 기준 데이터라 클라이언트가 한 번 받아 캐시해도 됩니다.
+
+  503 이 나오면 `codes` 표가 비어 있는 것입니다.
+  [knowledge/domain/seed-codes.sql](../../knowledge/domain/seed-codes.sql) 을
+  적용하세요.
