@@ -4,7 +4,9 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -99,9 +101,10 @@ public class EventServiceImpl implements EventService {
         int duplicated = 0;
         int rejected = 0;
 
+        // 1단계: 검증·정규화·직렬화. 한 건이 규약에 어긋나도 배치 전체를 거부하지 않는다.
+        // 이벤트 하나 때문에 그 사용자의 청취 기록이 통째로 사라지는 쪽이 더 나쁘다.
+        List<Ready> ready = new ArrayList<>(dto.events().size());
         for (EventItemRequest item : dto.events()) {
-            // 한 건이 규약에 어긋나도 배치 전체를 거부하지 않는다. 이벤트 하나 때문에
-            // 그 사용자의 청취 기록이 통째로 사라지는 쪽이 더 나쁘다.
             Optional<ListenEventMessage> message = normalize(userId, item, now);
             if (message.isEmpty()) {
                 rejected++;
@@ -114,18 +117,33 @@ public class EventServiceImpl implements EventService {
                 continue;
             }
 
-            // 멱등 처리는 직렬화까지 끝난 뒤에 한다. 먼저 잡아 두고 실패하면 클라이언트가
-            // 같은 event_id 로 재시도해도 "이미 받음" 으로 버려져 이벤트가 영영 사라진다.
-            String eventId = message.get().eventId();
-            if (!cacheService.setIfAbsent(eventId, CacheKind.EventId, props.dedupTtl())) {
+            ready.add(new Ready(message.get(), payload.get(), item));
+        }
+
+        // 2단계: 멱등 선점을 한 번의 왕복으로 끝낸다. 건별로 부르면 배치 크기만큼
+        // Redis 를 왕복해 그 시간이 응답을 지배한다 — 하트비트가 3초마다 들어오는
+        // 경로라 요청 수 자체가 많다.
+        //
+        // 직렬화까지 끝난 뒤에 선점하는 것은 그대로다. 먼저 잡아 두고 실패하면
+        // 클라이언트가 같은 event_id 로 재시도해도 "이미 받음" 으로 버려진다.
+        List<Boolean> claimed = cacheService.setIfAbsent(
+            ready.stream().map(it -> it.message().eventId()).toList(),
+            CacheKind.EventId,
+            props.dedupTtl()
+        );
+
+        // 3단계: 발행. Kafka 응답을 기다리지 않으므로 이 반복은 큐에 넣기만 한다.
+        for (int i = 0; i < ready.size(); i++) {
+            if (!claimed.get(i)) {
                 duplicated++;
                 continue;
             }
 
-            publish(message.get(), payload.get());
+            Ready event = ready.get(i);
+            publish(event.message(), event.payload());
             // 서비스용 사본은 Kafka 로 보낸 뒤에 남긴다. 여기서 실패해도
             // 분석 적재는 이미 끝났다.
-            recordHistory(userId, message.get(), item);
+            recordHistory(userId, event.message(), event.item());
             accepted++;
         }
 
@@ -133,11 +151,19 @@ public class EventServiceImpl implements EventService {
     }
 
     /**
+     * 검증을 통과해 발행만 남은 한 건. 원본 요청도 들고 다니는 것은 `HistoryService`
+     * 가 `reason` 처럼 Kafka 메시지에 없는 값을 쓰기 때문이다.
+     */
+    private record Ready(ListenEventMessage message, String payload, EventItemRequest item) {
+
+    }
+
+    /**
      * 화면이 바로 읽는 MySQL 사본을 남긴다.
      *
      * 전체 22종 중 `PLAY_START` 와 `SEARCH` 만이다. 나머지는 분석용이라
-     * ClickHouse 에만 있으면 된다. 특히 `PLAY_PROGRESS` 는 5초 하트비트라
-     * 여기에 들어오면 안 된다.
+     * ClickHouse 에만 있으면 된다. 특히 `PLAY_PROGRESS` 는 몇 초마다 들어오는
+     * 하트비트라 여기에 들어오면 안 된다.
      *
      * 실패해도 던지지 않는다. "최근 감상" 은 편의 기능이고, 그것 때문에
      * 이벤트 수집이 실패로 응답되면 클라이언트가 배치 전체를 재전송한다.
@@ -361,15 +387,29 @@ public class EventServiceImpl implements EventService {
         return Math.min(value, UINT32_MAX);
     }
 
-    private int clampToInt(Integer value) {
-        return value == null || value < 0 ? 0 : value;
+    /**
+     * id 계열(`track_id` · `playlist_id` · `comment_id`)을 `UInt32` 로 좁힌다.
+     *
+     * **범위를 넘으면 상한으로 자르지 않고 0 을 준다.** 위치(`position_ms`)는 잘라도
+     * "곡의 끝쯤" 이라는 뜻이 남지만, id 를 4294967295 로 자르면 존재하지 않는 대상을
+     * 가리키는 **그럴듯한 거짓 id** 가 된다. 이 스키마에서 0 은 "모름" 이고, 모르는
+     * 것은 모른다고 적는 편이 낫다 — 신호도 만들어지지 않아 조용히 빠진다.
+     */
+    private int clampToInt(Long value) {
+        if (value == null || value < 0 || value > UINT32_MAX) {
+            return 0;
+        }
+        return value.intValue();
     }
 
-    private int clamp(Integer value, int max) {
+    /**
+     * 순위처럼 크기 자체가 뜻인 값은 상한으로 자른다. "아주 뒤쪽" 이라는 뜻이 남는다.
+     */
+    private int clamp(Long value, int max) {
         if (value == null || value < 0) {
             return 0;
         }
-        return Math.min(value, max);
+        return (int)Math.min(value, max);
     }
 
 }
