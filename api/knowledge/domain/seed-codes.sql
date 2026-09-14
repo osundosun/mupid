@@ -13,8 +13,10 @@
 -- 여러 번 돌려도 늘어나지 않는다. `code_name` 은 UNIQUE 가 아니라서
 -- INSERT ... SELECT 로 있는지 보고 넣는다.
 
-INSERT INTO `codes` (`code_type`, `code_name`)
-SELECT * FROM (
+-- `created_at` 을 직접 넣는다. 표를 Hibernate 가 만든 환경에서는 ERD 와 달리
+-- DEFAULT CURRENT_TIMESTAMP 가 붙지 않아 생략하면 1364 로 막힌다.
+INSERT INTO `codes` (`code_type`, `code_name`, `created_at`)
+SELECT wanted.t, wanted.n, NOW(6) FROM (
   SELECT 'MOOD' AS t, '잔잔한' AS n
   UNION ALL SELECT 'MOOD', '벅찬'
   UNION ALL SELECT 'MOOD', '몽환적인'
