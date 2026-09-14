@@ -28,6 +28,7 @@
 | 좋아요·관심없음 | `PUT/DELETE /api/v1/music/{id}/reaction`, `GET /api/v1/user/reaction[/music]` | 연결 완료 |
 | 최근 감상 | `GET /api/v1/user/history` (적재는 이벤트 수집기가) | 연결 완료 |
 | 시점 댓글 | `GET/POST /api/v1/music/{id}/comment`, `PATCH/DELETE /api/v1/comment/{id}` | 연결 완료 |
+| 프로필 사진 | `POST/GET/DELETE /api/v1/storage/image/PROFILE/{userId}` | 연결 완료 |
 | 플레이리스트 | `POST /api/v1/playlist` | **생성만** |
 
 근거: `api/src/main/java/com/osundosun/mupid/api/**/controller/`
@@ -98,14 +99,18 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 
 ## P1 — 사용자 데이터가 브라우저에만 있다
 
-프론트는 아래 전부를 `localStorage` 한 덩어리(`mupid.sky.preferences.v1`)로
-저장한다. 기기를 바꾸면 사라지고, 로그인해도 계정에 붙지 않는다.
+프론트는 아래를 `localStorage` 한 덩어리(`mupid.sky.preferences.v1`)로 저장했다.
+기기를 바꾸면 사라지고, 로그인해도 계정에 붙지 않았다.
+
+**지금은 로그인하면 계정이 기준이다.** 온보딩·좋아요·최근 감상·시점 댓글·프로필
+사진이 서버로 옮겨졌고, `localStorage` 는 **비로그인 체험용**으로만 남는다.
+남은 것은 플레이리스트(동료 담당)와 저장한 구간(ERD 합의 필요)이다.
 
 근거: `frontend/lib/services/index.ts`, `frontend/lib/services/contracts.ts` 의 `Preferences`
 
-> `savePreferences` 는 지금 **스냅샷 하나**를 통째로 덮어쓰는 계약이다. 서버로
-> 옮길 때는 항목별 API 로 쪼개야 한다 —
-> `frontend/docs/server-integration.md` 4번 항목.
+> `savePreferences` 는 지금도 **스냅샷 하나**를 통째로 덮어쓰는 계약이다.
+> 비로그인 경로에만 남아 있어 당장 문제는 없지만, 이 계약 자체를 걷어낼지는
+> 정해야 한다 — `frontend/docs/server-integration.md` 4번 항목.
 
 ### 3. 온보딩 설문 — ✅ 완료
 
@@ -235,14 +240,33 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 - 시점이 곡 길이를 넘는지는 **검사하지 않는다.** 곡 길이가 스트림에서 오는
   값이라(P0-1) 스트림 없는 곡에는 기준이 없다. 화면이 먼저 막는다.
 
-### 9. 프로필 사진
+### 9. 프로필 사진 — ✅ 완료
 
-업로드 자체는 범용 스토리지 API 로 된다. 남은 것은 **조회 URL 규약**이다.
-`UserGetInfoResponse.imageUrl` 이 무엇을 돌려주는지 프론트가 그대로 쓸 수 있어야
-한다(절대 URL인지, 스토리지 경로인지).
+**조회 URL 규약**: `image_url` 은 서버 기준 **상대 경로**다
+(`/api/v1/storage/image/{CATEGORY}/{키}`). 절대 URL 이 아니므로 프론트는
+`baseUrl` 과 합쳐 쓰면 된다. 카테고리는 **대문자**다.
 
-- 근거: `api/.../user/response/UserGetInfoResponse.java`,
-  `frontend/lib/services/contracts.ts` 의 `readPhoto`/`savePhoto`
+규약을 만드는 자리는 하나다 — `StorageImageService.imageUrl(...)`. 곡 목록의
+앨범·아티스트 이미지도 같은 메서드를 쓴다.
+
+사진이 없으면 `/api/v1/storage/image/PROFILE/default` 를 가리킨다. 그 키에는
+파일이 없고 서버가 기본 이미지를 돌려주므로 `<img>` 에 그대로 넣어도 된다.
+화면은 이 값이 `default` 로 끝나면 "사진 없음" 으로 보고 마스코트를 띄운다.
+
+**프로필 사진은 공개 경로가 아니다.** 개인 정보라 `SecurityConfig` 에서 열지
+않았다. `<img src>` 는 `Authorization` 을 달 수 없으므로 프론트가 토큰을 붙여
+바이트를 받고 object URL 로 바꿔 쓴다(`lib/profile-photo.ts`). 앨범·아티스트
+이미지는 공개라 URL 을 그대로 쓴다.
+
+업로드 키는 **본인 유저 번호**여야 한다. 아니면 403 이다.
+
+고친 것 다섯 (전부 [failure/](failure/) 에 기록):
+
+- `image_url` 이 저장 키를 통째로 넣어 **부를 수 없는 주소**였다
+- 업로드가 인증 principal 에 값을 넣어 **DB 에 저장되지 않았다**
+- principal 의 지연 연관을 읽어 `GET /api/v1/user` 가 500 이었다
+- 삭제가 파일을 두 번 지워 롤백됐다
+- **남의 번호를 키로 올려 남의 사진을 덮어쓸 수 있었다**
 
 ---
 

@@ -5,7 +5,7 @@ info:
 
 http:
   method: DELETE
-  url: "{{BASE_URL}}/api/v1/storage/image/profile/{{USER_ID}}"
+  url: "{{BASE_URL}}/api/v1/storage/image/PROFILE/{{USER_ID}}"
   headers:
     - name: Authorization
       value: Bearer {{ACCESS_TOKEN}}
@@ -58,8 +58,12 @@ docs: |-
   메타데이터 모두 삭제되며, 메타데이터는 `is_deleted = true` 로
   표시됩니다.
 
-  `PROFILE` 카테고리는 삭제 전에 해당 파일을 프로필로 쓰던 유저의
-  `image_file` 연결이 먼저 해제됩니다.
+  `PROFILE` 카테고리는 삭제 전에 해당 파일을 프로필로 쓰던 유저의 연결을
+  끊습니다. 파일 자체는 호출부가 한 번만 지웁니다 — 콜백이 같이 지우면 두 번
+  지우게 되어 `MUPID_FILE_NOT_FOUND` 로 롤백됩니다.
+
+  삭제하면 `GET /api/v1/user` 의 `image_url` 이 다시
+  `/api/v1/storage/image/PROFILE/default` 를 가리킵니다.
 
   ## 오류
 

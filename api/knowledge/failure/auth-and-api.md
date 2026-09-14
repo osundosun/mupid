@@ -1,6 +1,6 @@
 # 인증 · 보안 · 오류 응답
 
-23건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+26건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -201,3 +201,21 @@
 - **원인**: `?page=abc`, `?type=LOVE`(enum 에 없는 값), `/api/v1/music/abc` 같은 요청은 `MethodArgumentTypeMismatchException` 을 던지는데 `GlobalExceptionHandler` 에 핸들러가 없어 `Exception` 핸들러가 먹고 500 으로 나갔다. 보낸 쪽 잘못인데 서버가 고장 난 것처럼 보인다.
 - **해결**: `@ExceptionHandler(MethodArgumentTypeMismatchException.class)` 를 추가해 400(`MUPID_INVALID_REQUEST_BODY`)으로 돌린다. enum 이면 고를 수 있는 값을 `error_details` 에 적어 준다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/common/exception/GlobalExceptionHandler.java`
+
+### `UserGetInfoResponse.imageUrl` 이 부를 수 없는 주소다 — 해소됨
+
+- **원인**: `getProfileImageUrl` 이 `/api/v1/storage/image/profile/{저장 키 전체}` 를 만들었다. 저장 키는 이미 `image/profile/15` 라 결과가 `/api/v1/storage/image/profile/image/profile/15` 였다. 경로 마디 수가 달라 컨트롤러에 잡히지도 않고 401 이 됐다. 앨범·아티스트 쪽은 `MusicServiceImpl` 이 따로 만들고 있어 규약이 두 벌로 갈려 있었다.
+- **해결**: `StorageImageService.imageUrl(...)` 정적 메서드 하나로 모으고 둘 다 그것을 쓴다. 접두사를 떼고 URL 인코딩하며, 카테고리는 **대문자**다 — `SecurityConfig` 의 공개 경로가 대문자로 적혀 있어 소문자로 내보내면 비로그인 화면에서 401 이 된다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/service/StorageImageService.java`
+
+### 프로필 사진 삭제가 404 로 실패한다 — 해소됨
+
+- **원인**: `StorageImageServiceImpl.deleteImage` 가 콜백을 부른 뒤 파일을 지우는데, `UserImageServiceImpl.handleDeleteImageBefore` 도 같은 파일을 지우고 있었다. 두 번째 삭제가 `FILE_NOT_FOUND` 로 터져 트랜잭션 전체가 롤백됐다.
+- **해결**: 콜백은 **연결만 끊는다.** 파일 삭제는 호출부가 한 번만 한다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserImageServiceImpl.java`
+
+### 남의 번호를 키로 프로필 사진을 올릴 수 있었다 — 해소됨
+
+- **원인**: 저장 키가 경로 변수(`/api/v1/storage/image/PROFILE/{storageKey}`)라 아무 값이나 넣을 수 있었다. `image/profile/{남의 번호}` 로 올리면 그 사람 프로필 파일을 덮어쓰고, 업로드한 사람에게 연결됐다.
+- **해결**: `handleUploadImageAfter` 가 키의 마지막 마디를 본인 유저 번호와 대조한다. 어긋나면 `MUPID_PROFILE_KEY_MISMATCH`(403) 다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserImageServiceImpl.java`

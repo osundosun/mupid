@@ -1,6 +1,6 @@
 # 데이터베이스 · JPA · 트랜잭션
 
-16건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+18건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -140,3 +140,15 @@
 - **원인**: 엔티티에 `@Table` 이 없어 Hibernate 암묵 네이밍이 클래스명 그대로 `play_history` 로 내려갔다. 실제 표는 `play_histories` 다. 같은 패키지의 `SearchHistory` 에는 `@Table(name = "search_histories")` 가 붙어 있어 한쪽만 빠진 것이었다. 덤으로 PK 가 DB 에서는 `bigint` 인데 엔티티는 `Integer` 였다.
 - **해결**: `@Table(name = "play_histories")` 를 붙이고 `playHistoryId` 를 `Long` 으로, 리포지토리도 `JpaRepository<PlayHistory, Long>` 으로 바꿨다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/history/entity/PlayHistory.java`
+
+### 프로필 사진을 올려도 계정에 붙지 않는다 — 해소됨
+
+- **원인**: `UserImageServiceImpl.handleUploadImageAfter` 가 `SecurityUtils.getAuthUser()` 로 꺼낸 인증 principal 에 바로 `setImageFile` 을 했다. 이 `User` 는 액세스 토큰으로 만든 것이라 **영속 상태가 아니다.** 파일은 올라가고 `users.image_file_id` 는 NULL 로 남아, 프로필은 계속 기본 이미지였고 삭제는 `MUPID_USER_NOT_FOUND` 가 났다.
+- **해결**: `userService.getUser(principal.getUserId())` 로 DB 에서 다시 읽어 고친다. 사진을 바꾸면 이전 파일도 지운다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserImageServiceImpl.java`
+
+### 인증 principal 의 연관을 읽으면 LazyInitializationException 이 난다 — 해소됨
+
+- **원인**: `getProfileImageUrl` 이 principal 의 `user.getImageFile()` 을 읽었다. 그 프록시는 인증 필터가 쓰던 **이미 닫힌 세션**에 묶여 있어, 호출부에 `@Transactional` 을 붙여도 초기화되지 않는다. `GET /api/v1/user` 가 통째로 500 이 됐다.
+- **해결**: 지금 세션에서 `userService.getUser(userId)` 로 다시 읽는다. principal 은 식별자만 쓰고 연관은 건드리지 않는다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserImageServiceImpl.java`
