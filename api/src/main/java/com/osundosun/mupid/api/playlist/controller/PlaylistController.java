@@ -1,7 +1,10 @@
 package com.osundosun.mupid.api.playlist.controller;
 
+import java.util.List;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -9,12 +12,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.osundosun.mupid.api.common.response.BaseResponse;
+import com.osundosun.mupid.api.playlist.dto.PlaylistResponseItem;
 import com.osundosun.mupid.api.playlist.dto.PlaylistTrackAddResult;
 import com.osundosun.mupid.api.playlist.entity.Playlist;
 import com.osundosun.mupid.api.playlist.entity.PlaylistTrack;
 import com.osundosun.mupid.api.playlist.request.PlaylistCreateRequest;
 import com.osundosun.mupid.api.playlist.request.PlaylistTrackAddRequest;
 import com.osundosun.mupid.api.playlist.response.PlaylistCreateResponse;
+import com.osundosun.mupid.api.playlist.response.PlaylistGetResponse;
 import com.osundosun.mupid.api.playlist.response.PlaylistTrackAddResponse;
 import com.osundosun.mupid.api.playlist.service.PlaylistService;
 import com.osundosun.mupid.api.user.entity.User;
@@ -28,6 +33,29 @@ import lombok.RequiredArgsConstructor;
 public class PlaylistController {
 
     private final PlaylistService playlistService;
+
+    /**
+     * 내 플레이리스트 목록. 최근에 만든 것부터 나온다.
+     *
+     * 수록곡은 함께 내려보내지 않는다 — 목록 화면은 제목과 곡 수만 쓰고,
+     * 곡까지 붙이면 플레이리스트 수만큼 조회가 늘어난다.
+     */
+    @GetMapping
+    public ResponseEntity<BaseResponse<PlaylistGetResponse>> getPlaylists(
+        Authentication auth
+    ) {
+        User user = (User)auth.getPrincipal();
+        List<Playlist> playlists = playlistService.getPlaylistAll(user.getUserId());
+
+        return ResponseEntity.ok(BaseResponse.of(new PlaylistGetResponse(playlists.stream()
+            .map(it -> new PlaylistResponseItem(
+                it.getPlaylistId(), /* 플레이리스트 번호 */
+                it.getTitle(), /* 제목 */
+                it.getMusicCount(), /* 수록곡 수 */
+                it.getCreatedAt(), /* 생성 일시 */
+                it.getUpdatedAt())) /* 수정 일시 */
+            .toList())));
+    }
 
     @PostMapping
     public ResponseEntity<BaseResponse<PlaylistCreateResponse>> createPlaylist(
