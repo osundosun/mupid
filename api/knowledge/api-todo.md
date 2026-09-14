@@ -32,7 +32,7 @@
 | 아티스트·앨범 | `GET /api/v1/artist[/{id}]`, `GET /api/v1/album[/{id}]` | 인증 불필요 |
 | 가사·분석 | `GET /api/v1/music/{id}/lyric`, `.../analysis` | 인증 불필요 |
 | 일일 추천 | `GET /api/v1/recommendation/daily` | 조회만 (데이터 없음) |
-| 플레이리스트 | `POST /api/v1/playlist` | **생성만** |
+| 플레이리스트 | `GET/POST /api/v1/playlist`, `GET/PATCH/DELETE /api/v1/playlist/{id}`, `POST /api/v1/playlist/{id}/track`, `DELETE /api/v1/playlist/{id}/track/{musicId}` | 연결 완료 |
 
 근거: `api/src/main/java/com/osundosun/mupid/api/**/controller/`
 
@@ -189,20 +189,26 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 - `PLAY_START` 는 곡을 튼 순간이지 들은 것이 아니다. 3초 만에 넘긴 곡도 남는다.
   즉시성을 택한 결과이고, 다시 볼 여지는 ADR 에 적었다.
 
-### 6. 플레이리스트 (생성만 있음) — 🙋 동료 담당
+### 6. 플레이리스트 — ✅ 완료
 
-**이 항목은 다른 사람이 맡았다. 중복 작업하지 말 것.**
+> ⚠ **이 항목은 원래 동료가 맡기로 되어 있었다.** 목록·상세·삭제·곡 추가는 그쪽이
+> 먼저 만들었고, 프론트를 붙이면서 비어 있던 **곡 빼기와 이름 변경** 두 개를 채웠다.
+> 겹쳐 작업했을 수 있으니 합칠 때 확인한다.
 
-`POST /api/v1/playlist` 하나뿐이다. 화면은 목록·이름 변경·삭제·곡 추가/제거를
-모두 쓴다.
+| 엔드포인트 | 만든 쪽 |
+| --- | --- |
+| `GET /api/v1/playlist` — 내 플레이리스트 목록 | 동료 |
+| `GET /api/v1/playlist/{playlistId}` — 수록곡 포함 상세 | 동료 |
+| `POST /api/v1/playlist` — 생성 | 동료 |
+| `DELETE /api/v1/playlist/{playlistId}` — 소프트 삭제 | 동료 |
+| `POST /api/v1/playlist/{playlistId}/track` — 곡 추가 | 동료 |
+| `DELETE /api/v1/playlist/{playlistId}/track/{musicId}` — 곡 빼기 | 이번 작업 |
+| `PATCH /api/v1/playlist/{playlistId}` — 이름 변경 | 이번 작업 |
 
-- `GET /api/v1/playlist` — 내 플레이리스트 목록
-- `GET /api/v1/playlist/{playlistId}` — 수록곡 포함 상세
-- `PATCH /api/v1/playlist/{playlistId}` — 이름 변경
-- `DELETE /api/v1/playlist/{playlistId}`
-- `POST/DELETE /api/v1/playlist/{playlistId}/track/{musicId}` — 수록곡 편집
-- 근거: `frontend/hooks/use-mupid.ts` 의 `playlists` · `createPlaylist` ·
-  `deletePlaylist` · `playPlaylist`, `frontend/components/mupid/collection.tsx`
+프론트는 `frontend/lib/playlists.ts` 가 이 API 를 감싸고 `hooks/use-mupid.ts` 가
+낙관적 갱신 + 실패 시 되돌리기로 쓴다. **`Playlist.id` 는 서버의 `playlist_id` 다** —
+예전의 `Date.now()` 지역 번호는 청취 이벤트의 `playlist_id`(UInt32)에 들어가지 않아
+그 이벤트가 실린 배치를 통째로 거부시켰다 → [domain/listening-events.md](domain/listening-events.md).
 
 ### 7. 저장한 구간 (moment)
 
