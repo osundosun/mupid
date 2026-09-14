@@ -61,3 +61,21 @@
 - **원인**: `knowledge/domain/erd.sql` 은 ERD 도구 산출물이라 엔티티가 먼저 바뀌면 그대로 뒤처진다. 수록곡 테이블이 그랬다 — SQL 은 `playlist_songs`(단일 PK `playlist_song_id`, `user_id` NULL 허용)인데 `PlaylistTrack` 엔티티는 `playlist_tracks`(`playlist_id` + `track_order` 복합키, `user_id` NOT NULL)다. `@Table` 이름을 SQL 과 대조하면 더 있다: 엔티티에만 있는 `daily_recommendation_tracks` · `listening` · `mubti` · `music_comments` · `music_moods` · `reports`, SQL 에만 있는 `comments` · `daily_recommendation_songs` · `mbti` · `play_histories` · `analysis_reports` 등.
 - **해결**: **둘이 어긋나면 엔티티가 기준이다.** `playlist_tracks` 는 엔티티에 맞춰 `erd.sql` 을 고쳤다(복합키 PK + `uq_playlist_track_music` 유니크). 나머지 테이블은 각 기능 티켓에서 같은 방식으로 맞춘다. `ddl-auto` 가 `none` 이라([decision/0011](../decision/0011-jpa-manages-schema.md)) 실제 DB 에 DDL 이 적용됐는지는 별도로 확인해야 한다.
 - **근거**: `api/knowledge/domain/erd.sql` vs `api/src/main/java/com/osundosun/mupid/api/playlist/entity/PlaylistTrack.java`
+
+### Bruno 문서의 `permitAll` 목록이 코드와 어긋난다
+
+- **원인**: 인증 규칙을 바꾸면 `SecurityConfig` 와 **Bruno 컬렉션 세 군데**가 함께 틀어진다. 한 곳만 고치면 나머지가 조용히 거짓말을 한다.
+  1. `docs/opencollection.yml` 의 "인증 없이 호출 가능한 엔드포인트" 목록
+  2. 도메인 `folder.yml` 의 인증 표 (`Music/folder.yml` 은 8줄짜리 표를 갖고 있다)
+  3. 요청 파일마다 첫 줄의 `· **인증 불필요**` 표기
+- **해결**: 다음 한 줄로 대조한다. 출력이 1:1 로 맞아야 한다.
+
+  ```bash
+  grep -oE '\.requestMatchers\((HttpMethod\.[A-Z]+, )?"[^)]+\)\.permitAll' \
+    api/src/main/java/com/osundosun/mupid/api/common/config/SecurityConfig.java
+  grep -n '^    - `' api/docs/opencollection.yml | head -12
+  ```
+
+- **확인**: 컬렉션 `.yml` 83개를 `yaml.safe_load` 로 통과시키면 여러 줄 `docs` 블록의 들여쓰기 실수를 잡을 수 있다. 문서를 고친 뒤 반드시 돌린다.
+- **곁들여**: 엔드포인트 누락은 컨트롤러의 `@*Mapping` 과 요청 파일의 `http.url` 을 뽑아 대조하면 드러난다. 2026-09-14 기준 누락 없음.
+- **근거**: `api/docs/opencollection.yml`, `api/docs/Music/folder.yml`, `api/knowledge/convention/api-docs.md`

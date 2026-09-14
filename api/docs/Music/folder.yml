@@ -14,24 +14,31 @@ docs:
     음악·앨범·아티스트·가사 관리 API 입니다. 스트리밍 서비스에 콘텐츠를
     등록할 때 쓰는 **관리자/시스템 전용** 엔드포인트입니다.
 
-    **조회(`GET`)는 인증이 필요 없고, 나머지는 SYSTEM/ADMIN 전용입니다.**
-    첫 방문자가 로그인 전에 곡을 둘러봐야 해서 조회만 열어 두었습니다.
+    **조회(`GET`)는 로그인한 사용자면 누구나, 나머지는 SYSTEM/ADMIN 전용입니다.**
     조회는 `*QueryController`, 등록 계열은 `@SystemRole` 이 붙은 컨트롤러로
     나뉘어 있습니다.
+
+    조회는 한때 인증 없이 열려 있었습니다 — 첫 방문자가 로그인 전에 곡을
+    둘러본다고 보았기 때문입니다. 지금은 로그인하지 않으면 서비스를 쓸 수
+    없어(비로그인이 갈 수 있는 화면은 `/`·`/login`·`/signup` 뿐) 열어 둘
+    이유가 사라졌고, 열어 두면 곡·가사·분석이 통째로 공개됩니다.
+    **앨범·아티스트 이미지(`Storage / 이미지 조회`)만 예외로 열려 있습니다** —
+    `<img src>` 에는 Authorization 헤더를 붙일 수 없어 닫으면 목록의 표지가
+    전부 깨집니다.
 
     등록 계열을 일반 사용자(`ROLE_USER`) 토큰으로 호출하면
     403 (`MUPID_FORBIDDEN`) 이 반환됩니다.
 
     | 엔드포인트 | 동작 | 인증 |
     | --- | --- | --- |
-    | `GET /api/v1/music` | 곡 목록·검색 | **불필요** |
-    | `GET /api/v1/music/{musicId}` | 곡 상세 | **불필요** |
-    | `GET /api/v1/music/{musicId}/lyric` | 가사 | **불필요** |
-    | `GET /api/v1/music/{musicId}/analysis` | 구간·보컬·악기 | **불필요** |
-    | `GET /api/v1/artist` | 아티스트 목록·검색 | **불필요** |
-    | `GET /api/v1/artist/{artistId}` | 아티스트 상세 | **불필요** |
-    | `GET /api/v1/album` | 앨범 목록·검색 | **불필요** |
-    | `GET /api/v1/album/{albumId}` | 앨범 상세(수록곡 포함) | **불필요** |
+    | `GET /api/v1/music` | 곡 목록·검색 | 액세스 토큰 |
+    | `GET /api/v1/music/{musicId}` | 곡 상세 | 액세스 토큰 |
+    | `GET /api/v1/music/{musicId}/lyric` | 가사 | 액세스 토큰 |
+    | `GET /api/v1/music/{musicId}/analysis` | 구간·보컬·악기 | 액세스 토큰 |
+    | `GET /api/v1/artist` | 아티스트 목록·검색 | 액세스 토큰 |
+    | `GET /api/v1/artist/{artistId}` | 아티스트 상세 | 액세스 토큰 |
+    | `GET /api/v1/album` | 앨범 목록·검색 | 액세스 토큰 |
+    | `GET /api/v1/album/{albumId}` | 앨범 상세(수록곡 포함) | 액세스 토큰 |
     | `POST /api/v1/music` | 음악 추가 | SYSTEM/ADMIN |
     | `PATCH /api/v1/music/{musicId}` | 음악 수정 | SYSTEM/ADMIN |
     | `DELETE /api/v1/music/{musicId}` | 음악 삭제 | SYSTEM/ADMIN |
