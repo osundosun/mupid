@@ -7,7 +7,7 @@
 | 문서 | 다루는 것 |
 |---|---|
 | [glossary.md](glossary.md) | 용어 사전 |
-| [erd.md](erd.md) · [erd.sql](erd.sql) | MySQL ERD 스키마 — 테이블 27개, 공통 규약, 엔티티 변환 규칙, 코드와 어긋난 지점 |
+| [erd.md](erd.md) · [erd.sql](erd.sql) | MySQL ERD 스키마 — 테이블 30개, 공통 규약, 엔티티 변환 규칙, 코드와 어긋난 지점 |
 | [user-account.md](user-account.md) | 회원·이메일 인증·파일 — MySQL 에 있는 유일한 도메인 |
 | [track-sections.md](track-sections.md) | 곡과 구간, `analysis_version`, 재생 위치 → 구간 판정 |
 | [listening-events.md](listening-events.md) | 청취 이벤트 22종, 이벤트별 필드, 신호 가중치, 스킵 해석 |

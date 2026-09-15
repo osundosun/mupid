@@ -33,7 +33,10 @@ import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.repository.MusicSectionAnalysisRepository;
 import com.osundosun.mupid.api.music.response.MusicAnalysisResponse;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
+import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
+import com.osundosun.mupid.api.storage.error.StorageErrorCode;
 import com.osundosun.mupid.api.storage.service.StorageImageService;
+import com.osundosun.mupid.api.storage.service.StorageService;
 import com.osundosun.mupid.api.stream.entity.Stream;
 import com.osundosun.mupid.api.stream.enumerate.StreamStatus;
 import com.osundosun.mupid.api.stream.repository.StreamRepository;
@@ -59,6 +62,7 @@ public class MusicServiceImpl implements MusicService {
     private final MusicSectionAnalysisRepository sectionRepository;
     private final MusicSectionAnalysisMoodRepository sectionMoodRepository;
     private final MusicAnalysisInstrumentRepository instrumentRepository;
+    private final StorageService storageService;
 
     @Override
     public int addMusic(MusicAddRequest request) {
@@ -71,6 +75,7 @@ public class MusicServiceImpl implements MusicService {
             .artist(artist)
             .title(request.title())
             .releaseDate(request.releaseDate())
+            .imageFile(findImageFile(request.imageFileId()))
             .build();
         return repository.save(music).getMusicId();
     }
@@ -195,6 +200,24 @@ public class MusicServiceImpl implements MusicService {
         if (request.releaseDate() != null) {
             music.setReleaseDate(request.releaseDate());
         }
+        if (request.imageFileId() != null) {
+            music.setImageFile(findImageFile(request.imageFileId()));
+        }
+    }
+
+    /**
+     * 곡 커버 파일을 찾는다. 번호가 없으면 커버가 없는 곡이라 null 이다.
+     *
+     * 번호를 줬는데 그런 파일이 없으면 조용히 넘기지 않고 막는다. 배치가 잘못된
+     * 번호를 보내면 커버 없는 곡이 말없이 쌓이고, 나중에 어느 곡이 왜 비었는지
+     * 추적할 수 없다.
+     */
+    private ObjectStorageFile findImageFile(Integer imageFileId) {
+        if (imageFileId == null) {
+            return null;
+        }
+        return storageService.getFile(imageFileId)
+            .orElseThrow(() -> new BusinessException(StorageErrorCode.FILE_NOT_FOUND));
     }
 
     @Override

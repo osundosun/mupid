@@ -1,0 +1,53 @@
+# AI 추천 서비스 검증. **산출물(모델·색인) 없이 도는 것만** 돌린다.
+#
+# `tests/test_smoke.py` 는 색인이 있어야 의미가 있어 CI 에서 통째로 건너뛴다. 그러면
+# "전부 건너뛰고 초록불" 이 되므로, 오프라인 계약 테스트가 실제로 몇 건 돌았는지를
+# 확인한다 — 경로 해석·오류 코드·응답 문장 회귀는 색인 없이도 잡을 수 있고, 잡아야 한다.
+#
+# torch 는 설치하지 않는다. 오프라인 테스트가 닿는 경로에는 없고, CPU 빌드라도 수백 MB 라
+# 설치 시간과 캐시가 낭비된다. 랭킹 모델을 실제로 불러오는 것은 smoke 쪽 일이다.
+ai-server-verify:
+  stage: verify
+  image: python:3.12-slim
+  tags: [mupid-ci]
+  interruptible: true
+  timeout: 10m
+  variables:
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.pip-ci
+  cache:
+    key:
+      files:
+        - ai_server/requirements.txt
+    paths:
+      - .pip-ci/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: &ai_paths
+        - ai_server/**/*
+        - infra/ci/ai-server.yml
+        - .gitlab-ci.yml
+    - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
+      changes: *ai_paths
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  script:
+    - python -m pip install --quiet --upgrade pip
+    - python -m pip install --quiet -r ai_server/requirements.txt pytest httpx
+    - python -m pytest ai_server/tests -q --junitxml=ai-server-junit.xml
+    # 색인이 없으면 smoke 가 통째로 건너뛴다. 그 상태로 초록불이 나오면 CI 가 아무것도
+    # 지키지 않는 것과 같다. 오프라인 계약 테스트가 실제로 돌았는지 본다.
+    - |
+      python - <<'PY'
+      import xml.etree.ElementTree as ET
+      s = ET.parse("ai-server-junit.xml").getroot()
+      ts = s if s.tag == "testsuite" else s.find("testsuite")
+      total = int(ts.get("tests", 0))
+      skipped = int(ts.get("skipped", 0))
+      ran = total - skipped
+      print(f"실행 {ran}건 / 건너뜀 {skipped}건")
+      assert ran >= 90, f"산출물 없이 도는 테스트가 {ran}건만 돌았다 — 수집이 깨졌는지 본다"
+      PY
+  artifacts:
+    when: always
+    expire_in: 1 week
+    reports:
+      junit: ai-server-junit.xml

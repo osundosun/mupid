@@ -1,0 +1,179 @@
+info:
+  name: 요구 4 · 선택 구간 유사 추천
+  type: http
+  seq: 5
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/section/{{MUSIC_SECTION_ID}}/similar?limit=5"
+  params:
+    - name: limit
+      value: "5"
+      type: query
+      description: 기본 5, 최대 50
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+  body:
+    type: none
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 닮은 구간
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "music_section_id": 91,
+              "tracks": [
+                {
+                  "rank": 1,
+                  "similarity": 0.8734,
+                  "section": {
+                    "music_section_id": 340,
+                    "section_label": "CHORUS",
+                    "start_time_ms": 62000,
+                    "end_time_ms": 88500
+                  },
+                  "music": {
+                    "music_id": 12,
+                    "title": "열두 번째 곡",
+                    "duration_ms": 198400,
+                    "playable": true,
+                    "image_url": "/api/v1/storage/image/TRACK/...",
+                    "artist": { "artist_id": 3, "name": "다른 아티스트" },
+                    "album": { "album_id": 4, "title": "다른 앨범" }
+                  }
+                }
+              ]
+            }
+          }
+
+  - name: 200 닮은 구간 없음
+    response:
+      status: 200
+      statusText: OK
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "music_section_id": 91,
+              "tracks": []
+            }
+          }
+
+  - name: 400 limit 범위 밖
+    response:
+      status: 400
+      statusText: Bad Request
+      body:
+        type: json
+        data: |-
+          {
+            "message": "limit 은 1 이상 50 이하여야 합니다.",
+            "errorCode": "MUPID_INVALID_REQUEST",
+            "errorDetails": null
+          }
+
+  - name: 401 인증 없음
+    response:
+      status: 401
+      statusText: Unauthorized
+      body:
+        type: json
+        data: |-
+          {
+            "message": "인증이 필요합니다.",
+            "errorCode": "MUPID_UNAUTHORIZED",
+            "errorDetails": null
+          }
+
+  - name: 404 없는 구간
+    response:
+      status: 404
+      statusText: Not Found
+      body:
+        type: json
+        data: |-
+          {
+            "message": "구간을 찾을 수 없습니다.",
+            "errorCode": "MUPID_MUSIC_SECTION_NOT_FOUND",
+            "errorDetails": null
+          }
+
+  - name: 503 추천 서버 미준비
+    response:
+      status: 503
+      statusText: Service Unavailable
+      body:
+        type: json
+        data: |-
+          {
+            "message": "추천 서버가 준비되지 않았습니다.",
+            "errorCode": "MUPID_RECOMMENDER_UNAVAILABLE",
+            "errorDetails": null
+          }
+
+docs:
+  type: text/markdown
+  content: |-
+    # 요구 4 · 선택 구간 유사 추천 — **BE 구현 필요**
+
+    > **아직 없는 API 입니다.** AI 쪽(`POST /internal/similar`)은 이미 동작합니다.
+    > 이 요청은 그 앞에 놓일 사용자용 엔드포인트입니다.
+
+    사용자가 고른 구간과 **소리가 닮은** 다른 곡의 구간을 돌려줍니다.
+    「이 구간과 비슷한 음악」 동작입니다.
+
+    ## 추천과 다릅니다
+
+    개인 취향을 섞지 않습니다. 같은 구간에는 **누가 물어도 같은 답**이 나옵니다.
+
+    | | 자동재생 다음 곡 | 이 API |
+    | --- | --- | --- |
+    | 기준 | 취향 묶음(Moment DNA) | **지정한 구간 하나** |
+    | 사용자별로 다른가 | 그렇다 | **아니다** |
+    | 점수 | `reason_code` + 내부 점수 | `similarity` (코사인 원값) |
+    | `recommendation_id` | 필요 | **불필요** |
+
+    그래서 `GET` 이고 캐시할 수 있습니다. 취향이 안 섞이므로 사용자 사이에 공유해도
+    됩니다.
+
+    ## 왜 GET 인가
+
+    AI 쪽은 `POST /internal/similar` 지만, 사용자용은 부수효과가 없고 URL 만으로
+    결과가 정해지므로 `GET` 이 맞습니다. 경로에 곡과 구간이 함께 들어가
+    `/music/{musicId}/section/{sectionId}` 구조를 따릅니다.
+
+    ## Spring 이 해야 하는 것
+
+    | | |
+    | --- | --- |
+    | 구간 검증 | `{sectionId}` 가 `{musicId}` 의 구간이 맞는지 본다. 아니면 404 |
+    | 기준 곡 제외 | AI 에 `exclude_music_ids: [musicId]` 로 넘긴다 |
+    | 곡 메타 | AI 는 `music_id` 만 준다. 제목·아티스트·이미지는 Spring 이 붙인다 |
+
+    기준 구간이 속한 곡 자신은 결과에서 빠집니다. 같은 곡의 다른 구간을 돌려주면
+    「닮은 음악」이 아니라 「같은 음악」이 됩니다.
+
+    ## 인증
+
+    개인화가 없지만 **로그인은 요구합니다.** 카탈로그 전체를 구간 단위로 훑을 수 있는
+    입구라 공개하면 크롤링 통로가 됩니다.

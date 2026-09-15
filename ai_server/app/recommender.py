@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -28,38 +29,52 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
+from . import metrics, paths, stage1_np
+from .log import log
+
 warnings.filterwarnings("ignore")
 
-# 모델·색인 경로는 MUPID_AI_ARTIFACT_DIR 하나로 통일한다. 아래 경로 계산은 원본 그대로다.
-ROOT = Path(os.environ.get("MUPID_AI_ARTIFACT_DIR",
-                           Path(__file__).resolve().parents[1] / "artifacts"))
-SRC = ROOT / "src"
+# 모델·색인 경로는 MUPID_AI_ARTIFACT_DIR 하나로 통일한다. 계산은 paths 한 곳에서만 한다
+# — 값은 종전과 같다(미설정 시 ai_server/artifacts).
+ROOT = paths.artifact_root()
+# 라벨러는 **코드와 함께** 배포된다(app/legacy). 산출물 디렉터리에는 없다 — 예전 데모의
+# <저장소>/src 배치를 그대로 들고 오면 subprocess 가 조용히 실패한다.
+LEGACY = Path(__file__).resolve().parent / "legacy"
 OUT_DIR = ROOT / "data" / "proc" / "mupid"
 SERVE = OUT_DIR / "serve"
 EVENTS = OUT_DIR / "logs" / "events_service.jsonl"
 LABELS = OUT_DIR / "labels_service.parquet"
 PREFS = SERVE / "prefs.parquet"
 ONBOARD = SERVE / "onboarding.parquet"
-FLOW_AUDIO = Path.home() / "flow_music_data" / "audio"
-FLOW_COVER = Path.home() / "flow_music_data" / "covers"
-LOCAL_AUDIO = Path.home() / "Mupid_mert" / "audio"
-NLP_PARSE_URL = __import__("os").environ.get("MUPID_NLP_URL", "http://127.0.0.1:8200/parse")
+# 음원·표지 경로는 두지 않는다. 이 서비스는 스트리밍을 하지 않고(main.py), 그 값을 읽는
+# 곳도 없었다. 개발자 홈 디렉터리(Path.home())를 가리키고 있어 컨테이너에서는 존재하지도
+# 않는 경로였고, 추천 결과 딕셔너리에 실려 로그로 새어 나갈 수 있었다.
+# 자연어 해석기 주소. 게이트(설정 여부 판단)와 호출부가 **같은 변수**를 본다.
+# 기본값을 두지 않는다 — 기본값이 있으면 "미설정" 이 존재할 수 없어, 해석기가 없는 배포에서
+# 조건을 뽑지 못한 채 일반 추천이 나간다.
+NLP_PARSE_URL = os.environ.get("MUPID_AI_NLP_URL", "").strip()
 
 # m09_labels / m10_features / m11_stage1 은 함수 안에서 맨 이름으로 지연 import 된다.
 # 산출물 디렉터리가 아니라 코드와 함께 둔 legacy 를 경로에 올린다.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "legacy"))
 
 # ---------------------------- 설정 (조정 대상) ----------------------------
-POOL_SOURCE = __import__("os").environ.get("MUPID_POOL", "flow")
+POOL_SOURCE = os.environ.get("MUPID_POOL", "flow")
 # 후보 풀에 포함할 moments.source 집합. 출처 표기는 그대로 두고 선택만 넓힌다.
 # 해당 출처의 행이 없으면 기존 동작과 완전히 같다.
+#
+# 기본값에서 `own` 을 뺐다. 현재 카탈로그에 그 출처의 행이 0건이라 아무 일도 하지 않으면서
+# "자체 음원도 추천된다" 고 읽히기 때문이다. 실제로 넣을 때 환경변수로 다시 켠다.
+# 설정한 출처가 카탈로그에 없으면 기동 로그와 /health 가 알려준다 — 오타로 풀이 조용히
+# 비는 일이 없어야 한다.
 POOL_SOURCES = {POOL_SOURCE} | {
-    x.strip() for x in __import__("os").environ.get("MUPID_POOL_EXTRA", "jamendo,own").split(",")
+    x.strip() for x in os.environ.get("MUPID_POOL_EXTRA", "jamendo").split(",")
     if x.strip()}
 MAX_BPM_LOG2 = 0.40
 MIN_MOMENT_SEC = 8.0
 W_RULE, W_MODEL = 0.5, 0.5     # 로지스틱 계수가 없을 때만 쓰는 폴백
 CLAP_WEIGHT = 0.25             # 자연어-오디오 의미 점수; 명시 필터 통과 후보만 재정렬
+MOOD_WEIGHT = 0.25             # filters.mood 부드러운 재정렬; 걸러내지 않는다
 P_MIN = 0.32                   # 절대 임계값 (P_MODE="absolute" 일 때만)
 P_MODE = "quantile"            # quantile | absolute
 P_TOP_FRAC = 0.05              # 사용자별 후보 확률 상위 5% 를 통과시킨다
@@ -83,6 +98,9 @@ FLOW_W_ENERGY = 0.08           # 이어 듣기: 에너지가 튈 때의 감점 �
 FLOW_BPM_TOL = 0.5             # log2 배율 — 0.5 는 약 1.41배까지 허용
 BEH_SKIP_HALF_LIFE_DAYS = 7.0  # Early Skip 감점 반감기
 BEH_REC_SURFACES = ("autoplay", "recommendation", "daily_recommendation")
+# (user, 로그 크기, mtime, 분) -> 집계. 로그가 바뀌면 키가 달라져 자동으로 무효가 된다.
+_BEH_CACHE: dict = {}
+_BEH_CACHE_MAX = 256
 # 4시간 즉시 재추천 방지는 "정상 재생"에만 적용한다. Early Skip 은 영구 제외가 아니라 감점이다.
 BEH_PLAYED_REASONS = ("track_done", "user_stop", "replaced")
 
@@ -138,6 +156,13 @@ class Catalog:
         self.meta = (pd.read_parquet(OUT_DIR / "flow_meta.parquet").set_index("track_id")
                      if (OUT_DIR / "flow_meta.parquet").exists() else pd.DataFrame())
         self.pool = self.mom[self.mom.source.isin(POOL_SOURCES)].reset_index(drop=True)
+        # 출처별 구간 수. 설정했는데 0건인 출처는 오타이거나 아직 안 실린 것이다.
+        counts = self.pool.source.value_counts().to_dict()
+        self.pool_sources = {src: int(counts.get(src, 0)) for src in sorted(POOL_SOURCES)}
+        self.pool_sources_empty = sorted(k for k, v in self.pool_sources.items() if not v)
+        if self.pool_sources_empty:
+            log(f"설정된 출처인데 구간이 0건이다 — {', '.join(self.pool_sources_empty)}"
+                f" (MUPID_POOL / MUPID_POOL_EXTRA 확인)")
         self.pool_rows = self.pool.emb_row.to_numpy()
         self.pool_x = np.asarray([self.idx.get(m, -1) for m in self.pool.moment_id])
         self.by_track = {t: g for t, g in self.pool.groupby("track_id", sort=False)}
@@ -148,21 +173,58 @@ class Catalog:
             self.clap_emb = np.asarray(d["embeddings"], dtype=np.float32)
             self.clap_idx = {str(mid): i for i, mid in enumerate(d["moment_ids"])}
         self.ZS = None
-        self.model = None
+        self.model_error = None    # 규칙 경로로 내려앉았다면 그 이유
+        self.model = None          # torch 판 (있을 때만)
+        self.user_enc = None       # NumPy 판 (stage1_weights.npz 가 있을 때)
+        self.model_backend = None
         p = OUT_DIR / "stage1_section.npy"
-        if p.exists() and (OUT_DIR / "stage1.pt").exists():
+
+        # NumPy 가중치가 있으면 그쪽을 먼저 쓴다. 서빙에서 torch 가 하는 일은 enc_user
+        # 한 번뿐이라 이것만 있으면 이미지에서 torch 를 걷어낼 수 있다.
+        npz = OUT_DIR / "stage1_weights.npz"
+        if p.exists() and npz.exists():
+            try:
+                enc = stage1_np.load(npz)
+                if enc is not None and enc.in_dim == self.X.shape[1]:
+                    with np.load(npz) as d:
+                        self.hist_max = int(d["hist_max"]) if "hist_max" in d else 32
+                        self.ckpt_half_life = (float(d["half_life_days"])
+                                               if "half_life_days" in d else None)
+                    self.user_enc = enc
+                    self.model = enc          # "모델이 있다" 판정에 함께 쓴다
+                    self.model_backend = "numpy"
+                    self.ZS = np.load(p, mmap_mode="r")
+                else:
+                    self.model_error = (
+                        f"특징 차원 불일치: npz {getattr(enc, 'in_dim', '?')} vs "
+                        f"현재 {self.X.shape[1]} — 재학습 필요")
+            except Exception as e:
+                self.model_error = f"npz 적재 실패: {type(e).__name__}: {e}"
+
+        if self.model is None and p.exists() and (OUT_DIR / "stage1.pt").exists():
             try:
                 import torch
 
                 import m11_stage1 as s1
 
-                ck = torch.load(OUT_DIR / "stage1.pt", map_location="cpu", weights_only=False)
+                # 체크포인트는 남이 준 파일이다. weights_only=False 로 열면 파일 하나가
+                # 임의 코드를 실행할 수 있다. 먼저 안전 모드로 열고, 그 파일이 텐서·
+                # 기본형만 담고 있지 않을 때만 예전 방식으로 물러난다 — 그때는 조용히
+                # 넘어가지 않고 로그를 남긴다.
+                ckpt_path = OUT_DIR / "stage1.pt"
+                try:
+                    ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+                except Exception as _e:
+                    log(f"stage1.pt 를 안전 모드로 읽지 못했다 "
+                        f"({type(_e).__name__}). 신뢰할 수 있는 파일인지 확인할 것.")
+                    ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
                 if ck["in_dim"] == self.X.shape[1]:
                     m = s1.make_model(ck["in_dim"])
                     m.load_state_dict(ck["state"])
                     m.eval()
                     self.model = m
                     self.torch = torch
+                    self.model_backend = "torch"
                     self.hist_max = ck["hist_max"]
                     self.ckpt_half_life = ck.get("half_life_days")
                     self.ZS = np.load(p, mmap_mode="r")
@@ -171,6 +233,17 @@ class Catalog:
                                         f"현재 {self.X.shape[1]} — 재학습 필요")
             except Exception as e:      # 모델이 없어도 규칙 경로로 동작한다
                 self.model_error = f"{type(e).__name__}: {e}"
+
+        # 구간 벡터(stage1_section.npy)가 있다는 것은 **학습 점수를 쓰겠다는 뜻**이다.
+        # 그런데 실행기가 없으면 점수가 통째로 빠진 채 규칙 경로로 내려앉는다. 조용히
+        # 넘어가면 "추천이 좀 이상하다" 로만 보이므로 여기서 이유를 남긴다.
+        if self.model is None and p.exists() and not self.model_error:
+            self.model_error = (
+                "구간 벡터는 있는데 실행기가 없다 — stage1_weights.npz 를 함께 두거나"
+                " (권장, torch 불필요) stage1.pt 와 torch 를 둘 다 둔다."
+                " 생성: python -m ai_server.tools.export_stage1_npz")
+        if self.model_error:
+            log(f"학습 점수 없이 규칙 경로로 동작한다 — {self.model_error}")
         self.comb = None
         import os as _os
         _name = _os.environ.get("MUPID_COMBINER", "logistic_flow_stage1.json")
@@ -202,9 +275,6 @@ class Catalog:
             "bpm_requested": [m.get("bpm_lo"), m.get("bpm_hi")],
             "dur_sec": round(float(c.get("dur_sec", 0.0)), 1),
             "sound_raw": m.get("sound_raw", ""),
-            "audio_path": str((FLOW_AUDIO if POOL_SOURCE == "flow" else LOCAL_AUDIO)
-                              / f"{tid}.mp3"),
-            "cover_path": (str(FLOW_COVER / f"{tid}.jpg") if POOL_SOURCE == "flow" else None),
             **_catalog_tags(m),
             **{k: v for k, v in jamendo_row(tid).items()
                if k in ("source", "artist_name", "audio_url", "image_url",
@@ -272,8 +342,16 @@ def parse_style(cat: str, vocal: str, lang: str) -> str:
 
 
 def catalog_facets() -> dict:
-    """조사 선택지를 **카탈로그에서 직접** 만든다 (하드코딩하지 않는다)."""
+    """조사 선택지를 **카탈로그에서 직접** 만든다 (하드코딩하지 않는다).
+
+    카탈로그가 바뀌지 않는 한 결과가 같으므로 한 번만 만든다. 캐시를 **카탈로그
+    객체에 붙여** 두어, `CAT` 을 새로 만들면 캐시도 함께 사라진다(`_pool_mean` 과 같은
+    방식). 전역 dict 에 두면 산출물을 교체했을 때 옛 어휘가 남는다.
+    """
     c = CAT
+    hit = getattr(c, "_facets_cache", None)
+    if hit is not None:
+        return hit
     rows = []
     for t in sorted(c.by_track):
         ti = c.track_info(t)
@@ -313,10 +391,27 @@ def catalog_facets() -> dict:
             for k, v in c.pool.section_label.value_counts().items()]
     # 에너지(rms 백분위)는 선택지에서 뺐다 — 체감과 어긋나 부정확했다.
     # 대신 모델이 뽑은 장르·무드·악기를 선택지로 쓴다.
-    return {"language": cnt("language"), "vocal_type": cnt("vocal_type"),
-            "style": cnt("style"), "genre": cnt("genre"),
-            "mood": cnt_multi("moods"), "instrument": cnt_multi("instruments"),
-            "tempo": tempo, "section_label": secs, "_df": df}
+    out = {"language": cnt("language"), "vocal_type": cnt("vocal_type"),
+           "style": cnt("style"), "genre": cnt("genre"),
+           "mood": cnt_multi("moods"), "instrument": cnt_multi("instruments"),
+           "tempo": tempo, "section_label": secs, "_df": df}
+    # 인덱스를 건 사본도 함께 들고 있는다. `set_index` 도 호출마다 복사가 일어난다.
+    c._facets_cache = out
+    c._facets_by_track = df.set_index("track_id").to_dict("index")
+    return out
+
+
+def catalog_facet_rows() -> dict:
+    """track_id -> 메타 dict. `fac.loc[t]` 를 대신한다.
+
+    `DataFrame.loc` 은 한 번에 Series 를 새로 만든다. 후보마다 부르면 그 비용이
+    행 수만큼 쌓인다 — 게이트 다섯 개면 곡 수의 다섯 배다. 값은 같고 만드는 방식만
+    다르다.
+    """
+    c = CAT
+    if getattr(c, "_facets_by_track", None) is None:
+        catalog_facets()
+    return c._facets_by_track
 
 
 ONB_LIST_FIELDS = ("language", "vocal_type", "style", "genre", "mood", "instrument",
@@ -499,7 +594,7 @@ def run_labeler() -> dict:
         return {"ok": False, "reason": "이벤트 로그가 없다"}
     src_events = normalized_events()
     r = subprocess.run(
-        [sys.executable, str(SRC / "m09_labels.py"), "--events", str(src_events),
+        [sys.executable, str(LEGACY / "m09_labels.py"), "--events", str(src_events),
          "--out", str(LABELS), "--pool", "service"],
         capture_output=True, text=True, cwd=ROOT)
     return {"ok": r.returncode == 0 and LABELS.exists(),
@@ -585,6 +680,51 @@ def user_event_state(user: str) -> dict:
             last_id = str(e.get("event_id") or last_id)
             last_at = str(e.get("occurred_at") or last_at)
     return {"n_events": n, "last_event_id": last_id, "last_occurred_at": last_at}
+
+
+def learn(req: "LearnReq") -> dict:
+    """라벨을 다시 만들고 사용자별 선호 구간을 `prefs.parquet` 으로 굳힌다.
+
+    데모의 `POST /learn` 본문을 그대로 옮긴 것이다. 이식 때 라우트만 걷어 내면서 함수까지
+    빠져 `learn_incremental()` 이 NameError 로 죽어 있었다. 이 저장소에는 라우트가 없으므로
+    HTTP 예외 대신 평범한 예외를 던진다 — 배치에서 불릴 수도 있다.
+    """
+    r = run_labeler()
+    if not r["ok"]:
+        raise RuntimeError(f"라벨 생성 실패: {r.get('reason') or r.get('stderr', '')[-300:]}")
+    lab = pd.read_parquet(LABELS)
+    c = CAT
+    minfo = c.mom.set_index("moment_id")
+    rows = []
+    users = [req.user_ref] if req.user_ref else sorted(lab.user_ref.unique())
+    for u in users:
+        C, W, meta = build_dna(u)
+        p = lab[(lab.user_ref == u) & (lab.grade == "L1")]
+        for r_ in p.itertuples():
+            if r_.section_key not in minfo.index:
+                continue
+            mi = minfo.loc[r_.section_key]
+            rows.append({
+                "user_ref": u, "moment_id": r_.section_key, "track_id": r_.track_id,
+                "title": c.track_info(r_.track_id)["title"],
+                "section_label": mi.section_label,
+                "start_sec": round(float(mi.start_sec), 2),
+                "end_sec": round(float(mi.end_sec), 2),
+                "grade": r_.grade, "evidence": r_.evidence,
+                "is_merged": bool(r_.is_merged),
+                "dna_clusters": len(C), "created_at": now_iso(),
+                "source": "auto",
+            })
+    SERVE.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame(rows)
+    if PREFS.exists() and len(df):
+        old = pd.read_parquet(PREFS)
+        old = old[~old.user_ref.isin(df.user_ref.unique())]
+        df = pd.concat([old, df], ignore_index=True)
+    if len(df):
+        df.to_parquet(PREFS, index=False)
+    return {"ok": True, "users": users, "labels": int(len(lab)),
+            "preferences_saved": int(len(rows)), "path": str(PREFS)}
 
 
 def learn_incremental(user: str, force: bool = False) -> dict:
@@ -793,6 +933,15 @@ def user_behavior(user: str, now: float | None = None) -> dict:
            "complete": {}, "skip_pen": {}, "delta": {}, "recent_pen": {}, "events": 0}
     if not EVENTS.exists():
         return out
+
+    # 로그가 그대로면 다시 읽지 않는다. 추천은 사용자가 기다리는 경로라 요청마다
+    # 전체를 훑으면 로그 크기에 비례해 느려진다. 파일이 자라거나 바뀌면 캐시를 버린다.
+    # (시간이 흐르면 감쇠 값이 달라지므로 `now` 도 키에 넣는다 — 분 단위로 끊는다.)
+    st = EVENTS.stat()
+    ck = (user, st.st_size, st.st_mtime_ns, int(now // 60))
+    hit = _BEH_CACHE.get(ck)
+    if hit is not None:
+        return copy.deepcopy(hit)
     cut = now - RECENT_EXCLUDE_SEC
     recent_ts: dict[str, float] = {}    # track -> 최근 PLAY_START 시각
     toggles: dict[str, list] = {}       # track -> [(ts, event_type)]
@@ -882,6 +1031,9 @@ def user_behavior(user: str, now: float | None = None) -> dict:
             # 스킵 감점이 가점을 깎을 수는 있어도 음수로 끌어내리지는 못한다.
             d = max(d, 0.0)
         out["delta"][tid] = d
+    if len(_BEH_CACHE) > _BEH_CACHE_MAX:
+        _BEH_CACHE.clear()          # 사용자가 늘면 통째로 비운다. LRU 까지는 필요 없다
+    _BEH_CACHE[ck] = copy.deepcopy(out)
     return out
 
 
@@ -908,6 +1060,55 @@ def center(V: np.ndarray) -> np.ndarray:
     W = np.atleast_2d(np.asarray(V, dtype=np.float32)) - _pool_mean()
     W /= np.clip(np.linalg.norm(W, axis=1, keepdims=True), 1e-9, None)
     return W
+
+
+def similar_moments(moment_id: str, n: int, exclude_tracks: set[str] | None = None,
+                    same_track: bool = False) -> list[dict]:
+    """기준 구간과 닮은 다른 곡의 구간. **개인화는 하지 않는다.**
+
+    사용자 취향을 섞지 않는 것이 요점이다 — "이 구간과 비슷한 구간" 은 누가 물어도 같은
+    답이어야 캐시도 되고 설명도 된다. 개인화가 필요하면 `recommend()` 를 쓴다.
+
+    질의와 후보에 `center()` 를 **둘 다** 적용한다. 한쪽만 하면 유사도가 통째로
+    내려앉는다 — 이 프로젝트에서 실제로 겪은 회귀다.
+
+    한 곡당 가장 닮은 구간 하나만 남긴다. 같은 곡의 인접 구간이 목록을 채우면 "비슷한
+    곡" 으로서 쓸모가 없다.
+    """
+    c = CAT
+    hit = c.pool.index[c.pool.moment_id == moment_id]
+    if not len(hit):
+        return []
+    i0 = int(hit[0])
+    src_track = str(c.pool.track_id.iloc[i0])
+
+    q = center(np.asarray(c.Z[int(c.pool.emb_row.iloc[i0])], dtype=np.float32))[0]
+    V = center(np.asarray(c.Z[c.pool_rows], dtype=np.float32))
+    sim = V @ q
+
+    drop = set(exclude_tracks or ())
+    if not same_track:
+        drop.add(src_track)
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for i in np.argsort(-sim):
+        i = int(i)
+        if i == i0:
+            continue
+        r = c.pool.iloc[i]
+        t = str(r.track_id)
+        if t in drop or t in seen:
+            continue
+        seen.add(t)
+        out.append({"rank": len(out) + 1, "track_id": t, "moment_id": str(r.moment_id),
+                    "section_label": str(r.section_label),
+                    "start_sec": round(float(r.start_sec), 2),
+                    "end_sec": round(float(r.end_sec), 2),
+                    "similarity": round(float(sim[i]), 6)})
+        if len(out) >= n:
+            break
+    return out
 
 
 def build_dna(user: str) -> tuple[np.ndarray, np.ndarray, list[dict]]:
@@ -982,11 +1183,17 @@ def model_user_vec(user: str) -> Optional[np.ndarray]:
         return None
     rows = [c.idx[k] for k in keys]
     dw = decay_weights(pos.set_index("section_key").loc[keys].reset_index())
-    t = c.torch
     pad = c.hist_max - len(rows)
-    Ht = t.tensor(np.asarray([rows + [0] * pad]))
-    Mt = t.tensor(np.asarray([[True] * len(rows) + [False] * pad]))
-    LW = t.tensor(np.log(np.concatenate([dw, np.full(pad, 1e-3)]))[None].astype(np.float32))
+    idx = np.asarray(rows + [0] * pad)
+    mask = np.asarray([True] * len(rows) + [False] * pad)
+    logw = np.log(np.concatenate([dw, np.full(pad, 1e-3)])).astype(np.float32)
+
+    if c.user_enc is not None:                      # NumPy 판
+        return c.user_enc.encode(np.asarray(c.X)[idx], mask, logw)
+
+    t = c.torch
+    Ht, Mt = t.tensor(idx[None]), t.tensor(mask[None])
+    LW = t.tensor(logw[None])
     with t.no_grad():
         try:
             z = c.model.enc_user(t.tensor(c.X)[Ht], Mt, logw=LW).numpy()[0]
@@ -1043,8 +1250,47 @@ def pct(v: np.ndarray) -> np.ndarray:
     return o / max(len(v) - 1, 1)
 
 
-def parse_nlp_query(text: str) -> tuple[Optional[dict], Optional[str]]:
-    """8200 QueryPlan v1 호출. 실패하면 기존 추천을 유지한다."""
+def soft_rerank(v: np.ndarray, clap_active: bool, clap_pct: np.ndarray,
+                mood_match: Optional[np.ndarray]) -> np.ndarray:
+    """명시 게이트를 통과한 뒤의 **부드러운 재정렬**. 걸러내지 않고 순서만 바꾼다.
+
+    `mood_match` 가 `None` 이면 종전 식과 연산이 그대로 같다 — mood 조건이 없는 요청의
+    순위는 이 함수가 생기기 전과 비트 단위로 같아야 한다.
+
+    mood 는 백분위(`pct`)로 바꾸지 않고 **일치 비율(0~1) 그대로** 섞는다. 대부분의 후보가
+    0 으로 동점인데 `pct` 를 씌우면 동점자 사이에 원래 행 순서가 순위로 새어 들어간다.
+    """
+    out = pct(v)
+    if clap_active:
+        out = (1.0 - CLAP_WEIGHT) * out + CLAP_WEIGHT * clap_pct
+    if mood_match is not None:
+        out = (1.0 - MOOD_WEIGHT) * out + MOOD_WEIGHT * mood_match
+    return out
+
+
+def mood_match_ratio(pool: pd.DataFrame, wanted: list, fac: pd.DataFrame) -> np.ndarray:
+    """요청한 무드 중 그 곡이 실제로 가진 비율. 게이트가 아니라 가점 재료다."""
+    want = set(_qvals(wanted))
+    if not want:
+        return np.zeros(len(pool), dtype=np.float32)
+    per_track = {t: len(want & set(_qvals(fac.loc[t].get("moods", []))))
+                 for t in pool.track_id.unique() if t in fac.index}
+    return np.asarray([per_track.get(t, 0) / len(want) for t in pool.track_id],
+                      dtype=np.float32)
+
+
+def parse_nlp_query(text: str) -> tuple[Optional[dict], Optional[tuple[str, str]]]:
+    """QueryPlan v1 해석기 호출. 실패를 **삼키지 않는다.**
+
+    반환은 `(plan, error)` 이고 `error` 는 `None` 또는 `(error_code, message)` 다.
+    호출부가 그대로 응답 오류로 쓴다.
+
+    실패했는데 일반 추천으로 넘어가면 사용자가 말한 조건("조용한 피아노")이 소리 없이
+    사라진 채 200 이 나간다. 조건을 몰래 푸는 것과 같아서, 조건을 못 뽑았으면 실패로 답한다.
+    """
+    if not NLP_PARSE_URL:
+        return None, ("SEARCH_NOT_CONFIGURED",
+                      "자연어 해석기가 설정되지 않았습니다. MUPID_AI_NLP_URL 을 지정하세요.")
     try:
         body = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
         req = UrlRequest(NLP_PARSE_URL, data=body, headers={"Content-Type": "application/json"})
@@ -1052,13 +1298,16 @@ def parse_nlp_query(text: str) -> tuple[Optional[dict], Optional[str]]:
             data = json.loads(res.read().decode("utf-8"))
         plan = data.get("plan") if data.get("ok") else None
         if not isinstance(plan, dict):
-            return None, str(data.get("error") or "QueryPlan 없음")
+            # 해석기 주소는 내부 정보다. 메시지에 싣지 않는다. 해석기가 돌려준 문자열은
+            # 남의 출력이므로 길이를 잘라서 넣는다(스택 추적·경로가 통째로 실릴 수 있다).
+            why = str(data.get("error") or "QueryPlan 없음")[:200]
+            return None, ("INTERNAL_ERROR", f"자연어 해석에 실패했습니다: {why}")
         emb = data.get("clap_embedding")
         if isinstance(emb, list):
             plan["_clap_embedding"] = emb
         return plan, None
     except Exception as e:
-        return None, f"{type(e).__name__}: {e}"
+        return None, ("INTERNAL_ERROR", f"자연어 해석기 호출 실패: {type(e).__name__}")
 
 
 def _qvals(v) -> list[str]:
@@ -1128,7 +1377,9 @@ def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional
                       current_moment_id: Optional[str]) -> tuple[pd.DataFrame, dict]:
     """QueryPlan 의 명시 조건만 후보 게이트로 적용한다."""
     c = CAT
-    fac = catalog_facets()["_df"].set_index("track_id")
+    facets = catalog_facets()
+    fac = facets["_df"].set_index("track_id")
+    meta = catalog_facet_rows()          # track_id -> dict. .loc 대신 쓴다
     raw_f = plan.get("filters") or {}
     f = _canonicalize_query_tags(raw_f, fac, pool)
     ex = _canonicalize_query_tags(plan.get("exclude") or {}, fac, pool)
@@ -1158,16 +1409,17 @@ def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional
         keep &= ~hit if negate else hit
         applied.append(("exclude." if negate else "filters.") + name)
 
-    gate("genre", lambda t: [fac.loc[t].get("genre", ""), fac.loc[t].get("style", "")])
-    gate("language", lambda t: fac.loc[t].get("language", ""))
-    gate("instrument", lambda t: fac.loc[t].get("instruments", []))
-    gate("vocal", lambda t: fac.loc[t].get("vocal_type", ""))
+    _m = lambda t: meta.get(t) or {}          # noqa: E731  (fac.loc[t] 과 같은 값)
+    gate("genre", lambda t: [_m(t).get("genre", ""), _m(t).get("style", "")])
+    gate("language", lambda t: _m(t).get("language", ""))
+    gate("instrument", lambda t: _m(t).get("instruments", []))
+    gate("vocal", lambda t: _m(t).get("vocal_type", ""))
     # mood/activity/goal은 추론 가능성이 커서 CLAP 점수로만 반영한다.
-    gate("genre", lambda t: [fac.loc[t].get("genre", ""), fac.loc[t].get("style", "")], True)
-    gate("language", lambda t: fac.loc[t].get("language", ""), True)
-    gate("mood", lambda t: fac.loc[t].get("moods", []), True)
-    gate("instrument", lambda t: fac.loc[t].get("instruments", []), True)
-    gate("vocal", lambda t: fac.loc[t].get("vocal_type", ""), True)
+    gate("genre", lambda t: [_m(t).get("genre", ""), _m(t).get("style", "")], True)
+    gate("language", lambda t: _m(t).get("language", ""), True)
+    gate("mood", lambda t: _m(t).get("moods", []), True)
+    gate("instrument", lambda t: _m(t).get("instruments", []), True)
+    gate("vocal", lambda t: _m(t).get("vocal_type", ""), True)
 
     flow = f.get("flow")
     if _qvals(flow):
@@ -1178,14 +1430,15 @@ def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional
         keep &= ~np.asarray([_qmatch(v, flow_ex) for v in pool.section_label])
         applied.append("exclude.flow")
 
-    bpms = np.asarray([float(fac.loc[t].get("bpm", 0) or 0) for t in pool.track_id])
+    bpms = np.asarray([float(_m(t).get("bpm", 0) or 0) for t in pool.track_id])
     if f.get("bpm_min") is not None:
         keep &= bpms >= float(f["bpm_min"]); applied.append("filters.bpm_min")
     if f.get("bpm_max") is not None:
         keep &= bpms <= float(f["bpm_max"]); applied.append("filters.bpm_max")
 
     tempo_dir = str(f.get("tempo_direction") or "").lower()
-    ref_bpm = float(fac.loc[current_track_id].get("bpm", 0) or 0) if current_track_id in fac.index else 0.0
+    ref_bpm = (float(_m(current_track_id).get("bpm", 0) or 0)
+               if current_track_id in meta else 0.0)
     if tempo_dir in ("up", "faster", "fast") and ref_bpm:
         keep &= bpms > ref_bpm; applied.append("filters.tempo_direction")
     elif tempo_dir in ("down", "slower", "slow") and ref_bpm:
@@ -1258,7 +1511,9 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         if len(C):
             query_source = "onboarding"
     zu = model_user_vec(user)
+    _t_beh = time.perf_counter()
     beh = user_behavior(user)
+    metrics.observe_behavior(time.perf_counter() - _t_beh)
     # 하드 필터 = 현재 목록/세션 재생곡 + 활성 DISLIKE
     # 최근 4시간 재생곡은 **제외하지 않는다** — 감점만 주고 4시간에 걸쳐 복구한다.
     # 통째로 빼면 많이 들은 사용자일수록 후보가 말라 추천이 빈약해진다.
@@ -1297,6 +1552,18 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             clap_active = True
             diag["clap"] = {"active": True, "covered": int(cov.sum()),
                             "candidates": len(pool), "weight": CLAP_WEIGHT}
+
+    # filters.mood 는 게이트가 아니다 — 무드는 추론 폭이 커서 걸러내면 후보가 과하게 마른다.
+    # 대신 일치하는 곡을 위로 올린다. CLAP 이 없는 경로(호출자가 QueryPlan 을 직접 보낸
+    # 경우)에서 mood 가 아무 일도 하지 않던 것을 메운다.
+    mood_match = None
+    want_mood = _qvals(((query_plan or {}).get("filters") or {}).get("mood"))
+    if want_mood:
+        mood_match = mood_match_ratio(pool, want_mood, catalog_facets()["_df"]
+                                      .set_index("track_id"))
+        diag["mood_rerank"] = {"requested": want_mood, "weight": MOOD_WEIGHT,
+                               "matched": int((mood_match > 0).sum()),
+                               "candidates": len(pool)}
 
     rows = pool.emb_row.to_numpy()
     V = center(np.asarray(c.Z[rows], dtype=np.float32))   # 질의와 동일 변환
@@ -1367,15 +1634,14 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         if zu is None:
             final = pct(s_rule)
 
-    final = ((1.0 - CLAP_WEIGHT) * pct(final) + CLAP_WEIGHT * clap_pct
-             if clap_active else pct(final)) + bdelta
+    final = soft_rerank(final, clap_active, clap_pct, mood_match) + bdelta
 
     # BPM 게이트 (사용자 선호 BPM 중앙값 기준)
     keep = np.ones(len(pool), dtype=bool)
     # ---- 명시 선호 게이트: 청취 이력 유무와 무관하게 항상 적용 (게이트 인계) ----
     ans = onboarding_of(user) or {}
     if ans:
-        fac = catalog_facets()["_df"].set_index("track_id")
+        fac = catalog_facets()["_df"].set_index("track_id")   # 온보딩 게이트. 캐시된 df 다
         wl = ans.get("language") or []
         wv = ans.get("vocal_type") or []
         xs = ans.get("exclude_style") or []
@@ -1433,8 +1699,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
                     pool, S[:, j] / max(float(W[j]), 1e-9), s_model, bpm_pref))
             else:
                 sj = W_RULE * pct(S[:, j]) + (W_MODEL * pct(s_model) if zu is not None else 0.0)
-            sj = ((1.0 - CLAP_WEIGHT) * pct(sj) + CLAP_WEIGHT * clap_pct
-                  if clap_active else pct(sj)) + bdelta
+            sj = soft_rerank(sj, clap_active, clap_pct, mood_match) + bdelta
             per.append(np.argsort(-np.where(keep, sj, -1e9)))
         cl_order = list(np.argsort(-W))
         ptr = {j: 0 for j in range(len(C))}
@@ -1472,7 +1737,6 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             picked.append((int(i), float(final[int(i)]), 0))
             taken_tracks.add(r.track_id)
             vecs.append(V[int(i)])
-        order = order
 
     if explore and EXPLORE_SLOTS and len(picked) >= 3:
         rng = np.random.default_rng(int(time.time()) // 60)
@@ -1528,57 +1792,8 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
 
 
 # ------------------------------------------------------------------- 스키마
-class NextReq(BaseModel):
-    user_ref: str
-    n: int = 5
-    exclude: list[str] = []
-    explore: bool = True
-    query: Optional[str] = None
-    current_track_id: Optional[str] = None
-    current_moment_id: Optional[str] = None
-
-
-class FeedbackReq(BaseModel):
-    user_ref: str
-    track_id: str
-    event_type: str
-    start_sec: Optional[float] = None
-    end_sec: Optional[float] = None
-    from_sec: Optional[float] = None
-    to_sec: Optional[float] = None
-    trigger: Optional[str] = None
-    position_sec: Optional[float] = None
-    reason: Optional[str] = None
-    intervals: Optional[list[dict]] = None
-    value: Optional[int] = None
-    count: Optional[int] = None
-    session_id: Optional[str] = None
-    event_id: Optional[str] = None
-    play_id: Optional[str] = None
-    playlist_id: Optional[str] = None
-
-
 class LearnReq(BaseModel):
     user_ref: Optional[str] = None
     force: bool = False        # 전체 재계산(복구·검증용)
 
 
-class OnboardReq(BaseModel):
-    user_ref: str
-    language: list[str] = []
-    vocal_type: list[str] = []
-    style: list[str] = []
-    genre: list[str] = []
-    mood: list[str] = []
-    instrument: list[str] = []
-    tempo: list[str] = []
-    energy: list[str] = []          # 더 이상 선택지로 제공하지 않는다 (구답변 호환용)
-    section_label: list[str] = []
-    exclude_style: list[str] = []      # 절대 비선호 — 이력이 쌓여도 계속 제외
-
-
-class SimReq(BaseModel):
-    user_ref: str
-    rule: str = "chorus_energy"
-    tracks: int = 12
-    seed: int = 0
