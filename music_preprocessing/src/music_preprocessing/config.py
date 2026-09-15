@@ -25,7 +25,8 @@ class ChunkConfig:
         input_dir: 입력 디렉토리 경로
         output_dir: 출력 디렉토리 경로
         processed_log: 처리 완료 로그 파일 경로
-        metadata_dir: 곡별 메타데이터 JSON 디렉터리 (`catalog` · `covers` 명령)
+        metadata_dir: 곡별 메타데이터 JSON 디렉터리
+            (`catalog` · `covers` · `lyrics` 가 모두 이 디렉터리를 읽는다)
         covers_dir: 곡별 커버 이미지 디렉터리 (`catalog` · `covers` 명령)
         log_dir: 실행 로그를 남길 디렉터리. 실행마다 파일 하나가 생긴다
         api_base_url: Mupid API 루트. 비우면 등록 단계를 건너뛴다

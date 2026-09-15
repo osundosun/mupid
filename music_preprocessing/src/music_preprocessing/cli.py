@@ -4,6 +4,7 @@
 music-preprocessing catalog --config config.json --dry-run
 music-preprocessing catalog --config config.json
 music-preprocessing covers  --config config.json
+music-preprocessing lyrics  --config config.json
 music-preprocessing batch   --config config.json
 music-preprocessing status  --config config.json
 ```
@@ -28,6 +29,7 @@ music-preprocessing status  --config config.json
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Annotated
@@ -57,12 +59,13 @@ from .catalog import (
 from .chunker import process_file
 from .config import ChunkConfig
 from .logging_setup import default_log_path, setup_logging
+from .lyrics import LyricRegistrar, LyricSheet, load_lyrics
 from .registrar import Registry
 
 logger = logging.getLogger(__name__)
 
 app = typer.Typer(
-    help="음악 스트리밍 전처리 — 청킹(single·batch)과 카탈로그 등록(catalog·covers)",
+    help="음악 스트리밍 전처리 — 청킹(single·batch)과 카탈로그 등록(catalog·covers·lyrics)",
     no_args_is_help=True,
     add_completion=False,
     rich_markup_mode="rich",
@@ -111,7 +114,7 @@ class RichProgress(ProgressReporter):
     """`CatalogRegistrar` 의 단계 보고를 Rich 막대로 그린다.
 
     단계가 넘어가면 앞 단계 막대는 완료된 채로 남는다. 끝난 뒤 화면에
-    "아티스트 83/83 · 앨범 204/204 · 곡 1060/1060" 이 그대로 보이는 편이,
+    "아티스트 87/87 · 앨범 204/204 · 곡 1060/1060" 이 그대로 보이는 편이,
     막대가 사라지고 숫자만 남는 것보다 읽기 좋다.
     """
 
@@ -253,6 +256,103 @@ def covers(
 
 
 @app.command()
+def lyrics(
+    config: ConfigOpt = None,
+    metadata_dir: Annotated[
+        Path | None,
+        typer.Option(help="곡별 메타데이터 JSON 디렉터리 (가사도 여기 있다)", show_default=False),
+    ] = None,
+    api_base_url: Annotated[
+        str | None, typer.Option(help="Mupid API 루트", show_default=False)
+    ] = None,
+    skip_untimed: Annotated[
+        bool,
+        typer.Option(
+            "--skip-untimed",
+            help="시각을 모르는 줄을 채우지 않고 버린다 (기본은 앞뒤 사이를 고르게 메운다)",
+        ),
+    ] = False,
+    limit: Annotated[
+        int | None,
+        typer.Option(help="앞에서 N곡만 올린다. 시험용", show_default=False),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="내용이 그대로여도 지우고 다시 올린다")
+    ] = False,
+    dry_run: DryRunOpt = False,
+    yes: YesOpt = False,
+    show_progress: ProgressOpt = True,
+    log_file: LogFileOpt = None,
+    no_log_file: NoLogOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """곡별 가사를 시각과 함께 등록한다. [b]catalog 를 먼저 돌려야 한다.[/]"""
+    console = _start("lyrics", log_file, no_log_file, config, verbose)
+    cfg, sheets = _load_lyrics(config, metadata_dir, api_base_url, skip_untimed, limit)
+
+    total_lines = sum(len(s) for s in sheets.values())
+    interpolated = sum(s.interpolated for s in sheets.values())
+    dropped = sum(s.dropped for s in sheets.values())
+
+    info = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    info.add_row("메타데이터", f"[cyan]{cfg.metadata_dir}[/]")
+    info.add_row(
+        "등록 대상",
+        "[dim]없음 (dry-run)[/]" if dry_run else f"[cyan]{cfg.api_base_url}[/]",
+    )
+    info.add_row("규모", f"곡 {len(sheets)} · 줄 {total_lines}")
+    if skip_untimed:
+        info.add_row("시각 없는 줄", f"[yellow]{dropped}줄을 버린다[/] (--skip-untimed)")
+    else:
+        info.add_row("시각 없는 줄", f"{interpolated}줄을 앞뒤 사이로 메운다")
+    console.print(info)
+    if dry_run:
+        console.print("[yellow]dry-run[/] — 아무것도 올리지 않고 무엇이 올라갈지만 셉니다.")
+
+    _confirm(
+        console,
+        yes,
+        dry_run,
+        f"가사 {total_lines}줄을 {cfg.api_base_url} 에 올립니다"
+        f" (곡마다 기존 가사를 지우고 다시 씁니다).",
+    )
+
+    with _progress_bar(console, show_progress and not console.is_jupyter) as bar:
+        registrar = LyricRegistrar(
+            client=None if dry_run else _client(cfg),
+            registry=Registry(cfg.api_registry_log),
+            dry_run=dry_run,
+            progress=RichProgress(bar),
+        )
+        result = registrar.run(sheets, force=force)
+
+    table = Table(title="가사 등록" + (" (dry-run)" if dry_run else ""), title_style="bold")
+    table.add_column("항목")
+    table.add_column("값", justify="right")
+    table.add_row("등록한 곡", str(result["songs_registered"]))
+    table.add_row("그대로라 건너뜀", str(result["songs_unchanged"]))
+    table.add_row("올린 줄", str(result["lines_written"]))
+    table.add_row("  파일에 시각 있음", str(result["lines_timed"]))
+    table.add_row("  시각을 메움", str(result["lines_interpolated"]))
+    if result["lines_dropped"]:
+        table.add_row("  시각 없어 버림", str(result["lines_dropped"]))
+    if result["lines_deleted"]:
+        table.add_row("지운 줄(재등록)", str(result["lines_deleted"]))
+    console.print(table)
+
+    for key, message in (
+        ("songs_empty", "가사 줄이 없는 곡"),
+        ("songs_untimed", "시각을 아는 줄이 없어 건너뛴 곡"),
+        ("songs_unregistered", "곡이 아직 등록되지 않아 건너뜀"),
+    ):
+        if result[key]:
+            hint = " — `catalog` 를 먼저 돌리세요" if key == "songs_unregistered" else ""
+            console.print(f"[yellow]{message} {result[key]}개[/]{hint}")
+
+    _report_errors(console, result)
+
+
+@app.command()
 def status(
     config: ConfigOpt = None,
     metadata_dir: Annotated[
@@ -278,6 +378,17 @@ def status(
         if entry.get("image_file_id") is None
     )
 
+    # 가사는 곡 1060개 중 있는 것만 센다. 연주곡을 분모에 넣으면 영영 안 찬다.
+    with_lyrics = {
+        t.track_id
+        for t in tracks
+        if _has_lyrics(Path(cfg.metadata_dir) / f"{t.track_id}.json")
+    }
+    done_lyrics = with_lyrics & registry.catalog("lyrics").keys()
+    lyric_lines = sum(
+        entry.get("line_count") or 0 for entry in registry.catalog("lyrics").values()
+    )
+
     table = Table(title="카탈로그 등록 현황", title_style="bold")
     table.add_column("대상")
     table.add_column("등록됨", justify="right")
@@ -287,6 +398,7 @@ def status(
         ("아티스트", len(done_artists), len(artist_keys)),
         ("앨범", len(done_albums), len(album_keys)),
         ("곡", len(done_tracks), len(tracks)),
+        ("가사", len(done_lyrics), len(with_lyrics)),
     ):
         remaining = total - done
         table.add_row(
@@ -297,6 +409,8 @@ def status(
         )
     console.print(table)
     console.print(f"등록 기록: [cyan]{cfg.api_registry_log}[/]")
+    if lyric_lines:
+        console.print(f"등록된 가사 줄: [bold]{lyric_lines}[/]")
     if no_cover:
         console.print(
             f"[yellow]커버 없이 등록된 곡 {no_cover}개[/]"
@@ -482,6 +596,41 @@ def _load(
     if limit is not None:
         tracks = tracks[:limit]
     return cfg, tracks
+
+
+def _has_lyrics(metadata_path: Path) -> bool:
+    """그 곡에 가사가 있는가. 파일을 통째로 읽되 값 하나만 본다."""
+    try:
+        with open(metadata_path, encoding="utf-8") as f:
+            return bool(json.load(f).get("lyrics_sync"))
+    except (OSError, ValueError):
+        return False
+
+
+def _load_lyrics(
+    config: Path | None,
+    metadata_dir: Path | None,
+    api_base_url: str | None,
+    skip_untimed: bool,
+    limit: int | None,
+) -> tuple[ChunkConfig, dict[str, LyricSheet]]:
+    """설정을 읽고 가사를 불러온다. 경로가 틀리면 여기서 끝낸다."""
+    try:
+        cfg = ChunkConfig.from_file(str(config)) if config else ChunkConfig()
+        for name, given in (
+            ("metadata_dir", metadata_dir),
+            ("api_base_url", api_base_url),
+        ):
+            if given:
+                setattr(cfg, name, str(given))
+        sheets = load_lyrics(Path(cfg.metadata_dir), skip_untimed=skip_untimed)
+    except (CatalogError, OSError, TypeError, ValueError) as e:
+        Console(stderr=True).print(f"[red]✖[/] {e}")
+        raise typer.Exit(1) from None
+
+    if limit is not None:
+        sheets = {key: sheets[key] for key in sorted(sheets)[:limit]}
+    return cfg, sheets
 
 
 def _registrar(

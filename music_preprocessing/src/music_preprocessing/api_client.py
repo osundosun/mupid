@@ -286,6 +286,27 @@ class MupidClient:
             json_body={"image_file_id": image_file_id},
         )
 
+    def get_lyrics(self, music_id: int) -> list[dict]:
+        """곡에 붙어 있는 가사 줄 목록. 없으면 빈 목록이다 (404 가 아니다)."""
+        body = self._request("GET", f"/api/v1/music/{music_id}/lyric")
+        return body["data"]["lines"]
+
+    def add_lyric(self, music_id: int, text: str, time_ms: int) -> int:
+        """가사 한 줄을 붙인다.
+
+        서버에 여러 줄을 한 번에 넣는 길이 없어 줄마다 부른다. 516곡이면
+        23,000번쯤 된다 — 배치가 오래 걸리는 것은 이 때문이다.
+        """
+        body = self._request(
+            "POST",
+            "/api/v1/lyric",
+            json_body={"music_id": music_id, "text": text, "time_ms": time_ms},
+        )
+        return body["data"]["lyric_id"]
+
+    def delete_lyric(self, lyric_id: int) -> None:
+        self._request("DELETE", f"/api/v1/lyric/{lyric_id}")
+
     def create_stream(
         self,
         music_id: int,

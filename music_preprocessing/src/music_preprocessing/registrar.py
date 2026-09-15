@@ -111,18 +111,19 @@ class Registry:
     - `albums` : "artist_id|앨범명" → album_id
     - `tracks` : 오디오 파일 경로 → { music_id, stream_id, ... }
 
-    카탈로그 경로 (`catalog` · `covers` 명령이 쓴다)
+    카탈로그 경로 (`catalog` · `covers` · `lyrics` 명령이 쓴다)
 
     - `catalog.artists`: artist_key → { artist_id, image_file_id, cover_sha256 }
     - `catalog.albums` : album_key  → { album_id, artist_id, image_file_id, … }
     - `catalog.tracks` : track_id   → { music_id, album_id, artist_id, … }
+    - `catalog.lyrics` : track_id   → { music_id, line_count, sha256, … }
 
     두 경로가 한 파일을 쓰는 이유는 **곡 번호를 나눠 가져야 하기 때문이다.**
     카탈로그가 만든 곡을 청킹 쪽이 모르면 같은 곡을 한 번 더 만들어 고아 행이
     쌓인다. `Registrar` 가 사이드카가 없을 때 `catalog.tracks` 를 먼저 본다.
     """
 
-    _CATALOG_SECTIONS = ("artists", "albums", "tracks")
+    _CATALOG_SECTIONS = ("artists", "albums", "tracks", "lyrics")
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)

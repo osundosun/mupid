@@ -5,7 +5,7 @@
 | 갈래 | 명령 | 하는 일 |
 | --- | --- | --- |
 | **청킹** | `single` · `batch` | 오디오를 Opus 청크 + RTP 패킷으로 쪼개고, 스트림·청크를 API 에 올린다 |
-| **카탈로그** | `catalog` · `covers` | 곡별 메타데이터·커버를 읽어 아티스트·앨범·곡을 API 에 등록한다 |
+| **카탈로그** | `catalog` · `covers` · `lyrics` | 곡별 메타데이터·커버·가사를 읽어 아티스트·앨범·곡을 API 에 등록한다 |
 
 두 갈래는 `registered.json` 하나를 함께 쓴다. `catalog` 가 만든 곡 번호를
 `batch` 가 그대로 이어받으므로, 같은 곡이 두 번 만들어지지 않는다.
@@ -20,6 +20,7 @@ MP3/WAV/FLAC → FFMPEG(Opus 인코딩+세그먼트 분할) → Ogg 파싱 → R
 
 ② 카탈로그
 metadata/*.json + covers/*.jpg → 커버 업로드 → 아티스트 → 앨범 → 곡
+                                            → 가사 (metadata 의 lyrics_sync)
 ```
 
 1. **FFMPEG 세그먼트 분할**: 입력 오디오를 N초 단위 Ogg/Opus 세그먼트로 분할
@@ -40,6 +41,9 @@ uv run music-preprocessing catalog -c config.json             # 확인을 묻고
 
 # 커버만 다시 올리기
 uv run music-preprocessing covers -c config.json
+
+# 가사 (catalog 다음)
+uv run music-preprocessing lyrics -c config.json
 
 # 어디까지 됐나
 uv run music-preprocessing status -c config.json
@@ -63,13 +67,14 @@ PYTHONPATH=src python -m music_preprocessing --help
 명령에서나 옵션 표가 나옵니다.
 
 ```
-music-preprocessing {catalog,covers,status,single,batch}
+music-preprocessing {catalog,covers,lyrics,status,single,batch}
 ```
 
 | 명령 | 하는 일 |
 | --- | --- |
 | `catalog` | 곡별 메타데이터·커버를 읽어 아티스트·앨범·곡을 등록한다 |
 | `covers` | 이미 등록된 대상의 커버만 다시 올린다 |
+| `lyrics` | 곡별 가사를 시각과 함께 등록한다 |
 | `status` | 무엇이 등록됐고 무엇이 남았는지 센다. **서버에 붙지 않는다** |
 | `single` | 파일 하나를 Opus 청크 + RTP 로 쪼갠다 |
 | `batch` | 입력 디렉터리를 통째로 청킹하고 스트림·청크를 등록한다 |
@@ -88,6 +93,9 @@ uv run music-preprocessing status -c config.json
 
 # 4. 나머지를 올린다
 uv run music-preprocessing catalog -c config.json
+
+# 5. 가사를 올린다 (곡이 있어야 한다)
+uv run music-preprocessing lyrics -c config.json
 ```
 
 `catalog` 와 `covers` 는 서버에 행을 만들거나 파일을 덮어쓰므로, **무엇이 어디에
@@ -99,13 +107,14 @@ uv run music-preprocessing catalog -c config.json
 | 옵션 | 명령 | 설명 |
 | --- | --- | --- |
 | `-c`, `--config` | 전부 | JSON 설정 파일 |
-| `--metadata-dir` · `--covers-dir` | `catalog` `covers` `status` | 설정 파일보다 우선 |
-| `--api-base-url` | `catalog` `covers` `batch` | 등록할 서버 |
-| `--dry-run` | `catalog` `covers` | 서버에 붙지 않고 세기만 한다 |
-| `--limit N` | `catalog` | 앞에서 N곡만. 처음 붙일 때 시험용 |
-| `--force` | `covers` | 바뀌지 않은 커버도 다시 올린다 |
-| `-y`, `--yes` | `catalog` `covers` | 확인 프롬프트를 건너뛴다 (크론용) |
-| `--no-progress` | `catalog` `covers` | 진행률 막대를 끈다 |
+| `--metadata-dir` · `--covers-dir` | `catalog` `covers` `lyrics` `status` | 설정 파일보다 우선 |
+| `--api-base-url` | `catalog` `covers` `lyrics` `batch` | 등록할 서버 |
+| `--dry-run` | `catalog` `covers` `lyrics` | 서버에 붙지 않고 세기만 한다 |
+| `--limit N` | `catalog` `lyrics` | 앞에서 N곡만. 처음 붙일 때 시험용 |
+| `--force` | `covers` `lyrics` | 바뀌지 않은 것도 지우고 다시 올린다 |
+| `--skip-untimed` | `lyrics` | 시각을 모르는 줄을 메우지 않고 버린다 |
+| `-y`, `--yes` | `catalog` `covers` `lyrics` | 확인 프롬프트를 건너뛴다 (크론용) |
+| `--no-progress` | `catalog` `covers` `lyrics` | 진행률 막대를 끈다 |
 | `--log-file` · `--no-log-file` | 전부 | 로그 파일 경로 / 남기지 않기 |
 | `-v`, `--verbose` | 전부 | DEBUG 까지 남기고 화면에도 전부 찍는다 |
 
@@ -168,14 +177,14 @@ flow_music_data/
 | `artist.artist_key` | 아티스트를 한 번만 만들기 위한 키 · 이미지 저장 키 |
 | `artist.name` | 아티스트명 |
 | `album.album_key` · `album.title` | 앨범 키 · 앨범명 |
+| `lyrics_sync` | 가사와 시각. **`lyrics` 명령이 따로 읽는다** |
 
 앨범 발매일은 **수록곡 중 가장 이른 발매일**로 잡습니다.
 
 `prompt` · `prompt_sha256` · `source` · `assets` · `requested` ·
-`flow_generated` · `structure_validation` 은 읽지 않습니다.
+`flow_generated` · `structure_validation` · `lyrics_sections` 는 읽지 않습니다.
 
-**가사(`lyrics_raw` · `lyrics_sections`)는 넣지 않습니다.** 아직 다듬는
-중이라, 나중에 `POST /api/v1/music/{musicId}/lyric` 으로 따로 넣습니다.
+가사는 `catalog` 가 아니라 `lyrics` 명령이 올립니다 → [가사 등록](#가사-등록-lyrics).
 
 ### 커버가 어디에 붙는가
 
@@ -205,16 +214,18 @@ flow_music_data/
               POST /api/v1/music                              → music_id
 ```
 
-곡 1060개가 아티스트 83명 · 앨범 204개로 묶이면 호출은 이미지 1347번 +
-생성 1347번입니다. 병렬로 돌리지 않습니다 — 아티스트 → 앨범 → 곡 순서를 지켜야
+곡 1060개가 아티스트 87명 · 앨범 204개로 묶이면 호출은 이미지 1351번 +
+생성 1351번입니다. 병렬로 돌리지 않습니다 — 아티스트 → 앨범 → 곡 순서를 지켜야
 하고, 한 건씩 `registered.json` 에 적어야 중간에 끊겨도 이어서 할 수 있습니다.
 
 ### 설정
 
 ```jsonc
 {
+  // catalog · covers · lyrics 가 모두 이 디렉터리를 읽는다
   "metadata_dir": "/home/jupyter/flow_music_data/metadata",
   "covers_dir":   "/home/jupyter/flow_music_data/covers",
+  "log_dir":      "./logs",
   "api_base_url": "http://localhost:9900",
   "api_refresh_token_file": "./refresh_token.txt",
   "api_registry_log": "./registered.json"
@@ -247,12 +258,97 @@ flow_music_data/
 ```
 catalog  →  music_id 1..1060  (registered.json 의 catalog.tracks)
                   ↓
-batch    →  stream_id + 청크   (오디오 파일명 T000001 로 위 표를 찾는다)
+        ┌─────────┴─────────┐
+lyrics  →  가사 줄          batch  →  stream_id + 청크
+(track_id 로 위 표를 찾는다)        (오디오 파일명 T000001 로 찾는다)
 ```
 
 `batch` 는 사이드카 JSON 이 없어도 `registered.json` 에서 `T000001` 을 찾으면
 그 곡 번호로 스트림을 만듭니다. 그래서 **카탈로그를 먼저 돌린 뒤 청킹을 등록해도
 곡이 두 번 만들어지지 않습니다.**
+
+## 가사 등록 (`lyrics`)
+
+가사는 곡 메타데이터 안의 `lyrics_sync` 에 들어 있습니다 — `catalog` 가 읽는
+파일과 **같은 파일**입니다.
+
+```json
+"lyrics_sync": [
+  { "text": "Sun goes down across the sky",     "start_sec": null, "end_sec": null },
+  { "text": "Left my big speaker on the stage", "start_sec": 30.0, "end_sec": 32.1 }
+]
+```
+
+연주곡은 이 값이 `null` 입니다. 곡 1060개 중 **가사가 있는 505곡**만 올립니다.
+
+서버의 `lyrics` 테이블은 `text` 와 `time_ms` 둘뿐이라 쓰는 것도 `text` 와
+`start_sec` 뿐입니다. `end_sec` 은 담을 자리가 없습니다.
+
+### 시각이 비어 있는 줄
+
+**가사 23,675줄 중 3,419줄(14%)에 `start_sec` 이 없습니다.** 정렬이 그 줄을
+음원에 못 붙인 것입니다. `lyrics.time_ms` 는 NOT NULL 이라 그대로는 넣을 수
+없어서, 둘 중 하나를 골라야 합니다.
+
+| | 동작 | 대가 |
+| --- | --- | --- |
+| 기본 | 앞뒤로 시각을 아는 줄 **사이를 고르게 나눠 메운다** | 그 줄의 시각은 추정값이다 |
+| `--skip-untimed` | 시각이 확실한 줄만 올린다 | 한 절에서 가운데 줄이 사라져 가사가 이가 빠진 채로 보인다 |
+
+기본을 "메운다" 로 둔 이유는, 가사는 **읽는 것**이 먼저고 따라가는 것은
+그다음이기 때문입니다. 줄이 통째로 사라지면 노래를 따라 부를 수 없지만, 한두
+줄의 시각이 조금 어긋나는 것은 눈으로 보정됩니다.
+
+결측은 대부분 **사이**에 있습니다 (구간 1,500개 중 사이 1,271 · 앞 125 ·
+뒤 104, 중앙값 1줄). 사이는 앞뒤 시각을 알아 고르게 나눌 수 있고, 앞뒤 끝은
+그 곡의 평균 줄 간격만큼 늘려 잡습니다.
+
+```
+원본=  None  결과=  17.28  Heavy black case banging on my knee   ← 메움
+원본=  None  결과=  20.46  Walking past the laundromat in the…   ← 메움
+원본=  30.0  결과=  30.00  Left my big speaker on the stage      ← 원본 그대로
+원본=  32.3  결과=  32.30  Got twelve bucks sitting in my coat   ← 원본 그대로
+```
+
+시각이 있던 줄은 **손대지 않습니다.**
+
+### 못 올리는 곡
+
+| 경우 | 곡 수 | 동작 |
+| --- | --- | --- |
+| `lyrics_present` 인데 `lyrics_sync` 가 비어 있음 | 11 | 올릴 것이 없다. 기록만 남기고 넘어간다 |
+| 시각을 아는 줄이 하나도 없음 (`T000407`) | 1 | 기준점이 없어 메울 수 없다. 건너뛴다 |
+
+둘 다 실패로 세지 않습니다 — 사람이 원본을 고치기 전에는 다시 시도해도 같습니다.
+
+### 실행
+
+`catalog` 가 먼저 돌아 있어야 합니다. 곡 번호를 `registered.json` 의
+`catalog.tracks` 에서 가져오기 때문입니다.
+
+```bash
+uv run music-preprocessing catalog -c config.json   # 곡을 먼저 만든다
+uv run music-preprocessing lyrics  -c config.json
+```
+
+곡이 아직 없으면 그 곡은 건너뛰고 "`catalog` 를 먼저 돌리세요" 라고 알립니다.
+
+### 오래 걸립니다
+
+서버에 가사를 한 줄씩 넣는 API(`POST /api/v1/lyric`)밖에 없어서 **줄 수만큼**
+호출합니다 — 505곡에 23,628번입니다. 진행률 막대에 남은 시간이 나옵니다.
+
+곡 단위로는 다시 돌려도 안전합니다.
+
+| 상황 | 동작 |
+| --- | --- |
+| 그대로 다시 실행 | 아무것도 호출하지 않는다 (가사 내용의 SHA-256 을 비교) |
+| 가사가 바뀐 곡 | 그 곡의 **기존 가사를 지우고** 다시 올린다 |
+| 지난번이 중간에 끊김 | 반쯤 올라간 줄을 지우고 다시 올린다 |
+| `--force` | 바뀌지 않은 곡도 지우고 다시 올린다 |
+
+지문은 파일 전체가 아니라 `lyrics_sync` 만 가지고 냅니다. 같은 파일에 들어 있는
+곡명·아티스트가 바뀌었다고 가사 23,000줄을 다시 올릴 이유가 없습니다.
 
 ## API 인증과 청킹 등록 (`batch`)
 
@@ -423,6 +519,8 @@ Offset  Size  Description
 ```bash
 # 매일 새벽 2시 — 새 곡을 카탈로그에 등록하고
 0 2 * * * cd /opt/music_preprocessing && uv run music-preprocessing catalog -c config.json --yes --no-progress
+# 2시 30분 — 가사 (곡이 있어야 한다)
+30 2 * * * cd /opt/music_preprocessing && uv run music-preprocessing lyrics -c config.json --yes --no-progress
 # 새벽 3시 — 청킹과 스트림 등록
 0 3 * * * cd /opt/music_preprocessing && uv run music-preprocessing batch -c config.json
 ```
