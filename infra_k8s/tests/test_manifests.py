@@ -623,6 +623,41 @@ class AnsibleTest(unittest.TestCase):
                     self.assertIn(selector["mupid.io/role"], roles)
 
 
+class SchemaCheckTest(unittest.TestCase):
+    """schema-check.py 는 정규식으로 erd.sql 과 엔티티를 읽는다. 어느 쪽 형식이
+    바뀌어 파서가 조용히 아무것도 못 찾게 되면, 차이가 있어도 '차이 없음' 을
+    보고한다 — 도구가 있는데 못 잡는 것이 없는 것보다 나쁘다."""
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "schema_check", K8S / "deploy" / "schema-check.py")
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+
+    def test_it_reads_the_repository_erd(self):
+        tables = self.module.parse_erd(self.module.ERD)
+        self.assertGreater(len(tables), 20, "erd.sql 에서 테이블을 거의 못 찾았다")
+        for name, columns in tables.items():
+            with self.subTest(table=name):
+                self.assertTrue(columns, f"{name} 의 컬럼을 하나도 읽지 못했다")
+
+    def test_it_reads_the_entities(self):
+        entities = self.module.parse_entities(self.module.ENTITIES)
+        self.assertGreater(len(entities), 20, "@Table 엔티티를 거의 못 찾았다")
+
+    def test_type_comparison_survives_formatting_but_not_a_real_change(self):
+        """ERD 는 `ENUM('A', 'B')`, MySQL 은 `enum('A','B')` 로 준다. 서식 차이는
+        같게 보고, 값이 하나라도 다르면 다르게 봐야 한다 — MUBTI 가 빠졌던 것이
+        이 비교로 걸리는 종류다."""
+        same = ("ENUM('A', 'B')", "enum('A','B')")
+        self.assertEqual(*[self.module.normalise(v) for v in same])
+        differ = ("ENUM('A', 'B')", "enum('A','B','C')")
+        self.assertNotEqual(*[self.module.normalise(v) for v in differ])
+        self.assertNotEqual(self.module.normalise("VARCHAR(50)"),
+                            self.module.normalise("varchar(64)"))
+
+
 class DeployEndpointTest(unittest.TestCase):
     """The deployment endpoint is reachable with a CI key, so its input shapes
     are the security boundary."""
