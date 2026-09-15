@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS `music_section_analysis_mood` (
 CREATE TABLE IF NOT EXISTS `object_storage_files` (
   `file_id` INT AUTO_INCREMENT NOT NULL,
   `file_type` ENUM('IMG', 'MUSIC') NOT NULL,
-  `category` ENUM('PROFILE', 'ARTIST', 'ALBUM', 'TRACK', 'STREAMING') NOT NULL,
+  `category` ENUM('PROFILE', 'ARTIST', 'ALBUM', 'TRACK', 'MUBTI', 'STREAMING') NOT NULL,
   `original_file_name` VARCHAR(255) NOT NULL,
   `storage_object_key` VARCHAR(255) NOT NULL,
   `file_size_bytes` INT NOT NULL COMMENT '파일 크기 (bytes)',

@@ -122,9 +122,10 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 - `POST /api/v1/onboarding` — 분위기·장르 제출. **계정당 한 번**, 재제출은 409
 - `GET /api/v1/user/{userId}/onboarding` — 제출 내용. **`ROLE_SYSTEM` 전용**
 
-분위기·장르는 이름이 아니라 `codes` 표의 **번호**로 주고받는다. `codes` 는 기준
-데이터라 사람이 넣어야 한다 → [domain/seed-codes.sql](domain/seed-codes.sql).
-비어 있으면 `GET /option` 이 503 이다.
+분위기·장르는 이름이 아니라 `codes` 표의 **번호**로 주고받는다. `codes` 가 비어
+있으면 `GET /option` 이 503 이다. 기동 때 `bootstrap/BootstrapRunner` 가 빠진
+코드를 채우므로 보통은 비지 않는다 — 손으로 넣으려면
+[domain/seed-codes.sql](domain/seed-codes.sql).
 
 저장 형태는 **분위기 × 장르 조합**이다. 표의 두 코드 칼럼이 모두 NOT NULL 이라
 집합 두 개를 그대로 담을 수 없어서다 —

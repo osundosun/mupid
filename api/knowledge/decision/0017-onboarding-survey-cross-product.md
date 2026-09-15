@@ -54,9 +54,9 @@ CREATE TABLE `onboarding_survey` (
   온보딩 화면에 장르 선택을 추가했다(원래 분위기만 물었다). 화면 디자인
   (`components/mufeed-app.tsx`)은 처음부터 장르·분위기를 둘 다 묻고 있었다.
 - ~~다시 제출하면 이전 응답을 전부 지우고 새로 넣는다.~~ **아래 "고친 것" 참고.**
-- `codes` 표가 비어 있었다. 기준 데이터라 사람이 넣어야 한다 →
-  [domain/seed-codes.sql](../domain/seed-codes.sql). 비어 있으면
-  `GET /api/v1/onboarding/option` 이 503 이다.
+- `codes` 표가 비어 있었다. 비면 `GET /api/v1/onboarding/option` 이 503 이다.
+  지금은 기동 때 `bootstrap/BootstrapRunner` 가 빠진 코드를 채운다. 같은 목록의
+  수동 스크립트는 [domain/seed-codes.sql](../domain/seed-codes.sql).
 
 ## 고친 것 — 재제출을 막는다 (2026-09-15)
 
