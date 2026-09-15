@@ -31,7 +31,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { QUEUE_LIMIT, type MupidModel } from '@/hooks/use-mupid';
 import { formatTime, genreOptions, moodOptions } from '@/lib/mupid-data';
-import { loadOnboardingOptions, namesOf } from '@/lib/onboarding';
+import {
+  loadOnboardingOptions,
+  namesOf,
+  OnboardingOptionsStale,
+  refreshOnboardingOptions,
+} from '@/lib/onboarding';
 import {
   AlbumArt,
   Brand,
@@ -641,7 +646,18 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             if (step === 1) { if (selectedGenres.length) { setError(''); setSelectedMoods([]); setStep(2); } return; }
             setBusy(true); setError('');
             try { await m.completeOnboarding(name, selectedMoods, selectedGenres); }
-            catch (e) { setError(e instanceof Error && e.message ? e.message : '취향을 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.'); }
+            catch (e) {
+              // 선택지가 서버와 어긋났다면 새로 받아 **처음부터 다시 고르게** 한다.
+              // 고른 것을 그대로 둔 채 다시 누르게 하면 같은 곳에서 또 막힌다.
+              if (e instanceof OnboardingOptionsStale) {
+                const fresh = await refreshOnboardingOptions();
+                setOptions({ moods: namesOf(fresh.moods), genres: namesOf(fresh.genres) });
+                setSelectedGenres([]);
+                setSelectedMoods([]);
+                setStep(1);
+              }
+              setError(e instanceof Error && e.message ? e.message : '취향을 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.');
+            }
             finally { setBusy(false); }
           }}
         >

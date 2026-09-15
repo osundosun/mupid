@@ -25,15 +25,50 @@ const fallbackOptions: OnboardingOptions = {
 
 /** 한 번 받아 오면 세션 동안 다시 부르지 않는다. 바뀌지 않는 마스터 데이터다. */
 let cached: Promise<OnboardingOptions> | null = null;
+/** 마지막으로 돌려준 것이 서버 목록이 아니라 대체 목록이었는가. */
+let servedFallback = false;
 
 export function loadOnboardingOptions(signal?: AbortSignal): Promise<OnboardingOptions> {
-  cached ??= api.onboarding.options(signal).catch((error: unknown) => {
-    console.warn('[mupid] 온보딩 선택지를 불러오지 못했어요. 기본 목록을 씁니다.', error);
-    // 다음 시도에서 다시 부를 수 있게 캐시를 비운다.
-    cached = null;
-    return fallbackOptions;
-  });
+  cached ??= api.onboarding
+    .options(signal)
+    .then((value) => {
+      servedFallback = false;
+      return value;
+    })
+    .catch((error: unknown) => {
+      console.warn('[mupid] 온보딩 선택지를 불러오지 못했어요. 기본 목록을 씁니다.', error);
+      // 다음 시도에서 다시 부를 수 있게 캐시를 비운다.
+      cached = null;
+      servedFallback = true;
+      return fallbackOptions;
+    });
   return cached;
+}
+
+/**
+ * 캐시를 버리고 서버에서 다시 받는다.
+ *
+ * 저장이 `OnboardingOptionsStale` 로 막힌 뒤 화면이 부른다. 그때의 목록은
+ * 이미 서버와 어긋나 있으므로 그대로 두고 다시 고르게 해 봐야 또 막힌다.
+ */
+export function refreshOnboardingOptions(signal?: AbortSignal): Promise<OnboardingOptions> {
+  cached = null;
+  return loadOnboardingOptions(signal);
+}
+
+/**
+ * 고른 이름이 서버 코드와 하나도 맞지 않는다.
+ *
+ * 선택지를 아직 못 받아 왔거나(대체 목록), 서버의 코드 데이터가 바뀐 경우다.
+ * 어느 쪽이든 **고른 사람 잘못이 아니다.** 화면은 이 오류를 보고 선택지를 새로
+ * 받아 다시 고르게 해야 한다 — 예전에는 "하나 이상 골라 주세요" 로 뭉뚱그려
+ * 던져서, 다 골랐는데도 못 골랐다는 말을 듣고 온보딩에 갇혔다.
+ */
+export class OnboardingOptionsStale extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OnboardingOptionsStale';
+  }
 }
 
 /** 서버에서 받은(또는 기본) 선택지를 이름만 뽑아 준다. 화면 칩이 쓰는 모양이다. */
@@ -89,7 +124,13 @@ export async function saveOnboarding(choice: OnboardingChoice): Promise<void> {
   const moodCodeIds = idsOf(options.moods, choice.moods);
   const genreCodeIds = idsOf(options.genres, choice.genres);
   if (!moodCodeIds.length || !genreCodeIds.length) {
-    throw new Error('분위기와 장르를 각각 하나 이상 골라 주세요.');
+    // 고른 이름이 서버 코드와 하나도 맞지 않는다. 다음에 열 때는 새로 받는다.
+    cached = null;
+    throw new OnboardingOptionsStale(
+      servedFallback
+        ? '선택지를 불러오지 못했어요. 잠시 뒤 다시 골라 주세요.'
+        : '선택지가 바뀌었어요. 새로 불러왔으니 다시 골라 주세요.',
+    );
   }
   await api.onboarding.submit({
     nickname: choice.nickname,
