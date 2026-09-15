@@ -44,7 +44,11 @@ RUN --mount=type=bind,from=build,source=/wheels,target=/wheels \
       -r /wheels/requirements.txt torch==2.6.0
 
 COPY --chown=mupid:mupid ai_server/app /app/ai_server/app
-COPY --chown=mupid:mupid ai_server/__init__.py* /app/ai_server/
+# 배치 진입점(run_labeler 등)도 넣는다. 이미지 안에서 cron 이 부를 수 있어야 한다.
+COPY --chown=mupid:mupid ai_server/tools /app/ai_server/tools
+# 저장소에는 ai_server/__init__.py 가 없다(네임스페이스 패키지로 동작한다). 이미지에서는
+# `python -m ai_server.tools.*` 가 확실히 잡히도록 아래 RUN 에서 만든다.
+# 글로브로 COPY 하면 맞는 파일이 없을 때 **빌드가 실패한다.**
 RUN touch /app/ai_server/__init__.py \
  && chown mupid:mupid /app/ai_server/__init__.py \
  && mkdir -p /artifacts \

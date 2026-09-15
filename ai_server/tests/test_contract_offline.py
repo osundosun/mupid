@@ -928,3 +928,32 @@ def test_pending_docs_list_is_not_stale():
     root = Path(__file__).resolve().parents[2]
     arrived = [d for d in _PENDING_DOCS if (root / d).exists()]
     assert not arrived, f"이미 들어왔다. _PENDING_DOCS 에서 지울 것: {arrived}"
+
+
+def test_dockerfile_copy_sources_exist():
+    """COPY 원본이 없으면 **빌드가 실패한다.** 글로브는 아무것도 못 맞춰도 실패다.
+    도커 데몬 없이도 이 정도는 잡을 수 있어야 한다."""
+    import re
+
+    root = Path(__file__).resolve().parents[2]
+    df = (root / "ai_server" / "Dockerfile").read_text(encoding="utf-8")
+    bad = []
+    for line in df.splitlines():
+        line = line.strip()
+        if not line.startswith("COPY ") or "--from=" in line:
+            continue
+        parts = [p for p in line.split()[1:] if not p.startswith("--")]
+        for src in parts[:-1]:                      # 마지막은 목적지
+            if "*" in src:
+                if not list(root.glob(src)):
+                    bad.append(src)
+            elif not (root / src).exists():
+                bad.append(src)
+    assert not bad, f"Dockerfile COPY 원본이 없다: {bad}"
+
+
+def test_image_ships_the_batch_entrypoints():
+    """`python -m ai_server.tools.run_labeler` 가 이미지 안에서 돌아야 한다."""
+    root = Path(__file__).resolve().parents[2]
+    df = (root / "ai_server" / "Dockerfile").read_text(encoding="utf-8")
+    assert "ai_server/tools" in df
