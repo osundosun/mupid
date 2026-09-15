@@ -160,6 +160,44 @@ class BuildTest(unittest.TestCase):
                             self.assertIn("name", entry)
                             self.assertEqual(set(), set(entry) - allowed)
 
+    def test_a_pod_that_binds_its_own_dns_name_can_resolve_it(self):
+        """A headless Service publishes only ready endpoints by default. A pod
+        that binds to its own DNS name at startup then waits for a record that
+        waits for the pod, and crashes with `no such host` forever."""
+        docs = build("cutover")
+        for doc in docs:
+            if doc.get("kind") != "StatefulSet":
+                continue
+            args = " ".join(
+                str(a) for c in containers(doc) for a in (c.get("args") or [])
+            )
+            if "$(POD_NAME)." not in args:
+                continue
+            governing = doc["spec"]["serviceName"]
+            with self.subTest(statefulset=doc["metadata"]["name"]):
+                service = by_kind(docs, "Service", governing)
+                # Headless is spelled with the literal string "None", not YAML
+                # null, so this is a string comparison.
+                self.assertEqual("None", service["spec"].get("clusterIP"),
+                                 "self-addressing needs a headless Service")
+                self.assertTrue(service["spec"].get("publishNotReadyAddresses"))
+
+    def test_exec_probes_say_how_long_they_may_take(self):
+        """timeoutSeconds defaults to 1. Anything that starts a JVM or another
+        client process exceeds that every time, and the container never reports
+        ready no matter how healthy it is."""
+        for overlay in OVERLAYS:
+            for doc in build(overlay):
+                if doc.get("kind") not in ("Deployment", "StatefulSet"):
+                    continue
+                for container in containers(doc):
+                    for kind in ("readinessProbe", "livenessProbe", "startupProbe"):
+                        probe = container.get(kind)
+                        if not probe or "exec" not in probe:
+                            continue
+                        with self.subTest(name=doc["metadata"]["name"], probe=kind):
+                            self.assertIn("timeoutSeconds", probe)
+
     def test_every_overlay_builds(self):
         for overlay in OVERLAYS:
             with self.subTest(overlay=overlay):

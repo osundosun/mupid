@@ -40,11 +40,13 @@ spec:
           volumeMounts: [{name: data, mountPath: /var/lib/mysql}]
           readinessProbe:
             exec: {command: [bash, -c, 'mysqladmin ping -h 127.0.0.1 -p"$MYSQL_ROOT_PASSWORD" --silent']}
+            timeoutSeconds: 5
             initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 15
           livenessProbe:
             exec: {command: [bash, -c, 'mysqladmin ping -h 127.0.0.1 -p"$MYSQL_ROOT_PASSWORD" --silent']}
+            timeoutSeconds: 5
             initialDelaySeconds: 120
             periodSeconds: 20
             failureThreshold: 6

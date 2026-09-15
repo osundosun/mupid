@@ -106,11 +106,13 @@ spec:
             # users.d/default-user.xml, so the probe uses it from inside the pod
             # exactly as the Compose healthcheck did.
             exec: {command: [clickhouse-client, --host, 127.0.0.1, --query, 'SELECT 1']}
+            timeoutSeconds: 10
             initialDelaySeconds: 20
             periodSeconds: 15
             failureThreshold: 10
           livenessProbe:
             exec: {command: [clickhouse-client, --host, 127.0.0.1, --query, 'SELECT 1']}
+            timeoutSeconds: 10
             initialDelaySeconds: 120
             periodSeconds: 30
             failureThreshold: 5

@@ -27,6 +27,7 @@ spec:
           volumeMounts: [{name: data, mountPath: /data}]
           readinessProbe:
             exec: {command: [redis-cli, ping]}
+            timeoutSeconds: 3
             periodSeconds: 10
             failureThreshold: 10
   volumeClaimTemplates:

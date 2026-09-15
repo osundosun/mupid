@@ -46,9 +46,14 @@ spec:
           image: chrislusf/seaweedfs@sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62
           args:
             - filer
-            # The address it advertises to itself and to the S3 gateway. The
-            # Service above makes the name resolve, so it is unchanged.
+            # -ip is what this filer advertises to the master and the S3
+            # gateway; the Service above makes the name resolve. It is NOT a
+            # bind address: the name resolves to the Service ClusterIP, which
+            # no pod can bind, so the listener is opened separately on 0.0.0.0.
+            # Under Compose these were the same thing because the container
+            # name resolved to the container's own address.
             - -ip=storage
+            - -ip.bind=0.0.0.0
             - -master=storage-master:9333
             - -s3
             - -s3.port=8333
@@ -117,7 +122,9 @@ spec:
           image: chrislusf/seaweedfs@sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62
           args:
             - master
+            # Advertised, not bound — see the filer above.
             - -ip=storage-master
+            - -ip.bind=0.0.0.0
             - -mdir=/data
             - -volumeSizeLimitMB=1024
             # 001 = one replica on a different server in the same rack. This is
@@ -165,6 +172,10 @@ kind: Service
 metadata: {name: storage-volume, namespace: mupid}
 spec:
   clusterIP: None
+  # Without this a headless Service only publishes ready endpoints, and the
+  # volume server cannot become ready because it binds to its own DNS name at
+  # startup: the pod waits for a record that waits for the pod.
+  publishNotReadyAddresses: true
   selector: {app: storage-volume}
   ports:
     - {name: http, port: 8080, targetPort: 8080}
