@@ -549,6 +549,37 @@ MUPID_API_REFRESH_TOKEN=     # ROLE_SYSTEM 계정의 리프레시 토큰
 테스트가 지킨다 (`test_every_spring_code_reaches_the_catalog`). 카탈로그 어휘가 바뀌면
 이 테스트가 먼저 깨진다.
 
+### AI 가 구간 표를 넣을 때 (선행 조건)
+
+**이것이 없으면 행동 데이터가 통째로 버려진다.** `mv_user_section_signals` 는
+`dictGet(dict_track_sections, ...)` 로 재생 위치가 어느 구간인지 찾고, 못 찾으면 그
+이벤트를 버린다. 2026-09-15 에 실제로 재현했다 — 구간 표가 비어 있으니 좋아요를 눌러도
+`user_section_signals` 에 한 줄도 안 남았고, 구간 1건을 넣자 바로 통과했다.
+
+읽기 전용 원칙(Q8)의 유일한 예외다. `track_sections` 는 **AI 만이 만들 수 있는 분석
+결과**이고 Spring 을 거칠 이유가 없다. 행동 데이터는 여전히 읽기만 한다.
+
+```
+moments.parquet ──(id_map)──> track_sections ──> dict_track_sections
+                                                       ↑
+                           listen_events ──> mv_user_section_signals
+```
+
+도구는 `ai_server/tools/push_sections.py` 다.
+
+| 컬럼 | 값 |
+|---|---|
+| `track_id` | **MySQL 이 발급한 숫자.** `id_map` 에 없는 곡은 넣지 않고 센다 |
+| `section_uid` | 문자열 구간 ID(`T001001#3`). MySQL `external_id` 와 같은 값이다 |
+| `analysis_version` | **`v1` 고정.** `v_track_sections_current` 가 이 값만 고른다 |
+| `fn` | MySQL `section_label` ENUM 어휘만. 밖의 라벨은 제외하고 센다 |
+| `peak_ms` | 구간 안 최대 에너지 지점을 아직 산출하지 않아 **시작점을 넣는다** |
+
+넣은 뒤 **두 노드 모두** 딕셔너리를 갱신해야 한다(`ON CLUSTER mupid_all`). 한쪽만 하면
+그 샤드로 간 조회가 구간을 못 찾는다 — 초기화 직후 ch-02 만 `NOT_LOADED` 였다.
+갱신을 건너뛰어도 `LIFETIME(300~600초)` 로 언젠가는 반영되지만, 그때까지 들어온 이벤트는
+버려진다.
+
 ### AI 배치가 행동 데이터를 읽을 때 (Q8)
 
 AI 정기 배치가 **ClickHouse 를 읽기 전용으로 직접 조회한다.** Spring 이 밀어 주거나 Kafka 를

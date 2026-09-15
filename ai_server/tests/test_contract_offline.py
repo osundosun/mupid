@@ -1278,3 +1278,79 @@ def test_raw_answer_is_kept_for_tracing():
     assert json.loads(row["genre_raw"]) == ["Jazz"]
     assert json.loads(row["genre"]) == ["Contemporary Jazz", "Jazzy Hip-Hop"]
     assert "relaxing" in json.loads(row["mood"])
+
+
+# ------------------------------------------------------------------ 구간 적재
+class _FakeMap:
+    loaded = True
+
+    def music_id(self, s):
+        if s == "T000999":
+            raise KeyError("매핑 없음")
+        return {"T001001": 1001, "T001002": 1002}[s]
+
+
+def _moments():
+    import pandas as pd
+
+    return pd.DataFrame([
+        {"track_id": "T001001", "moment_id": "T001001#4", "section_idx": 4,
+         "section_label": "verse", "start_sec": 30.0, "end_sec": 60.0},
+        {"track_id": "T001002", "moment_id": "T001002#9", "section_idx": 9,
+         "section_label": "weird", "start_sec": 80.0, "end_sec": 90.0},
+        {"track_id": "T000999", "moment_id": "T000999#1", "section_idx": 1,
+         "section_label": "chorus", "start_sec": 10.0, "end_sec": 20.0},
+        {"track_id": "T001001", "moment_id": "T001001#5", "section_idx": 5,
+         "section_label": "chorus", "start_sec": 70.0, "end_sec": 70.0},
+    ])
+
+
+def test_push_sections_never_invents_a_numeric_id():
+    """매핑에 없는 곡을 넣으면 실제 DB 와 어긋난 순간 엉뚱한 곡을 추천한다."""
+    from ai_server.tools import push_sections as ps
+
+    rows, stat = ps.build_rows(_moments(), _FakeMap(), "v1")
+    assert stat["unmapped_track"] == 1
+    assert "T000999" in stat["unmapped_sample"]
+    assert all(r["track_id"] in (1001, 1002) for r in rows)
+
+
+def test_push_sections_drops_labels_outside_the_erd_enum():
+    """한쪽에만 있는 라벨을 넣으면 두 저장소를 맞출 때 어느 쪽이 맞는지 알 수 없다."""
+    from ai_server.tools import push_sections as ps
+
+    rows, stat = ps.build_rows(_moments(), _FakeMap(), "v1")
+    assert stat["unknown_label"] == 1
+    assert all(r["fn"] in ps.SECTION_ENUM for r in rows)
+
+
+def test_push_sections_drops_empty_ranges():
+    """RANGE_HASHED 딕셔너리는 start==end 를 어느 쪽으로도 못 고른다."""
+    from ai_server.tools import push_sections as ps
+
+    rows, stat = ps.build_rows(_moments(), _FakeMap(), "v1")
+    assert stat["bad_range"] == 1
+    assert all(r["end_ms"] > r["start_ms"] for r in rows)
+
+
+def test_push_sections_uses_the_version_the_dictionary_reads():
+    """v_track_sections_current 가 'v1' 만 고른다. 다른 값은 표에는 들어가지만
+    구간 판정에 전혀 쓰이지 않는다."""
+    from ai_server.tools import push_sections as ps
+
+    assert ps.DICT_VERSION == "v1"
+    rows, _ = ps.build_rows(_moments(), _FakeMap(), ps.DICT_VERSION)
+    assert {r["analysis_version"] for r in rows} == {"v1"}
+
+
+def test_push_sections_accepts_the_jdbc_url_shape(monkeypatch):
+    """.env 가 jdbc: 형태로 적혀 있다. 그대로 넣어도 붙어야 한다."""
+    from ai_server.tools import push_sections as ps
+
+    monkeypatch.setenv("MUPID_CLICKHOUSE_URL", "jdbc:clickhouse://localhost:18123/default")
+    assert ps._http_base() == "http://localhost:18123"
+    monkeypatch.setenv("MUPID_CLICKHOUSE_URL", "http://ch:8123")
+    assert ps._http_base() == "http://ch:8123"
+    monkeypatch.delenv("MUPID_CLICKHOUSE_URL")
+    with pytest.raises(SystemExit):
+        ps._http_base()
