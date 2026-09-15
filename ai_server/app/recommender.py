@@ -28,7 +28,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
-from . import paths
+from . import metrics, paths
 
 warnings.filterwarnings("ignore")
 
@@ -1399,7 +1399,9 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         if len(C):
             query_source = "onboarding"
     zu = model_user_vec(user)
+    _t_beh = time.perf_counter()
     beh = user_behavior(user)
+    metrics.observe_behavior(time.perf_counter() - _t_beh)
     # 하드 필터 = 현재 목록/세션 재생곡 + 활성 DISLIKE
     # 최근 4시간 재생곡은 **제외하지 않는다** — 감점만 주고 4시간에 걸쳐 복구한다.
     # 통째로 빼면 많이 들은 사용자일수록 후보가 말라 추천이 빈약해진다.

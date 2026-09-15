@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 from fastapi import APIRouter, FastAPI, Request
@@ -18,7 +19,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
-from . import ids, paths
+from . import ids, metrics, paths
 
 PREFIX = "/internal"
 MODEL_VERSION = "mupid-stage1-v1"       # /feedback 이 이미 내보내는 값과 같게 둔다
@@ -232,6 +233,7 @@ def to_response(rec_id: int, out: dict, limit: int,
     """`recommend()` 결과를 공통 DTO 로 옮긴다. 순서·점수는 건드리지 않는다."""
     im = ids.id_map()
     query_source = str(out.get("diagnostics", {}).get("query_source", ""))
+    metrics.observe_query_source(query_source)
     unknown_labels: list[str] = []
     items: list[RecommendationItem] = []
     for r in out.get("results", []):
@@ -248,6 +250,7 @@ def to_response(rec_id: int, out: dict, limit: int,
             unknown_labels.append(label or "(빈값)")
             continue
         code = _reason_code(r, has_query, query_source)
+        metrics.observe_reason(code)
         items.append(RecommendationItem(
             music_id=mid, music_section_id=sid,
             start_time_ms=s_ms, end_time_ms=e_ms,
@@ -481,6 +484,24 @@ def similar(req: SimilarRequest) -> SimilarResponse:
                            embedding_version=EMBEDDING_VERSION)
 
 
+@router.get("/metrics", summary="운영 지표 (프로세스 내 카운터)")
+def metrics_view() -> dict:
+    """재시작하면 0 이다. 장기 추세는 수집기가 주기적으로 읽어 쌓는다.
+
+    `/internal/ready` 상태도 함께 싣는다 — 지표만 보고 "왜 실패율이 1.0 인가" 를
+    판단하려면 준비 여부가 같은 화면에 있어야 한다.
+    """
+    snap = metrics.snapshot()
+    try:
+        st = id_map_status()
+        snap["ready"] = {"ok": bool(st.get("ready")),
+                         "tracks_unmapped": st.get("tracks_unmapped"),
+                         "sections_unmapped": st.get("sections_unmapped")}
+    except Exception as e:                       # 색인 미적재 등
+        snap["ready"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    return snap
+
+
 def _pool_keys():
     pool = _svc().CAT.pool
     return (set(pool.track_id.astype(str)), set(pool.moment_id.astype(str)))
@@ -528,6 +549,19 @@ def install(app: FastAPI, service_module=None) -> None:
     if service_module is not None:
         _SVC_MOD = service_module
     app.include_router(router)
+
+    @app.middleware("http")
+    async def _observe(request: Request, call_next):
+        if not request.url.path.startswith(PREFIX):
+            return await call_next(request)
+        t0 = time.perf_counter()
+        response = await call_next(request)
+        # 오류 코드는 예외 처리기가 본문에 실어 둔 것을 상태 코드로 갈음한다.
+        # 본문을 여기서 읽으면 스트리밍 응답을 소비해 버린다.
+        code = None if response.status_code < 400 else f"HTTP_{response.status_code}"
+        metrics.observe_request(request.url.path, time.perf_counter() - t0, code)
+        return response
+
     prev = app.exception_handlers.get(RequestValidationError)
 
     @app.exception_handler(ids.MappingError)

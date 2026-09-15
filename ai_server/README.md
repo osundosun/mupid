@@ -89,6 +89,7 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 | GET | `/health` | 프로세스 생존 |
 | GET | `/internal/ready` | 요청을 받을 수 있는가 |
 | GET | `/internal/facets` | QueryPlan 에 쓸 수 있는 태그 어휘 |
+| GET | `/internal/metrics` | 운영 지표 (프로세스 내 카운터) |
 | POST | `/internal/recommendations/daily` | 오늘의 추천 |
 | POST | `/internal/recommendations/next` | 이어 듣기 |
 | POST | `/internal/recommendations/search` | 자연어 검색 |
@@ -166,6 +167,23 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 | `INTERNAL_ERROR` | 500 | 그 밖. 재시도 대상 |
 
 읽기 타임아웃 **5초**, 재시도는 `503`·`500`·타임아웃에만 1회. `400`·`404` 는 재시도하지 않는다.
+
+### `/internal/metrics`
+
+| 지표 | 보는 이유 |
+|---|---|
+| `cold_start_rate` | 온보딩·라벨 배치가 도는지. **이 값이 높으면 개인화가 꺼진 것이다** |
+| `query_source` | 위 비율의 원천 (`labels` / `onboarding` / `none`) |
+| `reason_codes` | 사유 분포. 한 코드로 쏠리면 게이트나 임계값을 의심한다 |
+| `latency_seconds` | 경로별 p50·p95·max |
+| `behavior_lookup_seconds` | 행동 로그 조회 시간. 개인화 사용자가 느린 원인을 분리한다 |
+| `errors` | 코드별 건수와 실패율 |
+| `ready` | `/internal/ready` 상태. 실패율만 보고는 원인을 못 가른다 |
+
+**프로세스가 살아 있는 동안만 쌓인다.** 재시작하면 0 이라 `started_at`·`uptime_seconds` 를
+함께 내보낸다. 장기 추세는 수집기가 주기적으로 읽어 쌓아야 한다.
+
+지연은 평균을 내보내지 않는다 — 느린 요청 몇 건이 평균에 묻혀 괜찮아 보이는 그래프가 된다.
 
 ### `/internal/similar`
 

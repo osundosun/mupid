@@ -629,3 +629,63 @@ def test_similar_rejects_user_id(similar_client):
     c = similar_client([_srow("B", 1)])
     r = c.post("/internal/similar", json={"music_section_id": 10, "user_id": 1})
     assert r.status_code == 400
+
+
+# ------------------------------------------------------------------ 운영 지표
+@pytest.fixture
+def fresh_metrics():
+    from ai_server.app import metrics
+
+    metrics.reset()
+    yield metrics
+    metrics.reset()
+
+
+def test_cold_start_rate_counts_query_source(fresh_metrics):
+    for src in ("labels", "labels", "onboarding", "none"):
+        fresh_metrics.observe_query_source(src)
+    snap = fresh_metrics.snapshot()
+    assert snap["query_source"] == {"labels": 2, "onboarding": 1, "none": 1}
+    assert snap["cold_start_rate"] == 0.25
+
+
+def test_onboarding_does_not_inflate_cold_start(fresh_metrics):
+    """온보딩으로 뽑은 추천은 콜드스타트가 아니다. 섞이면 지표가 배치 장애처럼 보인다."""
+    fresh_metrics.observe_query_source("onboarding")
+    assert fresh_metrics.snapshot()["cold_start_rate"] == 0.0
+
+
+def test_latency_uses_percentiles_not_mean(fresh_metrics):
+    for x in [0.01] * 99 + [5.0]:
+        fresh_metrics.observe_request("/internal/recommendations/daily", x)
+    blk = fresh_metrics.snapshot()["latency_seconds"]["/internal/recommendations/daily"]
+    assert blk["p50"] == 0.01 and blk["max"] == 5.0
+    assert blk["p95"] is not None
+    assert "mean" not in blk, "평균은 느린 요청을 묻어 버린다"
+
+
+def test_error_rate_and_codes(fresh_metrics):
+    fresh_metrics.observe_request("/internal/similar", 0.1)
+    fresh_metrics.observe_request("/internal/similar", 0.1, "HTTP_404")
+    snap = fresh_metrics.snapshot()
+    assert snap["errors"]["by_code"] == {"HTTP_404": 1}
+    assert snap["errors"]["rate"] == 0.5
+
+
+def test_metrics_endpoint_includes_ready(similar_client, fresh_metrics):
+    c = similar_client([_srow("B", 1)])
+    c.post("/internal/similar", json={"music_section_id": 10})
+    body = c.get("/internal/metrics").json()
+    assert body["requests"]["total"] >= 1
+    assert "/internal/similar" in body["requests"]["by_path"]
+    assert "ready" in body, "실패율만 보고는 원인을 못 가른다"
+    assert body["uptime_seconds"] >= 0
+
+
+def test_metrics_snapshot_is_json_safe(fresh_metrics):
+    import json
+
+    fresh_metrics.observe_request("/internal/recommendations/next", 0.2)
+    fresh_metrics.observe_reason("COLD_START")
+    fresh_metrics.observe_behavior(1.5)
+    json.dumps(fresh_metrics.snapshot())
