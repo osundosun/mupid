@@ -312,8 +312,16 @@ pytest 11건 전부 통과.
 5. 공개 API 에서 `snake_case` → `camelCase` 변환
 
 Spring 은 컨테이너로 돈다. 이 서비스를 호스트에서 직접 실행하면 컨테이너가 닿도록
-`extra_hosts` 와 `MUPID_AI_BASE_URL` 을 맞춰야 한다. **nginx 에 노출하지 않는다** —
-`/internal` 은 Spring 만 호출하는 전제다.
+`extra_hosts` 와 `MUPID_RECOMMENDER_BASE_URL` 을 맞춰야 한다. **nginx 에 노출하지 않는다**
+— `/internal` 은 Spring 만 호출하는 전제다.
+
+> `MUPID_AI_BASE_URL` 이 아니다. 그 이름은 Spring 에서 이미 **LLM 게이트웨이**가 쓰고
+> 있어(`api` 의 `ai.base-url`), 여기에 이 서비스 주소를 넣으면 **대화 요청이 추천 서버로
+> 나간다.**
+
+Spring 은 자연어 원문 대신 `query_plan` 을 보낸다. 대화 모델이 `/internal/facets` 의 어휘로
+조건을 뽑기 때문에 **자연어 해석기를 따로 세우지 않아도** 조건이 걸린다. 배경은
+`api/knowledge/decision/0019-query-plan-instead-of-nl-interpreter.md` 를 본다.
 
 네트워크 격리가 유일한 방어선이면 설정 실수 한 번에 그대로 열린다. `MUPID_AI_INTERNAL_TOKEN`
 을 넣으면 `X-Internal-Token` 헤더를 검사한다. **양쪽을 동시에 설정해야 한다** — 한쪽만
