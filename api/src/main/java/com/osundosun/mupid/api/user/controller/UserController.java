@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.osundosun.mupid.api.auth.provider.JwtProvider;
 import com.osundosun.mupid.api.common.annotation.AdminRole;
 import com.osundosun.mupid.api.common.response.BaseResponse;
+import com.osundosun.mupid.api.onboarding.service.OnboardingService;
 import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.dto.SystemUserCreateResult;
 import com.osundosun.mupid.api.user.request.SystemUserCreateRequest;
@@ -34,6 +35,12 @@ public class UserController {
     private final UserService userService;
     private final UserImageService userImageService;
     private final JwtProvider jwtProvider;
+    /*
+     * 온보딩 완료 여부를 실어 주려고 컨트롤러에서 직접 부른다. `UserServiceImpl`
+     * 에 넣으면 OnboardingServiceImpl → UserService → OnboardingService 로
+     * 순환 참조가 된다.
+     */
+    private final OnboardingService onboardingService;
     
     @PostMapping
     public ResponseEntity<BaseResponse<Void>> createUser(
@@ -82,7 +89,8 @@ public class UserController {
             user.getBirthYear(), /* 출생 연도 */
             user.getGender(), /* 성별 */
             user.getRole(), /* 권한 */
-            user.getStatus() /* 유저 상태 */
+            user.getStatus(), /* 유저 상태 */
+            onboardingService.hasSubmitted(user.getUserId()) /* 온보딩 설문을 마쳤는가 */
         )));
     }
 

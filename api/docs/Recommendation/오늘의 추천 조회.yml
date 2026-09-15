@@ -49,6 +49,7 @@ examples:
                         "playable": true,
                         "play_count": 0,
                         "like_count": 0,
+                        "image_url": "/api/v1/storage/image/TRACK/...",
                         "artist": { "artist_id": 1, "name": "무피드 테스트 아티스트", "image_url": "/api/v1/storage/image/ARTIST/..." },
                         "album": { "album_id": 1, "title": "무피드 테스트 앨범", "image_url": "/api/v1/storage/image/ALBUM/...", "release_date": "2026-09-14T00:00:00" },
                         "genres": [],

@@ -171,7 +171,7 @@ docs:
     - `GET /api/v1/mail/verification/**`
     - `GET /api/actuator/**`
     - `GET /api/v1/onboarding/option` (온보딩 선택지 — 무드·장르 이름 목록)
-    - `GET /api/v1/storage/image/ALBUM/*`, `.../ARTIST/*` (앨범·아티스트 이미지)
+    - `GET /api/v1/storage/image/ALBUM/*`, `.../ARTIST/*`, `.../TRACK/*` (앨범·아티스트·곡 커버 이미지)
 
     스트리밍(`Stream` 폴더) 엔드포인트는 모두 액세스 토큰이 필요합니다.
 
@@ -206,7 +206,7 @@ docs:
     `errorDetails` (camelCase) 필드를 씁니다.
 
     `ROLE_SYSTEM` 계정은 `User / 시스템 계정 생성` 으로 관리자가 발급합니다.
-    `music_chunking` 배치가 이 계정의 리프레시 토큰으로 동작합니다.
+    `music_preprocessing` 배치가 이 계정의 리프레시 토큰으로 동작합니다.
 
     관리자 화면의 **HTML 골격**(`GET /api/admin`, `GET /api/admin/login`)만
     `permitAll` 입니다. 브라우저 주소창으로 들어오는 요청에는 `Authorization`
@@ -225,7 +225,7 @@ docs:
     - `status` (user) — `PENDING`, `ACTIVE`, `WITHDRAW`
     - `codec` — `AAC`, `OPUS`
     - `status` (stream) — `PENDING`, `IN_PROGRESS`, `DONE`, `FAILED`
-    - `category` (storage) — `PROFILE`, `ARTIST`, `ALBUM`, `STREAMING`
+    - `category` (storage) — `PROFILE`, `ARTIST`, `ALBUM`, `TRACK`, `STREAMING`
 
     가입 직후에는 `status = PENDING`(온보딩 필요), `role = ROLE_USER` 입니다.
 

@@ -29,6 +29,7 @@ from .api_client import MupidClient
 from .chunker import process_file
 from .config import ChunkConfig
 from .hasher import compute_sha256
+from .orphans import scan_streams
 from .registrar import Registrar, Registry, SidecarMissingError
 
 logger = logging.getLogger(__name__)
@@ -38,13 +39,18 @@ SUPPORTED_EXTENSIONS = frozenset(
 )
 
 
-def run_batch(config: ChunkConfig) -> dict:
+def run_batch(
+    config: ChunkConfig,
+    orphan_check: bool = True,
+    verify_chunks: bool = False,
+) -> dict:
     """배치 처리를 실행합니다.
 
     1. 입력 디렉토리에서 오디오 파일을 탐색
     2. SHA-256 해시 비교로 새 파일 / 변경 파일 식별
     3. ProcessPoolExecutor로 병렬 변환
     4. 삭제된 파일의 stale 로그 엔트리 정리
+    5. 서버에 쓰이지 않는 스트림·청크가 남아 있는지 훑어 **경고만** 남긴다
 
     Args:
         config: 변환 설정
@@ -99,6 +105,7 @@ def run_batch(config: ChunkConfig) -> dict:
             "registration_retried": retried,
             "registration_errors": len(registration_errors),
             "registration_error_details": registration_errors,
+            "orphans": _scan_orphans(config, registrar, orphan_check, verify_chunks),
         }
 
     # 변경 사유 로그 출력
@@ -202,6 +209,7 @@ def run_batch(config: ChunkConfig) -> dict:
         ),
         "error_details": errors,
         "registration_error_details": registration_errors,
+        "orphans": _scan_orphans(config, registrar, orphan_check, verify_chunks),
     }
 
     logger.info(
@@ -220,6 +228,28 @@ def run_batch(config: ChunkConfig) -> dict:
 # ─────────────────────────────────────────────────────────────
 # 등록
 # ─────────────────────────────────────────────────────────────
+
+
+def _scan_orphans(
+    config: ChunkConfig,
+    registrar: Registrar | None,
+    enabled: bool,
+    verify_chunks: bool,
+) -> dict | None:
+    """서버에 쓰이지 않는 스트림·청크가 남아 있는지 훑는다.
+
+    **읽기만 한다.** 찾은 것은 경고로 남기고 아무것도 지우지 않는다. 점검이
+    깨져도 배치 결과를 더럽히지 않는다 — 청킹과 등록은 이미 끝난 뒤다.
+    """
+    if not enabled or registrar is None:
+        return None
+    try:
+        return scan_streams(
+            registrar.client, registrar.registry, verify_chunks=verify_chunks
+        )
+    except Exception as e:  # noqa: BLE001 — 점검 실패가 배치 실패는 아니다
+        logger.warning("스트림 점검을 마치지 못했습니다: %s", e)
+        return None
 
 
 def build_registrar(config: ChunkConfig) -> Registrar | None:

@@ -253,8 +253,18 @@ class MupidClient:
         return body["data"]["album_id"]
 
     def add_music(
-        self, album_id: int, artist_id: int, title: str, release_date: str
+        self,
+        album_id: int,
+        artist_id: int,
+        title: str,
+        release_date: str,
+        image_file_id: int | None = None,
     ) -> int:
+        """곡을 등록한다.
+
+        `image_file_id` 는 곡 커버(`TRACK` 카테고리)다. 앨범·아티스트 이미지와
+        달리 **선택이다.** 비우면 화면이 앨범 커버를 대신 쓴다.
+        """
         body = self._request(
             "POST",
             "/api/v1/music",
@@ -263,9 +273,58 @@ class MupidClient:
                 "artist_id": artist_id,
                 "title": title,
                 "release_date": release_date,
+                "image_file_id": image_file_id,
             },
         )
         return body["data"]["music_id"]
+
+    def update_music(self, music_id: int, **fields) -> None:
+        """곡 정보를 고친다. 준 필드만 바뀐다 (`PATCH` 규약).
+
+        받는 이름: `album_id` · `artist_id` · `title` · `release_date` ·
+        `image_file_id`.
+        """
+        self._request("PATCH", f"/api/v1/music/{music_id}", json_body=fields)
+
+    def update_music_image(self, music_id: int, image_file_id: int) -> None:
+        """곡 커버를 갈아 끼운다."""
+        self.update_music(music_id, image_file_id=image_file_id)
+
+    def update_artist(self, artist_id: int, **fields) -> None:
+        """아티스트 정보를 고친다. 서버가 받는 것은 `name` 뿐이다."""
+        self._request("PATCH", f"/api/v1/artist/{artist_id}", json_body=fields)
+
+    def update_album(self, album_id: int, **fields) -> None:
+        """앨범 정보를 고친다. 받는 이름: `artist_id` · `title` · `release_date`."""
+        self._request("PATCH", f"/api/v1/album/{album_id}", json_body=fields)
+
+    def get_lyrics(self, music_id: int) -> list[dict]:
+        """곡에 붙어 있는 가사 줄 목록. 없으면 빈 목록이다 (404 가 아니다)."""
+        body = self._request("GET", f"/api/v1/music/{music_id}/lyric")
+        return body["data"]["lines"]
+
+    def replace_lyrics(self, music_id: int, lines: list[tuple[int, str]]) -> dict:
+        """한 곡의 가사를 통째로 갈아 끼운다. **기존 가사는 지워진다.**
+
+        줄마다 `POST /api/v1/lyric` 을 부르던 것을 곡마다 한 번으로 줄인다
+        (505곡 23,628줄 → 505번). 곡 하나가 서버에서 한 트랜잭션이라 중간에
+        끊겨도 반쯤 올라간 가사가 남지 않는다.
+
+        Args:
+            lines: `(time_ms, text)` 를 **보일 순서대로**. 서버는 정렬하지
+                않으므로, 같은 `time_ms` 인 줄들은 여기 순서대로 보인다
+
+        Returns:
+            `{ "music_id": …, "deleted": 지운 줄 수, "created": 넣은 줄 수 }`
+        """
+        body = self._request(
+            "PUT",
+            f"/api/v1/music/{music_id}/lyric",
+            json_body={
+                "lines": [{"text": text, "time_ms": time_ms} for time_ms, text in lines]
+            },
+        )
+        return body["data"]
 
     def create_stream(
         self,
@@ -324,6 +383,21 @@ class MupidClient:
             },
         )
         return body["data"]
+
+    def get_streams(self, music_id: int) -> list[dict]:
+        """곡에 달린 스트림 목록.
+
+        **완료(`DONE`)된 것만 돌려준다** — 서버가 그렇게 거른다
+        (`StreamServiceImpl.getStreamByMusicId`). 올리다 만 `PENDING` 스트림은
+        이 길로는 보이지 않는다.
+        """
+        body = self._request("GET", f"/api/v1/music/{music_id}/stream")
+        return body["data"]["streams"]
+
+    def get_chunks(self, stream_id: int) -> list[dict]:
+        """스트림에 기록된 청크 목록. 인덱스 오름차순."""
+        body = self._request("GET", f"/api/v1/chunk/{stream_id}")
+        return body["data"]["chunks"]
 
     def complete_stream(self, stream_id: int) -> None:
         self._request(

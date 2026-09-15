@@ -100,7 +100,7 @@ docs: |-
 
   `POST /api/v1/user/system` · **`ROLE_ADMIN` 전용**
 
-  배치 프로그램(`music_chunking`) 이 쓸 `ROLE_SYSTEM` 계정을 발급합니다.
+  배치 프로그램(`music_preprocessing`) 이 쓸 `ROLE_SYSTEM` 계정을 발급합니다.
   일반 회원가입(`POST /api/v1/user`) 과 달리 이메일 인증이 필요 없고,
   비밀번호를 받지 않고 서버가 32자 무작위로 만듭니다.
 
@@ -127,7 +127,7 @@ docs: |-
 
   배치는 **리프레시 토큰 하나만** 파일로 들고 있습니다.
 
-  1. `data.refresh_token` 을 `music_chunking/refresh_token.txt` 에 저장한다
+  1. `data.refresh_token` 을 `music_preprocessing/refresh_token.txt` 에 저장한다
   2. 배치는 액세스 토큰이 필요할 때 `Auth / 액세스 토큰 재발급`
      (`GET /api/v1/auth`) 을 쿠키로 호출해 받는다
   3. 서버가 **새 리프레시 토큰**을 `Set-Cookie` 로 주므로 배치가 파일을

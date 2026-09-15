@@ -570,47 +570,16 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
           <p>저장한 순간으로 나를 알아가요.</p>
         </div>
       </section>
-      <section className="report-card taste-card">
-        {m.demoSession && <NicknameForm key={m.nickname} model={m} />}
-        <Heading title="내가 좋아하는 장르" />
-        <div className="filter-chips wrap">
-          {genreOptions.map((genre) => (
-            <button
-              aria-pressed={m.genres.includes(genre)}
-              className={m.genres.includes(genre) ? 'selected' : ''}
-              key={genre}
-              onClick={() =>
-                m.updateGenres((list) =>
-                  list.includes(genre)
-                    ? list.filter((v) => v !== genre)
-                    : [...list, genre],
-                )
-              }
-            >
-              {genre}
-            </button>
-          ))}
-        </div>
-        <Heading title="내가 좋아하는 분위기" />
-        <div className="filter-chips wrap">
-          {moodOptions.map((mood) => (
-            <button
-              aria-pressed={m.moods.includes(mood)}
-              className={m.moods.includes(mood) ? 'selected' : ''}
-              key={mood}
-              onClick={() =>
-                m.updateMoods((list) =>
-                  list.includes(mood)
-                    ? list.filter((v) => v !== mood)
-                    : [...list, mood],
-                )
-              }
-            >
-              {mood}
-            </button>
-          ))}
-        </div>
-      </section>
+      {/*
+        * 선호 장르·분위기 칩을 지웠다. 온보딩은 계정당 한 번이고 서버가
+        * 재제출을 409 로 막으므로, 칩을 누를 때마다 실패했다. 닉네임은
+        * 온보딩과 무관하게 `PATCH /api/v1/user` 로 고친다.
+        */}
+      {m.demoSession && (
+        <section className="report-card taste-card">
+          <NicknameForm key={m.nickname} model={m} />
+        </section>
+      )}
       <Heading title="최근 감상 기록" />
       <section className="track-list profile-history" aria-label="최근 감상 기록 목록" tabIndex={0}>
         {m.history
@@ -623,9 +592,16 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
     </div>
   );
 }
+/**
+ * 온보딩 설문 화면.
+ *
+ * 닉네임은 묻지 않는다 — 회원가입에서 이미 받았고, 서버도 설문 본문에서
+ * 받지 않는다. 남은 것은 장르·분위기 두 단계다.
+ *
+ * **계정당 한 번뿐이다.** 마친 사람에게는 이 폼 대신 환영 화면이 뜬다.
+ */
 export function WelcomeView({ model: m }: { model: MupidModel }) {
   const [step, setStep] = useState(0);
-  const [name, setName] = useState(m.onboardingSubmittedAt ? m.nickname : '');
   const [selectedMoods, setSelectedMoods] = useState<string[]>([]);
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -645,7 +621,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
   }, []);
   return (
     <div className="welcome-page">
-      {(step > 0 || m.onboardingSubmittedAt) && <button
+      {(step > 0 || m.onboardingSubmitted) && <button
         className="icon-button welcome-back"
         aria-label={step > 0 ? '이전 단계로 돌아가기' : '홈으로 돌아가기'}
         disabled={busy}
@@ -654,7 +630,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
         <ChevronLeft />
       </button>}
       <Brand className="welcome-logo" />
-      {!m.demoSession || m.onboardingSubmittedAt ? (
+      {!m.demoSession || m.onboardingSubmitted ? (
         <div className="welcome-composition">
           <div className="welcome-copy">
           <p className="welcome-kicker">내 마음에 닿는 음악, 뮤피드</p>
@@ -675,35 +651,20 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
           onSubmit={async (e) => {
             e.preventDefault();
             if (busy) return;
-            if (step === 0) { if (name.trim()) { setError(''); setSelectedGenres([]); setStep(1); } return; }
-            if (step === 1) { if (selectedGenres.length) { setError(''); setSelectedMoods([]); setStep(2); } return; }
+            if (step === 0) { if (selectedGenres.length) { setError(''); setSelectedMoods([]); setStep(1); } return; }
             setBusy(true); setError('');
-            try { await m.completeOnboarding(name, selectedMoods, selectedGenres); }
+            try { await m.completeOnboarding(selectedMoods, selectedGenres); }
             catch (e) { setError(e instanceof Error && e.message ? e.message : '취향을 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.'); }
             finally { setBusy(false); }
           }}
         >
-          <output className="onboarding-step-count">{step + 1} / 3 · {['닉네임', '장르', '분위기'][step]}</output>
-          <h1>{['어떻게 불러드릴까요?', '어떤 장르를 좋아하세요?', '어떤 분위기를 좋아하세요?'][step]}</h1>
-          {step === 0 && <>
-          <label className="field-label" htmlFor="welcome-name">
-            닉네임
-          </label>
-          <input
-            id="welcome-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            minLength={2}
-            maxLength={10}
-            required
-            disabled={busy}
-          />
-          </>}
-          {step === 1 && <fieldset key="genres" className="onboarding-choice-group">
+          <output className="onboarding-step-count">{step + 1} / 2 · {['장르', '분위기'][step]}</output>
+          <h1>{['어떤 장르를 좋아하세요?', '어떤 분위기를 좋아하세요?'][step]}</h1>
+          {step === 0 && <fieldset key="genres" className="onboarding-choice-group">
             <legend>좋아하는 장르 <small>하나 이상 · 여러 개 선택 가능</small></legend>
             <div className="filter-chips wrap">{options.genres.map(genre => <button type="button" key={genre} disabled={busy} aria-pressed={selectedGenres.includes(genre)} className={selectedGenres.includes(genre) ? 'selected' : ''} onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}>{genre}</button>)}</div>
           </fieldset>}
-          {step === 2 && <fieldset key="moods" className="onboarding-choice-group">
+          {step === 1 && <fieldset key="moods" className="onboarding-choice-group">
           <legend>좋아하는 분위기 <small>하나 이상 · 여러 개 선택 가능</small></legend>
           <div className="filter-chips wrap">
             {options.moods.map((mood) => (
@@ -726,10 +687,10 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             ))}
           </div>
           </fieldset>}
-          <p>{step === 0 ? '뮤피드에서 사용할 닉네임을 입력해 주세요.' : step === 1 ? '좋아하는 장르를 하나 이상 선택해 주세요.' : '좋아하는 분위기를 하나 이상 선택해 주세요.'}</p>
+          <p>{step === 0 ? '좋아하는 장르를 하나 이상 선택해 주세요.' : '좋아하는 분위기를 하나 이상 선택해 주세요.'}</p>
           {error && <p role="alert">{error}</p>}
-          <button className="primary-button wide" disabled={busy || (step === 0 ? !name.trim() : step === 1 ? !selectedGenres.length : !selectedMoods.length)}>
-            {busy ? '취향 저장 중…' : step < 2 ? '다음' : '음악 둘러보기'} <ChevronRight />
+          <button className="primary-button wide" disabled={busy || (step === 0 ? !selectedGenres.length : !selectedMoods.length)}>
+            {busy ? '취향 저장 중…' : step < 1 ? '다음' : '음악 둘러보기'} <ChevronRight />
           </button>
         </form>
       )}

@@ -39,7 +39,8 @@ examples:
               "birth_year": 2000,
               "gender": "M",
               "role": "ROLE_USER",
-              "status": "PENDING"
+              "status": "PENDING",
+              "onboarding_submitted": true
             }
           }
   - name: 401 토큰 없음/만료
@@ -77,9 +78,19 @@ docs: |-
   | `data.gender` | string | `M` / `F` / `ETC` |
   | `data.role` | string | `ROLE_USER` / `ROLE_SYSTEM` / `ROLE_ADMIN` |
   | `data.status` | string | `PENDING` / `ACTIVE` / `WITHDRAW` |
+  | `data.onboarding_submitted` | boolean | 온보딩 설문을 마쳤는가 |
 
   `image_url` 은 `UserImageService.getProfileImageUrl` 이 조합한 값입니다.
   저장된 프로필 사진이 없는 사용자는 `null` 을 받습니다.
+
+  ## onboarding_submitted
+
+  거짓이면 화면이 온보딩 설문으로 보냅니다. 화면 진입 분기에 필요한 것이
+  **불리언 하나**라 여기에 실었습니다 — 제출한 내용을 본인이 되돌려 받는 API 는
+  없앴습니다. 내용을 읽는 것은 추천 서버뿐이고 `ROLE_SYSTEM` 전용
+  `GET /api/v1/user/{userId}/onboarding` 을 씁니다.
+
+  설문은 계정당 한 번이라 이 값은 한 번 참이 되면 거짓으로 돌아가지 않습니다.
 
   ## 오류
 

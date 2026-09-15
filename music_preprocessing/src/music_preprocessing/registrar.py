@@ -1,5 +1,12 @@
 """등록 단계 — 청킹 결과를 Mupid API 에 올린다.
 
+곡을 특정하는 길이 둘이다.
+
+1. **카탈로그** — `catalog` 명령이 이미 만든 곡이면 그 번호를 그대로 쓴다.
+   오디오 파일명(`T000567.mp3`)이 곧 카탈로그의 `track_id` 다. 이 길로 오면
+   아티스트·앨범·곡을 만들지 않고 스트림·청크만 붙인다.
+2. **사이드카** — 아래 설명. 카탈로그에 없는 곡을 청킹과 함께 등록할 때 쓴다.
+
 배치 서버에는 오디오 파일과 함께 이미지·곡 정보가 놓인다. 오디오 파일 하나당
 같은 이름의 사이드카 JSON 을 읽어 아티스트 → 앨범 → 음악 → 스트림 → 청크 순서로
 등록한다.
@@ -51,7 +58,7 @@ class RegistrationError(RuntimeError):
 
 
 class SidecarMissingError(RegistrationError):
-    """사이드카 JSON 이 없어 등록할 수 없다.
+    """사이드카 JSON 도 카탈로그 등록도 없어 곡을 특정할 수 없다.
 
     다시 시도해도 사람이 파일을 놓기 전까지는 결과가 같다. 그래서 배치는 이
     경우를 실패가 아니라 건너뜀으로 처리하고 종료 코드를 더럽히지 않는다.
@@ -98,19 +105,36 @@ def parse_bitrate_kbps(bitrate: str) -> int:
 class Registry:
     """등록 결과를 기억하는 JSON 파일.
 
+    사이드카 경로 (`batch` 명령이 쓴다)
+
     - `artists`: 아티스트명 → artist_id
     - `albums` : "artist_id|앨범명" → album_id
     - `tracks` : 오디오 파일 경로 → { music_id, stream_id, ... }
+
+    카탈로그 경로 (`catalog` · `covers` · `lyrics` 명령이 쓴다)
+
+    - `catalog.artists`: artist_key → { artist_id, image_file_id, cover_sha256 }
+    - `catalog.albums` : album_key  → { album_id, artist_id, image_file_id, … }
+    - `catalog.tracks` : track_id   → { music_id, album_id, artist_id, … }
+    - `catalog.lyrics` : track_id   → { music_id, line_count, sha256, … }
+
+    두 경로가 한 파일을 쓰는 이유는 **곡 번호를 나눠 가져야 하기 때문이다.**
+    카탈로그가 만든 곡을 청킹 쪽이 모르면 같은 곡을 한 번 더 만들어 고아 행이
+    쌓인다. `Registrar` 가 사이드카가 없을 때 `catalog.tracks` 를 먼저 본다.
     """
+
+    _CATALOG_SECTIONS = ("artists", "albums", "tracks", "lyrics")
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
-        self.data = {"artists": {}, "albums": {}, "tracks": {}}
+        self.data = {"artists": {}, "albums": {}, "tracks": {}, "catalog": {}}
         if self.path.exists():
             with open(self.path, encoding="utf-8") as f:
                 loaded = json.load(f)
             for key in self.data:
                 self.data[key] = loaded.get(key, {})
+        for section in self._CATALOG_SECTIONS:
+            self.data["catalog"].setdefault(section, {})
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,6 +161,25 @@ class Registry:
     def put_track(self, audio_path: Path, entry: dict) -> None:
         self.data["tracks"][str(audio_path)] = entry
 
+    # ── 카탈로그 (`catalog` · `covers` 명령) ──
+
+    def catalog(self, section: str) -> dict:
+        """`artists` · `albums` · `tracks` 중 하나를 통째로 돌려준다."""
+        if section not in self._CATALOG_SECTIONS:
+            raise KeyError(section)
+        return self.data["catalog"][section]
+
+    def catalog_entry(self, section: str, key: str) -> dict | None:
+        return self.catalog(section).get(key)
+
+    def put_catalog_entry(self, section: str, key: str, entry: dict) -> None:
+        self.catalog(section)[key] = entry
+
+    def catalog_music_id(self, track_id: str) -> int | None:
+        """카탈로그가 이미 만든 곡 번호. 청킹 등록이 이걸 먼저 본다."""
+        entry = self.catalog("tracks").get(track_id)
+        return entry.get("music_id") if entry else None
+
 
 # ─────────────────────────────────────────────────────────────
 # 등록
@@ -161,12 +204,6 @@ class Registrar:
         Returns:
             { "music_id": …, "stream_id": …, "chunk_count": … }
         """
-        sidecar = load_sidecar(audio_path)
-        if sidecar is None:
-            raise SidecarMissingError(
-                f"사이드카 JSON 이 없습니다: {audio_path.with_suffix('.json').name}"
-            )
-
         chunks = metadata.get("chunks")
         if not chunks:
             raise RegistrationError(
@@ -174,10 +211,28 @@ class Registrar:
             )
 
         previous = self.registry.track(audio_path) or {}
+        # `catalog` 명령이 먼저 곡을 만들어 두었으면 그 번호를 그대로 쓴다.
+        # 파일명(`T000567.mp3`)이 곧 카탈로그의 track_id 다. 이걸 보지 않으면
+        # 같은 곡이 한 번 더 만들어져 서버에 고아 행이 쌓인다.
+        catalog = self.registry.catalog_entry("tracks", audio_path.stem) or {}
+        sidecar = load_sidecar(audio_path)
 
-        artist_id = self._ensure_artist(audio_path, sidecar)
-        album_id = self._ensure_album(audio_path, sidecar, artist_id)
-        music_id = self._ensure_music(sidecar, previous, artist_id, album_id)
+        if sidecar is None and not catalog:
+            raise SidecarMissingError(
+                f"사이드카 JSON 도 카탈로그 등록도 없습니다: "
+                f"{audio_path.with_suffix('.json').name}"
+            )
+
+        if sidecar is None:
+            artist_id = catalog["artist_id"]
+            album_id = catalog["album_id"]
+            music_id = catalog["music_id"]
+        else:
+            artist_id = self._ensure_artist(audio_path, sidecar)
+            album_id = self._ensure_album(audio_path, sidecar, artist_id)
+            music_id = self._ensure_music(
+                sidecar, previous, catalog, artist_id, album_id
+            )
 
         # 곡 번호를 먼저 남긴다. 아래에서 실패하고 다음 배치가 다시 시도할 때
         # 이 값이 없으면 같은 곡이 또 만들어져 고아 행이 쌓인다.
@@ -298,11 +353,18 @@ class Registrar:
         return album_id
 
     def _ensure_music(
-        self, sidecar: dict, previous: dict, artist_id: int, album_id: int
+        self,
+        sidecar: dict,
+        previous: dict,
+        catalog: dict,
+        artist_id: int,
+        album_id: int,
     ) -> int:
         # 같은 파일을 다시 처리하는 경우 곡은 그대로 두고 스트림만 갈아끼운다.
         if previous.get("music_id"):
             return previous["music_id"]
+        if catalog.get("music_id"):
+            return int(catalog["music_id"])
         if sidecar.get("music_id"):
             return int(sidecar["music_id"])
 

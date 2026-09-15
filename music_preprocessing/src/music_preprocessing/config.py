@@ -25,6 +25,10 @@ class ChunkConfig:
         input_dir: 입력 디렉토리 경로
         output_dir: 출력 디렉토리 경로
         processed_log: 처리 완료 로그 파일 경로
+        metadata_dir: 곡별 메타데이터 JSON 디렉터리
+            (`catalog` · `covers` · `lyrics` 가 모두 이 디렉터리를 읽는다)
+        covers_dir: 곡별 커버 이미지 디렉터리 (`catalog` · `covers` 명령)
+        log_dir: 실행 로그를 남길 디렉터리. 실행마다 파일 하나가 생긴다
         api_base_url: Mupid API 루트. 비우면 등록 단계를 건너뛴다
         api_refresh_token_file: ROLE_SYSTEM 계정의 리프레시 토큰 파일
         api_registry_log: 등록 결과(아티스트·앨범·곡 번호) 기록 파일
@@ -52,6 +56,14 @@ class ChunkConfig:
     input_dir: str = "./input"
     output_dir: str = "./output"
     processed_log: str = "./processed.json"
+
+    # ── 카탈로그 (`catalog` · `covers` 명령) ──
+    # 수집 파이프라인이 만든 디렉터리를 그대로 읽는다. 파일 이름이 곧 track_id 다.
+    metadata_dir: str = "./metadata"
+    covers_dir: str = "./covers"
+
+    # ── 로그 ──
+    log_dir: str = "./logs"
 
     # ── API 등록 ──
     # api_base_url 이 비어 있으면 청킹만 하고 등록은 하지 않는다.
@@ -93,6 +105,9 @@ class ChunkConfig:
             "input_dir": self.input_dir,
             "output_dir": self.output_dir,
             "processed_log": self.processed_log,
+            "metadata_dir": self.metadata_dir,
+            "covers_dir": self.covers_dir,
+            "log_dir": self.log_dir,
             "api_base_url": self.api_base_url,
             "api_refresh_token_file": self.api_refresh_token_file,
             "api_registry_log": self.api_registry_log,

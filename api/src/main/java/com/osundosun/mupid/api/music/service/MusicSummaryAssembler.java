@@ -101,6 +101,7 @@ public class MusicSummaryAssembler {
                 stream != null,
                 music.getPlayCount(),
                 music.getLikeCount(),
+                StorageImageService.imageUrl(music.getImageFile()),
                 new MusicSummary.ArtistSummary(
                     artist.getArtistId(), artist.getName(), StorageImageService.imageUrl(artist.getImageFile())),
                 new MusicSummary.AlbumSummary(

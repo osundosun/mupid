@@ -8,7 +8,7 @@ const photoKey = 'mupid-profile-photo';
 const DEMO_SESSION_KEY = 'mupid.demo-session.v1';
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object';
 // 데모 곡이 없으므로 미리 좋아 둔 곡도, 들어 둔 기록도 없다.
-const defaults: Preferences = { onboardingSubmittedAt: null, nickname: '규원', moods: [], genres: [],
+const defaults: Preferences = { onboardingSubmitted: false, nickname: '규원', moods: [], genres: [],
   liked: [], ignored: [], history: [], moments: initialMoments, playlists: initialPlaylists,
   lastPlayedId: null };
 const unavailable = async (): Promise<never> => {
@@ -27,7 +27,10 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
       try {
         const saved: unknown = JSON.parse(storage.getItem(preferencesKey) || 'null');
         if (record(saved)) {
-          if (typeof saved.onboardingSubmittedAt === 'string' && Number.isFinite(Date.parse(saved.onboardingSubmittedAt))) preferences.onboardingSubmittedAt = saved.onboardingSubmittedAt;
+          // 예전에는 완료 시각(ISO 문자열)을 넣었다. 남아 있는 기기가 초기화되지
+          // 않도록 문자열이면 "마쳤다"로 읽는다.
+          if (typeof saved.onboardingSubmitted === 'boolean') preferences.onboardingSubmitted = saved.onboardingSubmitted;
+          else if (typeof saved.onboardingSubmittedAt === 'string' && Number.isFinite(Date.parse(saved.onboardingSubmittedAt))) preferences.onboardingSubmitted = true;
           if (typeof saved.nickname === 'string' && saved.nickname.trim()) preferences.nickname = saved.nickname.slice(0, 20);
           if (Array.isArray(saved.moods)) preferences.moods = saved.moods.filter((v: unknown) => typeof v === 'string');
           if (Array.isArray(saved.genres)) preferences.genres = [...new Set(saved.genres.filter((v: unknown): v is string => typeof v === 'string'))];
