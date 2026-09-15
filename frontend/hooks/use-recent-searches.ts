@@ -17,8 +17,10 @@
  *
  * <h2>삭제</h2>
  *
- * 항목마다 있는 삭제 버튼은 아직 **화면에서만** 지운다. 서버 API 는 별도
- * 작업이라 여기서 부르지 않는다. 다시 열면 지운 항목이 돌아온다.
+ * 한 줄 지우기와 전체 지우기 모두 **먼저 화면에서 지우고** 서버를 부른다.
+ * 지우기는 사용자가 결과를 이미 아는 동작이라, 왕복을 기다리는 동안 지워지지
+ * 않은 줄이 남아 있으면 버튼이 안 먹은 것처럼 보인다. 실패하면 되돌리고 그때
+ * 알린다.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -31,8 +33,10 @@ export type RecentSearchState = {
   loading: boolean;
   /** 화면에 보여 줄 오류 문구. 없으면 빈 문자열. */
   error: string;
-  /** 서버를 부르지 않고 그 자리에서 한 줄만 지운다. */
-  dismiss: (keyword: string) => void;
+  /** 한 줄 지우기. 그 말로 남은 기록이 서버에서도 사라진다. */
+  remove: (keyword: string) => void;
+  /** 전체 지우기. */
+  clear: () => void;
 };
 
 /**
@@ -84,11 +88,47 @@ export function useRecentSearches(active: boolean): RecentSearchState {
     };
   }, [active]);
 
-  const dismiss = useCallback((keyword: string) => {
-    // 서버에는 닿지 않는다. 삭제 API 는 별도 작업이다.
-    latest.current = latest.current.filter((item) => item.keyword !== keyword);
-    setItems(latest.current);
-  }, []);
+  /**
+   * 먼저 지우고 서버를 부른다. 실패하면 있던 자리로 되돌린다.
+   *
+   * `undo` 는 지우기 직전의 목록이다. 실패했을 때 남은 목록에 다시 끼워 넣는
+   * 대신 통째로 되돌리는 쪽이, 그 사이 다른 줄을 지웠더라도 순서가 안 꼬인다.
+   */
+  const erase = useCallback(
+    (next: RecentSearch[], call: () => Promise<void>, failure: string) => {
+      const undo = latest.current;
+      latest.current = next;
+      setItems(next);
+      setError('');
 
-  return { items, loading, error, dismiss };
+      void call().catch(() => {
+        latest.current = undo;
+        setItems(undo);
+        setError(failure);
+      });
+    },
+    [],
+  );
+
+  const remove = useCallback(
+    (keyword: string) =>
+      erase(
+        latest.current.filter((item) => item.keyword !== keyword),
+        () => api.history.removeRecentSearch(keyword),
+        '최근 검색어를 지우지 못했어요.',
+      ),
+    [erase],
+  );
+
+  const clear = useCallback(
+    () =>
+      erase(
+        [],
+        () => api.history.clearRecentSearches(),
+        '최근 검색어를 지우지 못했어요.',
+      ),
+    [erase],
+  );
+
+  return { items, loading, error, remove, clear };
 }
