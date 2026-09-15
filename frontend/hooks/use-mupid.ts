@@ -101,6 +101,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const previewEnd = useRef<number | null>(null);
   /** 종료를 처리한 곡. 한 곡의 종료로 두 번 넘어가지 않게 한다. */
   const endedFor = useRef<number | null>(null);
+  /** 마지막으로 알린 재생 오류. 같은 사정을 반복해서 띄우지 않는다. */
+  const notifiedError = useRef<string | null>(null);
   const playedInCycle = useRef<Set<number>>(new Set());
   const requestId = useRef(0);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -586,7 +588,16 @@ export function useMupid(bootstrap: Bootstrap) {
       // 버퍼를 기다리는 동안에도 사용자 입장에서는 '재생 중'이다.
       setPlaying(state.status === 'playing' || state.status === 'buffering');
       setTime(state.positionSec);
-      if (state.status === 'error' && state.error) setToast(state.error);
+      // 상태가 'error' 일 때만 알리면 안 된다. 회선이 끊겨 계속 재시도하는
+      // 동안에는 status 가 'buffering' 으로 남아 있어(그래야 돌아왔을 때
+      // 스스로 이어진다) 스피너만 돌고 이유가 보이지 않았다.
+      //
+      // 구독은 위치가 바뀔 때마다(200ms) 불리므로 **사정이 바뀐 순간에만**
+      // 띄운다. 매번 부르면 토스트가 3.2초마다 깜빡인다.
+      if (state.error && state.error !== notifiedError.current) {
+        setToast(state.error);
+      }
+      notifiedError.current = state.error;
 
       // 구간 미리듣기는 끝 지점에서 멈춘다. 곡이 끝난 것이 아니므로
       // 다음 곡으로 넘어가지 않는다.
