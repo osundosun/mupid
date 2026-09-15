@@ -41,6 +41,64 @@ from ai_server.app import paths, recommender
 from ai_server.app.log import log
 
 TIMEOUT = 10
+
+# ---------------------------------------------------------------- 어휘 변환
+# Spring 코드표는 사람이 고르는 8+8 개의 큰 덩어리고, AI 카탈로그는 태그에서 자란
+# 31/91 개의 잔 어휘다. **두 어휘는 한 글자도 겹치지 않는다**(2026-09-15 실측).
+# 변환 없이 넘기면 씨앗이 비고, 씨앗이 비면 조사 답변이 추천에 전혀 반영되지 않는다.
+#
+# mood 는 뜻으로 이어야 해서 표로 적는다. genre 는 대분류 → 세분류라 이름 포함으로
+# 자동 확장한다(`Rock` → `Alternative Rock`·`Pop Rock`·`Indie Rock` …).
+MOOD_MAP = {
+    "잔잔한": ["relaxing", "meditative", "slow", "background"],
+    "벅찬": ["epic", "uplifting", "inspiring", "motivational"],
+    "몽환적인": ["space", "deep", "drama"],
+    "신나는": ["energetic", "happy", "party", "positive"],
+    "집중되는": ["background", "corporate", "meditative"],
+    "감성적인": ["emotional", "melodic", "sad", "ballad"],
+    "강렬한": ["heavy", "action", "trailer", "dark"],
+    "설레는": ["love", "romantic", "summer"],
+}
+
+# 이름 포함으로는 못 잇는 것만 적는다.
+GENRE_EXTRA = {
+    "Electronic": ["House", "Downtempo", "Synthwave", "Tropical House", "Dubstep",
+                   "Drum n Bass", "Electro House", "Chillwave", "Nu-Disco", "Synth-pop"],
+    "Hip-hop": ["Cloud Rap", "Trap"],
+    "Indie": ["Folk"],
+}
+
+
+def map_mood(names: list[str]) -> list[str]:
+    out: list[str] = []
+    for n in names:
+        for v in MOOD_MAP.get(n, []):
+            if v not in out:
+                out.append(v)
+    return out
+
+
+def map_genre(names: list[str], catalog: list[str]) -> list[str]:
+    """대분류 이름이 세분류 안에 들어 있으면 같은 무리로 본다."""
+    out: list[str] = []
+    for n in names:
+        hit = [c for c in catalog if n.lower() in c.lower()]
+        hit += [c for c in GENRE_EXTRA.get(n, []) if c in catalog]
+        for v in hit:
+            if v not in out:
+                out.append(v)
+    return out
+
+
+def genre_catalog() -> list[str]:
+    """카탈로그가 없으면 변환을 건너뛴다 — 지어내지 않는다."""
+    try:
+        return [str(x["value"]) for x in recommender.catalog_facets().get("genre", [])]
+    except Exception as e:                       # 색인 없이 도는 경우
+        log(f"카탈로그를 읽지 못해 genre 변환을 건너뛴다 ({type(e).__name__})")
+        return []
+
+
 # `onboarding_seeds()` 가 읽는 축. 지금 채울 수 있는 것은 mood·genre 뿐이다.
 EMPTY_AXES = ("language", "vocal_type", "style", "tempo", "instrument",
               "energy", "section_label", "exclude_style")
@@ -76,14 +134,27 @@ def access_token() -> str:
     return tok
 
 
-def to_row(data: dict) -> dict | None:
-    """응답 한 건을 `onboarding.parquet` 한 줄로 옮긴다. 미제출이면 None."""
+def to_row(data: dict, genres: list[str] | None = None) -> dict | None:
+    """응답 한 건을 `onboarding.parquet` 한 줄로 옮긴다. 미제출이면 None.
+
+    `genres` 는 AI 카탈로그의 장르 어휘다. 주지 않으면 변환 없이 원문을 넣는다 —
+    그 경우 필터가 걸리지 않는다는 것을 알고 쓰는 것이다(테스트·점검용)."""
     if not data.get("submitted"):
         return None
     names = lambda key: [str(x["name"]) for x in (data.get(key) or []) if x.get("name")]
+    raw_mood, raw_genre = names("moods"), names("genres")
+    mood = map_mood(raw_mood) or []
+    genre = map_genre(raw_genre, genres) if genres else []
+    if raw_mood and not mood:
+        log(f"mood 변환 결과가 비었다 — MOOD_MAP 에 없는 값 {raw_mood}")
+    if genres and raw_genre and not genre:
+        log(f"genre 변환 결과가 비었다 — 카탈로그에 없는 값 {raw_genre}")
     row = {"user_ref": f"internal:{int(data['user_id'])}",
-           "mood": json.dumps(names("moods"), ensure_ascii=False),
-           "genre": json.dumps(names("genres"), ensure_ascii=False),
+           "mood": json.dumps(mood, ensure_ascii=False),
+           "genre": json.dumps(genre, ensure_ascii=False),
+           # 사람이 고른 원문. 변환이 어긋났을 때 되짚을 근거가 된다.
+           "mood_raw": json.dumps(raw_mood, ensure_ascii=False),
+           "genre_raw": json.dumps(raw_genre, ensure_ascii=False),
            "submitted_at": data.get("submitted_at") or ""}
     # 빈 축은 필터를 건너뛴다. 키 자체를 빼면 옛 행과 concat 할 때 NaN 이 된다.
     for k in EMPTY_AXES:
@@ -91,7 +162,7 @@ def to_row(data: dict) -> dict | None:
     return row
 
 
-def fetch_one(user_id: int, token: str) -> dict | None:
+def fetch_one(user_id: int, token: str, genres: list[str] | None = None) -> dict | None:
     try:
         body = _get(f"{_base()}/api/v1/user/{int(user_id)}/onboarding", token=token)
     except urllib.error.HTTPError as e:
@@ -99,13 +170,14 @@ def fetch_one(user_id: int, token: str) -> dict | None:
             log(f"없는 사용자 {user_id} — 매핑이 어긋났는지 본다")
             return None
         raise
-    return to_row(body.get("data") or {})
+    return to_row(body.get("data") or {}, genres)
 
 
 def fetch_many(user_ids: list[int], token: str) -> pd.DataFrame:
+    genres = genre_catalog()
     rows, skipped = [], 0
     for uid in user_ids:
-        r = fetch_one(uid, token)
+        r = fetch_one(uid, token, genres)
         if r is None:
             skipped += 1
             continue

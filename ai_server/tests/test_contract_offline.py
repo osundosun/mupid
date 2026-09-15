@@ -1178,13 +1178,17 @@ def _onb_body(user_id=42, submitted=True):
 
 
 def test_fetch_onboarding_maps_submitted_answer():
-    """제출한 사용자는 user_ref 와 두 축이 채워진 한 줄이 된다."""
+    """제출한 사용자는 user_ref 와 두 축이 채워진 한 줄이 된다.
+
+    저장되는 것은 **카탈로그 어휘로 옮긴 값**이다. Spring 의 한국어 분위기를 그대로
+    넣으면 AI 태그와 한 건도 맞지 않아 필터가 통째로 비어 버린다."""
     from ai_server.tools import fetch_onboarding as f
 
-    row = f.to_row(_onb_body()["data"])
+    row = f.to_row(_onb_body()["data"], ["Contemporary Jazz"])
     assert row["user_ref"] == "internal:42"
-    assert json.loads(row["mood"]) == ["잔잔한", "몽환적인"]
-    assert json.loads(row["genre"]) == ["Jazz"]
+    assert "relaxing" in json.loads(row["mood"])        # 잔잔한 →
+    assert "space" in json.loads(row["mood"])           # 몽환적인 →
+    assert json.loads(row["genre"]) == ["Contemporary Jazz"]
 
 
 def test_fetch_onboarding_skips_unsubmitted():
@@ -1234,3 +1238,43 @@ def test_fetch_onboarding_requires_credentials(monkeypatch):
     monkeypatch.delenv("MUPID_API_BASE_URL", raising=False)
     with pytest.raises(SystemExit):
         f._base()
+
+
+# ------------------------------------------------------------------ 어휘 변환
+_AI_GENRE = ["K-pop", "Ballad", "Alternative Rock", "Contemporary R&B", "Downtempo",
+             "House", "Pop Rock", "Indie Rock", "Synthwave", "J-pop", "Cloud Rap",
+             "Synth-pop", "Contemporary Jazz", "Jazzy Hip-Hop", "Neo-Classical",
+             "Hard Rock", "Trap", "Folk", "Indie Pop"]
+_SPRING_MOOD = ["잔잔한", "벅찬", "몽환적인", "신나는", "집중되는", "감성적인", "강렬한", "설레는"]
+_SPRING_GENRE = ["Electronic", "Indie", "R&B", "Rock", "Pop", "Hip-hop", "Jazz", "Classical"]
+
+
+def test_every_spring_code_reaches_the_catalog():
+    """Spring 코드표와 AI 어휘는 **한 건도 그대로 겹치지 않는다**(2026-09-15 실측).
+    변환이 하나라도 비면 그 답변은 추천에 전혀 반영되지 않는다."""
+    from ai_server.tools import fetch_onboarding as f
+
+    dead_mood = [m for m in _SPRING_MOOD if not f.map_mood([m])]
+    dead_genre = [g for g in _SPRING_GENRE if not f.map_genre([g], _AI_GENRE)]
+    assert not dead_mood, f"변환되지 않는 mood: {dead_mood}"
+    assert not dead_genre, f"변환되지 않는 genre: {dead_genre}"
+
+
+def test_mapped_values_exist_in_the_catalog():
+    """지어낸 값을 넣으면 필터가 아무것도 고르지 못한다."""
+    from ai_server.tools import fetch_onboarding as f
+
+    for g in _SPRING_GENRE:
+        for v in f.map_genre([g], _AI_GENRE):
+            assert v in _AI_GENRE, v
+
+
+def test_raw_answer_is_kept_for_tracing():
+    """변환이 어긋났을 때 되짚을 근거가 없으면 원인을 못 찾는다."""
+    from ai_server.tools import fetch_onboarding as f
+
+    row = f.to_row(_onb_body()["data"], _AI_GENRE)
+    assert json.loads(row["mood_raw"]) == ["잔잔한", "몽환적인"]
+    assert json.loads(row["genre_raw"]) == ["Jazz"]
+    assert json.loads(row["genre"]) == ["Contemporary Jazz", "Jazzy Hip-Hop"]
+    assert "relaxing" in json.loads(row["mood"])

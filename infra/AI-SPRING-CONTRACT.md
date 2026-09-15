@@ -527,9 +527,27 @@ MUPID_API_REFRESH_TOKEN=     # ROLE_SYSTEM 계정의 리프레시 토큰
 2. **단건 조회다.** 사용자 수만큼 두드려야 한다. 전체 백필이 필요해지면 벌크 조회를
    요청한다 — BE 쪽에서 별도 티켓으로 얹는 것을 열어 두었다.
 
-어휘가 맞는지는 아직 확인하지 못했다. Spring 은 코드표의 이름(`잔잔한`, `Jazz`)을 주고
-AI 의 facet 은 카탈로그 태그에서 만들어진다. **두 어휘가 다르면 씨앗이 비어 아무 필터도
-걸리지 않는다** — 실제 값을 받아 대조하는 것이 다음 차례다.
+**어휘는 한 건도 겹치지 않는다** (2026-09-15 실측).
+
+| 축 | Spring 코드표 | AI 카탈로그 | 그대로 넘겼을 때 일치 |
+|---|---|---|---|
+| mood | 8종 · 한국어 (`잔잔한`·`벅찬`…) | 31종 · 영문 태그 (`relaxing`·`epic`…) | **0 / 8** |
+| genre | 8종 · 대분류 (`Rock`·`Jazz`…) | 91종 · 세분류 (`Alternative Rock`·`Smooth Jazz`…) | **0 / 8** |
+
+변환 없이 넘기면 씨앗이 비고, 씨앗이 비면 **연결은 되는데 개인화가 0 이 된다.** 그래서
+`fetch_onboarding.py` 가 옮겨 담는다.
+
+- **mood** 는 뜻으로 이어야 해서 `MOOD_MAP` 표로 적는다 (`잔잔한` → relaxing·meditative·
+  slow·background).
+- **genre** 는 대분류 → 세분류라 이름 포함으로 자동 확장한다 (`Rock` → Alternative Rock·
+  Pop Rock·Indie Rock·Hard Rock). 이름으로 못 잇는 것만 `GENRE_EXTRA` 에 적는다
+  (`Electronic` → House·Downtempo·Synthwave…).
+- 사람이 고른 **원문을 `mood_raw`·`genre_raw` 에 함께 남긴다.** 변환이 어긋났을 때
+  되짚을 근거가 없으면 원인을 못 찾는다.
+
+변환표가 카탈로그와 어긋나면 그 답변은 조용히 사라진다. 그래서 **8종이 전부 비지 않는지**
+테스트가 지킨다 (`test_every_spring_code_reaches_the_catalog`). 카탈로그 어휘가 바뀌면
+이 테스트가 먼저 깨진다.
 
 ### AI 배치가 행동 데이터를 읽을 때 (Q8)
 
@@ -625,7 +643,7 @@ MUPID_JAMENDO_CLIENT_ID=       # Jamendo 를 다시 수집할 때만 필요
 | 5 | ~~AI 가 MySQL 을 직접 읽을지~~ → **ClickHouse 를 읽기 전용 직접 조회** (Q8) |
 | 6 | ~~FastAPI 인증 방식~~ → **공유 비밀 헤더 구현 완료** (아래 참조) |
 | 7 | ClickHouse 조회·학습 실행을 API 로 둘지 배치 규격으로 둘지 |
-| 8 | ~~온보딩 데이터 전달 방식~~ → **`GET /api/v1/user/{userId}/onboarding` 로 확정.** 남은 것은 어휘 대조와 벌크 조회 여부 |
+| 8 | ~~온보딩 데이터 전달 방식~~ → **`GET /api/v1/user/{userId}/onboarding` 로 확정.** 어휘 대조까지 끝났다. 남은 것은 벌크 조회 여부 |
 | 9 | 데일리 추천 호출·DB 저장 API |
 | 10 | 유사 구간·자동재생 API 연결 |
 | 11 | 실제 DB 의 ERD·JPA 컬럼 통일 (Q1·Q2 확정 대기) |
