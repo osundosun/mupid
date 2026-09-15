@@ -120,6 +120,9 @@ def health() -> dict:
         "artifact_dir": str(recommender.ROOT),
         "paths": paths.check(),
         "catalog_loaded": _STATE["loaded"],
+        # torch 판인지 NumPy 판인지. 이미지에서 torch 를 걷어낸 뒤 실제로 어느 쪽이
+        # 돌고 있는지 응답으로 확인할 수 있어야 한다.
+        "model_backend": getattr(recommender.CAT, "model_backend", None),
         "load_seconds": _STATE["load_seconds"],
         "error": _STATE["error"],
         "catalog": ({"tracks": int(cat.pool.track_id.nunique()),

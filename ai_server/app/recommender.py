@@ -28,7 +28,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
-from . import metrics, paths
+from . import metrics, paths, stage1_np
 
 warnings.filterwarnings("ignore")
 
@@ -156,9 +156,34 @@ class Catalog:
             self.clap_emb = np.asarray(d["embeddings"], dtype=np.float32)
             self.clap_idx = {str(mid): i for i, mid in enumerate(d["moment_ids"])}
         self.ZS = None
-        self.model = None
+        self.model = None          # torch 판 (있을 때만)
+        self.user_enc = None       # NumPy 판 (stage1_weights.npz 가 있을 때)
+        self.model_backend = None
         p = OUT_DIR / "stage1_section.npy"
-        if p.exists() and (OUT_DIR / "stage1.pt").exists():
+
+        # NumPy 가중치가 있으면 그쪽을 먼저 쓴다. 서빙에서 torch 가 하는 일은 enc_user
+        # 한 번뿐이라 이것만 있으면 이미지에서 torch 를 걷어낼 수 있다.
+        npz = OUT_DIR / "stage1_weights.npz"
+        if p.exists() and npz.exists():
+            try:
+                enc = stage1_np.load(npz)
+                if enc is not None and enc.in_dim == self.X.shape[1]:
+                    with np.load(npz) as d:
+                        self.hist_max = int(d["hist_max"]) if "hist_max" in d else 32
+                        self.ckpt_half_life = (float(d["half_life_days"])
+                                               if "half_life_days" in d else None)
+                    self.user_enc = enc
+                    self.model = enc          # "모델이 있다" 판정에 함께 쓴다
+                    self.model_backend = "numpy"
+                    self.ZS = np.load(p, mmap_mode="r")
+                else:
+                    self.model_error = (
+                        f"특징 차원 불일치: npz {getattr(enc, 'in_dim', '?')} vs "
+                        f"현재 {self.X.shape[1]} — 재학습 필요")
+            except Exception as e:
+                self.model_error = f"npz 적재 실패: {type(e).__name__}: {e}"
+
+        if self.model is None and p.exists() and (OUT_DIR / "stage1.pt").exists():
             try:
                 import torch
 
@@ -182,6 +207,7 @@ class Catalog:
                     m.eval()
                     self.model = m
                     self.torch = torch
+                    self.model_backend = "torch"
                     self.hist_max = ck["hist_max"]
                     self.ckpt_half_life = ck.get("half_life_days")
                     self.ZS = np.load(p, mmap_mode="r")
@@ -1092,11 +1118,17 @@ def model_user_vec(user: str) -> Optional[np.ndarray]:
         return None
     rows = [c.idx[k] for k in keys]
     dw = decay_weights(pos.set_index("section_key").loc[keys].reset_index())
-    t = c.torch
     pad = c.hist_max - len(rows)
-    Ht = t.tensor(np.asarray([rows + [0] * pad]))
-    Mt = t.tensor(np.asarray([[True] * len(rows) + [False] * pad]))
-    LW = t.tensor(np.log(np.concatenate([dw, np.full(pad, 1e-3)]))[None].astype(np.float32))
+    idx = np.asarray(rows + [0] * pad)
+    mask = np.asarray([True] * len(rows) + [False] * pad)
+    logw = np.log(np.concatenate([dw, np.full(pad, 1e-3)])).astype(np.float32)
+
+    if c.user_enc is not None:                      # NumPy 판
+        return c.user_enc.encode(np.asarray(c.X)[idx], mask, logw)
+
+    t = c.torch
+    Ht, Mt = t.tensor(idx[None]), t.tensor(mask[None])
+    LW = t.tensor(logw[None])
     with t.no_grad():
         try:
             z = c.model.enc_user(t.tensor(c.X)[Ht], Mt, logw=LW).numpy()[0]

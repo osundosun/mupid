@@ -737,3 +737,106 @@ def test_dockerfile_uses_cpu_torch_and_excludes_artifacts():
     ignore = (root / ".dockerignore").read_text(encoding="utf-8")
     for pat in ("node_modules", "**/.env", "!**/.env.example"):
         assert pat in ignore, pat
+
+
+# ------------------------------------------------------------------ NumPy 인코더
+def _torch_or_skip():
+    return pytest.importorskip("torch", reason="torch 없이는 동치를 비교할 수 없다")
+
+
+def _make_pair(in_dim=37, hist_max=8, seed=0):
+    """무작위 가중치로 torch 모델과 NumPy 인코더 한 쌍을 만든다.
+
+    **산출물이 필요 없다.** 동치는 가중치 값과 무관한 성질이므로 무작위로 확인할 수 있다.
+    """
+    torch = _torch_or_skip()
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app" / "legacy"))
+    import m11_stage1 as s1
+
+    from ai_server.app import stage1_np
+
+    torch.manual_seed(seed)
+    m = s1.make_model(in_dim)
+    # gmean 은 학습 중에만 갱신되는 버퍼다. 0 이 아닌 값으로 두어야 뺄셈까지 검증된다.
+    with torch.no_grad():
+        m.gmean.copy_(torch.randn(m.gmean.shape) * 0.1)
+    m.eval()
+    w = stage1_np.from_state_dict(m.state_dict(), m.gmean.detach().numpy(), in_dim)
+    return m, stage1_np.UserEncoder(w), in_dim, hist_max
+
+
+def test_numpy_user_encoder_matches_torch():
+    import numpy as np
+
+    torch = _torch_or_skip()
+    m, enc, in_dim, hist_max = _make_pair()
+    rng = np.random.default_rng(1)
+    worst = 0.0
+    for _ in range(32):
+        n = int(rng.integers(1, hist_max + 1))
+        xh = rng.normal(size=(hist_max, in_dim)).astype("float32")
+        mask = np.zeros(hist_max, dtype=bool)
+        mask[:n] = True
+        logw = np.log(np.clip(rng.random(hist_max), 1e-3, None)).astype("float32")
+        with torch.no_grad():
+            zt = m.enc_user(torch.tensor(xh)[None], torch.tensor(mask)[None],
+                            logw=torch.tensor(logw)[None]).numpy()[0]
+        worst = max(worst, float(np.abs(zt - enc.encode(xh, mask, logw)).max()))
+    assert worst < 1e-5, f"최대 오차 {worst:.3e}"
+
+
+def test_numpy_encoder_gives_identical_ranking():
+    """이 벡터는 후보 행렬과의 내적으로만 쓰인다. 최종 기준은 순위 일치다."""
+    import numpy as np
+
+    torch = _torch_or_skip()
+    m, enc, in_dim, hist_max = _make_pair(seed=3)
+    rng = np.random.default_rng(2)
+    for _ in range(16):
+        xh = rng.normal(size=(hist_max, in_dim)).astype("float32")
+        mask = np.ones(hist_max, dtype=bool)
+        with torch.no_grad():
+            zt = m.enc_user(torch.tensor(xh)[None], torch.tensor(mask)[None]).numpy()[0]
+        zn = enc.encode(xh, mask, None)
+        cand = rng.normal(size=(500, zt.shape[0])).astype("float32")
+        assert np.array_equal(np.argsort(-(cand @ zt)), np.argsort(-(cand @ zn)))
+
+
+def test_numpy_encoder_handles_fully_padded_history():
+    """전부 가려진 입력에서 NaN 이 나오면 안 된다. -inf 대신 -1e9 를 쓰는 이유다."""
+    import numpy as np
+
+    _torch_or_skip()
+    _, enc, in_dim, hist_max = _make_pair(seed=5)
+    z = enc.encode(np.zeros((hist_max, in_dim), dtype="float32"),
+                   np.zeros(hist_max, dtype=bool), None)
+    assert np.isfinite(z).all()
+
+
+def test_gelu_is_the_erf_variant_not_tanh():
+    """tanh 근사를 쓰면 4번째 자리부터 갈라져 순위가 바뀐다."""
+    import numpy as np
+
+    from ai_server.app import stage1_np
+
+    x = np.array([-2.0, -0.5, 0.0, 0.5, 2.0], dtype=np.float64)
+    tanh_approx = 0.5 * x * (1 + np.tanh(np.sqrt(2 / np.pi) * (x + 0.044715 * x ** 3)))
+    exact = stage1_np._gelu(x)
+    assert np.abs(exact - tanh_approx).max() > 1e-5, "근사판과 구분되지 않는다"
+    assert np.allclose(exact[2], 0.0) and exact[4] > 1.9
+
+
+def test_scipy_is_not_required_to_import_the_app():
+    """npz 를 쓰지 않는 배포에서 import 시점에 scipy 를 요구하면 안 된다."""
+    import ast
+
+    src = (Path(__file__).resolve().parents[1] / "app" / "stage1_np.py").read_text(
+        encoding="utf-8")
+    # 모듈 최상단(함수 밖)의 import 만 본다. 독스트링에 적힌 단어는 세지 않는다.
+    for node in ast.parse(src).body:
+        if isinstance(node, ast.Import):
+            assert not any(a.name.startswith("scipy") for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert not (node.module or "").startswith("scipy"), node.module

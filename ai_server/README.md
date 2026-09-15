@@ -57,7 +57,8 @@ CUDA 라이브러리를 끌고 와 수 GB 가 된다.
    │  ├─ moments_emb.npy            MERT 임베딩
    │  ├─ features_v1.npz            랭킹 입력 특징
    │  ├─ stage1_section.npy         구간 랭킹 표현
-   │  ├─ stage1.pt                  랭킹 모델
+   │  ├─ stage1.pt                  랭킹 모델 (torch 판)
+   │  ├─ stage1_weights.npz        랭킹 모델 (NumPy 판, 있으면 우선)
    │  ├─ content.parquet            곡 특징 (BPM 등)
    │  ├─ flow_meta.parquet          곡 메타
    │  ├─ labels_service.parquet     사용자 선호 구간
@@ -326,6 +327,26 @@ Spring 은 자연어 원문 대신 `query_plan` 을 보낸다. 대화 모델이 
 네트워크 격리가 유일한 방어선이면 설정 실수 한 번에 그대로 열린다. `MUPID_AI_INTERNAL_TOKEN`
 을 넣으면 `X-Internal-Token` 헤더를 검사한다. **양쪽을 동시에 설정해야 한다** — 한쪽만
 켜면 추천이 통째로 401 이다. `/health` 는 오케스트레이터가 부르므로 검사 밖에 둔다.
+
+## 랭킹 모델 백엔드
+
+서빙에서 torch 가 하는 일은 **사용자 벡터 한 번**(`enc_user`)뿐이다. 구간 벡터는 이미
+`stage1_section.npy` 에 있고 점수는 그 행렬과의 내적이다. 그 한 번 때문에 CPU 빌드라도
+수백 MB 인 torch 가 이미지에 들어간다.
+
+`stage1_weights.npz` 가 있으면 NumPy 판을 쓴다. 없으면 종전대로 `stage1.pt` 를 torch 로
+읽는다. 지금 어느 쪽인지는 `/health` 의 `model_backend` 로 확인한다.
+
+```bash
+MUPID_AI_ARTIFACT_DIR=/경로/artifacts python -m ai_server.tools.export_stage1_npz
+```
+
+내보내기 도구가 **동치를 확인한 뒤에만** 파일을 쓴다(오차 < 1e-5, 순위 완전 일치).
+무작위 가중치로 두 판을 비교하는 테스트도 함께 돈다 — 산출물이 없어도 검증된다.
+
+npz 를 배포하면 이미지에서 torch 를 뺄 수 있다. **먼저 `model_backend` 가 `numpy` 인지
+확인하고** Dockerfile 의 torch 설치 줄을 지운다. 순서를 바꾸면 모델 없이 규칙 경로로
+조용히 내려앉는다.
 
 ## 이미지
 
