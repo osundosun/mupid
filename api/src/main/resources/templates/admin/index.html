@@ -822,10 +822,12 @@
                     return;
                 }
                 var next = raw === '' ? null : raw;
-                var before = row[field.name];
-                if (!creating && String(before === null || before === undefined ? '' : before) === raw) {
-                    // 바뀐 것만 보낸다. 손대지 않은 칸이 다른 사람의 수정을 덮어쓰지 않게.
-                    return;
+                if (!creating) {
+                    var before = row[field.name];
+                    if (String(before === null || before === undefined ? '' : before) === raw) {
+                        // 바뀐 것만 보낸다. 손대지 않은 칸이 다른 사람의 수정을 덮어쓰지 않게.
+                        return;
+                    }
                 }
                 payload[field.name] = next;
             });
