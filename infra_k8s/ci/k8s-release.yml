@@ -1,22 +1,35 @@
-# k8s deployment jobs. Manual only.
-#
-# Every job here is `when: manual`. The cluster does not exist yet, and until it
-# does these must never fire on a push — infra/ci/* is still the path that
-# serves production and nothing in this file touches it.
-#
-# At cutover the rules below become the same ones infra/ci/release.yml uses
-# (protected develop + MUPID_DEPLOY_ENABLED) and the includes for the Compose
-# jobs come out of .gitlab-ci.yml. Until then this is a button.
+# k8s deployment jobs. Protected master only.
 #
 # Required CI variables, separate from the Compose ones so neither credential
 # can drive the other path:
 #   MUPID_DEPLOY_K8S_SSH_KEY      file  private key for mupid-deploy-k8s
 #   MUPID_DEPLOY_K8S_KNOWN_HOSTS  file  verified host key for the edge node
-#   MUPID_K8S_BASE_URL            var   https://...:8443 before cutover
-.k8s-changes: &k8s_changes
+#   MUPID_K8S_BASE_URL            var   https://j15a204.p.ssafy.io
+#   MUPID_DEPLOY_ENABLED          var   "true" — the switch that arms deployment
+#
+# backend-verify and frontend-verify still come from infra/ci/. Only the Compose
+# deployment jobs (infra/ci/release.yml, and the package/deploy pair in
+# frontend.yml) were retired — the verify jobs are not Compose-specific and the
+# jobs below need them.
+#
+# The api and web paths have separate `changes` filters on purpose. Sharing one
+# would run the web package on an api-only commit, and its verify job would have
+# been skipped, leaving no frontend/dist to package.
+
+.api-changes: &api_changes
   - api/**/*
+  - infra/image/**/*
+  - infra/ci/package-image.sh
+  - infra_k8s/base/api.yaml
+  - infra_k8s/ci/**/*
+  - .gitlab-ci.yml
+
+.web-changes: &web_changes
   - frontend/**/*
-  - infra_k8s/**/*
+  - infra_k8s/image/web.Dockerfile
+  - infra_k8s/base/edge.yaml
+  - infra_k8s/base/nginx/**/*
+  - infra_k8s/ci/**/*
   - .gitlab-ci.yml
 
 .k8s-image:
@@ -28,22 +41,30 @@
       user: '0'
   variables:
     BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
-  timeout: 40m
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "web" || $CI_COMMIT_BRANCH == "develop"'
-      changes: *k8s_changes
-      when: manual
-      allow_failure: true
+  # The runner is a Raspberry Pi on an SD card now; a cold Gradle build is
+  # slower than it was on the EC2 node.
+  timeout: 60m
+  interruptible: true
 
 # The API image is the one infra/ci/package-image.sh already builds; the archive
 # it writes is a docker archive, which is what `k3s ctr images import` takes.
+# platform=linux/amd64 is pinned there, so an arm64 runner still produces an
+# image the x86_64 nodes can execute.
 k8s-package-api:
   extends: .k8s-image
   stage: package
-  interruptible: true
   needs:
     - job: backend-verify
       artifacts: false
+      # Skipped when the commit changed nothing under api/. This job's own
+      # rules keep it from running in that case, but `optional` keeps the
+      # pipeline from failing to generate.
+      optional: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      changes: *api_changes
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      when: manual
   script:
     - sh infra/ci/package-image.sh
   artifacts:
@@ -53,10 +74,14 @@ k8s-package-api:
 k8s-package-web:
   extends: .k8s-image
   stage: package
-  interruptible: true
   needs:
     - job: frontend-verify
       artifacts: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      changes: *web_changes
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      when: manual
   script:
     - sh infra_k8s/ci/package-web.sh
   artifacts:
@@ -71,25 +96,32 @@ k8s-package-web:
   # be refused rather than queued.
   resource_group: mupid-k8s
   environment:
-    name: demo-k8s
+    name: demo
     url: https://j15a204.p.ssafy.io
-  timeout: 15m
+  timeout: 20m
+  # A deployment must not be cancelled half way by the next push.
   interruptible: false
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "web" || $CI_COMMIT_BRANCH == "develop"'
-      when: manual
-      allow_failure: true
   before_script:
     - apk add --no-cache curl openssh-client
 
 k8s-deploy-api:
   extends: .k8s-deploy
   needs: [k8s-package-api]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      changes: *api_changes
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      when: manual
   script:
     - sh infra_k8s/ci/deploy-k8s.sh api
 
 k8s-deploy-web:
   extends: .k8s-deploy
   needs: [k8s-package-web]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      changes: *web_changes
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      when: manual
   script:
     - sh infra_k8s/ci/deploy-k8s.sh web

@@ -682,20 +682,49 @@ class DeployEndpointTest(unittest.TestCase):
             with self.subTest(line=number):
                 self.assertNotIn("/etc/rancher", line)
 
-    def test_every_k8s_ci_job_is_still_manual(self):
-        """The cluster does not exist yet and infra/ci/* still serves
-        production. A rule here without `when: manual` would deploy on a push
-        to a namespace that is not there."""
+    def test_no_k8s_ci_job_can_deploy_off_protected_master(self):
+        """These jobs hold the deployment key. Every rule that lets one run has
+        to pin the branch, require the ref to be protected, and require the
+        deployment switch — otherwise a feature branch, or an unprotected ref
+        with the same name, reaches production."""
         jobs = yaml.safe_load((K8S / "ci" / "k8s-release.yml").read_text(encoding="utf-8"))
         checked = 0
         for name, body in jobs.items():
             if not isinstance(body, dict) or "rules" not in body:
                 continue
             for rule in body["rules"]:
-                with self.subTest(job=name):
-                    self.assertEqual("manual", rule.get("when"))
+                condition = rule.get("if", "")
+                with self.subTest(job=name, rule=condition[:50]):
+                    self.assertIn('$CI_COMMIT_BRANCH == "master"', condition)
+                    self.assertIn('$CI_COMMIT_REF_PROTECTED == "true"', condition)
+                    self.assertIn('$MUPID_DEPLOY_ENABLED == "true"', condition)
                 checked += 1
         self.assertTrue(checked, "no rules found; the file shape changed")
+
+    def test_the_k8s_jobs_still_have_the_verify_jobs_they_need(self):
+        """backend-verify and frontend-verify live in infra/ci/. Dropping those
+        includes with the Compose deployment would leave `needs` pointing at
+        jobs that no longer exist, and the pipeline fails to generate."""
+        root = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8"))
+        included = {
+            entry["local"] for entry in root["include"] if isinstance(entry, dict)
+        }
+        defined = set()
+        for path in included:
+            defined |= {
+                key for key in yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))
+                if not key.startswith(".")
+            }
+        jobs = yaml.safe_load((K8S / "ci" / "k8s-release.yml").read_text(encoding="utf-8"))
+        for name, body in jobs.items():
+            if not isinstance(body, dict):
+                continue
+            for need in body.get("needs", []):
+                job = need["job"] if isinstance(need, dict) else need
+                if isinstance(need, dict) and need.get("optional"):
+                    continue
+                with self.subTest(job=name, needs=job):
+                    self.assertIn(job, defined)
 
     def test_the_k8s_ci_uses_its_own_credential(self):
         """Sharing the Compose deploy key would let either path drive the

@@ -7,9 +7,8 @@ stages:
 include:
   - local: infra/ci/frontend.yml
   - local: infra/ci/backend.yml
-  - local: infra/ci/release.yml
-  # k8s path. Every job in it is `when: manual` until the cluster exists and
-  # the cutover happens; it adds buttons, not automatic deployments.
+  # infra/ci/release.yml (Compose 배포) 는 뺐다. frontend.yml·backend.yml 은
+  # backend-verify·frontend-verify 때문에 남는다 — k8s job 이 needs 로 쓴다.
   - local: infra_k8s/ci/k8s-release.yml
 
 gemini-code-review:
