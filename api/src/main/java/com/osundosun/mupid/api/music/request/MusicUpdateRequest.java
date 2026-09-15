@@ -10,7 +10,10 @@ public record MusicUpdateRequest(
 
     String title,
 
-    LocalDateTime releaseDate
+    LocalDateTime releaseDate,
+
+    /** 곡 커버 이미지 파일 번호. null 이면 지금 커버를 그대로 둔다. */
+    Integer imageFileId
 
 ) {
     

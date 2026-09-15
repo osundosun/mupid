@@ -13,6 +13,7 @@ public enum FileCategory {
     PROFILE("프로필 이미지", UserImageServiceImpl.class),
     ARTIST("아티스트 이미지", null),
     ALBUM("앨범 이미지", null),
+    TRACK("곡 커버 이미지", null),
     STREAMING("스트리밍용 오디오 청크", null);
 
     private final String displayName;

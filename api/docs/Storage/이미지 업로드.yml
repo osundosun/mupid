@@ -96,7 +96,7 @@ docs: |-
 
   | 필드 | 설명 |
   | --- | --- |
-  | `category` | `PROFILE` / `ARTIST` / `ALBUM` / `STREAMING` |
+  | `category` | `PROFILE` / `ARTIST` / `ALBUM` / `TRACK` / `STREAMING` |
   | `storageKey` | 대상 번호 (예: 유저 번호). `image/{category}/{key}` 키로 저장됨 |
 
   같은 키로 다시 업로드하면 기존 파일이 **덮어써지고** 메타데이터

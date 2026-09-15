@@ -6,6 +6,8 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
@@ -79,6 +81,18 @@ public class Music {
     @Column(nullable = false)
     @Builder.Default
     private Integer likeCount = 0;
+
+    /**
+     * 곡 커버 이미지 파일. **없을 수 있다.**
+     *
+     * 앨범·아티스트와 달리 NULL 을 허용한다. 곡마다 표지가 따로 있는 카탈로그
+     * (`music_preprocessing` 배치가 올리는 flow_music 데이터)가 있는가 하면,
+     * 표지 없이 앨범 커버만 쓰는 곡도 있다. 화면은 이것이 비면 앨범 커버로
+     * 내려간다.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "image_file_id")
+    private ObjectStorageFile imageFile;
 
     /**
      * 삭제 여부

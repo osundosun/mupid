@@ -148,6 +148,8 @@ export type MusicSummary = {
   playable: boolean;
   play_count: number;
   like_count: number;
+  /** 곡 커버. 곡에 표지가 없으면 null 이고, 그때는 앨범 커버를 쓴다. */
+  image_url: string | null;
   artist: { artist_id: number; name: string; image_url: string | null };
   album: {
     album_id: number;

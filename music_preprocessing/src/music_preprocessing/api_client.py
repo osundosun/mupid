@@ -253,8 +253,18 @@ class MupidClient:
         return body["data"]["album_id"]
 
     def add_music(
-        self, album_id: int, artist_id: int, title: str, release_date: str
+        self,
+        album_id: int,
+        artist_id: int,
+        title: str,
+        release_date: str,
+        image_file_id: int | None = None,
     ) -> int:
+        """곡을 등록한다.
+
+        `image_file_id` 는 곡 커버(`TRACK` 카테고리)다. 앨범·아티스트 이미지와
+        달리 **선택이다.** 비우면 화면이 앨범 커버를 대신 쓴다.
+        """
         body = self._request(
             "POST",
             "/api/v1/music",
@@ -263,9 +273,18 @@ class MupidClient:
                 "artist_id": artist_id,
                 "title": title,
                 "release_date": release_date,
+                "image_file_id": image_file_id,
             },
         )
         return body["data"]["music_id"]
+
+    def update_music_image(self, music_id: int, image_file_id: int) -> None:
+        """곡 커버를 갈아 끼운다."""
+        self._request(
+            "PATCH",
+            f"/api/v1/music/{music_id}",
+            json_body={"image_file_id": image_file_id},
+        )
 
     def create_stream(
         self,

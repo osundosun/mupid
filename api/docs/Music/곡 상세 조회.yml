@@ -41,6 +41,7 @@ examples:
               "playable": true,
               "play_count": 0,
               "like_count": 0,
+              "image_url": "/api/v1/storage/image/TRACK/...",
               "artist": {
                 "artist_id": 1,
                 "name": "무피드 테스트 아티스트",

@@ -1,17 +1,23 @@
-"""CLI 진입점 — 단일 파일 처리 & 배치 처리 모드 지원
+"""CLI 진입점 — 청킹(single·batch)과 카탈로그 등록(catalog·covers)
 
 Usage:
-  # 단일 파일 처리
-  music-chunking single -i song.mp3 -o ./output
+  # 단일 파일 청킹
+  music-preprocessing single -i song.mp3 -o ./output
 
-  # 배치 처리 (crontab용)
-  music-chunking batch -I ./input -O ./output
+  # 배치 청킹 (crontab용)
+  music-preprocessing batch -I ./input -O ./output
+
+  # 곡별 메타데이터·커버를 API 에 등록
+  music-preprocessing catalog --config config.json
+
+  # 커버만 다시 올리기
+  music-preprocessing covers --config config.json
 
   # 설정 파일 사용
-  music-chunking batch --config config.json
+  music-preprocessing batch --config config.json
 
   # python -m으로 실행
-  python -m music_chunking batch -I ./input -O ./output
+  python -m music_preprocessing batch -I ./input -O ./output
 """
 
 from __future__ import annotations
@@ -21,9 +27,12 @@ import logging
 import sys
 from pathlib import Path
 
+from .api_client import MupidClient
 from .batch import build_registrar, run_batch
+from .catalog import CatalogError, CatalogRegistrar, load_metadata
 from .chunker import process_file
 from .config import ChunkConfig
+from .registrar import Registry
 
 
 def main() -> None:
@@ -32,9 +41,11 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 사용 예시:
-  music-chunking single -i song.mp3 -o ./output
-  music-chunking batch -I ./input -O ./output -b 128k
-  music-chunking batch --config config.json
+  music-preprocessing single -i song.mp3 -o ./output
+  music-preprocessing batch -I ./input -O ./output -b 128k
+  music-preprocessing batch --config config.json
+  music-preprocessing catalog --config config.json --dry-run
+  music-preprocessing covers --config config.json
         """,
     )
 
@@ -71,6 +82,21 @@ def main() -> None:
     )
     _add_common_args(batch_p)
 
+    # ── catalog 모드 ──
+    catalog_p = subparsers.add_parser(
+        "catalog", help="곡별 메타데이터·커버를 API 에 등록"
+    )
+    _add_catalog_args(catalog_p)
+
+    # ── covers 모드 ──
+    covers_p = subparsers.add_parser("covers", help="커버 이미지만 다시 업로드")
+    _add_catalog_args(covers_p)
+    covers_p.add_argument(
+        "--force",
+        action="store_true",
+        help="내용이 그대로여도 다시 올린다",
+    )
+
     args = parser.parse_args()
 
     _force_utf8_console()
@@ -91,6 +117,10 @@ def main() -> None:
         _handle_single(args)
     elif args.command == "batch":
         _handle_batch(args)
+    elif args.command == "catalog":
+        _handle_catalog(args)
+    elif args.command == "covers":
+        _handle_covers(args)
 
 
 def _force_utf8_console() -> None:
@@ -189,6 +219,157 @@ def _handle_batch(args: argparse.Namespace) -> None:
             sys.exit(1)
     else:
         print("⚠️  입력 디렉토리가 비어있습니다.")
+
+
+# ─────────────────────────────────────────────────────────────
+# 카탈로그 (`catalog` · `covers`)
+# ─────────────────────────────────────────────────────────────
+
+
+def _handle_catalog(args: argparse.Namespace) -> None:
+    """catalog 모드: 곡별 메타데이터·커버를 API 에 등록합니다."""
+    config, registrar, tracks = _build_catalog(args)
+
+    print()
+    print(
+        f"대상: 곡 {len(tracks)}개"
+        f" | 메타데이터 {config.metadata_dir}"
+        f" | 커버 {config.covers_dir}"
+    )
+    if args.dry_run:
+        print("⚠️  dry-run — 아무것도 올리지 않고 무엇이 만들어질지만 셉니다.")
+
+    result = registrar.run(tracks)
+
+    print()
+    print(f"✅ 카탈로그 등록 {'미리보기' if args.dry_run else '완료'}:")
+    print(f"   아티스트    : {result['artists_created']} / {result['artists_total']}")
+    print(f"   앨범        : {result['albums_created']} / {result['albums_total']}")
+    print(f"   곡          : {result['tracks_created']} / {result['tracks_total']}")
+    print(f"   커버 업로드 : {result['covers_uploaded']}개")
+    if result["covers_missing"]:
+        print(f"   커버 없음   : {result['covers_missing']}개 (앨범 커버로 대체됨)")
+    _report_errors(result)
+
+
+def _handle_covers(args: argparse.Namespace) -> None:
+    """covers 모드: 이미 등록된 대상의 커버만 다시 올립니다."""
+    config, registrar, tracks = _build_catalog(args)
+
+    print()
+    print(f"대상: 곡 {len(tracks)}개 | 커버 {config.covers_dir}")
+    if args.dry_run:
+        print("⚠️  dry-run — 아무것도 올리지 않고 무엇이 바뀔지만 셉니다.")
+
+    result = registrar.refresh_covers(tracks, force=args.force)
+
+    print()
+    print(f"✅ 커버 갱신 {'미리보기' if args.dry_run else '완료'}:")
+    print(f"   아티스트    : {result['artists_refreshed']}개")
+    print(f"   앨범        : {result['albums_refreshed']}개")
+    print(f"   곡          : {result['tracks_refreshed']}개")
+    print(f"   업로드      : {result['covers_uploaded']}개")
+    if result["covers_missing"]:
+        print(f"   커버 없음   : {result['covers_missing']}개")
+    if result["skipped_unregistered"]:
+        print(
+            f"   미등록 건너뜀: {result['skipped_unregistered']}개"
+            " (`catalog` 를 먼저 돌리세요)"
+        )
+    _report_errors(result)
+
+
+def _build_catalog(
+    args: argparse.Namespace,
+) -> tuple[ChunkConfig, CatalogRegistrar, list]:
+    """설정을 읽고 등록기와 메타데이터를 준비합니다.
+
+    여기서 실패하는 것은 경로·설정이 틀린 경우다. 역추적을 통째로 뱉으면 크론
+    로그에서 사유를 찾기 어려워, 한 줄로 줄여 내보낸다.
+    """
+    try:
+        return _build_catalog_unsafe(args)
+    except (CatalogError, OSError) as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _build_catalog_unsafe(
+    args: argparse.Namespace,
+) -> tuple[ChunkConfig, CatalogRegistrar, list]:
+    config = ChunkConfig.from_file(args.config) if args.config else ChunkConfig()
+
+    # 설정 파일보다 명령줄에 직접 준 값이 우선한다.
+    for name in ("metadata_dir", "covers_dir", "api_base_url"):
+        given = getattr(args, name, None)
+        if given:
+            setattr(config, name, given)
+
+    # dry-run 은 서버에 붙지 않는다. 토큰이 없어도 무엇이 만들어질지 볼 수 있다.
+    client = None if args.dry_run else _require_client(config)
+    registrar = CatalogRegistrar(
+        client=client,
+        registry=Registry(config.api_registry_log),
+        covers_dir=Path(config.covers_dir),
+        dry_run=args.dry_run,
+    )
+    return config, registrar, load_metadata(Path(config.metadata_dir))
+
+
+def _require_client(config: ChunkConfig) -> MupidClient:
+    """API 클라이언트를 만든다. 등록할 서버가 없으면 여기서 멈춘다."""
+    registrar = build_registrar(config)
+    if registrar is None:
+        print(
+            "❌ api_base_url 이 비어 있습니다. 설정 파일이나 --api-base-url 로"
+            " 등록할 서버를 지정하세요."
+            " (무엇이 만들어질지만 보려면 --dry-run)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return registrar.client
+
+
+def _report_errors(result: dict) -> None:
+    """실패 목록을 찍고 종료 코드를 맞춘다.
+
+    크론이 읽는 것은 종료 코드다. 한 건이라도 실패했으면 0 으로 끝내지 않는다.
+    """
+    errors = result.get("errors") or []
+    if not errors:
+        return
+    print()
+    print(f"❌ 실패 {len(errors)}건:")
+    for err in errors[:20]:
+        print(f"   - {err['key']}: {err['error']}")
+    if len(errors) > 20:
+        print(f"   … 그 밖에 {len(errors) - 20}건")
+    sys.exit(1)
+
+
+def _add_catalog_args(parser: argparse.ArgumentParser) -> None:
+    """catalog / covers 공통 CLI 인자를 추가합니다."""
+    parser.add_argument("--config", help="JSON 설정 파일 경로")
+    parser.add_argument(
+        "--metadata-dir",
+        default="",
+        help="곡별 메타데이터 JSON 디렉터리 (기본: 설정의 metadata_dir)",
+    )
+    parser.add_argument(
+        "--covers-dir",
+        default="",
+        help="곡별 커버 이미지 디렉터리 (기본: 설정의 covers_dir)",
+    )
+    parser.add_argument(
+        "--api-base-url",
+        default="",
+        help="Mupid API 루트 (예: http://localhost:9900)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="서버에 붙지 않고 무엇이 만들어질지만 센다",
+    )
 
 
 # ─────────────────────────────────────────────────────────────

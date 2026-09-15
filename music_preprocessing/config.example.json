@@ -12,6 +12,8 @@
   "input_dir": "./input",
   "output_dir": "./output",
   "processed_log": "./processed.json",
+  "metadata_dir": "./metadata",
+  "covers_dir": "./covers",
   "api_base_url": "http://localhost:9900",
   "api_refresh_token_file": "./refresh_token.txt",
   "api_registry_log": "./registered.json",

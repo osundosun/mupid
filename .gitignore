@@ -8,11 +8,11 @@ __pycache__/
 *.py[cod]
 .venv/
 
-# music_chunking (uv)
-/music_chunking/config.json
+# music_preprocessing (uv)
+/music_preprocessing/config.json
 # 배치 계정의 리프레시 토큰. 커밋하면 시스템 권한이 그대로 새어 나간다.
-/music_chunking/refresh_token.txt
-/music_chunking/registered.json
-/music_chunking/processed.json
-/music_chunking/input/
-/music_chunking/output/
+/music_preprocessing/refresh_token.txt
+/music_preprocessing/registered.json
+/music_preprocessing/processed.json
+/music_preprocessing/input/
+/music_preprocessing/output/

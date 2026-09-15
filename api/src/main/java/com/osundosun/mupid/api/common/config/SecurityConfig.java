@@ -60,14 +60,15 @@ public class SecurityConfig {
                  * 뿐이다) 데모 곡도 없앴다. 비로그인이 곡을 보는 화면 자체가 없으니
                  * 열어 둘 이유가 사라졌다. 열어 두면 곡·가사·분석이 통째로 공개된다.
                  *
-                 * 다만 **앨범·아티스트 이미지는 연다.** `<img src>` 에는
+                 * 다만 **앨범·아티스트·곡 커버 이미지는 연다.** `<img src>` 에는
                  * Authorization 헤더를 붙일 수 없어서, 닫으면 목록의 표지가 전부
-                 * 깨진다. 키가 앨범·아티스트 이름이라 개인 정보도 아니다.
+                 * 깨진다. 키가 앨범·아티스트 이름이거나 곡 번호라 개인 정보도 아니다.
                  * 프로필 사진(PROFILE)은 개인 정보라 열지 않는다 — 그쪽은 토큰을
                  * 붙여 바이트를 받아 object URL 로 쓴다(`lib/profile-photo.ts`).
                  */
                 .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/ALBUM/*").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/ARTIST/*").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/TRACK/*").permitAll()
                 // 온보딩 선택지(무드·장르 이름)는 마스터 데이터다. 지금은 온보딩
                 // 화면이 로그인한 사람에게만 뜨므로 닫아도 되지만, 개인 정보가
                 // 아니고 가입 흐름을 건드리지 않으려 열어 둔다. 제출·조회는

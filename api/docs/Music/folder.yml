@@ -65,7 +65,7 @@ docs:
     6. `가사 추가` (`music_id` 필요)
     7. `Stream / 스트림 생성` → `청크 업로드` → `스트림 상태 변경(DONE)`
 
-    1~7 전체를 `music_chunking` 배치가 자동으로 수행합니다. Bruno 로는 같은
+    1~7 전체를 `music_preprocessing` 배치가 자동으로 수행합니다. Bruno 로는 같은
     순서를 수동으로 호출하면 됩니다.
 
     ## 삭제 정책
