@@ -44,7 +44,7 @@ ai-server-verify:
       skipped = int(ts.get("skipped", 0))
       ran = total - skipped
       print(f"실행 {ran}건 / 건너뜀 {skipped}건")
-      assert ran >= 40, f"오프라인 계약 테스트가 {ran}건만 돌았다 — 수집이 깨졌는지 본다"
+      assert ran >= 90, f"산출물 없이 도는 테스트가 {ran}건만 돌았다 — 수집이 깨졌는지 본다"
       PY
   artifacts:
     when: always

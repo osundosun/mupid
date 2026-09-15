@@ -1,0 +1,232 @@
+"""합성 산출물로 추천 경로 전체를 태운다.
+
+`test_smoke.py` 는 **실제** 색인이 있어야 하고 CI 에서는 통째로 건너뛴다. 그래서 지금까지
+`recommend()` 를 한 줄도 지나가지 않는 상태로 초록불이 났다. 계약 테스트는 경계만 보고,
+점수·게이트·중복 제거는 아무도 보지 않았다.
+
+여기서는 **스키마만 진짜인** 작은 카탈로그를 만들어 그 경로를 지나간다. 값이 무작위라
+추천 품질은 볼 수 없다 — 품질은 실제 색인으로 봐야 한다. 대신 "돌긴 도는가", "조건이
+실제로 걸리는가", "손대지 않은 경로의 순위가 그대로인가" 를 본다.
+
+컬럼을 하나라도 빠뜨리면 여기서 터진다. 실제로 이 파일을 만들다 `rel_start`/`rel_end`
+누락이 드러났다.
+"""
+from __future__ import annotations
+
+import json
+
+import numpy as np
+import pandas as pd
+import pytest
+
+LABELS4 = ["intro", "verse", "chorus", "bridge"]
+GENRES = ["pop", "ballad", "rock"]
+MOODS = ["relaxing", "happy"]
+INSTRUMENTS = ["piano", "guitar"]
+
+
+def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
+    """실제 스키마대로 만든다. 값만 무작위다."""
+    rng = np.random.default_rng(seed)
+    d = root / "data" / "proc" / "mupid"
+    (d / "serve").mkdir(parents=True, exist_ok=True)
+    (d / "logs").mkdir(parents=True, exist_ok=True)
+
+    rows, r = [], 0
+    for t in range(n_tracks):
+        tid = f"T{t:06d}"
+        for s in range(per_track):
+            rows.append({
+                "moment_id": f"{tid}#{s}", "track_id": tid, "section_idx": s,
+                "section_label": LABELS4[s % len(LABELS4)], "label_source": "allin1",
+                "start_sec": float(s * 30), "end_sec": float(s * 30 + 28),
+                "dur_sec": 28.0, "emb_row": r, "source": "flow",
+                "rms": float(rng.uniform(0.05, 0.4)),
+                "track_dur_sec": float(per_track * 30),
+                # 곡 안에서의 상대 위치. 위치 prior 가 읽는다.
+                "rel_start": s / per_track, "rel_end": (s + 1) / per_track,
+            })
+            r += 1
+    mom = pd.DataFrame(rows)
+    mom.to_parquet(d / "moments.parquet", index=False)
+
+    n = len(mom)
+    z = rng.normal(size=(n, emb_dim)).astype(np.float32)
+    np.save(d / "moments_emb.npy", z / np.linalg.norm(z, axis=1, keepdims=True))
+
+    np.savez(d / "features_v1.npz", X=rng.normal(size=(n, feat_dim)).astype(np.float32),
+             moment_id=mom.moment_id.to_numpy().astype("<U80"))
+    side = ["log_dur", "rel_center"]
+    (d / "features_info.json").write_text(
+        json.dumps({"version": "feat-v1", "pca_dim": feat_dim - len(side),
+                    "side_dim": len(side), "side_cols": side}, ensure_ascii=False),
+        encoding="utf-8")
+
+    s1 = rng.normal(size=(n, 8)).astype(np.float32)
+    np.save(d / "stage1_section.npy", s1 / np.linalg.norm(s1, axis=1, keepdims=True))
+
+    tids = sorted(mom.track_id.unique())
+    pd.DataFrame([{"track_id": t, "bpm": float(rng.uniform(70, 150)),
+                   "dur_sec": float(per_track * 30)} for t in tids]
+                 ).to_parquet(d / "content.parquet", index=False)
+    pd.DataFrame([{
+        "track_id": t, "title": f"곡 {t}", "category": GENRES[i % 3],
+        "vocal_type": ["female", "male"][i % 2], "language": ["ko", "en"][i % 2],
+        "bpm_lo": 80, "bpm_hi": 120, "sound_raw": "",
+        # 장르는 `genre` 가 아니라 `genre_top1` 에서 온다(_catalog_tags). 이름을 틀리면
+        # 패싯이 조용히 빈 목록이 되고, LLM 이 고를 어휘가 사라진다.
+        "genre_top1": GENRES[i % 3],
+        "mood_tags": MOODS[i % 2], "instrument_tags": INSTRUMENTS[i % 2],
+    } for i, t in enumerate(tids)]).to_parquet(d / "flow_meta.parquet", index=False)
+    return d
+
+
+@pytest.fixture(scope="module")
+def svc(tmp_path_factory):
+    """합성 산출물을 가리키게 하고 모듈을 다시 읽는다.
+
+    상수만 바꿔서는 안 된다. `app/legacy/m10_features.py` 가 **자기 모듈에서** 루트를
+    따로 계산하기 때문에(import 시점) recommender 쪽만 고치면 특징 파일만 딴 곳을 본다 —
+    이 저장소가 `ids.py` 로 겪은 문제와 같은 모양이고, legacy 는 원본 유지라 그대로 둔다.
+    """
+    import importlib
+    import os
+    import sys
+
+    root = tmp_path_factory.mktemp("art")
+    _build(root)
+
+    saved_env = os.environ.get("MUPID_AI_ARTIFACT_DIR")
+    os.environ["MUPID_AI_ARTIFACT_DIR"] = str(root)
+
+    def _reload():
+        for name in ("m10_features", "m09_labels", "m11_stage1"):
+            if name in sys.modules:
+                importlib.reload(sys.modules[name])
+        from ai_server.app import recommender as mod
+        return importlib.reload(mod)
+
+    rc = _reload()
+    rc.CAT = rc.Catalog()
+    yield rc
+
+    if saved_env is None:
+        os.environ.pop("MUPID_AI_ARTIFACT_DIR", None)
+    else:
+        os.environ["MUPID_AI_ARTIFACT_DIR"] = saved_env
+    back = _reload()
+    back.CAT = None
+
+
+def test_catalog_loads_every_required_column(svc):
+    """컬럼을 하나라도 빠뜨리면 여기서 터진다."""
+    assert len(svc.CAT.pool) == 24
+    assert svc.CAT.pool.track_id.nunique() == 6
+
+
+def test_recommend_returns_requested_count(svc):
+    out = svc.recommend("internal:1", 3, set())
+    assert len(out["results"]) == 3
+    assert out["diagnostics"]["query_source"] == "none"      # 이력이 없다
+
+
+def test_recommend_never_repeats_a_track(svc):
+    items = svc.recommend("internal:1", 5, set())["results"]
+    tracks = [r["track_id"] for r in items]
+    assert len(tracks) == len(set(tracks)), tracks
+
+
+def test_recommend_honours_exclusion(svc):
+    first = svc.recommend("internal:1", 1, set())["results"][0]["track_id"]
+    again = svc.recommend("internal:1", 3, {first})["results"]
+    assert first not in [r["track_id"] for r in again]
+
+
+def test_query_plan_actually_gates(svc):
+    """조건이 걸리지 않으면 자연어 검색이 무의미하다."""
+    out = svc.recommend("internal:1", 5, set(), True, {"filters": {"genre": ["pop"]}})
+    assert out["diagnostics"]["nlp"]["applied"] == ["filters.genre"]
+    for r in out["results"]:
+        assert svc.CAT.track_info(r["track_id"])["category"] == "pop"
+
+
+def test_unsatisfiable_condition_returns_nothing_not_anything(svc):
+    """어휘에 없는 조건을 조용히 풀고 아무 곡이나 주면 안 된다."""
+    out = svc.recommend("internal:1", 5, set(), True,
+                        {"filters": {"genre": ["존재하지않는장르"]}})
+    assert out["results"] == []
+    assert out["diagnostics"]["nlp"]["unsatisfiable"]
+
+
+def test_mood_filter_reranks_without_dropping(svc):
+    plain = svc.recommend("internal:1", 6, set())
+    moody = svc.recommend("internal:1", 6, set(), True,
+                          {"filters": {"mood": ["relaxing"]}})
+    assert moody["diagnostics"]["mood_rerank"]["matched"] > 0
+    # 후보 수는 그대로 — mood 는 게이트가 아니다.
+    assert moody["diagnostics"]["candidates"] == plain["diagnostics"]["candidates"]
+
+
+def test_ranking_is_unchanged_when_no_mood_is_asked(svc):
+    """soft rerank 를 넣기 전과 순위가 같아야 한다. 동결 약속의 실증이다."""
+    a = [r["moment_id"] for r in svc.recommend("internal:1", 6, set(), False)["results"]]
+    b = [r["moment_id"] for r in svc.recommend("internal:1", 6, set(), False,
+                                               {"filters": {}})["results"]]
+    assert a == b
+
+
+def test_similar_excludes_the_source_track(svc):
+    rows = svc.similar_moments("T000000#1", 3)
+    assert rows and all(r["track_id"] != "T000000" for r in rows)
+    # 한 곡당 하나만.
+    assert len({r["track_id"] for r in rows}) == len(rows)
+    assert rows == sorted(rows, key=lambda r: -r["similarity"])
+
+
+def test_short_sections_are_dropped(svc):
+    """MIN_MOMENT_SEC 보다 짧은 구간은 후보에서 빠진다."""
+    out = svc.recommend("internal:1", 3, set())
+    for r in out["results"]:
+        assert r["end_sec"] - r["start_sec"] >= svc.MIN_MOMENT_SEC
+
+
+def test_internal_api_end_to_end(svc, monkeypatch):
+    """어댑터까지 붙여 실제 응답 모양을 본다."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ai_server.app import ids, internal_api
+
+    pool = svc.CAT.pool
+    im = ids.IdMap(path=svc.OUT_DIR / "_none.parquet", strict=False)
+    im.track_to_num = {t: 900_000 + i for i, t in enumerate(sorted(pool.track_id.unique()))}
+    im.num_to_track = {v: k for k, v in im.track_to_num.items()}
+    im.sec_to_num = {m: 9_000_000 + i for i, m in enumerate(sorted(pool.moment_id))}
+    im.num_to_sec = {v: k for k, v in im.sec_to_num.items()}
+    # 파일에서 읽은 적이 없으면 `loaded` 가 False 라 ready 가 503 이다. 그것이 옳은 동작이고,
+    # 여기서는 "매핑표를 정상으로 읽은 상태" 를 흉내 내야 하므로 세워 준다.
+    im.loaded = True
+    monkeypatch.setattr(ids, "_MAP", im)
+
+    app = FastAPI()
+    internal_api.install(app, svc)
+    c = TestClient(app)
+
+    r = c.post("/internal/recommendations/daily",
+               json={"recommendation_id": 1, "user_id": 7, "limit": 3})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["items"]) == 3
+    for it in body["items"]:
+        assert it["end_time_ms"] > it["start_time_ms"]
+        assert it["section_label"] in internal_api._SECTION_ENUM
+        assert it["reason"] and it["reason_code"]
+    assert len({i["music_id"] for i in body["items"]}) == 3
+
+    # 내부 값이 응답으로 새지 않는다.
+    raw = r.text
+    for leaked in ("T000000", "#", "moment_similarity", "prob"):
+        assert leaked not in raw, leaked
+
+    assert c.get("/internal/ready").status_code == 200
+    assert c.get("/internal/facets").json()["fields"]["genre"]["values"]
