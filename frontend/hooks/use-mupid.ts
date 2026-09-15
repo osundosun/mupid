@@ -13,6 +13,7 @@ import * as playlistApi from '@/lib/playlists';
 import { analytics, bindPlayer, type EntryPath } from '@/lib/analytics';
 import { fetchSections } from '@/lib/music-analysis';
 import { chatErrorMessage, requestChat } from '@/lib/ai-chat';
+import { useMediaSession } from './use-media-session';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
   getSongSectionAt,
@@ -101,6 +102,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const previewEnd = useRef<number | null>(null);
   /** 종료를 처리한 곡. 한 곡의 종료로 두 번 넘어가지 않게 한다. */
   const endedFor = useRef<number | null>(null);
+  /** 마지막으로 알린 재생 오류. 같은 사정을 반복해서 띄우지 않는다. */
+  const notifiedError = useRef<string | null>(null);
   const playedInCycle = useRef<Set<number>>(new Set());
   const requestId = useRef(0);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -537,6 +540,55 @@ export function useMupid(bootstrap: Bootstrap) {
     .map((id) => tracks.find((t) => t.id === id)!)
     .filter((t) => t && !ignored.includes(t.id))
     .slice(0, QUEUE_LIMIT);
+  /**
+   * 사용자가 재생 위치를 옮긴다. 화면의 막대와 잠금화면의 막대가 같은 길이다.
+   *
+   * **이미 들고 있는 곡이면 그 자리만 옮긴다.** 예전에는 `startPlayback` 을
+   * 다시 불러 곡을 통째로 다시 걸었다. 막대를 끄는 동안 `change` 가 계속
+   * 들어오는데 그때마다 청취 이벤트가 나가고 최근 감상에 쌓였고, 다시 건
+   * 재생이 옛 자리에서 시작했다가 뒤늦게 목적지로 튀어 막대가 요동쳤다.
+   */
+  const seekByUser = (value: number) => {
+    if (!Number.isFinite(value)) return;
+    previewEnd.current = null;
+    const track = activeRef.current;
+    if (!track) return;
+    const target = Math.max(0, Math.min(value, track.duration));
+    const player = getPlayer();
+    // 아직 이 곡을 들고 있지 않으면 그 자리에서 새로 튼다.
+    if (!player || player.store.get().musicId !== track.musicId) {
+      void startPlayback(track, target);
+      return;
+    }
+    // 사용자가 직접 옮긴 seek 만 이벤트로 남는다. `startPlayback` 이 거는 seek 이나
+    // 구간 미리듣기처럼 앱이 거는 이동은 여기를 지나지 않는다 — 되감아 다시 듣는
+    // 행동(+0.6)을 앱의 동작과 섞으면 구간 선호 신호가 망가진다.
+    analytics.seek(positionMs(), Math.round(target * 1000));
+    setTime(target);
+    void player.seek(target);
+  };
+
+  /**
+   * 상단 알림과 잠금화면의 플레이어.
+   *
+   * 앱에서만 뜬다(웹에서는 `lib/platform/media-session.ts` 가 조용히 지나간다).
+   * 버튼은 화면의 같은 자리를 그대로 부른다 — 알림에서 누른 것과 화면에서
+   * 누른 것이 청취 이벤트에서도 구분되지 않아야 하기 때문이다.
+   */
+  useMediaSession({
+    track: active,
+    canPrevious: queueTracks.length > 1,
+    canNext: queueTracks.length > 1,
+    onPlay: () => void getPlayer()?.play(),
+    onPause: () => getPlayer()?.pause(),
+    onNext: () => next(1),
+    onPrevious: () => next(-1),
+    onSeek: seekByUser,
+    onStop: () => {
+      getPlayer()?.stop();
+      setPlaying(false);
+    },
+  });
 
   /**
    * 청취 이벤트 자동 수집을 재생기에 붙인다.
@@ -563,7 +615,16 @@ export function useMupid(bootstrap: Bootstrap) {
       // 버퍼를 기다리는 동안에도 사용자 입장에서는 '재생 중'이다.
       setPlaying(state.status === 'playing' || state.status === 'buffering');
       setTime(state.positionSec);
-      if (state.status === 'error' && state.error) setToast(state.error);
+      // 상태가 'error' 일 때만 알리면 안 된다. 회선이 끊겨 계속 재시도하는
+      // 동안에는 status 가 'buffering' 으로 남아 있어(그래야 돌아왔을 때
+      // 스스로 이어진다) 스피너만 돌고 이유가 보이지 않았다.
+      //
+      // 구독은 위치가 바뀔 때마다(200ms) 불리므로 **사정이 바뀐 순간에만**
+      // 띄운다. 매번 부르면 토스트가 3.2초마다 깜빡인다.
+      if (state.error && state.error !== notifiedError.current) {
+        setToast(state.error);
+      }
+      notifiedError.current = state.error;
 
       // 구간 미리듣기는 끝 지점에서 멈춘다. 곡이 끝난 것이 아니므로
       // 다음 곡으로 넘어가지 않는다.
@@ -1146,33 +1207,7 @@ export function useMupid(bootstrap: Bootstrap) {
     chatButtonRef,
     play,
     next,
-    /**
-     * 화면에서 재생 위치를 옮긴다.
-     *
-     * **이미 들고 있는 곡이면 그 자리만 옮긴다.** 예전에는 `startPlayback` 을
-     * 다시 불러 곡을 통째로 다시 걸었다. 막대를 끄는 동안 `change` 가 계속
-     * 들어오는데 그때마다 청취 이벤트가 나가고 최근 감상에 쌓였고, 다시 건
-     * 재생이 옛 자리에서 시작했다가 뒤늦게 목적지로 튀어 막대가 요동쳤다.
-     */
-    seek: (value: number) => {
-      if (!Number.isFinite(value)) return;
-      previewEnd.current = null;
-      const track = activeRef.current;
-      if (!track) return;
-      const next = Math.max(0, Math.min(value, track.duration));
-      const player = getPlayer();
-      // 아직 이 곡을 들고 있지 않으면 그 자리에서 새로 튼다.
-      if (!player || player.store.get().musicId !== track.musicId) {
-        void startPlayback(track, next);
-        return;
-      }
-      // 사용자가 직접 옮긴 seek 만 이벤트로 남는다. `startPlayback` 이 거는 seek 이나
-      // 구간 미리듣기처럼 앱이 거는 이동은 여기를 지나지 않는다 — 되감아 다시 듣는
-      // 행동(+0.6)을 앱의 동작과 섞으면 구간 선호 신호가 망가진다.
-      analytics.seek(positionMs(), Math.round(next * 1000));
-      setTime(next);
-      void player.seek(next);
-    },
+    seek: seekByUser,
     openTrack,
     openMoment,
     previewMoment,

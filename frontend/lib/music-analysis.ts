@@ -12,6 +12,7 @@
 import { api } from './api/session';
 import type { MusicSection } from './api/endpoints';
 import type { SongSection, Track } from './mupid-data';
+import { withCache } from './platform';
 
 /** 서버 enum → 화면 이름. 없는 값은 그대로 보여준다. */
 const LABELS: Record<string, string> = {
@@ -55,8 +56,18 @@ export async function fetchSections(
   signal?: AbortSignal,
 ): Promise<SongSection[] | null> {
   if (typeof track.musicId !== 'number') return null;
+  const musicId = track.musicId;
   try {
-    const analysis = await api.music.analysis(track.musicId, signal);
+    // 앱에서는 분석 결과를 기기에 남긴다. 한 번 분석된 곡의 구간은 잘 바뀌지
+    // 않고, 곡을 열 때마다 부르는 값이라 네트워크가 느리면 파형이 늦게 뜬다.
+    // 아직 분석 전인 응답은 남기지 않는다 — 파이프라인이 돌고 난 뒤에도
+    // 앱만 계속 빈 답을 내놓게 된다.
+    const analysis = await withCache(
+      'analysis',
+      String(musicId),
+      () => api.music.analysis(musicId, signal),
+      { cacheIf: (value) => Boolean(value?.analyzed && value.sections.length) },
+    );
     if (!analysis?.analyzed || !analysis.sections.length) return null;
     return toSections(analysis.sections);
   } catch (error) {

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "앱 셸이 쓰는 기본 권한. HTTP·저장소는 이 크레이트의 커맨드가 직접 처리하므로 플러그인 권한이 없다.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

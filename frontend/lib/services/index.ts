@@ -88,5 +88,28 @@ export function createService(mode: 'demo' | 'api', api?: MupidService): MupidSe
   if (!api || api.mode !== 'api') throw new Error('실제 API 어댑터가 필요합니다. 데모로 자동 전환하지 않습니다.');
   return api;
 }
+
+/** 앱 셸(Tauri) 안에서 도는가. 전역은 웹뷰가 뜰 때 Tauri 가 먼저 심는다. */
+const inNativeShell = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+/*
+ * 앱에서는 SQLite 가 `localStorage` 자리를 대신한다 (`lib/platform/service.ts`).
+ * 구현은 **부를 때** 불러온다 — 정적 import 로 두면 웹 번들에도 `@tauri-apps/api`
+ * 가 섞이고, 이 모듈만 떼어 검사하는 시험(`tests/services.test.mjs`)이 상대 경로를
+ * 풀지 못한다.
+ */
+let native: Promise<MupidService> | null = null;
+const shell = () => (native ??= import('../platform/service').then(m => m.createSqliteService()));
+const nativeService: MupidService = {
+  mode: 'demo', // 역할은 데모 저장소와 같다 — 기기에만 남는 저장.
+  bootstrap: async catalog => (await shell()).bootstrap(catalog),
+  savePreferences: async value => (await shell()).savePreferences(value),
+  login: async input => (await shell()).login(input),
+  logout: async () => (await shell()).logout(),
+  signup: async input => (await shell()).signup(input),
+  requestEmailVerification: async email => (await shell()).requestEmailVerification(email),
+  readPhoto: async () => (await shell()).readPhoto(),
+  savePhoto: async data => (await shell()).savePhoto(data),
+  removePhoto: async () => (await shell()).removePhoto(),
+};
 // Replace only after backend contracts/authentication are agreed and tested.
-export const mupidService = createService('demo');
+export const mupidService: MupidService = inNativeShell() ? nativeService : createService('demo');

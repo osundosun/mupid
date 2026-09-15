@@ -10,7 +10,7 @@
 .mupid-shell :is(.album-horizontal-scroll, .keyword-card-track, .discovery-album-rail, .song-parts, .filter-chips)::-webkit-scrollbar { display:none; }
 @media (max-width: 767px) {
   .mupid-shell .app-layout, .mupid-shell .main-content { width:100%; min-width:0; max-width:100%; }
-  .mupid-shell .main-content { padding-inline:16px; padding-bottom:calc(var(--dock-height, 170px) + 32px + env(safe-area-inset-bottom, 0px)); }
+  .mupid-shell .main-content { padding-inline:16px; padding-bottom:calc(var(--dock-height, 170px) + 32px + var(--safe-area-inset-bottom)); }
   .mupid-shell .content-page, .mupid-shell .player-page { width:100%; min-width:0; }
   .mupid-shell .page-heading { gap:10px; margin-bottom:24px; }
   .mupid-shell .page-title-group { min-width:0; gap:8px; }
@@ -92,7 +92,10 @@
     --frame-gutter: clamp(6px, 2.4vw, 12px); /* sky margin outside the card */
     --page-gutter: clamp(12px, 3.8vw, 18px); /* content gutter inside it */
   }
-  .mupid-shell:not(.page-welcome) { padding:14px var(--frame-gutter) 0; }
+  /* 상태바는 카드가 아니라 하늘 위에 앉는다 — 카드가 상태바까지 올라가면
+     둥근 윗모서리를 시각·배터리가 가로지른다. 그래서 인셋을 카드 안쪽 헤더가
+     아니라 바깥 여백에서 비운다. */
+  .mupid-shell:not(.page-welcome) { padding:calc(14px + var(--safe-area-inset-top)) var(--frame-gutter) 0; }
   .mupid-shell .app-header, .page-home .app-header { padding-inline:var(--page-gutter); }
   .mupid-shell .main-content { padding-inline:var(--page-gutter); }
   /* Pages sit inside the main gutter already; a second inset only narrows them. */

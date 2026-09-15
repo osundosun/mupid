@@ -50,11 +50,13 @@ void test('mobile mirrors desktop selected-pill styling without changing desktop
 });
 
 void test('menu, mini player and content reserve separate safe-area-aware spaces', () => {
-  assert.ok(css.includes('env(safe-area-inset-top, 0px)'));
-  assert.ok(css.includes('env(safe-area-inset-bottom, 0px)'));
+  // 자리를 비우는 값은 `env()` 가 아니라 `--safe-area-inset-*` 로 받는다 —
+  // 안드로이드 웹뷰의 `env()` 는 시스템 바를 빼먹는다 (`safe-area.test.mjs`).
+  assert.ok(css.includes('var(--safe-area-inset-top)'));
+  assert.ok(css.includes('var(--safe-area-inset-bottom)'));
   assert.ok(
     css.includes(
-      'bottom: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px) + 8px)',
+      'bottom: calc(var(--nav-height) + var(--safe-area-inset-bottom) + 8px)',
     ),
   );
   assert.ok(css.includes('padding-bottom: calc(var(--dock-height) + 24px)'));

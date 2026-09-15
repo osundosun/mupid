@@ -102,7 +102,7 @@
     max-height: 85dvh;
     overflow-y: auto;
     border-radius: 24px 24px 0 0!important;
-    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+    padding-bottom: calc(24px + var(--safe-area-inset-bottom));
   }
 }
 .moment-page .moment-story { padding:40px 36px; }

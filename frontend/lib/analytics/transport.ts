@@ -1,3 +1,4 @@
+import { createPlatformTransport } from '../platform';
 import type { ListenEvent } from './types';
 
 /**
@@ -73,5 +74,33 @@ export function createHttpTransport(options: HttpTransportOptions = {}): Transpo
       throw new PermanentTransportError(response.status);
     }
     throw new Error(`이벤트 전송 실패: ${response.status}`);
+  };
+}
+
+/**
+ * 앱용 전송.
+ *
+ * 앱에서는 HTTP 가 전부 Rust 에서 돈다. `keepalive` 는 브라우저가 페이지를
+ * 버리는 순간에도 요청을 살려 두려고 쓰는 장치인데, 앱 웹뷰는 그런 식으로
+ * 사라지지 않고 Rust 쪽 요청은 화면과 수명이 다르다. 그래서 `leaving` 을 보지
+ * 않는다 — 64KB 본문 제한도 함께 없어진다.
+ */
+export function createNativeTransport(options: HttpTransportOptions = {}): Transport {
+  const url = options.url ?? '/api/v1/events';
+  const transport = createPlatformTransport();
+  return async (events) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = options.authorization?.();
+    if (token) headers.Authorization = token;
+    const response = await transport.send({
+      method: 'POST',
+      url,
+      headers,
+      body: JSON.stringify({ events }),
+      responseType: 'none',
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`이벤트 전송 실패: ${response.status}`);
+    }
   };
 }

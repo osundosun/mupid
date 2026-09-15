@@ -1,0 +1,44 @@
+[package]
+name = "mupid-app"
+version = "0.1.0"
+description = "뮤피드 모바일 앱 — frontend/ 를 Tauri 로 감싼 네이티브 셸"
+authors = ["osundosun"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+# 모바일에서는 네이티브 진입점이 이 라이브러리를 부른다. 이름을 고정해야
+# `cargo tauri android` 가 생성하는 JNI 바인딩이 심볼을 찾는다.
+name = "mupid_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP 는 전부 여기서 돈다. 웹뷰의 fetch 를 쓰지 않으므로 CORS·SameSite 쿠키
+# 제약을 받지 않는다. TLS 는 rustls + 번들 루트 — NDK 에 OpenSSL 을 붙이지
+# 않기 위해서다.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls-webpki-roots",
+  "cookies",
+  "multipart",
+  "gzip",
+  "stream",
+] }
+reqwest_cookie_store = "0.8"
+cookie_store = { version = "0.21", features = ["serde_json"] }
+
+rusqlite = { version = "0.32", features = ["bundled"] }
+base64 = "0.22"
+tokio = { version = "1", features = ["sync", "macros", "time"] }
+thiserror = "2"
+log = "0.4"
+
+[features]
+# 기본 기능 없음. Tauri CLI 가 만드는 `custom-protocol` 을 릴리스 빌드에서 켠다.
+custom-protocol = ["tauri/custom-protocol"]
