@@ -31,17 +31,33 @@ base=${MUPID_K8S_BASE_URL:-https://j15a204.p.ssafy.io}
 
 umask 077
 key=$(mktemp)
-trap 'rm -f "$key"' EXIT
-tr -d '\r' < "$MUPID_DEPLOY_K8S_SSH_KEY" > "$key"
+known=$(mktemp)
+trap 'rm -f "$key" "$known"' EXIT
+
+# GitLab 의 File 변수는 경로를, 일반 Variable 은 값을 준다. 둘 다 받는다.
+# 구분하지 않고 `< "$VAR"` 로 열면 Variable 로 등록돼 있을 때 셸이 열기 실패
+# 메시지에 **개인키 전문을 실어 출력한다** — 실제로 job 로그에 찍혀 키를 폐기해야
+# 했다. 어느 쪽이든 내용이 화면에 나오지 않게 한다.
+read_secret() {
+  if [ -f "$1" ]; then cat "$1"; else printf '%s\n' "$1"; fi
+}
+read_secret "$MUPID_DEPLOY_K8S_SSH_KEY" | tr -d '\r' > "$key"
 printf '\n' >> "$key"
 chmod 600 "$key"
-ssh-keygen -y -P '' -f "$key" >/dev/null
+read_secret "$MUPID_DEPLOY_K8S_KNOWN_HOSTS" | tr -d '\r' > "$known"
+chmod 600 "$known"
+
+# 키가 성한지 먼저 본다. 출력과 오류를 모두 버려 내용이 새지 않게 한다.
+ssh-keygen -y -P '' -f "$key" >/dev/null 2>&1 || {
+  echo 'MUPID_DEPLOY_K8S_SSH_KEY 를 개인키로 읽지 못했다 (내용은 출력하지 않는다)' >&2
+  exit 64
+}
 
 (cd "$(dirname "$archive")" && sha256sum -c image.tar.gz.sha256)
 checksum=$(sha256sum "$archive" | cut -d ' ' -f 1)
 
 ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
-  -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$MUPID_DEPLOY_K8S_KNOWN_HOSTS" \
+  -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" \
   -i "$key" mupid-deploy-k8s@j15a204.p.ssafy.io \
   "deploy-k8s $component $CI_COMMIT_SHA $checksum" < "$archive"
 
