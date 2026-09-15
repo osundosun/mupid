@@ -16,3 +16,6 @@ __pycache__/
 /music_chunking/processed.json
 /music_chunking/input/
 /music_chunking/output/
+
+# 배포 비밀. 저장소에 들어가면 안 된다.
+infra/deploy/.env
