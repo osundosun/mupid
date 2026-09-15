@@ -1,0 +1,44 @@
+# AI 서비스 이미지는 **저장소 루트**를 빌드 컨텍스트로 쓴다. 그대로 두면 node_modules 와
+# 프런트 빌드 산출물까지 데몬으로 전송되어 빌드가 느려지고, 러너의 디스크·메모리 한도
+# (CPU 2 · 4GB)에 그대로 부딪힌다. 필요한 것은 ai_server/ 뿐이다.
+#
+# api/ 는 자체 컨텍스트(api/)와 자체 .dockerignore 를 쓰므로 이 파일의 영향을 받지 않는다.
+
+.git
+.gitlab-ci.yml
+.husky
+.idea
+
+node_modules
+**/node_modules
+**/.gradle
+**/.gradle-ci
+**/build
+**/dist
+**/.next
+
+frontend
+api
+music_chunking
+prototype
+infra
+진행사항
+회고
+
+# 모델·색인은 이미지에 넣지 않는다. 실행할 때 MUPID_AI_ARTIFACT_DIR 로 붙인다.
+ai_server/artifacts
+**/data/proc
+**/*.parquet
+**/*.npy
+**/*.npz
+**/*.pt
+
+# 환경 변수 실제 값은 절대 이미지에 들어가면 안 된다.
+**/.env
+**/.env.*
+!**/.env.example
+
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/.pytest_cache

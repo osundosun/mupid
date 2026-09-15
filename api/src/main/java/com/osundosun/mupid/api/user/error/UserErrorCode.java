@@ -22,6 +22,11 @@ public enum UserErrorCode implements ErrorCode {
     DUPLICATE_EMAIL(HttpStatus.BAD_REQUEST, "이메일이 중복되었습니다."),
     
     /**
+     * 닉네임이 올바르지 않습니다.
+     */
+    INVALID_NICKNAME(HttpStatus.BAD_REQUEST, "닉네임은 공백만으로 지을 수 없습니다."),
+
+    /**
      * 요청한 유저를 찾을 수 없습니다.
      */
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 유저를 찾을 수 없습니다.");

@@ -30,6 +30,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { QUEUE_LIMIT, type MupidModel } from '@/hooks/use-mupid';
+import { NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH, normalizeNickname } from '@/lib/profile';
 import { useDailyReport } from '@/lib/report';
 import { formatTime, genreOptions, moodOptions } from '@/lib/mupid-data';
 import { loadOnboardingOptions, namesOf } from '@/lib/onboarding';
@@ -524,16 +525,39 @@ export function ReportView({ model: m }: { model: MupidModel }) {
     </div>
   );
 }
+/**
+ * 마이페이지의 닉네임 수정.
+ *
+ * 저장은 계정(`PATCH /api/v1/user`)에 한다. 화면 상태만 바꾸면 새로고침에서
+ * 예전 이름이 돌아온다. 길이 제한은 서버 규약을 그대로 따른다.
+ */
 function NicknameForm({ model: m }: { model: MupidModel }) {
   const [draft, setDraft] = useState(m.nickname);
+  const [busy, setBusy] = useState(false);
   return (
     <form
       className="profile-nickname-form"
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault();
-        if (draft.trim()) {
-          m.setNickname(draft.trim().slice(0, 20));
+        if (busy) return;
+        const next = normalizeNickname(draft);
+        if (next === m.nickname) {
+          setDraft(next);
+          return;
+        }
+        setBusy(true);
+        try {
+          await m.saveNickname(next);
           m.setToast('닉네임을 바꿨어요.');
+        } catch (error) {
+          setDraft(m.nickname);
+          m.setToast(
+            error instanceof Error && error.message
+              ? error.message
+              : '닉네임을 저장하지 못했어요. 다시 시도해 주세요.',
+          );
+        } finally {
+          setBusy(false);
         }
       }}
     >
@@ -543,13 +567,15 @@ function NicknameForm({ model: m }: { model: MupidModel }) {
       <div className="inline-form">
         <input
           id="nickname"
-          maxLength={20}
+          minLength={NICKNAME_MIN_LENGTH}
+          maxLength={NICKNAME_MAX_LENGTH}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
+          disabled={busy}
           required
         />
-        <button className="primary-button" type="submit">
-          저장
+        <button className="primary-button" type="submit" disabled={busy}>
+          {busy ? '저장 중…' : '저장'}
         </button>
       </div>
     </form>

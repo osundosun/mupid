@@ -1,0 +1,79 @@
+info:
+  name: 최근 검색어 조회
+  type: http
+  seq: 2
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/user/history/search?size=10"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "keywords": [
+                { "keyword": "무피드", "searched_at": "2026-09-15T14:02:11" },
+                { "keyword": "푸른 오후", "searched_at": "2026-09-15T13:40:02" }
+              ]
+            }
+          }
+
+  - name: 200 검색한 적 없음
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": { "keywords": [] }
+          }
+
+docs: |-
+  # 최근 검색어 조회
+
+  `GET /api/v1/user/history/search` · **인증 필요**
+
+  검색창을 눌렀을 때 아래에 펼쳐지는 목록입니다. 한 화면을 넘길 일이 없어
+  **페이지네이션이 없습니다.**
+
+  | 이름 | 기본값 | 설명 |
+  | --- | --- | --- |
+  | `size` | `10` | 최대 50. 넘기면 50, 0 이하면 1 로 당깁니다 |
+
+  ## 같은 말은 한 번만
+
+  기록은 검색할 때마다 쌓입니다. 같은 말을 다시 찾는 일이 흔해서 그대로
+  내리면 목록이 한 말로 뒤덮입니다. 말별로 묶고, **그 말을 마지막으로 검색한
+  시각**(`searched_at`) 내림차순으로 정렬합니다.
+
+  화면은 엔터나 검색 버튼으로 **제출할 때만** `SEARCH` 이벤트를 보냅니다.
+  글자마다 보내던 때는 "무" · "무피" · "무피드" 가 전부 기록으로 남았습니다.
+
+  ## 기록 번호를 내리지 않습니다
+
+  항목의 열쇠는 `search_history_id` 가 아니라 `keyword` 입니다. 하나의 말에
+  여러 기록이 묶여 있어 대표 번호를 고를 이유가 없고, 뒤에 붙을 삭제도 같은
+  말의 기록을 통째로 지우는 쪽이기 때문입니다.

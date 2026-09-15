@@ -7,6 +7,7 @@ import { login, logout, restoreSession } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
 import { saveOnboarding } from '@/lib/onboarding';
+import { updateNickname } from '@/lib/profile';
 import { fetchHistory, fetchReactions, pushReaction } from '@/lib/reactions';
 import * as playlistApi from '@/lib/playlists';
 import { analytics, bindPlayer, type EntryPath } from '@/lib/analytics';
@@ -21,9 +22,6 @@ import {
   type SavedMoment,
   type ChatMessage,
 } from '@/lib/mupid-data';
-
-/** 검색어 입력이 멎었다고 볼 시간. 이벤트를 글자마다 보내지 않으려는 값이다. */
-const SEARCH_EVENT_DELAY_MS = 900;
 
 /** 화면이 들고 있는 최근 감상 개수. */
 const HISTORY_LIMIT = 8;
@@ -177,18 +175,6 @@ export function useMupid(bootstrap: Bootstrap) {
     router.replace('/home');
     window.scrollTo(0, 0);
   };
-  /**
-   * 검색 이벤트.
-   *
-   * 화면이 입력할 때마다 걸러 주므로 제출 버튼이 없다. 글자마다 이벤트를 보내면
-   * "ㅁ", "무", "무피" 가 전부 검색어로 남으므로 손이 멎은 뒤에 한 번만 보낸다.
-   */
-  useEffect(() => {
-    const keyword = query.trim();
-    if (!keyword || demoSession?.kind !== 'authenticated') return;
-    const timer = setTimeout(() => analytics.search(keyword), SEARCH_EVENT_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [query, demoSession]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(''), 3200);
@@ -214,6 +200,24 @@ export function useMupid(bootstrap: Bootstrap) {
       });
   }, [chatOpen, messages, chatLoading]);
 
+  /**
+   * 검색 확정.
+   *
+   * 엔터나 검색 버튼으로 **제출할 때만** 부른다. 글자마다 부르면 "ㅁ", "무",
+   * "무피" 가 전부 검색어로 남아 최근 검색어가 앞자락으로 뒤덮인다.
+   *
+   * 이벤트를 큐에만 넣으면 5초 뒤에야 나가서, 방금 찾은 말이 최근 검색어에
+   * 늦게 들어온다. 제출은 사용자가 끝냈다고 선언한 순간이므로 바로 흘려보낸다.
+   */
+  const submitSearch = (keyword: string) => {
+    const value = keyword.trim();
+    setQuery(value);
+    // 빈 검색은 검색어를 지우는 동작이다. 기록에 남길 것이 없다.
+    if (!value || demoSession?.kind !== 'authenticated') return;
+    analytics.search(value);
+    void analytics.flush();
+  };
+
   const openLogin = () => {
     loginTriggerRef.current =
       document.activeElement instanceof HTMLElement
@@ -222,6 +226,22 @@ export function useMupid(bootstrap: Bootstrap) {
     setChatOpen(false);
     setLoginDialog(true);
     router.push('/login');
+  };
+  /**
+   * 마이페이지에서 닉네임을 바꾼다.
+   *
+   * 계정에 먼저 저장하고, 성공한 뒤에야 화면을 바꾼다. 순서를 뒤집으면 서버가
+   * 거절해도 바뀐 이름이 화면에 남아 저장된 것처럼 보인다. 실패는 던져서
+   * 화면이 알리게 한다 — 브라우저 저장과 달리 조용히 넘어가면 안 된다.
+   */
+  const saveNickname = async (name: string) => {
+    if (!sessionRef.current) throw new Error('로그인이 필요해요.');
+    const saved = await updateNickname(name);
+    if (!mountedRef.current) return saved;
+    sessionRef.current = { ...sessionRef.current, nickname: saved };
+    setNickname(saved);
+    setDemoSession((current) => (current ? { ...current, nickname: saved } : current));
+    return saved;
   };
   /*
    * 선호 분위기·장르를 나중에 고치는 길은 없앴다.
@@ -1020,7 +1040,7 @@ export function useMupid(bootstrap: Bootstrap) {
     go,
     goBack,
     nickname,
-    setNickname,
+    saveNickname,
     displayName: demoSession ? nickname : '게스트',
     demoSession,
     authReady: authChecked,
@@ -1063,6 +1083,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setLibraryTab,
     query,
     setQuery,
+    submitSearch,
     moodFilter,
     setMoodFilter,
     shuffle,

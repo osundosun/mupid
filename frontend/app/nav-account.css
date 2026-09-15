@@ -1,8 +1,33 @@
 /* Keep search and account access available across listening pages. */
 .mupid-shell .app-header { position: sticky; top: 0; z-index: 60; overflow: visible; }
-.nav-search { display: flex; align-items: center; flex: 1 1 240px; min-width: 120px; max-width: 340px; height: 42px; border: 1px solid #d6e3f6; border-radius: 24px; background: #f7faff; }
+/* 최근 검색어 목록이 검색창에 붙어 내려오도록, 자리 차지는 바깥이 맡는다. */
+.nav-search-area { position: relative; flex: 1 1 240px; min-width: 120px; max-width: 340px; }
+.nav-search { display: flex; align-items: center; width: 100%; height: 42px; border: 1px solid #d6e3f6; border-radius: 24px; background: #f7faff; }
 .nav-search input { width: 0; min-width: 0; flex: 1; padding: 10px 14px; border: 0; outline-offset: 2px; background: transparent; font-size: 15px; }
 .nav-search button { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; color: #5279b9; }
+/* 최근 검색어. 검색창 아래로 펼쳐지므로 헤더보다 위에 떠야 한다. */
+.recent-search-panel { position: absolute; left: 0; right: 0; top: calc(100% + 8px); z-index: 70; padding: 8px; background: #fff; border: 1px solid #dce6f5; border-radius: 14px; box-shadow: 0 8px 28px #42628c26; }
+.recent-search-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 8px; }
+.recent-search-title { font-size: 13px; color: var(--ink-secondary); }
+.recent-search-clear { flex-shrink: 0; padding: 2px 4px; border-radius: 6px; font-size: 13px; color: var(--ink-secondary); }
+.recent-search-clear:hover, .recent-search-clear:focus-visible { color: var(--primary); text-decoration: underline; }
+/* 한 번 더 묻는 자리. 제목 줄을 그대로 쓰므로 목록이 밀리지 않는다. */
+.recent-search-confirm { display: flex; align-items: center; gap: 8px; flex-shrink: 0; font-size: 13px; color: var(--ink-secondary); }
+.recent-search-confirm button { padding: 2px 4px; border-radius: 6px; font-size: 13px; color: var(--ink-secondary); }
+.recent-search-confirm button:hover, .recent-search-confirm button:focus-visible { text-decoration: underline; }
+.recent-search-confirm .is-danger { color: var(--color-destructive); font-weight: 600; }
+.recent-search-error { padding: 4px 10px 8px; font-size: 13px; color: var(--color-destructive); }
+.recent-search-empty { padding: 4px 10px 8px; font-size: 14px; color: var(--ink-secondary); }
+.recent-search-list { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; }
+.recent-search-list li { display: flex; align-items: center; gap: 4px; border-radius: 10px; }
+.recent-search-list li:hover, .recent-search-list li:focus-within { background: #edf3ff; }
+.recent-search-pick { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 10px; text-align: left; font-size: 15px; color: var(--ink-strong); }
+.recent-search-pick svg { flex-shrink: 0; color: #93a9c9; }
+.recent-search-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 입력과 겹친 자리. 색 하나로 "이래서 남았다" 를 보여 준다. */
+.recent-search-word mark { padding: 0 1px; border-radius: 3px; background: var(--color-accent); color: var(--primary); font-weight: 700; }
+.recent-search-remove { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; margin-right: 4px; border-radius: 8px; color: #8fa3c2; }
+.recent-search-remove:hover, .recent-search-remove:focus-visible { background: #dfe8f8; color: var(--ink-strong); }
 .nav-account { position: relative; flex-shrink: 0; margin-left: auto; }
 .nav-avatar { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: #edf3ff; color: #5279b9; overflow: hidden; }
 .nav-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
@@ -11,7 +36,7 @@
 .nav-account-panel button:hover, .nav-account-panel button:focus-visible { background: #edf3ff; }
 @media (max-width: 1100px) and (min-width: 768px) {
   .mupid-shell .app-header { flex-wrap: wrap; }
-  .nav-search { order: 4; max-width: none; flex-basis: 100%; }
+  .nav-search-area { order: 4; max-width: none; flex-basis: 100%; }
 }
 @media (max-width: 767px) {
   /* 모바일에서는 고정하지 않는다. 스크롤하면 본문이 헤더 밑으로 들어가 중간에서
@@ -20,7 +45,7 @@
   .mupid-shell .app-header { display: flex; flex-wrap: nowrap; gap: 10px; height: auto; min-height: 68px; padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px; background: #f8fbff; }
   .mupid-shell .app-header .brand { flex: 0 0 58px; width: 58px; }
   /* Keep logo, search and account in one compact mobile header row. */
-  .mupid-shell .app-header .nav-search { order: 0; flex: 1 1 0; width: auto; min-width: 0; max-width: none; }
+  .mupid-shell .app-header .nav-search-area { order: 0; flex: 1 1 0; width: auto; min-width: 0; max-width: none; }
   .mupid-shell .app-header .nav-account { margin-left: 0; }
   .nav-search input { font-size: 16px; padding-inline: 10px; }
 }

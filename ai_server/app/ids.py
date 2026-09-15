@@ -21,17 +21,15 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data/proc/mupid"
-# 시험용 매핑표를 따로 물릴 수 있게 한다. 운영 기본값은 아래 경로다.
-ID_MAP = Path(os.environ.get("MUPID_ID_MAP", DATA / "id_map.parquet"))
-MOMENTS = DATA / "moments.parquet"
+from . import paths
+
+# 경로는 paths 가 유일한 기준이다. 여기서 따로 계산하면 recommender 와 다른 곳을 보게
+# 되고, 그 상태에서도 서비스는 정상처럼 뜬다 → app/paths.py
 
 COLS = ("source_track_id", "music_id", "source_section_uid", "music_section_id")
 
@@ -52,8 +50,10 @@ class MappingError(Exception):
 class IdMap:
     """매핑표를 양방향 사전으로 들고 있는다. 파일이 없으면 빈 상태로 시작한다."""
 
-    def __init__(self, path: Path = ID_MAP, strict: bool = True):
-        self.path = path
+    def __init__(self, path: Optional[Path] = None, strict: bool = True):
+        # 경로를 만들 때 읽는다. 기본값으로 굳히면 import 순서에 따라 환경변수 설정 전의
+        # 값이 박힌다.
+        self.path = Path(path) if path is not None else paths.id_map_path()
         self.strict = strict
         self.track_to_num: dict[str, int] = {}
         self.num_to_track: dict[int, str] = {}
@@ -214,7 +214,7 @@ def to_ms(seconds: float) -> int:
 # ---------------------------------------------------------------------- 보고
 def report(pool_only: bool = True) -> dict:
     """아직 숫자 ID 매핑이 없는 데이터를 센다."""
-    m = pd.read_parquet(MOMENTS)
+    m = pd.read_parquet(paths.moments_path())
     if pool_only:
         m = m[m.source.isin(["flow", "jamendo", "own"])]
     im = id_map(reload=True)
@@ -230,6 +230,7 @@ def report(pool_only: bool = True) -> dict:
 
 
 if __name__ == "__main__":
+    # 패키지 모듈이라 상대 import 를 쓴다. 실행은 `python -m ai_server.app.ids --report`.
     ap = argparse.ArgumentParser()
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--all-sources", action="store_true", help="추천 풀 밖(fma 등)까지 센다")

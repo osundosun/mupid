@@ -107,7 +107,12 @@ public class UserServiceImpl implements UserService {
     public User updateUser(int userId, UserUpdateRequest dto) {
         User user = getUser(userId).orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
         if (dto.password() != null) user.setPassword(passwordEncoder.encode(dto.password()));
-        if (dto.nickname() != null) user.setNickname(dto.nickname());
+        if (dto.nickname() != null) {
+            // 앞뒤 공백은 이름의 일부가 아니다. 온보딩 제출도 같게 다룬다.
+            String nickname = dto.nickname().trim();
+            if (nickname.isEmpty()) throw new BusinessException(UserErrorCode.INVALID_NICKNAME);
+            user.setNickname(nickname);
+        }
         if (dto.birthYear() != null) user.setBirthYear(dto.birthYear());
         if (dto.gender() != null) user.setGender(UserGender.valueOf(dto.gender()));
         return user;
