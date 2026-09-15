@@ -287,3 +287,114 @@ def test_facets_payload_is_json_safe(facets_payload):
 
     json.dumps(facets_payload)
     assert "_df" not in json.dumps(facets_payload)
+
+
+# ------------------------------------------------------------------ 순위 불변
+def _old_blend(v, clap_active, clap_pct, bdelta, pct, CW):
+    """수정 전 식 그대로. 동결 확인용 기준이다."""
+    return ((1.0 - CW) * pct(v) + CW * clap_pct if clap_active else pct(v)) + bdelta
+
+
+def test_soft_rerank_is_identical_without_mood():
+    """mood 조건이 없으면 순위 계산이 수정 전과 **비트 단위로** 같아야 한다."""
+    import numpy as np
+
+    from ai_server.app import recommender as rc
+
+    rng = np.random.default_rng(0)
+    for clap_active in (False, True):
+        v = rng.random(64).astype(np.float32)
+        clap_pct = rng.random(64).astype(np.float32)
+        bdelta = rng.random(64).astype(np.float32) * 0.01
+        new = rc.soft_rerank(v, clap_active, clap_pct, None) + bdelta
+        old = _old_blend(v, clap_active, clap_pct, bdelta, rc.pct, rc.CLAP_WEIGHT)
+        assert np.array_equal(new, old), clap_active
+        assert list(np.argsort(-new)) == list(np.argsort(-old))
+
+
+def test_mood_rerank_lifts_near_candidates_but_cannot_overturn():
+    """가까운 후보는 추월한다. 그러나 순위를 뒤집지는 않는다 — soft 의 뜻이 그것이다."""
+    import numpy as np
+
+    from ai_server.app import recommender as rc
+
+    v = np.array([0.9, 0.8, 0.7, 0.6, 0.5], dtype=np.float32)   # pct → 1, .75, .5, .25, 0
+    match = np.zeros(5, dtype=np.float32)
+    match[3] = 1.0
+    out = rc.soft_rerank(v, False, None, match)
+    order = list(np.argsort(-out))
+
+    assert len(out) == len(v), "재정렬은 후보를 버리지 않는다"
+    assert order.index(3) < order.index(2), "바로 앞 후보는 추월한다"
+    assert order[0] == 0, "가장 잘 맞던 후보를 밀어내지 않는다"
+    assert order.index(3) > order.index(1), "MOOD_WEIGHT 로는 큰 격차를 뒤집지 못한다"
+
+
+def test_mood_match_ratio_counts_requested_tags():
+    import pandas as pd
+
+    from ai_server.app import recommender as rc
+
+    fac = pd.DataFrame([
+        {"track_id": "T1", "moods": ["relaxing", "meditative"]},
+        {"track_id": "T2", "moods": ["aggressive"]},
+    ]).set_index("track_id")
+    pool = pd.DataFrame([{"track_id": "T1"}, {"track_id": "T2"}, {"track_id": "T3"}])
+    r = rc.mood_match_ratio(pool, ["relaxing", "meditative"], fac)
+    assert list(r) == [1.0, 0.0, 0.0]          # T3 은 카탈로그에 없다 → 0
+    assert list(rc.mood_match_ratio(pool, ["relaxing", "sad"], fac)) == [0.5, 0.0, 0.0]
+
+
+# ------------------------------------------------------------------ query_plan
+def test_search_requires_query_or_plan():
+    from ai_server.app.internal_api import SearchRequest
+
+    with pytest.raises(Exception):
+        SearchRequest(recommendation_id=1, user_id=1)
+
+
+def test_query_plan_keeps_only_readable_keys():
+    from ai_server.app.internal_api import SearchRequest
+
+    req = SearchRequest(recommendation_id=1, user_id=1, query_plan={
+        "filters": {"genre": ["pop"], "_clap_embedding": [0.1, 0.2]},
+        "exclude": {"mood": ["aggressive"]},
+        "junk": 1})
+    assert req.query_plan == {"filters": {"genre": ["pop"]},
+                              "exclude": {"mood": ["aggressive"]}}
+
+
+def test_query_plan_rejects_embedding_injection():
+    """의미 점수 벡터는 내부 전용이다. 바깥에서 주입하지 못한다."""
+    from ai_server.app.internal_api import SearchRequest
+
+    req = SearchRequest(recommendation_id=1, user_id=1,
+                        query_plan={"filters": {"_clap_embedding": [1.0]},
+                                    "exclude": {"genre": ["rock"]}})
+    assert "_clap_embedding" not in req.query_plan["filters"]
+
+
+def test_query_plan_path_does_not_need_interpreter():
+    """A안: 호출자가 QueryPlan 을 보내면 해석기 없이도 추천이 나간다."""
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    seen: dict = {}
+
+    def _recommend(user, n, exclude, explore, plan, ct, cm):
+        seen["plan"] = plan
+        return {"results": [], "diagnostics": {"shortfall": 0}}
+
+    fake = SimpleNamespace(NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]),
+                           recommend=_recommend,
+                           parse_nlp_query=lambda t: (None, ("INTERNAL_ERROR", "불려선 안 된다")))
+    app = FastAPI()
+    internal_api.install(app, fake)
+    r = TestClient(app).post("/internal/recommendations/search",
+                             json={"recommendation_id": 1, "user_id": 1,
+                                   "query_plan": {"filters": {"genre": ["pop"]}}})
+    assert r.status_code == 404, r.text          # 후보 0 → NO_CANDIDATES (501 아님)
+    assert r.json()["error_code"] == "NO_CANDIDATES"
+    assert seen["plan"] == {"filters": {"genre": ["pop"]}}

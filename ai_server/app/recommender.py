@@ -65,6 +65,7 @@ MAX_BPM_LOG2 = 0.40
 MIN_MOMENT_SEC = 8.0
 W_RULE, W_MODEL = 0.5, 0.5     # 로지스틱 계수가 없을 때만 쓰는 폴백
 CLAP_WEIGHT = 0.25             # 자연어-오디오 의미 점수; 명시 필터 통과 후보만 재정렬
+MOOD_WEIGHT = 0.25             # filters.mood 부드러운 재정렬; 걸러내지 않는다
 P_MIN = 0.32                   # 절대 임계값 (P_MODE="absolute" 일 때만)
 P_MODE = "quantile"            # quantile | absolute
 P_TOP_FRAC = 0.05              # 사용자별 후보 확률 상위 5% 를 통과시킨다
@@ -1048,6 +1049,35 @@ def pct(v: np.ndarray) -> np.ndarray:
     return o / max(len(v) - 1, 1)
 
 
+def soft_rerank(v: np.ndarray, clap_active: bool, clap_pct: np.ndarray,
+                mood_match: Optional[np.ndarray]) -> np.ndarray:
+    """명시 게이트를 통과한 뒤의 **부드러운 재정렬**. 걸러내지 않고 순서만 바꾼다.
+
+    `mood_match` 가 `None` 이면 종전 식과 연산이 그대로 같다 — mood 조건이 없는 요청의
+    순위는 이 함수가 생기기 전과 비트 단위로 같아야 한다.
+
+    mood 는 백분위(`pct`)로 바꾸지 않고 **일치 비율(0~1) 그대로** 섞는다. 대부분의 후보가
+    0 으로 동점인데 `pct` 를 씌우면 동점자 사이에 원래 행 순서가 순위로 새어 들어간다.
+    """
+    out = pct(v)
+    if clap_active:
+        out = (1.0 - CLAP_WEIGHT) * out + CLAP_WEIGHT * clap_pct
+    if mood_match is not None:
+        out = (1.0 - MOOD_WEIGHT) * out + MOOD_WEIGHT * mood_match
+    return out
+
+
+def mood_match_ratio(pool: pd.DataFrame, wanted: list, fac: pd.DataFrame) -> np.ndarray:
+    """요청한 무드 중 그 곡이 실제로 가진 비율. 게이트가 아니라 가점 재료다."""
+    want = set(_qvals(wanted))
+    if not want:
+        return np.zeros(len(pool), dtype=np.float32)
+    per_track = {t: len(want & set(_qvals(fac.loc[t].get("moods", []))))
+                 for t in pool.track_id.unique() if t in fac.index}
+    return np.asarray([per_track.get(t, 0) / len(want) for t in pool.track_id],
+                      dtype=np.float32)
+
+
 def parse_nlp_query(text: str) -> tuple[Optional[dict], Optional[tuple[str, str]]]:
     """QueryPlan v1 해석기 호출. 실패를 **삼키지 않는다.**
 
@@ -1316,6 +1346,18 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             diag["clap"] = {"active": True, "covered": int(cov.sum()),
                             "candidates": len(pool), "weight": CLAP_WEIGHT}
 
+    # filters.mood 는 게이트가 아니다 — 무드는 추론 폭이 커서 걸러내면 후보가 과하게 마른다.
+    # 대신 일치하는 곡을 위로 올린다. CLAP 이 없는 경로(호출자가 QueryPlan 을 직접 보낸
+    # 경우)에서 mood 가 아무 일도 하지 않던 것을 메운다.
+    mood_match = None
+    want_mood = _qvals(((query_plan or {}).get("filters") or {}).get("mood"))
+    if want_mood:
+        mood_match = mood_match_ratio(pool, want_mood, catalog_facets()["_df"]
+                                      .set_index("track_id"))
+        diag["mood_rerank"] = {"requested": want_mood, "weight": MOOD_WEIGHT,
+                               "matched": int((mood_match > 0).sum()),
+                               "candidates": len(pool)}
+
     rows = pool.emb_row.to_numpy()
     V = center(np.asarray(c.Z[rows], dtype=np.float32))   # 질의와 동일 변환
     n_pairs = 0
@@ -1385,8 +1427,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         if zu is None:
             final = pct(s_rule)
 
-    final = ((1.0 - CLAP_WEIGHT) * pct(final) + CLAP_WEIGHT * clap_pct
-             if clap_active else pct(final)) + bdelta
+    final = soft_rerank(final, clap_active, clap_pct, mood_match) + bdelta
 
     # BPM 게이트 (사용자 선호 BPM 중앙값 기준)
     keep = np.ones(len(pool), dtype=bool)
@@ -1451,8 +1492,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
                     pool, S[:, j] / max(float(W[j]), 1e-9), s_model, bpm_pref))
             else:
                 sj = W_RULE * pct(S[:, j]) + (W_MODEL * pct(s_model) if zu is not None else 0.0)
-            sj = ((1.0 - CLAP_WEIGHT) * pct(sj) + CLAP_WEIGHT * clap_pct
-                  if clap_active else pct(sj)) + bdelta
+            sj = soft_rerank(sj, clap_active, clap_pct, mood_match) + bdelta
             per.append(np.argsort(-np.where(keep, sj, -1e9)))
         cl_order = list(np.argsort(-W))
         ptr = {j: 0 for j in range(len(C))}

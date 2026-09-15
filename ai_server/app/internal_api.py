@@ -63,7 +63,28 @@ class DailyRequest(_Base):
 
 
 class SearchRequest(_Base):
-    query: StrictStr = Field(..., min_length=1, max_length=500)
+    """자연어 검색. 조건을 **누가 뽑았느냐**에 따라 둘 중 하나를 채운다.
+
+    · `query_plan` — 호출자(Spring 의 LLM)가 이미 QueryPlan 으로 바꿔 보낸 경우.
+      해석기가 필요 없다. 쓸 수 있는 태그는 `GET /internal/facets` 가 알려준다.
+    · `query` — 원문만 보낸 경우. AI 서버가 `MUPID_AI_NLP_URL` 해석기를 부른다.
+      해석기가 없으면 501 이다.
+
+    둘 다 없으면 400 이다. 조건 없는 요청은 `daily`·`next` 로 보내야 한다 — 여기서
+    받아 주면 "검색했는데 조건이 안 걸린 결과" 가 나가고, 그게 이 API 의 실패 모드다.
+    """
+
+    query: Optional[StrictStr] = Field(None, min_length=1, max_length=500)
+    query_plan: Optional[dict] = Field(
+        None, description="QueryPlan v1. filters/exclude 만 읽는다")
+
+    @model_validator(mode="after")
+    def _one_of(self):
+        if not (self.query and self.query.strip()) and self.query_plan is None:
+            raise ValueError("query 또는 query_plan 중 하나는 있어야 합니다")
+        if self.query_plan is not None:
+            self.query_plan = _clean_plan(self.query_plan)
+        return self
 
 
 # ------------------------------------------------------------------ 응답 DTO
@@ -90,6 +111,28 @@ class RecommendationResponse(BaseModel):
     items: list[RecommendationItem]
     shortfall: int = Field(..., ge=0)
     model_version: str
+
+
+def _clean_plan(plan: dict) -> dict:
+    """바깥에서 온 QueryPlan 을 읽는 키만 남긴다.
+
+    `filter_query_pool` 은 `filters`·`exclude` 만 본다. `_clap_embedding` 같은 밑줄 키는
+    **내부 전용**이다 — 바깥에서 넣을 수 있게 두면 호출자가 의미 점수 벡터를 직접
+    주입하게 된다.
+    """
+    if not isinstance(plan, dict):
+        raise ValueError("query_plan 은 객체여야 합니다")
+    out: dict = {}
+    for key in ("filters", "exclude"):
+        v = plan.get(key)
+        if v is None:
+            continue
+        if not isinstance(v, dict):
+            raise ValueError(f"query_plan.{key} 는 객체여야 합니다")
+        out[key] = {k: val for k, val in v.items() if not str(k).startswith("_")}
+    if not out:
+        raise ValueError("query_plan 에 filters 또는 exclude 가 있어야 합니다")
+    return out
 
 
 class ErrorResponse(BaseModel):
@@ -271,15 +314,21 @@ def daily(req: DailyRequest) -> RecommendationResponse:
              responses=ERRORS, summary="자연어 검색 추천")
 def search(req: SearchRequest) -> RecommendationResponse:
     svc = _svc_mod()
-    if not getattr(svc, "NLP_PARSE_URL", ""):
-        raise ApiError("SEARCH_NOT_CONFIGURED",
-                       "자연어 해석기가 설정되지 않았습니다. "
-                       "MUPID_AI_NLP_URL 을 지정하세요. (S15P21A204-219)")
-    _svc()                                  # 색인 준비 확인
-    plan, error = svc.parse_nlp_query(req.query.strip())
-    if error is not None:
-        # 조건을 뽑지 못했다. 일반 추천으로 조용히 넘어가지 않는다.
-        raise ApiError(*error)
+    if req.query_plan is not None:
+        # 호출자가 이미 조건을 뽑아 보냈다. 해석기가 필요 없다.
+        _svc()                              # 색인 준비 확인
+        plan = req.query_plan
+    else:
+        if not getattr(svc, "NLP_PARSE_URL", ""):
+            raise ApiError("SEARCH_NOT_CONFIGURED",
+                           "자연어 해석기가 설정되지 않았습니다. "
+                           "MUPID_AI_NLP_URL 을 지정하거나 query_plan 을 보내세요. "
+                           "(S15P21A204-219)")
+        _svc()                              # 색인 준비 확인
+        plan, error = svc.parse_nlp_query(req.query.strip())
+        if error is not None:
+            # 조건을 뽑지 못했다. 일반 추천으로 조용히 넘어가지 않는다.
+            raise ApiError(*error)
     out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
                         True, plan, None, None)
     return to_response(req.recommendation_id, out, req.limit, True)

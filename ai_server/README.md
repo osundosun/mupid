@@ -94,8 +94,25 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
   "current_music_section_id": 1204, "position_ms": 58000 }
 ```
 
-`recommendation_id`·`user_id` 만 필수. 뒤 세 개는 `next` 전용, `query` 는 `search` 전용이다.
+`recommendation_id`·`user_id` 만 필수. 뒤 세 개는 `next` 전용이다.
 타입이 엄격하다 — `"5001"` 같은 문자열이나 실수 `limit` 은 400 으로 거부한다.
+
+`search` 는 조건을 **누가 뽑았느냐**에 따라 둘 중 하나를 채운다. 둘 다 없으면 400 이다.
+
+```json
+{ "recommendation_id": 5001, "user_id": 15, "limit": 10,
+  "query_plan": { "filters": { "genre": ["pop"], "instrument": ["piano"],
+                               "vocal": ["female"], "flow": ["chorus"] },
+                  "exclude": { "mood": ["aggressive"] } } }
+```
+
+| 필드 | 쓰는 경우 | 해석기 |
+|---|---|---|
+| `query_plan` | 호출자(Spring 의 LLM)가 이미 조건을 뽑았다 | **불필요** |
+| `query` | 원문만 보낸다 | 필요. 없으면 501 |
+
+`query_plan` 은 `filters`·`exclude` 만 읽는다. 밑줄로 시작하는 키는 내부 전용이라 버린다.
+쓸 수 있는 태그는 `GET /internal/facets` 가 알려준다.
 
 ### 응답
 
@@ -170,8 +187,9 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 | `gate_with_reference` | 기준 곡이 있어야 적용된다. 없으면 무시되고 진단에 남는다 |
 | `ignored` | 받지만 아무 일도 하지 않는다 (카탈로그에 해당 필드가 없다) |
 
-특히 **`filters.mood` 는 걸러내지 않는다.** 무드는 추론 폭이 커서 의미 점수로만 쓴다.
-반대로 `exclude.mood` 는 게이트다. 이걸 모르면 "잔잔한 곡" 조건이 걸린 줄 알고 넘어간다.
+특히 **`filters.mood` 는 걸러내지 않는다.** 무드는 추론 폭이 커서 게이트로 쓰면 후보가
+과하게 마른다. 대신 일치하는 곡을 **위로 올린다**(soft rerank, 가중치 `MOOD_WEIGHT`).
+가까운 순위는 추월하지만 큰 격차를 뒤집지는 않는다. 반대로 `exclude.mood` 는 게이트다.
 
 `filters` 에 쓰는 키는 `genre` · `language` · `vocal` · `instrument` · `mood` · `flow` ·
 `bpm_min` · `bpm_max` · `tempo_direction` · `energy_direction` 이다. `vocal_type` 이 아니라
