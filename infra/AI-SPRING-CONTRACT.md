@@ -495,6 +495,42 @@ MUPID_COMBINER=                # 결합기 파일명
 Spring 에 `MUPID_RECOMMENDER_INTERNAL_TOKEN` 을 주지 않으면 **추천 호출이 전부 401** 이
 된다. 배포 설정만으로 조용히 죽는 형태라 한 쌍으로 다룬다.
 
+### AI 가 온보딩 답변을 받을 때
+
+감상 이력이 없는 사용자의 첫 추천은 온보딩 답변으로 만든다. Spring 이 아래 배치 전용
+엔드포인트를 연다.
+
+```
+GET /api/v1/user/{userId}/onboarding     ROLE_SYSTEM | ROLE_ADMIN
+→ { data: { user_id, submitted, submitted_at, moods[], genres[] } }
+```
+
+미제출은 404 가 아니라 **200 + `submitted:false`** 다. "아직 안 한 사람"과 "없는 사용자"는
+로그 취급이 달라야 하므로 갈라져 있다. `submitted` 로 판단한다.
+
+받는 쪽은 `ai_server/tools/fetch_onboarding.py` 이고 `serve/onboarding.parquet` 로 떨군다.
+
+```
+MUPID_API_BASE_URL=          # Spring 주소 (`/api/v1` 앞까지)
+MUPID_API_REFRESH_TOKEN=     # ROLE_SYSTEM 계정의 리프레시 토큰
+```
+
+액세스 토큰은 `GET /api/v1/auth` 로 그때그때 받아 **메모리에만** 둔다. 파일·로그에 남기지
+않는다.
+
+**알아 둘 것 두 가지.**
+
+1. **일곱 축 중 둘만 온다.** `onboarding_seeds()` 는 language·vocal_type·style·tempo·
+   genre·mood·instrument 를 읽지만 `onboarding_survey` 에는 **mood·genre** 밖에 없다.
+   나머지 다섯은 빈 값으로 채워 넣는다 — 빈 축은 필터를 건너뛰므로 동작에는 지장이 없고,
+   대신 **개인화가 두 축으로 줄어든다.** 나머지를 넣으려면 ERD 변경이 먼저다.
+2. **단건 조회다.** 사용자 수만큼 두드려야 한다. 전체 백필이 필요해지면 벌크 조회를
+   요청한다 — BE 쪽에서 별도 티켓으로 얹는 것을 열어 두었다.
+
+어휘가 맞는지는 아직 확인하지 못했다. Spring 은 코드표의 이름(`잔잔한`, `Jazz`)을 주고
+AI 의 facet 은 카탈로그 태그에서 만들어진다. **두 어휘가 다르면 씨앗이 비어 아무 필터도
+걸리지 않는다** — 실제 값을 받아 대조하는 것이 다음 차례다.
+
 ### AI 배치가 행동 데이터를 읽을 때 (Q8)
 
 AI 정기 배치가 **ClickHouse 를 읽기 전용으로 직접 조회한다.** Spring 이 밀어 주거나 Kafka 를
@@ -589,7 +625,7 @@ MUPID_JAMENDO_CLIENT_ID=       # Jamendo 를 다시 수집할 때만 필요
 | 5 | ~~AI 가 MySQL 을 직접 읽을지~~ → **ClickHouse 를 읽기 전용 직접 조회** (Q8) |
 | 6 | ~~FastAPI 인증 방식~~ → **공유 비밀 헤더 구현 완료** (아래 참조) |
 | 7 | ClickHouse 조회·학습 실행을 API 로 둘지 배치 규격으로 둘지 |
-| 8 | 온보딩 데이터 전달 방식 |
+| 8 | ~~온보딩 데이터 전달 방식~~ → **`GET /api/v1/user/{userId}/onboarding` 로 확정.** 남은 것은 어휘 대조와 벌크 조회 여부 |
 | 9 | 데일리 추천 호출·DB 저장 API |
 | 10 | 유사 구간·자동재생 API 연결 |
 | 11 | 실제 DB 의 ERD·JPA 컬럼 통일 (Q1·Q2 확정 대기) |

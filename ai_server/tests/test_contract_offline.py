@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -1164,3 +1165,72 @@ def test_build_id_map_reads_csv_too(tmp_path):
     p.write_text("source_track_id,music_id,source_section_uid,music_section_id\n"
                  "A,1,A#0,10\n", encoding="utf-8")
     assert len(b.build(b.read_table(p))) == 1
+
+
+# ------------------------------------------------------------------ 온보딩 수신
+def _onb_body(user_id=42, submitted=True):
+    return {"message": None,
+            "data": {"user_id": user_id, "submitted": submitted,
+                     "submitted_at": "2026-09-14T10:32:26" if submitted else None,
+                     "moods": [{"code_id": 1, "name": "잔잔한"},
+                               {"code_id": 3, "name": "몽환적인"}] if submitted else [],
+                     "genres": [{"code_id": 15, "name": "Jazz"}] if submitted else []}}
+
+
+def test_fetch_onboarding_maps_submitted_answer():
+    """제출한 사용자는 user_ref 와 두 축이 채워진 한 줄이 된다."""
+    from ai_server.tools import fetch_onboarding as f
+
+    row = f.to_row(_onb_body()["data"])
+    assert row["user_ref"] == "internal:42"
+    assert json.loads(row["mood"]) == ["잔잔한", "몽환적인"]
+    assert json.loads(row["genre"]) == ["Jazz"]
+
+
+def test_fetch_onboarding_skips_unsubmitted():
+    """미제출은 오류가 아니라 건너뛸 일이다 — 줄을 만들지 않는다."""
+    from ai_server.tools import fetch_onboarding as f
+
+    assert f.to_row(_onb_body(submitted=False)["data"]) is None
+
+
+def test_fetch_onboarding_fills_every_axis_the_recommender_reads():
+    """빈 축을 키째 빼면 옛 행과 concat 할 때 NaN 이 되고, NaN 은 truthy 라
+    `x not in NaN` 에서 터진다(2026-09-07 에 실제로 겪었다)."""
+    from ai_server.app import recommender
+    from ai_server.tools import fetch_onboarding as f
+
+    row = f.to_row(_onb_body()["data"])
+    for axis in recommender.ONB_LIST_FIELDS:
+        assert axis in row, axis
+        assert isinstance(json.loads(row[axis]), list)
+
+
+def test_fetch_onboarding_rewrites_instead_of_appending(tmp_path):
+    """같은 사용자를 다시 받아도 줄이 늘지 않는다."""
+    import pandas as pd
+
+    from ai_server.tools import fetch_onboarding as f
+
+    dst = tmp_path / "onboarding.parquet"
+    first = pd.DataFrame([f.to_row(_onb_body()["data"])])
+    f.merge_into(first, dst).to_parquet(dst, index=False)
+
+    again = pd.DataFrame([f.to_row(_onb_body()["data"])])
+    out = f.merge_into(again, dst)
+    assert len(out) == 1
+    assert out.user_ref.tolist() == ["internal:42"]
+
+
+def test_fetch_onboarding_requires_credentials(monkeypatch):
+    """자격이 없으면 조용히 빈 결과를 내지 않고 멈춘다."""
+    from ai_server.tools import fetch_onboarding as f
+
+    monkeypatch.setenv("MUPID_API_BASE_URL", "http://x")
+    monkeypatch.delenv("MUPID_API_REFRESH_TOKEN", raising=False)
+    with pytest.raises(SystemExit):
+        f.access_token()
+
+    monkeypatch.delenv("MUPID_API_BASE_URL", raising=False)
+    with pytest.raises(SystemExit):
+        f._base()
