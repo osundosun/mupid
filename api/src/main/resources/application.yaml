@@ -64,6 +64,11 @@ clickhouse:
   connection-timeout: 3s
   # ClickHouse 집계 쿼리는 오래 걸릴 수 있어 검증 쿼리 타임아웃을 넉넉히 둔다.
   validation-timeout: 3s
+  # 관리자 콘솔(/api/admin/clickhouse)이 프록시할 HTTP 인터페이스 주소.
+  # 비워 두면 위의 JDBC 주소에서 만들어 쓴다. 다른 노드를 보고 싶을 때만 채운다.
+  http-url: ${MUPID_CLICKHOUSE_HTTP_URL:}
+  # 운영 nginx 의 /api/ 가 proxy_read_timeout 60s 다. 그보다 크게 잡지 않는다.
+  console-timeout: 60s
 
 event:
   kafka-bootstrap-servers: ${MUPID_KAFKA_BOOTSTRAP}

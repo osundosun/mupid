@@ -52,7 +52,7 @@ docs:
     ## 기본 이미지
 
     `PROFILE` 카테고리에서 저장된 사진이 없으면 기본 프로필 이미지
-    (`default-user-profile.png`) 가 반환됩니다. 404 가 아닙니다.
+    (`default-user-profile.webp`) 가 반환됩니다. 404 가 아닙니다.
 
     ## 엔드포인트 구분
 

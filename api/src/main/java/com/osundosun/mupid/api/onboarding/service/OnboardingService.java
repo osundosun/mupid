@@ -27,7 +27,10 @@ public interface OnboardingService {
     OnboardingResultResponse getResult(int userId);
 
     /**
-     * 설문을 저장한다. **한 번만 할 수 있다.**
+     * 설문을 저장하고 **계정을 `ACTIVE` 로 올린다.** 제출은 **한 번만 할 수 있다.**
+     *
+     * 가입 직후 상태는 `PENDING` 이고, 그 상태를 벗는 길은 이 제출 하나뿐이다.
+     * 저장과 상태 전환은 같은 트랜잭션에 있다.
      *
      * 이미 제출했으면 `ONBOARDING_ALREADY_SUBMITTED` 를 던진다.
      */

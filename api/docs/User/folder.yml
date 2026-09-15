@@ -34,7 +34,7 @@ docs:
     | 조회 | `GET /api/v1/storage/image/profile/{{USER_ID}}` |
     | 삭제 | `DELETE /api/v1/storage/image/profile/{{USER_ID}}` |
 
-    사진이 없으면 기본 프로필 이미지(`default-user-profile.png`)가 200 으로 반환됩니다.
+    사진이 없으면 기본 프로필 이미지(`default-user-profile.webp`)가 200 으로 반환됩니다.
 
     ## 회원가입 순서
 

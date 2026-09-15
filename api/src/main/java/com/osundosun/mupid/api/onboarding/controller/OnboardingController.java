@@ -50,6 +50,9 @@ public class OnboardingController {
      *
      * 이 설문은 이력이 없는 사람의 첫 추천을 만드는 콜드스타트 입력이라 계속
      * 고쳐 가며 쓰는 값이 아니다. 이미 제출했으면 409 다.
+     *
+     * 제출이 성공하면 계정 상태가 `PENDING` 에서 `ACTIVE` 로 바뀐다 —
+     * 가입 직후의 `PENDING` 을 벗는 길은 이 호출 하나뿐이다.
      */
     @PostMapping
     public ResponseEntity<BaseResponse<Void>> submit(

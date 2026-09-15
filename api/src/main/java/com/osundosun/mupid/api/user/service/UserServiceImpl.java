@@ -119,6 +119,19 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public User activateUser(int userId) {
+        User user = getUser(userId).orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+        /*
+         * `PENDING` 일 때만 올린다. `ACTIVE` 를 다시 쓰면 `updatedAt` 만 흔들리고,
+         * 탈퇴 계정은 `getUser` 가 애초에 내주지 않는다.
+         */
+        if (user.getStatus() == UserStatus.PENDING) {
+            user.setStatus(UserStatus.ACTIVE);
+        }
+        return user;
+    }
+
+    @Override
     public void deleteUser(int userId) {
         User user = getUser(userId).orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
         repository.delete(user);

@@ -134,6 +134,16 @@ public class OnboardingServiceImpl implements OnboardingService {
             }
         }
         repository.saveAll(rows);
+
+        /*
+         * 가입 직후 상태는 `PENDING` 이고, 그 상태를 벗는 길은 이 제출 하나뿐이다.
+         * 제출과 상태 전환은 같은 트랜잭션이라 한쪽만 남는 일이 없다.
+         *
+         * 인증 주체로 받은 `user` 를 직접 고치지 않고 `UserService` 를 거치는 것은,
+         * 이 엔티티가 보안 필터가 읽어 둔 것이라 지금 영속성 컨텍스트가 관리한다는
+         * 보장이 없기 때문이다. 관리되지 않으면 `setStatus` 는 그냥 사라진다.
+         */
+        userService.activateUser(user.getUserId());
     }
 
     private List<CodeOption> options(CodeType type) {

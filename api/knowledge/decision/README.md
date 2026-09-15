@@ -24,9 +24,11 @@
 | [0014](0014-event-collector-in-api.md) | 청취 이벤트 수집기를 API 안에 둔다 | 채택 · 구현 완료 |
 | [0015](0015-derive-interpretation-at-query-time.md) | 해석(분류·가중치)은 저장하지 않고 쿼리 시점에 계산한다 | 채택 · **기존 MV 1개가 미준수** |
 | [0016](0016-audio-upload-three-step.md) | 오디오 등록은 3단계 프로토콜로 하고, 바이트는 스프링을 거치지 않는다 | 채택 · 구현 완료 |
-| [0017](0017-onboarding-survey-cross-product.md) | 온보딩 설문을 분위기 × 장르 조합으로 저장한다 | 채택 |
+| [0017](0017-onboarding-survey-cross-product.md) | 온보딩 설문은 분위기 × 장르 조합으로 저장한다 | 채택 · 구현 완료 · 스키마 제안 중 |
 | [0018](0018-history-from-event-stream.md) | 재생·검색 기록은 청취 이벤트에서 갈라 쓴다 | 채택 · 구현 완료 |
 | [0019](0019-report-reads-clickhouse-directly.md) | 취향 리포트는 ClickHouse 를 직접 읽고, 결론만 MySQL 에 남긴다 | 채택 · 구현 완료 |
+| [0020](0020-lyric-bulk-replace.md) | 가사는 곡 단위로 통째로 갈아 끼운다 | 채택 · 구현 완료 |
+| [0021](0021-query-plan-instead-of-nl-interpreter.md) | 자연어는 대화 모델이 조건으로 바꾼다 — 별도 해석기를 세우지 않는다 | 채택 |
 
 ## 먼저 볼 것
 

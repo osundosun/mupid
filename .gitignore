@@ -11,11 +11,13 @@ __pycache__/
 # music_preprocessing (uv)
 /music_preprocessing/config.json
 # 배치 계정의 리프레시 토큰. 커밋하면 시스템 권한이 그대로 새어 나간다.
-/music_chunking/refresh_token.txt
-/music_chunking/registered.json
-/music_chunking/processed.json
-/music_chunking/input/
-/music_chunking/output/
+/music_preprocessing/refresh_token.txt
+/music_preprocessing/registered.json
+/music_preprocessing/processed.json
+/music_preprocessing/input/
+/music_preprocessing/output/
+# 실행마다 파일 하나가 생기는 배치 로그
+/music_preprocessing/logs/
 
 # infra_k8s 노드 접속 정보 (.env.example 를 복사해 만든 것)
 /infra_k8s/.env
@@ -27,14 +29,6 @@ __pycache__/
 .env.*
 !.env.example
 !*.env.example
-
-/music_preprocessing/refresh_token.txt
-/music_preprocessing/registered.json
-/music_preprocessing/processed.json
-/music_preprocessing/input/
-/music_preprocessing/output/
-# 실행마다 파일 하나가 생기는 배치 로그
-/music_preprocessing/logs/
 
 # 배포 비밀. 저장소에 들어가면 안 된다.
 infra/deploy/.env
