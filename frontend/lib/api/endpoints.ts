@@ -220,6 +220,35 @@ export type PlaylistTrackAdded = {
   created_at: string;
 };
 
+/**
+ * 재생 큐 한 벌. 서버가 기준이다 (decision/0022).
+ *
+ * `tracks` 가 담긴 곡 수보다 짧을 수 있다 — 저장소(Redis)에는 제약조건이 없어
+ * 지워진 곡 번호가 남는데, 서버가 조회할 때 걸러 내기 때문이다. 화면이 다음에
+ * 순서를 저장하면 걸러진 목록이 그대로 올라가 스스로 정리된다.
+ */
+export type PlayQueueState = {
+  /**
+   * 저장할 때마다 오르는 판본. 순서 저장(`replace`)에 이 값을 함께 보낸다.
+   * 서버 값과 다르면 409 다 — 그 사이 다른 기기가 큐를 고쳤다는 뜻이다.
+   */
+  revision: number;
+  /** 지금 재생 중인 곡. 새 곡은 이 곡 바로 아래로 들어간다. */
+  current_music_id: number | null;
+  /** 담을 수 있는 최대 곡 수. 화면이 숫자를 따로 들고 있지 않게 서버가 함께 보낸다. */
+  limit: number;
+  tracks: MusicSummary[];
+};
+
+/** 곡을 담은 결과. */
+export type PlayQueueTrackAdded = {
+  queue: PlayQueueState;
+  /** 이미 담겨 있어 아무것도 하지 않았다. */
+  duplicated: boolean;
+  /** 상한이 차서 밀려난 곡. 없으면 null. 있을 때만 퇴출 안내를 띄운다. */
+  evicted_music_id: number | null;
+};
+
 /** 트리맵 타일 하나. `share` 가 곧 면적이다. */
 export type ReportTrack = {
   music_id: number;
@@ -844,6 +873,68 @@ export function createEndpoints(client: ApiClient) {
           method: 'PATCH',
           path: `/api/v1/playlist/${playlistId}`,
           json: { title },
+        }),
+    },
+
+    /**
+     * 재생 큐. 사용자당 하나뿐이라 경로에 번호가 없다 (decision/0022).
+     *
+     * 큐는 계정에 붙어 있다 — 새로고침해도, 로그아웃 후 다시 들어와도 그대로다.
+     */
+    queue: {
+      /** 지금 큐. 담은 적이 없으면 빈 큐(`revision: 0`)가 온다 — 404 가 아니다. */
+      get: (signal?: AbortSignal) =>
+        client.request<PlayQueueState>({
+          path: '/api/v1/user/queue',
+          signal,
+        }),
+      /**
+       * 큐를 통째로 바꾼다. 순서 바꾸기와 재생 위치 이동이 모두 이 요청이다.
+       *
+       * 조작할 때마다 부르지 않는다 — 화면이 모아서 보낸다. 끌어서 순서를
+       * 다섯 번 바꿔도 요청은 한 번이다.
+       *
+       * `revision` 이 서버 값과 다르면 409(`MUPID_QUEUE_REVISION_CONFLICT`)다.
+       * 그때는 서버 큐를 다시 읽어 화면을 덮는다 — 큐는 병합할 데이터가 아니다.
+       */
+      replace: (musicIds: number[], currentMusicId: number | null, revision: number) =>
+        client.request<PlayQueueState>({
+          method: 'PUT',
+          path: '/api/v1/user/queue',
+          json: {
+            music_ids: musicIds,
+            current_music_id: currentMusicId,
+            revision,
+          },
+        }),
+      /**
+       * 한 곡을 담는다. 자리(재생 중인 곡 바로 아래)와 퇴출은 **서버가 정한다.**
+       *
+       * 이미 담긴 곡이어도 200 이다 (`duplicated: true`). 상한이 차 있어도
+       * 거절하지 않고 가장 오래 담긴 곡을 밀어낸다 (`evicted_music_id`).
+       */
+      addTrack: (musicId: number) =>
+        client.request<PlayQueueTrackAdded>({
+          method: 'POST',
+          path: '/api/v1/user/queue/track',
+          json: { music_id: musicId },
+        }),
+      /** 한 곡을 뺀다. 담겨 있지 않으면 404 다. */
+      removeTrack: (musicId: number) =>
+        client.request<PlayQueueState>({
+          method: 'DELETE',
+          path: `/api/v1/user/queue/track/${musicId}`,
+        }),
+      /**
+       * 플레이리스트 전체 재생. 큐가 그 수록곡으로 통째로 바뀐다.
+       *
+       * 판본을 보내지 않는다 — 사람이 방금 누른 동작이라 다른 기기의 상태와
+       * 겨루지 않고 이기는 것이 맞다.
+       */
+      fromPlaylist: (playlistId: number) =>
+        client.request<PlayQueueState>({
+          method: 'POST',
+          path: `/api/v1/user/queue/playlist/${playlistId}`,
         }),
     },
 

@@ -114,8 +114,10 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             </label>
             <button
               className="icon-button"
-              aria-label="재생목록 열기"
-              onClick={() => { m.setLibraryTab('queue'); m.go('library'); }}
+              aria-label={m.queueOpen ? '재생 목록 접기' : '재생 목록 펼치기'}
+              aria-expanded={m.queueOpen}
+              aria-controls="queue-dock"
+              onClick={m.toggleQueue}
             >
               <ListMusic />
             </button>

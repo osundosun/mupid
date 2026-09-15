@@ -98,7 +98,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
               {momentSaved ? <BookmarkMinus /> : <Bookmark />}
               {momentSaved ? '저장 취소' : '이 순간 저장'}
             </button>
-            <button className="secondary-button" onClick={() => { m.setLibraryTab('queue'); m.go('library'); }}><ListMusic />재생목록</button>
+            <button className="secondary-button" aria-expanded={m.queueOpen} aria-controls="queue-dock" onClick={m.toggleQueue}><ListMusic />재생목록</button>
             <button className="secondary-button" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
               <Heart className="pink" fill={m.liked.includes(active.id) ? 'currentColor' : 'none'} />
               좋아요

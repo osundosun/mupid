@@ -1,0 +1,206 @@
+/*
+ * 재생 목록 독.
+ *
+ * 마크업은 하나고(`components/mupid/queue-dock.tsx`) 성격만 너비에 따라 갈린다.
+ *
+ *   넓은 화면  미니 플레이어 바로 위에 붙어 올라오는 패널. 화면을 가리지 않아
+ *              목록을 열어 둔 채 다른 곳을 계속 쓸 수 있다.
+ *   좁은 화면  아래에서 올라오는 시트. 화면이 좁아 반쯤 걸친 패널은 목록도
+ *              본문도 못 쓰게 만든다. 막을 깔아 바깥을 눌러 닫는다.
+ *
+ * 미니 플레이어(`.mini-player`)와 같은 좌우 여백·색을 쓴다. 둘이 한 덩어리로
+ * 보여야 "재생 중인 것의 목록" 이라는 관계가 읽힌다.
+ */
+
+.queue-dock {
+  position: fixed;
+  /* 미니 플레이어 위. 그 높이(72px)와 아래 여백(18px), 사이 간격 10px. */
+  bottom: calc(var(--player-height) + 28px);
+  left: calc(210px + 30px);
+  right: 30px;
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  max-height: min(60vh, 560px);
+  background: #fbfdfff2;
+  border: 1px solid #dfe9f9;
+  box-shadow: 0 3px 28px #3059941a;
+  border-radius: 16px;
+  backdrop-filter: blur(18px);
+  overflow: hidden;
+}
+
+/*
+ * 접힌 상태는 `hidden` 으로 DOM 에서 지운다. 화면 밖으로 밀어 두기만 하면
+ * 보이지 않는 버튼이 탭 순서에 남아 초점이 사라진 것처럼 보인다.
+ * 그래서 여닫는 움직임은 열릴 때만 준다.
+ */
+.queue-dock.is-open {
+  animation: queue-dock-rise 180ms ease-out;
+}
+
+@keyframes queue-dock-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.queue-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid #e9f0fb;
+}
+
+.queue-dock-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #21375c;
+}
+
+.queue-dock-head h2 svg {
+  width: 18px;
+  height: 18px;
+  color: #5883cf;
+}
+
+.queue-dock-count {
+  margin-left: auto;
+  font-size: 0.8125rem;
+  color: #6b81a6;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-dock-body {
+  /* 목록만 스크롤한다. 머리글은 늘 보여야 몇 곡인지·어떻게 닫는지 알 수 있다. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px 14px;
+}
+
+.queue-dock-hint {
+  margin: 0 4px 8px;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: #6b81a6;
+}
+
+/* 넓은 화면에서는 독이 본문을 가리지 않으므로 막을 두지 않는다. */
+.queue-dock-scrim {
+  display: none;
+}
+
+@media (min-width: 1600px) {
+  .queue-dock {
+    left: calc((100vw - 1600px) / 2 + 240px);
+    right: calc((100vw - 1600px) / 2 + 30px);
+  }
+}
+
+@media (max-width: 1199px) {
+  .queue-dock {
+    left: 30px;
+  }
+}
+
+/*
+ * 좁은 화면 — 아래에서 올라오는 시트.
+ *
+ * 미니 플레이어와 하단 내비게이션을 **가린다.** 목록을 보는 동안 그 둘을 함께
+ * 띄우면 한 화면에 세 겹이 쌓여 목록이 손바닥만 해진다.
+ */
+@media (max-width: 767px) {
+  .queue-dock {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 41;
+    max-height: min(78vh, 680px);
+    border-radius: 18px 18px 0 0;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .queue-dock.is-open {
+    animation: queue-dock-slide 220ms ease-out;
+  }
+
+  @keyframes queue-dock-slide {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  /* 시트를 끌어 내릴 수 있을 것 같은 손잡이. 실제 동작은 닫기 버튼이 맡는다. */
+  .queue-dock-head::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    translate: -50% 0;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: #d8e3f4;
+  }
+
+  .queue-dock-head {
+    position: relative;
+    padding-top: 18px;
+  }
+
+  .queue-dock-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    border: 0;
+    padding: 0;
+    background: #1b2c4a3d;
+    backdrop-filter: blur(2px);
+    animation: queue-dock-fade 180ms ease-out;
+  }
+
+  @keyframes queue-dock-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .queue-dock-body {
+    padding: 8px 10px 16px;
+  }
+}
+
+/*
+ * 낮은 화면(가로로 든 휴대폰 등)에서는 시트가 화면을 거의 다 먹는다.
+ * 목록이 서너 줄만 보이더라도 머리글과 닫기 버튼은 남아야 한다.
+ */
+@media (max-height: 520px) {
+  .queue-dock {
+    max-height: 86vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .queue-dock.is-open,
+  .queue-dock-scrim {
+    animation: none;
+  }
+}

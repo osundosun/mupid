@@ -26,6 +26,7 @@ import { saveOnboarding } from '@/lib/onboarding';
 import { updateNickname } from '@/lib/profile';
 import { fetchHistory, fetchReactions, pushReaction } from '@/lib/reactions';
 import * as playlistApi from '@/lib/playlists';
+import * as queueApi from '@/lib/play-queue';
 import { analytics, bindPlayer, type EntryPath } from '@/lib/analytics';
 import { fetchSections } from '@/lib/music-analysis';
 import { chatErrorMessage, requestChat } from '@/lib/ai-chat';
@@ -46,17 +47,13 @@ const HISTORY_LIMIT = 8;
 // 반복 모드: 반복 없음 · 전체 반복 · 한곡 반복. 셔플은 이와 별개로 켜고 끈다.
 export type RepeatMode = 'off' | 'all' | 'one';
 
-// 재생 목록은 끝없이 쌓이면 훑기도, 순서를 바꾸기도 어렵다. 여기까지만 담는다.
-export const QUEUE_LIMIT = 100;
-
 /**
- * 화면에 내보내는 재생 목록의 한 줄.
+ * 재생 목록은 끝없이 쌓이면 훑기도, 순서를 바꾸기도 어렵다. 여기까지만 담는다.
  *
- * 곡에 **자리 번호**(`uid`)를 덧붙인 것이다. 같은 곡을 두 번 담을 수 있으므로
- * 화면의 `key` · 끌어 옮길 대상 · 뺄 대상은 모두 곡 번호가 아니라 이 번호로
- * 가리킨다 (`lib/queue.ts`).
+ * **서버도 같은 상한을 들고 있다**(`PlayQueueDocument.LIMIT`). 여기 값은 화면이
+ * 미리 반응하기 위한 사본이고 기준은 서버다 — decision/0022.
  */
-export type QueueTrack = Track & { uid: string };
+export const QUEUE_LIMIT = 100;
 
 export function useMupid(bootstrap: Bootstrap) {
   const router = useRouter();
@@ -105,22 +102,7 @@ export function useMupid(bootstrap: Bootstrap) {
   // 셔플은 재생 목록 안에서 중복 없이 섞어 재생한다. 반복과 함께 켤 수 있다.
   const [shuffle, setShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
-  // 자리마다 번호를 새로 만드는 일은 처음 한 번뿐이다. 매 렌더마다 만들면
-  // 화면의 key 가 계속 바뀌어 목록이 통째로 다시 그려진다.
-  const [queue, setQueue] = useState<QueueEntry[]>(() =>
-    toQueueEntries(tracks.slice(0, QUEUE_LIMIT).map((t) => t.id)),
-  );
-  /**
-   * 지금 듣고 있는 **자리**.
-   *
-   * 곡 번호로는 알 수 없다 — 같은 곡이 3번째와 7번째에 담겨 있으면 어느 쪽을
-   * 듣는 중인지 구분되지 않아 다음 곡이 늘 4번째로 되감겼다. 재생 목록 밖의
-   * 곡(저장한 순간 등)을 듣는 중이면 null.
-   */
-  const [currentUid, setCurrentUid] = useState<string | null>(null);
-  const currentUidRef = useRef<string | null>(null);
-  /** ✕ 로 짚어 둔 자리. 확인 대화상자를 지나는 동안만 들고 있는다. */
-  const pendingRemoval = useRef<string | null>(null);
+  const [queueIds, setQueueIds] = useState<number[]>(tracks.slice(0, QUEUE_LIMIT).map((t) => t.id));
   const [toast, setToast] = useState('');
   const [ready, setReady] = useState(false);
   // 세션 복원이 끝났는가. 끝나기 전에는 화면 가드를 돌리지 않는다.
@@ -402,6 +384,38 @@ export function useMupid(bootstrap: Bootstrap) {
     setPlaylists(saved);
   };
   /**
+   * 계정에 저장된 재생 목록을 가져온다. **서버가 기준이다.**
+   *
+   * 로그인 전 화면이 들고 있던 큐(카탈로그 앞 100곡)는 사용자가 고른 것이 아니라
+   * 그냥 채워 둔 기본값이라 덮어도 잃을 것이 없다. 다만 계정 큐가 **비어 있으면**
+   * 덮지 않는다 — 처음 쓰는 사람에게 빈 목록을 안기는 대신 기본값을 그대로 둔다.
+   *
+   * 여기서 받은 판본이 들어와야 저장이 열린다.
+   */
+  const adoptServerQueue = async (signal?: AbortSignal) => {
+    const saved = await queueApi.fetchQueue(tracks, signal);
+    if (!saved || signal?.aborted || !mountedRef.current) return;
+    queueRevision.current = saved.revision;
+    if (!saved.ids.length) return;
+    setQueueIds(saved.ids);
+    // 방금 받아 온 것을 곧바로 되돌려 보내지 않는다. 재생 중인 곡은 화면 쪽이
+    // 기준이라 비워 두고, 그 차이만 다음 저장에 실린다.
+    savedQueue.current = { ids: saved.ids, currentId: null };
+  };
+  /**
+   * 서버가 판정해서 돌려준 큐를 화면에 반영한다. 담기·빼기의 뒤처리다.
+   *
+   * 재생 중인 곡은 **마지막으로 올린 값을 그대로 둔다.** 여기서 지금 듣는 곡으로
+   * 적어 버리면, 그 사이 곡이 넘어갔는데도 "이미 올린 것" 으로 보여 서버의
+   * `current_music_id` 가 낡은 채로 남는다. 그러면 다음에 담는 곡의 자리가 틀어진다.
+   */
+  const adoptServerChange = (saved: queueApi.QueueSnapshot | null) => {
+    if (!saved || !mountedRef.current) return;
+    queueRevision.current = saved.revision;
+    setQueueIds(saved.ids);
+    savedQueue.current = { ids: saved.ids, currentId: savedQueue.current?.currentId ?? null };
+  };
+  /**
    * 세션 복원.
    *
    * 액세스 토큰은 메모리에만 있다. 새로고침 뒤에는 쿠키의 리프레시 토큰으로
@@ -429,6 +443,7 @@ export function useMupid(bootstrap: Bootstrap) {
         void adoptServerReactions(abort.signal);
         void adoptServerHistory(abort.signal);
         void adoptServerPlaylists(abort.signal);
+        void adoptServerQueue(abort.signal);
       })
       .catch(() => {})
       .finally(() => { if (!abort.signal.aborted) setAuthChecked(true); });
@@ -452,6 +467,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setToast('뮤피드에 오신 걸 환영해요.');
     void adoptServerReactions();
     void adoptServerHistory();
+    void adoptServerQueue();
     return true;
   };
   /**
@@ -754,6 +770,34 @@ export function useMupid(bootstrap: Bootstrap) {
   });
 
   /**
+   * 화면 쪽 담기 규칙. **서버와 같은 규칙이다** (decision/0022 규칙 1·2·4).
+   *
+   * 서버가 기준이지만 화면이 즉시 반응해야 해서 여기서 한 번 더 계산한다.
+   * 어긋나면 서버 응답이 덮는다.
+   *
+   * - 새 곡은 재생 중인 곡 **바로 아래**로. 맨 위에 넣으면 재생 커서 뒤라
+   *   영영 재생되지 않는다.
+   * - 상한을 넘기면 꼬리에서 밀어내되 재생 중인 곡과 방금 담은 곡은 건너뛴다.
+   */
+  const insertIntoQueue = (ids: number[], id: number, currentId: number | null) => {
+    const next = ids.slice();
+    const at = currentId === null ? -1 : next.indexOf(currentId);
+    next.splice(at < 0 ? 0 : at + 1, 0, id);
+
+    let evictedId: number | null = null;
+    if (next.length > QUEUE_LIMIT) {
+      for (let index = next.length - 1; index >= 0; index--) {
+        const candidate = next[index];
+        if (candidate === id || candidate === currentId) continue;
+        evictedId = candidate;
+        next.splice(index, 1);
+        break;
+      }
+    }
+    return { ids: next, evictedId };
+  };
+
+  /**
    * 청취 이벤트 자동 수집을 재생기에 붙인다.
    *
    * **아래 화면 구독보다 먼저 등록한다.** 스토어는 등록 순서대로 구독자를 부르는데,
@@ -812,6 +856,50 @@ export function useMupid(bootstrap: Bootstrap) {
   }, []);
 
   /**
+   * 큐 변경을 모아서 계정에 올린다.
+   *
+   * 조작마다 보내지 않는다 — 끌어서 순서를 다섯 번 바꿔도 요청은 한 번이다.
+   * 재생 중인 곡이 바뀔 때도 올린다. 그 값이 있어야 서버가 "담은 곡을 재생 중인
+   * 곡 바로 아래에 넣는다" 를 판정할 수 있다.
+   *
+   * **판본을 모르는 동안에는 올리지 않는다.** 계정 큐를 아직 읽지 못한 채로
+   * 올리면 저장돼 있던 큐를 화면의 초기값으로 지운다.
+   */
+  useEffect(() => {
+    if (demoSession?.kind !== 'authenticated') return;
+    const revision = queueRevision.current;
+    if (revision === null) return;
+
+    const currentId = active?.id ?? null;
+    const last = savedQueue.current;
+    const unchanged =
+      !!last &&
+      last.currentId === currentId &&
+      last.ids.length === queueIds.length &&
+      last.ids.every((id, index) => id === queueIds[index]);
+    if (unchanged) return;
+
+    const ids = queueIds;
+    const timer = setTimeout(() => {
+      void queueApi.saveQueue(ids, currentId, revision, tracks).then((saved) => {
+        if (!saved || !mountedRef.current) return;
+        queueRevision.current = saved.revision;
+        savedQueue.current = { ids: saved.ids, currentId };
+        /*
+         * 서버가 다른 목록을 돌려주는 경우가 둘 있다. 판본이 어긋나 다른 기기의
+         * 큐를 받아 왔거나, 지워진 곡이 걸러졌거나. 어느 쪽이든 서버가 기준이다.
+         * 여기서 덮어도 `savedQueue` 가 같은 값이라 저장이 다시 돌지는 않는다.
+         */
+        const changed =
+          saved.ids.length !== ids.length || saved.ids.some((id, index) => id !== ids[index]);
+        if (changed) setQueueIds(saved.ids);
+      });
+    }, QUEUE_SAVE_DELAY);
+
+    return () => clearTimeout(timer);
+  }, [queueIds, active?.id, demoSession, tracks]);
+
+  /**
    * 대기열에서 다음에 올 스트리밍 곡들의 앞 5초를 미리 받아 둔다.
    *
    * 로그인 전에는 받지 않는다. 스트림 API 가 인증을 요구하므로 401 만 쌓이고,
@@ -848,7 +936,7 @@ export function useMupid(bootstrap: Bootstrap) {
     playedInCycle.current = new Set(firstUid ? [firstUid] : []);
     setQueue(entries);
     previewEnd.current = null;
-    void startPlayback(first, 0, firstUid);
+    void startPlayback(first, 0);
   };
   /**
    * 곡이 끝났다. 반복·셔플 규칙에 따라 다음 곡을 고른다.
@@ -1352,32 +1440,17 @@ export function useMupid(bootstrap: Bootstrap) {
     renamePlaylist,
     setRenamePlaylist,
     queueTracks,
-    // 지금 듣고 있는 자리. 같은 곡이 여러 번 담겼을 때 어느 줄이 울리는 줄인지
-    // 화면이 이것으로 가린다.
-    currentQueueUid: currentUid,
-    /**
-     * 보이는 줄들을 받은 순서대로 다시 놓는다.
-     *
-     * **자리 번호로 받는다.** 곡 번호로 받던 때는 같은 곡이 두 번 담기면 어느
-     * 줄을 끌었는지 알 수 없었고, 화면에서 감춘 자리(건너뛴 곡)가 순서를 바꿀
-     * 때마다 큐 맨 뒤로 밀려났다.
-     */
-    setQueueOrder: (orderedUids: string[]) => {
-      setQueue(entries => reorderQueue(entries, orderedUids));
+    // 보이는 순서대로 재정렬한다. 목록에 없던 id는 뒤에 남겨 둔다.
+    setQueueOrder: (orderedIds: number[]) => {
+      setQueueIds(ids => [...orderedIds, ...ids.filter(id => !orderedIds.includes(id))].slice(0, QUEUE_LIMIT));
     },
-    /**
-     * 재생 목록에서 뺀다. 재생 중인 곡을 빼도 지금 재생은 그대로 이어진다.
-     *
-     * 재생 목록 화면이 넘겨 주는 값에는 자리 번호가 붙어 있어 **그 줄 하나만**
-     * 빠진다. 자리 번호가 없는 곳에서 부르면 그 곡이 담긴 첫 자리를 뺀다.
-     */
-    removeFromQueue: (track: Track & { uid?: string }) => {
-      const uid = track.uid ?? queue.find(entry => entry.trackId === track.id)?.uid;
-      pendingRemoval.current = null;
-      if (!uid) return;
-      setQueue(entries => removeQueueEntry(entries, uid));
-      playedInCycle.current.delete(uid);
+    // 재생 목록에서 뺀다. 재생 중인 곡을 빼도 지금 재생은 그대로 이어진다.
+    removeFromQueue: (track: Track) => {
+      setQueueIds(ids => ids.filter(id => id !== track.id));
+      playedInCycle.current.delete(track.id);
       setToast(`‘${track.title}’ 곡을 재생 목록에서 뺐어요.`);
+      if (demoSession?.kind !== 'authenticated' || queueRevision.current === null) return;
+      void queueApi.removeFromQueue(track, tracks).then(adoptServerChange);
     },
     /**
      * 줄의 ✕ 를 누른 **그 자리**를 일러둔다.
@@ -1407,14 +1480,14 @@ export function useMupid(bootstrap: Bootstrap) {
       uids.forEach(uid => playedInCycle.current.delete(uid));
       setToast(`${uids.length}곡을 재생 목록에서 뺐어요.`);
     },
-    // 재생 목록 맨 뒤에 담는다. **이미 있어도 한 번 더 담긴다** — 같은 곡을 이어서
-    // 두 번 듣고 싶은 것은 흔한 일이고, 자리마다 번호가 달라 둘을 구분할 수 있다.
+    // 재생 목록 맨 뒤에 담는다. 이미 있으면 그대로 둔다.
     addToQueue: (track: Track) => {
-      if (queue.length >= QUEUE_LIMIT) {
+      if (queueIds.includes(track.id)) { setToast('이미 재생 목록에 있어요.'); return; }
+      if (queueIds.length >= QUEUE_LIMIT) {
         setToast(`재생 목록은 ${QUEUE_LIMIT}곡까지 담을 수 있어요. 몇 곡을 먼저 빼주세요.`);
         return;
       }
-      setQueue(entries => [...entries, queueEntry(track.id)]);
+      setQueueIds(ids => [...ids, track.id]);
       setToast(`‘${track.title}’ 곡을 재생 목록에 담았어요.`);
     },
     playPlaylist,
