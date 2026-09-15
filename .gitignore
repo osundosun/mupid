@@ -18,3 +18,6 @@ __pycache__/
 /music_preprocessing/output/
 # 실행마다 파일 하나가 생기는 배치 로그
 /music_preprocessing/logs/
+
+# infra_k8s 노드 접속 정보 (.env.example 를 복사해 만든 것)
+/infra_k8s/.env

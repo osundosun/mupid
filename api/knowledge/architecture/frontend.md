@@ -218,14 +218,14 @@ saveQueue.current = saveQueue.current.catch(() => {}).then(() =>
 |---|---|
 | `types.ts` | 이벤트 타입·값 집합. `listen_events` 컬럼과 1:1 |
 | `tracker.ts` | 큐·배치·재시도·저장소 백업, 재생 세션(`play_id`)과 재생 포인터, 기본 콘솔 싱크 |
-| `transport.ts` | `Transport` 타입과 HTTP 구현 |
-| `audio.ts` | `<audio>` 바인딩. 자동 이벤트 6종과 5초 하트비트 |
+| `transport.ts` | `Transport` 타입과 HTTP 구현, 재시도 정책 |
+| `player.ts` | 재생기 바인딩. 자동 이벤트 6종과 5초 하트비트 |
 | `index.ts` | 공개 API 와 싱글턴 `analytics` |
 
 ### 지켜야 할 규약
 
 1. **화면에서 이벤트를 직접 `fetch` 하지 않는다.** `analytics` 만 쓴다. 서버 계약이 바뀌어도 호출부를 고치지 않기 위해서다.
-2. **`position_ms` 는 매번 `audio.currentTime` 을 실제로 읽어서 만든다.** 상태에 들고 있는 값을 쓰면 백그라운드 탭에서 틀어진다.
+2. **`position_ms` 는 매번 재생기에서 위치를 실제로 읽어서 만든다.** 화면 상태(`time`)는 0.2초마다 따라오는 사본이라 백그라운드 탭에서 뒤처지고, 그 값으로 만든 구간 신호는 엉뚱한 구간에 붙는다.
 3. **구간 번호를 보내지 않는다.** 밀리초만 보낸다. 구간 매핑은 백엔드가 한다.
 4. **가중치도 분류도 계산하지 않는다.** `TRACK_SKIP` 은 `skip_trigger` 와 `position_ms` 만 싣고, EARLY/AFTER_HOOK/LATE 분류는 ClickHouse 가 쿼리 시점에 만든다.
 5. **`occurred_at` 은 이벤트가 생길 때 각인된다.** 배치로 늦게 나가도 발생 시각은 정확하다. 이 성질에 기대는 테스트가 있다.
@@ -233,13 +233,30 @@ saveQueue.current = saveQueue.current.catch(() => {}).then(() =>
 
 ### 자동과 수동
 
-`bindAudio(audio, analytics)` 가 자동으로 남기는 것은 `PLAY_RESUME` · `PLAY_PAUSE` · `PLAY_END` · `PLAY_STALL` · `PLAY_ERROR` · `PLAY_PROGRESS` 여섯이다. 나머지는 앱이 직접 부른다 — 오디오 엘리먼트만 봐서는 판단할 수 없기 때문이다. `seeking` 은 사용자가 슬라이더를 옮겼을 때와 앱이 `currentTime` 을 대입했을 때 똑같이 발생하고, 스킵은 무엇을 눌러 넘겼는지를 엘리먼트가 모른다.
+`bindPlayer(player, analytics)` 가 자동으로 남기는 것은 `PLAY_RESUME` · `PLAY_PAUSE` · `PLAY_END` · `PLAY_STALL` · `PLAY_ERROR` · `PLAY_PROGRESS` 여섯이다. 나머지는 앱이 직접 부른다 — 재생기 상태만 봐서는 판단할 수 없기 때문이다. 사용자가 슬라이더를 옮긴 seek 과 앱이 건 seek 은 엔진에서 똑같은 모양이고, 스킵은 무엇을 눌러 넘겼는지(`skip_trigger`)를 엔진이 모른다.
 
-`hooks/use-mupid.ts` 에 붙일 자리는 세 곳이다 — `startPlayback` 에서 `startPlay()`, 슬라이더 핸들러에서 `seek(before, after)`, 다음곡 버튼에서 `skip(position, 'NEXT_BUTTON')`.
+**`<audio>` 바인딩이 아니다.** 이 앱에는 미디어 엘리먼트가 없고 재생은 `lib/player` 의 청크 스트리밍 엔진이 한다. `bindPlayer` 는 그 엔진의 상태 스토어 전이를 같은 의미로 읽는다. 엔진 타입을 import 하지 않고 필요한 모양(`PlayerSource`)만 구조적으로 받으므로, 이 모듈도 번들러 없이 `node --test` 로 돌아간다.
 
-### 아직 안 된 것
+**`bindPlayer` 는 화면 구독보다 먼저 등록한다.** 스토어는 등록 순서대로 구독자를 부르는데, 화면 구독이 먼저 돌면 곡이 끝나자마자 다음 곡을 걸어버려 `PLAY_END` 자리에 `PLAYBACK_ABANDON` 이 남는다. 끝까지 들은 것(`LATE_SKIP` 계열의 긍정)과 끊긴 것은 정반대의 신호다.
 
-`index.ts` 의 싱글턴은 기본 전송이 **콘솔 싱크**다. 백엔드 `POST /api/v1/events` 가 생기고 액세스 토큰 보관 위치가 정해지면(→ [open-questions C1](../open-questions.md)) `createTracker({ transport: createHttpTransport({ authorization }) })` 로 바꾼다. 그때 호출부는 고치지 않는다.
+수동 호출은 `hooks/use-mupid.ts` 가 모아서 한다 — `startPlayback`(`startPlay`), 슬라이더(`seek`), 다음곡 버튼과 다른 곡 선택(`skip`), 좋아요·숨기기(`like`/`unlike`/`dislike`/`undislike`), 저장한 순간(`markSection`/`unmarkSection`), 플레이리스트(`addToPlaylist`/`removeFromPlaylist`). 댓글 두 종은 `lib/track-comments.ts` 가 서버 응답을 받은 뒤에 남긴다 — `comment_id` 를 서버가 정해주기 때문이다.
+
+플레이리스트는 **서버가 기준이다.** `lib/playlists.ts` 가 `/api/v1/playlist` 를 감싸고, 훅이 낙관적으로 화면을 먼저 바꾼 뒤 실패하면 되돌린다. **`Playlist.id` 는 서버의 `playlist_id`** 이고, 계정에 플레이리스트가 하나도 없는데 브라우저에만 남은 것이 있으면 앱을 열 때 한 번 올려 준다(`migrateLocalPlaylists`).
+
+> ⚠ **`setMoments` · `setPlaylists` 를 화면에서 직접 부르지 않는다.** 훅의 `addMoments` · `removeMoment` · `replaceMoment` · `addToPlaylist` · `removeFromPlaylist` 를 쓴다. 직접 부르면 구간 신호(`SECTION_*` · `PLAYLIST_*`)가 조용히 빠진다 — 가장 강한 긍정(+1.5)과 부정(−1.5)이 여기 있다.
+
+### 전송 실패를 다루는 규칙
+
+| 응답 | 처리 |
+|---|---|
+| 2xx | 큐에서 지운다 |
+| 401 · 408 · 429 | 큐 앞으로 되돌리고 다시 보낸다 |
+| 그 밖의 4xx | **버린다** |
+| 5xx · 네트워크 오류 | 큐 앞으로 되돌리고 다시 보낸다 |
+
+4xx 를 되돌리지 않는 것은 무한 루프 때문이다. 규약에 어긋난 배치는 다시 보내도 같은 답이 오는데, 되돌려 두면 큐 앞을 영원히 막아 **뒤따르는 멀쩡한 이벤트까지 함께 잃는다**(큐 상한 `STORE_LIMIT` 에 닿으면 오래된 것부터 밀려난다). 한 배치를 포기하는 쪽이 싸다. 401 만 예외로 두는 것은 "아직 로그인하지 않았다" 가 고쳐질 수 있는 상태라서다 — 큐에 남았다가 로그인 뒤 함께 나간다.
+
+재시도 간격은 연속 실패마다 두 배가 되고 5분에서 멈춘다. 명시적인 `flush()`(탭이 가려질 때 등)는 이 간격을 기다리지 않는다.
 
 ## 스타일: Tailwind 4 + shadcn
 

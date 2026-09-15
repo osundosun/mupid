@@ -23,7 +23,8 @@ export const consoleTransport: Transport = async (events) => {
 /** keepalive 본문이 64KB 로 제한되므로 배치를 작게 잡는다. */
 const BATCH_SIZE = 20;
 const FLUSH_MS = 5000;
-export const HEARTBEAT_MS = 5000;
+/** 연속 실패 시 재시도 간격의 상한. 서버가 누워 있는 동안 5초마다 두드리지 않는다. */
+const MAX_BACKOFF_MS = 5 * 60_000;
 const STORE_KEY = 'mupid.analytics.pending.v1';
 /** 오프라인이 길어져도 저장소를 무한정 먹지 않게 한다. 넘치면 오래된 것부터 버린다. */
 const STORE_LIMIT = 500;
@@ -58,6 +59,15 @@ const isEvent = (value: unknown): value is ListenEvent =>
 
 const ms = (value: number) => Math.max(0, Math.round(value));
 
+/**
+ * 다시 보내도 결과가 같은 실패인가. 그렇다면 배치를 되돌리지 않고 버린다.
+ *
+ * `PermanentTransportError` 를 `instanceof` 로 보지 않는 것은 이 파일이 값(value)을
+ * relative import 하지 않기 때문이다(모듈 첫머리 주석). 필드 하나를 계약으로 삼는다.
+ */
+const isPermanent = (error: unknown): boolean =>
+  !!error && typeof error === 'object' && (error as { permanent?: boolean }).permanent === true;
+
 export function createTracker(options: TrackerOptions = {}) {
   const transport = options.transport ?? consoleTransport;
   const now = options.now ?? (() => Date.now());
@@ -71,6 +81,8 @@ export function createTracker(options: TrackerOptions = {}) {
   let pending: ListenEvent[] = [];
   let sending = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  /** 연속 전송 실패 횟수. 다음 예약을 얼마나 미룰지 정한다. */
+  let failures = 0;
 
   // 재생 하나의 상태. play_id 는 PLAY_START 에서 발급하고 재생이 끝날 때까지 유지한다.
   let play: (PlayContext & { id: string }) | null = null;
@@ -97,12 +109,21 @@ export function createTracker(options: TrackerOptions = {}) {
     }
   };
 
+  /**
+   * 다음 전송을 예약한다. 실패가 이어지면 간격을 두 배씩 늘린다.
+   *
+   * 명시적인 `flush()` 는 이 간격을 기다리지 않는다. 탭이 가려질 때처럼 지금
+   * 내보내야 하는 순간을 백오프가 막으면 안 된다.
+   */
   const schedule = () => {
     if (timer) return;
-    timer = setTimeout(() => {
-      timer = null;
-      void flush();
-    }, FLUSH_MS);
+    timer = setTimeout(
+      () => {
+        timer = null;
+        void flush();
+      },
+      Math.min(FLUSH_MS * 2 ** failures, MAX_BACKOFF_MS),
+    );
   };
 
   const flush = async (leaving = false): Promise<void> => {
@@ -117,10 +138,19 @@ export function createTracker(options: TrackerOptions = {}) {
     persist();
     try {
       await transport(batch, leaving);
-    } catch {
-      // 실패한 배치를 앞에 되돌린다. occurred_at 은 이미 각인돼 있으므로 몇 분 뒤에
-      // 도착해도 발생 시각은 정확하다. 중복 재전송은 서버가 event_id 로 걸러낸다.
-      pending = [...batch, ...pending].slice(-STORE_LIMIT);
+      failures = 0;
+    } catch (error) {
+      if (isPermanent(error)) {
+        // 다시 보내도 결과가 같다. 되돌려 두면 이 배치가 큐 앞을 영원히 막아
+        // 뒤따르는 이벤트까지 함께 잃는다 — 한 배치를 포기하는 쪽이 싸다.
+        failures = 0;
+        console.warn('[analytics] 이벤트 %d건을 버렸습니다.', batch.length, error);
+      } else {
+        // 실패한 배치를 앞에 되돌린다. occurred_at 은 이미 각인돼 있으므로 몇 분 뒤에
+        // 도착해도 발생 시각은 정확하다. 중복 재전송은 서버가 event_id 로 걸러낸다.
+        failures++;
+        pending = [...batch, ...pending].slice(-STORE_LIMIT);
+      }
       persist();
     } finally {
       sending = false;
@@ -249,7 +279,7 @@ export function createTracker(options: TrackerOptions = {}) {
     error: (positionMs: number, reason: string) =>
       track('PLAY_ERROR', { position_ms: ms(positionMs), reason }),
 
-    /** 5초마다 호출한다. `audio.currentTime` 을 **매번 실제로 읽어서** 넘긴다. */
+    /** 몇 초마다 호출한다(`bindPlayer` 가 돌린다). 재생 위치를 **매번 실제로 읽어서** 넘긴다. */
     heartbeat: (positionMs: number) => commitProgress(positionMs),
 
     /**
@@ -298,18 +328,21 @@ export function createTracker(options: TrackerOptions = {}) {
     // (mv_user_section_signals) 이 position_ms 한 점으로 dictGet 하고
     // `position_ms > 0` 을 요구하기 때문에, 이걸 빼면 가장 강한 긍정 신호(+1.5)가
     // 아예 만들어지지 않는다. 범위가 여러 구간에 걸치면 시작점이 속한 구간만 잡힌다.
-    markSection: (startMs: number, endMs: number) =>
-      track('SECTION_MARK', {
-        start_ms: ms(startMs),
-        end_ms: ms(endMs),
-        position_ms: ms(startMs),
-      }),
-    unmarkSection: (startMs: number, endMs: number) =>
-      track('SECTION_UNMARK', {
-        start_ms: ms(startMs),
-        end_ms: ms(endMs),
-        position_ms: ms(startMs),
-      }),
+    //
+    // 재생 중이 아닌 곡의 구간을 찍을 수도 있으므로(라이브러리에서 저장한 순간 편집)
+    // trackId 를 직접 받는다. 빠지면 곡을 특정할 수 없어 가장 강한 신호가 사라진다.
+    markSection: (startMs: number, endMs: number, trackId?: number) =>
+      track(
+        'SECTION_MARK',
+        { start_ms: ms(startMs), end_ms: ms(endMs), position_ms: ms(startMs) },
+        trackId === undefined ? {} : { track_id: trackId },
+      ),
+    unmarkSection: (startMs: number, endMs: number, trackId?: number) =>
+      track(
+        'SECTION_UNMARK',
+        { start_ms: ms(startMs), end_ms: ms(endMs), position_ms: ms(startMs) },
+        trackId === undefined ? {} : { track_id: trackId },
+      ),
 
     addToPlaylist: (playlistId: number, positionMs: number, trackId?: number) =>
       track(
@@ -324,12 +357,16 @@ export function createTracker(options: TrackerOptions = {}) {
         trackId === undefined ? {} : { track_id: trackId },
       ),
 
-    addComment: (content: string, positionMs: number, commentId?: number) =>
-      track('COMMENT_ADD', {
-        content,
-        position_ms: ms(positionMs),
-        ...(commentId !== undefined && { comment_id: commentId }),
-      }),
+    addComment: (content: string, positionMs: number, commentId?: number, trackId?: number) =>
+      track(
+        'COMMENT_ADD',
+        {
+          content,
+          position_ms: ms(positionMs),
+          ...(commentId !== undefined && { comment_id: commentId }),
+        },
+        trackId === undefined ? {} : { track_id: trackId },
+      ),
     deleteComment: (commentId: number) => track('COMMENT_DELETE', { comment_id: commentId }),
 
     /** 검색은 재생 밖의 행동이라 재생 맥락을 붙이지 않는다. */

@@ -213,6 +213,85 @@ export type PlaylistTrackAdded = {
   created_at: string;
 };
 
+/** 트리맵 타일 하나. `share` 가 곧 면적이다. */
+export type ReportTrack = {
+  music_id: number;
+  title: string;
+  artist_name: string;
+  album_title: string;
+  image_url: string | null;
+  listening_ms: number;
+  /** 그날 전체 청취 시간 중 이 곡의 비중 (0~1). */
+  share: number;
+};
+
+export type ReportKeyword = {
+  name: string;
+  kind: 'MOOD' | 'GENRE';
+  /** 청취 시간 가중 비중 (0~1). */
+  weight: number;
+};
+
+/**
+ * MuBTI 축 하나.
+ *
+ * `score` 는 들을 때마다 흐르지만 `code` 는 잘 바뀌지 않는다 — 서버가 이력 현상을
+ * 걸어 점수가 0 근처에서 깜빡이는 것을 막는다. 막대는 `score` 로 그리고 유형
+ * 이름은 `code` 로 그린다.
+ */
+export type ReportAxis = {
+  /** `A` 청취 포인트 · `B` 선곡 성향 · `C` 재생 방식 · `D` 탐색 성향 */
+  axis: 'A' | 'B' | 'C' | 'D';
+  code: string;
+  name: string;
+  opposite_code: string;
+  opposite_name: string;
+  /** −1 ~ +1. 양수면 `code` 쪽이다. */
+  score: number;
+  /** 0 ~ 1. 0 이면 판정 근거가 없어 기본값으로 둔 축이다. */
+  confidence: number;
+};
+
+export type ReportMubti = {
+  /** `VTFC` 같은 네 글자. */
+  code: string;
+  title: string;
+  subtitle: string;
+  description: string;
+  image_url: string | null;
+  axes: ReportAxis[];
+};
+
+/**
+ * 하루치 취향 리포트.
+ *
+ * `source` 가 `LIVE` 면 방금 집계한 값이다. 다만 방금 들은 곡이 반영되기까지
+ * 20초쯤 걸린다 — 하트비트 5초 + 전송 큐 5초 + 서버의 Kafka flush 15초. 화면은
+ * 폴링으로 그 지연을 덮는다.
+ */
+export type DailyReport = {
+  date: string;
+  generated_at: string;
+  source: 'LIVE' | 'STORED';
+  total_listening_ms: number;
+  /**
+   * 이벤트에는 있었지만 서버가 곡을 찾지 못해 버린 청취량.
+   * 0 이 아니면 곡 번호가 어긋나고 있다는 뜻이다.
+   */
+  unmatched_ms: number;
+  tracks: ReportTrack[];
+  keywords: ReportKeyword[];
+  /** 표본이 모자라면 null 이다. */
+  mubti: ReportMubti | null;
+  sample: {
+    sufficient: boolean;
+    /** 지난 날짜(STORED)는 저장하지 않아 null 이다. */
+    play_count: number | null;
+    distinct_music_count: number;
+    listening_ms: number;
+  };
+};
+
 export type StreamInfo = {
   stream_id: number;
   music_id: number;
@@ -433,6 +512,20 @@ export function createEndpoints(client: ApiClient) {
         }),
     },
 
+    report: {
+      /**
+       * 하루치 취향 리포트. `date` 를 생략하면 서버 기준(Asia/Seoul) 오늘이다.
+       *
+       * 오늘치는 부를 때마다 서버가 ClickHouse 에서 다시 집계한다. 미래 날짜는 400.
+       */
+      daily: (date?: string, signal?: AbortSignal) =>
+        client.request<DailyReport>({
+          path: '/api/v1/report',
+          query: { date },
+          signal,
+        }),
+    },
+
     reaction: {
       /** 좋아요·관심없음 설정. 같은 값을 다시 보내도 결과가 같다. */
       set: (musicId: number, type: ReactionType) =>
@@ -614,6 +707,26 @@ export function createEndpoints(client: ApiClient) {
           method: 'POST',
           path: `/api/v1/playlist/${playlistId}/track`,
           json: { music_id: musicId },
+        }),
+      /**
+       * 플레이리스트에서 곡 한 곡을 뺀다.
+       *
+       * 곡 추가와 달리 담겨 있지 않으면 **404** 다. 중복 추가를 성공으로 보는 것은
+       * "이미 원하는 상태" 라서인데, 없는 곡을 빼는 것은 화면과 서버가 어긋났다는
+       * 뜻이라 조용히 넘기지 않는다.
+       */
+      removeTrack: (playlistId: number, musicId: number) =>
+        client.request<void>({
+          method: 'DELETE',
+          path: `/api/v1/playlist/${playlistId}/track/${musicId}`,
+          responseType: 'none',
+        }),
+      /** 제목만 바꾼다. 수록곡은 그대로다. */
+      rename: (playlistId: number, title: string) =>
+        client.request<PlaylistSummary>({
+          method: 'PATCH',
+          path: `/api/v1/playlist/${playlistId}`,
+          json: { title },
         }),
     },
 

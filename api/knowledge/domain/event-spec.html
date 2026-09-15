@@ -308,7 +308,7 @@ footer{border-top:1px solid var(--rule);padding-top:18px;font-size:12.5px;color:
 <section>
   <h2>프론트가 지켜야 할 것</h2>
   <ol class="rules">
-    <li><span><b>매번 <code>audio.currentTime</code> 을 실제로 읽어서</b> <code>position_ms</code> 를 만든다. 상태에 들고 있던 값을 쓰면 백그라운드 탭에서 틀어진다.</span></li>
+    <li><span><b>매번 재생기에서 위치를 실제로 읽어서</b> <code>position_ms</code> 를 만든다. 화면이 들고 있던 값을 쓰면 백그라운드 탭에서 틀어진다.</span></li>
     <li><span><b>구간 번호를 보내지 않는다.</b> 밀리초만 보내고 구간 매핑은 백엔드가 한다.</span></li>
     <li><span><b><code>occurred_at</code> 은 이벤트가 생긴 그 순간 각인한다.</b> 배치로 묶여 늦게 나가도 각 이벤트는 자기 시각을 들고 간다.</span></li>
     <li><span><b><code>entry_path</code> 를 재생의 모든 이벤트에 싣는다.</b> 스킵 해석과 커버리지가 진입 경로를 필요로 하는데, 그때마다 <code>PLAY_START</code> 로 되짚는 JOIN 을 두지 않기 위해서다.</span></li>

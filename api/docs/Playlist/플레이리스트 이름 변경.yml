@@ -1,0 +1,137 @@
+info:
+  name: 플레이리스트 이름 변경
+  type: http
+  seq: 6
+
+http:
+  method: PATCH
+  url: "{{BASE_URL}}/api/v1/playlist/{{PLAYLIST_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "title": "구름 위를 걷는 기분"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: PLAYLIST_ID
+      value: "12"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 변경 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "플레이리스트 이름을 바꿨습니다.",
+            "data": {
+              "playlist_id": 12,
+              "title": "구름 위를 걷는 기분",
+              "music_count": 3,
+              "created_at": "2026-09-14T08:02:11"
+            }
+          }
+  - name: 400 제목 미입력
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_REQUEST_BODY",
+            "message": "데이터가 잘못 입력되었습니다.",
+            "error_details": {
+              "title": "플레이리스트 제목이 입력되지 않았습니다."
+            }
+          }
+  - name: 403 내 플레이리스트가 아님
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_PLAYLIST_ACCESS_DENIED",
+            "message": "플레이리스트에 접근할 권한이 없습니다.",
+            "error_details": null
+          }
+  - name: 404 플레이리스트 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_PLAYLIST_NOT_FOUND",
+            "message": "요청한 플레이리스트를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 플레이리스트 이름 변경
+
+  `PATCH /api/v1/playlist/{playlist_id}` · 인증 필요
+
+  제목만 바꿉니다. **수록곡은 건드리지 않습니다.**
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 규칙 |
+  | --- | --- | --- | --- |
+  | `title` | string | ✅ | 1~100자. 앞뒤 공백은 서버가 잘라냅니다 |
+
+  ## 응답 데이터
+
+  생성 응답(`PlaylistCreateResponse`)과 같은 모양입니다. `created_at` 은 **처음 만든
+  시각**이라 이름을 바꿔도 변하지 않습니다. 수정 시각이 필요하면 목록 조회의
+  `updated_at` 을 봅니다.
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `playlist_id` | int | 플레이리스트 번호 |
+  | `title` | string | 바뀐 제목 |
+  | `music_count` | int | 수록곡 수. 이 요청으로 변하지 않음 |
+  | `created_at` | datetime | 생성 일시 |
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | `title` 누락·공백·100자 초과. `error_details` 의 키는 **자바 필드명**입니다 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 404 | 요청 본문 누락/파싱 실패 |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_PLAYLIST_ACCESS_DENIED` | 403 | 내 플레이리스트가 아님 |
+  | `MUPID_PLAYLIST_NOT_FOUND` | 404 | 없거나 이미 삭제된 플레이리스트 |
+  | `MUPID_USER_NOT_FOUND` | 404 | 토큰의 사용자가 없음 |

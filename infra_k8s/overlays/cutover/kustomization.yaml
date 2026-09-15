@@ -1,0 +1,17 @@
+# Cutover: this overlay takes 80/443 on the edge node.
+#
+# Applying it while the Compose stack is up will leave the edge pod unable to
+# bind and stuck in Pending. Stop the Compose nginx first, or move it aside with
+# MUPID_HTTP_PORT / MUPID_HTTPS_PORT, which the Compose file already reads from
+# the environment.
+#
+# Cutover is a separate decision and is not part of the k8s option being built.
+# Everything up to that point is reversible by deleting the namespace.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mupid
+resources:
+  - ../../base
+patches:
+  - path: edge-ports.yaml
+    target: {kind: Deployment, name: edge}

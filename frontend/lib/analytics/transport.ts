@@ -10,6 +10,39 @@ import type { ListenEvent } from './types';
  */
 export type Transport = (events: ListenEvent[], leaving: boolean) => Promise<void>;
 
+/**
+ * 다시 보내도 결과가 같은 실패. 큐는 이 배치를 **되돌리지 않고 버린다.**
+ *
+ * 되돌리면 같은 배치가 5초마다 영원히 다시 나가고, 그 앞에 막혀 뒤따르는 이벤트도
+ * 전부 나가지 못한다. 큐가 상한(`STORE_LIMIT`)에 닿으면 오래된 것부터 밀려나므로
+ * 결국 **고칠 수 없는 한 배치 때문에 고칠 수 있는 이벤트까지 잃는다.** 한 배치를
+ * 포기하는 쪽이 싸다.
+ *
+ * `permanent` 필드가 큐와의 계약이다. `tracker.ts` 는 이 모듈에서 값을 import 하지
+ * 않으므로(확장자 없는 상대 경로를 `node --test` 가 해석하지 못한다) `instanceof`
+ * 가 아니라 이 필드를 본다.
+ */
+export class PermanentTransportError extends Error {
+  readonly permanent = true;
+
+  constructor(readonly status: number) {
+    super(`이벤트 전송 실패(재시도하지 않음): ${status}`);
+    this.name = 'PermanentTransportError';
+  }
+}
+
+/**
+ * 이 상태 코드는 되돌려 두고 다시 보낸다.
+ *
+ *   401  아직 토큰이 없거나 만료됐다. 다른 요청이 토큰을 갱신해 두면 다음 배치에서 나간다.
+ *   408  요청 타임아웃.
+ *   429  잠시 뒤에 다시 오라는 뜻이다.
+ *
+ * 나머지 4xx 는 우리가 보낸 것이 규약에 어긋난다는 뜻이라 다시 보내도 같은 답이 온다.
+ * 5xx 는 서버 사정이므로 전부 재시도한다.
+ */
+const RETRYABLE = new Set([401, 408, 429]);
+
 export type HttpTransportOptions = {
   url?: string;
   /**
@@ -34,6 +67,11 @@ export function createHttpTransport(options: HttpTransportOptions = {}): Transpo
       // keepalive 요청은 브라우저가 전체 용량을 따로 제한해서 아껴 써야 한다.
       keepalive: leaving,
     });
-    if (!response.ok) throw new Error(`이벤트 전송 실패: ${response.status}`);
+    if (response.ok) return;
+    // 네트워크 자체가 끊긴 경우는 fetch 가 던지므로 여기 오지 않는다 — 그건 재시도한다.
+    if (response.status >= 400 && response.status < 500 && !RETRYABLE.has(response.status)) {
+      throw new PermanentTransportError(response.status);
+    }
+    throw new Error(`이벤트 전송 실패: ${response.status}`);
   };
 }

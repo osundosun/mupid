@@ -28,7 +28,7 @@ api/clickhouse/
 | `api/compose.prod.yml` | `mupid` | 없음. 주석에 "ClickHouse 클러스터…는 이 compose 가 띄우지 않는다", `MUPID_CLICKHOUSE_URL` 을 운영 `.env` 에서 덮어쓰라고 적혀 있다 |
 | `infra/deploy/compose.yml` | `mupid` | 포함하되 profile 로 격리. 실제 배포 엔드포인트(`infra/deploy/receive.sh`)가 쓰는 파일이다 |
 
-Spring 쪽은 `api/src/main/java/com/osundosun/mupid/api/analytics/` 아래 두 파일뿐이다.
+Spring 쪽은 `api/src/main/java/com/osundosun/mupid/api/analytics/` 아래 세 갈래다 — 설정 두 파일(`config` · `properties`)과 조회 계층(`repository/ListenAnalyticsRepository` + `dto/`). 조회 계층은 취향 리포트가 처음 들여왔다 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md).
 
 ## 클러스터 토폴로지
 
@@ -160,7 +160,28 @@ TTL toDateTime(<시각 컬럼>) + INTERVAL 18 MONTH
 
 `kafka_listen_events` 는 전 컬럼을 **관대한 타입**으로 받는다. `event_id` / `play_id` / `occurred_at` 이 UUID·DateTime64 가 아니라 `String` 이고, 변환은 `mv_kafka_to_events` 가 `toUUIDOrZero()` / `parseDateTime64BestEffort(…, 3, 'Asia/Seoul')` 로 처리한다. `kafka_skip_broken_messages = 100` 과 `input_format_skip_unknown_fields = 1` 을 합쳐, 스키마가 조금 어긋난 메시지 때문에 컨슈머가 멈추지 않게 한 구성이다.
 
-**아직 Spring 은 Kafka 프로듀서가 아니다.** `build.gradle` 에 Kafka 클라이언트 의존성이 없고 `api/src` 전체에 kafka 문자열이 없다. `api/.env.example` 의 `MUPID_KAFKA_BOOTSTRAP` 은 선언만 있고 읽는 곳이 없다. 현재 토픽에 이벤트를 넣는 경로는 `verify.sh` 와 README 의 수동 `kafka-console-producer.sh` 뿐이다.
+### 소비 단위 튜닝
+
+```
+kafka_max_block_size      = 65536    한 번에 쓸 행 수
+kafka_poll_max_batch_size = 8192     한 번의 poll 로 가져올 메시지 수
+kafka_flush_interval_ms   = 15000    행 수가 안 차도 이때까지는 기다린다
+```
+
+둘 중 먼저 닿는 쪽이 파트를 만든다. **기본값을 그대로 두면 사실상 7.5초마다 파트가 하나씩 생긴다** — 기본 행 수가 `max_insert_block_size`(1,048,576) 라 이 워크로드에서는 절대 차지 않고 항상 시간 쪽이 이기기 때문이다. 그 작은 파트가 계속 쌓이면 병합 압력이 올라가고, `play_section_coverage` 의 SummingMergeTree 부분합도 오래 흩어져 남는다(그래서 읽을 때 GROUP BY 로 합산해야 한다).
+
+행 수를 현실적인 크기로 낮추고 대기를 늘려, 트래픽이 많을 때는 크기로 끊고 한산할 때는 시간으로 끊게 했다. 하트비트 간격을 바꾸면(`frontend/lib/analytics/player.ts` 의 `HEARTBEAT_MS`) 이 값도 함께 본다.
+
+### 프로듀서
+
+Spring 의 `event` 도메인이 유일한 프로듀서다(`EventKafkaConfig`). `spring.kafka.*` 자동설정을 쓰지 않고 빈을 직접 만든다 — 환경변수 `MUPID_` 접두사 강제(decision/0002) 때문이고, 컨슈머는 ClickHouse Kafka 엔진이 맡아 애플리케이션에는 프로듀서 하나만 필요해서다.
+
+| 설정 | 값 | 이유 |
+|---|---|---|
+| `enable.idempotence` · `acks` | `true` · `all` | 프로듀서 내부 재시도가 같은 메시지를 두 번 넣지 않게 한다. MV 는 중복을 걸러주지 않는다 |
+| `linger.ms` · `batch.size` | `20` · `64KB` | 하트비트가 몰리므로 조금 모아 보낸다. 기본 16KB 는 금방 차서 linger 를 채우기 전에 끊긴다 |
+| `compression.type` | `lz4` | 대부분이 같은 모양의 하트비트 JSON 이라 잘 먹는다. CPU 를 거의 쓰지 않고 네트워크와 ClickHouse 쪽 디스크 I/O 를 함께 줄인다 |
+| `max.block.ms` | `3s` | 브로커가 죽어 있을 때 `send` 가 요청 스레드를 오래 잡지 않게 한다 |
 
 ## 사용자 · 권한 · 설정 파일 분리
 
@@ -326,7 +347,13 @@ public class SectionStatsService {
 
 MySQL `JdbcTemplate` 이 `@Primary` 이므로 **`@Qualifier` 를 빠뜨리면 조용히 MySQL 이 주입된다.** 컴파일도 기동도 된다. `@RequiredArgsConstructor` 생성자로 `@Qualifier` 가 전달되려면 `api/lombok.config` 가 필요하다.
 
-이 템플릿을 쓰는 애플리케이션 코드는 아직 없다. `analytics` 패키지에는 위 두 파일뿐이다.
+이 템플릿을 쓰는 곳은 **`analytics/repository/ListenAnalyticsRepository` 하나뿐**이다. 취향 리포트가 처음 들여왔다 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md).
+
+새 조회를 붙일 때 그 클래스가 지키는 것 세 가지를 같이 지킨다.
+
+1. **Distributed 테이블(`listen_events`)을 읽는다.** Kafka 적재가 샤딩 키를 타지 않아 한 사용자의 이벤트가 두 샤드에 흩어져 있다. `_local` 을 읽으면 조용히 일부만 나온다.
+2. **`GROUP BY event_id` 로 감싼다.** `ReplacingMergeTree` 의 중복 제거는 병합 시점이고 그 시점을 보장할 수 없다. 합계를 내는 쿼리에서 이걸 빼면 재전송·재소비가 그대로 값 부풀리기가 된다.
+3. **시각은 문자열로 넘겨 `toDateTime64(?, 3, 'Asia/Seoul')` 로 못 박는다.** JDBC 드라이버가 `Timestamp` 를 어느 시간대로 보내는지에 결과가 좌우되면 안 된다.
 
 ## 스키마·설정을 바꿀 때
 

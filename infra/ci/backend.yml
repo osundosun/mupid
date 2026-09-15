@@ -21,26 +21,16 @@ backend-verify:
         - api/**/*
         - infra/image/**/*
         - infra/ci/backend.yml
-        - infra/ci/release.yml
         - infra/ci/package-image.sh
-        - infra/ci/deploy.sh
-        - infra/ci/release.sh
-        - infra/deploy/compose.yml
-        - infra/deploy/receive.sh
-        - infra/deploy/ssh-entrypoint.sh
+        - infra_k8s/**/*
         - .gitlab-ci.yml
     - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
       changes:
         - api/**/*
         - infra/image/**/*
         - infra/ci/backend.yml
-        - infra/ci/release.yml
         - infra/ci/package-image.sh
-        - infra/ci/deploy.sh
-        - infra/ci/release.sh
-        - infra/deploy/compose.yml
-        - infra/deploy/receive.sh
-        - infra/deploy/ssh-entrypoint.sh
+        - infra_k8s/**/*
         - .gitlab-ci.yml
     - if: '$CI_PIPELINE_SOURCE == "web"'
   script:

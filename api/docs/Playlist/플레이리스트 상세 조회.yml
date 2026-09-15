@@ -1,7 +1,7 @@
 info:
   name: 플레이리스트 상세 조회
   type: http
-  seq: 4
+  seq: 5
 
 http:
   method: GET

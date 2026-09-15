@@ -387,7 +387,7 @@ uv run music-preprocessing lyrics  -c config.json
 | `--force` 재등록 | 47,761 요청 | **502** |
 
 곡 하나가 서버에서 한 트랜잭션이라, 중간에 끊겨도 반쯤 올라간 가사가 남지
-않습니다 → [decision/0019](../api/knowledge/decision/0019-lyric-bulk-replace.md).
+않습니다 → [decision/0020](../api/knowledge/decision/0020-lyric-bulk-replace.md).
 
 | 상황 | 동작 |
 | --- | --- |

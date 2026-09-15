@@ -72,6 +72,17 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
     boolean existsByMusicIdAndIsDeletedFalse(int musicId);
 
     /**
+     * 살아 있는 곡 수. 취향 리포트가 대중성 백분위를 낼 때 <b>한 번도 재생되지 않은
+     * 곡 수를 알아내는 데</b> 쓴다.
+     *
+     * 재생수 자체는 `music.play_count` 가 아니라 ClickHouse 재생 로그에서 온다 —
+     * 그 컬럼을 올리는 코드가 저장소에 없어 전 곡이 0 이기 때문이다
+     * (`CatalogBaseline`). 재생 기록이 없는 곡은 로그에 나타나지 않으므로, 배열에
+     * 0 을 몇 개 채울지 알려면 이 수가 필요하다.
+     */
+    long countByIsDeletedFalse();
+
+    /**
      * 좋아요 수는 읽고-고쳐-쓰면 동시 요청에서 하나가 사라진다. DB 에서 바로 올린다.
      *
      * `flushAutomatically` 를 켜 둔 이유: 기본값(false)이면 아직 반영되지 않은

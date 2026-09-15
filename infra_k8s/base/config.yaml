@@ -1,0 +1,41 @@
+# Non-sensitive configuration only.
+#
+# The split: values that are structural (they point at a Kubernetes Service, or
+# are fixed by these manifests) live here and are committed. Values that come
+# from /srv/mupid-k8s/.env live in the Secret `mupid-secrets`, which an
+# administrator creates on the server and which is never committed.
+#
+# The few plain values below are already published in infra/deploy/.env.example,
+# so committing them adds no exposure.
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: api-config, namespace: mupid}
+data:
+  MUPID_PORT: '8800'
+  MUPID_MYSQL_USER: mupid_app
+  # Host is the Service name, so this string is identical to the Compose one.
+  MUPID_MYSQL_URL: jdbc:mysql://mysql:3306/mupid?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&serverTimezone=Asia/Seoul
+  MUPID_REDIS_HOST: redis
+  MUPID_REDIS_PORT: '6379'
+  MUPID_REDIS_KEY_PREFIX: mupid:prod
+  MUPID_CLIENT_WEBSITE: https://j15a204.p.ssafy.io
+  # application.yaml reads these with no default, so the API fails to start if
+  # they are absent. The ClickHouse pool and the Kafka producer are both created
+  # lazily, so neither service has to exist for the API to come up. Analytics is
+  # out of scope until Phase 6; these point at names that do not resolve yet,
+  # which is the same situation the Compose deployment is in today.
+  MUPID_CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123/default
+  MUPID_CLICKHOUSE_USER: mupid
+  MUPID_KAFKA_BOOTSTRAP: kafka:9092
+  MUPID_KAFKA_TOPIC: mupid.listen.events
+  # Consumed once the Spring internal client lands (Phase 4). Harmless until then.
+  MUPID_AI_BASE_URL: http://ai:8100
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: storage-filer, namespace: mupid}
+data:
+  filer.toml: |
+    [leveldb2]
+    enabled = true
+    dir = "/data/filer"

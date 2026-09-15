@@ -10,7 +10,13 @@
 -- 503 으로 막힌다.**
 --
 -- 적용:
---   docker exec -i mupid-dev-mysql mysql -u<USER> -p<PASSWORD> mupid < seed-codes.sql
+--   docker exec -i mupid-dev-mysql mysql --default-character-set=utf8mb4 \
+--     -u<USER> -p<PASSWORD> mupid < seed-codes.sql
+--
+-- **`--default-character-set=utf8mb4` 를 빼면 안 된다.** 클라이언트가 이 파일의
+-- UTF-8 바이트를 latin1 로 읽어 다시 인코딩해서 한글이 깨진 채로 들어가는데,
+-- 오류가 나지 않아 조용히 성공한다. `SELECT CHAR_LENGTH(code_name)` 이 글자 수보다
+-- 크면 그렇게 들어간 것이다.
 --
 -- 이름 목록의 출처는 화면 디자인이다 — `frontend/lib/mupid-data.ts` 의
 -- `moodOptions` · `genreOptions`. 여기를 고치면 화면도 같이 봐야 한다.
@@ -18,8 +24,10 @@
 -- 여러 번 돌려도 늘어나지 않는다. `code_name` 은 UNIQUE 가 아니라서
 -- INSERT ... SELECT 로 있는지 보고 넣는다.
 
-INSERT INTO `codes` (`code_type`, `code_name`)
-SELECT * FROM (
+-- `created_at` 을 직접 넣는다. 표를 Hibernate 가 만든 환경에서는 ERD 와 달리
+-- DEFAULT CURRENT_TIMESTAMP 가 붙지 않아 생략하면 1364 로 막힌다.
+INSERT INTO `codes` (`code_type`, `code_name`, `created_at`)
+SELECT wanted.t, wanted.n, NOW(6) FROM (
   SELECT 'MOOD' AS t, '잔잔한' AS n
   UNION ALL SELECT 'MOOD', '벅찬'
   UNION ALL SELECT 'MOOD', '몽환적인'

@@ -179,3 +179,43 @@ test('전송에 실패한 배치는 큐 앞으로 되돌아온다', async () => 
   await tracker.flush();
   assert.deepEqual(tracker.peek(), []);
 });
+
+test('다시 보내도 소용없는 실패(4xx)는 큐를 막지 않고 버려진다', async () => {
+  const attempts = [];
+  const tracker = createTracker({
+    storage: null,
+    transport: async (events) => {
+      attempts.push(events.length);
+      // 서버가 규약 위반으로 400 을 준 상황.
+      const error = new Error('bad request');
+      error.permanent = true;
+      throw error;
+    },
+  });
+  tracker.search('규약을 어긴 배치');
+  await tracker.flush();
+
+  // 되돌렸다면 이 배치가 큐 앞에 남아 영원히 다시 나간다.
+  assert.deepEqual(tracker.peek(), []);
+  assert.deepEqual(attempts, [1]);
+});
+
+test('401 은 버리지 않는다 — 로그인하면 그대로 나가야 한다', async () => {
+  let signedIn = false;
+  const sent = [];
+  const tracker = createTracker({
+    storage: null,
+    transport: async (events) => {
+      if (!signedIn) throw new Error('이벤트 전송 실패: 401');
+      sent.push(...events);
+    },
+  });
+  tracker.search('로그인 전 검색');
+  await tracker.flush();
+  assert.deepEqual(types(tracker), ['SEARCH']);
+
+  signedIn = true;
+  await tracker.flush();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].search_query, '로그인 전 검색');
+});

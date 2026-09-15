@@ -1,0 +1,188 @@
+# ClickHouse across both EC2 nodes. Two shards, one replica each — the topology
+# the Compose analytics profile already describes:
+#
+#   pod-0  shard 01  replica ch1
+#   pod-1  shard 02  replica ch2
+#
+# The XML under base/clickhouse/ is a copy of api/clickhouse/ and is NOT edited
+# here. Every node-specific value in those files is `from_env`, so one set of
+# files serves both pods; tests/test_manifests.py fails if the copy drifts.
+#
+# What Compose had to do and this does not: publish 9000/9009/9181 on the host
+# and list the peer's address in a security group. Both pods are on the cluster
+# network, so the analytics ports never leave it.
+---
+# Headless: the pods need stable per-pod DNS (clickhouse-0.clickhouse) because
+# 00-cluster.xml names each shard's host and 10-macros.xml advertises
+# interserver_http_host for part fetches. The bare name `clickhouse` resolves to
+# both pods, which is what Spring connects to — any node can be the initiator of
+# a distributed query, so it does not matter which one answers.
+apiVersion: v1
+kind: Service
+metadata: {name: clickhouse, namespace: mupid}
+spec:
+  clusterIP: None
+  selector: {app: clickhouse}
+  ports:
+    - {name: http, port: 8123, targetPort: 8123}
+    - {name: native, port: 9000, targetPort: 9000}
+    - {name: interserver, port: 9009, targetPort: 9009}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: clickhouse, namespace: mupid}
+spec:
+  serviceName: clickhouse
+  replicas: 2
+  selector: {matchLabels: {app: clickhouse}}
+  template:
+    metadata: {labels: {app: clickhouse}}
+    spec:
+      # One per node. `required`, not `preferred`: two shards on one host is not
+      # a degraded version of this topology, it is a different one.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: clickhouse}}
+              topologyKey: kubernetes.io/hostname
+      securityContext: {fsGroup: 101}
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.3
+          # Node identity comes from the pod ordinal. The Compose deployment set
+          # CH_SHARD/CH_REPLICA per host in .env; a StatefulSet has one pod
+          # template, so it is derived here instead.
+          #
+          # A case, not arithmetic on the ordinal: 00-cluster.xml declares
+          # exactly two shards, so a third pod has no identity to take. Failing
+          # loudly beats a pod that starts and writes to a Keeper path nobody
+          # queries. `$((...))` is also avoided because kubelet expands `$(` in
+          # args before the shell sees it.
+          command: [/bin/bash, -c]
+          args:
+            - |
+              set -eu
+              case "${HOSTNAME##*-}" in
+                0) export CH_SHARD=01 CH_REPLICA=ch1 ;;
+                1) export CH_SHARD=02 CH_REPLICA=ch2 ;;
+                *) echo "no shard defined for ${HOSTNAME}: add one to 00-cluster.xml" >&2
+                   exit 1 ;;
+              esac
+              # The address the other node fetches parts from.
+              export CH_INTERSERVER_HOST="${HOSTNAME}.clickhouse"
+              exec /entrypoint.sh
+          env:
+            - {name: CH_HOST_1, value: clickhouse-0.clickhouse}
+            - {name: CH_HOST_2, value: clickhouse-1.clickhouse}
+            - {name: CH_KEEPER_HOST, value: clickhouse-keeper}
+            # Compose passed 0 and let ClickHouse take a share of host RAM. Here
+            # the pod has a 4Gi cap, so the number is explicit and sits below it:
+            # ClickHouse refuses a query that would exceed its own budget, which
+            # is recoverable, whereas crossing the cgroup limit is an OOMKill.
+            # 3Gi = 3221225472.
+            - {name: CH_MAX_SERVER_MEMORY, value: '3221225472'}
+            - name: MUPID_CLICKHOUSE_PASSWORD
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_CLICKHOUSE_PASSWORD}}
+          ports:
+            - {containerPort: 8123}
+            - {containerPort: 9000}
+            - {containerPort: 9009}
+          resources:
+            requests: {cpu: 300m, memory: 1Gi}
+            # No CPU limit on purpose. ClickHouse sizes thread pools from the
+            # core count and throttling it produces timeouts rather than slower
+            # queries; the request is what keeps the scheduler honest.
+            limits: {memory: 4Gi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/clickhouse}
+            - {name: server, mountPath: /etc/clickhouse-server/config.d/00-cluster.xml, subPath: 00-cluster.xml, readOnly: true}
+            - {name: server, mountPath: /etc/clickhouse-server/config.d/01-keeper.xml, subPath: 01-keeper.xml, readOnly: true}
+            - {name: server, mountPath: /etc/clickhouse-server/config.d/02-server.xml, subPath: 02-server.xml, readOnly: true}
+            - {name: server, mountPath: /etc/clickhouse-server/config.d/10-macros.xml, subPath: 10-macros.xml, readOnly: true}
+            - {name: users, mountPath: /etc/clickhouse-server/users.d/00-profile.xml, subPath: 00-profile.xml, readOnly: true}
+            - {name: users, mountPath: /etc/clickhouse-server/users.d/10-mupid-user.xml, subPath: 10-mupid-user.xml, readOnly: true}
+          readinessProbe:
+            # default is restricted to 127.0.0.1 by the image's own
+            # users.d/default-user.xml, so the probe uses it from inside the pod
+            # exactly as the Compose healthcheck did.
+            exec: {command: [clickhouse-client, --host, 127.0.0.1, --query, 'SELECT 1']}
+            timeoutSeconds: 10
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 10
+          livenessProbe:
+            exec: {command: [clickhouse-client, --host, 127.0.0.1, --query, 'SELECT 1']}
+            timeoutSeconds: 10
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: server
+          configMap: {name: clickhouse-server}
+        - name: users
+          configMap: {name: clickhouse-users}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 30Gi}}
+---
+# Keeper. Holds the replication metadata and the ON CLUSTER DDL queue.
+#
+# One instance, pinned. Two would be worse than one: a quorum of two stops on
+# the first failure, which is why Keeper counts are odd. Three needs a third
+# host and there are two. This matches what the Compose deployment runs today.
+#
+# While it is down, replication and ON CLUSTER DDL stall and inserts into
+# Replicated tables fail. Reads of data already on disk keep working.
+apiVersion: v1
+kind: Service
+metadata: {name: clickhouse-keeper, namespace: mupid}
+spec:
+  clusterIP: None
+  selector: {app: clickhouse-keeper}
+  ports:
+    - {name: client, port: 9181, targetPort: 9181}
+    - {name: raft, port: 9234, targetPort: 9234}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: clickhouse-keeper, namespace: mupid}
+spec:
+  serviceName: clickhouse-keeper
+  replicas: 1
+  selector: {matchLabels: {app: clickhouse-keeper}}
+  template:
+    metadata: {labels: {app: clickhouse-keeper}}
+    spec:
+      nodeSelector: {mupid.io/role: edge}
+      securityContext: {fsGroup: 101}
+      containers:
+        - name: keeper
+          image: clickhouse/clickhouse-keeper:25.3
+          ports:
+            - {containerPort: 9181}
+            - {containerPort: 9234}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/clickhouse-keeper}
+            - {name: config, mountPath: /etc/clickhouse-keeper/keeper_config.xml, subPath: keeper_config.xml, readOnly: true}
+          readinessProbe:
+            # Keeper speaks its own TCP protocol on 9181; there is no HTTP
+            # endpoint to probe, so this checks that it is listening.
+            tcpSocket: {port: 9181}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 10
+      volumes:
+        - name: config
+          configMap: {name: clickhouse-keeper}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 5Gi}}
