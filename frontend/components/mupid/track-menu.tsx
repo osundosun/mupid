@@ -12,7 +12,7 @@ export function TrackMenu({ model: m }: { model: MupidModel }) {
   const close = () => { setTrack(null); setPicker(false); setName(''); };
   const add = (id: number) => {
     if (!track) return;
-    m.setPlaylists(list => list.map(p => p.id === id && !p.tracks.some(t => t.id === track.id) ? { ...p, tracks: [...p.tracks, track] } : p));
+    void m.addToPlaylist(id, track);
     m.setToast('플레이리스트에 추가했어요.'); close();
   };
   return <>
@@ -26,7 +26,7 @@ export function TrackMenu({ model: m }: { model: MupidModel }) {
           </div>
           <form onSubmit={event => {
             event.preventDefault(); if (!name.trim()) return;
-            m.setPlaylists(list => [...list, { id: Date.now(), name: name.trim(), tracks: [track] }]);
+            void m.createPlaylist(name, track);
             m.setToast('새 플레이리스트를 만들고 곡을 추가했어요.'); close();
           }}>
             <label className="field-label" htmlFor="new-track-playlist">새 플레이리스트 이름</label>

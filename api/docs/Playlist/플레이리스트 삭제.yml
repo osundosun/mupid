@@ -1,7 +1,7 @@
 info:
   name: 플레이리스트 삭제
   type: http
-  seq: 5
+  seq: 7
 
 http:
   method: DELETE

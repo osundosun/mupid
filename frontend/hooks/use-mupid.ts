@@ -8,7 +8,8 @@ import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
 import { fetchOnboarding, saveOnboarding } from '@/lib/onboarding';
 import { fetchHistory, fetchReactions, pushReaction } from '@/lib/reactions';
-import { analytics, type EntryPath } from '@/lib/analytics';
+import * as playlistApi from '@/lib/playlists';
+import { analytics, bindPlayer, type EntryPath } from '@/lib/analytics';
 import { fetchSections } from '@/lib/music-analysis';
 import { chatErrorMessage, requestChat } from '@/lib/ai-chat';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
@@ -305,6 +306,29 @@ export function useMupid(bootstrap: Bootstrap) {
     );
   };
   /**
+   * 계정에 저장된 플레이리스트를 가져온다. **서버가 기준이다.**
+   *
+   * 계정이 비어 있는데 브라우저에만 남은 목록이 있으면 그것부터 올린다. 서버 연동
+   * 전에 만든 플레이리스트가 계정에 없다는 이유로 조용히 사라지면 안 된다.
+   */
+  const adoptServerPlaylists = async (signal?: AbortSignal) => {
+    const saved = await playlistApi.fetchPlaylists(tracks, signal);
+    if (!saved || signal?.aborted || !mountedRef.current) return;
+    if (!saved.length && playlists.length) {
+      try {
+        const migrated = await playlistApi.migrateLocalPlaylists(playlists);
+        if (signal?.aborted || !mountedRef.current) return;
+        setPlaylists(migrated);
+        return;
+      } catch {
+        // 올리지 못했으면 화면에 있는 것을 그대로 둔다. 다음 기회에 다시 시도된다.
+        if (mountedRef.current) setToast('플레이리스트를 계정에 저장하지 못했어요.');
+        return;
+      }
+    }
+    setPlaylists(saved);
+  };
+  /**
    * 세션 복원.
    *
    * 액세스 토큰은 메모리에만 있다. 새로고침 뒤에는 쿠키의 리프레시 토큰으로
@@ -329,6 +353,7 @@ export function useMupid(bootstrap: Bootstrap) {
         await adoptServerOnboarding(abort.signal);
         void adoptServerReactions(abort.signal);
         void adoptServerHistory(abort.signal);
+        void adoptServerPlaylists(abort.signal);
       })
       .catch(() => {})
       .finally(() => { if (!abort.signal.aborted) setAuthChecked(true); });
@@ -436,6 +461,30 @@ export function useMupid(bootstrap: Bootstrap) {
     return 'RECOMMEND';
   };
   /**
+   * 지금 재생 위치(ms). 청취 이벤트가 싣는 `position_ms` 다.
+   *
+   * `time` 상태가 아니라 **재생기에서 실측한다.** 상태는 0.2초마다 따라오는 사본이라
+   * 백그라운드 탭에서 갱신이 늘어지면 뒤처지고, 그 값으로 만든 구간 신호는 엉뚱한
+   * 구간에 붙는다 (domain/listening-events.md "프론트가 지켜야 할 것").
+   */
+  const positionMs = () => Math.max(0, Math.round((getPlayer()?.store.get().positionSec ?? 0) * 1000));
+  /** 화면이 쓰는 곡 번호(`id`)를 서버 음악 번호로 옮긴다. 이벤트는 서버 번호로 나간다. */
+  const musicIdOf = (id: number) => tracks.find((t) => t.id === id)?.musicId;
+  /**
+   * 이벤트에 실을 플레이리스트 번호. 서버 번호가 아니면 0("모름")을 보낸다.
+   *
+   * **플레이리스트는 아직 서버에 저장되지 않는다.** `createPlaylist` 가 `Date.now()`
+   * 로 화면 안에서만 쓰는 번호를 만드는데, 그 값은 1.7조쯤이라 `listen_events` 의
+   * `playlist_id`(UInt32)에 들어가지 않는다. 그대로 보내면 **그 이벤트가 실린 배치
+   * 전체가 400 으로 거부되고**, 같이 실려 가던 재생 기록까지 사라진다.
+   *
+   * 0 으로 보내도 손해가 적다. `PLAYLIST_ADD` 의 구간 신호(+0.8)는 `track_id` 와
+   * `position_ms` 로 만들어지므로 그대로 남는다 — 어느 목록에 담았는지만 모른다.
+   * 서버 플레이리스트 API 를 붙이면 그때 진짜 번호가 이 검사를 통과한다.
+   */
+  const playlistIdOf = (id: number) =>
+    Number.isInteger(id) && id > 0 && id <= 4294967295 ? id : 0;
+  /**
    * 곡을 튼다. 재생 경로는 청크 스트리밍 하나뿐이다.
    *
    * 요청마다 번호를 매겨, 빠르게 곡을 바꿨을 때 **뒤늦게 끝난 이전 요청이
@@ -483,6 +532,11 @@ export function useMupid(bootstrap: Bootstrap) {
         return;
       }
     }
+    // 듣던 곡을 두고 다른 곡을 고른 것은 그 곡을 넘긴 것이다. 다음곡 버튼으로 넘긴
+    // 것과 구분해 `OTHER_TRACK` 으로 남긴다 — 분류는 ClickHouse 가 쿼리 시점에 한다.
+    if (activeRef.current && activeRef.current.id !== track.id) {
+      analytics.skip(positionMs(), 'OTHER_TRACK');
+    }
     void startPlayback(track, fromMoment ? track.moment : undefined);
   };
   const next = (direction = 1) => {
@@ -497,12 +551,28 @@ export function useMupid(bootstrap: Bootstrap) {
       shuffle && candidates.length
         ? candidates[Math.floor(Math.random() * candidates.length)]
         : pool[(index + direction + pool.length) % pool.length];
+    // 넘길 곡이 실제로 정해진 뒤에 남긴다. 이전·다음 어느 쪽이든 지금 곡을 끝까지
+    // 듣지 않고 떠난 것이므로 스킵이다.
+    analytics.skip(positionMs(), 'NEXT_BUTTON');
     void startPlayback(target, 0);
   };
   const queueTracks = queueIds
     .map((id) => tracks.find((t) => t.id === id)!)
     .filter((t) => t && !ignored.includes(t.id))
     .slice(0, QUEUE_LIMIT);
+
+  /**
+   * 청취 이벤트 자동 수집을 재생기에 붙인다.
+   *
+   * **아래 화면 구독보다 먼저 등록한다.** 스토어는 등록 순서대로 구독자를 부르는데,
+   * 화면 구독이 먼저 돌면 곡이 끝나자마자 다음 곡을 걸어버려 `PLAY_END` 자리에
+   * `PLAYBACK_ABANDON` 이 남는다. 끝까지 들은 것과 끊긴 것은 정반대의 신호다.
+   */
+  useEffect(() => {
+    const player = getPlayer();
+    if (!player) return;
+    return bindPlayer(player, analytics);
+  }, []);
 
   // 스트리밍 엔진은 React 밖에서 돈다. 상태를 훅의 값으로 옮겨 화면이 기존과
   // 똑같은 모양(playing / time)을 보게 한다.
@@ -675,9 +745,168 @@ export function useMupid(bootstrap: Bootstrap) {
           ),
       ),
     ]);
+    markMoments([saved]);
     // 구간을 저장하면 그 곡을 좋아한 것으로 본다. 계정에도 같이 남겨야 한다.
     if (!liked.includes(saved.track.id)) toggleLike(saved.track.id);
     setToast('저장한 순간을 저장했어요. 내 플레이리스트에서 다시 만나요.');
+  };
+
+  /**
+   * 저장한 순간을 `SECTION_MARK` 로 남긴다. 구간을 직접 찍는 행동이라 신호 중
+   * 가장 강한 긍정(+1.5)이다.
+   *
+   * 순간은 초 단위이고 이벤트는 밀리초다. 범위와 함께 시작점을 `position_ms` 로
+   * 싣는 것은 백엔드 구간 매핑이 그 한 점으로 `dictGet` 하기 때문이다 — SDK 가
+   * 알아서 넣지만, 곡 번호는 여기서만 알 수 있어 직접 넘긴다.
+   */
+  const markMoments = (entries: SavedMoment[]) => {
+    for (const entry of entries) {
+      if (typeof entry.track.musicId !== 'number') continue;
+      analytics.markSection(entry.start * 1000, entry.end * 1000, entry.track.musicId);
+    }
+  };
+  const unmarkMoments = (entries: SavedMoment[]) => {
+    for (const entry of entries) {
+      if (typeof entry.track.musicId !== 'number') continue;
+      analytics.unmarkSection(entry.start * 1000, entry.end * 1000, entry.track.musicId);
+    }
+  };
+
+  /**
+   * 저장한 순간을 더한다. 이미 같은 범위가 있으면 더하지도, 이벤트를 남기지도 않는다.
+   *
+   * 화면마다 `setMoments` 를 직접 부르던 것을 여기로 모았다. 흩어져 있으면 새 화면이
+   * 하나 늘 때마다 구간 신호가 조용히 빠진다.
+   */
+  const addMoments = (entries: SavedMoment[]) => {
+    const fresh = entries.filter(
+      (entry) =>
+        !moments.some(
+          (v) => v.track.id === entry.track.id && v.start === entry.start && v.end === entry.end,
+        ),
+    );
+    if (!fresh.length) return;
+    markMoments(fresh);
+    setMoments((list) => [...fresh, ...list]);
+  };
+
+  /** 저장한 순간을 뺀다. 지정 해제는 그만큼 강한 부정 신호(−1.5)라 반드시 남긴다. */
+  const removeMoment = (id: number) => {
+    const gone = moments.find((v) => v.id === id);
+    if (!gone) return;
+    unmarkMoments([gone]);
+    setMoments((list) => list.filter((v) => v.id !== id));
+  };
+
+  /** 저장한 순간의 범위를 바꾼다. 옛 구간을 해제하고 새 구간을 찍는 것과 같다. */
+  const replaceMoment = (id: number, part: { start: number; end: number; section: string }) => {
+    const previous = moments.find((v) => v.id === id);
+    if (!previous) return;
+    unmarkMoments([previous]);
+    markMoments([{ ...previous, ...part }]);
+    setMoments((list) => list.map((v) => (v.id === id ? { ...v, ...part } : v)));
+  };
+
+  /**
+   * 플레이리스트에 곡을 담는다. 이미 있으면 아무 일도 하지 않는다.
+   *
+   * `PLAYLIST_ADD` 는 구간 신호(+0.8)로 이어지므로 재생 중이면 그 위치를 싣는다.
+   */
+  const addToPlaylist = async (playlistId: number, track: Track) => {
+    const target = playlists.find((p) => p.id === playlistId);
+    // 방금 만든 플레이리스트는 아직 상태에 없다. "찾지 못함" 과 "이미 담겨 있음" 은 다르다.
+    if (target?.tracks.some((t) => t.id === track.id)) return;
+    // 재생 위치는 지금 읽어 둔다. 서버 왕복을 기다린 뒤에 읽으면 그 사이 곡이 흐른다.
+    const at = activeRef.current?.id === track.id ? positionMs() : 0;
+    // 화면을 먼저 바꾼다. 담기는 누르자마자 반응해야 한다.
+    setPlaylists((list) =>
+      list.map((p) =>
+        p.id === playlistId && !p.tracks.some((t) => t.id === track.id)
+          ? { ...p, tracks: [...p.tracks, track] }
+          : p,
+      ),
+    );
+    try {
+      // 서버에 담긴 뒤에 이벤트를 남긴다. 저장에 실패한 것을 신호(+0.8)로 세면 안 된다.
+      if (await playlistApi.addTrack(playlistId, track)) {
+        analytics.addToPlaylist(playlistIdOf(playlistId), at, track.musicId!);
+      }
+    } catch {
+      if (!mountedRef.current) return;
+      setPlaylists((list) =>
+        list.map((p) =>
+          p.id === playlistId ? { ...p, tracks: p.tracks.filter((t) => t.id !== track.id) } : p,
+        ),
+      );
+      setToast('플레이리스트에 담지 못했어요. 다시 시도해 주세요.');
+    }
+  };
+
+  /** 플레이리스트에서 곡을 뺀다. 화면에서 고른 id 목록을 그대로 받는다. */
+  const removeFromPlaylist = async (playlistId: number, trackIds: number[]) => {
+    const target = playlists.find((p) => p.id === playlistId);
+    if (!target || !trackIds.length) return;
+    const removed = target.tracks.filter((t) => trackIds.includes(t.id));
+    if (!removed.length) return;
+    const before = target.tracks;
+    setPlaylists((list) =>
+      list.map((p) =>
+        p.id === playlistId ? { ...p, tracks: p.tracks.filter((t) => !trackIds.includes(t.id)) } : p,
+      ),
+    );
+    try {
+      await playlistApi.removeTracks(playlistId, removed);
+      for (const track of removed) {
+        if (typeof track.musicId === 'number') {
+          analytics.removeFromPlaylist(playlistIdOf(playlistId), track.musicId);
+        }
+      }
+    } catch {
+      if (!mountedRef.current) return;
+      // 순서까지 원래대로 되돌린다. 남은 것만 다시 넣으면 뺀 곡이 뒤로 밀린다.
+      setPlaylists((list) => list.map((p) => (p.id === playlistId ? { ...p, tracks: before } : p)));
+      setToast('플레이리스트에서 빼지 못했어요. 다시 시도해 주세요.');
+    }
+  };
+
+  /** 플레이리스트 제목을 바꾼다. 화면을 먼저 바꾸고 실패하면 되돌린다. */
+  const applyPlaylistRename = async (playlistId: number, name: string) => {
+    const title = name.trim().slice(0, 40);
+    const before = playlists.find((p) => p.id === playlistId);
+    if (!title || !before || before.name === title) return;
+    setPlaylists((list) => list.map((p) => (p.id === playlistId ? { ...p, name: title } : p)));
+    try {
+      await playlistApi.renamePlaylist(playlistId, title);
+      setToast('플레이리스트 이름을 바꿨어요.');
+    } catch {
+      if (!mountedRef.current) return;
+      setPlaylists((list) =>
+        list.map((p) => (p.id === playlistId ? { ...p, name: before.name } : p)),
+      );
+      setToast('이름을 바꾸지 못했어요. 다시 시도해 주세요.');
+    }
+  };
+
+  /**
+   * 플레이리스트를 지운다. 서버는 소프트 삭제라 되살릴 수 있다.
+   *
+   * 수록곡마다 `PLAYLIST_REMOVE` 를 남기지는 않는다. 곡 하나를 빼는 것은 "이 곡은
+   * 여기 어울리지 않는다" 는 곡에 대한 신호지만, 목록을 통째로 지우는 것은 "이 묶음이
+   * 더는 필요 없다" 는 컬렉션에 대한 행동이다. 곡마다 부정 신호로 흩뿌리면 목록을
+   * 자주 정리하는 사용자의 취향이 왜곡된다.
+   */
+  const removePlaylist = async (playlistId: number) => {
+    const before = playlists;
+    setPlaylists((list) => list.filter((p) => p.id !== playlistId));
+    setSelectedPlaylist(null);
+    try {
+      await playlistApi.removePlaylist(playlistId);
+      setToast('플레이리스트를 삭제했어요.');
+    } catch {
+      if (!mountedRef.current) return;
+      setPlaylists(before);
+      setToast('플레이리스트를 삭제하지 못했어요. 다시 시도해 주세요.');
+    }
   };
   /**
    * 좋아요를 켜고 끈다.
@@ -690,6 +919,16 @@ export function useMupid(bootstrap: Bootstrap) {
   const toggleLike = (id: number) => {
     const wasLiked = liked.includes(id);
     const wasIgnored = ignored.includes(id);
+    // 듣고 있는 곡이면 지금 위치를, 목록에서 누른 것이면 0 을 싣는다. 0 이면 이벤트는
+    // 남되 구간 신호가 만들어지지 않는다 — 곡 단위 신호로만 쓰인다.
+    const at = activeRef.current?.id === id ? positionMs() : 0;
+    const musicId = musicIdOf(id);
+    if (musicId !== undefined) {
+      if (wasLiked) analytics.unlike(at, 'TRACK', musicId);
+      else analytics.like(at, 'TRACK', musicId);
+      // 좋아요가 켜지면서 "관심 없음" 이 풀렸다면 그 해제도 남긴다.
+      if (!wasLiked && wasIgnored) analytics.undislike('TRACK', musicId);
+    }
     setLiked((ids) => (wasLiked ? ids.filter((i) => i !== id) : [...ids, id]));
     if (!wasLiked && wasIgnored) setIgnored((ids) => ids.filter((i) => i !== id));
     if (demoSession?.kind !== 'authenticated') return;
@@ -705,6 +944,12 @@ export function useMupid(bootstrap: Bootstrap) {
   const ignoreTrack = (id: number) => {
     if (ignored.includes(id)) return;
     const wasLiked = liked.includes(id);
+    const at = activeRef.current?.id === id ? positionMs() : 0;
+    const musicId = musicIdOf(id);
+    if (musicId !== undefined) {
+      if (wasLiked) analytics.unlike(at, 'TRACK', musicId);
+      analytics.dislike(at, 'TRACK', musicId);
+    }
     setIgnored((ids) => [...ids, id]);
     if (wasLiked) setLiked((ids) => ids.filter((i) => i !== id));
     if (demoSession?.kind !== 'authenticated') return;
@@ -719,6 +964,10 @@ export function useMupid(bootstrap: Bootstrap) {
   /** 숨긴 곡을 모두 되돌린다. */
   const clearIgnored = () => {
     const before = ignored;
+    for (const id of before) {
+      const musicId = musicIdOf(id);
+      if (musicId !== undefined) analytics.undislike('TRACK', musicId);
+    }
     setIgnored([]);
     if (demoSession?.kind !== 'authenticated' || !before.length) return;
     Promise.all(before.map((id) => pushReaction(tracks, id, null))).catch(() => {
@@ -782,16 +1031,29 @@ export function useMupid(bootstrap: Bootstrap) {
       }
     })();
   };
-  const createPlaylist = (name: string) => {
-    if (!name.trim()) return;
-    const id = Date.now();
-    setPlaylists((list) => [
-      ...list,
-      { id, name: name.trim().slice(0, 40), tracks: [] },
-    ]);
-    setSelectedPlaylist(id);
-    setPlaylistDialog(false);
-    setToast('새 플레이리스트를 만들었어요.');
+  /**
+   * 플레이리스트를 만든다. 곡을 함께 주면 그 곡을 담은 채로 만든다.
+   *
+   * 곡을 담는 것은 목록을 만드는 것과 별개의 행동이라 `PLAYLIST_ADD` 를 따로 남긴다.
+   */
+  const createPlaylist = async (name: string, track?: Track) => {
+    const title = name.trim().slice(0, 40);
+    if (!title) return;
+    try {
+      // **번호는 서버가 정한다.** 예전에는 `Date.now()` 로 화면 전용 번호를 만들었는데,
+      // 그 값(≈1.7조)은 청취 이벤트의 playlist_id(UInt32)에 들어가지 않아 그 이벤트가
+      // 실린 배치가 통째로 거부됐다.
+      const id = await playlistApi.createPlaylist(title);
+      if (!mountedRef.current) return;
+      setPlaylists((list) => [...list, { id, name: title, tracks: [] }]);
+      setSelectedPlaylist(id);
+      setPlaylistDialog(false);
+      // 곡을 담는 것은 목록을 만드는 것과 별개의 행동이라 PLAYLIST_ADD 를 따로 남긴다.
+      if (track) await addToPlaylist(id, track);
+      if (mountedRef.current) setToast('새 플레이리스트를 만들었어요.');
+    } catch {
+      if (mountedRef.current) setToast('플레이리스트를 만들지 못했어요. 다시 시도해 주세요.');
+    }
   };
   return {
     onboardingSubmittedAt,
@@ -829,8 +1091,17 @@ export function useMupid(bootstrap: Bootstrap) {
     hasPlayed: lastPlayedId !== null,
     moments,
     setMoments,
+    // 저장한 순간·플레이리스트 변경은 이 셋을 지난다. `setMoments`/`setPlaylists` 를
+    // 화면에서 직접 부르면 구간 신호(SECTION_* · PLAYLIST_*)가 남지 않는다.
+    addMoments,
+    removeMoment,
+    replaceMoment,
     playlists,
     setPlaylists,
+    addToPlaylist,
+    removeFromPlaylist,
+    applyPlaylistRename,
+    removePlaylist,
     selectedPlaylist,
     setSelectedPlaylist,
     libraryTab,
@@ -919,6 +1190,10 @@ export function useMupid(bootstrap: Bootstrap) {
         void startPlayback(track, next);
         return;
       }
+      // 사용자가 직접 옮긴 seek 만 이벤트로 남는다. `startPlayback` 이 거는 seek 이나
+      // 구간 미리듣기처럼 앱이 거는 이동은 여기를 지나지 않는다 — 되감아 다시 듣는
+      // 행동(+0.6)을 앱의 동작과 섞으면 구간 선호 신호가 망가진다.
+      analytics.seek(positionMs(), Math.round(next * 1000));
       setTime(next);
       void player.seek(next);
     },

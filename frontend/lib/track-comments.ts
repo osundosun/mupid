@@ -10,6 +10,7 @@
 
 import { api } from './api/session';
 import type { MusicComment } from './api/endpoints';
+import { analytics } from './analytics';
 import { commentable } from './comment-rules';
 import type { Track } from './mupid-data';
 
@@ -63,6 +64,9 @@ export const trackComments = {
       timestamp_ms: Math.round(at * 1000),
       content: body.trim(),
     });
+    // 저장된 뒤에 남긴다. 댓글 번호는 서버가 정해주므로 그 전에는 실을 수 없고,
+    // 저장에 실패한 댓글을 신호(+0.7)로 세면 안 된다.
+    analytics.addComment(body.trim(), Math.round(at * 1000), saved.comment_id, track.musicId);
     return toComment(track, saved);
   },
   async update(track: Track, id: string, body: string): Promise<TrackComment> {
@@ -71,5 +75,7 @@ export const trackComments = {
   },
   async remove(id: string): Promise<void> {
     await api.comment.remove(Number(id));
+    // 삭제는 `comment_id` 하나면 된다. 곡·시점은 원본 이벤트를 되짚으면 나온다.
+    analytics.deleteComment(Number(id));
   },
 };

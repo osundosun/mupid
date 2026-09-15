@@ -7,14 +7,17 @@
  *
  * 원칙 세 가지만 기억하면 된다.
  *
- *   1. `position_ms` 는 **매번 `audio.currentTime` 을 실제로 읽어서** 만든다.
+ *   1. `position_ms` 는 **매번 재생 위치를 실제로 읽어서** 만든다. 흘러간 시간으로
+ *      추정하지 않는다 — 백그라운드 탭에서 타이머가 스로틀링돼도 값이 정확해야 한다.
  *   2. 구간 번호를 보내지 않는다. 밀리초만 보내고 구간 매핑은 백엔드가 한다.
  *   3. 가중치·분류를 계산하지 않는다. 원시 신호만 남기고 해석은 분석 시점에 한다.
  *
  * 붙이는 방법:
  *
  * ```ts
- * useEffect(() => bindAudio(audioRef.current!, analytics), []);
+ * // 재생기에 붙이면 PLAY_RESUME · PLAY_PAUSE · PLAY_END · PLAY_STALL · PLAY_ERROR ·
+ * // PLAY_PROGRESS 가 자동으로 나간다. 나머지는 앱이 직접 부른다.
+ * useEffect(() => { const player = getPlayer(); return player && bindPlayer(player, analytics); }, []);
  *
  * // 재생을 시작할 때 — 진입 경로는 이 재생이 어디서 왔는지다.
  * analytics.startPlay({ trackId: track.id, entryPath: 'SEARCH' });
@@ -39,17 +42,17 @@ export type {
   RecType,
   SkipTrigger,
 } from './types';
+export { consoleTransport, createTracker, type Tracker, type TrackerOptions } from './tracker';
 export {
-  consoleTransport,
-  createTracker,
+  bindPlayer,
   HEARTBEAT_MS,
-  type Tracker,
-  type TrackerOptions,
-} from './tracker';
-export { bindAudio } from './audio';
+  type PlayerSnapshot,
+  type PlayerSource,
+} from './player';
 export {
   createHttpTransport,
   createNativeTransport,
+  PermanentTransportError,
   type HttpTransportOptions,
   type Transport,
 } from './transport';

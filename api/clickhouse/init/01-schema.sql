@@ -342,6 +342,18 @@ SETTINGS
     kafka_format = 'JSONEachRow',
     kafka_num_consumers = 3,
     kafka_skip_broken_messages = 100,
+    -- 한 번에 쓰는 행 수와 그때까지 기다리는 시간. 둘 중 먼저 닿는 쪽이 파트를 만든다.
+    --
+    -- 기본값은 max_insert_block_size(1,048,576) 와 7,500ms 다. 하트비트가 몇 초마다
+    -- 들어오는 이 워크로드에서 100만 행이 모이는 일은 없으므로 사실상 7.5초마다
+    -- 파트가 하나씩 생긴다. 그 작은 파트가 계속 쌓이면 병합 압력이 올라가고,
+    -- `play_section_coverage` 의 SummingMergeTree 부분합도 오래 흩어져 남는다.
+    --
+    -- 행 수를 현실적인 크기로 낮추고 대기를 늘려, 트래픽이 많을 때는 크기로
+    -- 끊고 한산할 때는 시간으로 끊게 한다.
+    kafka_max_block_size = 65536,
+    kafka_poll_max_batch_size = 8192,
+    kafka_flush_interval_ms = 15000,
     input_format_skip_unknown_fields = 1;
 
 

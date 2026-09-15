@@ -616,6 +616,26 @@ export function createEndpoints(client: ApiClient) {
           path: `/api/v1/playlist/${playlistId}/track`,
           json: { music_id: musicId },
         }),
+      /**
+       * 플레이리스트에서 곡 한 곡을 뺀다.
+       *
+       * 곡 추가와 달리 담겨 있지 않으면 **404** 다. 중복 추가를 성공으로 보는 것은
+       * "이미 원하는 상태" 라서인데, 없는 곡을 빼는 것은 화면과 서버가 어긋났다는
+       * 뜻이라 조용히 넘기지 않는다.
+       */
+      removeTrack: (playlistId: number, musicId: number) =>
+        client.request<void>({
+          method: 'DELETE',
+          path: `/api/v1/playlist/${playlistId}/track/${musicId}`,
+          responseType: 'none',
+        }),
+      /** 제목만 바꾼다. 수록곡은 그대로다. */
+      rename: (playlistId: number, title: string) =>
+        client.request<PlaylistSummary>({
+          method: 'PATCH',
+          path: `/api/v1/playlist/${playlistId}`,
+          json: { title },
+        }),
     },
 
     stream: {
