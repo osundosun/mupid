@@ -28,7 +28,9 @@ _STATE: dict = {"loaded": False, "error": None, "integrity": None, "load_seconds
 _OPTIONAL_ARTIFACTS = {
     "labels_service.parquet": "개인화. 없으면 모든 사용자가 콜드스타트다",
     "logistic_flow_stage1.json": "점수 결합기. 없으면 규칙 점수로 내려간다",
-    "stage1.pt": "랭킹 모델. 없으면 학습 점수를 쓰지 않는다",
+    # 둘 중 **하나**는 있어야 학습 점수가 산다. npz 가 있으면 torch 가 필요 없다.
+    "stage1_weights.npz": "랭킹 모델(NumPy 판). 권장 — 이미지에 torch 가 필요 없다",
+    "stage1.pt": "랭킹 모델(torch 판). npz 가 있으면 필요 없다",
 }
 
 
@@ -124,6 +126,8 @@ def health() -> dict:
         # torch 판인지 NumPy 판인지. 이미지에서 torch 를 걷어낸 뒤 실제로 어느 쪽이
         # 돌고 있는지 응답으로 확인할 수 있어야 한다.
         "model_backend": getattr(recommender.CAT, "model_backend", None),
+        # 규칙 경로로 내려앉았다면 이유가 여기 있다. 비어 있으면 학습 점수가 살아 있다.
+        "model_error": getattr(recommender.CAT, "model_error", None),
         "load_seconds": _STATE["load_seconds"],
         "error": _STATE["error"],
         "catalog": ({"tracks": int(cat.pool.track_id.nunique()),

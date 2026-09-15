@@ -157,6 +157,7 @@ class Catalog:
             self.clap_emb = np.asarray(d["embeddings"], dtype=np.float32)
             self.clap_idx = {str(mid): i for i, mid in enumerate(d["moment_ids"])}
         self.ZS = None
+        self.model_error = None    # 규칙 경로로 내려앉았다면 그 이유
         self.model = None          # torch 판 (있을 때만)
         self.user_enc = None       # NumPy 판 (stage1_weights.npz 가 있을 때)
         self.model_backend = None
@@ -216,6 +217,17 @@ class Catalog:
                                         f"현재 {self.X.shape[1]} — 재학습 필요")
             except Exception as e:      # 모델이 없어도 규칙 경로로 동작한다
                 self.model_error = f"{type(e).__name__}: {e}"
+
+        # 구간 벡터(stage1_section.npy)가 있다는 것은 **학습 점수를 쓰겠다는 뜻**이다.
+        # 그런데 실행기가 없으면 점수가 통째로 빠진 채 규칙 경로로 내려앉는다. 조용히
+        # 넘어가면 "추천이 좀 이상하다" 로만 보이므로 여기서 이유를 남긴다.
+        if self.model is None and p.exists() and not self.model_error:
+            self.model_error = (
+                "구간 벡터는 있는데 실행기가 없다 — stage1_weights.npz 를 함께 두거나"
+                " (권장, torch 불필요) stage1.pt 와 torch 를 둘 다 둔다."
+                " 생성: python -m ai_server.tools.export_stage1_npz")
+        if self.model_error:
+            log(f"학습 점수 없이 규칙 경로로 동작한다 — {self.model_error}")
         self.comb = None
         import os as _os
         _name = _os.environ.get("MUPID_COMBINER", "logistic_flow_stage1.json")

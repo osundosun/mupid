@@ -62,8 +62,26 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
                     "side_dim": len(side), "side_cols": side}, ensure_ascii=False),
         encoding="utf-8")
 
-    s1 = rng.normal(size=(n, 8)).astype(np.float32)
+    dim, hist_max = 8, 6
+    s1 = rng.normal(size=(n, dim)).astype(np.float32)
     np.save(d / "stage1_section.npy", s1 / np.linalg.norm(s1, axis=1, keepdims=True))
+
+    # 랭킹 모델(NumPy 판). 구간 벡터만 두고 실행기를 안 두면 학습 점수가 통째로 빠지므로
+    # 여기서도 함께 만든다 — torch 없이 도는 경로를 실제로 태우는 것이 요점이다.
+    np.savez(
+        d / "stage1_weights.npz",
+        enc0_w=rng.normal(size=(192, feat_dim)).astype(np.float32) * 0.1,
+        enc0_b=np.zeros(192, dtype=np.float32),
+        ln_w=np.ones(192, dtype=np.float32), ln_b=np.zeros(192, dtype=np.float32),
+        enc1_w=rng.normal(size=(dim, 192)).astype(np.float32) * 0.1,
+        enc1_b=np.zeros(dim, dtype=np.float32),
+        att0_w=rng.normal(size=(64, dim)).astype(np.float32) * 0.1,
+        att0_b=np.zeros(64, dtype=np.float32),
+        att1_w=rng.normal(size=(1, 64)).astype(np.float32) * 0.1,
+        att1_b=np.zeros(1, dtype=np.float32),
+        gmean=np.zeros(dim, dtype=np.float32),
+        hist_max=np.asarray(hist_max, dtype=np.int64),
+        in_dim=np.asarray(feat_dim, dtype=np.int64))
 
     tids = sorted(mom.track_id.unique())
     pd.DataFrame([{"track_id": t, "bpm": float(rng.uniform(70, 150)),
@@ -122,6 +140,25 @@ def test_catalog_loads_every_required_column(svc):
     """컬럼을 하나라도 빠뜨리면 여기서 터진다."""
     assert len(svc.CAT.pool) == 24
     assert svc.CAT.pool.track_id.nunique() == 6
+
+
+def test_model_runs_on_numpy_without_torch(svc):
+    """이미지에서 torch 를 빼도 되는 근거. npz 만으로 학습 점수가 산다."""
+    assert svc.CAT.model_backend == "numpy"
+    assert svc.CAT.model_error is None, svc.CAT.model_error
+    assert svc.CAT.ZS is not None
+    assert getattr(svc.CAT, "torch", None) is None
+
+
+def test_missing_runner_is_reported_not_silent(svc, tmp_path, monkeypatch):
+    """구간 벡터만 있고 실행기가 없으면 학습 점수가 통째로 빠진다. 말을 해야 한다."""
+    (svc.OUT_DIR / "stage1_weights.npz").rename(tmp_path / "moved.npz")
+    try:
+        cat = svc.Catalog()
+        assert cat.model is None
+        assert cat.model_error and "stage1_weights.npz" in cat.model_error
+    finally:
+        (tmp_path / "moved.npz").rename(svc.OUT_DIR / "stage1_weights.npz")
 
 
 def test_recommend_returns_requested_count(svc):

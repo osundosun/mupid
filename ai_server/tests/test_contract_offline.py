@@ -727,10 +727,18 @@ def test_health_is_not_behind_the_token(monkeypatch):
 
 
 # ------------------------------------------------------------------ 배포 파일
-def test_dockerfile_uses_cpu_torch_and_excludes_artifacts():
+def test_dockerfile_does_not_install_torch():
+    """서빙에 torch 가 필요 없다. 넣으면 이미지의 대부분을 차지한다."""
     root = Path(__file__).resolve().parents[2]
     df = (root / "ai_server" / "Dockerfile").read_text(encoding="utf-8")
-    assert "download.pytorch.org/whl/cpu" in df, "기본 PyPI torch 는 CUDA 를 끌고 온다"
+    installs = [ln for ln in df.splitlines()
+                if "torch==" in ln and not ln.lstrip().startswith("#")]
+    assert not installs, installs
+
+
+def test_dockerfile_excludes_artifacts():
+    root = Path(__file__).resolve().parents[2]
+    df = (root / "ai_server" / "Dockerfile").read_text(encoding="utf-8")
     assert "MUPID_AI_ARTIFACT_DIR" in df
     assert "/health" in df and "/internal/ready" not in df.split("HEALTHCHECK")[1], \
         "ready 를 헬스체크로 쓰면 매핑표가 없는 동안 재시작을 반복한다"

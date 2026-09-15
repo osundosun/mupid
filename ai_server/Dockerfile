@@ -2,8 +2,13 @@
 #
 # AI 추천 서비스. **CPU 로만 돈다** — 랭킹 모델은 8.8만 파라미터(체크포인트 ~350KB)다.
 #
-# torch 를 CPU 인덱스에서 받는 것이 이 파일의 핵심이다. 기본 PyPI 판은 CUDA 라이브러리를
-# 함께 끌고 와 이미지가 수 GB 가 된다. 이 서비스는 GPU 를 쓰지 않으므로 전부 낭비다.
+# **torch 를 넣지 않는다.** 서빙에서 torch 가 하던 일은 사용자 벡터 한 번(`enc_user`)뿐이고
+# 그것을 NumPy 로 옮겼다(app/stage1_np.py — torch 판과 오차 1e-5 미만·순위 완전 일치).
+# CPU 빌드라도 수백 MB 라 이미지의 대부분을 차지하고 있었다.
+#
+# 대신 산출물에 `stage1_weights.npz` 가 **있어야 한다.** 없으면 학습 점수가 빠진 채 규칙
+# 경로로 동작한다 — 그 상태는 /health 의 model_backend·model_error 로 드러난다.
+#   생성: python -m ai_server.tools.export_stage1_npz
 #
 # 모델·색인은 이미지에 넣지 않는다. 용량도 용량이지만 코드와 수명이 다르다 — 색인만
 # 교체하는 일이 코드 배포보다 잦다. 실행할 때 MUPID_AI_ARTIFACT_DIR 로 붙인다.
@@ -18,9 +23,7 @@ WORKDIR /wheels
 
 COPY ai_server/requirements.txt ./requirements.txt
 RUN python -m pip install --no-cache-dir --upgrade pip \
- && pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt \
- && pip wheel --no-cache-dir --wheel-dir /wheels \
-      --index-url https://download.pytorch.org/whl/cpu torch==2.6.0
+ && pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
 # ---------- runtime ----------
 FROM python:3.12-slim AS runtime
@@ -45,7 +48,7 @@ RUN apt-get update \
 
 RUN --mount=type=bind,from=build,source=/wheels,target=/wheels \
     pip install --no-cache-dir --no-index --find-links=/wheels \
-      -r /wheels/requirements.txt torch==2.6.0
+      -r /wheels/requirements.txt
 
 COPY --chown=mupid:mupid ai_server/app /app/ai_server/app
 # 배치 진입점(run_labeler 등)도 넣는다. 이미지 안에서 cron 이 부를 수 있어야 한다.

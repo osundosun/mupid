@@ -14,14 +14,13 @@
 ```bash
 python -m venv .venv && . .venv/Scripts/activate      # Linux: . .venv/bin/activate
 pip install -r ai_server/requirements.txt
-pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0
 
 export MUPID_AI_ARTIFACT_DIR=/모델·색인을/둔/경로
 uvicorn ai_server.app.main:app --host 0.0.0.0 --port 8100
 ```
 
-Python **3.12**. GPU 는 필요 없다 — `torch` 는 반드시 CPU 빌드로 받는다. 기본 PyPI 판은
-CUDA 라이브러리를 끌고 와 수 GB 가 된다.
+Python **3.12**. GPU 도 `torch` 도 필요 없다 — 사용자 벡터 계산을 NumPy 로 옮겼다. 대신
+산출물에 `stage1_weights.npz` 가 있어야 학습 점수가 산다(아래 "랭킹 모델 백엔드").
 
 ### 환경변수
 
@@ -391,8 +390,13 @@ S15P21A204-217 에서 정한다 — 어느 쪽이든 같은 함수를 부른다.
 `stage1_section.npy` 에 있고 점수는 그 행렬과의 내적이다. 그 한 번 때문에 CPU 빌드라도
 수백 MB 인 torch 가 이미지에 들어간다.
 
-`stage1_weights.npz` 가 있으면 NumPy 판을 쓴다. 없으면 종전대로 `stage1.pt` 를 torch 로
-읽는다. 지금 어느 쪽인지는 `/health` 의 `model_backend` 로 확인한다.
+**이미지에는 torch 가 없다.** 그래서 산출물에 `stage1_weights.npz` 가 있어야 학습 점수가
+산다. `stage1.pt` + torch 조합도 여전히 동작하지만 그건 개발 환경용이다.
+
+지금 어느 쪽인지는 `/health` 의 `model_backend`(`numpy`/`torch`/`null`)로 본다.
+`null` 이면 규칙 점수만 쓰고 있다는 뜻이고, 이유는 같은 응답의 `model_error` 에 있다.
+구간 벡터(`stage1_section.npy`)만 두고 실행기를 안 두면 **학습 점수가 통째로 빠진 채
+조용히 돌던 것**을 그렇게 드러낸다.
 
 ```bash
 MUPID_AI_ARTIFACT_DIR=/경로/artifacts python -m ai_server.tools.export_stage1_npz
@@ -401,9 +405,8 @@ MUPID_AI_ARTIFACT_DIR=/경로/artifacts python -m ai_server.tools.export_stage1_
 내보내기 도구가 **동치를 확인한 뒤에만** 파일을 쓴다(오차 < 1e-5, 순위 완전 일치).
 무작위 가중치로 두 판을 비교하는 테스트도 함께 돈다 — 산출물이 없어도 검증된다.
 
-npz 를 배포하면 이미지에서 torch 를 뺄 수 있다. **먼저 `model_backend` 가 `numpy` 인지
-확인하고** Dockerfile 의 torch 설치 줄을 지운다. 순서를 바꾸면 모델 없이 규칙 경로로
-조용히 내려앉는다.
+배포 전에 `/health` 의 `model_backend` 가 `numpy` 인지 확인할 것. `null` 이면 npz 가 없거나
+특징 차원이 어긋난 것이고, 그 상태로도 서비스는 200 을 돌려준다 — 추천 품질만 떨어진다.
 
 ## 이미지
 
