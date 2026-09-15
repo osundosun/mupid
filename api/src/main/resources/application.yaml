@@ -104,6 +104,9 @@ recommender:
   read-timeout: 5s
   # 500·503·타임아웃에만 한 번. 400·404 는 다시 불러도 같은 답이다.
   retry-once: true
+  # /internal 공유 비밀. 추천 서버의 MUPID_AI_INTERNAL_TOKEN 과 **같은 값**이어야 한다.
+  # 양쪽을 동시에 설정한다. 추천 서버만 켜고 여기를 비우면 추천이 통째로 401 이다.
+  internal-token: ${MUPID_RECOMMENDER_INTERNAL_TOKEN:}
 
 redis:
   key-prefix: ${MUPID_REDIS_KEY_PREFIX}

@@ -3,6 +3,7 @@ package com.osundosun.mupid.api.ai.client;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.http.MediaType;
@@ -48,6 +49,9 @@ public class RecommenderClient {
     private static final String NEXT = "/internal/recommendations/next";
     private static final String FACETS = "/internal/facets";
 
+    /** 추천 서버가 `/internal` 을 지킬 때 쓰는 공유 비밀 헤더. `/health` 는 검사 밖이다. */
+    private static final String AUTH_HEADER = "X-Internal-Token";
+
     /** 조건에 맞는 곡이 없다. 빈 목록으로 답한다. */
     private static final String NO_CANDIDATES = "NO_CANDIDATES";
 
@@ -89,6 +93,7 @@ public class RecommenderClient {
             byte[] body = recommenderRestClient.get()
                 .uri(FACETS)
                 .accept(MediaType.APPLICATION_JSON)
+                .headers(this::authorize)
                 .retrieve()
                 .body(byte[].class);
             if (body == null || body.length == 0) {
@@ -132,6 +137,7 @@ public class RecommenderClient {
                 .uri(path)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON)
+                .headers(this::authorize)
                 .body(AiJson.writeBytes(request))
                 .retrieve()
                 .onStatus(HttpStatusCode::isError, (req, res) -> {
@@ -153,11 +159,27 @@ public class RecommenderClient {
         }
     }
 
+    /**
+     * 공유 비밀이 설정돼 있으면 헤더로 싣는다. 값은 여기서만 만지고 로그에 남기지 않는다.
+     */
+    private void authorize(HttpHeaders headers) {
+        if (props.hasInternalToken()) {
+            headers.set(AUTH_HEADER, props.internalToken());
+        }
+    }
+
     private Attempt classify(String path, HttpStatusCode status, String errorCode) {
         if (NO_CANDIDATES.equals(errorCode)) {
             // 장애가 아니다. 화면에는 "맞는 곡이 없다" 로 나가야 한다.
             log.info("추천 결과 없음 path={}", path);
             return new Attempt(null, false, true, NO_CANDIDATES);
+        }
+        if (status.value() == 401) {
+            // 한쪽만 켠 상태다. 다시 불러도 같으므로 재시도하지 않는다.
+            log.error("추천 서버가 인증을 거부했다 — MUPID_RECOMMENDER_INTERNAL_TOKEN 과 "
+                + "추천 서버의 MUPID_AI_INTERNAL_TOKEN 이 같은지 본다 (설정 여부={})",
+                props.hasInternalToken());
+            return new Attempt(null, false, false, "UNAUTHORIZED");
         }
         boolean retryable = status.is5xxServerError() && status.value() != 501;
         log.warn("추천 서버 오류 path={} status={} error_code={}", path, status, errorCode);

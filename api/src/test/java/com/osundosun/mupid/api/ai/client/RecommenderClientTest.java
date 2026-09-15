@@ -57,7 +57,27 @@ class RecommenderClientTest {
         server.start();
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
         return client(new RecommenderProperties(
-            baseUrl, Duration.ofSeconds(2), Duration.ofSeconds(2), true));
+            baseUrl, Duration.ofSeconds(2), Duration.ofSeconds(2), true, null));
+    }
+
+    /** 받은 X-Internal-Token 을 기록하는 서버. 값 자체가 아니라 실렸는지를 본다. */
+    private RecommenderClient startCapturing(List<String> seen, String token) throws IOException {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            String v = exchange.getRequestHeaders().getFirst("X-Internal-Token");
+            seen.add(v == null ? "(없음)" : v);
+            byte[] body = """
+                { "recommendation_id": 1, "shortfall": 0, "model_version": "v", "items": [] }
+                """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        return client(new RecommenderProperties(
+            "http://127.0.0.1:" + server.getAddress().getPort(),
+            Duration.ofSeconds(2), Duration.ofSeconds(2), true, token));
     }
 
     private RecommenderClient client(RecommenderProperties props) {
@@ -169,7 +189,7 @@ class RecommenderClientTest {
     @DisplayName("주소가 없으면 호출하지 않고 설정 오류로 답한다")
     void notConfigured() {
         RecommenderClient client = client(new RecommenderProperties(
-            "  ", Duration.ofSeconds(1), Duration.ofSeconds(1), true));
+            "  ", Duration.ofSeconds(1), Duration.ofSeconds(1), true, null));
 
         assertThat(client.isConfigured()).isFalse();
         assertThatThrownBy(() -> client.search(request()))
@@ -188,6 +208,42 @@ class RecommenderClientTest {
 
         assertThat(client.facets()).isNotNull();
         assertThat(client.facets()).isNotNull();
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("공유 비밀이 있으면 X-Internal-Token 으로 실어 보낸다")
+    void sendsInternalToken() throws IOException {
+        List<String> seen = new java.util.ArrayList<>();
+        RecommenderClient client = startCapturing(seen, "s3cret");
+
+        client.search(request());
+
+        assertThat(seen).containsExactly("s3cret");
+    }
+
+    @Test
+    @DisplayName("공유 비밀이 없으면 헤더를 아예 보내지 않는다")
+    void omitsHeaderWhenNotSet() throws IOException {
+        List<String> seen = new java.util.ArrayList<>();
+        RecommenderClient client = startCapturing(seen, "  ");
+
+        client.search(request());
+
+        assertThat(seen).containsExactly("(없음)");
+    }
+
+    @Test
+    @DisplayName("401 은 한쪽만 켠 상태다 — 재시도하지 않는다")
+    void doesNotRetryUnauthorized() throws IOException {
+        AtomicInteger calls = new AtomicInteger();
+        RecommenderClient client = start(calls, List.of(Map.entry(401,
+            "{ \"error_code\": \"UNAUTHORIZED\", \"message\": \"내부 호출 토큰이 올바르지 않습니다.\" }")));
+
+        assertThatThrownBy(() -> client.search(request()))
+            .isInstanceOf(BusinessException.class)
+            .extracting(e -> ((BusinessException) e).getErrorCode())
+            .isEqualTo(AiErrorCode.RECOMMENDER_REQUEST_FAILED);
         assertThat(calls).hasValue(1);
     }
 }

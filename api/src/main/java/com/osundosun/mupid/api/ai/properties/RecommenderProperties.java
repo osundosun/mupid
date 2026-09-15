@@ -41,9 +41,22 @@ public record RecommenderProperties(
      * <p>400·404 는 다시 불러도 같은 답이 온다. 특히 404 `NO_CANDIDATES` 는 장애가
      * 아니라 "조건에 맞는 곡이 없다" 라서 재시도하면 사용자만 기다리게 된다.
      */
-    @DefaultValue("true") boolean retryOnce
+    @DefaultValue("true") boolean retryOnce,
+    /**
+     * `/internal` 공유 비밀. 추천 서버의 `MUPID_AI_INTERNAL_TOKEN` 과 같은 값이어야 한다.
+     *
+     * <p>**양쪽을 동시에 설정해야 한다.** 추천 서버만 켜고 여기를 비우면 추천이 통째로
+     * 401 이 되고, 여기만 넣으면 헤더가 무시될 뿐 아무 일도 없다.
+     *
+     * <p>값은 헤더로 실어 보내기만 한다. 로그·응답에 적지 않는다.
+     */
+    String internalToken
 ) {
     public boolean isConfigured() {
         return baseUrl != null && !baseUrl.isBlank();
+    }
+
+    public boolean hasInternalToken() {
+        return internalToken != null && !internalToken.isBlank();
     }
 }
