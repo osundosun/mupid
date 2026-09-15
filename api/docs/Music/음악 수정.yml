@@ -79,6 +79,7 @@ docs: |-
   | `artist_id` | int | 이동할 아티스트 번호 |
   | `title` | string | 새 곡명 (공백만 있는 값은 무시) |
   | `release_date` | datetime | 새 발매일 (ISO-8601) |
+  | `image_file_id` | int | 새 곡 커버 이미지 파일 번호 (`TRACK` 카테고리) |
 
   변경 대상 앨범/아티스트가 존재하지 않으면 각각
   `MUPID_ALBUM_NOT_FOUND` / `MUPID_ARTIST_NOT_FOUND` 가 반환됩니다.
@@ -92,3 +93,4 @@ docs: |-
   | `MUPID_MUSIC_NOT_FOUND` | 404 | 음악 없음 또는 삭제됨 |
   | `MUPID_ALBUM_NOT_FOUND` | 404 | 앨범 없음 또는 삭제됨 |
   | `MUPID_ARTIST_NOT_FOUND` | 404 | 아티스트 없음 또는 삭제됨 |
+  | `MUPID_FILE_NOT_FOUND` | 404 | `image_file_id` 에 해당하는 파일 없음 |

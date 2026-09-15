@@ -20,7 +20,12 @@ public interface OnboardingSurveyRepository extends JpaRepository<OnboardingSurv
         """)
     List<OnboardingSurvey> findAllByUser(@Param("userId") Integer userId);
 
-    /** 다시 제출하면 이전 응답은 통째로 갈아 끼운다. */
-    void deleteByUser_UserId(Integer userId);
+    /**
+     * 제출했는가.
+     *
+     * 진입 분기(`GET /api/v1/user`)와 재제출 차단이 쓴다. 둘 다 내용이 아니라
+     * 있고 없고만 보므로 줄을 끌어오지 않는다.
+     */
+    boolean existsByUser_UserId(Integer userId);
 
 }

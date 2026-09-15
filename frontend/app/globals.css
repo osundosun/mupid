@@ -27,37 +27,19 @@
 @import './responsive-polish.css';
 @import './dialog-viewport.css';
 @custom-variant dark (&:is(.dark *));
+/*
+ * Pretendard 는 직접 담는다.
+ *
+ * 예전에는 jsdelivr 에서 받았는데, 앱 웹뷰에서는 CSP 가 외부 폰트를 막아
+ * 글꼴이 통째로 시스템 기본값으로 떨어졌다. 앱이 인터넷 없이도 제 모습이어야
+ * 하고, 네트워크는 전부 Rust 가 맡는다는 구조와도 맞다.
+ *
+ * 실제로 쓰는 굵기만 담는다 (400·500·600·700·800). 쓰지 않는 굵기를 함께
+ * 담으면 앱 용량만 늘고 화면은 달라지지 않는다.
+ */
 @font-face {
   font-family: 'Pretendard';
-  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Thin.woff2')
-    format('woff2');
-  font-weight: 100;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Pretendard';
-  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-ExtraLight.woff2')
-    format('woff2');
-  font-weight: 200;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Pretendard';
-  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Light.woff2')
-    format('woff2');
-  font-weight: 300;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Pretendard';
-  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Regular.woff2')
-    format('woff2');
+  src: url('/fonts/pretendard/Pretendard-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -65,8 +47,7 @@
 
 @font-face {
   font-family: 'Pretendard';
-  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Medium.woff2')
-    format('woff2');
+  src: url('/fonts/pretendard/Pretendard-Medium.woff2') format('woff2');
   font-weight: 500;
   font-style: normal;
   font-display: swap;
@@ -74,8 +55,7 @@
 
 @font-face {
   font-family: 'Pretendard';
-  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-SemiBold.woff2')
-    format('woff2');
+  src: url('/fonts/pretendard/Pretendard-SemiBold.woff2') format('woff2');
   font-weight: 600;
   font-style: normal;
   font-display: swap;
@@ -83,8 +63,7 @@
 
 @font-face {
   font-family: 'Pretendard';
-  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Bold.woff2')
-    format('woff2');
+  src: url('/fonts/pretendard/Pretendard-Bold.woff2') format('woff2');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
@@ -92,18 +71,8 @@
 
 @font-face {
   font-family: 'Pretendard';
-  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-ExtraBold.woff2')
-    format('woff2');
+  src: url('/fonts/pretendard/Pretendard-ExtraBold.woff2') format('woff2');
   font-weight: 800;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Pretendard';
-  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Black.woff2')
-    format('woff2');
-  font-weight: 900;
   font-style: normal;
   font-display: swap;
 }
@@ -159,6 +128,19 @@
   --sky-tint: #e8f3ff;
   --sky-accent: #477dca;
   --sky-pink: #e88fbb;
+  /*
+   * 시스템 바가 가리는 자리.
+   *
+   * 화면은 `env(safe-area-inset-*)` 를 직접 쓰지 않고 이 속성을 거친다.
+   * 안드로이드 웹뷰의 `env()` 는 **노치만 셈에 넣고 상태바·내비게이션 바는
+   * 빼먹어서**, 노치 없는 기기에서는 넷 다 0 으로 떨어지기 때문이다. 앱에서는
+   * 안드로이드가 잰 값이 `<html>` 인라인 스타일로 이 자리를 덮어쓴다
+   * (`lib/platform/safe-area.ts`). 웹과 iOS 에서는 아래 `env()` 가 그대로 산다.
+   */
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
 }
 @layer base {
   * {

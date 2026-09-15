@@ -1,10 +1,14 @@
 package com.osundosun.mupid.api.admin.controller;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -15,15 +19,20 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.osundosun.mupid.api.admin.dto.AdminConsoleTicket;
+import com.osundosun.mupid.api.admin.response.AdminClickHouseConsoleResponse;
 import com.osundosun.mupid.api.admin.response.AdminDashboardResponse;
 import com.osundosun.mupid.api.admin.response.AdminResourceSummary;
 import com.osundosun.mupid.api.admin.response.AdminRowPageResponse;
 import com.osundosun.mupid.api.admin.response.AdminSchemaResponse;
+import com.osundosun.mupid.api.admin.service.AdminClickHouseConsoleService;
+import com.osundosun.mupid.api.admin.service.AdminClickHouseConsoleServiceImpl;
 import com.osundosun.mupid.api.admin.service.AdminDashboardService;
 import com.osundosun.mupid.api.admin.service.AdminResourceService;
 import com.osundosun.mupid.api.common.annotation.AdminRole;
 import com.osundosun.mupid.api.common.response.BaseResponse;
 
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -51,12 +60,84 @@ public class AdminApiController {
 
     private final AdminResourceService adminResourceService;
     private final AdminDashboardService adminDashboardService;
+    private final AdminClickHouseConsoleService consoleService;
 
     @GetMapping("/dashboard")
     public ResponseEntity<BaseResponse<AdminDashboardResponse>> dashboard() {
         return ResponseEntity.ok(
             BaseResponse.of(adminDashboardService.dashboard())
         );
+    }
+
+    /**
+     * ClickHouse 콘솔을 연다.
+     *
+     * 응답 본문에는 주소만 있고 **열람권은 쿠키로 나간다.** iframe 안에서 도는 것은
+     * ClickHouse 가 만든 화면이라 우리가 헤더를 붙일 수 없어서다
+     * (`AdminClickHouseController` 참고).
+     *
+     * `Path` 를 프록시 경로로 좁혀 두어 다른 API 요청에는 실리지 않는다. `Secure` 는
+     * 요청이 https 로 들어왔을 때만 붙인다 — 리프레시 토큰처럼 늘 붙이면 http 로 띄우는
+     * 로컬에서 브라우저가 쿠키를 버려 콘솔이 열리지 않는다.
+     */
+    @PostMapping("/clickhouse/console")
+    public ResponseEntity<BaseResponse<AdminClickHouseConsoleResponse>> openConsole(
+        HttpServletRequest request
+    ) {
+        AdminConsoleTicket ticket = consoleService.open();
+
+        ResponseCookie cookie = consoleCookie(request, ticket.value(), ticket.ttl());
+        AdminClickHouseConsoleResponse response = new AdminClickHouseConsoleResponse(
+            AdminClickHouseConsoleServiceImpl.PLAY_PATH,
+            AdminClickHouseConsoleServiceImpl.DASHBOARD_PATH,
+            ticket.ttl().toSeconds()
+        );
+
+        return ResponseEntity.ok()
+            .header(HttpHeaders.SET_COOKIE, cookie.toString())
+            .body(BaseResponse.of(response));
+    }
+
+    /**
+     * 콘솔을 닫는다. 쿠키를 비우는 것만으로는 부족하다 — 열람권이 Redis 에 남아 있으면
+     * 그 값을 들고 있는 누구든 남은 시간 동안 분석 DB 를 계속 본다. 로그아웃할 때 부른다.
+     */
+    @DeleteMapping("/clickhouse/console")
+    public ResponseEntity<BaseResponse<Void>> closeConsole(
+        HttpServletRequest request,
+        @CookieValue(name = AdminClickHouseController.TICKET_COOKIE, required = false) String ticket
+    ) {
+        consoleService.close(ticket);
+
+        ResponseCookie cookie = consoleCookie(request, "", Duration.ZERO);
+        return ResponseEntity.ok()
+            .header(HttpHeaders.SET_COOKIE, cookie.toString())
+            .body(BaseResponse.message("콘솔을 닫았습니다."));
+    }
+
+    private ResponseCookie consoleCookie(HttpServletRequest request, String value, Duration maxAge) {
+        return ResponseCookie
+            .from(AdminClickHouseController.TICKET_COOKIE, value)
+            .path(AdminClickHouseConsoleServiceImpl.PREFIX.substring(
+                0, AdminClickHouseConsoleServiceImpl.PREFIX.length() - 1))
+            .httpOnly(true)
+            .secure(isSecure(request))
+            .sameSite("Strict")
+            .maxAge(maxAge)
+            .build();
+    }
+
+    /**
+     * 운영에서는 nginx 가 TLS 를 끊고 스프링에는 http 로 넘긴다. `request.isSecure()` 만
+     * 보면 https 뒤에 있는데도 `Secure` 가 빠진다. nginx 가 붙여 주는
+     * `X-Forwarded-Proto` 를 먼저 본다 (`infra/deploy/nginx.conf`).
+     */
+    private boolean isSecure(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-Proto");
+        if (forwarded != null && !forwarded.isBlank()) {
+            return "https".equalsIgnoreCase(forwarded.split(",")[0].trim());
+        }
+        return request.isSecure();
     }
 
     @GetMapping("/resource")

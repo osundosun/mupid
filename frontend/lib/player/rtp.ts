@@ -1,7 +1,7 @@
 /**
  * 청크 파일(.rtp) 파서.
  *
- * `music_chunking` 이 만드는 자체 컨테이너다. RTP 패킷을 길이 접두사로 이어
+ * `music_preprocessing` 이 만드는 자체 컨테이너다. RTP 패킷을 길이 접두사로 이어
  * 붙였고, 각 패킷은 12바이트 RTP 헤더 + Opus 프레임 하나다.
  *
  *   0   4  매직 'RTPK'
@@ -9,7 +9,7 @@
  *   6   4  총 패킷 수 (uint32 BE)
  *   10  ..  [uint16 BE 길이 | RTP 패킷] × N
  *
- * 근거: music_chunking/src/music_chunking/chunker.py, rtp.py
+ * 근거: music_preprocessing/src/music_preprocessing/chunker.py, rtp.py
  */
 
 const MAGIC = 0x5254504b; // 'RTPK'

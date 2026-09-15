@@ -3,8 +3,10 @@ package com.osundosun.mupid.api.music.service;
 import java.util.Optional;
 
 import com.osundosun.mupid.api.music.entity.Lyric;
+import com.osundosun.mupid.api.music.response.LyricBulkResponse;
 import com.osundosun.mupid.api.music.response.LyricResponse;
 import com.osundosun.mupid.api.music.request.LyricAddRequest;
+import com.osundosun.mupid.api.music.request.LyricBulkRequest;
 import com.osundosun.mupid.api.music.request.LyricUpdateRequest;
 
 public interface LyricService {
@@ -18,6 +20,14 @@ public interface LyricService {
 
     /** 한 곡의 가사. 시간 오름차순. 가사가 없으면 빈 목록이다. */
     LyricResponse getLyrics(int musicId);
+
+    /**
+     * 한 곡의 가사를 통째로 갈아 끼운다. **기존 가사는 지워진다.**
+     *
+     * 줄마다 `addLyric` 을 부르는 것과 결과는 같지만, 곡 하나가 한
+     * 트랜잭션이라 중간에 끊겨도 반쯤 올라간 가사가 남지 않는다.
+     */
+    LyricBulkResponse replaceLyrics(int musicId, LyricBulkRequest request);
 
     void updateLyric(int lyricId, LyricUpdateRequest request);
 

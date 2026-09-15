@@ -3,7 +3,9 @@ package com.osundosun.mupid.api.analytics.config;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.web.client.RestClient;
 
 import com.osundosun.mupid.api.analytics.properties.ClickHouseProperties;
 import com.zaxxer.hikari.HikariDataSource;
@@ -41,6 +43,25 @@ public class ClickHouseConfig implements DisposableBean {
     public JdbcTemplate clickHouseJdbcTemplate() {
         this.dataSource = createDataSource();
         return new JdbcTemplate(this.dataSource);
+    }
+
+    /**
+     * 관리자 콘솔(`/api/admin/clickhouse/**`)이 ClickHouse **HTTP 인터페이스**로 요청을
+     * 넘길 때 쓰는 클라이언트. JDBC 풀과는 목적도 프로토콜도 다르지만, 붙는 서버와
+     * 자격증명이 같아서 ClickHouse 배선은 이 클래스 한 곳에 모아 둔다.
+     *
+     * `baseUrl` 을 두지 않는다. 프록시는 매번 절대 주소를 만들어 넘기고, 그래야 어디로
+     * 나가는지가 호출부 한 줄에 다 보인다.
+     */
+    @Bean
+    public RestClient clickHouseConsoleRestClient() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(props.connectionTimeout());
+        factory.setReadTimeout(props.consoleTimeout());
+
+        return RestClient.builder()
+            .requestFactory(factory)
+            .build();
     }
 
     @Override

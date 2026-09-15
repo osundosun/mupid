@@ -9,6 +9,13 @@
 import { ApiClient, ApiError } from './client';
 import { createEndpoints, type UserInfo } from './endpoints';
 import { createStore } from '../store';
+import {
+  clearCache,
+  clearNativeCookies,
+  createPlatformTransport,
+  isTauri,
+  setStoredAccount,
+} from '../platform';
 
 export type SessionStatus =
   /** 아직 복원을 시도하지 않았다. 화면은 인증 버튼을 비활성으로 둔다. */
@@ -34,6 +41,9 @@ export const sessionStore = createStore<SessionState>({
  * 개발에서는 Vite 프록시가 `/api` 를 nginx(9900)로 넘긴다. 서버에 CORS 설정이
  * 없고 리프레시 토큰 쿠키가 SameSite=Strict 라, 브라우저에게는 같은 출처로
  * 보이게 하는 편이 유일하게 단순한 길이다.
+ *
+ * 앱에서는 비워 둔 채로 둔다. 경로만 받은 요청에 원본 주소를 붙이는 일은
+ * Rust 가 한다 (`app/src/config.rs`) — 주소를 한 곳에서만 바꾸기 위해서다.
  */
 const baseUrl =
   (import.meta as { env?: Record<string, string> }).env?.VITE_MUPID_API_BASE ??
@@ -41,6 +51,7 @@ const baseUrl =
 
 export const apiClient = new ApiClient({
   baseUrl,
+  transport: createPlatformTransport(),
   onSessionExpired: () => {
     sessionStore.set({ status: 'anonymous', user: null });
   },
@@ -63,6 +74,7 @@ export function restoreSession(): Promise<SessionState> {
       const { access_token } = await api.auth.reissue();
       apiClient.setAccessToken(access_token);
       const user = await api.user.me();
+      await openAccount(user);
       sessionStore.set({ status: 'authenticated', user });
     } catch {
       // 쿠키가 없거나 만료됐다. 첫 방문자의 정상 경로라 조용히 넘어간다.
@@ -77,10 +89,27 @@ export function restoreSession(): Promise<SessionState> {
   return restoring;
 }
 
+/**
+ * 앱에서 저장이 어느 계정 몫인지 알린다. 웹에서는 할 일이 없다.
+ *
+ * 이 다음에야 취향·컬렉션을 읽을 수 있다. 순서가 뒤집히면 로그인한 사람이
+ * 잠깐 앞사람의 컬렉션을 보게 된다.
+ */
+async function openAccount(user: UserInfo) {
+  if (!isTauri()) return;
+  try {
+    await setStoredAccount(user.user_id);
+  } catch (error) {
+    // 계정 전환에 실패해도 로그인 자체는 성공이다. 기기 저장만 기본값으로 남는다.
+    console.warn('[mupid] 계정별 저장소를 열지 못했어요.', error);
+  }
+}
+
 export async function login(email: string, password: string) {
   const result = await api.auth.login(email, password);
   apiClient.setAccessToken(result.access_token);
   const user = await api.user.me();
+  await openAccount(user);
   sessionStore.set({ status: 'authenticated', user });
   return user;
 }
@@ -94,5 +123,14 @@ export async function logout() {
   } finally {
     apiClient.clearSession();
     sessionStore.set({ status: 'anonymous', user: null });
+    // 앱은 쿠키와 캐시를 기기에 들고 있다. 지우지 않으면 다음 사람이 앱을
+    // 열었을 때 앞사람 계정으로 재발급이 돌아 그대로 로그인된다.
+    if (isTauri()) {
+      await Promise.allSettled([
+        clearNativeCookies(),
+        clearCache(),
+        setStoredAccount(null),
+      ]);
+    }
   }
 }

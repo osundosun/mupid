@@ -8,7 +8,7 @@ const photoKey = 'mupid-profile-photo';
 const DEMO_SESSION_KEY = 'mupid.demo-session.v1';
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object';
 // 데모 곡이 없으므로 미리 좋아 둔 곡도, 들어 둔 기록도 없다.
-const defaults: Preferences = { onboardingSubmittedAt: null, nickname: '규원', moods: [], genres: [],
+const defaults: Preferences = { onboardingSubmitted: false, nickname: '규원', moods: [], genres: [],
   liked: [], ignored: [], history: [], moments: initialMoments, playlists: initialPlaylists,
   lastPlayedId: null };
 const unavailable = async (): Promise<never> => {
@@ -27,7 +27,10 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
       try {
         const saved: unknown = JSON.parse(storage.getItem(preferencesKey) || 'null');
         if (record(saved)) {
-          if (typeof saved.onboardingSubmittedAt === 'string' && Number.isFinite(Date.parse(saved.onboardingSubmittedAt))) preferences.onboardingSubmittedAt = saved.onboardingSubmittedAt;
+          // 예전에는 완료 시각(ISO 문자열)을 넣었다. 남아 있는 기기가 초기화되지
+          // 않도록 문자열이면 "마쳤다"로 읽는다.
+          if (typeof saved.onboardingSubmitted === 'boolean') preferences.onboardingSubmitted = saved.onboardingSubmitted;
+          else if (typeof saved.onboardingSubmittedAt === 'string' && Number.isFinite(Date.parse(saved.onboardingSubmittedAt))) preferences.onboardingSubmitted = true;
           if (typeof saved.nickname === 'string' && saved.nickname.trim()) preferences.nickname = saved.nickname.slice(0, 20);
           if (Array.isArray(saved.moods)) preferences.moods = saved.moods.filter((v: unknown) => typeof v === 'string');
           if (Array.isArray(saved.genres)) preferences.genres = [...new Set(saved.genres.filter((v: unknown): v is string => typeof v === 'string'))];
@@ -85,5 +88,28 @@ export function createService(mode: 'demo' | 'api', api?: MupidService): MupidSe
   if (!api || api.mode !== 'api') throw new Error('실제 API 어댑터가 필요합니다. 데모로 자동 전환하지 않습니다.');
   return api;
 }
+
+/** 앱 셸(Tauri) 안에서 도는가. 전역은 웹뷰가 뜰 때 Tauri 가 먼저 심는다. */
+const inNativeShell = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+/*
+ * 앱에서는 SQLite 가 `localStorage` 자리를 대신한다 (`lib/platform/service.ts`).
+ * 구현은 **부를 때** 불러온다 — 정적 import 로 두면 웹 번들에도 `@tauri-apps/api`
+ * 가 섞이고, 이 모듈만 떼어 검사하는 시험(`tests/services.test.mjs`)이 상대 경로를
+ * 풀지 못한다.
+ */
+let native: Promise<MupidService> | null = null;
+const shell = () => (native ??= import('../platform/service').then(m => m.createSqliteService()));
+const nativeService: MupidService = {
+  mode: 'demo', // 역할은 데모 저장소와 같다 — 기기에만 남는 저장.
+  bootstrap: async catalog => (await shell()).bootstrap(catalog),
+  savePreferences: async value => (await shell()).savePreferences(value),
+  login: async input => (await shell()).login(input),
+  logout: async () => (await shell()).logout(),
+  signup: async input => (await shell()).signup(input),
+  requestEmailVerification: async email => (await shell()).requestEmailVerification(email),
+  readPhoto: async () => (await shell()).readPhoto(),
+  savePhoto: async data => (await shell()).savePhoto(data),
+  removePhoto: async () => (await shell()).removePhoto(),
+};
 // Replace only after backend contracts/authentication are agreed and tested.
-export const mupidService = createService('demo');
+export const mupidService: MupidService = inNativeShell() ? nativeService : createService('demo');

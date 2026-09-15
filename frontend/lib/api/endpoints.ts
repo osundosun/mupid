@@ -23,6 +23,13 @@ export type UserInfo = {
   gender: 'M' | 'F' | 'ETC';
   role: 'ROLE_USER' | 'ROLE_SYSTEM' | 'ROLE_ADMIN';
   status: 'PENDING' | 'ACTIVE' | 'WITHDRAW';
+  /**
+   * 온보딩 설문을 마쳤는가. 거짓이면 온보딩 화면으로 보낸다.
+   *
+   * 제출한 **내용**을 받는 길은 없다. 콜드스타트 입력이라 화면이 되읽을 일이
+   * 없고, 읽는 것은 추천 서버뿐이다(`ROLE_SYSTEM` 전용 API).
+   */
+  onboarding_submitted: boolean;
 };
 
 export type SignupBody = {
@@ -124,16 +131,7 @@ export type OnboardingOptions = {
   genres: CodeOption[];
 };
 
-export type OnboardingStatus = {
-  submitted: boolean;
-  submitted_at: string | null;
-  nickname: string;
-  moods: CodeOption[];
-  genres: CodeOption[];
-};
-
 export type OnboardingBody = {
-  nickname: string;
   mood_code_ids: number[];
   genre_code_ids: number[];
 };
@@ -148,6 +146,8 @@ export type MusicSummary = {
   playable: boolean;
   play_count: number;
   like_count: number;
+  /** 곡 커버. 곡에 표지가 없으면 null 이고, 그때는 앨범 커버를 쓴다. */
+  image_url: string | null;
   artist: { artist_id: number; name: string; image_url: string | null };
   album: {
     album_id: number;
@@ -165,6 +165,13 @@ export type MusicPage = {
   size: number;
   total_elements: number;
   total_pages: number;
+};
+
+/** 최근 검색어 한 줄. 같은 말은 한 번만 오므로 `keyword` 가 곧 열쇠다. */
+export type RecentSearch = {
+  keyword: string;
+  /** 이 말을 마지막으로 검색한 시각. */
+  searched_at: string;
 };
 
 export type PlaylistSummary = {
@@ -510,6 +517,41 @@ export function createEndpoints(client: ApiClient) {
           query: { page: options.page, size: options.size },
           signal,
         }),
+
+      /**
+       * 최근 검색어. 같은 말은 한 번만, 최신순.
+       *
+       * 이것도 적재 API 가 없다. 검색 이벤트(`SEARCH`)를 서버가 이 표에도
+       * 남긴다. 페이지네이션은 없다 — 검색창 아래 목록이라 한 화면이 끝이다.
+       */
+      recentSearches: (size?: number, signal?: AbortSignal) =>
+        client.request<{ keywords: RecentSearch[] }>({
+          path: '/api/v1/user/history/search',
+          query: { size },
+          signal,
+        }),
+
+      /**
+       * 최근 검색어 한 줄 지우기. 그 말로 남은 기록이 전부 사라진다.
+       *
+       * 목록의 한 줄은 기록 하나가 아니라 같은 말의 묶음이라 그렇다. 이미
+       * 없던 말이어도 성공이다.
+       */
+      removeRecentSearch: (keyword: string) =>
+        client.request<void>({
+          method: 'DELETE',
+          path: '/api/v1/user/history/search',
+          query: { keyword },
+          responseType: 'none',
+        }),
+
+      /** 최근 검색어 전체 지우기. 되돌릴 수 없어 경로가 따로 나 있다. */
+      clearRecentSearches: () =>
+        client.request<void>({
+          method: 'DELETE',
+          path: '/api/v1/user/history/search/all',
+          responseType: 'none',
+        }),
     },
 
     report: {
@@ -565,13 +607,12 @@ export function createEndpoints(client: ApiClient) {
           anonymous: true,
           signal,
         }),
-      /** 제출 여부와 제출한 내용. */
-      status: (signal?: AbortSignal) =>
-        client.request<OnboardingStatus>({
-          path: '/api/v1/onboarding',
-          signal,
-        }),
-      /** 제출. 이미 제출했으면 서버가 갈아 끼운다. */
+      /**
+       * 제출. **한 번만 할 수 있다** — 두 번째부터는 409
+       * (`MUPID_ONBOARDING_ALREADY_SUBMITTED`) 다.
+       *
+       * 제출 여부는 `user.me()` 의 `onboarding_submitted` 로 확인한다.
+       */
       submit: (body: OnboardingBody) =>
         client.request<void>({
           method: 'POST',

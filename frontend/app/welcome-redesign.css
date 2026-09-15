@@ -23,9 +23,9 @@
 .welcome-page .welcome-form > .primary-button { margin-top: 24px; }
 @media (max-width: 767px) {
   .mupid-shell .welcome-page {
-    padding: calc(40px + env(safe-area-inset-top, 0px)) 24px calc(56px + env(safe-area-inset-bottom, 0px));
+    padding: calc(40px + var(--safe-area-inset-top)) 24px calc(56px + var(--safe-area-inset-bottom));
   }
-  .welcome-page .welcome-back { top: calc(36px + env(safe-area-inset-top, 0px)); }
+  .welcome-page .welcome-back { top: calc(36px + var(--safe-area-inset-top)); }
   .welcome-page .welcome-logo { width: 108px; }
   .welcome-composition { grid-template-columns: 1fr; gap: 12px; padding: 42px 0 24px; max-width: 440px; }
   .welcome-copy { display: flex; flex-direction: column; align-items: center; text-align: center; }

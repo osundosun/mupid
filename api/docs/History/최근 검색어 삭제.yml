@@ -1,0 +1,85 @@
+info:
+  name: 최근 검색어 삭제
+  type: http
+  seq: 3
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/user/history/search?keyword=무피드"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 삭제 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "최근 검색어를 지웠습니다.",
+            "data": null
+          }
+
+  - name: 400 지울 말이 없음
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_REQUEST_BODY",
+            "message": "데이터가 잘못 입력되었습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 최근 검색어 삭제
+
+  `DELETE /api/v1/user/history/search?keyword=무피드` · **인증 필요**
+
+  | 이름 | 필수 | 설명 |
+  | --- | --- | --- |
+  | `keyword` | 예 | 지울 말. 비어 있으면 400 |
+
+  ## 그 말의 기록이 전부 사라집니다
+
+  목록의 한 줄은 기록 하나가 아니라 **같은 말의 기록 묶음**입니다. 그래서 줄
+  하나를 지우면 그 말로 남은 기록이 다 없어집니다. 하나만 지우면 화면은 그대로인데
+  서버만 줄어서, 누른 사람은 삭제가 안 먹었다고 봅니다.
+
+  `keyword` 는 `utf8mb4_unicode_ci` 라 대소문자를 가리지 않습니다. 목록을 묶는
+  기준과 같으므로 "kcik" 을 지우면 "KCIK" 도 함께 사라집니다 — 애초에 한 줄로
+  보이던 것들입니다.
+
+  ## 없던 말을 지워도 성공입니다
+
+  지우기의 목적은 "그 말이 목록에 없는 상태" 이고, 다른 탭에서 먼저 지웠다면 이미
+  원하는 상태입니다. 여기서 404 를 내면 사용자는 이미 이룬 일로 실패를 봅니다.
+  (`Playlist / 곡 빼기` 가 404 를 내는 것과는 다른 판단입니다 — 그쪽은 수록곡이
+  화면과 어긋난 것을 알려야 합니다.)
+
+  ## 빈 값은 "전부" 가 아닙니다
+
+  `keyword` 를 빼고 부르면 400 입니다. 화면 버그로 파라미터가 빠졌을 때 기록이
+  통째로 날아가는 것보다, 지우지 못했다고 돌려보내는 편이 낫습니다. 전체 삭제는
+  `최근 검색어 전체 삭제` 라는 따로 난 길로만 갑니다.
+
+  ## 왜 쿼리 파라미터입니까
+
+  검색어에는 `/` 도 `#` 도 들어갈 수 있어서 경로 변수로 두면 인코딩 실수 하나에
+  다른 엔드포인트로 새거나 404 가 납니다.

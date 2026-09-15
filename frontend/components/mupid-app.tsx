@@ -5,6 +5,7 @@ import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
 import { useStore } from '@/lib/store';
 import { fetchCatalog } from '@/lib/stream-catalog';
 import { restoreSession, sessionStore } from '@/lib/api/session';
+import { watchSafeArea } from '@/lib/platform';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
 import {
@@ -31,6 +32,7 @@ import {
   LikeButton,
   PlayerControls,
 } from '@/components/mupid/primitives';
+import { HeaderSearch } from '@/components/mupid/header-search';
 import { HomeView } from '@/components/mupid/home';
 import {
   MomentView,
@@ -72,6 +74,9 @@ export function MupidApp() {
   const [data, setData] = useState<Bootstrap | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  // 시스템 바가 가리는 자리를 CSS 에 건넨다. 곡을 받기 전 화면도 상태바 밑으로
+  // 들어가면 안 되므로 여기, 가장 바깥에서 한 번만 건다.
+  useEffect(() => watchSafeArea(), []);
   /*
    * 곡 목록은 **로그인한 사람만** 받을 수 있다(`SecurityConfig`). 그래서 세션을
    * 먼저 복원하고 그 다음에 받는다. 순서가 뒤집히면 첫 방문자의 요청이 401 로
@@ -103,7 +108,7 @@ export function MupidApp() {
    * 마이페이지·플레이리스트처럼 곡이 필요 없는 화면은 평소처럼 써야 한다.
    * 여기서 막는 것은 **아직 못 받아온 동안** 과 **못 받아온 경우** 뿐이다.
    */
-  if (!data) return <main className="mupid-shell" style={{ padding: 32 }} aria-busy={!error}>
+  if (!data) return <main className="mupid-shell" style={{ padding: 32, paddingTop: 'calc(32px + var(--safe-area-inset-top))' }} aria-busy={!error}>
     <output>{error || '음악을 준비하고 있어요…'}</output>
     {error && <button className="secondary-button" onClick={() => { setError(''); setAttempt(v => v + 1); }}>다시 불러오기</button>}
   </main>;
@@ -148,7 +153,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   // 로그인 여부를 알기 전에는 아무 화면도 보여주지 않는다. 먼저 그리면 시작
   // 화면이 깜빡였다가 바뀌고, 비로그인에게 앱 골격이 잠깐 노출된다.
   if (!m.authReady) {
-    return <main className="mupid-shell" style={{ padding: 32 }} aria-busy="true">
+    return <main className="mupid-shell" style={{ padding: 32, paddingTop: 'calc(32px + var(--safe-area-inset-top))' }} aria-busy="true">
       <output>로그인 상태를 확인하고 있어요…</output>
     </main>;
   }
@@ -183,10 +188,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
                 </button>
               ))}
             </nav>
-            <form className="nav-search" role="search" onSubmit={event => { event.preventDefault(); m.go('search'); }}>
-              <input aria-label="곡 또는 아티스트 검색" placeholder="곡, 아티스트 검색" value={m.query} onChange={event => m.setQuery(event.target.value)} />
-              <button type="submit" aria-label="검색"><Search size={20} /></button>
-            </form>
+            <HeaderSearch model={m} />
             <div className="nav-account" ref={accountRef}>
               <button ref={accountButton} className="nav-avatar" aria-label={m.demoSession ? '내 계정 메뉴' : '로그인'} aria-expanded={accountOpen} aria-controls="nav-account-panel" disabled={!m.authReady} onClick={() => m.demoSession ? setAccountOpen(value => !value) : m.openLogin()}>
                 {/* 사진을 올리지 않았으면 `photo` 에 기본 이미지가 담겨 온다.

@@ -4,7 +4,7 @@
 
 ## 맥락
 
-`music_chunking` 배치가 만든 음원 청크를 서버에 올릴 방법이 필요했다. 곡 하나가 6초 단위 청크 수십 개(3분 곡이면 30개, 각 100KB 남짓)로 쪼개진다.
+`music_preprocessing` 배치가 만든 음원 청크를 서버에 올릴 방법이 필요했다. 곡 하나가 6초 단위 청크 수십 개(3분 곡이면 30개, 각 100KB 남짓)로 쪼개진다.
 
 두 가지를 정해야 했다.
 
@@ -55,7 +55,7 @@ nginx 의 `auth_request` 를 쓴다. `X-Accel-Redirect` 는 **응답** 시점 �
 
 ## 관련
 
-- 배치 쪽 구현: `music_chunking/src/music_chunking/registrar.py`, `api_client.py`
+- 배치 쪽 구현: `music_preprocessing/src/music_preprocessing/registrar.py`, `api_client.py`
 - nginx 설정: `api/nginx/templates/default.conf.template`(개발), `infra/deploy/nginx.conf`(운영) — 두 파일이 같은 블록을 가져야 한다 → [0008](0008-deploy-image-from-infra.md)
 - 다운로드도 같은 발상이다 (`X-Accel-Redirect`) → [0007](0007-shared-nginx-template.md)
 - 스트림·청크는 하드 삭제다. 스토리지 파일만 [0013](0013-soft-delete-policy.md) 대로 `isDeleted` 를 쓴다.

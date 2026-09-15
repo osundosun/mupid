@@ -49,14 +49,22 @@ test('bootstrap without a catalog has no songs', async () => {
 test('first visits require onboarding and completion survives reload independently of login', async () => {
   const service = createDemoService(memory());
   const first = await service.bootstrap();
-  assert.equal(first.preferences.onboardingSubmittedAt, null);
-  first.preferences.onboardingSubmittedAt = '2026-09-08T00:00:00.000Z';
+  assert.equal(first.preferences.onboardingSubmitted, false);
+  first.preferences.onboardingSubmitted = true;
   first.preferences.nickname = '방문자'; first.preferences.moods = ['잔잔한'];
   await service.savePreferences(first.preferences);
   await service.logout();
   const next = await service.bootstrap();
-  assert.equal(next.preferences.onboardingSubmittedAt, first.preferences.onboardingSubmittedAt);
+  assert.equal(next.preferences.onboardingSubmitted, true);
   assert.deepEqual(next.preferences.moods, ['잔잔한']);
+});
+// 예전에는 완료 **시각**을 저장했다. 화면이 시각을 쓰지 않아 불리언으로 바꿨는데,
+// 이미 저장된 기기가 "안 했다"로 읽혀 설문을 다시 보면 안 된다.
+test('legacy onboarding timestamps still read as completed', async () => {
+  const storage = memory();
+  storage.setItem('mupid.sky.preferences.v1', JSON.stringify({ onboardingSubmittedAt: '2026-09-08T00:00:00.000Z' }));
+  const { preferences } = await createDemoService(storage).bootstrap();
+  assert.equal(preferences.onboardingSubmitted, true);
 });
 test('existing preferences and empty playlists survive round trip', async () => {
   const service = createDemoService(memory()); const data = await service.bootstrap();

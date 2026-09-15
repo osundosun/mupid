@@ -332,7 +332,7 @@ public class ApiApplication { ... }
 ```
 src/main/resources/
 ├── application.yaml
-├── img/default-user-profile.png                # UserImageServiceImpl 이 ClassPathResource 로 읽는다
+├── img/default-user-profile.webp               # UserImageServiceImpl 이 ClassPathResource 로 읽는다
 ├── META-INF/additional-spring-configuration-metadata.json
 └── templates/mail/
     ├── email-verification.html

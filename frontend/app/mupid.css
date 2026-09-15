@@ -3,17 +3,23 @@
   --nav-height: 70px;
   --player-height: 72px;
   --dock-height: calc(
-    var(--nav-height) + var(--player-height) + env(safe-area-inset-bottom, 0px)
+    var(--nav-height) + var(--player-height) + var(--safe-area-inset-bottom)
   );
   min-height: 100dvh;
   background: linear-gradient(155deg, #eff5ff 0%, #fbfdff 42%, #f4f8fe 100%);
 }
 .app-header {
-  height: 76px;
+  /*
+   * 화면 위에 붙어 있는 헤더라(`nav-account.css` 의 `position: sticky`) 상태바
+   * 몫을 스스로 비운다. 좁은 화면에서는 셸 바깥 여백이 대신 비우고
+   * (`responsive-polish.css`) 이 규칙은 그쪽에서 덮어쓰인다 — 가로로 돌려
+   * 768px 을 넘겼을 때를 위한 것이다.
+   */
+  min-height: 76px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 5%;
+  padding: var(--safe-area-inset-top) 5% 0;
   border-bottom: 1px solid #dae6f7;
   background: #f6faffd9;
 }
@@ -737,7 +743,7 @@ h1 {
     right: 16px;
     max-width: 488px;
     margin-inline: auto;
-    bottom: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px));
+    bottom: calc(var(--nav-height) + var(--safe-area-inset-bottom));
     min-height: var(--player-height);
     border-radius: 14px 14px 0 0;
     gap: 8px;
@@ -762,8 +768,8 @@ h1 {
     right: 0;
     max-width: 520px;
     margin-inline: auto;
-    height: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px));
-    padding: 6px 9px calc(6px + env(safe-area-inset-bottom, 0px));
+    height: calc(var(--nav-height) + var(--safe-area-inset-bottom));
+    padding: 6px 9px calc(6px + var(--safe-area-inset-bottom));
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     background: #fbfdfff5;
@@ -2347,7 +2353,8 @@ h1 {
     font-size: 0.875rem;
   }
   .page-home .main-content {
-    padding-top: max(24px, env(safe-area-inset-top, 0px));
+    /* 상태바 몫은 셸 바깥 여백이 비운다 (`responsive-polish.css`). */
+    padding-top: 24px;
   }
   .page-player .app-header,
   .page-moment .app-header,
@@ -2374,8 +2381,8 @@ h1 {
     width: 20px;
   }
   .page-player .main-content {
-    padding-top: max(12px, env(safe-area-inset-top, 0px));
-    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+    padding-top: 12px;
+    padding-bottom: calc(var(--safe-area-inset-bottom) + 84px);
   }
   .player-heading {
     margin-bottom: 10px;

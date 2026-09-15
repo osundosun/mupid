@@ -11,7 +11,7 @@
     box-shadow: none;
   }
   .mupid-shell:not(.page-welcome) {
-    padding: 22px clamp(20px, 6vw, 28px) 0;
+    padding: calc(22px + var(--safe-area-inset-top)) clamp(20px, 6vw, 28px) 0;
     background:
       radial-gradient(ellipse at 92% 3%, #fff1f88f, transparent 42%),
       linear-gradient(180deg, #e6f3ffd9, #f5faffed 68%),
@@ -42,8 +42,9 @@
     display: flex;
     align-items: center;
     height: auto;
-    min-height: calc(60px + env(safe-area-inset-top, 0px));
-    padding: calc(8px + env(safe-area-inset-top, 0px)) var(--page-gutter) 8px;
+    /* 상태바 몫은 셸 바깥 여백이 이미 비웠다. 여기서 또 더하면 두 번 센다. */
+    min-height: 60px;
+    padding: 8px var(--page-gutter);
     max-width: 520px;
     margin-inline: auto;
     gap: 16px;
@@ -88,8 +89,8 @@
     grid-template-columns: repeat(5, minmax(0, 1fr));
     align-items: start;
     gap: 2px;
-    height: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px));
-    padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+    height: calc(var(--nav-height) + var(--safe-area-inset-bottom));
+    padding: 8px 8px calc(8px + var(--safe-area-inset-bottom));
     border-top: 1px solid #e2ebf8;
     background: #fcfdfff2;
     box-shadow: 0 -6px 24px #688abc06;
@@ -154,7 +155,7 @@
     left: 12px;
     right: 12px;
     max-width: 496px;
-    bottom: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px) + 8px);
+    bottom: calc(var(--nav-height) + var(--safe-area-inset-bottom) + 8px);
     border-radius: 16px;
     border-color: #e1eafa;
     background: #ffffffed;

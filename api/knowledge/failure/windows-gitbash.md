@@ -36,6 +36,6 @@
 
 - **원인**: Windows 기본 콘솔이 cp949 다. `print("처리 완료")` 의 이모지를 인코딩하지 못해 `'cp949' codec can't encode character` 로 프로세스가 죽는다. **청킹 작업 자체는 이미 끝난 뒤**라 결과물은 남아 있고 종료 코드만 실패로 보인다. `logging.basicConfig` 의 스트림 핸들러도 같은 인코딩을 써서 로그 한글이 깨진다.
 - **해결**: 진입점에서 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` 로 맞춘다.
-- **근거**: `music_chunking/src/music_chunking/__main__.py`
+- **근거**: `music_preprocessing/src/music_preprocessing/__main__.py`
 
 ---

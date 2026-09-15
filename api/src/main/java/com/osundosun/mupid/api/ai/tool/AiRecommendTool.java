@@ -1,6 +1,7 @@
 package com.osundosun.mupid.api.ai.tool;
 
 import java.util.List;
+import java.util.Map;
 
 import com.osundosun.mupid.api.ai.client.OpenAiTool;
 import com.osundosun.mupid.api.ai.dto.AiRecommendedTrack;
@@ -35,13 +36,28 @@ public interface AiRecommendTool {
     record Arguments(
 
         /**
-         * 사용자가 원한 느낌을 한 문장으로.
-         * 추천 서버의 `/internal/recommendations/search` 의 `query` 가 된다.
+         * 사용자가 원한 느낌을 한 문장으로. **조건을 거는 데 쓰이지 않는다.**
+         *
+         * 추천 서버에 원문을 보내려면 자연어 해석기가 따로 떠 있어야 한다(없으면 501).
+         * 우리는 해석기 대신 대화 모델이 뽑은 `filters`·`exclude` 를 보내므로, 이 문장은
+         * 로그와 "무엇을 찾았는지" 를 사람이 읽기 위한 자리다.
          */
         String query,
 
         /** 몇 곡을 받을지. 구현이 1~5 로 자른다. */
-        Integer limit
+        Integer limit,
+
+        /**
+         * 반드시 만족해야 하는 조건. 값은 `/internal/facets` 의 어휘여야 한다.
+         *
+         * 예: `{"genre": ["pop"], "instrument": ["piano"], "vocal": ["female"]}`
+         */
+        Map<String, Object> filters,
+
+        /**
+         * 빼야 하는 조건. 같은 어휘를 쓴다. 예: `{"mood": ["aggressive"]}`
+         */
+        Map<String, Object> exclude
 
     ) {
     }

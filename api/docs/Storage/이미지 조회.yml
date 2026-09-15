@@ -25,9 +25,9 @@ examples:
       statusText: OK
       headers:
         - name: Content-Type
-          value: image/png
+          value: image/webp
         - name: Content-Disposition
-          value: attachment; filename="default-user-profile.png"
+          value: attachment; filename="default-user-profile.webp"
 
 docs: |-
   # 이미지 조회
@@ -44,7 +44,7 @@ docs: |-
   ## 기본 이미지
 
   `PROFILE` 카테고리에서 파일이 없으면 기본 프로필 이미지
-  (`default-user-profile.png`, PNG) 를 200 으로 반환합니다. 그래서
+  (`default-user-profile.webp`, WebP) 를 200 으로 반환합니다. 그래서
   `GET /api/v1/user` 의 `image_url` 이 가리키는 `.../PROFILE/default` 도
   그대로 부를 수 있습니다.
 

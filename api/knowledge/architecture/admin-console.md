@@ -15,6 +15,8 @@
 | `admin/service/AdminResourceRegistry.java` | 기동 시 JPA 메타모델을 읽어 자원 목록을 만든다 |
 | `admin/service/AdminResourceServiceImpl.java` | 자원 하나를 읽고 쓰는 제네릭 CRUD |
 | `admin/service/AdminDashboardServiceImpl.java` | JVM·외부 저장소 상태 집계 |
+| `admin/controller/AdminClickHouseController.java` | ClickHouse 화면 프록시 (`/api/admin/clickhouse/**`) |
+| `admin/service/AdminClickHouseConsoleServiceImpl.java` | 열람권 발급·검사, 프록시 본체 |
 | `admin/service/AdminValueCodec.java` | JSON 값 → 엔티티 필드 타입 변환 |
 | `admin/dto/`, `admin/response/`, `admin/error/` | 메타데이터 홀더, 응답 record, `AdminErrorCode` |
 | `admin/runner/AdminRunner.java` | 관리자 계정이 하나도 없으면 기동 시 하나 만든다 |
@@ -134,6 +136,96 @@ Kafka 는 프로듀서 빈을 재사용하지 않고 일회용 `AdminClient` 를
 
 ClickHouse `JdbcTemplate` 은 `@Qualifier("clickHouseJdbcTemplate")` 로 받는다. 빼면 `@Primary` 인 MySQL 쪽이 주입되어 **컴파일도 기동도 되면서 다른 DB 를 조회한다.** 루트 `lombok.config` 가 `@Qualifier` 를 생성자 파라미터로 복사하게 해 두었다.
 
+## ClickHouse 콘솔은 포트를 열지 않고 넣는다
+
+ClickHouse 는 자기 화면 두 장을 스스로 서빙한다 — `/play`(쿼리 콘솔)와 `/dashboard`(차트).
+관리자 화면의 **ClickHouse 콘솔** 항목이 그 둘을 iframe 으로 띄운다.
+
+**8123 을 밖으로 열지 않는다.** 열면 그 화면에는 우리 로그인이 없고, 지키는 것이
+ClickHouse 계정 하나뿐인데 그 계정은 분석 DB 를 통째로 읽고 쓴다. 방화벽 규칙과
+ClickHouse 계정이라는 두 번째 자격증명 체계를 따로 관리하게 된다. 대신 스프링이 중간에
+서서 관리자 로그인 하나로 통과시킨다 — `compose.yml` 의 `ports` 는 로컬 편의를 위한
+것이고 운영에서는 필요 없다.
+
+### 자격증명이 브라우저로 내려가지 않는다
+
+두 화면 모두 user·password 칸을 갖고 그 값을 **쿼리 문자열에** 실어 보낸다. 프록시는
+`user`·`password`·`quota_key` 를 **버리고** `X-ClickHouse-User`·`X-ClickHouse-Key` 헤더를
+서버에서 붙인다. 그래서 ClickHouse 비밀번호가 브라우저 주소창·히스토리·중간 로그에
+남지 않는다. 화면의 두 칸은 조각(아래)이 잠가 둔다 — 적어도 무시되기 때문이다.
+
+### 열람권은 쿠키다
+
+iframe 의 문서 요청, 그 안의 `<script src>`, ClickHouse 화면이 스스로 던지는 `fetch` —
+셋 다 우리가 `Authorization` 헤더를 붙일 수 없다. 이 프로젝트의 인증은 헤더의 Bearer
+뿐이므로(`AuthFilter`) 세 가지를 한 번에 통과시킬 수 있는 자격증명은 쿠키뿐이다.
+
+1. 화면이 `POST /api/v1/admin/clickhouse/console` 을 부른다. 이 엔드포인트는 `@AdminRole` 이다.
+2. 서버가 무작위 열람권을 Redis 에 30분 TTL 로 올리고, 같은 값을 `HttpOnly` 쿠키로 내린다.
+   `Path` 는 `/api/admin/clickhouse` 라 다른 API 요청에는 실리지 않는다.
+3. 화면이 iframe 을 띄운다. 프록시가 매 요청마다 쿠키를 Redis 에서 확인한다.
+4. 화면은 만료 1분 전에 열람권만 새로 받는다 — **iframe 은 다시 그리지 않는다.** 쓰던
+   쿼리가 사라지면 콘솔을 쓸 수 없다.
+5. 로그아웃이 `DELETE /api/v1/admin/clickhouse/console` 로 Redis 에서 지운다. 쿠키만
+   비우면(그마저 HttpOnly 라 화면이 못 지운다) 남은 30분 동안 그 값이 그대로 산다.
+
+`Secure` 는 요청이 https 로 들어왔을 때만 붙인다(`X-Forwarded-Proto` 를 먼저 본다).
+리프레시 토큰 쿠키처럼 늘 붙이면 http 로 띄우는 로컬에서 콘솔이 아예 열리지 않는다.
+
+> ⚠ `SecurityConfig` 에서 `/api/admin/clickhouse/**` 는 `permitAll` 이다. 관리자 HTML 두
+> 장을 연 것과 같아 보이지만 성격이 다르다 — 그쪽은 데이터가 한 줄도 없지만 **여기는
+> 분석 DB 그 자체다.** 쿠키 검사가 유일한 방어선이다.
+
+### X-Frame-Options 를 경로별로 준다
+
+스프링 시큐리티는 **모든 응답에 `X-Frame-Options: DENY`** 를 붙인다. 그대로 두면
+브라우저가 프레임을 거부해서 콘솔 iframe 이 **아무것도 그리지 않는다** — 화면에는 흰
+사각형만 남고, 서버 로그에는 200 이 찍혀서 원인을 찾기 어렵다. (curl 로는 멀쩡히
+내려오므로 명령줄 확인만으로는 드러나지 않는다.)
+
+전체를 `SAMEORIGIN` 으로 내리지는 않았다. 운영에서 프런트엔드와 API 는 같은 오리진이라
+(nginx 가 둘 다 서빙한다) 프런트에 HTML 주입이 생기면 관리자 로그인 화면이 프레임에
+걸릴 수 있다. 기본 라이터를 끄고 `DelegatingRequestMatcherHeaderWriter` 로 **콘솔
+경로에만 `SAMEORIGIN`, 나머지에는 `DENY`** 를 붙인다.
+
+컨트롤러에서 헤더를 덮어쓰는 방법은 통하지 않는다. `XFrameOptionsHeaderWriter` 는
+DENY·SAMEORIGIN 모드에서 기존 헤더를 확인하지 않고 `setHeader` 로 덮어쓰고, 그 시점이
+응답 커밋 직전이라 우리가 먼저 적어 둔 값이 진다.
+
+같은 이유로 `X-Content-Type-Options: nosniff` 도 늘 붙는다. ClickHouse 가 `/js/*` 를
+`text/html` 로 내보내므로 프록시가 `.js` 응답의 Content-Type 을 바로잡아 준다 —
+안 그러면 차트 대시보드의 라이브러리가 nosniff 에 걸려 실행되지 않는다.
+
+### ClickHouse 가 만든 HTML 을 두 군데만 고친다
+
+`/play` 는 자기가 서빙된 **오리진의 루트**로 쿼리를 던진다 (`location.origin + '?query'`).
+주소칸을 고쳐 줘도 소용없다 — `new URL(주소).origin` 으로 경로를 지우고 부르는 자리가
+있다. 그래서 내려보내기 전에 HTML 을 손본다.
+
+| 고치는 것 | 왜 |
+|---|---|
+| `</head>` 앞에 조각 삽입 | `fetch` 를 감싸 같은 오리진 요청의 경로를 `/api/admin/clickhouse/` 로 옮긴다. user·password 칸을 잠근다. `<base target="_blank">` 로 바깥 링크가 iframe 을 삼키지 않게 한다 |
+| `src="/js/` → `src="js/` | `/dashboard` 가 차트 라이브러리를 오리진 루트에서 읽는다. 상대 경로로 내려야 프록시 아래로 들어온다 |
+
+남의 코드를 문자열로 고치는 것이라 ClickHouse 버전이 바뀌면 깨질 수 있다. 그래서 손대는
+곳을 이 둘로만 묶었다. `</head>` 를 못 찾으면 경고를 남기고 원본을 그대로 내보낸다.
+
+넘겨주는 경로도 **손으로 적은 것만**이다 — 빈 경로(쿼리 엔드포인트)·`play`·`dashboard`·
+`js/<파일>`. `**` 를 그대로 이어 붙이면 ClickHouse 의 HTTP 인터페이스 전체가 열린다.
+
+### 주의
+
+- **읽기 전용이 아니다.** 프록시는 `mupid` 계정으로 나가고 그 계정은 `default` 프로파일이라
+  `DROP`·`ALTER` 가 된다. 관리자가 데이터를 바로잡는 통로라는 점에서 `AdminResourceService`
+  가 도메인 서비스를 건너뛰는 것과 같은 판단이다.
+- `LIMIT` 없는 `SELECT` 도 그대로 나간다. 그래서 프록시는 응답을 통째로 들고 있지 않고
+  흘려보낸다 — 바이트 배열로 받으면 API 서버의 힙이 먼저 죽는다. 단 `play`·`dashboard`
+  두 장은 HTML 을 고쳐야 해서 버퍼링한다 (70KB 남짓).
+- `console-timeout` 은 60초다. 운영 nginx 의 `/api/` 가 `proxy_read_timeout 60s` 라
+  그보다 크게 잡으면 브라우저는 nginx 의 504 를 먼저 받는다.
+- 어느 노드를 볼지는 `MUPID_CLICKHOUSE_HTTP_URL` 로 바꾼다. 비우면 `MUPID_CLICKHOUSE_URL`
+  의 JDBC 주소에서 만들어 쓴다 (`ClickHouseProperties.httpEndpoint()`).
+
 ## 화면 쪽 규칙
 
 - `templates/admin/*.html` 은 **Thymeleaf 표현식을 하나도 쓰지 않는다.** 그대로 나가는 정적 HTML 이고, 인라인 `<style>`·`<script>` 로 자기완결이다. 정적 리소스 경로를 새로 열지 않으려는 것이다 (`/admin/app.js` 를 만들면 `SecurityConfig` 에 permitAll 규칙이 하나 더 필요해진다).
@@ -148,7 +240,10 @@ ClickHouse `JdbcTemplate` 은 `@Qualifier("clickHouseJdbcTemplate")` 로 받는�
 - 오류 응답이 **어느 필드가 잘못됐는지 말하지 않는다.** `ErrorResponse.errorDetails` 를 채우는 곳은 `GlobalExceptionHandler.invalidArgs` 하나뿐이고 거기에 끼려면 `BindException` 이어야 한다. 지금은 서버 로그에만 남는다. 화면이 타입별 입력칸(숫자·선택·날짜)을 그려 애초에 틀린 값이 잘 가지 않게 하는 것으로 대신하고 있다.
 - `GET /api/v1/admin/resource` 는 자원 수만큼 `COUNT` 쿼리를 돌린다. 행이 아주 많아지면 느려진다.
 - 일괄 삭제가 없다. 화면에서 한 행씩 지운다.
-- 관리자 행동이 감사 로그로 남지 않는다.
+- 관리자 행동이 감사 로그로 남지 않는다. ClickHouse 콘솔은 **연 사람과 시각만**
+  서버 로그에 남는다 — 거기서 무슨 쿼리를 돌렸는지는 ClickHouse 의 `system.query_log`
+  를 봐야 한다.
+- 콘솔의 쿼리 콘솔/차트 대시보드를 오가면 iframe 이 다시 뜨면서 쓰던 쿼리가 사라진다.
 
 ## 검증
 
@@ -160,5 +255,19 @@ ClickHouse `JdbcTemplate` 은 `@Qualifier("clickHouseJdbcTemplate")` 로 받는�
 ```
 
 관리자 계정이 없으면 기동할 때 `AdminRunner` 가 하나 만들고 비밀번호를 **콘솔에 한 번만** 찍는다. 놓치면 `users` 에서 지우고 다시 띄운다.
+
+ClickHouse 콘솔만 따로 확인하려면 (`$CK` 는 열람권 쿠키 값):
+
+```bash
+# 열람권 받기 (Set-Cookie 헤더에 들어온다)
+curl -i -X POST localhost:8800/api/v1/admin/clickhouse/console -H "Authorization: Bearer $ACCESS_TOKEN"
+
+# 쿼리가 실제로 도는가 — user/password 는 프록시가 버린다
+curl -b "mupid_ch_console=$CK" -X POST --data "SELECT version()"   "localhost:8800/api/admin/clickhouse/?default_format=JSONEachRow&user=default&password=아무거나"
+
+# 쿠키 없이 401 인가
+curl -o /dev/null -w "%{http_code}
+" localhost:8800/api/admin/clickhouse/play
+```
 
 API 만 확인하려면 `docs/Admin/` Bruno 컬렉션을 쓴다. `Auth / 로그인` 을 먼저 돌려 `ACCESS_TOKEN` 을 채운다.

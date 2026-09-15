@@ -1,0 +1,57 @@
+info:
+  name: ClickHouse 콘솔 닫기
+  type: http
+  seq: 10
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/admin/clickhouse/console"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 닫힘
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+        - name: Set-Cookie
+          value: mupid_ch_console=; Path=/api/admin/clickhouse; Max-Age=0; HttpOnly; SameSite=Strict
+      body:
+        type: json
+        data: |-
+          {
+            "message": "콘솔을 닫았습니다.",
+            "data": null
+          }
+
+docs: |-
+  # ClickHouse 콘솔 닫기
+
+  `DELETE /api/v1/admin/clickhouse/console` · `ROLE_ADMIN`
+
+  열람권을 **Redis 에서 지우고** 쿠키도 비웁니다. 관리자 화면의 로그아웃이 부릅니다.
+
+  쿠키만 비우는 것으로는 부족합니다. 열람권이 Redis 에 남아 있으면 그 값을 들고 있는
+  누구든 남은 30분 동안 분석 DB 를 계속 봅니다. 액세스 토큰을 로그아웃 때 차단 목록에
+  올리는 것과 같은 이유입니다.
+
+  쿠키를 보내지 않아도 200 입니다 — 이미 닫혀 있는 것과 결과가 같습니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰 없음/만료 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

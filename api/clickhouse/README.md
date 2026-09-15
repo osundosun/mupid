@@ -117,9 +117,17 @@ cd api && ./clickhouse/verify.sh
 | ClickHouse 모니터링 | http://localhost:18123/dashboard | 내장. QPS·메모리 그래프 |
 | ch-02 (샤드 2) 콘솔 | http://localhost:18124/play | 샤드별로 직접 볼 때 |
 | Kafka | http://localhost:18080 | `docker compose up -d kafka-ui` 로 띄운다 |
+| 관리자 화면 안의 콘솔 | http://localhost:8800/api/admin → *ClickHouse 콘솔* | 스프링이 프록시한다. **포트를 열지 않는 길** |
 
 `/play` 는 우측 상단에 계정 입력란이 있다. **user `mupid`**, password 는 `.env` 의
 `MUPID_CLICKHOUSE_PASSWORD` 값을 넣는다. Kafka UI 는 인증이 없다.
+
+위의 18123·18124 는 **로컬 편의용이다.** 운영에서는 ClickHouse 포트를 밖으로 열지
+않는다 — 열면 그 화면에는 우리 로그인이 없고, 지키는 것이 ClickHouse 계정 하나뿐인데
+그 계정은 분석 DB 를 통째로 읽고 쓴다. 대신 관리자 화면의 **ClickHouse 콘솔** 항목이
+같은 두 화면을 스프링을 거쳐 iframe 으로 띄운다. 계정 입력란도 필요 없다 — 자격증명은
+API 서버가 붙이고 브라우저로 내려가지 않는다.
+[관리자 화면 문서](../knowledge/architecture/admin-console.md) 참고.
 
 Kafka UI 는 `ui` profile 이라 `docker compose up -d` 로는 뜨지 않는다. 이름을 직접
 지정하면 profile 이 자동으로 켜진다.

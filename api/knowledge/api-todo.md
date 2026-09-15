@@ -24,7 +24,8 @@
 | 스트리밍 | 스트림·청크 생성/업로드/조회/다운로드 | 연결 완료 |
 | 이미지 | `POST/GET/DELETE /api/v1/storage/image/{category}/{key}` | 연결 완료 |
 | 이벤트 수집 | `POST /api/v1/events` | 프론트 트래커 있음 |
-| 온보딩 | `GET /api/v1/onboarding/option`, `GET`, `POST /api/v1/onboarding` | 연결 완료 |
+| 온보딩 | `GET /api/v1/onboarding/option`, `POST /api/v1/onboarding` | 연결 완료 · **제출은 계정당 한 번** |
+| 온보딩(배치) | `GET /api/v1/user/{userId}/onboarding` | **`ROLE_SYSTEM` 전용** · 추천 서버가 콜드스타트에 씀 |
 | 좋아요·관심없음 | `PUT/DELETE /api/v1/music/{id}/reaction`, `GET /api/v1/user/reaction[/music]` | 연결 완료 |
 | 최근 감상 | `GET /api/v1/user/history` (적재는 이벤트 수집기가) | 연결 완료 |
 | 시점 댓글 | `GET/POST /api/v1/music/{id}/comment`, `PATCH/DELETE /api/v1/comment/{id}` | 연결 완료 |
@@ -118,12 +119,13 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 ### 3. 온보딩 설문 — ✅ 완료
 
 - `GET /api/v1/onboarding/option` — 고를 수 있는 분위기·장르 (**인증 불필요**)
-- `POST /api/v1/onboarding` — 닉네임·분위기·장르 제출 (재제출 시 교체)
-- `GET /api/v1/onboarding` — 제출 여부·제출 내용
+- `POST /api/v1/onboarding` — 분위기·장르 제출. **계정당 한 번**, 재제출은 409
+- `GET /api/v1/user/{userId}/onboarding` — 제출 내용. **`ROLE_SYSTEM` 전용**
 
-분위기·장르는 이름이 아니라 `codes` 표의 **번호**로 주고받는다. `codes` 는 기준
-데이터라 사람이 넣어야 한다 → [domain/seed-codes.sql](domain/seed-codes.sql).
-비어 있으면 `GET /option` 이 503 이다.
+분위기·장르는 이름이 아니라 `codes` 표의 **번호**로 주고받는다. `codes` 가 비어
+있으면 `GET /option` 이 503 이다. 기동 때 `bootstrap/BootstrapRunner` 가 빠진
+코드를 채우므로 보통은 비지 않는다 — 손으로 넣으려면
+[domain/seed-codes.sql](domain/seed-codes.sql).
 
 저장 형태는 **분위기 × 장르 조합**이다. 표의 두 코드 칼럼이 모두 NOT NULL 이라
 집합 두 개를 그대로 담을 수 없어서다 —
@@ -134,13 +136,21 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 따라온 것:
 
 - 온보딩 화면에 **장르 선택**을 추가했다. 장르 없이는 행을 만들 수 없다.
-- 제출한 닉네임이 계정 닉네임(`users.nickname`)에도 반영된다.
-- 프로필 화면의 "내가 좋아하는 분위기" 도 계정에 반영된다
-  (`useMupid` 의 `updateMoods`).
-- 로그인·세션 복원 시 계정에 있는 설문을 화면 상태로 끌어온다. 다른 기기에서
-  답했으면 온보딩 화면을 건너뛴다.
+- 로그인·세션 복원 시 `GET /api/v1/user` 의 `onboarding_submitted` 로 분기한다.
+  다른 기기에서 답했으면 온보딩 화면을 건너뛴다.
 - 비로그인은 예전처럼 브라우저 저장만 쓴다. 온보딩은 앱에 들어가는 관문이라
   서버가 없다고 막히면 안 된다.
+
+**콜드스타트 입력으로 못박았다** (2026-09-15). 이 설문은 이력이 없는 사람의 첫
+추천을 만드는 값이지 계속 고쳐 쓰는 취향 설정이 아니다 —
+[decision/0017](decision/0017-onboarding-survey-cross-product.md) 의 "고친 것".
+
+- 제출은 **계정당 한 번**이다. 두 번째는 `MUPID_ONBOARDING_ALREADY_SUBMITTED`(409).
+- **본인 조회 API 를 없앴다.** 화면이 답을 되돌려 받을 일이 없다. 진입 분기에
+  쓰는 불리언만 `GET /api/v1/user` 에 실었다.
+- 마이페이지의 취향 편집 칩을 지웠다. 누를 때마다 재제출하고 있었다.
+- 설문이 **닉네임을 받지 않는다.** 회원가입이 이미 받는다. 화면도 3단계에서
+  2단계로 줄었다.
 
 ### 4. 좋아요 / 관심 없음 — ✅ 완료
 
@@ -169,6 +179,25 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 ### 5. 재생 기록 · 검색 기록 — ✅ 완료
 
 - `GET /api/v1/user/history` — 최근 들은 곡. 같은 곡은 한 번만, 최신순
+- `GET /api/v1/user/history/search` — 최근 검색어. 같은 말은 한 번만, 최신순
+- `DELETE /api/v1/user/history/search?keyword=` — 한 줄 지우기
+- `DELETE /api/v1/user/history/search/all` — 전체 지우기
+
+삭제는 **그 말의 기록을 전부** 지운다. 목록의 한 줄이 기록 하나가 아니라 같은
+말의 묶음이라, 하나만 지우면 화면은 그대로인데 서버만 줄어든다.
+
+전체 삭제는 길을 따로 냈다. 파라미터 없는 `DELETE .../search` 를 전체 삭제로
+쓰면, 화면이 `keyword` 를 빠뜨린 것과 전부 지우려는 것이 서버에서 똑같아
+보인다. 빈 `keyword` 는 400 이다.
+
+없던 말을 지워도 성공이다. 다른 탭에서 먼저 지웠다면 이미 원하는 상태인데,
+404 를 내면 사용자는 이미 이룬 일로 실패를 본다. 플레이리스트 곡 빼기가 404 를
+내는 것과는 다른 판단이다 — 그쪽은 수록곡이 화면과 어긋난 것을 알려야 한다.
+
+`SEARCH` 이벤트는 **제출할 때만** 나간다. 처음에는 입력이 멎으면 보냈는데,
+그러면 "무" · "무피" · "무피드" 가 전부 검색어로 남아 최근 검색어가 앞자락으로
+뒤덮였다. 지금은 엔터나 검색 버튼이 유일한 계기이고, 그 자리에서 큐를 비워
+방금 찾은 말이 바로 목록에 뜬다.
 
 **적재 API 는 만들지 않았다.** 청취 이벤트(`POST /api/v1/events`)의 `PLAY_START`
 · `SEARCH` 를 서버가 MySQL 사본으로도 남긴다. 화면이 같은 사실을 두 번 보내지

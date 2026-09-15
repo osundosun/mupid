@@ -30,6 +30,18 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class UserImageServiceImpl implements UserImageService, StorageImageServiceCallback {
 
+    /**
+     * 사진을 올린 적 없는 계정에 내려 주는 기본 이미지.
+     *
+     * <p>PNG 가 아니라 WebP 다 — 같은 그림이 75KB 에서 9KB 로 줄어 jar 와 응답이 함께
+     * 가벼워진다. 파일 이름이 응답의 `Content-Disposition` 에 그대로 나가므로
+     * 확장자를 바꾸면 `api/docs/Storage`, `api/docs/User` 의 예시도 같이 고쳐야 한다.
+     */
+    private static final String DEFAULT_PROFILE_IMAGE = "default-user-profile.webp";
+
+    /** {@link MediaType} 에 WebP 상수가 없어 문자열로 둔다. */
+    private static final String DEFAULT_PROFILE_IMAGE_MIME = "image/webp";
+
     public static final long USER_IMAGE_FILE_MAX_SIZE = 1024 * 1024 * 5; // 5 MB
 
     /** 사진을 올린 적이 없는 사람이 가리키는 키. 이 키에는 파일이 없다. */
@@ -117,11 +129,11 @@ public class UserImageServiceImpl implements UserImageService, StorageImageServi
     @Override
     @Transactional(readOnly = true)
     public StorageFileData handleNoImageData(FileCategory category, String key) {
-        ClassPathResource resource = new ClassPathResource("img/default-user-profile.png");
+        ClassPathResource resource = new ClassPathResource("img/" + DEFAULT_PROFILE_IMAGE);
         try (InputStream inputStream = resource.getInputStream()) {
             return new StorageFileData(
-                "default-user-profile.png",
-                MediaType.IMAGE_PNG,
+                DEFAULT_PROFILE_IMAGE,
+                MediaType.parseMediaType(DEFAULT_PROFILE_IMAGE_MIME),
                 StreamUtils.copyToByteArray(inputStream)
             );
         } catch (IOException e) {

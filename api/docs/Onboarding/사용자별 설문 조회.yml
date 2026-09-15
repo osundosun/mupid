@@ -1,0 +1,131 @@
+info:
+  name: 사용자별 설문 조회
+  type: http
+  seq: 3
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/user/{{USER_ID}}/onboarding"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 제출함
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "user_id": 42,
+              "submitted": true,
+              "submitted_at": "2026-09-14T10:32:26",
+              "moods": [
+                { "code_id": 1, "name": "잔잔한" },
+                { "code_id": 3, "name": "몽환적인" }
+              ],
+              "genres": [
+                { "code_id": 15, "name": "Jazz" }
+              ]
+            }
+          }
+  - name: 200 아직 제출 안 함
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "user_id": 42,
+              "submitted": false,
+              "submitted_at": null,
+              "moods": [],
+              "genres": []
+            }
+          }
+  - name: 404 없는 사용자
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_USER_NOT_FOUND",
+            "message": "요청한 유저를 찾을 수 없습니다.",
+            "error_details": null
+          }
+  - name: 403 권한 없음
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_FORBIDDEN",
+            "message": "접근 권한이 없습니다.",
+            "errorDetails": null
+          }
+
+docs: |-
+  # 사용자별 설문 조회
+
+  `GET /api/v1/user/{userId}/onboarding` · **`ROLE_SYSTEM` · `ROLE_ADMIN` 전용**
+
+  추천 서버(`ai_server`)가 **이력이 없는 신규 사용자의 첫 추천**을 만들 때
+  부릅니다. 온보딩 결과는 그 사용자의 콜드스타트 입력입니다.
+
+  **제출 내용을 읽는 유일한 길입니다.** 본인 조회는 없앴습니다 — 화면이 답을
+  되돌려 받을 일이 없어서입니다. 일반 사용자 토큰으로 부르면 403 입니다.
+
+  ## 미제출과 없는 사용자는 다릅니다
+
+  | 상황 | 응답 |
+  | --- | --- |
+  | 설문을 마친 사용자 | 200 · `submitted: true` |
+  | 설문을 안 한 사용자 | **200** · `submitted: false`, `submitted_at: null`, 빈 배열 |
+  | 없는(또는 탈퇴한) 사용자 번호 | 404 · `MUPID_USER_NOT_FOUND` |
+
+  배치에게 앞은 **건너뛸 일**, 뒤는 **데이터가 어긋난 일**이라 로그 취급이
+  달라야 해서 갈라 두었습니다.
+
+  ## 응답에 대하여
+
+  - `user_id` 가 들어 있습니다. 여러 사용자를 도는 배치가 응답만 보고 누구
+    것인지 알 수 있습니다.
+  - **`nickname` 이 없습니다.** 추천에 쓰이지 않는 값을 배치 페이로드에 실을
+    이유가 없습니다. 닉네임이 필요하면 `GET /api/v1/user` 를 씁니다.
+  - `moods` · `genres` 는 저장 형태인 조합이 드러나지 않고, 사용자가 고른
+    집합 그대로 돌아옵니다.
+  - 설문은 계정당 한 번이라 `submitted_at` 은 한 번 정해지면 바뀌지 않습니다.
+
+  ## 토큰
+
+  배치 계정은 `POST /api/v1/user/system` 으로 발급하고(관리자 권한 필요),
+  리프레시 토큰만 보관한 뒤 액세스 토큰은 `GET /api/v1/auth` 로 그때그때
+  받습니다.

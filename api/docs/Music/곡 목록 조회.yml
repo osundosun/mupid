@@ -53,6 +53,7 @@ examples:
                   "playable": true,
                   "play_count": 0,
                   "like_count": 0,
+                  "image_url": "/api/v1/storage/image/TRACK/...",
                   "artist": {
                     "artist_id": 1,
                     "name": "무피드 테스트 아티스트",
@@ -123,6 +124,7 @@ docs: |-
   | `duration_ms` | 재생 길이. **완료된 스트림이 없으면 `null`** |
   | `playable` | 재생 가능한(`DONE`) 스트림이 있는가 |
   | `artist.image_url` `album.image_url` | 바로 부를 수 있는 조회 경로. 파일이 없으면 `null` |
+  | `image_url` | 곡 커버 조회 경로. 곡에 표지가 없으면 `null` 이고, 그때는 앨범 커버를 쓴다 |
   | `genres` `moods` | 아직 데이터가 없어 대부분 빈 배열입니다 |
 
   ### 곡 길이는 스트림에서 온다

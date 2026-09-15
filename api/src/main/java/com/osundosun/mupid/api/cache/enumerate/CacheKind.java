@@ -15,6 +15,14 @@ public enum CacheKind {
     EventId("event:id"),
 
     /**
+     * 관리자 ClickHouse 콘솔의 열람권. 값은 연 사람의 이메일이다.
+     *
+     * JWT 로 만들지 않는다. iframe 은 로그아웃했다고 알려 주지 않으므로, 서버가
+     * 지워서 바로 끊을 수 있어야 한다.
+     */
+    ClickHouseConsole("admin:clickhouse:console"),
+
+    /**
      * 그날 이전에 들어본 곡 번호 (취향 리포트 D축).
      *
      * 90일치를 훑는 리포트에서 가장 무거운 질의인데 **그날 안에는 값이 변하지 않는다.**

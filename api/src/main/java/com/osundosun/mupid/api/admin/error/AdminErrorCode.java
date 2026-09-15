@@ -55,7 +55,13 @@ public enum AdminErrorCode implements ErrorCode {
     /**
      * 마지막 관리자 계정은 지우거나 권한을 낮출 수 없습니다.
      */
-    LAST_ADMIN_PROTECTED(HttpStatus.BAD_REQUEST, "마지막 관리자 계정은 지우거나 권한을 낮출 수 없습니다.");
+    LAST_ADMIN_PROTECTED(HttpStatus.BAD_REQUEST, "마지막 관리자 계정은 지우거나 권한을 낮출 수 없습니다."),
+
+    /**
+     * ClickHouse 콘솔 주소가 설정되어 있지 않습니다.
+     */
+    CONSOLE_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE,
+        "ClickHouse 콘솔 주소가 설정되어 있지 않습니다.");
 
     private final HttpStatus status;
     private final String message;

@@ -17,8 +17,8 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
     /**
      * 제목·아티스트명·앨범명으로 검색한다. 검색어가 비면 전체 목록이다.
      *
-     * 아티스트·앨범을 함께 가져온다. 지연 로딩에 맡기면 한 페이지(20곡)에
-     * 40번의 추가 질의가 나간다.
+     * 아티스트·앨범·곡 커버를 함께 가져온다. 지연 로딩에 맡기면 한 페이지(20곡)에
+     * 수십 번의 추가 질의가 나간다. 곡 커버는 없을 수 있어 LEFT 로 붙인다.
      */
     @Query("""
         SELECT m FROM Music m
@@ -26,6 +26,7 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         JOIN FETCH a.imageFile
         JOIN FETCH m.album al
         JOIN FETCH al.imageFile
+        LEFT JOIN FETCH m.imageFile
         WHERE m.isDeleted = false
           AND (:keyword IS NULL
                OR LOWER(m.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
@@ -40,6 +41,7 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         JOIN FETCH a.imageFile
         JOIN FETCH m.album al
         JOIN FETCH al.imageFile
+        LEFT JOIN FETCH m.imageFile
         WHERE m.musicId = :musicId AND m.isDeleted = false
         """)
     Optional<Music> findDetail(@Param("musicId") int musicId);
@@ -53,6 +55,7 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         JOIN FETCH a.imageFile
         JOIN FETCH m.album al
         JOIN FETCH al.imageFile
+        LEFT JOIN FETCH m.imageFile
         WHERE m.musicId IN :musicIds AND m.isDeleted = false
         """)
     List<Music> findDetailAllByIds(@Param("musicIds") List<Integer> musicIds);

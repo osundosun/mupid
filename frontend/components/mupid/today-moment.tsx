@@ -6,8 +6,8 @@ import { AlbumArt } from './primitives';
 
 // 취향은 제외 조건이 아니라 정렬 기준이다. 데모 곡이 적어도 목록이 비지 않게 채운다.
 export function pickTodayMoments(m: MupidModel): Track[] {
-  const moods = m.onboardingSubmittedAt ? [...new Set(m.moods)] : [];
-  const genres = m.onboardingSubmittedAt ? m.genres : [];
+  const moods = m.onboardingSubmitted ? [...new Set(m.moods)] : [];
+  const genres = m.onboardingSubmitted ? m.genres : [];
   return m.tracks
     .filter((track) => !m.ignored.includes(track.id))
     .map((track) => ({
@@ -20,7 +20,7 @@ export function pickTodayMoments(m: MupidModel): Track[] {
 }
 
 export function todayMomentNote(m: MupidModel) {
-  const tuned = m.onboardingSubmittedAt && (m.moods.length || m.genres.length);
+  const tuned = m.onboardingSubmitted && (m.moods.length || m.genres.length);
   return tuned
     ? '선택한 취향의 곡부터, 새롭게 발견할 음악까지 만나보세요.'
     : '오늘 들어볼 음악을 골랐어요.';
