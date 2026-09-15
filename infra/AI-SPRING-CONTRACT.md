@@ -46,6 +46,16 @@ Frontend 는 FastAPI·Pinecone·MySQL·ClickHouse 를 직접 부르지 않는다
 - `end_time_ms > start_time_ms` 를 양쪽에서 검증한다.
 - 과거 표기 `song`·`songId`·`songs` 는 쓰지 않는다. `music`·`musicId`·`music_id` 로 통일한다.
 
+> **확정 (2026-09-15)**
+> · 구간 PK 는 `music_section_id` 로 본다 (Q1). AI 계약 필드명은 그대로다 —
+>   실제 DB 컬럼이 `music_section_analysis_id` 로 남더라도 값만 맞으면 되고,
+>   내보낼 때 별칭으로 맞춘다. **DB·BE 팀 확정이 남아 있다.**
+> · 구간 외부 ID 컬럼은 `external_id VARCHAR(64) UNIQUE` 로 본다 (Q2).
+>   실측 최댓값이 36자인데 flow ID 는 제목 길이만큼 늘어나므로 50 으로는 모자란다.
+>   **DB·BE 팀 확정이 남아 있다.**
+> · 곡 문자열 ID 를 위한 `music.source_track_id` 는 **만들지 않는다** (Q3).
+>   숫자 `music_id` 하나를 공통 키로 쓰고, 문자열은 AI 안에만 둔다.
+
 ### 레거시 문자열 ID
 
 AI 내부에는 문자열 곡 ID(`T000148`, `JAMENDO_1048629`)와 구간 ID(`T000148#3`)가 남아 있다.
@@ -53,6 +63,8 @@ AI 내부에는 문자열 곡 ID(`T000148`, `JAMENDO_1048629`)와 구간 ID(`T00
 `source_section_uid` 다.
 
 숫자 ↔ 문자열 매핑은 AI 쪽 `data/proc/mupid/id_map.parquet` 한 곳에서만 한다.
+`source_track_id` 는 DB 컬럼이 아니라 **구간 UID 의 `#` 앞을 잘라 만든 값**이다(Q3).
+`music_id` 는 파생하지 않는다 — Spring 이 발급한 값을 그대로 받는다(Q4).
 
 | 컬럼 | 뜻 |
 |---|---|
@@ -97,7 +109,7 @@ moment:{music_section_id}:mert-v1
 1) MySQL 구간 메타 저장          → music_section_id 발급
 2) vector ID 생성                moment:{music_section_id}:mert-v1
 3) Pinecone upsert
-4) MySQL embedding_id 에 vector ID 저장
+4) MySQL external_id 에 vector ID 저장
 5) 양쪽 검증 (개수·역추적)
 ```
 
@@ -148,7 +160,7 @@ moment:{music_section_id}:mert-v1
 | `section_label` | ENUM 9종 | 아래 매핑 |
 | `index` | 0부터 | All-In-One 구간 순서 |
 | `start_time_ms` / `end_time_ms` | 정수 ms | `round(sec*1000)` |
-| `embedding_id` | `moment:{music_section_id}:mert-v1` | 2장 |
+| `external_id` | `moment:{music_section_id}:mert-v1` | 2장 |
 
 **구간 종류 매핑** — AI 는 소문자 8종을 만든다(실측). ERD ENUM 은 9종이다.
 
@@ -483,6 +495,21 @@ MUPID_COMBINER=                # 결합기 파일명
 Spring 에 `MUPID_RECOMMENDER_INTERNAL_TOKEN` 을 주지 않으면 **추천 호출이 전부 401** 이
 된다. 배포 설정만으로 조용히 죽는 형태라 한 쌍으로 다룬다.
 
+### AI 배치가 행동 데이터를 읽을 때 (Q8)
+
+AI 정기 배치가 **ClickHouse 를 읽기 전용으로 직접 조회한다.** Spring 이 밀어 주거나 Kafka 를
+구독하지 않는다 — 배치가 증분으로 되짚어야 하는데, 밀어 주는 쪽은 재처리 때 과거 구간을
+다시 받을 방법이 없다.
+
+```
+MUPID_CLICKHOUSE_URL=          # 읽기 전용 계정을 쓴다
+MUPID_CLICKHOUSE_USER=
+MUPID_CLICKHOUSE_PASSWORD=
+```
+
+**쓰기 권한을 주지 않는다.** AI 는 어떤 DB 에도 직접 쓰지 않는다
+([decision/0011](../api/knowledge/decision/0011-jpa-manages-schema.md)).
+
 #### 아직 연결되지 않은 것
 
 아래는 **계획이며 현재 코드에 참조가 없다**(2026-09-15 확인). 벡터 검색은 Pinecone 이
@@ -494,9 +521,12 @@ Spring 에 `MUPID_RECOMMENDER_INTERNAL_TOKEN` 을 주지 않으면 **추천 호�
 MUPID_PINECONE_API_KEY=        # 미연결
 MUPID_PINECONE_INDEX_HOST=     # 미연결
 MUPID_PINECONE_NAMESPACE=      # 미연결
-MUPID_MYSQL_URL=               # 미연결
+MUPID_MYSQL_URL=               # 미연결 — 읽을 계획도 없다 (Q8: 행동 데이터는 ClickHouse)
 MUPID_MYSQL_USER=              # 미연결
 MUPID_MYSQL_PASSWORD=          # 미연결
+MUPID_CLICKHOUSE_URL=          # 미연결 — 배치가 붙을 자리 (Q8)
+MUPID_CLICKHOUSE_USER=         # 미연결
+MUPID_CLICKHOUSE_PASSWORD=     # 미연결
 ```
 
 Pinecone 을 붙일 때는 **경계를 수정한 구간의 임베딩 재추출이 함께 들어가야 한다.**
@@ -555,9 +585,15 @@ MUPID_JAMENDO_CLIENT_ID=       # Jamendo 를 다시 수집할 때만 필요
 | 1 | BPM 을 All-In-One 값과 Essentia 값 중 무엇으로 적재할지 |
 | 2 | `genres` 에 Discogs 원형(`Pop---K-pop`)과 축약형(`K-pop`) 중 무엇을 넣을지 |
 | 3 | 어휘 3종을 선적재할지, 배치가 없으면 만들지 |
-| 4 | 산출물 515MB 를 Docker 이미지에 넣을지 외부에 둘지 (실측 후 결정) |
-| 5 | AI 가 MySQL 을 직접 읽을지, Spring 이 필요한 메타를 넘길지 |
-| 6 | FastAPI 인증 방식 — 아래 참조 |
+| 4 | ~~산출물을 Docker 이미지에 넣을지~~ → **Kubernetes 설계와 함께 결정** (Q7) |
+| 5 | ~~AI 가 MySQL 을 직접 읽을지~~ → **ClickHouse 를 읽기 전용 직접 조회** (Q8) |
+| 6 | ~~FastAPI 인증 방식~~ → **공유 비밀 헤더 구현 완료** (아래 참조) |
+| 7 | ClickHouse 조회·학습 실행을 API 로 둘지 배치 규격으로 둘지 |
+| 8 | 온보딩 데이터 전달 방식 |
+| 9 | 데일리 추천 호출·DB 저장 API |
+| 10 | 유사 구간·자동재생 API 연결 |
+| 11 | 실제 DB 의 ERD·JPA 컬럼 통일 (Q1·Q2 확정 대기) |
+| 12 | Kubernetes 배포·산출물 관리 방식 (Q6·Q7) |
 
 ### 인증
 
@@ -570,5 +606,15 @@ MUPID_JAMENDO_CLIENT_ID=       # Jamendo 를 다시 수집할 때만 필요
 | B | 공유 비밀 헤더 — `MUPID_AI_INTERNAL_TOKEN` 을 양쪽 환경변수로 |
 | C | mTLS |
 
-A 를 권한다. 추가 의존성이 없고 현재 배포 구조로 충분하다. 확정 전까지 외부 포트를 열지
-않는다.
+**A + B 로 정리됐다.** 네트워크 격리를 유지하되 공유 비밀 헤더도 구현했다 — 설정 실수 한
+번이면 격리는 그대로 뚫리기 때문이다.
+
+Spring 은 `MUPID_RECOMMENDER_INTERNAL_TOKEN`, AI 는 `MUPID_AI_INTERNAL_TOKEN` 에 같은 값을
+넣는다. **기본은 꺼져 있고, 값을 넣는 쪽이 켜는 쪽이다.** 한쪽만 켜면 추천이 통째로 401 이
+되므로 한 쌍으로 다룬다.
+
+### 실행 환경 (Q6)
+
+**Docker 로 간다는 결정은 취소됐다.** Kubernetes 설계가 끝날 때까지 보류한다. `Dockerfile`
+과 CI 잡은 지우지 않고 그대로 둔다 — 빌드가 되는지는 계속 확인해야 하고, K8s 로 가더라도
+이미지는 필요하다. 다만 `infra/deploy/compose.yml` 에 ai 서비스를 **넣지 않는다.**

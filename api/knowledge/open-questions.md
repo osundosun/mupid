@@ -115,8 +115,8 @@ JPA 와 DDL 을 건드리지 않으므로 대상만 적는다. `ddl-auto` 가 `n
 
 | # | 대상 엔티티 | 현재 JPA | ERD | 권장 |
 |---|---|---|---|---|
-| 1 | `MusicSectionAnalysis` | `musicSectionAnalysisId` → `music_section_analysis_id` | `music_section_id` | `@Column(name = "music_section_id")` |
-| 2 | `MusicSectionAnalysis` | `externalId` → `external_id` | `embedding_id VARCHAR(50)` | 필드명을 `embeddingId` 로 맞춘다 |
+| 1 | `MusicSectionAnalysis` | `musicSectionAnalysisId` → `music_section_analysis_id` | `music_section_id` | `@Column(name = "music_section_id")` — **Q1 로 `music_section_id` 확정 권고** (2026-09-15). AI 계약은 값만 맞으면 되므로 수정 없음 |
+| 2 | `MusicSectionAnalysis` | `externalId` → `external_id` | `embedding_id VARCHAR(50)` | **ERD 를 `external_id VARCHAR(64) UNIQUE` 로 바꾼다** (Q2, 2026-09-15). 이 컬럼을 읽고 쓰는 코드가 저장소 전체에 0건이라 의미를 바꿔도 깨질 것이 없다. 실측 최댓값 36자인데 flow ID 는 제목 길이만큼 늘어나 50 으로는 모자란다 |
 | 3 | `MusicSectionAnalysis` | `mood_id` 미매핑 | `mood_id INT **NOT NULL**` | 컬럼을 NULL 허용으로 바꾸거나 필드를 추가한다. **지금 그대로면 INSERT 가 실패한다** |
 | 4 | `MusicSectionAnalysisMood` | `@Table(name = "music_moods")` | `music_section_analysis_mood` | 테이블명을 ERD 에 맞춘다 |
 | 5 | `MusicAnalysis` | `@Id @Column(name = "music_id")` (공유 PK) | `music_analysis_id INT AUTO_INCREMENT` | PK 구조 자체가 다르다. 어느 쪽이 맞는지 먼저 정한다 |

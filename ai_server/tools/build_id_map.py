@@ -6,18 +6,25 @@
 
     mysql ... -e "
       SELECT s.external_id AS source_section_uid,
-             s.music_section_analysis_id AS music_section_id,
-             m.source_track_id, m.music_id
+             s.music_section_id AS music_section_id,
+             m.music_id
       FROM music_section_analysis s JOIN music m ON m.music_id = s.music_id
     " --batch > sections.tsv
+
+구간 PK 컬럼명이 아직 두 벌(`music_section_id` / `music_section_analysis_id`)이다. 별칭으로
+`music_section_id` 만 맞춰 주면 어느 쪽이든 읽는다.
 
     MUPID_AI_ARTIFACT_DIR=/경로 python -m ai_server.tools.build_id_map sections.tsv
 
 컬럼 이름만 맞으면 CSV·TSV 어느 쪽이든 읽는다. **구분자와 컬럼 순서는 보지 않는다** —
 내보내는 쪽이 도구마다 다르기 때문이다.
 
-곡 문자열 ID 컬럼이 아직 DB 에 없으면 `--derive-track-id` 로 구간 UID 의 `#` 앞을 잘라
-쓴다. 임시 수단이고, 되짚을 근거가 DB 에 남지 않으므로 권하지 않는다.
+**곡 문자열 ID 는 MySQL 에 두지 않는다**(Q3). 숫자 `music_id` 가 공통 키이고, 문자열은 AI
+내부에만 남는다. 그래서 `source_track_id` 컬럼이 표에 없으면 구간 UID 의 `#` 앞을 잘라
+쓰는 것이 **정식 경로**다. 표에 그 컬럼이 있으면 그쪽을 그대로 믿는다.
+
+`music_id` 는 파생하지 않는다. 숫자 ID 는 Spring 이 발급하고(Q4) AI 는 받기만 한다 — 지어내면
+실제 DB 와 어긋난 순간 엉뚱한 곡을 추천한다.
 
 쓰기 전에 **1:1 을 검증한다.** 위반이 있으면 파일을 만들지 않는다. 절반만 매핑된 표를
 그대로 두면 곡이 소리 없이 사라진다.
@@ -33,7 +40,9 @@ import pandas as pd
 from ai_server.app import ids, paths
 
 REQUIRED = ("source_section_uid", "music_section_id")
-UID_MAX = 50        # erd.sql 의 VARCHAR(50). 넘으면 MySQL 이 잘라 저장한다
+# Q2 로 `external_id VARCHAR(64)` 를 권고했다. 넘으면 MySQL 이 조용히 잘라 저장하고,
+# 잘린 값끼리는 1:1 검사도 통과할 수 있어 매핑이 어긋난 채 서비스가 올라온다.
+UID_MAX = 64
 
 
 def read_table(path: Path) -> pd.DataFrame:
@@ -41,7 +50,7 @@ def read_table(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, sep=None, engine="python", dtype=str)
 
 
-def build(df: pd.DataFrame, derive_track_id: bool = False) -> pd.DataFrame:
+def build(df: pd.DataFrame, derive_track_id: bool = True) -> pd.DataFrame:
     missing = [c for c in REQUIRED if c not in df.columns]
     if missing:
         raise SystemExit(f"컬럼이 없다: {missing} (있는 것: {list(df.columns)})")
@@ -49,12 +58,12 @@ def build(df: pd.DataFrame, derive_track_id: bool = False) -> pd.DataFrame:
     out = df.copy()
     if "source_track_id" not in out.columns:
         if not derive_track_id:
-            raise SystemExit(
-                "source_track_id 컬럼이 없다. DB 에 곡 문자열 ID 자리를 만들거나, "
-                "임시로 --derive-track-id 를 준다(되짚을 근거가 남지 않는다).")
+            raise SystemExit("source_track_id 컬럼이 없고 파생도 막혀 있다.")
+        # Q3: MySQL 에 곡 문자열 ID 자리를 두지 않기로 했다. 구간 UID 의 `#` 앞이 곧 곡 ID 다.
         out["source_track_id"] = out.source_section_uid.str.split("#").str[0]
     if "music_id" not in out.columns:
-        raise SystemExit("music_id 컬럼이 없다.")
+        # 숫자 ID 는 Spring 이 발급한다(Q4). 없으면 만들어내지 않고 멈춘다.
+        raise SystemExit("music_id 컬럼이 없다. Spring 이 발급한 값을 함께 내보내야 한다.")
 
     out = out[list(ids.COLS)]
     for c in ("music_id", "music_section_id"):
@@ -83,8 +92,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("table", help="MySQL 에서 내보낸 CSV/TSV")
     ap.add_argument("--out", default=None, help="기본: <ARTIFACT_DIR>/.../id_map.parquet")
-    ap.add_argument("--derive-track-id", action="store_true",
-                    help="곡 문자열 ID 를 구간 UID 에서 잘라 쓴다 (임시 수단)")
+    ap.add_argument("--no-derive-track-id", dest="derive_track_id", action="store_false",
+                    help="source_track_id 컬럼이 없을 때 파생하지 않고 멈춘다")
+    ap.add_argument("--derive-track-id", dest="derive_track_id", action="store_true",
+                    help="(기본값) 호환용으로 남겨 둔다")
+    ap.set_defaults(derive_track_id=True)
     ap.add_argument("--force", action="store_true", help="경고가 있어도 쓴다")
     a = ap.parse_args()
 

@@ -1138,13 +1138,22 @@ def test_build_id_map_warns_on_oversized_uid(tmp_path):
     assert problems and "길이" in problems[0]
 
 
-def test_build_id_map_requires_track_id_or_explicit_derive(tmp_path):
-    """곡 문자열 ID 를 말없이 지어내지 않는다."""
+def test_build_id_map_derives_track_id_but_never_music_id(tmp_path):
+    """Q3: 곡 문자열 ID 는 DB 에 없다 — 구간 UID 에서 파생하는 것이 정식이다.
+    반대로 숫자 music_id 는 Spring 이 발급하므로 지어내지 않고 멈춘다."""
     from ai_server.tools import build_id_map as b
 
     src = _tsv(tmp_path, ["A#0\t10"], header="source_section_uid\tmusic_section_id")
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit):        # music_id 가 없다
         b.build(b.read_table(src))
+
+    ok = _tsv(tmp_path, ["A#0\t10\t1"],
+              header="source_section_uid\tmusic_section_id\tmusic_id")
+    got = b.build(b.read_table(ok))
+    assert got.source_track_id.iloc[0] == "A"        # 파생이 기본 동작이다
+
+    with pytest.raises(SystemExit):        # 파생을 막으면 예전처럼 멈춘다
+        b.build(b.read_table(ok), derive_track_id=False)
 
 
 def test_build_id_map_reads_csv_too(tmp_path):

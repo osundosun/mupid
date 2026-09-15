@@ -84,9 +84,13 @@ dict 이고 `_canonicalize_query_tags()`(`recommender.py:1090`)가 어차피 카
 `work/build_id_map.py`(Jupyter)가 이미 있다 — MySQL CSV 2개를 받아 1:1 검증을 통과해야 저장한다.
 **저장소로 가져오고 정기 실행 경로를 만든다.**
 
-**막는 것**: MySQL 이 원본 문자열 ID 를 들고 있지 않다. ERD 의 `music` 에 `source_track_id` 가
-없고 `music_section_analysis` 에는 `embedding_id VARCHAR(50)` 뿐이다. 어느 컬럼에 남길지는
-**ERD 변경이라 팀 합의가 먼저다** (`api/AGENTS.md`).
+**2026-09-15 해소.** `music.source_track_id` 는 **만들지 않기로 했다**(Q3) — 숫자 `music_id`
+하나를 공통 키로 쓰고 곡 문자열 ID 는 구간 UID 의 `#` 앞에서 파생한다. `build_id_map` 이
+그렇게 동작하도록 바꿨고, 파생이 기본 경로다.
+
+구간 외부 ID 는 `external_id VARCHAR(64) UNIQUE` 로 간다(Q2). UID 길이 상한을 50 → 64 로
+올렸다. **DDL 반영은 DB·BE 팀 확정이 남아 있다** — 확정 전에 내보낸 표는 50자에서 잘릴 수
+있고, 잘린 값끼리는 1:1 검사도 통과하므로 `build_id_map` 의 길이 경고를 무시하지 않는다.
 
 ### 7. 배포 경로 자체가 없다
 
