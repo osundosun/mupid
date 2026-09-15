@@ -22,6 +22,17 @@
     MUPID_CLICKHOUSE_URL       jdbc:clickhouse://host:port/db  또는 http://host:port
     MUPID_CLICKHOUSE_USER
     MUPID_CLICKHOUSE_PASSWORD
+
+언제 돌리나
+    **재생할 때마다 돌리는 것이 아니다.** 구간 표는 곡이 늘거나 재분석으로 경계가
+    바뀔 때만 변한다. 재생은 아무것도 바꾸지 않는다.
+
+      최초       `--full`          10,007 구간 일괄 (id_map 이 갖춰진 뒤 한 번)
+      평소       (기본)            바뀐 것만. 신규 곡·재분석 뒤에 돌린다
+      하루 1회   `--audit`         넣지 않고 차이만 센다. 차이가 있으면 종료 코드 3
+
+    Kubernetes 로 가면 전처리 완료 이벤트로 Job 을 띄우거나 짧은 주기 CronJob 으로
+    같은 명령을 돌리면 된다. 증분이라 자주 돌려도 비용이 거의 없다.
 """
 from __future__ import annotations
 
@@ -121,6 +132,39 @@ def build_rows(mom: pd.DataFrame, im, version: str) -> tuple[list[dict], dict]:
     return rows, stat
 
 
+def remote_state() -> dict:
+    """ClickHouse 에 이미 있는 구간. 키는 section_uid, 값은 (시작·끝·라벨)."""
+    sql = ("SELECT section_uid, start_ms, end_ms, fn FROM track_sections "
+           f"WHERE analysis_version = '{DICT_VERSION}' FORMAT JSONEachRow")
+    out = {}
+    for ln in query(sql).splitlines():
+        if not ln.strip():
+            continue
+        r = json.loads(ln)
+        out[str(r["section_uid"])] = (int(r["start_ms"]), int(r["end_ms"]), str(r["fn"]))
+    return out
+
+
+def diff(rows: list[dict], remote: dict) -> tuple[list[dict], dict]:
+    """넣어야 할 것만 고른다.
+
+    `ReplicatedReplacingMergeTree` 라 전량을 다시 넣어도 결과는 같지만, 구간 1만 개를
+    매번 밀면 파트가 계속 쌓이고 머지가 따라오지 못한다. 바뀐 것만 넣는다.
+    """
+    add, changed = [], []
+    for r in rows:
+        cur = remote.get(r["section_uid"])
+        if cur is None:
+            add.append(r)
+        elif cur != (r["start_ms"], r["end_ms"], r["fn"]):
+            changed.append(r)
+    local_uids = {r["section_uid"] for r in rows}
+    orphan = sorted(set(remote) - local_uids)
+    return add + changed, {"new": len(add), "changed": len(changed),
+                           "unchanged": len(rows) - len(add) - len(changed),
+                           "orphan": len(orphan), "orphan_sample": orphan[:5]}
+
+
 def insert(rows: list[dict]) -> None:
     """`ReplicatedReplacingMergeTree(created_at)` 라 같은 (버전·곡·순번) 은 덮어쓴다."""
     sql = "INSERT INTO track_sections FORMAT JSONEachRow"
@@ -147,6 +191,12 @@ def main() -> int:
                          "다른 값은 딕셔너리가 보지 않는다")
     ap.add_argument("--dry-run", action="store_true", help="만들어만 보고 넣지 않는다")
     ap.add_argument("--no-reload", action="store_true", help="딕셔너리 갱신을 건너뛴다")
+    ap.add_argument("--full", action="store_true",
+                    help="바뀐 것만이 아니라 전량을 다시 넣는다 (최초 적재·복구용)")
+    ap.add_argument("--audit", action="store_true",
+                    help="넣지 않고 차이만 본다. 하루 한 번 도는 대사용")
+    ap.add_argument("--json", dest="json_out", action="store_true",
+                    help="대사 결과를 JSON 한 줄로 출력")
     a = ap.parse_args()
 
     src = Path(a.moments) if a.moments else paths.moments_path()
@@ -174,6 +224,27 @@ def main() -> int:
     if a.version != DICT_VERSION:
         log(f"경고: analysis_version 이 '{a.version}' 이라 "
             f"v_track_sections_current('{DICT_VERSION}') 가 보지 않는다.")
+
+    # ---- 대사: 넣지 않고 차이만 본다 (하루 한 번) ----
+    if a.audit:
+        _, d = diff(rows, remote_state())
+        log(f"대사: 신규 {d['new']} · 변경 {d['changed']} · 동일 {d['unchanged']} "
+            f"· 고아 {d['orphan']}")
+        if d["orphan_sample"]:
+            log(f"  ClickHouse 에만 있는 구간 예: {d['orphan_sample']}")
+            log("  색인에서 사라진 구간이다. 재분석으로 경계가 바뀌었는지 본다.")
+        if a.json_out:
+            print(json.dumps(d, ensure_ascii=False))
+        # 차이가 있으면 0 이 아닌 코드로 끝낸다 — cron 이 알아차려야 한다
+        return 0 if (d["new"] == 0 and d["changed"] == 0) else 3
+
+    # ---- 증분: 바뀐 것만 넣는다 ----
+    if not a.full:
+        rows, d = diff(rows, remote_state())
+        log(f"증분: 신규 {d['new']} · 변경 {d['changed']} · 동일 {d['unchanged']}")
+        if not rows:
+            log("바뀐 구간이 없다. 넣지 않는다.")
+            return 0
 
     if a.dry_run:
         print(json.dumps(rows[:3], ensure_ascii=False, indent=2))

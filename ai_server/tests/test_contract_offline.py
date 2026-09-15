@@ -1354,3 +1354,87 @@ def test_push_sections_accepts_the_jdbc_url_shape(monkeypatch):
     monkeypatch.delenv("MUPID_CLICKHOUSE_URL")
     with pytest.raises(SystemExit):
         ps._http_base()
+
+
+# ------------------------------------------------------------------ 증분 적재
+def test_push_sections_incremental_only_sends_changes():
+    """구간 1만 개를 매번 밀면 파트가 쌓이고 머지가 따라오지 못한다."""
+    from ai_server.tools import push_sections as ps
+
+    rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1")
+    same = {r["section_uid"]: (r["start_ms"], r["end_ms"], r["fn"]) for r in rows}
+    todo, d = ps.diff(rows, same)
+    assert todo == [] and d["new"] == 0 and d["changed"] == 0
+
+    moved = dict(same)
+    k = rows[0]["section_uid"]
+    moved[k] = (moved[k][0], moved[k][1] + 5000, moved[k][2])
+    todo, d = ps.diff(rows, moved)
+    assert d["changed"] == 1 and [r["section_uid"] for r in todo] == [k]
+
+    todo, d = ps.diff(rows, {})
+    assert d["new"] == len(rows) and len(todo) == len(rows)
+
+
+def test_push_sections_audit_spots_orphans():
+    """색인에서 사라진 구간이 ClickHouse 에 남아 있으면 옛 경계로 판정된다."""
+    from ai_server.tools import push_sections as ps
+
+    rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1")
+    remote = {r["section_uid"]: (r["start_ms"], r["end_ms"], r["fn"]) for r in rows}
+    remote["T009999#0"] = (0, 1000, "INTRO")
+    _, d = ps.diff(rows, remote)
+    assert d["orphan"] == 1 and "T009999#0" in d["orphan_sample"]
+
+
+# ------------------------------------------------------------------ Q8 읽기
+def _signal(ts="2026-09-15 14:35:00.000", sig="SECTION_MARK"):
+    return {"user_id": 42, "section_uid": "T001001#3", "track_id": 1001,
+            "signal": sig, "entry_path": "AUTO", "ts": ts,
+            "play_id": "0-0", "weight": 1.5}
+
+
+class _IdMap:
+    def source_track_id(self, n):
+        return {1001: "T001001"}[n]
+
+
+def test_pull_signals_event_id_comes_from_content():
+    """두 번 받아도 한 번만 쌓여야 한다. 워터마크만으로는 경계의 같은 밀리초를 못 막는다."""
+    from ai_server.tools import pull_signals as pl
+
+    assert pl.event_id(_signal()) == pl.event_id(_signal())
+    assert pl.event_id(_signal()) != pl.event_id(_signal(sig="LIKE"))
+    assert pl.event_id(_signal()) != pl.event_id(_signal(ts="2026-09-15 14:35:00.001"))
+
+
+def test_pull_signals_keeps_the_ui_name_for_the_labeler():
+    """등급 판정은 라벨러 한 곳에서만 한다. 여기서 이름을 바꾸면 변환표가 두 벌이 된다."""
+    from ai_server.app import recommender
+    from ai_server.tools import pull_signals as pl
+
+    ev = pl.to_event(_signal(), {"T001001#3": (90.0, 120.0)}, _IdMap())
+    assert ev["event_type"] == "SECTION_MARK"
+    assert ev["event_type"] in recommender.UI_TO_LABELER
+    assert ev["user_ref"] == "internal:42"
+    assert (ev["start_sec"], ev["end_sec"]) == (90.0, 120.0)
+
+
+def test_pull_signals_drops_sections_the_index_does_not_know():
+    """구간 표와 AI 색인이 어긋나면 경계 없이 이벤트를 만들 수 없다."""
+    from ai_server.tools import pull_signals as pl
+
+    assert pl.to_event(_signal(), {}, _IdMap()) is None
+    assert pl.to_event(_signal(sig="PLAY_PROGRESS"), {"T001001#3": (1.0, 2.0)}, _IdMap()) is None
+
+
+def test_pull_signals_watermark_survives_a_missing_file(tmp_path, monkeypatch):
+    """처음 돌 때와 파일이 깨졌을 때 모두 처음부터 읽어야 한다 — 건너뛰면 조용히 샌다."""
+    from ai_server.tools import pull_signals as pl
+
+    monkeypatch.setattr(pl, "watermark_path", lambda: tmp_path / "wm.json")
+    assert pl.load_watermark() == pl.EPOCH
+    (tmp_path / "wm.json").write_text("깨진 내용", encoding="utf-8")
+    assert pl.load_watermark() == pl.EPOCH
+    pl.save_watermark("2026-09-15 00:00:00.000", 3)
+    assert pl.load_watermark() == "2026-09-15 00:00:00.000"

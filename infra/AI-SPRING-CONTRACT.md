@@ -592,6 +592,36 @@ MUPID_CLICKHOUSE_USER=
 MUPID_CLICKHOUSE_PASSWORD=
 ```
 
+도구는 `ai_server/tools/pull_signals.py` 다.
+
+```
+user_section_signals ──(워터마크 증분)──> events_service.jsonl ──> run_labeler
+```
+
+**등급 판정을 여기서 하지 않는다.** ClickHouse 가 구간을 판정하고 가중치까지 매겼지만,
+등급은 라벨러 한 곳에서만 만든다 — 같은 구간을 들은 전체 사용자 평균·위치 편향·표본
+보정이 함께 들어가야 하기 때문이다. 이 도구는 `signal` 을 **UI 이름 그대로** 적재하고,
+라벨러 이름으로 바꾸는 일은 이미 있는 `UI_TO_LABELER` 에 맡긴다. 두 벌로 만들면 어긋난다.
+
+두 번 돌려도 같다. 워터마크는 **성공했을 때만** 전진하고, 이벤트 ID 를 내용(사용자·구간·
+신호·시각)에서 만들어 겹치면 건너뛴다. 경계의 같은 밀리초는 워터마크만으로 못 막으므로
+ID 쪽이 최종 방어선이다.
+
+### 운영 주기
+
+| 작업 | 언제 | 명령 |
+|---|---|---|
+| 구간 표 최초 적재 | `id_map` 이 갖춰진 뒤 한 번 | `push_sections --full` |
+| 구간 표 증분 | **신규 곡·재분석 뒤** | `push_sections` |
+| 구간 표 대사 | 하루 1회 | `push_sections --audit` (차이 있으면 종료 코드 3) |
+| 신호 수집 | 짧은 주기 | `pull_signals` |
+| 라벨·선호 갱신 | 신호 수집 뒤 | `run_labeler` |
+
+**재생할 때마다 `push_sections` 를 돌리지 않는다.** 구간 표는 곡이 늘거나 경계가 바뀔 때만
+변하고, 재생은 아무것도 바꾸지 않는다. Kubernetes 로 가면 전처리 완료 이벤트로 Job 을
+띄우거나 짧은 주기 CronJob 으로 같은 명령을 돌리면 된다 — 증분이라 자주 돌려도 비용이
+거의 없다.
+
 **쓰기 권한을 주지 않는다.** AI 는 어떤 DB 에도 직접 쓰지 않는다
 ([decision/0011](../api/knowledge/decision/0011-jpa-manages-schema.md)).
 
@@ -673,7 +703,7 @@ MUPID_JAMENDO_CLIENT_ID=       # Jamendo 를 다시 수집할 때만 필요
 | 4 | ~~산출물을 Docker 이미지에 넣을지~~ → **Kubernetes 설계와 함께 결정** (Q7) |
 | 5 | ~~AI 가 MySQL 을 직접 읽을지~~ → **ClickHouse 를 읽기 전용 직접 조회** (Q8) |
 | 6 | ~~FastAPI 인증 방식~~ → **공유 비밀 헤더 구현 완료** (아래 참조) |
-| 7 | ClickHouse 조회·학습 실행을 API 로 둘지 배치 규격으로 둘지 |
+| 7 | ~~ClickHouse 조회·학습 실행~~ → **배치 CLI 로 구현 완료**(`pull_signals`). HTTP 로도 열지는 여전히 미정 |
 | 8 | ~~온보딩 데이터 전달 방식~~ → **`GET /api/v1/user/{userId}/onboarding` 로 확정.** 어휘 대조까지 끝났다. 남은 것은 벌크 조회 여부 |
 | 9 | 데일리 추천 호출·DB 저장 API |
 | 10 | 유사 구간·자동재생 API 연결 |
