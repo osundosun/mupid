@@ -9,6 +9,7 @@ resources:
   - storage.yaml
   - clickhouse.yaml
   - kafka.yaml
+  - dbstudio.yaml
   - api.yaml
   - edge.yaml
 # ai.yaml is deliberately not listed. ai_server is still being written, so it is

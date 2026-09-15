@@ -16,6 +16,7 @@
 |---|---|---|
 | 들어감 | 프론트엔드 · 백엔드(Spring) · MySQL · Redis · SeaweedFS | 1차 |
 | 들어감 | ClickHouse(2노드 분산) · Kafka · Keeper | analytics |
+| 들어감 | DB Studio (마스터 1 + 리플리카 1) | 운영 도구. 외부 노출 없음 |
 | **빠짐** | `ai_server` | 개발 중. `base/ai.yaml` 은 있고 kustomization 에서만 뺐다 |
 
 `ai_server` 는 이미지가 생기면 `base/kustomization.yaml` 에 한 줄을 되돌리면 된다.
@@ -72,11 +73,12 @@ OOMKill 이다. 근거는 [BASELINE.md](BASELINE.md).
 
 | | NODE_A | NODE_B |
 |---|---|---|
-| `requests.cpu` 합계 | **1,850m** / 2,000m 예산 | **600m** / 2,000m |
-| `limits.memory` 합계 | 약 10.8Gi | 약 6.5Gi |
+| `requests.cpu` 합계 | **1,950m** / 2,000m 예산 | **750m** / 2,000m |
+| `limits.memory` 합계 | 약 11.3Gi | 약 7.3Gi |
 | available 메모리 | 13,849MB | 15,004MB |
 
-`ai_server` 가 돌아오면 NODE_B 는 2,100m / 14.5Gi 가 되어 현재 예산을 넘는다.
+NODE_A 는 예산까지 50m 밖에 남지 않았고, `ai_server` 가 돌아오면 NODE_B 도
+2,250m 로 예산을 넘는다.
 그 시점에는 Runner 가 CONTROLLER 로 옮겨간 뒤이므로 `group_vars/all.yml` 의
 `system_reserved` 를 낮춰 예산을 다시 잡는다. 지금 값은 Compose 스택과 Runner 가
 호스트에 있다는 전제로 잡혀 있다.

@@ -111,30 +111,59 @@ class ClickHouseCopyTest(unittest.TestCase):
 class SecretKeyTest(unittest.TestCase):
     """Every referenced Secret key must be one the administrator knows to set."""
 
-    def test_referenced_keys_exist_in_the_env_example(self):
+    # mupid-secrets is built from the application .env, so its keys have to be
+    # ones that file declares. Other Secrets come from somewhere else and are
+    # checked by the second test instead.
+    FROM_ENV_FILE = "mupid-secrets"
+
+    def test_keys_of_the_env_backed_secret_exist_in_the_env_example(self):
         example = (ROOT / "infra" / "deploy" / ".env.example").read_text(encoding="utf-8")
         declared = {
             line.split("=", 1)[0].strip()
             for line in example.splitlines()
             if "=" in line and not line.lstrip().startswith("#")
         }
-        referenced = set()
-        for path in (K8S / "base").glob("*.yaml"):
-            for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
-                for ref in self._secret_refs(doc):
-                    referenced.add(ref)
+        referenced = {
+            key for name, key in self._secret_refs_in_base() if name == self.FROM_ENV_FILE
+        }
         missing = sorted(referenced - declared)
         self.assertEqual(
             [], missing,
             f"manifests reference Secret keys absent from .env.example: {missing}",
         )
 
+    def test_every_other_secret_has_a_documented_way_to_create_it(self):
+        """A Secret nobody is told to create leaves the pod stuck in
+        CreateContainerConfigError with no hint of what is missing."""
+        runbook = (K8S / "OPERATIONS-K8S.md").read_text(encoding="utf-8")
+        others = {
+            name for name, _ in self._secret_refs_in_base() if name != self.FROM_ENV_FILE
+        }
+        for name in sorted(others):
+            with self.subTest(secret=name):
+                # Not assertIn: its failure message prints the whole runbook.
+                self.assertTrue(
+                    name in runbook,
+                    f"Secret {name} is referenced by a manifest but OPERATIONS-K8S.md "
+                    f"never says how to create it",
+                )
+
+    def _secret_refs_in_base(self):
+        for path in (K8S / "base").glob("*.yaml"):
+            for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
+                yield from self._secret_refs(doc)
+
     @staticmethod
     def _secret_refs(node):
+        """Yields (secret name, key) for every secretKeyRef, and (name, None)
+        for volumes and envFrom, which name a Secret without naming a key."""
         if isinstance(node, dict):
             ref = node.get("secretKeyRef")
             if isinstance(ref, dict) and "key" in ref:
-                yield ref["key"]
+                yield ref.get("name"), ref["key"]
+            secret = node.get("secret")
+            if isinstance(secret, dict) and "secretName" in secret:
+                yield secret["secretName"], None
             for value in node.values():
                 yield from SecretKeyTest._secret_refs(value)
         elif isinstance(node, list):
@@ -197,6 +226,87 @@ class BuildTest(unittest.TestCase):
                             continue
                         with self.subTest(name=doc["metadata"]["name"], probe=kind):
                             self.assertIn("timeoutSeconds", probe)
+
+    def test_the_dbstudio_cluster_agrees_on_the_three_things_it_must(self):
+        """Its docs name three values that have to match across nodes, and all
+        three fail quietly: a different cluster secret gives the replica a 401,
+        a different master key replicates fine but leaves that node unable to
+        decrypt DB credentials, and a different app version replicates only
+        partly with no error anywhere."""
+        docs = build("cutover")
+        nodes = [
+            d for d in docs
+            if d.get("kind") == "StatefulSet"
+            and d["metadata"]["name"].startswith("dbstudio")
+        ]
+        self.assertEqual(2, len(nodes), "expected one master and one replica")
+
+        images = {containers(d)[0]["image"] for d in nodes}
+        self.assertEqual(1, len(images), f"version skew between nodes: {images}")
+
+        for key in ("DBSTUDIO_CLUSTER_SECRET", "DBSTUDIO_MASTER_KEY"):
+            sources = set()
+            for node in nodes:
+                entry = next(
+                    e for e in containers(node)[0]["env"] if e["name"] == key
+                )
+                ref = entry.get("valueFrom", {}).get("secretKeyRef")
+                with self.subTest(node=node["metadata"]["name"], key=key):
+                    # A literal value would be a second place to keep in step.
+                    self.assertIsNotNone(ref, "must come from a Secret")
+                    sources.add((ref["name"], ref["key"]))
+            self.assertEqual(1, len(sources), f"{key} read from {sources}")
+
+        roles = {
+            next(e["value"] for e in containers(d)[0]["env"]
+                 if e["name"] == "DBSTUDIO_CLUSTER_ROLE")
+            for d in nodes
+        }
+        # Two masters means two truths, and they cannot be merged afterwards.
+        self.assertEqual({"master", "replica"}, roles)
+
+    def test_dbstudio_is_reachable_only_from_inside_the_cluster(self):
+        """It holds every database credential the team has registered, so it is
+        reached through an internal proxy, never a port on the node. The edge is
+        the one workload allowed to bind the host."""
+        docs = build("cutover")
+        for doc in docs:
+            name = doc["metadata"]["name"]
+            if not name.startswith("dbstudio"):
+                continue
+            with self.subTest(name=name):
+                if doc["kind"] == "Service":
+                    self.assertIn(doc["spec"].get("type", "ClusterIP"),
+                                  ("ClusterIP", "None"))
+                    for port in doc["spec"]["ports"]:
+                        self.assertIsNone(port.get("nodePort"))
+                if doc["kind"] == "StatefulSet":
+                    for container in containers(doc):
+                        for port in container.get("ports", []):
+                            self.assertIsNone(port.get("hostPort"))
+
+        # nginx.conf is the audited production file and must not learn about it.
+        conf = (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
+        self.assertNotIn("dbstudio", conf)
+
+        # And nothing else grows a host port either: the edge owns 80/443.
+        binders = {
+            doc["metadata"]["name"] for doc in docs
+            if doc.get("kind") in ("Deployment", "StatefulSet")
+            and any(p.get("hostPort") for c in containers(doc) for p in c.get("ports", []))
+        }
+        self.assertEqual({"edge"}, binders)
+
+    def test_the_dbstudio_cluster_secret_never_becomes_an_argument(self):
+        """The docs are explicit that it is an environment variable only: an
+        argument is visible in the process list, and that one value is enough
+        to pull every row in the cluster."""
+        text = (K8S / "base" / "dbstudio.yaml").read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            with self.subTest(line=line.strip()[:60]):
+                self.assertNotIn("-cluster-secret", line)
 
     def test_every_overlay_builds(self):
         for overlay in OVERLAYS:

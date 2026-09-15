@@ -24,7 +24,7 @@
 |---|---|---|
 | 역할 라벨 | `mupid.io/role=edge` | `mupid.io/role=ai` |
 | k3s | server | agent |
-| 단독 워크로드 | edge · api · mysql · redis<br>storage(master·filer+s3) · clickhouse-keeper | kafka<br>(`ai_server` 자리) |
+| 단독 워크로드 | edge · api · mysql · redis<br>storage(master·filer+s3) · clickhouse-keeper<br>dbstudio-replica | kafka · dbstudio(마스터)<br>(`ai_server` 자리) |
 | 양쪽에 하나씩 | clickhouse(샤드 01) · storage-volume | clickhouse(샤드 02) · storage-volume |
 | 호스트에 남는 것 | certbot, 백업 타이머 | — (Runner 는 CONTROLLER 로 이전) |
 
@@ -152,20 +152,24 @@ docker build -f infra_k8s/image/ai.Dockerfile -t mupid-ai:<sha> .
 
 ## 현재 상태
 
-Phase 0(실측)과 Phase 1(매니페스트·이미지·수신기·CI)까지 로컬에서 끝났다.
-**서버에는 아무것도 적용하지 않았다.** CI 의 k8s job 은 전부 `when: manual` 이라
-푸시로 동작하지 않고, `infra/ci/*` 가 계속 운영 배포를 담당한다.
+**전환 완료. 운영 중이다** (2026-09-15).
 
-다음은 서버 작업이다. 그 전에 해야 하는 것은 **보안그룹 3포트**(콘솔 작업) 하나뿐이다.
+| | |
+|---|---|
+| 서비스 | https://j15a204.p.ssafy.io HTTP 200, `/api/actuator/health` UP |
+| 인증서 | `certbot renew --dry-run` 통과 (웹루트 `/srv/mupid-k8s/acme`) |
+| 워크로드 | 14개 Pod 전부 Running |
+| MySQL | 테이블/뷰 30 · FK 48 · `codes` 24행 |
+| ClickHouse | 두 샤드에 각 17테이블, 복제 지연 0 |
+| Kafka | `mupid.listen.events` 6파티션, 컨슈머 3 배정 |
+| SeaweedFS | 버킷 `mupid`, MUBTI 이미지 16장 적재 |
+| DB Studio | 마스터(NODE_B) + 리플리카(NODE_A), 스냅샷 동기화 완료 |
+| 기존 Compose | 철거됨. `/srv/mupid` 없음 |
+| GitLab Runner | CONTROLLER 로 이전 (`mupid-ci-pi`) |
 
-```
-teardown.yml → cluster.yml → apply -k overlays/cutover → 스키마·시드 → 배포
-```
+남은 것은 **CI 전환**뿐이다(Phase 5). `k8s-release.yml` 의 job 이 아직 전부
+`when: manual` 이고, `mupid-deploy-k8s` 의 `authorized_keys` 에 CI 키가 없다.
+배포는 지금 수동으로 같은 수신기 경로를 거친다.
 
-`teardown.yml` 이 지우기 전에 `/srv/mupid/.env` 와 `config/` 를
-`/srv/mupid-k8s/salvage/` 로 옮겨 둔다. 데이터는 버리기로 했지만 `MUPID_GMAIL_*` 는
-Google OAuth 에서 받은 값이라 서버에서 다시 만들 수 없다.
-
-BASELINE #7(최신 `mupid-api` 이미지가 기동하지 못한 정황)은 더 이상 차단 사항이
-아니다 — 되돌아갈 배포가 없어졌기 때문이다. 다만 **원인이 코드에 있으면 새 이미지도
-같은 이유로 기동하지 못한다.** 첫 배포가 실패하면 여기부터 본다.
+그리고 `system_reserved` 재조정이 남아 있다. 지금 값은 Compose 와 Runner 가
+호스트에 있다는 전제인데 둘 다 떠났고, NODE_A 는 예산까지 50m 밖에 남지 않았다.
