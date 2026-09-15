@@ -12,6 +12,7 @@ import com.osundosun.mupid.api.history.entity.PlayHistory;
 import com.osundosun.mupid.api.history.entity.SearchHistory;
 import com.osundosun.mupid.api.history.repository.PlayHistoryRepository;
 import com.osundosun.mupid.api.history.repository.SearchHistoryRepository;
+import com.osundosun.mupid.api.history.response.RecentSearchResponse;
 import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
@@ -37,6 +38,12 @@ public class HistoryServiceImpl implements HistoryService {
 
     /** `search_histories.keyword` 가 varchar(200) 이다. */
     private static final int KEYWORD_MAX = 200;
+
+    /** 검색창 아래 목록의 기본 길이. 검색엔진들이 대개 이 언저리를 보여 준다. */
+    public static final int DEFAULT_RECENT_SEARCH_SIZE = 10;
+
+    /** 목록이 화면을 덮을 이유가 없다. */
+    public static final int MAX_RECENT_SEARCH_SIZE = 50;
 
     /** `play_histories.recommendation_reason` 이 varchar(100) 이다. */
     private static final int REASON_MAX = 100;
@@ -92,6 +99,15 @@ public class HistoryServiceImpl implements HistoryService {
             ids.getSize(),
             ids.getTotalElements(),
             ids.getTotalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public RecentSearchResponse getRecentSearches(User user, int size) {
+        int safeSize = Math.min(Math.max(1, size), MAX_RECENT_SEARCH_SIZE);
+
+        return new RecentSearchResponse(
+            searchRepository.findRecentKeywords(user.getUserId(), PageRequest.of(0, safeSize)));
     }
 
     /** 컬럼 길이를 넘기면 INSERT 가 터진다. 기록은 잘려도 남는 쪽이 낫다. */
