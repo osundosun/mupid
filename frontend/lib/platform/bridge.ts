@@ -11,6 +11,11 @@ type InvokeFn = <T>(
   args?: Record<string, unknown>,
 ) => Promise<T>;
 
+type ListenFn = <T>(
+  event: string,
+  handler: (message: { payload: T }) => void,
+) => Promise<() => void>;
+
 /**
  * 지금 앱 셸 안에서 도는가.
  *
@@ -35,4 +40,23 @@ export async function invoke<T>(
 ): Promise<T> {
   const fn = await load();
   return fn<T>(command, args);
+}
+
+let listening: Promise<ListenFn> | null = null;
+
+/**
+ * Rust 가 웹뷰로 보내는 이벤트를 받는다. 돌려주는 함수를 부르면 끊는다.
+ *
+ * `invoke` 와 달리 **Rust 가 먼저 말을 거는** 통로다. 알림·잠금화면의 버튼처럼
+ * 화면 밖에서 벌어진 일이 이리로 들어온다.
+ */
+export async function listen<T>(
+  event: string,
+  handler: (payload: T) => void,
+): Promise<() => void> {
+  listening ??= import('@tauri-apps/api/event').then(
+    (module) => module.listen as ListenFn,
+  );
+  const fn = await listening;
+  return fn<T>(event, (message) => handler(message.payload));
 }

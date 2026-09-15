@@ -18,6 +18,13 @@ export {
   type CacheOptions,
 } from './cache';
 export { toImageSource } from './image';
+export {
+  createMediaSession,
+  onMediaControl,
+  type MediaControl,
+  type MediaSession,
+  type NowPlaying,
+} from './media-session';
 export { watchSafeArea, type SafeArea } from './safe-area';
 
 /**

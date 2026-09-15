@@ -20,6 +20,16 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
+# 상단 알림·잠금화면 플레이어.
+#
+# `MediaSessionPlugin` 은 Rust 가 이름으로 찾아 세운다(`app/src/media.rs` 의
+# `register_android_plugin`). 코드 어디에서도 부르지 않으므로 R8 이 보기에는
+# 죽은 코드다. tauri-android 의 규칙이 `@TauriPlugin` 을 이미 남기지만,
+# 이름으로 찾는다는 사실을 여기에도 적어 둔다 — 규칙이 사라지면 릴리스
+# 빌드에서만 알림이 뜨지 않고, 그 원인을 찾기까지 오래 걸린다.
+-keep class com.osundosun.mupid.MediaSessionPlugin { *; }
+-keep class com.osundosun.mupid.NowPlayingArgs { *; }
+
 # 시스템 바 인셋을 건네는 통로.
 #
 # `SafeArea` 는 `addJavascriptInterface` 로 웹뷰에 심긴다. 자바스크립트가

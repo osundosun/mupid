@@ -1,4 +1,12 @@
 <resources>
     <string name="app_name">"뮤피드"</string>
     <string name="main_activity_title">"뮤피드"</string>
+
+    <!-- 상단 알림·잠금화면 플레이어 -->
+    <string name="playback_channel_name">"재생 중"</string>
+    <string name="playback_channel_description">"듣고 있는 곡을 알림과 잠금화면에 보여 줍니다."</string>
+    <string name="playback_play">"재생"</string>
+    <string name="playback_pause">"일시정지"</string>
+    <string name="playback_previous">"이전 곡"</string>
+    <string name="playback_next">"다음 곡"</string>
 </resources>

@@ -9,6 +9,7 @@
 | 저장소 | `localStorage` | **SQLite** — `src/db.rs`, `src/store/` |
 | 앨범 아트 | 원격 주소 그대로 | Rust 가 받아 `mupidimg` 스킴으로 |
 | 화면 | RSC 서버 (Cloudflare Worker) | `output: 'export'` 정적 번들 |
+| 재생 표시 | 화면 안에만 | **상단 알림·잠금화면** — `src/media.rs` |
 | 시스템 바 여백 | `env(safe-area-inset-*)` | **안드로이드가 잰 인셋** — `gen/android/.../SafeArea.kt` |
 
 ## 왜 HTTP 를 Rust 로 옮겼나
@@ -46,6 +47,7 @@ cd app && cargo tauri android init
 ```bash
 cd app && cargo test          # 저장소 왕복·계정 분리·캐시 만료
 cd frontend && node --experimental-strip-types --test tests/platform-transport.test.mjs
+cd frontend && node --experimental-strip-types --test tests/media-session.test.mjs
 cd frontend && node --experimental-strip-types --test tests/safe-area.test.mjs
 ```
 
@@ -124,8 +126,96 @@ cd app && MUPID_API_ORIGIN=http://localhost:9900 cargo tauri android dev
 | `store_read_photo` / `store_save_photo` / `store_remove_photo` | 프로필 사진 |
 | `session_set_user_key` | 지금 저장이 어느 계정 몫인지 |
 | `cache_get` / `cache_put` / `cache_clear` | 서버 응답 캐시 |
+| `media_session_update` / `media_session_clear` | 상단 알림·잠금화면 플레이어 |
 
 화면 쪽 짝은 `frontend/lib/platform/` 에 있다.
+
+Rust 가 먼저 말을 거는 통로는 하나뿐이다 — 알림·잠금화면·이어폰 버튼을 누르면
+`media-session://control` 이벤트가 웹뷰로 간다.
+
+## 상단 알림과 잠금화면 플레이어
+
+노래가 울리는 동안 알림 그늘과 잠금화면에 곡과 조작 버튼이 뜬다.
+
+```
+재생기 스토어 ─▸ useMediaSession ─▸ media_session_update ─▸ MediaSessionPlugin
+                                                             │
+     알림(PlaybackService) ·  잠금화면  ·  이어폰 버튼  ◂──────┘
+                                    │
+           media-session://control ◂┘ ─▸ 화면의 play/pause/next/seek
+```
+
+| 어디 | 무엇 |
+| --- | --- |
+| `frontend/hooks/use-media-session.ts` | 재생기 스토어를 구독해 올려보낸다 |
+| `frontend/lib/platform/media-session.ts` | 무엇을 언제 보낼지. 웹에서는 아무 일도 안 한다 |
+| `src/media.rs` | 앨범 아트를 받아 파일로 두고, 플러그인에 넘긴다 |
+| `gen/android/.../MediaSessionPlugin.kt` | `MediaSession` 갱신, 버튼을 되돌려 보냄 |
+| `gen/android/.../NowPlayingSession.kt` | 세션 한 벌(메타데이터·재생 상태·표지) |
+| `gen/android/.../PlaybackService.kt` | 알림을 든 전경 서비스 |
+
+**재생 위치를 0.2초마다 올려보내지 않는다.** `PlaybackState` 에 재생 속도를 함께
+주면 안드로이드가 스스로 위치를 굴린다. 그래서 곡·재생 상태가 바뀌거나 실제
+위치가 2초 넘게 어긋났을 때만 IPC 를 탄다 (`shouldPush`). 매 틱마다 보내면 곡
+하나에 IPC 가 천 번 넘게 오간다.
+
+**전경 서비스는 멈춰 있는 동안에도 내려오지 않는다.** 소리는 웹뷰가 내므로
+안드로이드는 이 앱이 음악을 틀고 있다는 것을 따로 알지 못한다 — 전경 서비스가
+붙어 있어야 화면을 끄고도 프로세스가 살아남는다. 게다가 안드로이드 12 부터는
+뒤에 있는 앱이 전경 서비스를 **시작하지 못하므로**, 일시정지할 때 내려오면
+잠금화면의 재생 버튼으로 다시 올라올 수가 없다. 알림을 쓸어 내면 그때 함께
+내려간다.
+
+**안드로이드 13+ 는 알림 권한을 묻는다.** 앱을 켤 때가 아니라 **처음 재생할 때**
+묻는다. 거절해도 재생은 그대로 이어지고, 알림만 뜨지 않는다. 나중에 설정에서
+켜면 앱으로 돌아오는 순간(`onResume`) 다시 뜬다.
+
+**소리 초점(audio focus)은 아직 잡지 않는다.** 다른 앱이 음악을 틀어도 이 앱은
+멈추지 않고, 알림이 울려도 잠깐 줄어들지 않는다. `AudioManager.requestAudioFocus`
+를 붙이는 자리는 `NowPlayingSession` 이다.
+
+### 배경 재생은 어디까지 되나
+
+| 무엇을 했나 | 재생 | 플레이어 |
+| --- | --- | --- |
+| 홈으로 나감 · 화면 끔 · 다른 앱 | **이어진다** | 남는다 |
+| 알림의 정지 · 알림을 쓸어 냄 | 끝난다 | 사라진다 |
+| **최근 앱 목록에서 밀어냄** | **끝난다** | 사라진다 |
+
+앞의 두 줄은 의도한 것이고, 마지막 줄은 **이 구조에서 어쩔 수 없는 것**이다.
+그렇게 하기로 정했다.
+
+소리를 내는 것은 웹뷰이고 웹뷰는 액티비티에 붙어 있다. 최근 앱에서 밀어내면
+액티비티가 파괴되면서 웹뷰도 함께 사라진다. 게다가 그 정리 과정에서
+안드로이드의 `libhwui` 가 죽는다 — 실측한 텀스톤이다.
+
+```
+Abort message: 'FORTIFY: pthread_mutex_lock called on a destroyed mutex'
+  #04 libhwui.so  WebViewFunctorManager::onContextDestroyed()
+  #05 libhwui.so  RenderThread::destroyRenderingContext()
+```
+
+전경 서비스는 **안드로이드가 프로세스를 거둬 가려 할 때** 막아 주는 장치지,
+액티비티를 지켜 주지도 크래시를 막아 주지도 않는다. `android:stopWithTask="false"`
+도, 서비스를 붙들어 두는 것도 소용없었다 — 셋 다 해 보고 확인했다.
+
+그래서 남은 선택은 "밀어내면 깔끔히 끝난다"뿐이고, 그것을 `MainActivity.onDestroy`
+가 맡는다. 거기서 거두지 않으면 **눌러도 아무 일이 없는 플레이어**가 알림 그늘에
+남는다. 거둘 때 순서가 중요하다.
+
+1. **전경에서 먼저 내려온다.** 전경 서비스는 알림을 반드시 하나 들고 있어야 해서,
+   올라서 있는 동안 `cancel()` 을 불러도 시스템이 도로 띄운다.
+2. 그 다음에 알림을 지운다.
+
+둘 다 **동기로** 해야 한다. `stopService` 는 비동기라 서비스의 `onDestroy` 가 돌기
+전에 프로세스가 먼저 사라진다. 그래서 `PlaybackService.dismiss` 가 돌고 있는 서비스
+인스턴스를 직접 붙잡아 손으로 내린다.
+
+**플레이어를 누르면 앱으로 돌아온다.** 인텐트를 앱 아이콘과 똑같이 만든다
+(`ACTION_MAIN` + `CATEGORY_LAUNCHER`). 그냥 `Intent(this, MainActivity)` 로 띄우면
+열려 있던 화면 위에 새 태스크가 하나 더 생겨서, 돌아온 뒤 뒤로 가기를 누르면 같은
+앱이 두 번 나온다. 앱이 살아 있으면 보던 화면 그대로 돌아오고, 밀어낸 뒤라면
+플레이어 자체가 없으니 누를 일도 없다.
 
 ## 상태바·내비게이션 바 여백
 
@@ -169,9 +259,15 @@ WindowInsets ─▸ SafeArea.kt ─▸ window.__mupidSafeArea (기기 픽셀)
 ## 아직 안 한 것
 
 - **iOS**: `cargo tauri ios init` 은 macOS 에서만 돈다. Rust 코드는 그대로 쓴다.
+  잠금화면 플레이어는 `MPNowPlayingInfoCenter` 로 다시 만들어야 한다 —
+  `src/media.rs` 의 커맨드와 이벤트는 그대로 두고 `#[cfg(target_os = "ios")]`
+  가지만 채우면 화면 코드는 건드릴 일이 없다.
 - **오프라인 재생**: 오디오 청크는 캐시하지 않는다. 용량 상한과 만료 정책이 필요하다.
+- **최근 앱에서 밀어내도 이어지는 재생**: 디코딩과 스케줄링을 웹뷰 밖(Kotlin/Rust)
+  으로 옮겨야 한다. `frontend/lib/player/engine.ts` 1,000줄이 프리롤·페이드·Seek·
+  재시도·버퍼 언더런까지 실측으로 맞춰져 있어 옮기는 일이 작지 않다. 위의
+  "배경 재생은 어디까지 되나"에 왜 지금 구조로는 안 되는지 적어 두었다.
 - **깊은 링크 / 푸시 알림**: 아직 계획 없음.
 - **가로 화면의 좌우 인셋**: 값은 `--safe-area-inset-left/right` 로 이미 오지만
   쓰는 규칙이 없다. 세로에서는 둘 다 0 이라 티가 나지 않는다. 가로로 돌렸을 때
   노치나 제스처 바 쪽으로 붙는 것은 하단 메뉴와 미니 플레이어다.
-

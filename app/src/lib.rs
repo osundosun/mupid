@@ -1,22 +1,21 @@
 //! 뮤피드 앱 셸.
 //!
 //! 웹뷰는 `frontend/` 를 정적으로 빌드한 것을 그대로 띄운다. 웹과 앱이 같은
-//! 화면 코드를 쓰고, 다른 것은 바깥 두 가지뿐이다.
+//! 화면 코드를 쓰고, 다른 것은 바깥 몇 가지뿐이다.
 //!
-//! - 네트워크: `http.rs` 의 커맨드와 `mupidimg://` 스킴
+//! - 네트워크: `http.rs` 의 커맨드와 `image.rs` 의 `mupidimg://` 스킴
 //! - 저장소:   `db.rs` + `store/` 의 SQLite
+//! - 알림:     `media.rs` 의 상단 알림·잠금화면 플레이어
 
 mod commands;
 mod config;
 mod db;
 mod http;
+mod image;
+mod media;
 mod store;
 
-use base64::Engine;
 use tauri::{Manager, WebviewWindowBuilder};
-
-const IMAGE_BASE64: base64::engine::general_purpose::GeneralPurpose =
-    base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 /// RSC 호환성 식별자. `frontend/scripts/static-target.mjs` 의 같은 이름과
 /// **반드시 같아야 한다** — 다르면 화면을 옮길 때마다 전체가 다시 로딩된다.
@@ -51,22 +50,9 @@ fn serve_image(
                 .expect("빈 응답은 언제나 만들 수 있다")
         };
 
-        let Ok(bytes) = IMAGE_BASE64.decode(encoded.as_bytes()) else {
-            responder.respond(fail(400));
-            return;
-        };
-        let Ok(target) = String::from_utf8(bytes) else {
-            responder.respond(fail(400));
-            return;
-        };
-        // 서버는 이미지 주소를 `/api/v1/storage/image/...` 경로로 준다. 절대
-        // 주소로 바뀌어도 받을 수 있게 둘 다 받고, 경로면 여기서 완성한다 —
-        // `http_send` 와 같은 규칙이라 API 주소는 여전히 한 곳에만 있다.
-        let url = if target.starts_with('/') {
-            format!("{}{}", config::api_origin().trim_end_matches('/'), target)
-        } else if target.starts_with("http://") || target.starts_with("https://") {
-            target
-        } else {
+        // 푸는 규칙은 `image.rs` 한 곳에만 있다. 알림에 넣을 표지도 같은 것을
+        // 쓴다 (`media.rs`).
+        let Some(url) = image::decode(&encoded).as_deref().and_then(image::server_url) else {
             responder.respond(fail(400));
             return;
         };
@@ -167,6 +153,7 @@ fn serve_rsc<R: tauri::Runtime>(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(media::init())
         .register_asynchronous_uri_scheme_protocol(config::IMAGE_SCHEME, |ctx, request, responder| {
             serve_image(ctx.app_handle().clone(), request, responder);
         })
@@ -211,6 +198,8 @@ pub fn run() {
             commands::cache_get,
             commands::cache_put,
             commands::cache_clear,
+            media::media_session_update,
+            media::media_session_clear,
         ])
         .run(tauri::generate_context!())
         .expect("앱을 시작하지 못했습니다");
