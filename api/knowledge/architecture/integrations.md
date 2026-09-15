@@ -123,7 +123,7 @@ private ObjectStorageFile imageFile;
 
 - **업로드**: `imageFile.getSize() > USER_IMAGE_FILE_MAX_SIZE`(`1024 * 1024 * 5`) → `USER_IMAGE_FILE_SIZE_EXCEEDED`(413), `MultipartFileUtils.isImageExt` 실패 → `INVALID_USER_IMAGE_FILE_FORMAT`(400). 통과하면 업로드 후 `user.setImageFile(storageFile)`.
 - **삭제**: `imageFile` 이 없으면 그냥 반환. 있으면 `user.setImageFile(null)` 후 `storageService.deleteFile(...)`.
-- **조회**: `imageFile` 이 `null` 이면 `ClassPathResource("img/default-user-profile.png")` 를 `StorageFileData` 로 감싸 반환한다. 이건 "없음" 폴백이지 "실패" 폴백이 아니다 — S3 가 죽으면 그대로 예외가 올라간다.
+- **조회**: `imageFile` 이 `null` 이면 `ClassPathResource("img/default-user-profile.webp")` 를 `StorageFileData` 로 감싸 반환한다. 이건 "없음" 폴백이지 "실패" 폴백이 아니다 — S3 가 죽으면 그대로 예외가 올라간다.
 
 `MultipartFileUtils.isImageExt` 는 **확장자만** 본다 (`jpg`, `jpeg`, `png`, `gif`, `webp`, 소문자 비교). 매직 넘버도 Content-Type 도 검사하지 않는다.
 
@@ -284,7 +284,11 @@ api/src/main/resources/templates/mail/
 
 ### 이미지
 
-`api/src/main/resources/img/default-user-profile.png` 하나뿐이고, 참조도 `UserImageServiceImpl.getUserImageData` 한 곳뿐이다. 메일 템플릿은 이미지를 전혀 쓰지 않는다.
+`api/src/main/resources/img/` 에 둘 있다 — `default-user-profile.webp` 는 `UserImageServiceImpl.getUserImageData` 한 곳이 읽고, `default-album-cover.webp` 는 **참조하는 코드가 없다.** 메일 템플릿은 이미지를 전혀 쓰지 않는다.
+
+`bootstrap/mubti-characters.zip` 은 성격이 다르다 — 화면에 내려 주는 파일이 아니라 `BootstrapRunner` 가 기동 때 오브젝트 스토리지로 옮기는 씨앗이다. 옮기고 나면 조회는 스토리지에서 간다.
+
+셋 다 WebP 다. MuBTI 16장이 PNG 로는 19MB 였고, jar 에 그대로 실리는 파일이라 q=90 으로 줄여 3.3MB 가 됐다.
 
 ---
 
