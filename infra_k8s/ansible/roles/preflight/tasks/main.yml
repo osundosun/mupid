@@ -48,7 +48,16 @@
   register: listening
   changed_when: false
 
+- name: Check whether k3s is already installed
+  ansible.builtin.stat: {path: /usr/local/bin/k3s}
+  register: k3s_binary
+
 - name: Assert the ports k3s and the edge need are free
+  # Only before the install. Afterwards k3s itself holds 6443/10250/8472 and the
+  # edge pod holds 80/443, so asserting they are free would make this role — and
+  # cluster.yml, which runs it first — fail on every re-run against a working
+  # cluster.
+  when: not k3s_binary.stat.exists
   ansible.builtin.assert:
     that: "listening.stdout is not search(':' ~ item ~ '\\s')"
     # 80 or 443 still held means the Compose stack is up: run teardown.yml
@@ -59,9 +68,6 @@
        + (edge_ports if inventory_hostname in groups['k3s_server'] else [])
        + ([k3s_apiserver_port] if inventory_hostname in groups['k3s_server'] else []) }}
 
-- name: Check whether k3s is already installed
-  ansible.builtin.stat: {path: /usr/local/bin/k3s}
-  register: k3s_binary
 
 - name: Read the host firewall state
   ansible.builtin.command: ufw status verbose
