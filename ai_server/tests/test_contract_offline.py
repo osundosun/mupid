@@ -898,3 +898,33 @@ def test_run_labeler_reports_failure_with_nonzero_exit(monkeypatch, tmp_path, ca
     monkeypatch.setattr(sys, "argv", ["run_labeler"])
     assert run_labeler.main() == 1
     assert "색인 없음" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------ 문서 참조
+# 브랜치에 아직 없는 문서. **숨기지 않고 여기에 적어 둔다** — 들어오면 이 목록에서 지운다.
+_PENDING_DOCS = {
+    # ai/docs/S15P21A204-231-integration-contract 브랜치에만 있다. 현재 작업 종료 후 가져온다.
+    "infra/AI-SPRING-CONTRACT.md",
+}
+
+
+def test_readme_does_not_point_at_missing_files():
+    """없는 파일을 가리키는 문서는 읽는 사람을 막다른 길로 보낸다.
+    지금까지 고친 버그가 전부 '문서와 실제가 다르다' 였다."""
+    import re
+
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "ai_server" / "README.md").read_text(encoding="utf-8")
+    prefixes = ("ai_server/", "api/", "infra/", "frontend/", "tools/")
+    pat = r"`((?:%s)[A-Za-z0-9_./-]+\.[a-z]{2,8})`" % "|".join(
+        p.replace("/", r"/") for p in prefixes)
+    missing = sorted({m for m in re.findall(pat, text)
+                      if not (root / m).exists() and m not in _PENDING_DOCS})
+    assert not missing, f"README 가 없는 파일을 가리킨다: {missing}"
+
+
+def test_pending_docs_list_is_not_stale():
+    """들어온 문서가 목록에 남아 있으면 다음 사람이 또 '아직 없다' 고 믿는다."""
+    root = Path(__file__).resolve().parents[2]
+    arrived = [d for d in _PENDING_DOCS if (root / d).exists()]
+    assert not arrived, f"이미 들어왔다. _PENDING_DOCS 에서 지울 것: {arrived}"

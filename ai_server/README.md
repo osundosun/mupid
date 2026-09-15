@@ -324,8 +324,8 @@ Spring 은 컨테이너로 돈다. 이 서비스를 호스트에서 직접 실�
 > 나간다.**
 
 Spring 은 자연어 원문 대신 `query_plan` 을 보낸다. 대화 모델이 `/internal/facets` 의 어휘로
-조건을 뽑기 때문에 **자연어 해석기를 따로 세우지 않아도** 조건이 걸린다. 배경은
-`api/knowledge/decision/0019-query-plan-instead-of-nl-interpreter.md` 를 본다.
+조건을 뽑기 때문에 **자연어 해석기를 따로 세우지 않아도** 조건이 걸린다. 배경과 결정
+기록은 `S15P21A204-344` 에 있다.
 
 네트워크 격리가 유일한 방어선이면 설정 실수 한 번에 그대로 열린다. `MUPID_AI_INTERNAL_TOKEN`
 을 넣으면 `X-Internal-Token` 헤더를 검사한다. **양쪽을 동시에 설정해야 한다** — 한쪽만
