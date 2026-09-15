@@ -81,3 +81,4 @@ docs: |-
   | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
   | `MUPID_USER_NOT_FOUND` | 404 | 사용자 없음 또는 이미 탈퇴 |
   | `MUPID_INVALID_REQUEST_BODY` | 400 | 검증 규칙 위반 |
+  | `MUPID_INVALID_NICKNAME` | 400 | 닉네임이 공백뿐임 |

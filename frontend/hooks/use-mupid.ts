@@ -7,6 +7,7 @@ import { login, logout, restoreSession } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
 import { saveOnboarding } from '@/lib/onboarding';
+import { updateNickname } from '@/lib/profile';
 import { fetchHistory, fetchReactions, pushReaction } from '@/lib/reactions';
 import * as playlistApi from '@/lib/playlists';
 import { analytics, bindPlayer, type EntryPath } from '@/lib/analytics';
@@ -225,6 +226,22 @@ export function useMupid(bootstrap: Bootstrap) {
     setChatOpen(false);
     setLoginDialog(true);
     router.push('/login');
+  };
+  /**
+   * 마이페이지에서 닉네임을 바꾼다.
+   *
+   * 계정에 먼저 저장하고, 성공한 뒤에야 화면을 바꾼다. 순서를 뒤집으면 서버가
+   * 거절해도 바뀐 이름이 화면에 남아 저장된 것처럼 보인다. 실패는 던져서
+   * 화면이 알리게 한다 — 브라우저 저장과 달리 조용히 넘어가면 안 된다.
+   */
+  const saveNickname = async (name: string) => {
+    if (!sessionRef.current) throw new Error('로그인이 필요해요.');
+    const saved = await updateNickname(name);
+    if (!mountedRef.current) return saved;
+    sessionRef.current = { ...sessionRef.current, nickname: saved };
+    setNickname(saved);
+    setDemoSession((current) => (current ? { ...current, nickname: saved } : current));
+    return saved;
   };
   /*
    * 선호 분위기·장르를 나중에 고치는 길은 없앴다.
@@ -1023,7 +1040,7 @@ export function useMupid(bootstrap: Bootstrap) {
     go,
     goBack,
     nickname,
-    setNickname,
+    saveNickname,
     displayName: demoSession ? nickname : '게스트',
     demoSession,
     authReady: authChecked,
