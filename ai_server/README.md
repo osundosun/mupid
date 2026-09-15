@@ -92,6 +92,7 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 | POST | `/internal/recommendations/daily` | 오늘의 추천 |
 | POST | `/internal/recommendations/next` | 이어 듣기 |
 | POST | `/internal/recommendations/search` | 자연어 검색 |
+| POST | `/internal/similar` | 기준 구간과 닮은 다른 곡의 구간 |
 
 ### 요청
 
@@ -165,6 +166,26 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 | `INTERNAL_ERROR` | 500 | 그 밖. 재시도 대상 |
 
 읽기 타임아웃 **5초**, 재시도는 `503`·`500`·타임아웃에만 1회. `400`·`404` 는 재시도하지 않는다.
+
+### `/internal/similar`
+
+```json
+{ "music_section_id": 9001318, "limit": 5, "exclude_music_ids": [] }
+```
+
+```json
+{ "music_section_id": 9001318,
+  "items": [ { "music_id": 900204, "music_section_id": 9002110,
+               "start_time_ms": 41200, "end_time_ms": 68900,
+               "section_label": "CHORUS", "rank_order": 1, "similarity": 0.83 } ],
+  "shortfall": 0, "embedding_version": "mert-v1-95m" }
+```
+
+**개인화하지 않는다.** `user_id` 를 받지 않고, 받으면 400 이다. 같은 질문에 늘 같은 답이라
+캐시할 수 있고 설명도 된다. 취향을 반영하려면 `recommendations/next` 를 쓴다.
+
+한 곡당 가장 닮은 구간 **하나만** 남긴다. 같은 곡의 인접 구간이 목록을 채우면 "비슷한 곡"
+으로 쓸모가 없다. `similarity` 는 코사인이고 순위 근거일 뿐 확률이 아니다.
 
 ### `/internal/facets`
 

@@ -554,3 +554,78 @@ def test_env_files_are_ignored():
     if r.returncode == 128:
         pytest.skip("git 체크아웃이 아니다")
     assert r.returncode == 0, "infra/deploy/.env 가 무시되지 않는다"
+
+
+# ------------------------------------------------------------------ 닮은 구간
+def _similar_svc(rows):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(CAT=SimpleNamespace(pool=[1]),
+                           similar_moments=lambda uid, n, drop: rows[:n])
+
+
+def _srow(track, idx, label="chorus", sim=0.8):
+    return {"rank": 1, "track_id": track, "moment_id": f"{track}#{idx}",
+            "section_label": label, "start_sec": 10.0, "end_sec": 25.0,
+            "similarity": sim}
+
+
+@pytest.fixture
+def similar_client(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    im = ids.IdMap(path=Path("/nonexistent.parquet"), strict=False)
+    im.track_to_num = {"A": 1, "B": 2, "C": 3}
+    im.num_to_track = {v: k for k, v in im.track_to_num.items()}
+    im.sec_to_num = {"A#0": 10, "B#1": 21, "C#2": 32}
+    im.num_to_sec = {v: k for k, v in im.sec_to_num.items()}
+    monkeypatch.setattr(ids, "_MAP", im)
+
+    def build(rows):
+        app = FastAPI()
+        internal_api.install(app, _similar_svc(rows))
+        return TestClient(app)
+
+    return build
+
+
+def test_similar_returns_numeric_ids(similar_client):
+    c = similar_client([_srow("B", 1, sim=0.91), _srow("C", 2, sim=0.77)])
+    r = c.post("/internal/similar", json={"music_section_id": 10, "limit": 5})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [i["music_id"] for i in body["items"]] == [2, 3]
+    assert [i["music_section_id"] for i in body["items"]] == [21, 32]
+    assert [i["rank_order"] for i in body["items"]] == [1, 2]
+    assert body["items"][0]["start_time_ms"] == 10_000
+    assert body["embedding_version"]
+
+
+def test_similar_has_no_personalization_field(similar_client):
+    """개인화가 없으므로 사유·점수 필드를 만들어 붙이지 않는다."""
+    c = similar_client([_srow("B", 1)])
+    body = c.post("/internal/similar", json={"music_section_id": 10}).json()
+    assert "reason" not in body["items"][0]
+    assert "reason_code" not in body["items"][0]
+
+
+def test_similar_rejects_unknown_section(similar_client):
+    c = similar_client([_srow("B", 1)])
+    r = c.post("/internal/similar", json={"music_section_id": 999})
+    assert r.status_code == 404
+    assert r.json()["error_code"] == "SECTION_ID_MAPPING_NOT_FOUND"
+
+
+def test_similar_drops_labels_outside_erd_enum(similar_client):
+    c = similar_client([_srow("B", 1, label="other"), _srow("C", 2)])
+    body = c.post("/internal/similar", json={"music_section_id": 10, "limit": 2}).json()
+    assert [i["section_label"] for i in body["items"]] == ["CHORUS"]
+    assert body["shortfall"] == 1
+
+
+def test_similar_rejects_user_id(similar_client):
+    """개인화 API 가 아니다. user_id 를 받으면 계약을 오해한 것이다."""
+    c = similar_client([_srow("B", 1)])
+    r = c.post("/internal/similar", json={"music_section_id": 10, "user_id": 1})
+    assert r.status_code == 400

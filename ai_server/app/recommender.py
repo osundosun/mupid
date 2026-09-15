@@ -960,6 +960,55 @@ def center(V: np.ndarray) -> np.ndarray:
     return W
 
 
+def similar_moments(moment_id: str, n: int, exclude_tracks: set[str] | None = None,
+                    same_track: bool = False) -> list[dict]:
+    """기준 구간과 닮은 다른 곡의 구간. **개인화는 하지 않는다.**
+
+    사용자 취향을 섞지 않는 것이 요점이다 — "이 구간과 비슷한 구간" 은 누가 물어도 같은
+    답이어야 캐시도 되고 설명도 된다. 개인화가 필요하면 `recommend()` 를 쓴다.
+
+    질의와 후보에 `center()` 를 **둘 다** 적용한다. 한쪽만 하면 유사도가 통째로
+    내려앉는다 — 이 프로젝트에서 실제로 겪은 회귀다.
+
+    한 곡당 가장 닮은 구간 하나만 남긴다. 같은 곡의 인접 구간이 목록을 채우면 "비슷한
+    곡" 으로서 쓸모가 없다.
+    """
+    c = CAT
+    hit = c.pool.index[c.pool.moment_id == moment_id]
+    if not len(hit):
+        return []
+    i0 = int(hit[0])
+    src_track = str(c.pool.track_id.iloc[i0])
+
+    q = center(np.asarray(c.Z[int(c.pool.emb_row.iloc[i0])], dtype=np.float32))[0]
+    V = center(np.asarray(c.Z[c.pool_rows], dtype=np.float32))
+    sim = V @ q
+
+    drop = set(exclude_tracks or ())
+    if not same_track:
+        drop.add(src_track)
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for i in np.argsort(-sim):
+        i = int(i)
+        if i == i0:
+            continue
+        r = c.pool.iloc[i]
+        t = str(r.track_id)
+        if t in drop or t in seen:
+            continue
+        seen.add(t)
+        out.append({"rank": len(out) + 1, "track_id": t, "moment_id": str(r.moment_id),
+                    "section_label": str(r.section_label),
+                    "start_sec": round(float(r.start_sec), 2),
+                    "end_sec": round(float(r.end_sec), 2),
+                    "similarity": round(float(sim[i]), 6)})
+        if len(out) >= n:
+            break
+    return out
+
+
 def build_dna(user: str) -> tuple[np.ndarray, np.ndarray, list[dict]]:
     """규칙 경로. 군집은 **원공간**에서(구조가 살아 있음), 점수용 변환은 center() 로 통일."""
     from scipy.cluster.hierarchy import fcluster, linkage

@@ -22,6 +22,7 @@ from . import ids, paths
 
 PREFIX = "/internal"
 MODEL_VERSION = "mupid-stage1-v1"       # /feedback 이 이미 내보내는 값과 같게 둔다
+EMBEDDING_VERSION = "mert-v1-95m"       # 구간 임베딩. 교체하면 닮은 구간 결과가 바뀐다
 BIGINT_MAX = 2 ** 63 - 1
 MAX_LIMIT = 50
 
@@ -104,6 +105,33 @@ class RecommendationItem(BaseModel):
         if self.end_time_ms <= self.start_time_ms:
             raise ValueError("end_time_ms 는 start_time_ms 보다 커야 한다")
         return self
+
+
+class SimilarRequest(BaseModel):
+    """기준 구간과 닮은 구간 찾기. 개인화가 없어 `user_id` 를 받지 않는다."""
+
+    model_config = {"extra": "forbid"}
+
+    music_section_id: StrictInt = Field(..., ge=1)
+    limit: StrictInt = Field(5, ge=1, le=MAX_LIMIT)
+    exclude_music_ids: list[StrictInt] = Field(default_factory=list)
+
+
+class SimilarItem(BaseModel):
+    music_id: int
+    music_section_id: int
+    start_time_ms: int = Field(..., ge=0)
+    end_time_ms: int = Field(..., ge=0)
+    section_label: str
+    rank_order: int = Field(..., ge=1)
+    similarity: float = Field(..., description="코사인. 개인 취향이 섞이지 않은 값이다")
+
+
+class SimilarResponse(BaseModel):
+    music_section_id: int
+    items: list[SimilarItem]
+    shortfall: int = Field(..., ge=0)
+    embedding_version: str
 
 
 class RecommendationResponse(BaseModel):
@@ -421,6 +449,36 @@ def _facets_payload(svc) -> dict:
 def facets() -> dict:
     """자연어를 QueryPlan 으로 바꾸는 쪽이 읽는다. 카탈로그에서 직접 만든다."""
     return _facets_payload(_svc())
+
+
+@router.post("/similar", response_model=SimilarResponse, responses=ERRORS,
+             summary="기준 구간과 닮은 다른 곡의 구간")
+def similar(req: SimilarRequest) -> SimilarResponse:
+    """`recommend` 와 달리 사용자 취향을 섞지 않는다. 같은 질문에 늘 같은 답이다."""
+    svc = _svc()
+    im = ids.id_map()
+    src_uid = im.source_section_uid(req.music_section_id)     # 없으면 MappingError
+    drop = {im.source_track_id(x) for x in req.exclude_music_ids}
+    rows = svc.similar_moments(src_uid, req.limit, drop)
+
+    items: list[SimilarItem] = []
+    for r in rows:
+        label = str(r["section_label"]).upper()
+        if label not in _SECTION_ENUM:            # ERD ENUM 밖은 내보내지 않는다
+            continue
+        s_ms, e_ms = ids.to_ms(r["start_sec"]), ids.to_ms(r["end_sec"])
+        if e_ms <= s_ms:
+            continue
+        items.append(SimilarItem(
+            music_id=im.music_id(r["track_id"]),
+            music_section_id=im.music_section_id(r["moment_id"]),
+            start_time_ms=s_ms, end_time_ms=e_ms, section_label=label,
+            rank_order=len(items) + 1, similarity=float(r["similarity"])))
+    if not items:
+        raise ApiError("NO_CANDIDATES", "닮은 구간을 찾지 못했습니다.")
+    return SimilarResponse(music_section_id=req.music_section_id, items=items,
+                           shortfall=max(0, req.limit - len(items)),
+                           embedding_version=EMBEDDING_VERSION)
 
 
 def _pool_keys():
