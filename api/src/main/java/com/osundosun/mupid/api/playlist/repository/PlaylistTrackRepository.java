@@ -14,6 +14,15 @@ import com.osundosun.mupid.api.playlist.entity.PlaylistTrack;
 public interface PlaylistTrackRepository
     extends JpaRepository<PlaylistTrack, PlaylistTrack.PlaylistTrackId> {
 
+    /**
+     * 수록곡 수. `Playlist.musicCount` 가 아니라 **실제 행을 센다.**
+     *
+     * 그 숫자는 동시 요청이나 과거 데이터로 실제와 어긋난 적이 있고(빼기 쪽에
+     * `Math.max(0, ...)` 방어가 있는 이유다), 상한 판정을 어긋난 숫자에 맡기면
+     * 아직 자리가 있는데 거절하거나 상한을 넘겨 담게 된다.
+     */
+    long countByPlaylist(Playlist playlist);
+
     Optional<PlaylistTrack> findByPlaylistAndMusic(Playlist playlist, Music music);
 
     /**
