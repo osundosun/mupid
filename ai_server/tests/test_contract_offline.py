@@ -528,3 +528,29 @@ def test_learn_is_callable():
     from ai_server.app import recommender
 
     assert callable(recommender.learn)
+
+
+# ------------------------------------------------------------------ 배포 가능성
+def test_no_developer_home_paths_in_app():
+    """개발자 홈을 가리키는 경로가 있으면 컨테이너에서 존재하지 않는 곳을 읽는다.
+    경로는 MUPID_AI_ARTIFACT_DIR 하나에서만 나와야 한다."""
+    for f in (Path(__file__).resolve().parents[1] / "app").rglob("*.py"):
+        body = "\n".join(ln for ln in f.read_text(encoding="utf-8").splitlines()
+                         if not ln.lstrip().startswith("#"))
+        assert "Path.home()" not in body, f"{f.name}: 홈 디렉터리 경로"
+        assert "os.path.expanduser" not in body, f.name
+
+
+def test_env_files_are_ignored():
+    """실제 값이 든 .env 는 무시되고, 예시만 커밋된다."""
+    import subprocess
+
+    root = Path(__file__).resolve().parents[2]
+    patterns = root / ".gitignore"
+    text = patterns.read_text(encoding="utf-8")
+    assert ".env" in text and "!*.env.example" in text
+    r = subprocess.run(["git", "check-ignore", "-q", "infra/deploy/.env"],
+                       cwd=root, capture_output=True)
+    if r.returncode == 128:
+        pytest.skip("git 체크아웃이 아니다")
+    assert r.returncode == 0, "infra/deploy/.env 가 무시되지 않는다"

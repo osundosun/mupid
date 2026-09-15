@@ -44,9 +44,9 @@ EVENTS = OUT_DIR / "logs" / "events_service.jsonl"
 LABELS = OUT_DIR / "labels_service.parquet"
 PREFS = SERVE / "prefs.parquet"
 ONBOARD = SERVE / "onboarding.parquet"
-FLOW_AUDIO = Path.home() / "flow_music_data" / "audio"
-FLOW_COVER = Path.home() / "flow_music_data" / "covers"
-LOCAL_AUDIO = Path.home() / "Mupid_mert" / "audio"
+# 음원·표지 경로는 두지 않는다. 이 서비스는 스트리밍을 하지 않고(main.py), 그 값을 읽는
+# 곳도 없었다. 개발자 홈 디렉터리(Path.home())를 가리키고 있어 컨테이너에서는 존재하지도
+# 않는 경로였고, 추천 결과 딕셔너리에 실려 로그로 새어 나갈 수 있었다.
 # 자연어 해석기 주소. 게이트(설정 여부 판단)와 호출부가 **같은 변수**를 본다.
 # 기본값을 두지 않는다 — 기본값이 있으면 "미설정" 이 존재할 수 없어, 해석기가 없는 배포에서
 # 조건을 뽑지 못한 채 일반 추천이 나간다.
@@ -210,9 +210,6 @@ class Catalog:
             "bpm_requested": [m.get("bpm_lo"), m.get("bpm_hi")],
             "dur_sec": round(float(c.get("dur_sec", 0.0)), 1),
             "sound_raw": m.get("sound_raw", ""),
-            "audio_path": str((FLOW_AUDIO if POOL_SOURCE == "flow" else LOCAL_AUDIO)
-                              / f"{tid}.mp3"),
-            "cover_path": (str(FLOW_COVER / f"{tid}.jpg") if POOL_SOURCE == "flow" else None),
             **_catalog_tags(m),
             **{k: v for k, v in jamendo_row(tid).items()
                if k in ("source", "artist_name", "audio_url", "image_url",
