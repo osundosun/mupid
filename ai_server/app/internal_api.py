@@ -169,8 +169,17 @@ def _reason_code(item: dict, has_query: bool, query_source: str) -> str:
 #
 # Spring 이 자체 문구를 쓰고 싶으면 `reason_code` 로 갈아끼우면 된다. 여기 문장은 그때까지의
 # 안전한 기본값이고, 모르는 코드에서도 빈 문자열이 나가지 않게 폴백을 둔다.
-_SECTION_KO = {"INTRO": "인트로", "VERSE": "벌스", "CHORUS": "후렴", "BRIDGE": "브릿지",
-               "INST": "연주", "SOLO": "솔로", "OUTRO": "아웃트로", "OTHER": "이"}
+_SECTION_KO = {"INTRO": "인트로", "VERSE": "벌스", "PRE_CHORUS": "프리코러스",
+               "CHORUS": "후렴", "BRIDGE": "브릿지", "BREAK": "브레이크",
+               "INST": "연주", "SOLO": "솔로", "OUTRO": "아웃트로"}
+
+# 실서비스 ERD 의 `music_section_analysis.section_label` ENUM. Spring 의 SectionLabel 과
+# 같아야 한다 — 여기에 없는 값을 보내면 저쪽 역직렬화에서 터진다.
+#
+# 추천기는 `other` 를 만들 수 있는데 ENUM 에는 없다. 그런 구간은 **내보내지 않고**
+# shortfall 로 센다. 억지로 다른 라벨에 끼워 넣으면 사용자에게 틀린 구간 유형을 말하게 된다.
+# ENUM 에 OTHER 를 추가할지는 ERD 변경이라 BE 와 합의가 필요하다.
+_SECTION_ENUM = frozenset(_SECTION_KO)
 
 _REASON_TEXT = {
     "QUERY_SEMANTIC_MATCH": "요청하신 분위기에 가까운 {sec} 구간이에요.",
@@ -195,6 +204,7 @@ def to_response(rec_id: int, out: dict, limit: int,
     """`recommend()` 결과를 공통 DTO 로 옮긴다. 순서·점수는 건드리지 않는다."""
     im = ids.id_map()
     query_source = str(out.get("diagnostics", {}).get("query_source", ""))
+    unknown_labels: list[str] = []
     items: list[RecommendationItem] = []
     for r in out.get("results", []):
         src_t, src_s = str(r["track_id"]), str(r["moment_id"])
@@ -206,6 +216,9 @@ def to_response(rec_id: int, out: dict, limit: int,
                            f"구간 시간이 뒤집혔거나 길이가 0 입니다: {src_s}")
         # ERD ENUM 은 대문자다. 추천기는 소문자를 만들므로 경계에서만 맞춘다.
         label = str(r.get("section_label", "")).upper()
+        if label not in _SECTION_ENUM:
+            unknown_labels.append(label or "(빈값)")
+            continue
         code = _reason_code(r, has_query, query_source)
         items.append(RecommendationItem(
             music_id=mid, music_section_id=sid,
@@ -213,6 +226,10 @@ def to_response(rec_id: int, out: dict, limit: int,
             section_label=label,
             rank_order=int(r["rank"]), score=float(r["final_score"]),
             reason_code=code, reason=_reason_text(code, label)))
+    if unknown_labels:
+        # 조용히 넘기면 "추천이 왜 적지" 로만 보인다. 원인을 로그에 남긴다.
+        print(f"[internal] ERD ENUM 에 없는 구간 라벨 {len(unknown_labels)}건 제외 — "
+              f"{sorted(set(unknown_labels))}", flush=True)
     items, dropped = _dedupe_by_music_id(items)
     if dropped:
         # 여기서 걸렸다는 것은 매핑표가 N:1 이라는 뜻이다. 조용히 넘기면 원인이 묻힌다.
@@ -221,8 +238,10 @@ def to_response(rec_id: int, out: dict, limit: int,
     if not items:
         raise ApiError("NO_CANDIDATES", "해당되는 노래가 없습니다.")
     # shortfall 은 추천기가 이미 센 값을 쓰되, 없으면 요청 수와의 차로 메운다.
+    # 경계에서 떨군 것(ENUM 밖 라벨·music_id 중복)도 부족분이다. 추천기가 센 값만 믿으면
+    # "10개 달라고 했는데 7개 왔고 shortfall 은 0" 이 되어 BE 가 원인을 찾을 수 없다.
     short = out.get("diagnostics", {}).get("shortfall")
-    short = int(short) if short is not None else max(0, limit - len(items))
+    short = max(int(short) if short is not None else 0, limit - len(items), 0)
     return RecommendationResponse(recommendation_id=rec_id, items=items,
                                   shortfall=short, model_version=MODEL_VERSION)
 

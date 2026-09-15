@@ -428,3 +428,57 @@ def test_demo_only_schemas_are_gone():
         encoding="utf-8")
     for name in ("class NextReq", "class FeedbackReq", "class OnboardReq", "class SimReq"):
         assert name not in src, name
+
+
+# ------------------------------------------------------------------ 구간 라벨 ENUM
+def _out_with_label(label: str) -> dict:
+    return {"diagnostics": {"query_source": "labels", "shortfall": 0},
+            "results": [{"rank": 1, "track_id": "A", "moment_id": "A#0",
+                         "section_label": label, "start_sec": 1.0, "end_sec": 2.0,
+                         "final_score": 1.0, "matched_dna": "u#dna0",
+                         "slot_source": "dna0", "clap_score": None},
+                        {"rank": 2, "track_id": "B", "moment_id": "B#0",
+                         "section_label": "chorus", "start_sec": 1.0, "end_sec": 2.0,
+                         "final_score": 0.9, "matched_dna": "u#dna0",
+                         "slot_source": "dna0", "clap_score": None}]}
+
+
+@pytest.fixture
+def mapped(monkeypatch):
+    im = ids.IdMap(path=Path("/nonexistent.parquet"), strict=False)
+    im.track_to_num = {"A": 1, "B": 2}
+    im.sec_to_num = {"A#0": 11, "B#0": 22}
+    monkeypatch.setattr(ids, "_MAP", im)
+    return im
+
+
+def test_section_label_outside_erd_enum_is_not_sent(mapped):
+    """추천기는 `other` 를 만들 수 있지만 ERD ENUM 에는 없다.
+    그대로 보내면 Spring 의 SectionLabel 역직렬화가 터진다."""
+    resp = internal_api.to_response(1, _out_with_label("other"), 2, False)
+    assert [i.section_label for i in resp.items] == ["CHORUS"]
+    assert resp.items[0].rank_order == 1, "남은 것의 순번은 다시 붙인다"
+
+
+def test_dropped_label_is_counted_in_shortfall(mapped):
+    """떨궜으면 부족분에 적어야 한다. 아니면 BE 가 왜 적게 왔는지 알 수 없다."""
+    resp = internal_api.to_response(1, _out_with_label("other"), 2, False)
+    assert resp.shortfall == 1
+
+
+def test_known_labels_pass_through(mapped):
+    for label in ("intro", "verse", "pre_chorus", "chorus", "bridge",
+                  "break", "inst", "solo", "outro"):
+        resp = internal_api.to_response(1, _out_with_label(label), 2, False)
+        assert len(resp.items) == 2, label
+
+
+def test_section_enum_matches_spring(mapped):
+    """Spring 의 SectionLabel 과 어긋나면 그 차이가 곧 500 이다."""
+    java = (Path(__file__).resolve().parents[2] / "api/src/main/java/com/osundosun"
+            / "mupid/api/music/enumerate/SectionLabel.java")
+    if not java.exists():
+        pytest.skip("api 모듈이 없는 체크아웃")
+    names = set(re.findall(r"^\s{4}([A-Z_]+)\(", java.read_text(encoding="utf-8"),
+                           flags=re.M))
+    assert names == set(internal_api._SECTION_ENUM), names ^ set(internal_api._SECTION_ENUM)
