@@ -910,10 +910,8 @@ def test_run_labeler_reports_failure_with_nonzero_exit(monkeypatch, tmp_path, ca
 
 # ------------------------------------------------------------------ 문서 참조
 # 브랜치에 아직 없는 문서. **숨기지 않고 여기에 적어 둔다** — 들어오면 이 목록에서 지운다.
-_PENDING_DOCS = {
-    # ai/docs/S15P21A204-231-integration-contract 브랜치에만 있다. 현재 작업 종료 후 가져온다.
-    "infra/AI-SPRING-CONTRACT.md",
-}
+# 2026-09-15: AI-SPRING-CONTRACT.md 가 들어와 비었다. 새로 기다리는 문서가 생기면 여기 적는다.
+_PENDING_DOCS: set[str] = set()
 
 
 def test_readme_does_not_point_at_missing_files():
