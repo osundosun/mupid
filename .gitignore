@@ -35,3 +35,6 @@ __pycache__/
 /music_preprocessing/output/
 # 실행마다 파일 하나가 생기는 배치 로그
 /music_preprocessing/logs/
+
+# 배포 비밀. 저장소에 들어가면 안 된다.
+infra/deploy/.env
