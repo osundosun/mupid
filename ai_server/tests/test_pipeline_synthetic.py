@@ -326,3 +326,43 @@ def test_clickhouse_signals_become_labels(svc, monkeypatch):
     assert not mine.empty, "ClickHouse 신호가 라벨까지 도달하지 않았다"
     assert (mine.section_key == uid).any()
     assert set(mine.grade) & {"L1", "L2"}, f"등급이 붙지 않았다: {list(mine.grade)}"
+
+
+# ---------------------------------------------------------------- 성능 캐시
+def test_facets_cache_dies_with_the_catalog(svc):
+    """캐시를 전역에 두면 산출물을 교체해도 옛 어휘가 남는다. 카탈로그에 붙여 둔다."""
+    a = svc.catalog_facets()
+    assert svc.catalog_facets() is a, "같은 카탈로그인데 다시 만들었다"
+
+    old = svc.CAT
+    svc.CAT = svc.Catalog()                 # 산출물 교체 흉내
+    try:
+        b = svc.catalog_facets()
+        assert b is not a, "카탈로그를 바꿨는데 옛 캐시를 돌려줬다"
+    finally:
+        svc.CAT = old
+
+
+def test_facet_rows_match_the_dataframe(svc):
+    """`fac.loc[t]` 를 dict 로 바꿨다. 값이 다르면 게이트 판정이 달라진다."""
+    fx = svc.catalog_facets()
+    fac = fx["_df"].set_index("track_id")
+    meta = svc.catalog_facet_rows()
+    assert set(meta) == set(fac.index)
+    for t in list(meta)[:20]:
+        for col in ("genre", "style", "language", "vocal_type", "bpm"):
+            assert meta[t].get(col) == fac.loc[t].get(col), (t, col)
+        for col in ("moods", "instruments"):
+            assert list(meta[t].get(col) or []) == list(fac.loc[t].get(col) or []), (t, col)
+
+
+def test_query_gate_result_is_unchanged_by_the_cache(svc):
+    """두 번 불러도 같은 후보·같은 진단이어야 한다."""
+    fx = svc.catalog_facets()
+    pick = lambda k, n=2: [x["value"] for x in fx.get(k, [])[:n]]
+    plan = {"filters": {"genre": pick("genre", 3), "language": pick("language", 2)},
+            "exclude": {"mood": pick("mood", 1)}}
+    a_pool, a_diag = svc.filter_query_pool(svc.CAT.pool, dict(plan), None, None)
+    b_pool, b_diag = svc.filter_query_pool(svc.CAT.pool, dict(plan), None, None)
+    assert a_diag == b_diag
+    assert a_pool.moment_id.tolist() == b_pool.moment_id.tolist()

@@ -72,7 +72,7 @@ readinessProbe:
 | 마운트 경로 | **`/artifacts`** (`MUPID_AI_ARTIFACT_DIR` 기본값) |
 | 실제 읽는 위치 | `/artifacts/data/proc/mupid/` |
 | 접근 | **읽기 전용이면 충분하다** |
-| 총 크기 | **513 MB** |
+| 총 크기 | **513 MB** (`stage1_weights.npz` 포함, `stage1.pt` 제외) |
 
 | 파일 | 크기 | 없으면 |
 |---|---:|---|
@@ -80,7 +80,8 @@ readinessProbe:
 | `features_v1.npz` | 93 MB | 학습 점수가 빠진다 |
 | `stage1_section.npy` | 33 MB | 학습 점수가 빠진다 |
 | `moments.parquet` | 3.2 MB | **기동 실패** |
-| `stage1_weights.npz` | 작음 | 없으면 `stage1.pt` 를 찾고, torch 가 없으므로 결국 규칙 점수로 내려간다 |
+| `stage1_weights.npz` | **352 KB** | **묶음에 반드시 넣는다.** 없으면 `stage1.pt` 를 찾는데 이미지에 torch 가 없어 학습 점수가 통째로 빠진다. 오류는 안 나고 규칙 점수로 조용히 내려간다 |
+| `stage1.pt` | 349 KB | torch 판. 개발 환경용이고 **배포 묶음에는 필요 없다** |
 | `id_map.parquet` | 작음 | **`/internal/ready` 가 503** — 숫자 ID 를 못 잇는다 |
 | `labels_service.parquet` | 가변 | 모든 사용자가 콜드스타트가 된다 (오류는 안 난다) |
 
@@ -203,5 +204,21 @@ torch                  없음
 유휴 메모리            80 MB
 ```
 
-산출물을 붙인 상태의 기동은 **아직 확인하지 못했다.** MySQL 스키마가 비어 있어
+### 랭킹 모델 (2026-09-15 확인)
+
+`stage1_weights.npz` 를 실제 체크포인트에서 만들어 파리티를 확인했다.
+
+```
+python -m ai_server.tools.export_stage1_npz --trials 64
+  최대 절대 오차 1.192e-07 · 순위 불일치 0/64
+  저장 stage1_weights.npz (352KB)   in_dim 285 · hist_max 32 · half_life 14.0
+```
+
+torch 를 막은 상태에서 이 파일만으로 사용자 벡터가 나오는 것까지 확인했다(dim 128).
+**이 파일이 묶음에 없으면 배포 이미지에서 학습 점수가 조용히 사라진다** — `/health` 의
+`model_backend` 가 `numpy` 인지, `model_error` 가 비어 있는지로 확인한다.
+
+### 아직 확인하지 못한 것
+
+산출물을 붙인 상태의 **전체 기동**은 아직이다. MySQL 스키마가 비어 있어
 `id_map.parquet` 을 실제 숫자 ID 로 만들지 못했기 때문이다. DDL 적용이 선행이다.

@@ -342,8 +342,16 @@ def parse_style(cat: str, vocal: str, lang: str) -> str:
 
 
 def catalog_facets() -> dict:
-    """조사 선택지를 **카탈로그에서 직접** 만든다 (하드코딩하지 않는다)."""
+    """조사 선택지를 **카탈로그에서 직접** 만든다 (하드코딩하지 않는다).
+
+    카탈로그가 바뀌지 않는 한 결과가 같으므로 한 번만 만든다. 캐시를 **카탈로그
+    객체에 붙여** 두어, `CAT` 을 새로 만들면 캐시도 함께 사라진다(`_pool_mean` 과 같은
+    방식). 전역 dict 에 두면 산출물을 교체했을 때 옛 어휘가 남는다.
+    """
     c = CAT
+    hit = getattr(c, "_facets_cache", None)
+    if hit is not None:
+        return hit
     rows = []
     for t in sorted(c.by_track):
         ti = c.track_info(t)
@@ -383,10 +391,27 @@ def catalog_facets() -> dict:
             for k, v in c.pool.section_label.value_counts().items()]
     # 에너지(rms 백분위)는 선택지에서 뺐다 — 체감과 어긋나 부정확했다.
     # 대신 모델이 뽑은 장르·무드·악기를 선택지로 쓴다.
-    return {"language": cnt("language"), "vocal_type": cnt("vocal_type"),
-            "style": cnt("style"), "genre": cnt("genre"),
-            "mood": cnt_multi("moods"), "instrument": cnt_multi("instruments"),
-            "tempo": tempo, "section_label": secs, "_df": df}
+    out = {"language": cnt("language"), "vocal_type": cnt("vocal_type"),
+           "style": cnt("style"), "genre": cnt("genre"),
+           "mood": cnt_multi("moods"), "instrument": cnt_multi("instruments"),
+           "tempo": tempo, "section_label": secs, "_df": df}
+    # 인덱스를 건 사본도 함께 들고 있는다. `set_index` 도 호출마다 복사가 일어난다.
+    c._facets_cache = out
+    c._facets_by_track = df.set_index("track_id").to_dict("index")
+    return out
+
+
+def catalog_facet_rows() -> dict:
+    """track_id -> 메타 dict. `fac.loc[t]` 를 대신한다.
+
+    `DataFrame.loc` 은 한 번에 Series 를 새로 만든다. 후보마다 부르면 그 비용이
+    행 수만큼 쌓인다 — 게이트 다섯 개면 곡 수의 다섯 배다. 값은 같고 만드는 방식만
+    다르다.
+    """
+    c = CAT
+    if getattr(c, "_facets_by_track", None) is None:
+        catalog_facets()
+    return c._facets_by_track
 
 
 ONB_LIST_FIELDS = ("language", "vocal_type", "style", "genre", "mood", "instrument",
@@ -1352,7 +1377,9 @@ def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional
                       current_moment_id: Optional[str]) -> tuple[pd.DataFrame, dict]:
     """QueryPlan 의 명시 조건만 후보 게이트로 적용한다."""
     c = CAT
-    fac = catalog_facets()["_df"].set_index("track_id")
+    facets = catalog_facets()
+    fac = facets["_df"].set_index("track_id")
+    meta = catalog_facet_rows()          # track_id -> dict. .loc 대신 쓴다
     raw_f = plan.get("filters") or {}
     f = _canonicalize_query_tags(raw_f, fac, pool)
     ex = _canonicalize_query_tags(plan.get("exclude") or {}, fac, pool)
@@ -1382,16 +1409,17 @@ def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional
         keep &= ~hit if negate else hit
         applied.append(("exclude." if negate else "filters.") + name)
 
-    gate("genre", lambda t: [fac.loc[t].get("genre", ""), fac.loc[t].get("style", "")])
-    gate("language", lambda t: fac.loc[t].get("language", ""))
-    gate("instrument", lambda t: fac.loc[t].get("instruments", []))
-    gate("vocal", lambda t: fac.loc[t].get("vocal_type", ""))
+    _m = lambda t: meta.get(t) or {}          # noqa: E731  (fac.loc[t] 과 같은 값)
+    gate("genre", lambda t: [_m(t).get("genre", ""), _m(t).get("style", "")])
+    gate("language", lambda t: _m(t).get("language", ""))
+    gate("instrument", lambda t: _m(t).get("instruments", []))
+    gate("vocal", lambda t: _m(t).get("vocal_type", ""))
     # mood/activity/goal은 추론 가능성이 커서 CLAP 점수로만 반영한다.
-    gate("genre", lambda t: [fac.loc[t].get("genre", ""), fac.loc[t].get("style", "")], True)
-    gate("language", lambda t: fac.loc[t].get("language", ""), True)
-    gate("mood", lambda t: fac.loc[t].get("moods", []), True)
-    gate("instrument", lambda t: fac.loc[t].get("instruments", []), True)
-    gate("vocal", lambda t: fac.loc[t].get("vocal_type", ""), True)
+    gate("genre", lambda t: [_m(t).get("genre", ""), _m(t).get("style", "")], True)
+    gate("language", lambda t: _m(t).get("language", ""), True)
+    gate("mood", lambda t: _m(t).get("moods", []), True)
+    gate("instrument", lambda t: _m(t).get("instruments", []), True)
+    gate("vocal", lambda t: _m(t).get("vocal_type", ""), True)
 
     flow = f.get("flow")
     if _qvals(flow):
@@ -1402,14 +1430,15 @@ def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional
         keep &= ~np.asarray([_qmatch(v, flow_ex) for v in pool.section_label])
         applied.append("exclude.flow")
 
-    bpms = np.asarray([float(fac.loc[t].get("bpm", 0) or 0) for t in pool.track_id])
+    bpms = np.asarray([float(_m(t).get("bpm", 0) or 0) for t in pool.track_id])
     if f.get("bpm_min") is not None:
         keep &= bpms >= float(f["bpm_min"]); applied.append("filters.bpm_min")
     if f.get("bpm_max") is not None:
         keep &= bpms <= float(f["bpm_max"]); applied.append("filters.bpm_max")
 
     tempo_dir = str(f.get("tempo_direction") or "").lower()
-    ref_bpm = float(fac.loc[current_track_id].get("bpm", 0) or 0) if current_track_id in fac.index else 0.0
+    ref_bpm = (float(_m(current_track_id).get("bpm", 0) or 0)
+               if current_track_id in meta else 0.0)
     if tempo_dir in ("up", "faster", "fast") and ref_bpm:
         keep &= bpms > ref_bpm; applied.append("filters.tempo_direction")
     elif tempo_dir in ("down", "slower", "slow") and ref_bpm:
@@ -1612,7 +1641,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     # ---- 명시 선호 게이트: 청취 이력 유무와 무관하게 항상 적용 (게이트 인계) ----
     ans = onboarding_of(user) or {}
     if ans:
-        fac = catalog_facets()["_df"].set_index("track_id")
+        fac = catalog_facets()["_df"].set_index("track_id")   # 온보딩 게이트. 캐시된 df 다
         wl = ans.get("language") or []
         wv = ans.get("vocal_type") or []
         xs = ans.get("exclude_style") or []
