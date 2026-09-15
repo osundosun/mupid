@@ -1015,3 +1015,137 @@ def test_no_bare_print_in_startup_path():
 def test_dockerfile_pins_a_utf8_locale():
     df = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
     assert "LANG=C.UTF-8" in df and "PYTHONIOENCODING=utf-8" in df
+
+
+# ------------------------------------------------------------------ Spring 계약 대조
+def _java(rel: str):
+    p = Path(__file__).resolve().parents[2] / rel
+    if not p.exists():
+        pytest.skip("api 모듈이 없는 체크아웃")
+    return p.read_text(encoding="utf-8")
+
+
+def _record_fields(src: str, name: str) -> list[str]:
+    """`public record X( ... )` 의 필드 이름을 뽑는다. 주석과 애너테이션은 건너뛴다."""
+    import re
+
+    m = re.search(rf"record\s+{name}\s*\((.*?)\)\s*\{{", src, re.S)
+    assert m, f"record {name} 을 찾지 못했다"
+    body = re.sub(r"/\*.*?\*/|//[^\n]*", "", m.group(1), flags=re.S)
+    out = []
+    for part in body.split(","):
+        toks = part.split()
+        if len(toks) >= 2:
+            out.append(toks[-1].strip())
+    return out
+
+
+def _snake(name: str) -> str:
+    import re
+
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+_DTO = "api/src/main/java/com/osundosun/mupid/api/ai/client/RecommenderDto.java"
+
+
+def test_response_covers_every_field_spring_reads():
+    """Spring 이 읽는 필드를 우리가 안 보내면 그 값은 조용히 0·null 이 된다.
+    Jackson 은 모르는 필드를 무시하도록 돼 있어 **없는 필드도 예외가 나지 않는다.**"""
+    src = _java(_DTO)
+    ours = set(internal_api.RecommendationItem.model_fields)
+    theirs = {_snake(f) for f in _record_fields(src, "Item")}
+    assert theirs <= ours, f"우리가 안 보내는 필드: {sorted(theirs - ours)}"
+
+    ours_r = set(internal_api.RecommendationResponse.model_fields)
+    theirs_r = {_snake(f) for f in _record_fields(src, "Response")}
+    assert theirs_r <= ours_r, f"우리가 안 보내는 필드: {sorted(theirs_r - ours_r)}"
+
+
+def test_error_shape_matches():
+    theirs = {_snake(f) for f in _record_fields(_java(_DTO), "Error")}
+    assert theirs <= set(internal_api.ErrorResponse.model_fields)
+
+
+def test_search_request_accepts_what_spring_sends():
+    """Spring 의 SearchRequest 필드를 우리가 거부하면 400 이다 — extra=forbid 이기 때문."""
+    theirs = {_snake(f) for f in _record_fields(_java(_DTO), "SearchRequest")}
+    ours = set(internal_api.SearchRequest.model_fields)
+    assert theirs <= ours, f"우리가 거부하는 필드: {sorted(theirs - ours)}"
+
+
+def test_next_request_accepts_what_spring_sends():
+    theirs = {_snake(f) for f in _record_fields(_java(_DTO), "NextRequest")}
+    ours = set(internal_api.NextRequest.model_fields)
+    assert theirs <= ours, f"우리가 거부하는 필드: {sorted(theirs - ours)}"
+
+
+def test_spring_tolerates_fields_we_added():
+    """`ref_music_id` 처럼 우리가 늘린 필드가 저쪽 역직렬화를 깨면 안 된다.
+    AiJson 이 FAIL_ON_UNKNOWN_PROPERTIES 를 끈 것에 의존한다 — 되돌리면 여기서 걸린다."""
+    src = _java("api/src/main/java/com/osundosun/mupid/api/ai/client/AiJson.java")
+    assert "FAIL_ON_UNKNOWN_PROPERTIES" in src and ".disable(" in src
+
+
+# ------------------------------------------------------------------ 매핑표 생성
+def _tsv(tmp_path, rows, header=None):
+    header = header or "source_track_id\tmusic_id\tsource_section_uid\tmusic_section_id"
+    p = tmp_path / "t.tsv"
+    p.write_text(header + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    return p
+
+
+def test_build_id_map_writes_a_loadable_table(tmp_path, clean_env):
+    from ai_server.app import ids as idsmod
+    from ai_server.tools import build_id_map as b
+
+    src = _tsv(tmp_path, ["A\t1\tA#0\t10", "A\t1\tA#1\t11", "B\t2\tB#0\t20"])
+    out = tmp_path / "id_map.parquet"
+    df = b.build(b.read_table(src))
+    assert b.check(df) == []
+    df.to_parquet(out, index=False)
+
+    im = idsmod.IdMap(path=out, strict=True)
+    assert im.loaded and im.track_to_num == {"A": 1, "B": 2}
+    assert im.sec_to_num["A#1"] == 11
+
+
+def test_build_id_map_refuses_a_broken_mapping(tmp_path):
+    """같은 곡이 music_id 두 개면 적재가 막힌다. 파일을 만들기 전에 알아야 한다."""
+    from ai_server.app import ids as idsmod
+    from ai_server.tools import build_id_map as b
+
+    src = _tsv(tmp_path, ["A\t1\tA#0\t10", "A\t2\tA#1\t11"])
+    out = tmp_path / "bad.parquet"
+    b.build(b.read_table(src)).to_parquet(out, index=False)
+    with pytest.raises(idsmod.MapIntegrityError):
+        idsmod.IdMap(path=out, strict=True)
+
+
+def test_build_id_map_warns_on_oversized_uid(tmp_path):
+    """MySQL 이 조용히 잘라 저장하면 1:1 검사를 통과하면서 매핑이 어긋난다."""
+    from ai_server.tools import build_id_map as b
+
+    long_uid = "X" * (b.UID_MAX + 5) + "#0"
+    src = _tsv(tmp_path, [f"A\t1\t{long_uid}\t10"])
+    problems = b.check(b.build(b.read_table(src)))
+    assert problems and "길이" in problems[0]
+
+
+def test_build_id_map_requires_track_id_or_explicit_derive(tmp_path):
+    """곡 문자열 ID 를 말없이 지어내지 않는다."""
+    from ai_server.tools import build_id_map as b
+
+    src = _tsv(tmp_path, ["A#0\t10"], header="source_section_uid\tmusic_section_id")
+    with pytest.raises(SystemExit):
+        b.build(b.read_table(src))
+
+
+def test_build_id_map_reads_csv_too(tmp_path):
+    """내보내는 도구마다 구분자가 다르다."""
+    from ai_server.tools import build_id_map as b
+
+    p = tmp_path / "t.csv"
+    p.write_text("source_track_id,music_id,source_section_uid,music_section_id\n"
+                 "A,1,A#0,10\n", encoding="utf-8")
+    assert len(b.build(b.read_table(p))) == 1

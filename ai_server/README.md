@@ -255,6 +255,10 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 
 **MySQL 매핑이 없으면 503 이 정상이다.** 가짜 ID 로 통과시키지 않는다.
 
+**부분 매핑도 `ready` 가 아니다.** 추천 풀 전량이 매핑돼야 한다. 절반만 매핑된 상태로
+응답하면 매핑 안 된 곡이 **소리 없이 사라지고**, 그건 503 보다 나쁘다. 그래서 배포 규약은
+"색인 적재가 끝날 때까지 `ready` 는 뜨지 않는다" 이다 — 그동안 Spring 은 대체 응답을 쓴다.
+
 503 메시지에는 **매핑표 파일이 없는 것인지 매핑이 부족한 것인지**와 해석된 `id_map` 경로가
 함께 들어간다. 경로 설정 실수와 적재 미완을 응답만 보고 구분하기 위해서다.
 
@@ -341,6 +345,28 @@ Spring 은 자연어 원문 대신 `query_plan` 을 보낸다. 대화 모델이 
 네트워크 격리가 유일한 방어선이면 설정 실수 한 번에 그대로 열린다. `MUPID_AI_INTERNAL_TOKEN`
 을 넣으면 `X-Internal-Token` 헤더를 검사한다. **양쪽을 동시에 설정해야 한다** — 한쪽만
 켜면 추천이 통째로 401 이다. `/health` 는 오케스트레이터가 부르므로 검사 밖에 둔다.
+
+## 숫자 ID 매핑 만들기
+
+```bash
+mysql ... --batch -e "
+  SELECT s.external_id AS source_section_uid,
+         s.music_section_analysis_id AS music_section_id,
+         m.source_track_id, m.music_id
+  FROM music_section_analysis s JOIN music m ON m.music_id = s.music_id
+" > sections.tsv
+
+MUPID_AI_ARTIFACT_DIR=/경로 python -m ai_server.tools.build_id_map sections.tsv
+```
+
+CSV·TSV 어느 쪽이든 읽는다. 컬럼 **이름**만 맞으면 순서와 구분자는 보지 않는다.
+
+쓰기 전에 검사한다. 1:1 위반이면 파일을 만들지 않고, 구간 UID 가 **50자를 넘으면 경고**
+한다 — `erd.sql` 의 `VARCHAR(50)` 을 넘기면 MySQL 이 조용히 잘라 저장하고, 그러면 1:1
+검사를 통과하면서 매핑만 어긋난다. 실측 최댓값이 36자라 여유가 많지 않다.
+
+곡 문자열 ID 컬럼이 DB 에 아직 없으면 `--derive-track-id` 로 구간 UID 의 `#` 앞을 쓸 수
+있지만 권하지 않는다. 되짚을 근거가 DB 에 남지 않는다.
 
 ## 배치
 
