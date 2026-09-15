@@ -12,7 +12,7 @@ tr -d '\r' < api/gradlew > "$directory/context/gradlew"
 tr -d '\r' < infra/image/build.Dockerfile > "$directory/context/Dockerfile"
 # Reuse the production runtime definition, including user and health check.
 tr -d '\r' < infra/image/Dockerfile | \
-  sed 's/^COPY --chown=spring:spring app.jar app.jar$/COPY --from=builder --chown=spring:spring \/release\/app.jar app.jar/' \
+  sed 's/^COPY --chown=1000:1000 app.jar app.jar$/COPY --from=builder --chown=1000:1000 \/release\/app.jar app.jar/' \
   >> "$directory/context/Dockerfile"
 grep -q '^COPY --from=builder ' "$directory/context/Dockerfile"
 chown -R 1000:1000 "$directory"
