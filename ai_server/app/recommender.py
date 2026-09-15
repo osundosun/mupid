@@ -164,7 +164,18 @@ class Catalog:
 
                 import m11_stage1 as s1
 
-                ck = torch.load(OUT_DIR / "stage1.pt", map_location="cpu", weights_only=False)
+                # 체크포인트는 남이 준 파일이다. weights_only=False 로 열면 파일 하나가
+                # 임의 코드를 실행할 수 있다. 먼저 안전 모드로 열고, 그 파일이 텐서·
+                # 기본형만 담고 있지 않을 때만 예전 방식으로 물러난다 — 그때는 조용히
+                # 넘어가지 않고 로그를 남긴다.
+                ckpt_path = OUT_DIR / "stage1.pt"
+                try:
+                    ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+                except Exception as _e:
+                    print(f"[ai_server] stage1.pt 를 안전 모드로 읽지 못했다 "
+                          f"({type(_e).__name__}). 신뢰할 수 있는 파일인지 확인할 것.",
+                          flush=True)
+                    ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
                 if ck["in_dim"] == self.X.shape[1]:
                     m = s1.make_model(ck["in_dim"])
                     m.load_state_dict(ck["state"])

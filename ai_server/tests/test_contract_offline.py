@@ -689,3 +689,51 @@ def test_metrics_snapshot_is_json_safe(fresh_metrics):
     fresh_metrics.observe_reason("COLD_START")
     fresh_metrics.observe_behavior(1.5)
     json.dumps(fresh_metrics.snapshot())
+
+
+# ------------------------------------------------------------------ 내부 호출 보호
+def test_internal_is_open_by_default(similar_client, monkeypatch):
+    """기본은 꺼져 있어야 한다. 켜 두고 Spring 에 넣어 주지 않으면 추천이 통째로 막힌다."""
+    monkeypatch.delenv("MUPID_AI_INTERNAL_TOKEN", raising=False)
+    c = similar_client([_srow("B", 1)])
+    assert c.post("/internal/similar", json={"music_section_id": 10}).status_code == 200
+
+
+def test_internal_token_is_enforced_when_set(similar_client, monkeypatch):
+    monkeypatch.setenv("MUPID_AI_INTERNAL_TOKEN", "s3cret")
+    c = similar_client([_srow("B", 1)])
+    body = {"music_section_id": 10}
+
+    r = c.post("/internal/similar", json=body)
+    assert r.status_code == 401 and r.json()["error_code"] == "UNAUTHORIZED"
+    assert "s3cret" not in r.text, "토큰을 응답에 되돌려 주지 않는다"
+
+    r = c.post("/internal/similar", json=body, headers={"X-Internal-Token": "wrong"})
+    assert r.status_code == 401
+
+    r = c.post("/internal/similar", json=body, headers={"X-Internal-Token": "s3cret"})
+    assert r.status_code == 200, r.text
+
+
+def test_health_is_not_behind_the_token(monkeypatch):
+    """/health 는 오케스트레이터가 부른다. 토큰 뒤에 두면 컨테이너가 죽는다."""
+    monkeypatch.setenv("MUPID_AI_INTERNAL_TOKEN", "s3cret")
+    from fastapi.testclient import TestClient
+
+    from ai_server.app.main import app
+
+    with TestClient(app) as c:
+        assert c.get("/health").status_code == 200
+
+
+# ------------------------------------------------------------------ 배포 파일
+def test_dockerfile_uses_cpu_torch_and_excludes_artifacts():
+    root = Path(__file__).resolve().parents[2]
+    df = (root / "ai_server" / "Dockerfile").read_text(encoding="utf-8")
+    assert "download.pytorch.org/whl/cpu" in df, "기본 PyPI torch 는 CUDA 를 끌고 온다"
+    assert "MUPID_AI_ARTIFACT_DIR" in df
+    assert "/health" in df and "/internal/ready" not in df.split("HEALTHCHECK")[1], \
+        "ready 를 헬스체크로 쓰면 매핑표가 없는 동안 재시작을 반복한다"
+    ignore = (root / ".dockerignore").read_text(encoding="utf-8")
+    for pat in ("node_modules", "**/.env", "!**/.env.example"):
+        assert pat in ignore, pat

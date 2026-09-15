@@ -8,6 +8,7 @@ include:
   - local: infra/ci/frontend.yml
   - local: infra/ci/backend.yml
   - local: infra/ci/release.yml
+  - local: infra/ci/ai-server.yml
 
 gemini-code-review:
   stage: ai-review

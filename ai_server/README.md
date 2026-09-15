@@ -34,6 +34,7 @@ CUDA 라이브러리를 끌고 와 수 GB 가 된다.
 | `MUPID_POOL` | `flow` | 후보 풀의 주 출처 (`moments.parquet` 의 `source`) |
 | `MUPID_POOL_EXTRA` | `jamendo,own` | 주 출처에 **더해** 후보로 넣을 출처 (쉼표 구분) |
 | `MUPID_COMBINER` | `logistic_flow_stage1.json` | 점수 결합기 파일 이름 |
+| `MUPID_AI_INTERNAL_TOKEN` | (없음) | `/internal` 호출 토큰. 비우면 검사하지 않는다 |
 
 **`MUPID_POOL`·`MUPID_POOL_EXTRA`·`MUPID_COMBINER` 는 추천 결과 자체를 바꾼다.** 앞의 둘은
 후보에 오를 곡 집합을, 마지막은 순위를 바꾼다. 색인과 짝이 맞지 않는 결합기를 넣으면
@@ -312,7 +313,28 @@ pytest 11건 전부 통과.
 
 Spring 은 컨테이너로 돈다. 이 서비스를 호스트에서 직접 실행하면 컨테이너가 닿도록
 `extra_hosts` 와 `MUPID_AI_BASE_URL` 을 맞춰야 한다. **nginx 에 노출하지 않는다** —
-`/internal` 은 인증이 없고 Spring 만 호출하는 전제다.
+`/internal` 은 Spring 만 호출하는 전제다.
+
+네트워크 격리가 유일한 방어선이면 설정 실수 한 번에 그대로 열린다. `MUPID_AI_INTERNAL_TOKEN`
+을 넣으면 `X-Internal-Token` 헤더를 검사한다. **양쪽을 동시에 설정해야 한다** — 한쪽만
+켜면 추천이 통째로 401 이다. `/health` 는 오케스트레이터가 부르므로 검사 밖에 둔다.
+
+## 이미지
+
+```bash
+docker build -f ai_server/Dockerfile -t mupid-ai:<tag> .     # 컨텍스트는 저장소 루트
+docker run -p 8100:8100 -v /경로/artifacts:/artifacts:ro mupid-ai:<tag>
+```
+
+`torch` 는 CPU 인덱스에서 받는다. 기본 PyPI 판은 CUDA 라이브러리를 끌고 와 수 GB 가 된다.
+모델·색인은 이미지에 넣지 않는다 — 코드와 수명이 다르고, 색인만 교체하는 일이 더 잦다.
+
+헬스체크는 `/health` 다. `/internal/ready` 를 쓰면 매핑표가 없는 동안 컨테이너가 재시작을
+반복한다. 트래픽 차단은 오케스트레이터가 `ready` 로 따로 판단한다.
+
+CI 는 `infra/ci/ai-server.yml` 의 `ai-server-verify` 가 오프라인 계약 테스트를 돌린다.
+색인이 없으면 smoke 가 통째로 건너뛰므로, **실제로 몇 건 돌았는지**를 확인해 "전부
+건너뛰고 초록불" 을 막는다.
 
 
 | 파일 | 용도 |

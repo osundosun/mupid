@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import hmac
+import os
 import time
 from typing import Optional
 
@@ -24,6 +26,15 @@ from . import ids, metrics, paths
 PREFIX = "/internal"
 MODEL_VERSION = "mupid-stage1-v1"       # /feedback 이 이미 내보내는 값과 같게 둔다
 EMBEDDING_VERSION = "mert-v1-95m"       # 구간 임베딩. 교체하면 닮은 구간 결과가 바뀐다
+AUTH_HEADER = "X-Internal-Token"
+
+# `/internal` 은 Spring 만 부르는 전제이고 지금은 네트워크 격리가 유일한 방어선이다.
+# 설정 실수 한 번이면 그대로 열린다. 공유 비밀을 넣어 두면 두 겹이 된다.
+#
+# **기본은 꺼져 있다.** 켜 두고 Spring 에 넣어 주지 않으면 추천이 통째로 401 이 되므로,
+# 값을 넣는 쪽이 켜는 쪽이 되게 한다. 값은 읽기만 하고 응답·로그에 싣지 않는다.
+def _expected_token() -> str:
+    return os.environ.get("MUPID_AI_INTERNAL_TOKEN", "").strip()
 BIGINT_MAX = 2 ** 63 - 1
 MAX_LIMIT = 50
 
@@ -169,8 +180,9 @@ class ErrorResponse(BaseModel):
     message: str
 
 
-ERRORS = {400: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
-          500: {"model": ErrorResponse}, 503: {"model": ErrorResponse}}
+ERRORS = {400: {"model": ErrorResponse}, 401: {"model": ErrorResponse},
+          404: {"model": ErrorResponse}, 500: {"model": ErrorResponse},
+          503: {"model": ErrorResponse}}
 
 
 # ------------------------------------------------------------------ 어댑터
@@ -554,6 +566,13 @@ def install(app: FastAPI, service_module=None) -> None:
     async def _observe(request: Request, call_next):
         if not request.url.path.startswith(PREFIX):
             return await call_next(request)
+        expected = _expected_token()
+        if expected:
+            got = request.headers.get(AUTH_HEADER, "")
+            # 상수 시간 비교. 길이·내용이 응답 시간으로 새지 않게 한다.
+            if not hmac.compare_digest(got, expected):
+                metrics.observe_request(request.url.path, 0.0, "HTTP_401")
+                return _err("UNAUTHORIZED", "내부 호출 토큰이 올바르지 않습니다.", 401)
         t0 = time.perf_counter()
         response = await call_next(request)
         # 오류 코드는 예외 처리기가 본문에 실어 둔 것을 상태 코드로 갈음한다.
