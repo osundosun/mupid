@@ -29,6 +29,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Res
 from pydantic import BaseModel
 
 from . import metrics, paths, stage1_np
+from .log import log
 
 warnings.filterwarnings("ignore")
 
@@ -197,9 +198,8 @@ class Catalog:
                 try:
                     ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
                 except Exception as _e:
-                    print(f"[ai_server] stage1.pt 를 안전 모드로 읽지 못했다 "
-                          f"({type(_e).__name__}). 신뢰할 수 있는 파일인지 확인할 것.",
-                          flush=True)
+                    log(f"stage1.pt 를 안전 모드로 읽지 못했다 "
+                        f"({type(_e).__name__}). 신뢰할 수 있는 파일인지 확인할 것.")
                     ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
                 if ck["in_dim"] == self.X.shape[1]:
                     m = s1.make_model(ck["in_dim"])

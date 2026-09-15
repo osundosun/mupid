@@ -957,3 +957,61 @@ def test_image_ships_the_batch_entrypoints():
     root = Path(__file__).resolve().parents[2]
     df = (root / "ai_server" / "Dockerfile").read_text(encoding="utf-8")
     assert "ai_server/tools" in df
+
+
+# ------------------------------------------------------------------ 로그가 서비스를 죽이지 않는다
+class _NarrowStdout:
+    """cp949 처럼 한글·em dash 를 못 받는 콘솔을 흉내 낸다."""
+
+    encoding = "ascii"
+
+    def __init__(self):
+        self.buffer = None      # buffer 도 없는 환경(파이프 래퍼 등)까지 가정한다
+
+    def write(self, s):
+        s.encode("ascii")       # 못 받으면 UnicodeEncodeError
+        return len(s)
+
+    def flush(self):
+        pass
+
+
+def test_log_never_raises_on_narrow_stdout(monkeypatch):
+    """print 하나가 예외를 내면 그 호출이 기동 경로에 있을 때 서비스가 뜨지 못한다."""
+    import sys
+
+    from ai_server.app.log import log
+
+    monkeypatch.setattr(sys, "stdout", _NarrowStdout())
+    log("선택 산출물 없음 — id_map.parquet")          # 예외가 나면 실패다
+
+
+def test_startup_survives_narrow_stdout(monkeypatch):
+    """실제 기동 경로. 한글 진단 줄이 있어도 앱은 떠야 한다."""
+    import sys
+
+    from ai_server.app import main as appmain
+
+    monkeypatch.setattr(sys, "stdout", _NarrowStdout())
+    monkeypatch.setattr(appmain, "check_integrity",
+                        lambda: {"ok": False, "errors": ["색인 없음 — 확인"], "checks": {}})
+    appmain._startup()
+
+
+def test_no_bare_print_in_startup_path():
+    """진단은 log() 로만 남긴다. 맨 print 는 인코딩에 따라 예외를 낸다."""
+    import ast
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    for f in app_dir.glob("*.py"):
+        if f.name in ("log.py", "ids.py"):      # ids.py 의 print 는 CLI 전용이다
+            continue
+        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                    and node.func.id == "print":
+                raise AssertionError(f"{f.name}:{node.lineno} 맨 print")
+
+
+def test_dockerfile_pins_a_utf8_locale():
+    df = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    assert "LANG=C.UTF-8" in df and "PYTHONIOENCODING=utf-8" in df

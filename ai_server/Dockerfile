@@ -26,7 +26,11 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 FROM python:3.12-slim AS runtime
 WORKDIR /app
 
+# 로그에 한글이 들어간다. 로케일이 C 면 print 가 UnicodeEncodeError 를 내고, 그 호출이
+# 기동 경로에 있으면 **서비스가 뜨지 못한다.** 코드 쪽도 막아 두었지만 여기서 먼저 막는다.
 ENV TZ=Asia/Seoul \
+    LANG=C.UTF-8 \
+    PYTHONIOENCODING=utf-8 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     MUPID_AI_PORT=8100 \

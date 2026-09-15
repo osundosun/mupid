@@ -16,6 +16,7 @@ import pandas as pd
 from fastapi import FastAPI
 
 from . import internal_api, paths, recommender
+from .log import log
 
 _STARTED = time.time()
 _STATE: dict = {"loaded": False, "error": None, "integrity": None, "load_seconds": None}
@@ -81,24 +82,24 @@ def _startup() -> None:
     if miss:
         # 죽이지 않는다. "정상처럼 뜬 채 기능만 없는" 상태를 로그와 /health 에 남긴다.
         # 무결성 검사보다 **먼저** 찍는다 — 무결성이 깨지면 아래에서 돌아 나가기 때문이다.
-        print(f"[ai_server] 선택 산출물 없음 — {', '.join(miss)}", flush=True)
+        log(f"선택 산출물 없음 — {', '.join(miss)}")
     integrity = check_integrity()
     _STATE["integrity"] = integrity
     if not integrity["ok"]:
         # 여기서 죽이지 않는다. /health 로 원인을 볼 수 있어야 하고 ready 만 막으면 된다.
         _STATE["error"] = "; ".join(integrity["errors"])
-        print(f"[ai_server] 산출물 무결성 실패 — {_STATE['error']}", flush=True)
+        log(f"산출물 무결성 실패 — {_STATE['error']}")
         return
     try:
         recommender.CAT = recommender.Catalog()
         _STATE["loaded"] = True
         _STATE["load_seconds"] = round(time.time() - t0, 3)
-        print(f"[ai_server] 적재 완료 {_STATE['load_seconds']}초 · "
+        log(f"적재 완료 {_STATE['load_seconds']}초 · "
               f"{recommender.CAT.pool.track_id.nunique()}곡 "
-              f"{len(recommender.CAT.pool)}구간", flush=True)
+              f"{len(recommender.CAT.pool)}구간")
     except Exception as e:
         _STATE["error"] = f"{type(e).__name__}: {e}"
-        print(f"[ai_server] 카탈로그 적재 실패 — {_STATE['error']}", flush=True)
+        log(f"카탈로그 적재 실패 — {_STATE['error']}")
 
 
 @asynccontextmanager

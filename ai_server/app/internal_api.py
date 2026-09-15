@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
 from . import ids, metrics, paths
+from .log import log
 
 PREFIX = "/internal"
 MODEL_VERSION = "mupid-stage1-v1"       # /feedback 이 이미 내보내는 값과 같게 둔다
@@ -286,13 +287,12 @@ def to_response(rec_id: int, out: dict, limit: int,
             ref_music_id=ref_mid, ref_music_section_id=ref_sid))
     if unknown_labels:
         # 조용히 넘기면 "추천이 왜 적지" 로만 보인다. 원인을 로그에 남긴다.
-        print(f"[internal] ERD ENUM 에 없는 구간 라벨 {len(unknown_labels)}건 제외 — "
-              f"{sorted(set(unknown_labels))}", flush=True)
+        log(f"ERD ENUM 에 없는 구간 라벨 {len(unknown_labels)}건 제외 — "
+              f"{sorted(set(unknown_labels))}")
     items, dropped = _dedupe_by_music_id(items)
     if dropped:
         # 여기서 걸렸다는 것은 매핑표가 N:1 이라는 뜻이다. 조용히 넘기면 원인이 묻힌다.
-        print(f"[internal] music_id 중복 {dropped}건 제거 — 매핑표 1:1 확인 필요",
-              flush=True)
+        log(f"music_id 중복 {dropped}건 제거 — 매핑표 1:1 확인 필요")
     if not items:
         raise ApiError("NO_CANDIDATES", "해당되는 노래가 없습니다.")
     # shortfall 은 추천기가 이미 센 값을 쓰되, 없으면 요청 수와의 차로 메운다.
