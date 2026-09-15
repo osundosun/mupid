@@ -22,7 +22,20 @@
    * 곡 한 줄이 길어야 400px 남짓이고, 넓히면 제목과 빼기 버튼 사이가 휑해진다.
    */
   left: auto;
-  right: 30px;
+  /*
+   * 오른쪽 끝을 미니 플레이어의 오른쪽 끝에 맞춘다.
+   *
+   * 미니 플레이어는 PC 에서 가운데 정렬이다 — `sky-shell.css` 가
+   * `left: 50%; width: calc(100% - 96px); max-width: 1360px` 로 덮어쓴다
+   * (`.mupid-shell .mini-player` 라 `mupid.css` 의 `right: 30px` 보다 세다).
+   * 그래서 여백이 화면 끝에서 48px 이고, 1456px 을 넘으면 1360px 에 걸려
+   * 남는 공간의 절반이 된다. 그 값을 그대로 쓴다.
+   *
+   * `100vw` 가 아니라 `%` 다. 세로 스크롤바가 있으면 `100vw` 는 그 폭까지
+   * 세지만 미니 플레이어의 `100%` 는 세지 않아, 둘이 스크롤바 폭만큼 어긋난다.
+   * 고정 위치 요소라 `%` 의 기준이 미니 플레이어와 같다.
+   */
+  right: max(48px, calc((100% - 1360px) / 2));
   width: min(420px, calc(100vw - 300px));
   /*
    * AI 런처(`.chat-launcher`, z-index 40)보다 위다. 그 버튼이 독이 올라오는
@@ -130,10 +143,13 @@
   display: none;
 }
 
-/* 본문이 가운데로 모이면 독도 그 오른쪽 끝을 따라간다. */
-@media (min-width: 1600px) {
+/*
+ * 좁은 PC 화면에서는 미니 플레이어가 `calc(100% - 48px)` 로 더 넓게 퍼진다
+ * (`sky-shell.css` 의 768~1023px 구간). 여백도 그만큼 줄어든다.
+ */
+@media (min-width: 768px) and (max-width: 1023px) {
   .queue-dock {
-    right: calc((100vw - 1600px) / 2 + 30px);
+    right: 24px;
   }
 }
 
