@@ -25,12 +25,22 @@ CUDA 라이브러리를 끌고 와 수 GB 가 된다.
 
 ### 환경변수
 
-| 변수 | 뜻 |
-|---|---|
-| `MUPID_AI_ARTIFACT_DIR` | 모델·색인 루트 (**필수**) |
-| `MUPID_AI_PORT` | 포트. 기본 8100 |
-| `MUPID_ID_MAP` | 숫자 ID 매핑표. 비우면 `<ARTIFACT_DIR>/data/proc/mupid/id_map.parquet` |
-| `MUPID_AI_NLP_URL` | 자연어 해석기 주소. 비우면 `search` 가 501 |
+| 변수 | 기본값 | 뜻 |
+|---|---|---|
+| `MUPID_AI_ARTIFACT_DIR` | `ai_server/artifacts` | 모델·색인 루트 (**필수**). 서비스·매핑표·라벨러가 모두 이 하나를 기준으로 경로를 만든다 |
+| `MUPID_AI_PORT` | `8100` | 포트 |
+| `MUPID_ID_MAP` | `<ARTIFACT_DIR>/data/proc/mupid/id_map.parquet` | 숫자 ID 매핑표. **시험용 매핑표를 물릴 때만** 지정한다 |
+| `MUPID_AI_NLP_URL` | (없음) | 자연어 해석기 주소. 비우면 `search` 가 501 |
+| `MUPID_POOL` | `flow` | 후보 풀의 주 출처 (`moments.parquet` 의 `source`) |
+| `MUPID_POOL_EXTRA` | `jamendo,own` | 주 출처에 **더해** 후보로 넣을 출처 (쉼표 구분) |
+| `MUPID_COMBINER` | `logistic_flow_stage1.json` | 점수 결합기 파일 이름 |
+
+**`MUPID_POOL`·`MUPID_POOL_EXTRA`·`MUPID_COMBINER` 는 추천 결과 자체를 바꾼다.** 앞의 둘은
+후보에 오를 곡 집합을, 마지막은 순위를 바꾼다. 색인과 짝이 맞지 않는 결합기를 넣으면
+서비스는 정상처럼 뜨면서 순위만 틀어진다. 기본값을 그대로 두는 것을 권한다.
+
+경로 해석 결과는 `/health` 의 `paths` 와 `/internal/ready` 응답에서 확인한다. 설정한 대로
+읽고 있는지는 그 값으로 판별한다 — 환경변수 **값 자체는 응답에 싣지 않는다.**
 
 값은 `.env.example` 을 보고 배포 환경에 넣는다. 실제 값은 커밋하지 않는다.
 
@@ -102,8 +112,20 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 - 같은 `music_id` 는 한 번만 나온다
 - 후보가 모자라면 임의로 채우지 않고 `shortfall` 에 부족분을 적는다
 - `section_label` 은 ERD ENUM 과 같은 대문자
-- `reason_code` 4종: `SIMILAR_PREFERRED_MOMENT` · `QUERY_SEMANTIC_MATCH` · `EXPLORE_NEW` ·
-  `COLD_START`. 늘 수 있으니 모르는 값에서 실패하지 말 것
+- `reason_code` 6종
+
+  | 코드 | 언제 |
+  |---|---|
+  | `SIMILAR_PREFERRED_MOMENT` | 청취 이력에서 만든 선호 구간과 닮았다 |
+  | `ONBOARDING_MATCH` | 이력이 없어 온보딩 답변으로 뽑았다 |
+  | `QUERY_SEMANTIC_MATCH` | 자연어 검색 + 의미 유사도 적용 |
+  | `QUERY_FILTER_MATCH` | 자연어 검색 (조건 필터만) |
+  | `EXPLORE_NEW` | 탐색 슬롯 |
+  | `COLD_START` | 근거가 없다 |
+
+  **늘 수 있으니 모르는 값에서 실패하지 말 것.** 폴백 문장을 반드시 둔다.
+- `reason` 은 **AI 서버가 만든 안전한 기본 문장**이다. 내부 ID·모델 수치는 들어가지 않는다.
+  Spring 이 자체 문구를 쓰려면 `reason_code` 로 갈아끼운다
 
 ### 오류
 
@@ -113,7 +135,7 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 | `MUSIC_ID_MAPPING_NOT_FOUND` | 404 | 숫자 ID 매핑 없음 |
 | `SECTION_ID_MAPPING_NOT_FOUND` | 404 | 〃 (구간) |
 | `NO_CANDIDATES` | 404 | **조건에 맞는 곡이 없음 — 장애가 아니다.** 빈 목록으로 전달 |
-| `SEARCH_NOT_CONFIGURED` | 501 | 자연어 해석기 미설정 → `S15P21A204-219` |
+| `SEARCH_NOT_CONFIGURED` | 501 | 자연어 해석기 미설정 (`MUPID_AI_NLP_URL` 없음) → `S15P21A204-219` |
 | `INDEX_NOT_READY` | 503 | 색인·매핑 미완. 재시도 대상 |
 | `INTERNAL_ERROR` | 500 | 그 밖. 재시도 대상 |
 
@@ -127,6 +149,9 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 4. 매핑 1:1 5. 추천 풀 전체가 숫자 ID 로 매핑됨
 
 **MySQL 매핑이 없으면 503 이 정상이다.** 가짜 ID 로 통과시키지 않는다.
+
+503 메시지에는 **매핑표 파일이 없는 것인지 매핑이 부족한 것인지**와 해석된 `id_map` 경로가
+함께 들어간다. 경로 설정 실수와 적재 미완을 응답만 보고 구분하기 위해서다.
 
 ## ID 규칙
 

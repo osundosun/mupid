@@ -28,11 +28,13 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
+from . import paths
+
 warnings.filterwarnings("ignore")
 
-# 모델·색인 경로는 MUPID_AI_ARTIFACT_DIR 하나로 통일한다. 아래 경로 계산은 원본 그대로다.
-ROOT = Path(os.environ.get("MUPID_AI_ARTIFACT_DIR",
-                           Path(__file__).resolve().parents[1] / "artifacts"))
+# 모델·색인 경로는 MUPID_AI_ARTIFACT_DIR 하나로 통일한다. 계산은 paths 한 곳에서만 한다
+# — 값은 종전과 같다(미설정 시 ai_server/artifacts).
+ROOT = paths.artifact_root()
 SRC = ROOT / "src"
 OUT_DIR = ROOT / "data" / "proc" / "mupid"
 SERVE = OUT_DIR / "serve"
@@ -43,7 +45,10 @@ ONBOARD = SERVE / "onboarding.parquet"
 FLOW_AUDIO = Path.home() / "flow_music_data" / "audio"
 FLOW_COVER = Path.home() / "flow_music_data" / "covers"
 LOCAL_AUDIO = Path.home() / "Mupid_mert" / "audio"
-NLP_PARSE_URL = __import__("os").environ.get("MUPID_NLP_URL", "http://127.0.0.1:8200/parse")
+# 자연어 해석기 주소. 게이트(설정 여부 판단)와 호출부가 **같은 변수**를 본다.
+# 기본값을 두지 않는다 — 기본값이 있으면 "미설정" 이 존재할 수 없어, 해석기가 없는 배포에서
+# 조건을 뽑지 못한 채 일반 추천이 나간다.
+NLP_PARSE_URL = os.environ.get("MUPID_AI_NLP_URL", "").strip()
 
 # m09_labels / m10_features / m11_stage1 은 함수 안에서 맨 이름으로 지연 import 된다.
 # 산출물 디렉터리가 아니라 코드와 함께 둔 legacy 를 경로에 올린다.
@@ -1043,8 +1048,18 @@ def pct(v: np.ndarray) -> np.ndarray:
     return o / max(len(v) - 1, 1)
 
 
-def parse_nlp_query(text: str) -> tuple[Optional[dict], Optional[str]]:
-    """8200 QueryPlan v1 호출. 실패하면 기존 추천을 유지한다."""
+def parse_nlp_query(text: str) -> tuple[Optional[dict], Optional[tuple[str, str]]]:
+    """QueryPlan v1 해석기 호출. 실패를 **삼키지 않는다.**
+
+    반환은 `(plan, error)` 이고 `error` 는 `None` 또는 `(error_code, message)` 다.
+    호출부가 그대로 응답 오류로 쓴다.
+
+    실패했는데 일반 추천으로 넘어가면 사용자가 말한 조건("조용한 피아노")이 소리 없이
+    사라진 채 200 이 나간다. 조건을 몰래 푸는 것과 같아서, 조건을 못 뽑았으면 실패로 답한다.
+    """
+    if not NLP_PARSE_URL:
+        return None, ("SEARCH_NOT_CONFIGURED",
+                      "자연어 해석기가 설정되지 않았습니다. MUPID_AI_NLP_URL 을 지정하세요.")
     try:
         body = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
         req = UrlRequest(NLP_PARSE_URL, data=body, headers={"Content-Type": "application/json"})
@@ -1052,13 +1067,16 @@ def parse_nlp_query(text: str) -> tuple[Optional[dict], Optional[str]]:
             data = json.loads(res.read().decode("utf-8"))
         plan = data.get("plan") if data.get("ok") else None
         if not isinstance(plan, dict):
-            return None, str(data.get("error") or "QueryPlan 없음")
+            # 해석기 주소는 내부 정보다. 메시지에 싣지 않는다. 해석기가 돌려준 문자열은
+            # 남의 출력이므로 길이를 잘라서 넣는다(스택 추적·경로가 통째로 실릴 수 있다).
+            why = str(data.get("error") or "QueryPlan 없음")[:200]
+            return None, ("INTERNAL_ERROR", f"자연어 해석에 실패했습니다: {why}")
         emb = data.get("clap_embedding")
         if isinstance(emb, list):
             plan["_clap_embedding"] = emb
         return plan, None
     except Exception as e:
-        return None, f"{type(e).__name__}: {e}"
+        return None, ("INTERNAL_ERROR", f"자연어 해석기 호출 실패: {type(e).__name__}")
 
 
 def _qvals(v) -> list[str]:

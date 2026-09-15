@@ -10,7 +10,6 @@
 """
 from __future__ import annotations
 
-import os
 from typing import Optional
 
 from fastapi import APIRouter, FastAPI, Request
@@ -19,7 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
-from . import ids
+from . import ids, paths
 
 PREFIX = "/internal"
 MODEL_VERSION = "mupid-stage1-v1"       # /feedback 이 이미 내보내는 값과 같게 둔다
@@ -103,21 +102,56 @@ ERRORS = {400: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
 
 
 # ------------------------------------------------------------------ 어댑터
-def _reason_code(item: dict, has_query: bool) -> str:
-    """기존 결과가 이미 들고 있는 값에서 사유 코드를 읽어낸다. 새로 계산하지 않는다."""
-    if has_query and item.get("clap_score") is not None:
-        return "QUERY_SEMANTIC_MATCH"
+def _reason_code(item: dict, has_query: bool, query_source: str) -> str:
+    """기존 결과가 이미 들고 있는 값에서 사유 코드를 읽어낸다. 새로 계산하지 않는다.
+
+    `query_source` 는 추천기가 무엇으로 질의 벡터를 만들었는지다(`labels`/`onboarding`/
+    `none`). 이걸 보지 않으면 온보딩으로 뽑은 추천까지 `COLD_START` 로 집계되어,
+    "콜드스타트 비율" 지표가 온보딩이 정상 작동할 때도 높게 나온다.
+    """
+    if has_query:
+        return ("QUERY_SEMANTIC_MATCH" if item.get("clap_score") is not None
+                else "QUERY_FILTER_MATCH")
     if item.get("slot_source") == "explore":
         return "EXPLORE_NEW"
     if item.get("matched_dna"):
-        return "SIMILAR_PREFERRED_MOMENT"
+        return ("ONBOARDING_MATCH" if query_source == "onboarding"
+                else "SIMILAR_PREFERRED_MOMENT")
     return "COLD_START"
+
+
+# 사용자에게 보이는 문장은 **코드에서 만든다.** 추천기 내부 `reason` 문자열에는 내부
+# ID(`dna3`, `JAMENDO_1083659#2`)와 모델 수치(유사도·확률·점수)가 들어 있다. 프론트가 그대로
+# 표시하므로 응답에 실으면 그게 곧 노출이다. 내부 문자열은 진단용으로 두고 내보내지 않는다.
+#
+# Spring 이 자체 문구를 쓰고 싶으면 `reason_code` 로 갈아끼우면 된다. 여기 문장은 그때까지의
+# 안전한 기본값이고, 모르는 코드에서도 빈 문자열이 나가지 않게 폴백을 둔다.
+_SECTION_KO = {"INTRO": "인트로", "VERSE": "벌스", "CHORUS": "후렴", "BRIDGE": "브릿지",
+               "INST": "연주", "SOLO": "솔로", "OUTRO": "아웃트로", "OTHER": "이"}
+
+_REASON_TEXT = {
+    "QUERY_SEMANTIC_MATCH": "요청하신 분위기에 가까운 {sec} 구간이에요.",
+    "QUERY_FILTER_MATCH": "요청하신 조건에 맞는 {sec} 구간이에요.",
+    "SIMILAR_PREFERRED_MOMENT": "최근 좋아한 구간과 비슷한 {sec} 구간이에요.",
+    "ONBOARDING_MATCH": "처음 고른 취향에 맞는 {sec} 구간이에요.",
+    "EXPLORE_NEW": "새로 들어볼 만한 {sec} 구간이에요.",
+    "COLD_START": "많이 듣는 {sec} 구간부터 들려드려요.",
+}
+_REASON_FALLBACK = "취향에 맞을 것 같은 구간이에요."
+
+
+def _reason_text(code: str, section_label: str) -> str:
+    tpl = _REASON_TEXT.get(code)
+    if tpl is None:
+        return _REASON_FALLBACK
+    return tpl.format(sec=_SECTION_KO.get(section_label, "이"))
 
 
 def to_response(rec_id: int, out: dict, limit: int,
                 has_query: bool) -> RecommendationResponse:
     """`recommend()` 결과를 공통 DTO 로 옮긴다. 순서·점수는 건드리지 않는다."""
     im = ids.id_map()
+    query_source = str(out.get("diagnostics", {}).get("query_source", ""))
     items: list[RecommendationItem] = []
     for r in out.get("results", []):
         src_t, src_s = str(r["track_id"]), str(r["moment_id"])
@@ -127,14 +161,15 @@ def to_response(rec_id: int, out: dict, limit: int,
         if e_ms <= s_ms:
             raise ApiError("INVALID_TIME_RANGE",
                            f"구간 시간이 뒤집혔거나 길이가 0 입니다: {src_s}")
+        # ERD ENUM 은 대문자다. 추천기는 소문자를 만들므로 경계에서만 맞춘다.
+        label = str(r.get("section_label", "")).upper()
+        code = _reason_code(r, has_query, query_source)
         items.append(RecommendationItem(
             music_id=mid, music_section_id=sid,
             start_time_ms=s_ms, end_time_ms=e_ms,
-            # ERD ENUM 은 대문자다. 추천기는 소문자를 만들므로 경계에서만 맞춘다.
-            section_label=str(r.get("section_label", "")).upper(),
+            section_label=label,
             rank_order=int(r["rank"]), score=float(r["final_score"]),
-            reason_code=_reason_code(r, has_query),
-            reason=str(r.get("reason", ""))))
+            reason_code=code, reason=_reason_text(code, label)))
     items, dropped = _dedupe_by_music_id(items)
     if dropped:
         # 여기서 걸렸다는 것은 매핑표가 N:1 이라는 뜻이다. 조용히 넘기면 원인이 묻힌다.
@@ -175,10 +210,16 @@ def _dedupe_by_music_id(
 _SVC_MOD = None          # install() 이 넣어 준다. 이름으로 재import 하지 않는다.
 
 
-def _svc():
+def _svc_mod():
+    """색인 준비 여부와 무관하게 서비스 모듈만 가져온다."""
     svc = _SVC_MOD
     if svc is None:                       # 직접 호출 등 예외 상황의 최후 수단
         from . import recommender as svc  # noqa: PLC0415
+    return svc
+
+
+def _svc():
+    svc = _svc_mod()
     if getattr(svc, "CAT", None) is None or len(svc.CAT.pool) == 0:
         raise ApiError("INDEX_NOT_READY", "추천 색인이 아직 준비되지 않았습니다.")
     return svc
@@ -222,19 +263,23 @@ def daily(req: DailyRequest) -> RecommendationResponse:
 
 # 자연어 검색은 외부 해석기가 있어야 조건을 뽑는다. 해석기 없이 열어 두면 사용자가 적은
 # 조건을 말없이 무시한 채 아무 곡이나 돌려주게 된다 — 조건을 몰래 푸는 것과 같다.
-# 그래서 해석기 주소가 없으면 501 로 "아직 준비되지 않았다"고 답한다. 확장은 S15P21A204-219.
-NLP_URL = os.environ.get("MUPID_AI_NLP_URL", "").strip()
+# 설정 여부 판단과 실제 호출은 **같은 환경변수**(MUPID_AI_NLP_URL)를 본다. 확장은
+# S15P21A204-219.
 
 
 @router.post("/recommendations/search", response_model=RecommendationResponse,
              responses=ERRORS, summary="자연어 검색 추천")
 def search(req: SearchRequest) -> RecommendationResponse:
-    if not NLP_URL:
+    svc = _svc_mod()
+    if not getattr(svc, "NLP_PARSE_URL", ""):
         raise ApiError("SEARCH_NOT_CONFIGURED",
                        "자연어 해석기가 설정되지 않았습니다. "
                        "MUPID_AI_NLP_URL 을 지정하세요. (S15P21A204-219)")
-    svc = _svc()
-    plan, _error = svc.parse_nlp_query(req.query.strip())
+    _svc()                                  # 색인 준비 확인
+    plan, error = svc.parse_nlp_query(req.query.strip())
+    if error is not None:
+        # 조건을 뽑지 못했다. 일반 추천으로 조용히 넘어가지 않는다.
+        raise ApiError(*error)
     out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
                         True, plan, None, None)
     return to_response(req.recommendation_id, out, req.limit, True)
@@ -261,10 +306,19 @@ def ready() -> dict:
     """매핑이 하나라도 빠져 있으면 준비 완료가 아니다. 8100 데모와는 무관하다."""
     st = id_map_status()
     if not st.get("ready"):
+        pc = paths.check()
+        idm = pc["id_map"]
+        # 경로가 틀린 것인지 적재가 덜 된 것인지 응답만 보고 갈라야 한다.
+        where = ("매핑표 파일이 없습니다" if not idm["exists"] else "매핑이 부족합니다")
         raise ApiError("INDEX_NOT_READY",
-                       f"숫자 ID 매핑 미완료 — 곡 {st.get('tracks_unmapped', '?')}건, "
-                       f"구간 {st.get('sections_unmapped', '?')}건 미매핑")
-    return {"ready": True, "tracks": st["tracks"], "sections": st["sections"]}
+                       f"숫자 ID 매핑 미완료 — {where}. "
+                       f"곡 {st.get('tracks_unmapped', '?')}건, "
+                       f"구간 {st.get('sections_unmapped', '?')}건 미매핑. "
+                       f"id_map={idm['path']} (존재 {idm['exists']}, "
+                       f"MUPID_ID_MAP 지정 {idm['overridden']}), "
+                       f"artifact_dir={pc['artifact_dir']}")
+    return {"ready": True, "tracks": st["tracks"], "sections": st["sections"],
+            "paths": paths.check()}
 
 
 # ------------------------------------------------------------------ 설치

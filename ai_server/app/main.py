@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 
-from . import internal_api, recommender
+from . import internal_api, paths, recommender
 
 app = FastAPI(title="MUPID AI 추천 서비스", version="1.0.0")
 
@@ -83,6 +83,7 @@ def health() -> dict:
         "status": "ok",
         "uptime_seconds": round(time.time() - _STARTED, 1),
         "artifact_dir": str(recommender.ROOT),
+        "paths": paths.check(),
         "catalog_loaded": _STATE["loaded"],
         "load_seconds": _STATE["load_seconds"],
         "error": _STATE["error"],
