@@ -280,3 +280,49 @@ def test_pool_source_counts_are_reported(svc):
 def test_own_is_not_in_the_default_pool(svc):
     """행이 0건인 출처를 기본값에 두면 '자체 음원도 추천된다' 고 잘못 읽힌다."""
     assert "own" not in svc.POOL_SOURCES
+
+
+# ---------------------------------------------------------------- Q8 끝까지
+def test_clickhouse_signals_become_labels(svc, monkeypatch):
+    """ClickHouse 신호 → 행동 로그 → 라벨러까지 **실제로 이어지는지** 본다.
+
+    여기가 끊기면 신호를 아무리 잘 받아 와도 추천이 바뀌지 않는다. 각 조각은 따로
+    검증했지만 이어 붙인 것은 이 테스트가 처음이다.
+    """
+    from ai_server.tools import pull_signals as pl
+
+    mom = svc.CAT.mom
+    uid = str(mom.iloc[2].moment_id)               # T000000#2 같은 실재 구간
+    tid = str(mom.iloc[2].track_id)
+    bounds = {uid: (float(mom.iloc[2].start_sec), float(mom.iloc[2].end_sec))}
+
+    class _IM:
+        def source_track_id(self, n):
+            return tid
+
+    # ClickHouse 가 돌려줄 모양 그대로. 같은 구간을 두 번 받는다(중복 방어 확인).
+    rows = [{"user_id": 7, "section_uid": uid, "track_id": 1, "signal": "SECTION_MARK",
+             "entry_path": "AUTO", "ts": "2026-09-15 10:00:00.000",
+             "play_id": "0-0", "weight": 1.5},
+            {"user_id": 7, "section_uid": uid, "track_id": 1, "signal": "SECTION_MARK",
+             "entry_path": "AUTO", "ts": "2026-09-15 10:00:00.000",
+             "play_id": "0-0", "weight": 1.5}]
+
+    seen: set = set()
+    for r in rows:
+        ev = pl.to_event(r, bounds, _IM())
+        assert ev is not None
+        if ev["event_id"] in seen:
+            continue
+        seen.add(ev["event_id"])
+        svc.append_event(ev)
+    assert len(seen) == 1, "같은 신호를 두 번 받으면 한 번만 쌓여야 한다"
+
+    # 라벨러가 이 이벤트를 실제로 읽어 등급을 만드는가
+    res = svc.run_labeler()
+    assert res["ok"], res
+    lab = pd.read_parquet(svc.LABELS)
+    mine = lab[lab.user_ref == "internal:7"]
+    assert not mine.empty, "ClickHouse 신호가 라벨까지 도달하지 않았다"
+    assert (mine.section_key == uid).any()
+    assert set(mine.grade) & {"L1", "L2"}, f"등급이 붙지 않았다: {list(mine.grade)}"
