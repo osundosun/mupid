@@ -453,24 +453,59 @@ public record AiErrorResponse(
 ### Spring 이 AI 를 부를 때
 
 ```
-MUPID_AI_BASE_URL=
-MUPID_AI_REQUEST_TIMEOUT_SECONDS=
+MUPID_RECOMMENDER_BASE_URL=          # `/internal` 앞까지. 비우면 곡 추천만 503, 대화는 된다
+MUPID_RECOMMENDER_INTERNAL_TOKEN=    # 아래 MUPID_AI_INTERNAL_TOKEN 과 같은 값
 ```
+
+> **`MUPID_AI_BASE_URL` 에 추천 서버 주소를 넣으면 안 된다.** 그 이름은 LLM
+> 게이트웨이가 이미 쓰고 있어(`application.yaml` 의 `ai.base-url`), 거기에 넣으면
+> **대화가 추천 서버로 나간다.** 대화와 추천은 서로 다른 서버다.
+
+타임아웃은 환경변수가 아니라 `application.yaml` 에 값으로 둔다 — 배포마다 달라지면
+장애 재현이 어렵다. 현재 `connect-timeout: 2s`, `read-timeout: 5s`, 그리고 500·503·
+타임아웃에 한 번만 재시도(`retry-once`)다. 400·404 는 다시 불러도 같은 답이므로 재시도하지
+않는다.
 
 ### AI 서버 (`ai_server`)
 
 ```
-MUPID_AI_PORT=
-MUPID_AI_ARTIFACT_DIR=
-MUPID_PINECONE_API_KEY=
-MUPID_PINECONE_INDEX_HOST=
-MUPID_PINECONE_NAMESPACE=
-MUPID_MYSQL_URL=
-MUPID_MYSQL_USER=
-MUPID_MYSQL_PASSWORD=
+MUPID_AI_PORT=                 # 기본 8100
+MUPID_AI_ARTIFACT_DIR=         # 산출물 디렉터리. 없으면 /internal/ready 가 거짓이다
+MUPID_AI_INTERNAL_TOKEN=       # 비우면 헤더 검사를 하지 않는다 (기본 꺼짐)
+MUPID_ID_MAP=                  # 숫자 ID 매핑표 경로
+MUPID_AI_NLP_URL=              # 자연어 해석기. 비우면 QueryPlan 을 받는 경로만 쓴다
+MUPID_POOL=                    # 추천 후보 풀 (기본 flow)
+MUPID_POOL_EXTRA=              # 추가 풀. 쉼표로 구분 (예: jamendo,own)
+MUPID_COMBINER=                # 결합기 파일명
 ```
 
+**토큰은 양쪽을 동시에 설정해야 한다.** AI 서버에만 `MUPID_AI_INTERNAL_TOKEN` 을 넣고
+Spring 에 `MUPID_RECOMMENDER_INTERNAL_TOKEN` 을 주지 않으면 **추천 호출이 전부 401** 이
+된다. 배포 설정만으로 조용히 죽는 형태라 한 쌍으로 다룬다.
+
+#### 아직 연결되지 않은 것
+
+아래는 **계획이며 현재 코드에 참조가 없다**(2026-09-15 확인). 벡터 검색은 Pinecone 이
+아니라 메모리의 NumPy 행렬로 전수 비교하고, 카탈로그는 MySQL 이 아니라 Parquet 에서
+읽는다. 곡 수가 적어 전수 비교가 정확도 손실 없이 충분하기 때문이다. 붙일 때를 위해
+이름만 남겨 둔다.
+
+```
+MUPID_PINECONE_API_KEY=        # 미연결
+MUPID_PINECONE_INDEX_HOST=     # 미연결
+MUPID_PINECONE_NAMESPACE=      # 미연결
+MUPID_MYSQL_URL=               # 미연결
+MUPID_MYSQL_USER=              # 미연결
+MUPID_MYSQL_PASSWORD=          # 미연결
+```
+
+Pinecone 을 붙일 때는 **경계를 수정한 구간의 임베딩 재추출이 함께 들어가야 한다.**
+지금은 전수 비교라 원본 좌표 기준으로만 점수가 나가서 드러나지 않지만, 색인을 두면
+낡은 벡터가 남아 수정 전 경계로 추천이 나간다.
+
 ### AI 배치 (`ai_batch`)
+
+> `ai_batch/` 디렉터리는 **이 저장소에 아직 없다**(2026-09-15 확인). 아래 이름은 예정이다.
 
 ```
 MUPID_AI_BATCH_DEVICE=
