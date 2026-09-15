@@ -5,7 +5,13 @@
 -- 있으면 온보딩이 503 으로 막힌다.**
 --
 -- 적용:
---   docker exec -i mupid-dev-mysql mysql -u<USER> -p<PASSWORD> mupid < seed-codes.sql
+--   docker exec -i mupid-dev-mysql mysql --default-character-set=utf8mb4 \
+--     -u<USER> -p<PASSWORD> mupid < seed-codes.sql
+--
+-- **`--default-character-set=utf8mb4` 를 빼면 안 된다.** 클라이언트가 이 파일의
+-- UTF-8 바이트를 latin1 로 읽어 다시 인코딩해서 한글이 깨진 채로 들어가는데,
+-- 오류가 나지 않아 조용히 성공한다. `SELECT CHAR_LENGTH(code_name)` 이 글자 수보다
+-- 크면 그렇게 들어간 것이다.
 --
 -- 이름 목록의 출처는 화면 디자인이다 — `frontend/lib/mupid-data.ts` 의
 -- `moodOptions` · `genreOptions`. 여기를 고치면 화면도 같이 봐야 한다.

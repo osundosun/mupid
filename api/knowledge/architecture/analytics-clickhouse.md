@@ -28,7 +28,7 @@ api/clickhouse/
 | `api/compose.prod.yml` | `mupid` | 없음. 주석에 "ClickHouse 클러스터…는 이 compose 가 띄우지 않는다", `MUPID_CLICKHOUSE_URL` 을 운영 `.env` 에서 덮어쓰라고 적혀 있다 |
 | `infra/deploy/compose.yml` | `mupid` | 포함하되 profile 로 격리. 실제 배포 엔드포인트(`infra/deploy/receive.sh`)가 쓰는 파일이다 |
 
-Spring 쪽은 `api/src/main/java/com/osundosun/mupid/api/analytics/` 아래 두 파일뿐이다.
+Spring 쪽은 `api/src/main/java/com/osundosun/mupid/api/analytics/` 아래 세 갈래다 — 설정 두 파일(`config` · `properties`)과 조회 계층(`repository/ListenAnalyticsRepository` + `dto/`). 조회 계층은 취향 리포트가 처음 들여왔다 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md).
 
 ## 클러스터 토폴로지
 
@@ -347,7 +347,13 @@ public class SectionStatsService {
 
 MySQL `JdbcTemplate` 이 `@Primary` 이므로 **`@Qualifier` 를 빠뜨리면 조용히 MySQL 이 주입된다.** 컴파일도 기동도 된다. `@RequiredArgsConstructor` 생성자로 `@Qualifier` 가 전달되려면 `api/lombok.config` 가 필요하다.
 
-이 템플릿을 쓰는 애플리케이션 코드는 아직 없다. `analytics` 패키지에는 위 두 파일뿐이다.
+이 템플릿을 쓰는 곳은 **`analytics/repository/ListenAnalyticsRepository` 하나뿐**이다. 취향 리포트가 처음 들여왔다 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md).
+
+새 조회를 붙일 때 그 클래스가 지키는 것 세 가지를 같이 지킨다.
+
+1. **Distributed 테이블(`listen_events`)을 읽는다.** Kafka 적재가 샤딩 키를 타지 않아 한 사용자의 이벤트가 두 샤드에 흩어져 있다. `_local` 을 읽으면 조용히 일부만 나온다.
+2. **`GROUP BY event_id` 로 감싼다.** `ReplacingMergeTree` 의 중복 제거는 병합 시점이고 그 시점을 보장할 수 없다. 합계를 내는 쿼리에서 이걸 빼면 재전송·재소비가 그대로 값 부풀리기가 된다.
+3. **시각은 문자열로 넘겨 `toDateTime64(?, 3, 'Asia/Seoul')` 로 못 박는다.** JDBC 드라이버가 `Timestamp` 를 어느 시간대로 보내는지에 결과가 좌우되면 안 된다.
 
 ## 스키마·설정을 바꿀 때
 

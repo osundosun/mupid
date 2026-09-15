@@ -44,6 +44,19 @@
 - **해결**: DB 작업 전에 `api/.env` 의 `MUPID_MYSQL_URL` 포트를 반드시 확인한다.
 - **근거**: `api/.env:10`, `api/.env.example:6`, `api/compose.yml`
 
+### 기준 데이터 SQL 을 넣었는데 한글이 깨져 들어간다 (오류 없이)
+
+- **원인**: `docker exec -i ... mysql ... < seed-*.sql` 이 `--default-character-set` 없이 돌면 클라이언트가 파일의 UTF-8 바이트를 **latin1 로 읽어 다시 인코딩**한다. `보컬 소개팅형` 이 `ë³´ì»¬ ì†Œê°œíŒ…í˜•` 로 들어간다. **오류가 나지 않는다** — 행 수도 맞고 SQL 도 성공한다.
+- **증상**: `SELECT CHAR_LENGTH(title)` 이 눈에 보이는 글자 수보다 훨씬 크다(7 글자가 19). `HEX(LEFT(title,1))` 가 `C3AB`(= `Ã«`) 처럼 나오면 그렇게 들어간 것이다. 정상이면 한글 한 글자가 `EBB3B4` 같은 3바이트다.
+- **해결**: `mysql` 에 `--default-character-set=utf8mb4` 를 붙인다. 이미 들어간 행은 고칠 수 없으므로 지우고 다시 넣는다. `seed-codes.sql` · `seed-mubti.sql` 머리말에 이 플래그가 붙은 명령을 적어 두었다.
+- **근거**: `api/knowledge/domain/seed-mubti.sql`, `api/knowledge/domain/seed-codes.sql`
+
+### `DATETIME` 컬럼에 "그날의 마지막 순간" 을 넣으면 다음 날이 된다
+
+- **원인**: `reports.end_date` 같은 `DATETIME`(초 정밀도)에 `23:59:59.999999999` 를 넣으면 **다음 날 00:00:00 으로 반올림**된다. 잘리는 게 아니라 올라간다.
+- **해결**: 애초에 반열린 구간 `[start, end)` 로 정하고 다음 날 00:00 을 넣는다. 값은 같아지지만 의도가 코드에 남는다. `ReportSnapshotWriter` 가 그렇게 되어 있다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/report/service/ReportSnapshotWriter.java`
+
 ### 인증 메일 발송이 INSERT 에서 곧바로 실패한다
 
 - **원인**: `EmailVerification.verifiedAt` 이 `@Column(nullable = false)`(83행)인데 `EmailServiceImpl.sendVerification` 의 빌더(52-58행)는 이 값을 채우지 않는다. 값은 나중에 `validateToken()` 이 넣고, `validateToken()`·`isValid()` 는 `getVerifiedAt() != null` 로 미인증 상태를 판별한다. 코드는 null 을 정상 상태로 쓰는데 매핑만 NOT NULL 을 선언하고 있다.

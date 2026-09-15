@@ -62,6 +62,20 @@
 - **해결**: INSERT 직후 `SYSTEM RELOAD DICTIONARY default.dict_track_sections` 를 명시적으로 호출한다(README 수동 절차와 `verify.sh` 5단계가 그렇게 한다). 사전 소스가 `v_track_sections_current` 이므로 **`analysis_version = 'v1'` 이 아닌 행은 아예 사전에 들어오지 않는다**는 점도 함께 주의한다.
 - **근거**: `api/clickhouse/init/01-schema.sql`, `api/clickhouse/verify.sh`
 
+### 재생 수를 `uniqExact(play_id)` 로 셌더니 검색만 한 날에도 1 이 나온다
+
+- **원인**: `SEARCH` 처럼 재생 밖에서 일어난 이벤트에는 `play_id` 가 없다. `mv_kafka_to_events` 의 `toUUIDOrZero` 가 빈 문자열을 **영 UUID(`00000000-0000-0000-0000-000000000000`)** 로 적재하므로, `uniqExact` 가 그것을 재생 1회로 센다. 오류가 아니라 **값이 조용히 1 커진다.**
+- **해결**: `uniqExactIf(play_id, play_id != toUUID('00000000-0000-0000-0000-000000000000'))`. 취향 리포트의 재생 수가 이것 때문에 하루 30(실제 29)으로 나왔고, 그 값이 C축의 앞으로감기 빈도와 D축의 반복 강도에서 분모·분자로 쓰여 판정까지 흔들었다.
+- **같은 함정**: `track_id` · `playlist_id` · `comment_id` 는 숫자라 없을 때 **0** 이다. 집계에서 세거나 나눌 때 `> 0` 으로 거른다. 기존 MV 들이 `track_id > 0` 을 붙여 둔 것이 그 이유다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/analytics/repository/ListenAnalyticsRepository.java`, `api/clickhouse/init/01-schema.sql` (`mv_kafka_to_events`)
+
+### 집계 별칭을 컬럼명과 같게 뒀더니 `ILLEGAL_AGGREGATION` 으로 쿼리가 통째로 실패한다
+
+- **원인**: `SELECT track_id, sum(ms) FROM (SELECT any(track_id) AS track_id, … GROUP BY event_id)` 처럼 서브쿼리의 집계 별칭이 컬럼명과 같으면, ClickHouse 가 바깥 조건을 서브쿼리 WHERE 로 밀어 넣으면서 그 별칭과 부딪힌다. `Code: 184. Aggregate function any(track_id) AS track_id is found in WHERE in query`.
+- **증상**: 코드 리뷰로는 안 보인다. **실행해야 나온다** — SQL 자체는 멀쩡해 보인다.
+- **해결**: 서브쿼리 집계 별칭을 컬럼명과 겹치지 않게 쓴다(`AS tid`). 바깥에서 `SELECT tid AS track_id` 로 이름을 되돌리면 응답 계약은 그대로다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/analytics/repository/ListenAnalyticsRepository.java`
+
 ### Kafka 재소비 후 시그널이 두 배로 늘어 있다
 
 - **원인**: 로컬 `api/compose.yml` 이 Kafka 로그에 볼륨을 일부러 붙이지 않은 근거는 "오프셋이 초기화돼 재소비가 일어나도 `listen_events` 가 ReplacingMergeTree 라 중복이 정리된다" 인데, **이 설명은 `listen_events_local` 에만 해당한다.** `mv_user_section_signals` 는 들어오는 모든 INSERT 에 발화하고, 대상 `user_section_signals_local` 은 `ReplicatedMergeTree`(Replacing 아님)라 중복 시그널이 그대로 남는다. `mv_play_section_coverage` → `play_section_coverage_local`(SummingMergeTree) 도 같다 — 중복 하트비트의 `listened_ms` 가 그대로 더해진다. `rec_impressions_local` 도 마찬가지다.

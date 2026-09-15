@@ -350,24 +350,41 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
   `LocalDate` 로 고쳤다 — 그대로 두면 쓸 때 잘린다.
 - 화면 연결은 아직이다. 넣을 데이터가 없어 붙여도 빈 화면이다.
 
-> **13~15 는 지금 만들 수 없다.** 없는 인프라와 정해지지 않은 것에 걸려 있다.
+> **14~15 는 지금 만들 수 없다.** 없는 인프라와 정해지지 않은 것에 걸려 있다.
 > 아래 각 항목에 무엇이 막고 있는지 적어 두었다. 껍데기만 먼저 만들면
 > 계약이 잘못 굳는다.
 
-### 13. 취향 리포트 · MUBTI — ⛔ 막힘
+### 13. 취향 리포트 · MuBTI — ✅ 구현
 
-`reports` · `mubti` · `listening` 엔티티 있음, API 없음. 리포트 화면은 지금
-`moments`/`history` 길이로 **로컬에서 계산**한다.
+`GET /api/v1/report?date=YYYY-MM-DD` · 화면 연결까지 끝났다.
 
-- `GET /api/v1/report?period=week|month|year&offset=N` — 화면이 기간·오프셋을
-  이미 쓰고 있다
-- 구간별 선호도·키워드·MUBTI 가 응답에 필요하다
-- 집계는 ClickHouse 쪽이다 → [architecture/analytics-clickhouse.md](architecture/analytics-clickhouse.md)
-- **막는 것**: API 서버에 ClickHouse **조회** 계층이 없다. 설정
-  (`analytics/config/ClickHouseConfig.java`)만 있고 읽는 코드가 없다. 서비스
-  경로에서 분석 클러스터를 어떻게 읽을지(직접 조회 · 집계 테이블 복제 ·
-  배치로 MySQL 에 적재)는 팀이 정할 일이다 → 정할 것
-- 근거: `frontend/components/mupid/collection.tsx:329-460`
+막고 있던 것은 **API 서버에 ClickHouse 조회 계층이 없다**는 것이었다. 리포트가
+그 첫 사용처가 됐다 — `analytics/repository/ListenAnalyticsRepository`. 서비스
+경로에서 분석 클러스터를 직접 읽되 의존을 이 화면 하나에 가두는 쪽으로 정했다
+→ [decision/0019](decision/0019-report-reads-clickhouse-directly.md).
+
+- 곡별 청취량은 `PLAY_PROGRESS` 하트비트에서 집계한다 — 재생기가 돈 시간이
+  아니라 **실제로 귀에 닿은 시간**이다
+- 키워드는 분위기·장르를 청취 시간으로 가중한다
+- MuBTI 네 축은 **조회할 때마다 계산한다.** 저장하는 것은 그날의 결론
+  (`reports.mubti_id`)과 곡별 청취량(`listening`)뿐이다 →
+  [decision/0015](decision/0015-derive-interpretation-at-query-time.md)
+- 집계·판정 규칙 전부 → [domain/mubti-report.md](domain/mubti-report.md)
+
+따라온 것:
+
+- **기간은 일간뿐이다.** 원래 이 항목은 `period=week|month|year&offset=N` 을
+  적어 두었지만, 화면이 실제로 쓰는 것은 하루치다. 채우지 않을 파라미터를
+  미리 열면 계약이 잘못 굳는다.
+- **`mubti` 표 16행을 사람이 넣어야 한다** (`domain/seed-mubti.sql`). 비어
+  있으면 503 이다 — 온보딩이 `codes` 표에 걸리는 것과 같은 구조.
+- **구간 기반 신호를 하나도 못 썼다.** `track_sections` 를 채우는 파이프라인이
+  없어 `play_section_coverage` · `v_track_skips` 가 전부 빈 결과다. MuBTI
+  A축(보컬/멜로디)이 가장 약한 축이 된 이유다.
+- 저장소의 **첫 `@EnableScheduling`** 이 들어왔다 (자정 배치). 새 `@Scheduled`
+  를 붙일 때는 여러 인스턴스에서 무슨 일이 생기는지 먼저 본다.
+- 트리맵이 진짜 면적 비례가 됐다. 예전에는 모든 타일이 같은 크기였고 값도
+  가짜였다 (`frontend/lib/treemap.ts`).
 
 ### 14. AI 채팅 추천 — ⛔ 막힘
 
