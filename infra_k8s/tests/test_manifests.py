@@ -144,6 +144,22 @@ class SecretKeyTest(unittest.TestCase):
 
 @unittest.skipUnless(KUBECTL, "kubectl not installed")
 class BuildTest(unittest.TestCase):
+    def test_every_env_entry_has_only_the_fields_it_should(self):
+        """An unquoted comma inside a `{name: X, value: a,b}` flow mapping ends
+        the entry, so the value is truncated and the rest becomes a key of its
+        own. That is valid YAML and builds without complaint; the apiserver
+        rejects it on apply, after everything else in the overlay is created."""
+        allowed = {"name", "value", "valueFrom"}
+        for overlay in OVERLAYS:
+            for doc in build(overlay):
+                if doc.get("kind") not in ("Deployment", "StatefulSet"):
+                    continue
+                for container in containers(doc):
+                    for entry in container.get("env", []):
+                        with self.subTest(name=doc["metadata"]["name"], env=entry):
+                            self.assertIn("name", entry)
+                            self.assertEqual(set(), set(entry) - allowed)
+
     def test_every_overlay_builds(self):
         for overlay in OVERLAYS:
             with self.subTest(overlay=overlay):
