@@ -132,12 +132,12 @@ moment:{music_section_id}:mert-v1
 | 음원 | SeaweedFS 경로 또는 로컬 파일 |
 | 재처리 여부 | 단계별 성공 기록 |
 
-한 곡 최초 등록은 아래 순서다. `music_chunking` 과 `ai_batch` 는 `music_id` 확보 뒤
+한 곡 최초 등록은 아래 순서다. `music_preprocessing` 과 `ai_batch` 는 `music_id` 확보 뒤
 **병렬** 실행할 수 있고, Python 환경과 Docker 이미지는 분리한다.
 
 ```
 음악 메타 등록 → music_id 확보
-   ├─ music_chunking : Opus/RTP + SeaweedFS
+   ├─ music_preprocessing : Opus/RTP + SeaweedFS
    └─ ai_batch       : All-In-One → Essentia → MERT
 결과 검증 → 서비스 사용 가능
 ```

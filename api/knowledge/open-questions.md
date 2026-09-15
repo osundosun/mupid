@@ -113,13 +113,18 @@ JPA 와 DDL 을 건드리지 않으므로 대상만 적는다. `ddl-auto` 가 `n
 ([decision/0011](decision/0011-jpa-manages-schema.md)) 어느 쪽으로 맞추든 **수동 DDL 이
 필요하다.**
 
-| # | 대상 엔티티 | 현재 JPA | ERD | 권장 |
+> **2026-09-15 확정: JPA 매핑을 기준으로 통일한다.** 두 벌이 공존하면 내보낼 때마다
+> 어느 쪽인지 되묻게 된다. 돌고 있는 코드가 JPA 이므로 그쪽을 기준으로 삼고
+> `api/knowledge/domain/erd.sql` 을 옮겼다. **실제 DB 에는 아직 적용하지 않았다** —
+> Flyway 가 없어 수동 DDL 이다(대기 사항).
+
+| # | 대상 엔티티 | 현재 JPA | 기존 ERD | 결정 (JPA 기준) |
 |---|---|---|---|---|
-| 1 | `MusicSectionAnalysis` | `musicSectionAnalysisId` → `music_section_analysis_id` | `music_section_id` | `@Column(name = "music_section_id")` — **Q1 로 `music_section_id` 확정 권고** (2026-09-15). AI 계약은 값만 맞으면 되므로 수정 없음 |
-| 2 | `MusicSectionAnalysis` | `externalId` → `external_id` | `embedding_id VARCHAR(50)` | **ERD 를 `external_id VARCHAR(64) UNIQUE` 로 바꾼다** (Q2, 2026-09-15). 이 컬럼을 읽고 쓰는 코드가 저장소 전체에 0건이라 의미를 바꿔도 깨질 것이 없다. 실측 최댓값 36자인데 flow ID 는 제목 길이만큼 늘어나 50 으로는 모자란다 |
-| 3 | `MusicSectionAnalysis` | `mood_id` 미매핑 | `mood_id INT **NOT NULL**` | 컬럼을 NULL 허용으로 바꾸거나 필드를 추가한다. **지금 그대로면 INSERT 가 실패한다** |
-| 4 | `MusicSectionAnalysisMood` | `@Table(name = "music_moods")` | `music_section_analysis_mood` | 테이블명을 ERD 에 맞춘다 |
-| 5 | `MusicAnalysis` | `@Id @Column(name = "music_id")` (공유 PK) | `music_analysis_id INT AUTO_INCREMENT` | PK 구조 자체가 다르다. 어느 쪽이 맞는지 먼저 정한다 |
+| 1 | `MusicSectionAnalysis` | `musicSectionAnalysisId` → `music_section_analysis_id` | `music_section_id` | **ERD 를 `music_section_analysis_id` 로 바꿨다.** AI 계약의 JSON 필드명은 `music_section_id` 그대로이고 내보낼 때 별칭으로 맞춘다 |
+| 2 | `MusicSectionAnalysis` | `externalId` → `external_id` | `embedding_id VARCHAR(50)` | **ERD 를 `external_id VARCHAR(64)` + UNIQUE 로 바꿨다.** 넘치면 MySQL 이 조용히 자르고 잘린 값끼리는 매핑 1:1 검사까지 통과한다 |
+| 3 | `MusicSectionAnalysis` | `mood_id` 미매핑 | `mood_id INT **NOT NULL**` | **현재 ERD 에서 컬럼이 빠졌다.** 엔티티에 필드가 없어 NOT NULL 이면 INSERT 가 통째로 실패한다 |
+| 4 | `MusicSectionAnalysisMood` | `@Table(name = "music_section_analysis_mood")` | 같음 | **이 줄은 사실이 아니었다.** `music_moods` 는 다른 엔티티(`MusicMood`)다. 테이블명은 원래 일치하고, 조인 컬럼을 JPA 기준(`music_section_analysis_id`·`mood_code_id` → `codes`)으로 맞췄다 |
+| 5 | `MusicAnalysis` | `@Id @Column(name = "music_id")` (공유 PK) | `music_analysis_id INT AUTO_INCREMENT` | **공유 PK 로 바꿨다.** 대리키를 두면 한 곡에 분석이 여러 벌 생겨 어느 것이 맞는지 알 수 없다 |
 | 6 | `DailyRecommendation` | `Integer recommendationId` | `recommendation_id **BIGINT**` | `Long` 으로 바꾼다 — 공개 JSON 도 `recommendationId` 는 64비트다 |
 | 7 | `DailyRecommendationTrack` | `@Table(name = "daily_recommendation_tracks")` | `daily_recommendation_songs` | 이름이 셋(`tracks`/`songs`/표준 `music`)으로 갈려 있다. 아래 참조 |
 | 8 | `DailyRecommendationTrack` | 복합키 `(daily_recommendation_id, rank_order)` | `recommendation_song_id INT AUTO_INCREMENT` 단일 PK | 키 구조가 다르다 |

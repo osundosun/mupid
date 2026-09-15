@@ -4,7 +4,7 @@
 `app/legacy/` 와 추천 로직은 "원본 그대로" 가 원칙이므로 손대기 전에 합의가 필요하다.
 
 우선순위는 **채팅 기능(`POST /api/v1/ai/chat`)이 목업을 걷어내는 데 필요한 순서**로 잡았다.
-지금 그 자리는 `api/.../ai/tool/AiRecommendToolImpl.java` 가 카탈로그 앞쪽 곡에 정해진 사유를
+지금 그 자리는 `api/src/main/java/com/osundosun/mupid/api/ai/tool/AiRecommendToolImpl.java` 가 카탈로그 앞쪽 곡에 정해진 사유를
 붙여 채우고 있다.
 
 관련 문서: [README.md](README.md) · [`api/knowledge/architecture/integrations.md`](../api/knowledge/architecture/integrations.md) · [`api/knowledge/api-todo.md`](../api/knowledge/api-todo.md)

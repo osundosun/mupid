@@ -1438,3 +1438,49 @@ def test_pull_signals_watermark_survives_a_missing_file(tmp_path, monkeypatch):
     assert pl.load_watermark() == pl.EPOCH
     pl.save_watermark("2026-09-15 00:00:00.000", 3)
     assert pl.load_watermark() == "2026-09-15 00:00:00.000"
+
+
+# ------------------------------------------------------------------ 온보딩 결함 회귀
+def test_missing_genre_catalog_stops_instead_of_dropping_taste(monkeypatch):
+    """예전에는 카탈로그를 못 읽으면 장르를 빈 값으로 저장하고 **성공으로** 끝냈다.
+    온보딩은 콜드스타트의 유일한 입력이라, 조용히 비면 그 사용자는 영원히 개인화를
+    못 받는다."""
+    from ai_server.app import recommender
+    from ai_server.tools import fetch_onboarding as f
+
+    monkeypatch.setattr(recommender, "catalog_facets",
+                        lambda: (_ for _ in ()).throw(RuntimeError("색인 없음")))
+    with pytest.raises(f.CatalogUnavailable):
+        f.genre_catalog()
+
+    monkeypatch.setattr(recommender, "catalog_facets", lambda: {"genre": []})
+    with pytest.raises(f.CatalogUnavailable):
+        f.genre_catalog()
+
+
+def test_empty_genre_is_reported_and_raw_answer_survives():
+    """어휘가 안 맞아 비더라도 사람이 고른 원문은 남아야 되짚을 수 있다."""
+    from ai_server.tools import fetch_onboarding as f
+
+    row = f.to_row(_onb_body()["data"], [])        # 카탈로그를 못 받은 상황
+    assert json.loads(row["genre"]) == []
+    assert json.loads(row["genre_raw"]) == ["Jazz"]
+
+
+def test_onboarding_cli_has_no_dead_flag(capsys):
+    """`--from-id-map` 은 선언만 되고 읽는 곳이 없었다. id_map 은 곡 매핑표라
+    사용자 번호가 애초에 없다 — 개념이 맞지 않는 옵션이었다."""
+    import sys
+
+    from ai_server.tools import fetch_onboarding as f
+
+    argv = sys.argv
+    try:
+        sys.argv = ["fetch_onboarding", "--help"]
+        with pytest.raises(SystemExit):
+            f.main()
+    finally:
+        sys.argv = argv
+    help_text = capsys.readouterr().out
+    assert "--from-id-map" not in help_text
+    assert "--users-file" in help_text

@@ -90,13 +90,24 @@ def map_genre(names: list[str], catalog: list[str]) -> list[str]:
     return out
 
 
+class CatalogUnavailable(RuntimeError):
+    """장르 어휘를 읽지 못했다. 조용히 빈 값을 쓰면 취향이 사라진다."""
+
+
 def genre_catalog() -> list[str]:
-    """카탈로그가 없으면 변환을 건너뛴다 — 지어내지 않는다."""
+    """AI 카탈로그의 장르 어휘. 없으면 **멈춘다.**
+
+    예전에는 빈 리스트를 돌려주고 계속 갔는데, 그러면 사용자가 고른 장르가 통째로
+    사라진 채 "성공" 으로 끝난다. 온보딩은 콜드스타트의 유일한 입력이라 조용히 비면
+    그 사용자는 영원히 개인화를 못 받는다.
+    """
     try:
-        return [str(x["value"]) for x in recommender.catalog_facets().get("genre", [])]
-    except Exception as e:                       # 색인 없이 도는 경우
-        log(f"카탈로그를 읽지 못해 genre 변환을 건너뛴다 ({type(e).__name__})")
-        return []
+        vals = [str(x["value"]) for x in recommender.catalog_facets().get("genre", [])]
+    except Exception as e:
+        raise CatalogUnavailable(f"장르 어휘를 읽지 못했다 ({type(e).__name__}: {e})") from None
+    if not vals:
+        raise CatalogUnavailable("장르 어휘가 비어 있다 — 색인이 적재됐는지 본다")
+    return vals
 
 
 # `onboarding_seeds()` 가 읽는 축. 지금 채울 수 있는 것은 mood·genre 뿐이다.
@@ -143,12 +154,15 @@ def to_row(data: dict, genres: list[str] | None = None) -> dict | None:
         return None
     names = lambda key: [str(x["name"]) for x in (data.get(key) or []) if x.get("name")]
     raw_mood, raw_genre = names("moods"), names("genres")
-    mood = map_mood(raw_mood) or []
+    mood = map_mood(raw_mood)
     genre = map_genre(raw_genre, genres) if genres else []
     if raw_mood and not mood:
         log(f"mood 변환 결과가 비었다 — MOOD_MAP 에 없는 값 {raw_mood}")
-    if genres and raw_genre and not genre:
-        log(f"genre 변환 결과가 비었다 — 카탈로그에 없는 값 {raw_genre}")
+    if raw_genre and not genre:
+        # 카탈로그를 못 받았거나 어휘가 안 맞는다. 어느 쪽이든 **그 사용자의 장르는
+        # 추천에 반영되지 않는다.** 원문은 genre_raw 에 남으니 나중에 되짚을 수 있다.
+        log(f"genre 가 비었다 — 원문 {raw_genre}"
+            + ("" if genres else " (장르 어휘를 받지 못했다)"))
     row = {"user_ref": f"internal:{int(data['user_id'])}",
            "mood": json.dumps(mood, ensure_ascii=False),
            "genre": json.dumps(genre, ensure_ascii=False),
@@ -173,8 +187,15 @@ def fetch_one(user_id: int, token: str, genres: list[str] | None = None) -> dict
     return to_row(body.get("data") or {}, genres)
 
 
-def fetch_many(user_ids: list[int], token: str) -> pd.DataFrame:
-    genres = genre_catalog()
+def fetch_many(user_ids: list[int], token: str,
+               allow_missing_catalog: bool = False) -> pd.DataFrame:
+    try:
+        genres = genre_catalog()
+    except CatalogUnavailable:
+        if not allow_missing_catalog:
+            raise
+        log("경고: 장르 어휘 없이 진행한다 — 고른 장르가 추천에 반영되지 않는다")
+        genres = []
     rows, skipped = [], 0
     for uid in user_ids:
         r = fetch_one(uid, token, genres)
@@ -200,17 +221,33 @@ def merge_into(new: pd.DataFrame, dst: Path) -> pd.DataFrame:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("user_ids", nargs="*", type=int, help="조회할 사용자 번호")
-    ap.add_argument("--from-id-map", action="store_true",
-                    help="id_map.parquet 에 있는 사용자 대신 인자로 받은 번호를 쓴다")
+    # id_map 은 **곡** 매핑표라 사용자 번호가 없다. 예전 `--from-id-map` 은 선언만
+    # 되어 있고 읽는 곳도 없었다. 배치가 실제로 쓸 수 있는 형태로 바꾼다.
+    ap.add_argument("--users-file", default=None,
+                    help="사용자 번호 목록 파일 (한 줄에 하나). '-' 이면 표준입력")
     ap.add_argument("--out", default=None, help="기본: <ARTIFACT_DIR>/serve/onboarding.parquet")
     ap.add_argument("--dry-run", action="store_true", help="받아만 보고 쓰지 않는다")
+    ap.add_argument("--allow-missing-catalog", action="store_true",
+                    help="장르 어휘 없이도 진행한다. **고른 장르가 반영되지 않는다**")
     a = ap.parse_args()
 
-    if not a.user_ids:
-        print("사용자 번호를 하나 이상 준다.", file=sys.stderr)
+    user_ids = list(a.user_ids)
+    if a.users_file:
+        src = sys.stdin if a.users_file == "-" else open(a.users_file, encoding="utf-8")
+        with src as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if ln and not ln.startswith("#"):
+                    user_ids.append(int(ln))
+    if not user_ids:
+        print("사용자 번호를 하나 이상 준다 (인자 또는 --users-file).", file=sys.stderr)
         return 2
 
-    df = fetch_many(a.user_ids, access_token())
+    try:
+        df = fetch_many(user_ids, access_token(), allow_missing_catalog=a.allow_missing_catalog)
+    except CatalogUnavailable as e:
+        print(f"{e}\n장르 없이 진행하려면 --allow-missing-catalog 를 준다.", file=sys.stderr)
+        return 1
     if df.empty:
         log("쓸 것이 없다.")
         return 0
