@@ -91,7 +91,10 @@ export function createSqliteService(): MupidService {
       }));
 
       const preferences: Preferences = {
-        onboardingSubmittedAt: stored.onboardingSubmittedAt,
+        // SQLite 에는 제출 시각으로 담긴다(`onboarding_submitted_at`). 화면이
+        // 보는 것은 진위뿐이라 여기서 줄인다 — 값이 있으면 마친 것이다.
+        // 컬럼을 그대로 두면 예전에 깔린 앱의 기록도 그대로 살아난다.
+        onboardingSubmitted: Boolean(stored.onboardingSubmittedAt),
         nickname: stored.nickname.trim() || DEFAULT_NICKNAME,
         moods: stored.moods,
         genres: [...new Set(stored.genres)],
@@ -113,7 +116,8 @@ export function createSqliteService(): MupidService {
 
     async savePreferences(value) {
       const stored: StoredPreferences = {
-        onboardingSubmittedAt: value.onboardingSubmittedAt,
+        // 시각을 읽는 곳은 이제 없다. 있고 없음만 뜻한다.
+        onboardingSubmittedAt: value.onboardingSubmitted ? new Date().toISOString() : null,
         nickname: value.nickname,
         moods: value.moods,
         genres: value.genres,
@@ -166,7 +170,7 @@ export function createSqliteService(): MupidService {
 
 function emptyPreferences(): Preferences {
   return {
-    onboardingSubmittedAt: null,
+    onboardingSubmitted: false,
     nickname: DEFAULT_NICKNAME,
     moods: [],
     genres: [],

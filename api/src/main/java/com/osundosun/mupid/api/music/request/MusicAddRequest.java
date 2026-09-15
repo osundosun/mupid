@@ -17,7 +17,15 @@ public record MusicAddRequest(
     String title,
 
     @NotNull(message = "발매일이 입력되지 않았습니다.")
-    LocalDateTime releaseDate
+    LocalDateTime releaseDate,
+
+    /**
+     * 곡 커버 이미지 파일 번호 (`이미지 업로드` 응답의 file_id). **선택이다.**
+     *
+     * 앨범 커버(`album.image_file_id`)와 달리 비워 둘 수 있다. 비우면 화면이
+     * 앨범 커버를 대신 쓴다.
+     */
+    Integer imageFileId
 
 ) {
     

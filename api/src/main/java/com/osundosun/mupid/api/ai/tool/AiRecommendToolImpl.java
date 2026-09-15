@@ -1,16 +1,18 @@
 package com.osundosun.mupid.api.ai.tool;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
 import com.osundosun.mupid.api.ai.client.OpenAiTool;
+import com.osundosun.mupid.api.ai.client.RecommenderClient;
+import com.osundosun.mupid.api.ai.client.RecommenderDto;
 import com.osundosun.mupid.api.ai.dto.AiRecommendedTrack;
 import com.osundosun.mupid.api.music.entity.Music;
-import com.osundosun.mupid.api.music.enumerate.SectionLabel;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.storage.service.StorageImageService;
 
@@ -18,27 +20,26 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * ⚠ <b>목업이다.</b> 사용자가 무엇을 물었든 결과가 같다.
+ * 추천 서버에 실제로 물어본다.
  *
- * 추천 점수도 취향도 보지 않는다. 카탈로그 앞쪽에서 몇 곡을 집어 정해진 사유를 붙일
- * 뿐이다. <b>다만 실제 곡 번호를 쓴다</b> — 없는 번호를 돌려주면 화면이 재생할 수 없는
- * 줄만 그리게 되고, 그러면 대화가 이어지는지 눈으로 확인할 수가 없다. 카탈로그가 비어
- * 있을 때만 고정 예시로 돌아간다.
+ * 대화 모델은 **곡을 고르지 않는다.** 사용자가 말한 조건을 카탈로그 어휘로 옮기는 일까지만
+ * 한다. 어떤 곡의 어느 구간이 나올지는 추천 파이프라인이 정한다 — 모델에게 카탈로그를
+ * 통째로 물릴 수도 없고, 물리면 없는 곡을 지어낸다.
  *
- * 진짜 추천은 별도 서버가 한다 (`ai_server/`). 붙일 때 바꾸는 것은 이 클래스 하나다 —
- * `recommend()` 안에서 아래를 호출하고, 응답 `items[]` 를 {@link AiRecommendedTrack} 으로
- * 옮긴 뒤 `musicId` 로 곡명·아티스트·표지를 채우면 된다. 필드 이름을 저쪽 계약에 맞춰 둔
- * 이유다.
+ * <h2>왜 자연어 원문을 보내지 않는가</h2>
  *
- * <pre>
- * POST /internal/recommendations/search
- *   { "recommendation_id": .., "user_id": .., "query": .., "limit": ..,
- *     "exclude_music_ids": [..] }
- * </pre>
+ * 추천 서버의 `search` 는 원문을 받으면 별도의 자연어 해석기(GPU 가 필요하다)를 부른다.
+ * 그게 없으면 501 이다. 우리는 이미 대화 모델을 쓰고 있으므로, 모델에게 조건을 뽑게 해
+ * `query_plan` 으로 보낸다. 해석기를 세우지 않아도 조건이 걸린다.
  *
- * ⚠ `search` 는 자연어 해석기(`MUPID_AI_NLP_URL`)가 없으면 **501** 이다. 대화가 쓰는 경로가
- * 하필 그쪽이라, 붙일 때 해석기를 함께 세우거나 `/internal/recommendations/next`
- * (지금 듣는 곡 기준)로 시작할지 먼저 정해야 한다 — `ai_server/README.md`, S15P21A204-219.
+ * 대신 CLAP 임베딩 기반의 의미 재정렬은 빠진다. 무드는 추천 서버가 태그 일치로 부드럽게
+ * 재정렬해 그 자리를 메운다.
+ *
+ * <h2>조건이 없으면</h2>
+ *
+ * 모델이 조건을 하나도 못 뽑았으면 `search` 가 아니라 `next` 를 부른다. 조건 없는
+ * `search` 는 400 이다 — "검색했는데 조건이 안 걸린 결과" 를 막으려고 추천 서버가 일부러
+ * 거부한다.
  */
 @Slf4j
 @Component
@@ -48,37 +49,11 @@ public class AiRecommendToolImpl implements AiRecommendTool {
     private static final int DEFAULT_LIMIT = 3;
     private static final int MAX_LIMIT = 5;
 
-    /** 순위별 사유. 목업이라 곡과 무관하게 순서대로 붙는다. */
-    private static final List<String> REASONS = List.of(
-        "지금 곡보다 템포를 조금 낮추고 잔향을 길게 남긴 곡이에요.",
-        "저장하신 순간과 결이 비슷해서, 분위기를 그대로 이어 갑니다.",
-        "리듬은 그대로 두고 악기를 덜어 낸 편성이라 더 담백해요.",
-        "평소 듣던 결과는 조금 다르지만, 여운이 긴 마무리가 어울릴 것 같아요.",
-        "보컬이 앞에 나오는 곡이라 가사에 오래 머무르게 됩니다."
-    );
+    /** 조건에 쓸 수 있는 칸. 추천 서버의 `/internal/facets` 가 정하는 이름이다. */
+    private static final List<String> FILTER_FIELDS =
+        List.of("genre", "language", "vocal", "instrument", "mood", "flow");
 
-    /**
-     * 카탈로그가 비었을 때 쓰는 고정 예시. **곡 번호가 실제 카탈로그에 없어서 재생되지
-     * 않는다.** 화면은 이런 곡을 목록에서 걸러 낸다 (`frontend/lib/ai-chat.ts`).
-     */
-    private static final List<AiRecommendedTrack> FIXTURES = List.of(
-        new AiRecommendedTrack(
-            1, 9001, "밤의 가장자리", "여름 산책", "긴 밤", null,
-            9101, SectionLabel.CHORUS, 72_000, 96_000,
-            0.91, "QUERY_SEMANTIC_MATCH", REASONS.get(0)
-        ),
-        new AiRecommendedTrack(
-            2, 9002, "선유도 새벽", "모래시계", "새벽 세 시", null,
-            9102, SectionLabel.BRIDGE, 118_000, 142_000,
-            0.87, "SIMILAR_PREFERRED_MOMENT", REASONS.get(1)
-        ),
-        new AiRecommendedTrack(
-            3, 9003, "Slow Tide", "Harbor Lights", "Low Water", null,
-            9103, SectionLabel.VERSE, 24_000, 51_000,
-            0.83, "QUERY_SEMANTIC_MATCH", REASONS.get(2)
-        )
-    );
-
+    private final RecommenderClient recommender;
     private final MusicRepository musicRepository;
 
     @Override
@@ -89,6 +64,8 @@ public class AiRecommendToolImpl implements AiRecommendTool {
             지금 듣고 있는 곡과 사용자의 취향을 바탕으로 다음에 들을 곡(구간)을 찾는다.
             곡·분위기·장르를 추천해 달라는 요청에는 반드시 이 툴을 먼저 부른다.
             결과에 없는 곡을 지어내지 않는다.
+            조건은 열거된 값 중에서만 고른다. 목록에 없는 말을 넣으면 결과가 0 이 된다.
+            사용자가 말하지 않은 조건은 넣지 않는다 — 비워 두면 그 사람의 취향으로 고른다.
             """,
             Map.of(
                 "type", "object",
@@ -102,71 +79,164 @@ public class AiRecommendToolImpl implements AiRecommendTool {
                         "description", "추천받을 곡 수. 1~5, 기본 3",
                         "minimum", 1,
                         "maximum", MAX_LIMIT
-                    )
+                    ),
+                    "filters", conditionSchema("반드시 만족해야 하는 조건"),
+                    "exclude", conditionSchema("빼야 하는 조건")
                 ),
                 "required", List.of("query")
             )
         );
     }
 
+    /**
+     * 조건 칸의 JSON Schema. 값 목록은 카탈로그에서 받아 채운다.
+     *
+     * 어휘를 못 받으면 열거 없이 자유 문자열로 둔다. 그래도 조건이 조용히 사라지지는
+     * 않는다 — 추천 서버가 어휘에 없는 조건을 "만족시킬 수 없음" 으로 보고 결과 0 을 준다.
+     */
+    private Map<String, Object> conditionSchema(String description) {
+        RecommenderDto.Facets facets = recommender.facets();
+        Map<String, Object> properties = new LinkedHashMap<>();
+        for (String field : FILTER_FIELDS) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("type", "string");
+            List<String> values = allowedValues(facets, field);
+            if (!values.isEmpty()) {
+                item.put("enum", values);
+            }
+            properties.put(field, Map.of("type", "array", "items", item));
+        }
+        return Map.of("type", "object", "description", description, "properties", properties);
+    }
+
+    private List<String> allowedValues(RecommenderDto.Facets facets, String field) {
+        if (facets == null || facets.fields() == null) {
+            return List.of();
+        }
+        if (!(facets.fields().get(field) instanceof Map<?, ?> spec)) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        // 장르 게이트는 genre 와 style 양쪽에 맞춰 보므로 두 어휘를 함께 노출한다.
+        for (String key : List.of("values", "style_values")) {
+            if (spec.get(key) instanceof List<?> list) {
+                for (Object row : list) {
+                    if (row instanceof Map<?, ?> entry && entry.get("value") != null) {
+                        out.add(String.valueOf(entry.get("value")));
+                    }
+                }
+            }
+        }
+        return out.stream().distinct().toList();
+    }
+
     @Override
     public List<AiRecommendedTrack> recommend(Integer userId, Integer currentMusicId, Arguments arguments) {
         int limit = DEFAULT_LIMIT;
         String query = null;
+        Map<String, Object> filters = Map.of();
+        Map<String, Object> exclude = Map.of();
         if (arguments != null) {
             query = arguments.query();
             if (arguments.limit() != null) {
                 limit = Math.clamp(arguments.limit(), 1, MAX_LIMIT);
             }
+            filters = clean(arguments.filters());
+            exclude = clean(arguments.exclude());
         }
-        log.info("추천 툴 호출(목업) user_id={} current_music_id={} limit={} query={}",
-            userId, currentMusicId, limit, query);
 
-        // +1 은 지금 듣는 곡이 앞쪽에 섞여 들어와도 개수를 채우려는 것이다.
-        // 연관을 함께 끌어오는 질의라 아티스트·앨범을 지연 로딩하지 않는다.
-        List<Music> candidates = musicRepository
-            .search(null, PageRequest.of(0, limit + 1))
-            .getContent();
+        // 추천 한 묶음을 가리키는 번호. 아직 노출 기록(rec_impressions)을 남기지 않아
+        // 저장되지는 않는다. 그 작업이 붙으면 발급처를 그쪽으로 옮긴다.
+        long recommendationId = System.currentTimeMillis();
+        List<Integer> excludeIds = currentMusicId == null ? List.of() : List.of(currentMusicId);
+        boolean conditioned = !filters.isEmpty() || !exclude.isEmpty();
 
-        List<AiRecommendedTrack> picked = new ArrayList<>();
-        for (Music music : candidates) {
-            if (picked.size() >= limit) {
-                break;
+        log.info("추천 툴 호출 user_id={} current_music_id={} limit={} 조건={} query={}",
+            userId, currentMusicId, limit, conditioned ? filters.keySet() : "없음", query);
+
+        List<RecommenderDto.Item> items;
+        if (conditioned) {
+            Map<String, Object> plan = new LinkedHashMap<>();
+            if (!filters.isEmpty()) {
+                plan.put("filters", filters);
             }
-            // 듣고 있는 곡을 다시 권하지 않는다. 추천 서버에서는 exclude_music_ids 가 한다.
-            if (currentMusicId != null && currentMusicId.equals(music.getMusicId())) {
-                continue;
+            if (!exclude.isEmpty()) {
+                plan.put("exclude", exclude);
             }
-            picked.add(toRecommended(music, picked.size() + 1));
+            items = recommender.search(new RecommenderDto.SearchRequest(
+                recommendationId, userId, limit, excludeIds, null, plan));
+        } else {
+            items = recommender.next(new RecommenderDto.NextRequest(
+                recommendationId, userId, limit, excludeIds, currentMusicId, null));
         }
-        if (!picked.isEmpty()) {
-            return List.copyOf(picked);
+        if (items.isEmpty()) {
+            log.info("조건에 맞는 곡이 없다 user_id={} 조건={}", userId, filters);
+            return List.of();
         }
-
-        log.warn("카탈로그에서 추천할 곡을 찾지 못해 고정 예시로 답한다 (재생되지 않는 곡이다)");
-        return FIXTURES.stream().limit(limit).toList();
+        return withMusicDetails(items);
     }
 
     /**
-     * 구간은 채우지 않는다. 목업이 임의로 정한 구간을 내보내면 화면이 곡의 엉뚱한
-     * 지점을 "추천된 순간" 으로 표시한다. 추천 서버가 붙으면 그때 진짜 구간이 온다.
+     * 모델이 만든 조건에서 빈 칸을 걷어낸다.
+     *
+     * 모델은 조건이 없을 때도 `{"genre": []}` 같은 빈 껍데기를 곧잘 만든다. 그대로 보내면
+     * "조건이 있다" 로 판정돼 `next` 대신 `search` 로 가고 결과가 달라진다.
      */
-    private AiRecommendedTrack toRecommended(Music music, int rank) {
-        return new AiRecommendedTrack(
-            rank,
-            music.getMusicId(),
-            music.getTitle(),
-            music.getArtist().getName(),
-            music.getAlbum().getTitle(),
-            StorageImageService.imageUrl(music.getAlbum().getImageFile()),
-            null,
-            null,
-            0,
-            0,
-            Math.max(0.5, 0.92 - (rank - 1) * 0.04),
-            "COLD_START",
-            REASONS.get((rank - 1) % REASONS.size())
-        );
+    private Map<String, Object> clean(Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        raw.forEach((key, value) -> {
+            if (!FILTER_FIELDS.contains(key)) {
+                return;                                 // 추천 서버가 읽지 않는 칸이다
+            }
+            if (value instanceof List<?> list && !list.isEmpty()) {
+                out.put(key, list.stream().map(String::valueOf).distinct().toList());
+            } else if (value instanceof String s && !s.isBlank()) {
+                out.put(key, List.of(s));               // 모델이 배열 대신 문자열을 줄 때가 있다
+            }
+        });
+        return out;
     }
 
+    /**
+     * 곡 제목·아티스트·앨범·표지를 MySQL 에서 채운다. 추천 서버는 이 값을 모른다 —
+     * 숫자 ID 만 주고받는 것이 계약이다.
+     *
+     * 카탈로그에 없는 `music_id` 는 **버린다.** 화면이 재생할 수 없는 줄을 그리게 되기
+     * 때문이다. 이런 일이 생겼다면 추천 서버의 매핑표가 실제 DB 와 어긋났다는 뜻이라
+     * 로그에 남긴다.
+     */
+    private List<AiRecommendedTrack> withMusicDetails(List<RecommenderDto.Item> items) {
+        List<Integer> ids = items.stream().map(RecommenderDto.Item::musicId).distinct().toList();
+        Map<Integer, Music> byId = musicRepository.findDetailAllByIds(ids).stream()
+            .collect(Collectors.toMap(Music::getMusicId, m -> m, (a, b) -> a));
+
+        List<AiRecommendedTrack> out = new ArrayList<>();
+        for (RecommenderDto.Item item : items) {
+            Music music = byId.get(item.musicId());
+            if (music == null) {
+                log.warn("추천된 music_id={} 가 카탈로그에 없다 — id_map 과 DB 가 어긋났다",
+                    item.musicId());
+                continue;
+            }
+            out.add(new AiRecommendedTrack(
+                out.size() + 1,                          // 버린 것이 있어도 순번은 이어 붙인다
+                music.getMusicId(),
+                music.getTitle(),
+                music.getArtist().getName(),
+                music.getAlbum().getTitle(),
+                StorageImageService.imageUrl(music.getAlbum().getImageFile()),
+                item.musicSectionId(),
+                item.sectionLabel(),
+                item.startTimeMs(),
+                item.endTimeMs(),
+                item.score(),
+                item.reasonCode(),
+                item.reason()
+            ));
+        }
+        return List.copyOf(out);
+    }
 }

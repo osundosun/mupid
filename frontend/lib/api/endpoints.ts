@@ -24,10 +24,10 @@ export type UserInfo = {
   role: 'ROLE_USER' | 'ROLE_SYSTEM' | 'ROLE_ADMIN';
   status: 'PENDING' | 'ACTIVE' | 'WITHDRAW';
   /**
-   * 온보딩 설문을 마쳤는가. **화면 진입 분기는 이 값으로 한다.**
+   * 온보딩 설문을 마쳤는가. 거짓이면 온보딩 화면으로 보낸다.
    *
-   * `status` 도 제출 시점에 PENDING -> ACTIVE 로 함께 움직이지만, 이쪽이
-   * 설문 표를 직접 보고 만든 값이라 더 곧다.
+   * 제출한 **내용**을 받는 길은 없다. 콜드스타트 입력이라 화면이 되읽을 일이
+   * 없고, 읽는 것은 추천 서버뿐이다(`ROLE_SYSTEM` 전용 API).
    */
   onboarding_submitted: boolean;
 };
@@ -132,7 +132,6 @@ export type OnboardingOptions = {
 };
 
 export type OnboardingBody = {
-  nickname: string;
   mood_code_ids: number[];
   genre_code_ids: number[];
 };
@@ -147,6 +146,8 @@ export type MusicSummary = {
   playable: boolean;
   play_count: number;
   like_count: number;
+  /** 곡 커버. 곡에 표지가 없으면 null 이고, 그때는 앨범 커버를 쓴다. */
+  image_url: string | null;
   artist: { artist_id: number; name: string; image_url: string | null };
   album: {
     album_id: number;
@@ -164,6 +165,13 @@ export type MusicPage = {
   size: number;
   total_elements: number;
   total_pages: number;
+};
+
+/** 최근 검색어 한 줄. 같은 말은 한 번만 오므로 `keyword` 가 곧 열쇠다. */
+export type RecentSearch = {
+  keyword: string;
+  /** 이 말을 마지막으로 검색한 시각. */
+  searched_at: string;
 };
 
 export type PlaylistSummary = {
@@ -210,6 +218,85 @@ export type PlaylistTrackAdded = {
   music_count: number;
   duplicated: boolean;
   created_at: string;
+};
+
+/** 트리맵 타일 하나. `share` 가 곧 면적이다. */
+export type ReportTrack = {
+  music_id: number;
+  title: string;
+  artist_name: string;
+  album_title: string;
+  image_url: string | null;
+  listening_ms: number;
+  /** 그날 전체 청취 시간 중 이 곡의 비중 (0~1). */
+  share: number;
+};
+
+export type ReportKeyword = {
+  name: string;
+  kind: 'MOOD' | 'GENRE';
+  /** 청취 시간 가중 비중 (0~1). */
+  weight: number;
+};
+
+/**
+ * MuBTI 축 하나.
+ *
+ * `score` 는 들을 때마다 흐르지만 `code` 는 잘 바뀌지 않는다 — 서버가 이력 현상을
+ * 걸어 점수가 0 근처에서 깜빡이는 것을 막는다. 막대는 `score` 로 그리고 유형
+ * 이름은 `code` 로 그린다.
+ */
+export type ReportAxis = {
+  /** `A` 청취 포인트 · `B` 선곡 성향 · `C` 재생 방식 · `D` 탐색 성향 */
+  axis: 'A' | 'B' | 'C' | 'D';
+  code: string;
+  name: string;
+  opposite_code: string;
+  opposite_name: string;
+  /** −1 ~ +1. 양수면 `code` 쪽이다. */
+  score: number;
+  /** 0 ~ 1. 0 이면 판정 근거가 없어 기본값으로 둔 축이다. */
+  confidence: number;
+};
+
+export type ReportMubti = {
+  /** `VTFC` 같은 네 글자. */
+  code: string;
+  title: string;
+  subtitle: string;
+  description: string;
+  image_url: string | null;
+  axes: ReportAxis[];
+};
+
+/**
+ * 하루치 취향 리포트.
+ *
+ * `source` 가 `LIVE` 면 방금 집계한 값이다. 다만 방금 들은 곡이 반영되기까지
+ * 20초쯤 걸린다 — 하트비트 5초 + 전송 큐 5초 + 서버의 Kafka flush 15초. 화면은
+ * 폴링으로 그 지연을 덮는다.
+ */
+export type DailyReport = {
+  date: string;
+  generated_at: string;
+  source: 'LIVE' | 'STORED';
+  total_listening_ms: number;
+  /**
+   * 이벤트에는 있었지만 서버가 곡을 찾지 못해 버린 청취량.
+   * 0 이 아니면 곡 번호가 어긋나고 있다는 뜻이다.
+   */
+  unmatched_ms: number;
+  tracks: ReportTrack[];
+  keywords: ReportKeyword[];
+  /** 표본이 모자라면 null 이다. */
+  mubti: ReportMubti | null;
+  sample: {
+    sufficient: boolean;
+    /** 지난 날짜(STORED)는 저장하지 않아 null 이다. */
+    play_count: number | null;
+    distinct_music_count: number;
+    listening_ms: number;
+  };
 };
 
 export type StreamInfo = {
@@ -430,6 +517,55 @@ export function createEndpoints(client: ApiClient) {
           query: { page: options.page, size: options.size },
           signal,
         }),
+
+      /**
+       * 최근 검색어. 같은 말은 한 번만, 최신순.
+       *
+       * 이것도 적재 API 가 없다. 검색 이벤트(`SEARCH`)를 서버가 이 표에도
+       * 남긴다. 페이지네이션은 없다 — 검색창 아래 목록이라 한 화면이 끝이다.
+       */
+      recentSearches: (size?: number, signal?: AbortSignal) =>
+        client.request<{ keywords: RecentSearch[] }>({
+          path: '/api/v1/user/history/search',
+          query: { size },
+          signal,
+        }),
+
+      /**
+       * 최근 검색어 한 줄 지우기. 그 말로 남은 기록이 전부 사라진다.
+       *
+       * 목록의 한 줄은 기록 하나가 아니라 같은 말의 묶음이라 그렇다. 이미
+       * 없던 말이어도 성공이다.
+       */
+      removeRecentSearch: (keyword: string) =>
+        client.request<void>({
+          method: 'DELETE',
+          path: '/api/v1/user/history/search',
+          query: { keyword },
+          responseType: 'none',
+        }),
+
+      /** 최근 검색어 전체 지우기. 되돌릴 수 없어 경로가 따로 나 있다. */
+      clearRecentSearches: () =>
+        client.request<void>({
+          method: 'DELETE',
+          path: '/api/v1/user/history/search/all',
+          responseType: 'none',
+        }),
+    },
+
+    report: {
+      /**
+       * 하루치 취향 리포트. `date` 를 생략하면 서버 기준(Asia/Seoul) 오늘이다.
+       *
+       * 오늘치는 부를 때마다 서버가 ClickHouse 에서 다시 집계한다. 미래 날짜는 400.
+       */
+      daily: (date?: string, signal?: AbortSignal) =>
+        client.request<DailyReport>({
+          path: '/api/v1/report',
+          query: { date },
+          signal,
+        }),
     },
 
     reaction: {
@@ -472,10 +608,10 @@ export function createEndpoints(client: ApiClient) {
           signal,
         }),
       /**
-       * 제출. **한 번만 받는다** — 이미 냈으면 409 다.
+       * 제출. **한 번만 할 수 있다** — 두 번째부터는 409
+       * (`MUPID_ONBOARDING_ALREADY_SUBMITTED`) 다.
        *
-       * 제출 여부는 회원정보(`user.me`)의 `onboarding_submitted` 로 본다.
-       * 예전에 있던 `GET /api/v1/onboarding` 은 서버에서 사라졌다.
+       * 제출 여부는 `user.me()` 의 `onboarding_submitted` 로 확인한다.
        */
       submit: (body: OnboardingBody) =>
         client.request<void>({

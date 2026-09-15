@@ -40,7 +40,7 @@ docs:
     | `Music` | 음악/앨범/아티스트/가사 관리 (SYSTEM/ADMIN 전용) |
     | `Stream` | 스트림/청크 조회·다운로드, 오디오 등록 (업로드는 SYSTEM/ADMIN 전용) |
     | `Storage` | 범용 이미지 스토리지 (프로필 사진 포함) |
-    | `AI` | Mupid AI 대화 (곡 추천은 tool calling, 아직 목업) |
+    | `AI` | Mupid AI 대화 + AI 연동으로 **BE 에 요구하는 API** 4건 + AI 서버 내부 계약 2건 |
     | `Admin` | 관리자 화면이 쓰는 자원 CRUD·대시보드 (ADMIN 전용) |
     | `Actuator` / `Error` | 헬스체크, 오류 응답 확인 |
 
@@ -63,6 +63,10 @@ docs:
     | `STREAM_ID` | `Stream / 스트림 생성`·`스트림 목록 조회` 응답에서 자동 저장 |
     | `SYSTEM_REFRESH_TOKEN` | `User / 시스템 계정 생성` 응답에서 자동 저장 |
     | `CHUNK_INDEX` | 직접 입력 (청크 순서, 0 부터) |
+    | `AI_BASE_URL` | AI 추천 서버 주소 (`/internal` 앞까지) |
+    | `AI_INTERNAL_TOKEN` | Spring↔AI 공유 비밀. 양쪽에 같은 값을 넣습니다 |
+    | `MUSIC_SECTION_ID` | 직접 입력 (추천 응답의 구간 번호) |
+    | `RECOMMENDATION_ID` | 직접 입력 (Spring 이 발급하는 추천 요청 번호) |
 
     ## ⚠️ 요청/응답 필드는 snake_case
 
@@ -171,7 +175,7 @@ docs:
     - `GET /api/v1/mail/verification/**`
     - `GET /api/actuator/**`
     - `GET /api/v1/onboarding/option` (온보딩 선택지 — 무드·장르 이름 목록)
-    - `GET /api/v1/storage/image/ALBUM/*`, `.../ARTIST/*` (앨범·아티스트 이미지)
+    - `GET /api/v1/storage/image/ALBUM/*`, `.../ARTIST/*`, `.../TRACK/*` (앨범·아티스트·곡 커버 이미지)
 
     스트리밍(`Stream` 폴더) 엔드포인트는 모두 액세스 토큰이 필요합니다.
 
@@ -206,7 +210,7 @@ docs:
     `errorDetails` (camelCase) 필드를 씁니다.
 
     `ROLE_SYSTEM` 계정은 `User / 시스템 계정 생성` 으로 관리자가 발급합니다.
-    `music_chunking` 배치가 이 계정의 리프레시 토큰으로 동작합니다.
+    `music_preprocessing` 배치가 이 계정의 리프레시 토큰으로 동작합니다.
 
     관리자 화면의 **HTML 골격**(`GET /api/admin`, `GET /api/admin/login`)만
     `permitAll` 입니다. 브라우저 주소창으로 들어오는 요청에는 `Authorization`
@@ -225,7 +229,7 @@ docs:
     - `status` (user) — `PENDING`, `ACTIVE`, `WITHDRAW`
     - `codec` — `AAC`, `OPUS`
     - `status` (stream) — `PENDING`, `IN_PROGRESS`, `DONE`, `FAILED`
-    - `category` (storage) — `PROFILE`, `ARTIST`, `ALBUM`, `STREAMING`
+    - `category` (storage) — `PROFILE`, `ARTIST`, `ALBUM`, `TRACK`, `STREAMING`
 
     가입 직후에는 `status = PENDING`(온보딩 필요), `role = ROLE_USER` 입니다.
 

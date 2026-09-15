@@ -30,6 +30,12 @@ public record MusicSummary(
 
     int likeCount,
 
+    /**
+     * 곡 커버 조회 경로. 곡에 표지가 없으면 null 이고, 그때 화면은 앨범
+     * 커버(`album.imageUrl`)로 내려간다.
+     */
+    String imageUrl,
+
     ArtistSummary artist,
 
     AlbumSummary album,

@@ -7,10 +7,11 @@
 | 문서 | 다루는 것 |
 |---|---|
 | [glossary.md](glossary.md) | 용어 사전 |
-| [erd.md](erd.md) · [erd.sql](erd.sql) | MySQL ERD 스키마 — 테이블 27개, 공통 규약, 엔티티 변환 규칙, 코드와 어긋난 지점 |
+| [erd.md](erd.md) · [erd.sql](erd.sql) | MySQL ERD 스키마 — 테이블 30개, 공통 규약, 엔티티 변환 규칙, 코드와 어긋난 지점 |
 | [user-account.md](user-account.md) | 회원·이메일 인증·파일 — MySQL 에 있는 유일한 도메인 |
 | [track-sections.md](track-sections.md) | 곡과 구간, `analysis_version`, 재생 위치 → 구간 판정 |
 | [listening-events.md](listening-events.md) | 청취 이벤트 22종, 이벤트별 필드, 신호 가중치, 스킵 해석 |
+| [mubti-report.md](mubti-report.md) · [seed-mubti.sql](seed-mubti.sql) | '내 취향' 일간 리포트 — 집계 쿼리, MuBTI 네 축 판정 규칙, 적재 시점 |
 | [event-spec.html](event-spec.html) | 위 문서를 렌더한 한 장짜리 페이지 (브라우저로 열어 본다) |
 | [recommendation.md](recommendation.md) | 선호 신호 축적, 노출 기록, 평가 |
 
@@ -39,6 +40,10 @@
 | 곡 목록·검색 조회 | ❌ 없음 (등록 API 만 있다) |
 | 플레이리스트 | ⚠ 생성만 있음 |
 | 좋아요·재생 기록·저장한 구간·시점 댓글 | ❌ 없음 (브라우저 `localStorage` 에만 있다) |
+| 취향 리포트 · MuBTI (`GET /api/v1/report`) | ✅ 구현 — 화면 연결까지. `mubti` 16행은 사람이 넣는다 |
+
+> 이 표는 그때그때 손으로 고쳐 왔고 **뒤처져 있다.** 실제 구현 여부는
+> [api-todo.md](../api-todo.md) 쪽이 최신이다.
 
 프론트엔드가 필요로 하는 API 를 우선순위별로 정리한 목록은
 [api-todo.md](../api-todo.md) 에 있다.

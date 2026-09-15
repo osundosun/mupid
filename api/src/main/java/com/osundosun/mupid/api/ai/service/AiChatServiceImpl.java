@@ -124,10 +124,27 @@ public class AiChatServiceImpl implements AiChatService {
 
         AiRecommendTool.Arguments arguments =
             AiJson.readArguments(call.function().arguments(), AiRecommendTool.Arguments.class);
-        List<AiRecommendedTrack> found =
-            recommendTool.recommend(user.getUserId(), request.musicId(), arguments);
+
+        List<AiRecommendedTrack> found;
+        try {
+            found = recommendTool.recommend(user.getUserId(), request.musicId(), arguments);
+        } catch (BusinessException e) {
+            // 추천 서버가 죽었다고 대화까지 끊지 않는다. 모델에게 사실을 알려 주면
+            // "지금은 곡을 찾아드릴 수 없다" 고 말할 수 있다. 여기서 502 를 올리면
+            // 사용자는 빈 화면만 본다.
+            log.warn("추천 서버 호출 실패 — 대화는 이어 간다 code={}", e.getErrorCode());
+            return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of(
+                "error", "지금은 곡을 찾을 수 없습니다. 잠시 후 다시 시도해 주세요.")));
+        }
         found.forEach(track -> tracks.putIfAbsent(track.musicId(), track));
 
+        if (found.isEmpty()) {
+            // 빈 배열만 주면 모델이 "오류" 로 읽고 곡을 지어내는 일이 있다. 조건에 맞는
+            // 곡이 없다는 것은 정상 결과이므로 그렇게 말해 준다.
+            return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of(
+                "tracks", found,
+                "message", "조건에 맞는 곡이 없습니다. 조건을 줄이거나 다른 분위기를 제안하세요.")));
+        }
         return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of("tracks", found)));
     }
 

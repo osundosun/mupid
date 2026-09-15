@@ -1,0 +1,5 @@
+# Only ai_server/ is needed. Without this the build context is the whole repo
+# (frontend/node_modules, .next, api/build, app/target ...).
+*
+!ai_server/**
+ai_server/**/__pycache__/**

@@ -8,10 +8,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.osundosun.mupid.api.common.enumerate.Selector;
+import com.osundosun.mupid.api.common.error.GlobalErrorCode;
+import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.history.entity.PlayHistory;
 import com.osundosun.mupid.api.history.entity.SearchHistory;
 import com.osundosun.mupid.api.history.repository.PlayHistoryRepository;
 import com.osundosun.mupid.api.history.repository.SearchHistoryRepository;
+import com.osundosun.mupid.api.history.response.RecentSearchResponse;
 import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
@@ -37,6 +40,12 @@ public class HistoryServiceImpl implements HistoryService {
 
     /** `search_histories.keyword` 가 varchar(200) 이다. */
     private static final int KEYWORD_MAX = 200;
+
+    /** 검색창 아래 목록의 기본 길이. 검색엔진들이 대개 이 언저리를 보여 준다. */
+    public static final int DEFAULT_RECENT_SEARCH_SIZE = 10;
+
+    /** 목록이 화면을 덮을 이유가 없다. */
+    public static final int MAX_RECENT_SEARCH_SIZE = 50;
 
     /** `play_histories.recommendation_reason` 이 varchar(100) 이다. */
     private static final int REASON_MAX = 100;
@@ -92,6 +101,42 @@ public class HistoryServiceImpl implements HistoryService {
             ids.getSize(),
             ids.getTotalElements(),
             ids.getTotalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public RecentSearchResponse getRecentSearches(User user, int size) {
+        int safeSize = Math.min(Math.max(1, size), MAX_RECENT_SEARCH_SIZE);
+
+        return new RecentSearchResponse(
+            searchRepository.findRecentKeywords(user.getUserId(), PageRequest.of(0, safeSize)));
+    }
+
+    /**
+     * 빈 값을 "전부" 로 읽지 않는다. 400 이다.
+     *
+     * 화면 버그로 파라미터가 빠졌을 때 그 사람의 기록이 통째로 날아가는 것보다,
+     * 지우지 못했다고 돌려보내는 편이 낫다. 전체 삭제는 `clearRecentSearches`
+     * 라는 따로 난 길로만 간다.
+     *
+     * 이미 없던 말이어도 오류가 아니다. 지우기의 목적은 "그 말이 목록에 없는
+     * 상태" 이고, 다른 탭에서 먼저 지웠다면 이미 원하는 상태다. 여기서 404 를
+     * 내면 사용자는 이미 이룬 일로 실패를 본다. (플레이리스트 곡 빼기가 404 를
+     * 내는 것과는 다른 판단이다 — 그쪽은 수록곡이 화면과 어긋난 것을 알려야
+     * 한다.)
+     */
+    @Override
+    public int deleteRecentSearch(User user, String keyword) {
+        String trimmed = keyword == null ? "" : keyword.trim();
+        if (trimmed.isEmpty()) throw new BusinessException(GlobalErrorCode.INVALID_REQUEST_BODY);
+
+        return searchRepository.deleteByUserAndKeyword(user.getUserId(), trimmed);
+    }
+
+    /** 검색한 적이 없어도 오류가 아니다. 0 을 돌려준다. */
+    @Override
+    public int clearRecentSearches(User user) {
+        return searchRepository.deleteAllByUser(user.getUserId());
     }
 
     /** 컬럼 길이를 넘기면 INSERT 가 터진다. 기록은 잘려도 남는 쪽이 낫다. */

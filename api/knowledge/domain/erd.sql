@@ -43,22 +43,6 @@ CREATE TABLE IF NOT EXISTS `albums` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`album_id`)
 ) COMMENT='앨범 정보';
-CREATE TABLE IF NOT EXISTS `reports` (
-  `report_id` INT AUTO_INCREMENT NOT NULL COMMENT '분석 리포트 PK',
-  `user_id` INT NOT NULL COMMENT '유저 FK',
-  `mubti_id` INT NOT NULL COMMENT '취향 유형 FK',
-  `start_date` DATETIME NOT NULL COMMENT '집계 시작 일시',
-  `end_date` DATETIME NOT NULL COMMENT '집계 종료 일시',
-  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 일시',
-  PRIMARY KEY (`report_id`)
-) COMMENT='취향 분석 리포트';
-CREATE UNIQUE INDEX `uq_report_period` ON `reports` (`user_id`, `start_date`);
-CREATE TABLE IF NOT EXISTS `listening` (
-  `report_id` INT NOT NULL COMMENT '분석 리포트 FK',
-  `music_id` INT NOT NULL COMMENT '음악 FK',
-  `listening_ms` INT NOT NULL COMMENT '해당 기간 곡별 청취 시간(ms)',
-  PRIMARY KEY (`music_id`, `report_id`)
-) COMMENT='리포트 기간의 곡별 청취량';
 CREATE TABLE IF NOT EXISTS `artists` (
   `artist_id` INT AUTO_INCREMENT NOT NULL COMMENT '아티스트 PK',
   `name` VARCHAR(200) NOT NULL COMMENT '아티스트명',
@@ -69,13 +53,12 @@ CREATE TABLE IF NOT EXISTS `artists` (
   PRIMARY KEY (`artist_id`)
 ) COMMENT='아티스트';
 CREATE TABLE IF NOT EXISTS `chunks` (
-  `chunk_id` INT AUTO_INCREMENT NOT NULL,
   `stream_id` INT NOT NULL,
   `index` INT NOT NULL,
   `duration_ms` INT UNSIGNED NOT NULL,
   `file_id` INT NOT NULL,
   `file_hash` VARCHAR(64) NOT NULL COMMENT 'SHA-256',
-  PRIMARY KEY (`chunk_id`)
+  PRIMARY KEY (`stream_id`, `index`)
 );
 CREATE TABLE IF NOT EXISTS `codes` (
   `code_id` INT AUTO_INCREMENT NOT NULL,
@@ -84,17 +67,7 @@ CREATE TABLE IF NOT EXISTS `codes` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`code_id`)
 );
-CREATE TABLE IF NOT EXISTS `music_comments` (
-  `music_comment_id` INT AUTO_INCREMENT NOT NULL COMMENT '댓글 PK',
-  `music_id` INT NOT NULL COMMENT '음악 FK (?song={song_id})',
-  `user_id` INT NOT NULL COMMENT '작성자 FK',
-  `content` VARCHAR(100) NOT NULL COMMENT '댓글 내용',
-  `timestamp_ms` INT UNSIGNED NOT NULL COMMENT '곡 내 타임스탬프(ms)',
-  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '삭제 여부',
-  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '작성 일시',
-  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '수정 일시',
-  PRIMARY KEY (`music_comment_id`)
-) COMMENT='음악 타임스탬프 댓글';
+CREATE UNIQUE INDEX `ix_codes_type_name` ON `codes` (`code_type`, `code_name`);
 CREATE TABLE IF NOT EXISTS `daily_recommendation_tracks` (
   `daily_recommendation_id` INT NOT NULL COMMENT '오늘의 추천 FK',
   `rank_order` INT NOT NULL COMMENT '추천 순위',
@@ -103,14 +76,14 @@ CREATE TABLE IF NOT EXISTS `daily_recommendation_tracks` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성일시',
   PRIMARY KEY (`daily_recommendation_id`, `rank_order`)
 ) COMMENT='오늘의 모먼트 추천곡';
-CREATE UNIQUE INDEX `uq_daily_recommendation_track` ON `daily_recommendation_tracks` (`daily_recommendation_id`, `music_id`);
+CREATE UNIQUE INDEX `uq_daily_recommendation_song` ON `daily_recommendation_tracks` (`daily_recommendation_id`, `music_id`);
 CREATE TABLE IF NOT EXISTS `daily_recommendations` (
   `daily_recommendation_id` INT AUTO_INCREMENT NOT NULL COMMENT '오늘의 추천 PK',
   `user_id` INT NOT NULL COMMENT '유저 FK',
   `title` VARCHAR(100) NOT NULL COMMENT '모먼트 타이틀',
   `music_count` SMALLINT UNSIGNED NOT NULL,
   `reason` VARCHAR(100) NOT NULL COMMENT '추천 사유 문구 (AI 생성)',
-  `mood_code_id` INT NOT NULL COMMENT '모먼트 무드 FK (codes.code_id)',
+  `mood_code_id` INT NOT NULL,
   `recommendation_date` DATE NOT NULL COMMENT '추천 기준일',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 일시',
   PRIMARY KEY (`daily_recommendation_id`)
@@ -128,48 +101,33 @@ CREATE TABLE IF NOT EXISTS `email_verifications` (
   PRIMARY KEY (`verification_id`)
 ) COMMENT='회원가입 이메일 인증';
 CREATE UNIQUE INDEX `uq_email_verification_token` ON `email_verifications` (`token`);
-CREATE TABLE IF NOT EXISTS `genres` (
-  `genre_id` INT AUTO_INCREMENT NOT NULL COMMENT '장르 PK',
-  `name` VARCHAR(50) NOT NULL COMMENT '장르명',
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '생성일시',
-  PRIMARY KEY (`genre_id`)
-) COMMENT='장르';
-CREATE UNIQUE INDEX `uq_genre_name` ON `genres` (`name`);
-CREATE TABLE IF NOT EXISTS `instruments` (
-  `instrument_id` SMALLINT UNSIGNED AUTO_INCREMENT NOT NULL,
-  `name` VARCHAR(50),
-  `created_at` DATETIME,
-  PRIMARY KEY (`instrument_id`)
+CREATE TABLE IF NOT EXISTS `listening` (
+  `report_id` INT NOT NULL,
+  `music_id` INT NOT NULL,
+  `listening_ms` INT UNSIGNED NOT NULL COMMENT 'Milliseconds 단위',
+  PRIMARY KEY (`report_id`, `music_id`)
 );
 CREATE TABLE IF NOT EXISTS `lyrics` (
   `lyric_id` INT AUTO_INCREMENT NOT NULL,
   `music_id` INT NOT NULL,
-  `index` INT NOT NULL,
   `text` VARCHAR(500) NOT NULL,
-  `start_time_ms` INT UNSIGNED NOT NULL,
-  `end_time_ms` INT UNSIGNED NOT NULL,
+  `time_ms` INT UNSIGNED NOT NULL,
   PRIMARY KEY (`lyric_id`)
 );
 CREATE TABLE IF NOT EXISTS `mubti` (
-  `mubti_id` INT AUTO_INCREMENT NOT NULL COMMENT '취향 유형 PK',
-  `title` VARCHAR(20) NOT NULL COMMENT '유형 이름',
-  `subtitle` VARCHAR(50) NOT NULL COMMENT '유형 한 줄 소개',
-  `description` VARCHAR(100) NOT NULL COMMENT '유형 설명',
-  `image_file_id` INT COMMENT '유형 아이콘 FK',
-  `classa` ENUM('I', 'V') NOT NULL COMMENT '축 A',
-  `classb` ENUM('M', 'T') NOT NULL COMMENT '축 B',
-  `classc` ENUM('F', 'S') NOT NULL COMMENT '축 C',
-  `classd` ENUM('C', 'E') NOT NULL COMMENT '축 D',
+  `mubti_id` INT AUTO_INCREMENT NOT NULL,
+  `title` VARCHAR(20) NOT NULL,
+  `subtitle` VARCHAR(20) NOT NULL,
+  `description` VARCHAR(150) NOT NULL,
+  `class_a` ENUM('V', 'I') NOT NULL COMMENT '청취 포인트(보컬파, 멜로디파)',
+  `class_b` ENUM('T', 'M') NOT NULL COMMENT '선곡 성향(트렌드형, 매니아형)',
+  `class_c` ENUM('F', 'S') NOT NULL COMMENT '재생 방식(완주형, 스킵형)',
+  `class_d` ENUM('C', 'E') NOT NULL COMMENT '탐색 성향(국밥형, 개척형)',
+  `image_file_id` INT NOT NULL,
   PRIMARY KEY (`mubti_id`)
 ) COMMENT='사용자의 취향을 분류';
-CREATE UNIQUE INDEX `uq_mubti_image` ON `mubti` (`image_file_id`);
-CREATE TABLE IF NOT EXISTS `moods` (
-  `mood_id` INT AUTO_INCREMENT NOT NULL COMMENT '무드 PK',
-  `name` VARCHAR(20) NOT NULL COMMENT '무드명 (모먼트 추천/분석 기준)',
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '생성일시',
-  PRIMARY KEY (`mood_id`)
-) COMMENT='곡 분위기 태그';
-CREATE UNIQUE INDEX `uq_mood_name` ON `moods` (`name`);
+CREATE UNIQUE INDEX `ux_mubti_image_file_id` ON `mubti` (`image_file_id`);
+CREATE UNIQUE INDEX `ux_mubti_title` ON `mubti` (`title`);
 CREATE TABLE IF NOT EXISTS `music` (
   `music_id` INT AUTO_INCREMENT NOT NULL COMMENT '음악 PK',
   `album_id` INT NOT NULL COMMENT '앨범 FK',
@@ -178,35 +136,47 @@ CREATE TABLE IF NOT EXISTS `music` (
   `release_date` DATE NOT NULL COMMENT '발매일',
   `play_count` INT NOT NULL DEFAULT 0 COMMENT '누적 재생 수',
   `like_count` INT NOT NULL DEFAULT 0 COMMENT '누적 좋아요 수',
+  `image_file_id` INT,
   `is_deleted` TINYINT(1) NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 일시',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`music_id`)
 ) COMMENT='음악 (메타데이터 조회 GET /api/v1/song/info)';
 CREATE TABLE IF NOT EXISTS `music_analysis` (
-  `music_analysis_id` INT AUTO_INCREMENT NOT NULL,
   `music_id` INT NOT NULL,
-  `vocal_gender` ENUM('M', 'F', 'ETC') NOT NULL,
   `has_vocal` TINYINT(1) NOT NULL,
-  PRIMARY KEY (`music_analysis_id`)
+  `vocal_gender` ENUM('M', 'F', 'ETC'),
+  PRIMARY KEY (`music_id`)
 );
 CREATE TABLE IF NOT EXISTS `music_analysis_instruments` (
-  `music_analysis_id` INT AUTO_INCREMENT NOT NULL,
-  `instrument_id` SMALLINT UNSIGNED NOT NULL,
-  PRIMARY KEY (`music_analysis_id`, `instrument_id`)
+  -- 구간 PK 를 가리키는 자리다. AUTO_INCREMENT 는 값을 발급하겠다는 뜻이라 맞지 않는다.
+  `music_section_analysis_id` INT NOT NULL,
+  `instrument_code_id` INT NOT NULL,
+  PRIMARY KEY (`music_section_analysis_id`, `instrument_code_id`)
 );
+CREATE TABLE IF NOT EXISTS `music_comments` (
+  `music_comment_id` INT AUTO_INCREMENT NOT NULL COMMENT '댓글 PK',
+  `music_id` INT NOT NULL COMMENT '음악 FK (?song={song_id})',
+  `user_id` INT NOT NULL COMMENT '작성자 FK',
+  `content` VARCHAR(100) NOT NULL COMMENT '댓글 내용',
+  `timestamp_ms` INT UNSIGNED NOT NULL COMMENT '곡 내 타임스탬프(ms)',
+  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '삭제 여부',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '작성 일시',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '수정 일시',
+  PRIMARY KEY (`music_comment_id`)
+) COMMENT='음악 타임스탬프 댓글';
 CREATE TABLE IF NOT EXISTS `music_genres` (
   `music_id` INT NOT NULL COMMENT '음악 FK',
-  `genre_id` INT NOT NULL COMMENT '장르 FK',
-  PRIMARY KEY (`music_id`, `genre_id`)
+  `genre_code_id` INT NOT NULL,
+  PRIMARY KEY (`music_id`, `genre_code_id`)
 ) COMMENT='음악-장르 매핑 (N:M)';
-CREATE UNIQUE INDEX `uq_song_genre` ON `music_genres` (`music_id`, `genre_id`);
+CREATE INDEX `uq_song_genre` ON `music_genres` (`music_id`);
 CREATE TABLE IF NOT EXISTS `music_moods` (
   `music_id` INT NOT NULL COMMENT '음악 FK',
-  `mood_id` INT NOT NULL COMMENT '무드 FK',
-  PRIMARY KEY (`music_id`, `mood_id`)
+  `mood_code_id` INT NOT NULL,
+  PRIMARY KEY (`music_id`, `mood_code_id`)
 ) COMMENT='음악-분위기 매핑 (N:M)';
-CREATE UNIQUE INDEX `uq_song_mood` ON `music_moods` (`music_id`, `mood_id`);
+CREATE INDEX `uq_song_mood` ON `music_moods` (`music_id`);
 CREATE TABLE IF NOT EXISTS `music_reactions` (
   `user_id` INT NOT NULL COMMENT '유저 FK (복합키)',
   `music_id` INT NOT NULL COMMENT '음악 FK (복합키)',
@@ -217,25 +187,28 @@ CREATE TABLE IF NOT EXISTS `music_reactions` (
 ) COMMENT='음악 좋아요/관심없음 (POST /api/v1/song/like)';
 CREATE UNIQUE INDEX `ix_song_reactions_` ON `music_reactions` (`user_id`, `music_id`);
 CREATE TABLE IF NOT EXISTS `music_section_analysis` (
-  `music_section_id` INT AUTO_INCREMENT NOT NULL,
+  `music_section_analysis_id` INT AUTO_INCREMENT NOT NULL,
   `music_id` INT NOT NULL,
   `section_label` ENUM('INTRO', 'VERSE', 'PRE_CHORUS', 'CHORUS', 'BRIDGE', 'BREAK', 'INST', 'SOLO', 'OUTRO') NOT NULL,
   `index` INT NOT NULL,
   `start_time_ms` INT NOT NULL,
   `end_time_ms` INT NOT NULL,
-  `mood_id` INT NOT NULL,
-  `embedding_id` VARCHAR(50) NOT NULL,
-  PRIMARY KEY (`music_section_id`)
+  -- 문자열 구간 UID(`JAMENDO_1048629#0`). 실측 최댓값 36자인데 flow ID 는 제목 길이만큼
+  -- 늘어나 50 으로는 모자라다. 넘치면 MySQL 이 조용히 잘라 저장하고, 잘린 값끼리는
+  -- 매핑 1:1 검사까지 통과해 어긋난 채 서비스가 올라온다.
+  `external_id` VARCHAR(64) NOT NULL,
+  PRIMARY KEY (`music_section_analysis_id`),
+  UNIQUE KEY `uk_music_section_analysis_external_id` (`external_id`)
 );
 CREATE TABLE IF NOT EXISTS `music_section_analysis_mood` (
-  `music_section_id` INT NOT NULL,
-  `mood_id` INT NOT NULL,
-  PRIMARY KEY (`music_section_id`, `mood_id`)
+  `music_section_analysis_id` INT NOT NULL,
+  `mood_code_id` INT NOT NULL,
+  PRIMARY KEY (`music_section_analysis_id`, `mood_code_id`)
 );
 CREATE TABLE IF NOT EXISTS `object_storage_files` (
   `file_id` INT AUTO_INCREMENT NOT NULL,
   `file_type` ENUM('IMG', 'MUSIC') NOT NULL,
-  `category` ENUM('PROFILE', 'ARTIST', 'ALBUM', 'STREAMING') NOT NULL,
+  `category` ENUM('PROFILE', 'ARTIST', 'ALBUM', 'TRACK', 'MUBTI', 'STREAMING') NOT NULL,
   `original_file_name` VARCHAR(255) NOT NULL,
   `storage_object_key` VARCHAR(255) NOT NULL,
   `file_size_bytes` INT NOT NULL COMMENT '파일 크기 (bytes)',
@@ -248,8 +221,8 @@ CREATE TABLE IF NOT EXISTS `object_storage_files` (
 CREATE TABLE IF NOT EXISTS `onboarding_survey` (
   `answer_id` INT AUTO_INCREMENT NOT NULL COMMENT '응답 PK',
   `user_id` INT NOT NULL COMMENT '유저 FK',
-  `mood_id` INT NOT NULL,
-  `genre_id` INT NOT NULL,
+  `mood_code_id` INT NOT NULL,
+  `genre_code_id` INT NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성일시',
   PRIMARY KEY (`answer_id`)
 ) COMMENT='온보딩 문항별 응답';
@@ -259,22 +232,21 @@ CREATE TABLE IF NOT EXISTS `play_histories` (
   `music_id` INT NOT NULL COMMENT '음악 FK',
   `selector` ENUM('USER', 'AI') NOT NULL,
   `recommendation_reason` VARCHAR(100),
-  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '재생 일시',
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '재생 일시',
   PRIMARY KEY (`play_history_id`)
 ) COMMENT='최근 들은 음악 히스토리 (GET /api/v1/song/history)';
 CREATE INDEX `ix_play_histories_` ON `play_histories` (`user_id`, `music_id`);
 CREATE UNIQUE INDEX `ux_play_histories_play_history_id` ON `play_histories` (`play_history_id`);
 CREATE TABLE IF NOT EXISTS `playlist_tracks` (
   `playlist_id` INT NOT NULL COMMENT '플레이리스트 FK',
-  `track_order` INT NOT NULL COMMENT '트랙 순서 (1부터)',
+  `track_order` SMALLINT UNSIGNED NOT NULL COMMENT '트랙 순서',
   `music_id` INT NOT NULL COMMENT '음악 FK',
-  `selector` ENUM('USER', 'AI') NOT NULL COMMENT '선곡 주체',
-  `user_id` INT NOT NULL COMMENT '추가한 유저 FK',
+  `selector` ENUM('USER', 'AI') NOT NULL,
+  `user_id` INT COMMENT '추가한 유저 FK (NULL이면 시스템 생성)',
   `created_at` DATETIME NOT NULL COMMENT '추가 일시',
   PRIMARY KEY (`playlist_id`, `track_order`)
 ) COMMENT='플레이리스트 수록곡 (N:M)';
--- 같은 곡이 한 플레이리스트에 두 번 담기지 않게 막는다 (곡 추가 API 의 중복 검사 최후 방어선)
-CREATE UNIQUE INDEX `uq_playlist_track_music` ON `playlist_tracks` (`playlist_id`, `music_id`);
+CREATE UNIQUE INDEX `uq_playlist_song` ON `playlist_tracks` (`playlist_id`, `music_id`);
 CREATE TABLE IF NOT EXISTS `playlists` (
   `playlist_id` INT AUTO_INCREMENT NOT NULL COMMENT '플레이리스트 PK',
   `user_id` INT COMMENT '소유 유저 FK (NULL이면 시스템/추천 생성)',
@@ -285,11 +257,21 @@ CREATE TABLE IF NOT EXISTS `playlists` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '수정 일시',
   PRIMARY KEY (`playlist_id`)
 ) COMMENT='플레이리스트 (목록/상세 조회 + 생성/수정/삭제)';
+CREATE TABLE IF NOT EXISTS `reports` (
+  `report_id` INT AUTO_INCREMENT NOT NULL COMMENT '분석 리포트 PK',
+  `user_id` INT NOT NULL COMMENT '유저 FK',
+  `start_date` DATE NOT NULL COMMENT '집계 시작일',
+  `end_date` DATE NOT NULL COMMENT '집계 종료일',
+  `mubti_id` INT NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 일시',
+  PRIMARY KEY (`report_id`)
+) COMMENT='취향 분석 리포트';
+CREATE UNIQUE INDEX `analysis_reports_copy_uq_analysis_report_period` ON `reports` (`user_id`, `start_date`);
 CREATE TABLE IF NOT EXISTS `search_histories` (
   `search_history_id` INT AUTO_INCREMENT NOT NULL COMMENT '검색 기록 PK',
   `user_id` INT NOT NULL COMMENT '유저 FK',
   `keyword` VARCHAR(200) NOT NULL COMMENT '검색어',
-  `created_at` DATETIME COMMENT '검색 일시',
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '검색 일시',
   PRIMARY KEY (`search_history_id`)
 ) COMMENT='최근 검색어 (조회/삭제)';
 CREATE TABLE IF NOT EXISTS `streams` (
@@ -302,7 +284,6 @@ CREATE TABLE IF NOT EXISTS `streams` (
   `status` ENUM('PENDING', 'IN_PROGRESS', 'DONE', 'FAILED') NOT NULL DEFAULT 'PENDING',
   PRIMARY KEY (`stream_id`)
 );
-CREATE UNIQUE INDEX `ux_music_streams_music_id` ON `streams` (`music_id`);
 CREATE TABLE IF NOT EXISTS `users` (
   `user_id` INT AUTO_INCREMENT NOT NULL COMMENT '유저 PK',
   `email` VARCHAR(320) NOT NULL COMMENT '로그인 이메일',
@@ -329,33 +310,31 @@ ALTER TABLE `albums` ADD CONSTRAINT `fk_album_artist` FOREIGN KEY (`artist_id`) 
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `albums` ADD CONSTRAINT `fk_album_cover_image` FOREIGN KEY (`image_file_id`) REFERENCES `object_storage_files` (`file_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `analysis_reports` ADD CONSTRAINT `analysis_reports_copy_fk_analysis_report_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
--- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `analysis_reports` ADD CONSTRAINT `fk_analysis_reports_copy_listening_dna_id` FOREIGN KEY (`mbti_id`) REFERENCES `mbti` (`listening_dna_id`);
--- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `artists` ADD CONSTRAINT `fk_artist_image` FOREIGN KEY (`image_file_id`) REFERENCES `object_storage_files` (`file_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `chunks` ADD CONSTRAINT `fk_song_chunks_file_id` FOREIGN KEY (`file_id`) REFERENCES `object_storage_files` (`file_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `chunks` ADD CONSTRAINT `fk_song_chunks_song_stream_id` FOREIGN KEY (`stream_id`) REFERENCES `streams` (`stream_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `comments` ADD CONSTRAINT `fk_comment_song` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
+ALTER TABLE `daily_recommendation_tracks` ADD CONSTRAINT `fk_daily_rec_song_recommendation` FOREIGN KEY (`daily_recommendation_id`) REFERENCES `daily_recommendations` (`daily_recommendation_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `comments` ADD CONSTRAINT `fk_comment_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
--- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `daily_recommendation_songs` ADD CONSTRAINT `fk_daily_rec_song_recommendation` FOREIGN KEY (`recommendation_id`) REFERENCES `daily_recommendations` (`recommendation_id`);
--- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `daily_recommendation_songs` ADD CONSTRAINT `fk_daily_rec_song_song` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
--- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `daily_recommendations` ADD CONSTRAINT `fk_daily_recommendation_mood` FOREIGN KEY (`mood_id`) REFERENCES `moods` (`mood_id`);
+ALTER TABLE `daily_recommendation_tracks` ADD CONSTRAINT `fk_daily_rec_song_song` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `daily_recommendations` ADD CONSTRAINT `fk_daily_recommendation_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `daily_recommendations` ADD CONSTRAINT `fk_daily_recommendations_mood_code_id` FOREIGN KEY (`mood_code_id`) REFERENCES `codes` (`code_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `email_verifications` ADD CONSTRAINT `fk_email_verifications_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `listening` ADD CONSTRAINT `fk_listening_report_id` FOREIGN KEY (`report_id`) REFERENCES `reports` (`report_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `listening` ADD CONSTRAINT `fk_report_listening_music_id` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `lyrics` ADD CONSTRAINT `fk_song_lyrics_song_id` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `mbti` ADD CONSTRAINT `fk_listening_dna_icon_file_id` FOREIGN KEY (`icon_file_id`) REFERENCES `object_storage_files` (`file_id`);
+ALTER TABLE `mubti` ADD CONSTRAINT `fk_mubti_file_id` FOREIGN KEY (`image_file_id`) REFERENCES `object_storage_files` (`file_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `music` ADD CONSTRAINT `fk_music_image_file_id` FOREIGN KEY (`image_file_id`) REFERENCES `object_storage_files` (`file_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `music` ADD CONSTRAINT `fk_song_album` FOREIGN KEY (`album_id`) REFERENCES `albums` (`album_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
@@ -363,15 +342,19 @@ ALTER TABLE `music` ADD CONSTRAINT `fk_song_artist` FOREIGN KEY (`artist_id`) RE
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `music_analysis` ADD CONSTRAINT `fk_song_analysis_song_id` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `music_analysis_instruments` ADD CONSTRAINT `fk_instruments_id` FOREIGN KEY (`instrument_id`) REFERENCES `instruments` (`instrument_id`);
+ALTER TABLE `music_analysis_instruments` ADD CONSTRAINT `fk_music_analysis_instruments_code_id` FOREIGN KEY (`instrument_code_id`) REFERENCES `codes` (`code_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `music_analysis_instruments` ADD CONSTRAINT `fk_song_analysis_id` FOREIGN KEY (`music_analysis_id`) REFERENCES `music_analysis` (`music_analysis_id`);
+ALTER TABLE `music_analysis_instruments` ADD CONSTRAINT `fk_music_analysis_instruments_music_section_analysis_id` FOREIGN KEY (`music_section_analysis_id`) REFERENCES `music_section_analysis` (`music_section_analysis_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `music_genres` ADD CONSTRAINT `fk_song_genre_genre` FOREIGN KEY (`genre_id`) REFERENCES `genres` (`genre_id`);
+ALTER TABLE `music_comments` ADD CONSTRAINT `fk_comment_song` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `music_comments` ADD CONSTRAINT `fk_comment_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `music_genres` ADD CONSTRAINT `fk_music_genres_code_id` FOREIGN KEY (`genre_code_id`) REFERENCES `codes` (`code_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `music_genres` ADD CONSTRAINT `fk_song_genre_song` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `music_moods` ADD CONSTRAINT `fk_song_mood_mood` FOREIGN KEY (`mood_id`) REFERENCES `moods` (`mood_id`);
+ALTER TABLE `music_moods` ADD CONSTRAINT `fk_music_moods_code_id` FOREIGN KEY (`mood_code_id`) REFERENCES `codes` (`code_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `music_moods` ADD CONSTRAINT `fk_song_mood_song` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
@@ -381,31 +364,34 @@ ALTER TABLE `music_reactions` ADD CONSTRAINT `fk_song_reaction_user` FOREIGN KEY
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `music_section_analysis` ADD CONSTRAINT `fk_song_section_analysis_song_id` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `music_section_analysis_mood` ADD CONSTRAINT `fk_song_section_analysis_mood_mood_id` FOREIGN KEY (`mood_id`) REFERENCES `moods` (`mood_id`);
+ALTER TABLE `music_section_analysis_mood` ADD CONSTRAINT `fk_music_section_analysis_mood_code_id` FOREIGN KEY (`mood_code_id`) REFERENCES `codes` (`code_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `music_section_analysis_mood` ADD CONSTRAINT `fk_song_section_analysis_mood_song_section_id` FOREIGN KEY (`music_section_id`) REFERENCES `music_section_analysis` (`music_section_id`);
--- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `onboarding_survey` ADD CONSTRAINT `fk_onboarding_answers_genre_id` FOREIGN KEY (`genre_id`) REFERENCES `genres` (`genre_id`);
--- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `onboarding_survey` ADD CONSTRAINT `fk_onboarding_answers_mood_id` FOREIGN KEY (`mood_id`) REFERENCES `moods` (`mood_id`);
+ALTER TABLE `music_section_analysis_mood` ADD CONSTRAINT `fk_song_section_analysis_mood_song_section_id` FOREIGN KEY (`music_section_analysis_id`) REFERENCES `music_section_analysis` (`music_section_analysis_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `onboarding_survey` ADD CONSTRAINT `fk_onboarding_answers_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `onboarding_survey` ADD CONSTRAINT `fk_onboarding_survey_code_id` FOREIGN KEY (`genre_code_id`) REFERENCES `codes` (`code_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `onboarding_survey` ADD CONSTRAINT `fk_onboarding_survey_mood_code_id` FOREIGN KEY (`mood_code_id`) REFERENCES `codes` (`code_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `play_histories` ADD CONSTRAINT `fk_play_history_song` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `play_histories` ADD CONSTRAINT `fk_play_history_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `playlist_tracks` ADD CONSTRAINT `fk_playlist_track_playlist` FOREIGN KEY (`playlist_id`) REFERENCES `playlists` (`playlist_id`);
+ALTER TABLE `playlist_tracks` ADD CONSTRAINT `fk_playlist_song_playlist` FOREIGN KEY (`playlist_id`) REFERENCES `playlists` (`playlist_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `playlist_tracks` ADD CONSTRAINT `fk_playlist_track_music` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
+ALTER TABLE `playlist_tracks` ADD CONSTRAINT `fk_playlist_song_song` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
-ALTER TABLE `playlist_tracks` ADD CONSTRAINT `fk_playlist_track_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
+ALTER TABLE `playlist_tracks` ADD CONSTRAINT `fk_playlist_song_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `playlists` ADD CONSTRAINT `fk_playlist_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `reports` ADD CONSTRAINT `analysis_reports_copy_fk_analysis_report_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `reports` ADD CONSTRAINT `fk_analysis_reports_copy_listening_dna_id` FOREIGN KEY (`mubti_id`) REFERENCES `mubti` (`mubti_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `search_histories` ADD CONSTRAINT `fk_search_history_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `streams` ADD CONSTRAINT `fk_song_streams_song_id` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `users` ADD CONSTRAINT `fk_user_profile_image` FOREIGN KEY (`image_file_id`) REFERENCES `object_storage_files` (`file_id`);
-CREATE OR REPLACE VIEW `user_auth` AS SELECT user_id, email, password FROM users WHERE status != 'WITHDRAW';

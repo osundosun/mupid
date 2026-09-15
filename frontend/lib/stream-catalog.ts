@@ -41,8 +41,12 @@ const toTrack = (music: MusicSummary): Track => {
     // 추천 점수·추천 이유는 아직 서버가 주지 않는다 (api-todo P3).
     match: 100,
     reason: '',
-    // 앱에서는 앨범 아트도 Rust 가 받아 온다 (`lib/platform/image.ts`).
-    image: toImageSource(music.album.image_url) || '/sky-background.webp',
+    // 곡마다 표지가 따로 있는 카탈로그(flow_music)가 있고, 앨범 커버만 있는
+    // 곡도 있다. 곡 표지 → 앨범 커버 → 기본 이미지 순으로 내려간다.
+    //
+    // 앱에서는 원격 이미지를 웹뷰가 직접 받지 않는다. `toImageSource` 가
+    // `mupidimg` 로 감싸고 Rust 가 대신 받아 온다 (`app/src/image.rs`).
+    image: toImageSource(music.image_url ?? music.album.image_url) || '/sky-background.webp',
     tags: tags.length ? tags : ['스트리밍'],
     // 구간은 `GET /api/v1/music/{id}/analysis` 가 준다. 다만 분석 파이프라인이
     // 아직 돌지 않아 대부분 비어 있어서, 여기서는 곡을 둘로 나눠 둔다.

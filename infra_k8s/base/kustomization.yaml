@@ -1,0 +1,48 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mupid
+resources:
+  - namespace.yaml
+  - config.yaml
+  - mysql.yaml
+  - redis.yaml
+  - storage.yaml
+  - clickhouse.yaml
+  - kafka.yaml
+  - dbstudio.yaml
+  - api.yaml
+  - edge.yaml
+# ai.yaml is deliberately not listed. ai_server is still being written, so it is
+# out of this cutover; the manifest stays because the work on it is done and the
+# AI node's budget is reserved for it. Add the line back when the image exists —
+# nothing else has to change, and api-config already points MUPID_AI_BASE_URL at
+# the Service the file creates.
+# The hash suffix is deliberate: editing nginx.conf produces a new ConfigMap name
+# and therefore a new pod. Without it the file would change on disk while the
+# running nginx kept the old configuration.
+configMapGenerator:
+  - name: edge-nginx
+    files:
+      - default.conf=nginx/default.conf
+  # Same reason as above: editing one of these XML files renames the ConfigMap,
+  # so the pods restart and pick it up. ClickHouse re-reads config.d at runtime
+  # for some settings but not for macros or remote_servers, so a restart is the
+  # only way to be sure the change took.
+  - name: clickhouse-server
+    files:
+      - clickhouse/server/00-cluster.xml
+      - clickhouse/server/01-keeper.xml
+      - clickhouse/server/02-server.xml
+      - clickhouse/server/10-macros.xml
+  - name: clickhouse-users
+    files:
+      - clickhouse/users/00-profile.xml
+      - clickhouse/users/10-mupid-user.xml
+  - name: clickhouse-keeper
+    files:
+      - clickhouse/keeper/keeper_config.xml
+# Both are created on the server from /srv/mupid-k8s/.env by an administrator and
+# are never committed. Declaring them here makes `kustomize build` fail loudly if
+# a manifest references a key that was not planned for.
+#   kubectl -n mupid create secret generic mupid-secrets --from-env-file=/srv/mupid-k8s/.env
+#   kubectl -n mupid create secret generic mupid-storage-s3 --from-file=s3.json=/srv/mupid-k8s/s3.json

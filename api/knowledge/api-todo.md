@@ -24,7 +24,8 @@
 | 스트리밍 | 스트림·청크 생성/업로드/조회/다운로드 | 연결 완료 |
 | 이미지 | `POST/GET/DELETE /api/v1/storage/image/{category}/{key}` | 연결 완료 |
 | 이벤트 수집 | `POST /api/v1/events` | 프론트 트래커 있음 |
-| 온보딩 | `GET /api/v1/onboarding/option`, `GET`, `POST /api/v1/onboarding` | 연결 완료 |
+| 온보딩 | `GET /api/v1/onboarding/option`, `POST /api/v1/onboarding` | 연결 완료 · **제출은 계정당 한 번** |
+| 온보딩(배치) | `GET /api/v1/user/{userId}/onboarding` | **`ROLE_SYSTEM` 전용** · 추천 서버가 콜드스타트에 씀 |
 | 좋아요·관심없음 | `PUT/DELETE /api/v1/music/{id}/reaction`, `GET /api/v1/user/reaction[/music]` | 연결 완료 |
 | 최근 감상 | `GET /api/v1/user/history` (적재는 이벤트 수집기가) | 연결 완료 |
 | 시점 댓글 | `GET/POST /api/v1/music/{id}/comment`, `PATCH/DELETE /api/v1/comment/{id}` | 연결 완료 |
@@ -118,8 +119,8 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 ### 3. 온보딩 설문 — ✅ 완료
 
 - `GET /api/v1/onboarding/option` — 고를 수 있는 분위기·장르 (**인증 불필요**)
-- `POST /api/v1/onboarding` — 닉네임·분위기·장르 제출 (재제출 시 교체)
-- `GET /api/v1/onboarding` — 제출 여부·제출 내용
+- `POST /api/v1/onboarding` — 분위기·장르 제출. **계정당 한 번**, 재제출은 409
+- `GET /api/v1/user/{userId}/onboarding` — 제출 내용. **`ROLE_SYSTEM` 전용**
 
 분위기·장르는 이름이 아니라 `codes` 표의 **번호**로 주고받는다. `codes` 는 기준
 데이터라 사람이 넣어야 한다 → [domain/seed-codes.sql](domain/seed-codes.sql).
@@ -134,13 +135,21 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 따라온 것:
 
 - 온보딩 화면에 **장르 선택**을 추가했다. 장르 없이는 행을 만들 수 없다.
-- 제출한 닉네임이 계정 닉네임(`users.nickname`)에도 반영된다.
-- 프로필 화면의 "내가 좋아하는 분위기" 도 계정에 반영된다
-  (`useMupid` 의 `updateMoods`).
-- 로그인·세션 복원 시 계정에 있는 설문을 화면 상태로 끌어온다. 다른 기기에서
-  답했으면 온보딩 화면을 건너뛴다.
+- 로그인·세션 복원 시 `GET /api/v1/user` 의 `onboarding_submitted` 로 분기한다.
+  다른 기기에서 답했으면 온보딩 화면을 건너뛴다.
 - 비로그인은 예전처럼 브라우저 저장만 쓴다. 온보딩은 앱에 들어가는 관문이라
   서버가 없다고 막히면 안 된다.
+
+**콜드스타트 입력으로 못박았다** (2026-09-15). 이 설문은 이력이 없는 사람의 첫
+추천을 만드는 값이지 계속 고쳐 쓰는 취향 설정이 아니다 —
+[decision/0017](decision/0017-onboarding-survey-cross-product.md) 의 "고친 것".
+
+- 제출은 **계정당 한 번**이다. 두 번째는 `MUPID_ONBOARDING_ALREADY_SUBMITTED`(409).
+- **본인 조회 API 를 없앴다.** 화면이 답을 되돌려 받을 일이 없다. 진입 분기에
+  쓰는 불리언만 `GET /api/v1/user` 에 실었다.
+- 마이페이지의 취향 편집 칩을 지웠다. 누를 때마다 재제출하고 있었다.
+- 설문이 **닉네임을 받지 않는다.** 회원가입이 이미 받는다. 화면도 3단계에서
+  2단계로 줄었다.
 
 ### 4. 좋아요 / 관심 없음 — ✅ 완료
 
@@ -169,6 +178,25 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 ### 5. 재생 기록 · 검색 기록 — ✅ 완료
 
 - `GET /api/v1/user/history` — 최근 들은 곡. 같은 곡은 한 번만, 최신순
+- `GET /api/v1/user/history/search` — 최근 검색어. 같은 말은 한 번만, 최신순
+- `DELETE /api/v1/user/history/search?keyword=` — 한 줄 지우기
+- `DELETE /api/v1/user/history/search/all` — 전체 지우기
+
+삭제는 **그 말의 기록을 전부** 지운다. 목록의 한 줄이 기록 하나가 아니라 같은
+말의 묶음이라, 하나만 지우면 화면은 그대로인데 서버만 줄어든다.
+
+전체 삭제는 길을 따로 냈다. 파라미터 없는 `DELETE .../search` 를 전체 삭제로
+쓰면, 화면이 `keyword` 를 빠뜨린 것과 전부 지우려는 것이 서버에서 똑같아
+보인다. 빈 `keyword` 는 400 이다.
+
+없던 말을 지워도 성공이다. 다른 탭에서 먼저 지웠다면 이미 원하는 상태인데,
+404 를 내면 사용자는 이미 이룬 일로 실패를 본다. 플레이리스트 곡 빼기가 404 를
+내는 것과는 다른 판단이다 — 그쪽은 수록곡이 화면과 어긋난 것을 알려야 한다.
+
+`SEARCH` 이벤트는 **제출할 때만** 나간다. 처음에는 입력이 멎으면 보냈는데,
+그러면 "무" · "무피" · "무피드" 가 전부 검색어로 남아 최근 검색어가 앞자락으로
+뒤덮였다. 지금은 엔터나 검색 버튼이 유일한 계기이고, 그 자리에서 큐를 비워
+방금 찾은 말이 바로 목록에 뜬다.
 
 **적재 API 는 만들지 않았다.** 청취 이벤트(`POST /api/v1/events`)의 `PLAY_START`
 · `SEARCH` 를 서버가 MySQL 사본으로도 남긴다. 화면이 같은 사실을 두 번 보내지
@@ -350,24 +378,41 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
   `LocalDate` 로 고쳤다 — 그대로 두면 쓸 때 잘린다.
 - 화면 연결은 아직이다. 넣을 데이터가 없어 붙여도 빈 화면이다.
 
-> **13~15 는 지금 만들 수 없다.** 없는 인프라와 정해지지 않은 것에 걸려 있다.
+> **14~15 는 지금 만들 수 없다.** 없는 인프라와 정해지지 않은 것에 걸려 있다.
 > 아래 각 항목에 무엇이 막고 있는지 적어 두었다. 껍데기만 먼저 만들면
 > 계약이 잘못 굳는다.
 
-### 13. 취향 리포트 · MUBTI — ⛔ 막힘
+### 13. 취향 리포트 · MuBTI — ✅ 구현
 
-`reports` · `mubti` · `listening` 엔티티 있음, API 없음. 리포트 화면은 지금
-`moments`/`history` 길이로 **로컬에서 계산**한다.
+`GET /api/v1/report?date=YYYY-MM-DD` · 화면 연결까지 끝났다.
 
-- `GET /api/v1/report?period=week|month|year&offset=N` — 화면이 기간·오프셋을
-  이미 쓰고 있다
-- 구간별 선호도·키워드·MUBTI 가 응답에 필요하다
-- 집계는 ClickHouse 쪽이다 → [architecture/analytics-clickhouse.md](architecture/analytics-clickhouse.md)
-- **막는 것**: API 서버에 ClickHouse **조회** 계층이 없다. 설정
-  (`analytics/config/ClickHouseConfig.java`)만 있고 읽는 코드가 없다. 서비스
-  경로에서 분석 클러스터를 어떻게 읽을지(직접 조회 · 집계 테이블 복제 ·
-  배치로 MySQL 에 적재)는 팀이 정할 일이다 → 정할 것
-- 근거: `frontend/components/mupid/collection.tsx:329-460`
+막고 있던 것은 **API 서버에 ClickHouse 조회 계층이 없다**는 것이었다. 리포트가
+그 첫 사용처가 됐다 — `analytics/repository/ListenAnalyticsRepository`. 서비스
+경로에서 분석 클러스터를 직접 읽되 의존을 이 화면 하나에 가두는 쪽으로 정했다
+→ [decision/0019](decision/0019-report-reads-clickhouse-directly.md).
+
+- 곡별 청취량은 `PLAY_PROGRESS` 하트비트에서 집계한다 — 재생기가 돈 시간이
+  아니라 **실제로 귀에 닿은 시간**이다
+- 키워드는 분위기·장르를 청취 시간으로 가중한다
+- MuBTI 네 축은 **조회할 때마다 계산한다.** 저장하는 것은 그날의 결론
+  (`reports.mubti_id`)과 곡별 청취량(`listening`)뿐이다 →
+  [decision/0015](decision/0015-derive-interpretation-at-query-time.md)
+- 집계·판정 규칙 전부 → [domain/mubti-report.md](domain/mubti-report.md)
+
+따라온 것:
+
+- **기간은 일간뿐이다.** 원래 이 항목은 `period=week|month|year&offset=N` 을
+  적어 두었지만, 화면이 실제로 쓰는 것은 하루치다. 채우지 않을 파라미터를
+  미리 열면 계약이 잘못 굳는다.
+- **`mubti` 표 16행을 사람이 넣어야 한다** (`domain/seed-mubti.sql`). 비어
+  있으면 503 이다 — 온보딩이 `codes` 표에 걸리는 것과 같은 구조.
+- **구간 기반 신호를 하나도 못 썼다.** `track_sections` 를 채우는 파이프라인이
+  없어 `play_section_coverage` · `v_track_skips` 가 전부 빈 결과다. MuBTI
+  A축(보컬/멜로디)이 가장 약한 축이 된 이유다.
+- 저장소의 **첫 `@EnableScheduling`** 이 들어왔다 (자정 배치). 새 `@Scheduled`
+  를 붙일 때는 여러 인스턴스에서 무슨 일이 생기는지 먼저 본다.
+- 트리맵이 진짜 면적 비례가 됐다. 예전에는 모든 타일이 같은 크기였고 값도
+  가짜였다 (`frontend/lib/treemap.ts`).
 
 ### 14. AI 채팅 추천 — ⛔ 막힘
 

@@ -55,14 +55,10 @@
 .daily-album-cell span { position: absolute; bottom: 0; left: 0; right: 0; padding: 12px 4px 5px; background: linear-gradient(transparent,#172941b3); color: white; font-size: 12.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .daily-album-cell:focus-visible, .daily-album-cell[aria-pressed=true] { outline: 3px solid #5278b5; outline-offset: -3px; z-index: 2; }
 .daily-album-detail { min-height: 76px; display: flex; flex-direction: column; justify-content: center; gap: 5px; margin-top: 16px; color: #607da9; font-size: 15px; }
-.daily-album-report .uniform-album-map { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 3px; aspect-ratio: auto; }
-.uniform-album-map .daily-album-cell { position: relative; width: 100%; aspect-ratio: 1; padding: 0; border: 0; border-radius: 4px; }
-.uniform-album-map .daily-album-cell[aria-expanded=true] { outline: 3px solid #5278b5; outline-offset: -3px; }
 .daily-album-popup { position: absolute; z-index: 5; width: min(240px,100%); min-height: 140px; padding: 16px 30px 16px 16px; border: 1px solid #d4e0f2; border-radius: 12px; background: #fff; box-shadow: 0 8px 24px #35547730; color: #4a6492; }
 .daily-album-popup strong { font-size: 15px; }
 .daily-album-popup p { font-size: 14px; margin: 5px 0 0; }
 .daily-popup-close { position: absolute; right: 0; top: 0; width: 36px; height: 36px; font-size: 24px; }
-@media(max-width:767px) { .daily-album-report .uniform-album-map { grid-template-columns: repeat(3,minmax(0,1fr)); } }
 .playlist-play-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
 .playlist-play-actions button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:48px; padding:12px 18px; white-space:nowrap; font-size:16px; }
 .playlist-play-actions svg { width:21px; height:21px; flex-shrink:0; }

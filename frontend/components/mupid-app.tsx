@@ -32,6 +32,7 @@ import {
   LikeButton,
   PlayerControls,
 } from '@/components/mupid/primitives';
+import { HeaderSearch } from '@/components/mupid/header-search';
 import { HomeView } from '@/components/mupid/home';
 import {
   MomentView,
@@ -187,10 +188,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
                 </button>
               ))}
             </nav>
-            <form className="nav-search" role="search" onSubmit={event => { event.preventDefault(); m.go('search'); }}>
-              <input aria-label="곡 또는 아티스트 검색" placeholder="곡, 아티스트 검색" value={m.query} onChange={event => m.setQuery(event.target.value)} />
-              <button type="submit" aria-label="검색"><Search size={20} /></button>
-            </form>
+            <HeaderSearch model={m} />
             <div className="nav-account" ref={accountRef}>
               <button ref={accountButton} className="nav-avatar" aria-label={m.demoSession ? '내 계정 메뉴' : '로그인'} aria-expanded={accountOpen} aria-controls="nav-account-panel" disabled={!m.authReady} onClick={() => m.demoSession ? setAccountOpen(value => !value) : m.openLogin()}>
                 {/* 사진을 올리지 않았으면 `photo` 에 기본 이미지가 담겨 온다.

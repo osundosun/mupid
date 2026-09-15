@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!-- 서버 레벨 공통 설정. 쿼리(user) 레벨 설정은 users/00-profile.xml 에 있다. -->
+<clickhouse>
+    <logger>
+        <level>information</level>
+        <console>1</console>
+    </logger>
+
+    <!-- DateTime64(3, 'Asia/Seoul') 컬럼과 서버 기본 시간대를 일치시킨다. -->
+    <timezone>Asia/Seoul</timezone>
+
+    <listen_host>0.0.0.0</listen_host>
+
+    <!--
+      컨테이너에 메모리 제한이 없으면 ClickHouse 는 호스트 전체 RAM 의 90% 까지
+      쓸 수 있다고 판단한다. 로컬은 한 머신에 노드 2개 + MySQL/Redis/Kafka 가
+      같이 있으므로 노드별로 묶는다.
+
+      [운영 변경]
+      서버 1대가 ClickHouse 를 전용으로 쓰면 CH_MAX_SERVER_MEMORY=0 으로 두어
+      ClickHouse 기본 비율 계산(RAM 의 90%)에 맡긴다. 다른 프로세스와 공유하면
+      그 몫을 뺀 바이트 값을 준다.
+    -->
+    <max_server_memory_usage from_env="CH_MAX_SERVER_MEMORY"/>
+</clickhouse>

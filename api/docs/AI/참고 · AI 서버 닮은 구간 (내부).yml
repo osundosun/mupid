@@ -1,0 +1,156 @@
+info:
+  name: 참고 · AI 서버 닮은 구간 (내부)
+  type: http
+  seq: 7
+
+http:
+  method: POST
+  url: "{{AI_BASE_URL}}/internal/similar"
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: X-Internal-Token
+      value: "{{AI_INTERNAL_TOKEN}}"
+  auth: none
+  body:
+    type: json
+    data: |-
+      {
+        "music_section_id": {{MUSIC_SECTION_ID}},
+        "limit": 5,
+        "exclude_music_ids": [{{MUSIC_ID}}]
+      }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
+
+examples:
+  - name: 200 닮은 구간
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "music_section_id": 91,
+            "items": [
+              {
+                "music_id": 12,
+                "music_section_id": 340,
+                "start_time_ms": 62000,
+                "end_time_ms": 88500,
+                "section_label": "CHORUS",
+                "rank_order": 1,
+                "similarity": 0.8734
+              },
+              {
+                "music_id": 31,
+                "music_section_id": 802,
+                "start_time_ms": 15000,
+                "end_time_ms": 44000,
+                "section_label": "VERSE",
+                "rank_order": 2,
+                "similarity": 0.8112
+              }
+            ]
+          }
+
+  - name: 400 잘못된 요청
+    response:
+      status: 400
+      statusText: Bad Request
+      body:
+        type: json
+        data: |-
+          {
+            "error_code": "INVALID_REQUEST",
+            "message": "music_section_id 는 1 이상이어야 합니다."
+          }
+
+  - name: 401 내부 토큰 불일치
+    response:
+      status: 401
+      statusText: Unauthorized
+      body:
+        type: json
+        data: |-
+          {
+            "error_code": "UNAUTHORIZED",
+            "message": "내부 호출 토큰이 올바르지 않습니다."
+          }
+
+  - name: 404 매핑에 없는 구간
+    response:
+      status: 404
+      statusText: Not Found
+      body:
+        type: json
+        data: |-
+          {
+            "error_code": "INVALID_REQUEST",
+            "message": "매핑에 없는 music_section_id 입니다."
+          }
+
+  - name: 503 색인 미준비
+    response:
+      status: 503
+      statusText: Service Unavailable
+      body:
+        type: json
+        data: |-
+          {
+            "error_code": "INDEX_NOT_READY",
+            "message": "숫자 ID 매핑 미완료"
+          }
+
+docs:
+  type: text/markdown
+  content: |-
+    # 선택 구간 닮은 구간
+
+    사용자가 고른 구간과 **소리가 닮은** 다른 곡의 구간을 찾습니다. 「이 구간과
+    비슷한 음악」 같은 동작에 씁니다.
+
+    ## 추천과 다릅니다
+
+    `recommendations/next` 와 달리 **개인 취향을 섞지 않습니다.** 그래서
+    `user_id` 를 받지 않고, 같은 질문에는 늘 같은 답이 나옵니다.
+
+    | | `recommendations/next` | `similar` |
+    | --- | --- | --- |
+    | 사용자 | 필요 | **받지 않음** |
+    | 기준 | 취향 묶음(Moment DNA) | **지정한 구간 하나** |
+    | 결과 점수 | `score` (취향 섞임) | `similarity` (코사인 원값) |
+    | 같은 질문 | 이력에 따라 달라짐 | **항상 같음** |
+
+    ## 요청
+
+    | 필드 | 타입 | 필수 | 설명 |
+    | --- | --- | --- | --- |
+    | `music_section_id` | int | ✅ | 기준 구간. 1 이상 |
+    | `limit` | int | | 기본 5, 최대 50 |
+    | `exclude_music_ids` | int[] | | 뺄 곡. 보통 기준 곡을 넣습니다 |
+
+    ## 응답
+
+    기준 구간이 속한 **곡 자신은 결과에서 빠집니다.** 같은 곡의 다른 구간을
+    돌려주면 "닮은 음악" 이 아니라 "같은 음악" 이 됩니다.
+
+    `similarity` 는 구간 임베딩 사이의 코사인입니다. 개인 취향이 섞이지 않은
+    값이라 사용자끼리 비교할 수 있습니다.
+
+    `section_label` 이 ERD ENUM 밖이면 그 항목은 빠집니다. 없는 구간 유형을
+    화면에 말하게 두지 않습니다.
+
+    ## Spring 쪽은 아직 없습니다
+
+    이 요청을 부르는 Spring 엔드포인트는 아직 만들어지지 않았습니다. AI 쪽만
+    구현되어 있습니다.

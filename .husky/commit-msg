@@ -35,11 +35,29 @@ if [ -z "$TICKET" ]; then
   echo "  현재 브랜치: ${BRANCH:-(detached HEAD)}" >&2
   echo "  브랜치명 컨벤션: <type>/S15P21A204-<번호>-<branch-name>" >&2
   echo "  예) back/feat/S15P21A204-44-husky-setting" >&2
+  echo "      ai/feat/S15P21A204-220-qwen-query-plan" >&2
   echo "" >&2
   exit 1
 fi
 
-# 5) 주석(#)과 빈 줄을 건너뛴 첫 줄(제목) 끝에 티켓 번호를 덧붙인다.
+# 5) 제목 형식 검증: <type>(<scope>): <설명>
+#    type 어휘를 고정하지 않으면 feature/merge/README 처럼 제각각이 된다(실제로 섞여 있었다).
+#    scope 는 선택이며 소문자 영문·숫자·하이픈만 받는다. 예) docs(ai): ...
+SUBJECT="$(grep -vE '^[[:space:]]*#' "$MSG_FILE" | grep -m1 '[^[:space:]]')"
+TYPES='feat|fix|docs|chore|refactor|test|ci'
+
+if ! printf '%s' "$SUBJECT" | grep -qE "^($TYPES)(\([a-z0-9-]+\))?: .+"; then
+  echo "" >&2
+  echo "✖ 커밋 실패: 제목 형식이 규약과 다릅니다." >&2
+  echo "  받은 제목: $SUBJECT" >&2
+  echo "  형식: <type>(<scope>): <설명>" >&2
+  echo "  type: feat fix docs chore refactor test ci" >&2
+  echo "  예) feat(ai): 구간 추천 응답에 추천 이유 추가" >&2
+  echo "" >&2
+  exit 1
+fi
+
+# 6) 주석(#)과 빈 줄을 건너뛴 첫 줄(제목) 끝에 티켓 번호를 덧붙인다.
 #    이미 티켓 번호가 적혀 있으면 중복해서 붙이지 않는다.
 awk -v ticket="$TICKET" '
   BEGIN { tagged = 0 }

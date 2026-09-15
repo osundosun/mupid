@@ -1,0 +1,182 @@
+info:
+  name: 참고 · AI 서버 다음 곡 (내부)
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: "{{AI_BASE_URL}}/internal/recommendations/next"
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: X-Internal-Token
+      value: "{{AI_INTERNAL_TOKEN}}"
+  auth: none
+  body:
+    type: json
+    data: |-
+      {
+        "recommendation_id": {{RECOMMENDATION_ID}},
+        "user_id": {{USER_ID}},
+        "limit": 5,
+        "exclude_music_ids": [],
+        "current_music_id": {{MUSIC_ID}},
+        "current_music_section_id": {{MUSIC_SECTION_ID}},
+        "position_ms": 95000
+      }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
+
+examples:
+  - name: 200 다음 곡
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "recommendation_id": 1024,
+            "items": [
+              {
+                "music_id": 2,
+                "music_section_id": 118,
+                "start_time_ms": 90000,
+                "end_time_ms": 120000,
+                "section_label": "CHORUS",
+                "rank_order": 1,
+                "score": 0.8123,
+                "reason_code": "SIMILAR_PREFERRED_MOMENT",
+                "reason": "저장하신 순간과 닮은 후렴이에요.",
+                "ref_music_id": 7,
+                "ref_music_section_id": 91
+              }
+            ],
+            "shortfall": 0,
+            "model_version": "mupid-stage1-v1"
+          }
+
+  - name: 200 후보가 모자람
+    response:
+      status: 200
+      statusText: OK
+      body:
+        type: json
+        data: |-
+          {
+            "recommendation_id": 1024,
+            "items": [],
+            "shortfall": 5,
+            "model_version": "mupid-stage1-v1"
+          }
+
+  - name: 400 잘못된 요청
+    response:
+      status: 400
+      statusText: Bad Request
+      body:
+        type: json
+        data: |-
+          {
+            "error_code": "INVALID_REQUEST",
+            "message": "recommendation_id 는 1 이상이어야 합니다."
+          }
+
+  - name: 401 내부 토큰 불일치
+    response:
+      status: 401
+      statusText: Unauthorized
+      body:
+        type: json
+        data: |-
+          {
+            "error_code": "UNAUTHORIZED",
+            "message": "내부 호출 토큰이 올바르지 않습니다."
+          }
+
+  - name: 404 매핑에 없는 번호
+    response:
+      status: 404
+      statusText: Not Found
+      body:
+        type: json
+        data: |-
+          {
+            "error_code": "INVALID_REQUEST",
+            "message": "매핑에 없는 music_section_id 입니다."
+          }
+
+  - name: 503 색인 미준비
+    response:
+      status: 503
+      statusText: Service Unavailable
+      body:
+        type: json
+        data: |-
+          {
+            "error_code": "INDEX_NOT_READY",
+            "message": "숫자 ID 매핑 미완료 — 곡 1063건, 구간 10007건 미매핑"
+          }
+
+docs:
+  type: text/markdown
+  content: |-
+    # 자동재생 다음 곡 추천
+
+    지금 듣고 있는 곡이 끝날 때 다음 곡을 고릅니다. **Spring 이 AI 서버를 직접
+    부릅니다** — 사용자 브라우저가 이 주소를 부르지 않습니다.
+
+    ## 요청
+
+    | 필드 | 타입 | 필수 | 설명 |
+    | --- | --- | --- | --- |
+    | `recommendation_id` | int | ✅ | **Spring 이 발급합니다.** AI 는 만들지 않고 응답에 그대로 돌려줍니다 |
+    | `user_id` | int | ✅ | 1 이상 |
+    | `limit` | int | | 기본 5, 최대 50 |
+    | `exclude_music_ids` | int[] | | 이번 목록에서 뺄 곡 |
+    | `current_music_id` | int | | 지금 듣던 곡. 흐름 보정에 씁니다 |
+    | `current_music_section_id` | int | | 지금 듣던 구간 |
+    | `position_ms` | int | | 재생 위치. **현재 로직은 쓰지 않습니다** |
+
+    타입이 엄격합니다. `"148"` 처럼 문자열로 보내면 400 입니다. 정의에 없는 필드를
+    넣어도 400 입니다.
+
+    ## 응답
+
+    `items` 는 `rank_order` 순입니다. **같은 곡은 한 번만** 나옵니다.
+
+    | 필드 | 설명 |
+    | --- | --- |
+    | `music_section_id` | 추천 구간. 재생을 여기서 시작합니다 |
+    | `start_time_ms` · `end_time_ms` | 구간 경계. `end > start` 를 양쪽에서 검증합니다 |
+    | `section_label` | ERD `section_label` ENUM 과 같은 어휘입니다 |
+    | `reason_code` | `SIMILAR_PREFERRED_MOMENT` · `ONBOARDING_MATCH` · `COLD_START` · `EXPLORE_NEW` · `QUERY_FILTER_MATCH` · `QUERY_SEMANTIC_MATCH` |
+    | `reason` | 사람이 읽는 문장. 화면에 그대로 씁니다 |
+    | `ref_music_id` · `ref_music_section_id` | 무엇과 닮아서 골랐는지. 없으면 `null` |
+    | `shortfall` | 요청한 수보다 적게 준 개수 |
+
+    점수 내부값(`model_score`·`prob`·`clap_score`)과 진단 정보는 **내보내지 않습니다.**
+
+    ## 빈 결과는 오류가 아닙니다
+
+    조건을 만족하는 곡이 없으면 `items: []` 에 `shortfall` 을 채워 **200** 으로
+    돌려줍니다. 억지로 채우면 조건과 무관한 곡이 나가고, 그게 더 나쁩니다.
+
+    ## 타임아웃
+
+    Spring 쪽 규약은 연결 2초 · 읽기 5초이고 500·503·타임아웃에만 한 번 재시도합니다.
+    400·404 는 다시 불러도 같은 답이라 재시도하지 않습니다. 이력이 있는 사용자는
+    p50 2.2초까지 걸립니다.
+
+    ## Spring 쪽은 아직 없습니다
+
+    이 요청을 부르는 Spring 엔드포인트(`POST /api/v1/recommend/next` 등)는 아직
+    만들어지지 않았습니다. AI 쪽만 구현되어 있습니다.

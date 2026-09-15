@@ -19,7 +19,12 @@ public enum LyricErrorCode implements ErrorCode {
     /**
      * 올바르지 않은 가사 시간이 입력되었습니다.
      */
-    LYRIC_INVALID_TIME_MS(HttpStatus.BAD_REQUEST, "올바르지 않은 가사 시간이 입력되었습니다.");
+    LYRIC_INVALID_TIME_MS(HttpStatus.BAD_REQUEST, "올바르지 않은 가사 시간이 입력되었습니다."),
+
+    /**
+     * 한 번에 올릴 수 있는 가사 줄 수를 넘었습니다.
+     */
+    LYRIC_BULK_TOO_MANY(HttpStatus.BAD_REQUEST, "한 번에 올릴 수 있는 가사 줄 수를 넘었습니다.");
 
     private final HttpStatus status;
     private final String message;
