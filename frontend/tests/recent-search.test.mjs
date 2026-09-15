@@ -53,8 +53,6 @@ test('recent search panel keeps a vertical list with a delete button per row', a
   assert.match(view, /recent-search-list/);
   assert.match(view, /recent-search-remove/);
   assert.match(view, /지우기/);
-  // 삭제는 아직 서버에 닿지 않는다. 별도 브랜치 작업이다.
-  assert.doesNotMatch(view, /api\.history/);
 
   const css = await readFile(
     new URL('../app/nav-account.css', import.meta.url),
@@ -86,4 +84,48 @@ test('search is submitted by enter or the button, never by typing', async () => 
   assert.doesNotMatch(model, /SEARCH_EVENT_DELAY_MS/);
   assert.match(model, /const submitSearch = \(keyword: string\) => \{/);
   assert.match(model, /analytics\.search\(value\);\s*\n\s*void analytics\.flush\(\);/);
+});
+
+test('deleting a recent search reaches the server and rolls back when it fails', async () => {
+  const hook = await readFile(
+    new URL('../hooks/use-recent-searches.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(hook, /api\.history\.removeRecentSearch\(keyword\)/);
+  assert.match(hook, /api\.history\.clearRecentSearches\(\)/);
+  // 먼저 지우고 부른다. 실패하면 지우기 직전 목록으로 되돌린다.
+  const erase = hook.slice(hook.indexOf('const erase'), hook.indexOf('const remove'));
+  assert.match(erase, /const undo = latest\.current;/);
+  assert.match(erase, /\.catch\(\(\) => \{\s*latest\.current = undo;/);
+
+  const endpoints = await readFile(
+    new URL('../lib/api/endpoints.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(endpoints, /path: '\/api\/v1\/user\/history\/search',\s*\n\s*query: \{ keyword \}/);
+  assert.match(endpoints, /path: '\/api\/v1\/user\/history\/search\/all'/);
+});
+
+test('clearing every recent search asks once and is reachable from the panel head', async () => {
+  const view = await readFile(
+    new URL('../components/mupid/header-search.tsx', import.meta.url),
+    'utf8',
+  );
+  // 목록이 비어 있으면 지울 것이 없으니 버튼도 없다.
+  assert.match(view, /\{items\.length > 0 && \(confirming/);
+  assert.match(view, /전체 삭제/);
+  // 바로 지우지 않는다. 확인을 누른 뒤에야 clear 가 불린다.
+  assert.match(view, /setConfirming\(true\)/);
+  assert.match(view, /onClick=\{\(\) => \{ setConfirming\(false\); clear\(\); \}\}/);
+  // 목록이 닫히면 확인 상태도 풀린다.
+  for (const close of [/setOpen\(false\); setConfirming\(false\); \}, \[m\.page\]/, /setOpen\(false\); setConfirming\(false\); \}/]) {
+    assert.match(view, close);
+  }
+
+  const css = await readFile(
+    new URL('../app/nav-account.css', import.meta.url),
+    'utf8',
+  );
+  assert.match(css, /\.recent-search-head \{[^}]*justify-content: space-between/);
+  assert.match(css, /\.recent-search-confirm \.is-danger \{[^}]*color: var\(--color-destructive\)/);
 });

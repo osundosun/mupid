@@ -7,7 +7,16 @@
 .nav-search button { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; color: #5279b9; }
 /* 최근 검색어. 검색창 아래로 펼쳐지므로 헤더보다 위에 떠야 한다. */
 .recent-search-panel { position: absolute; left: 0; right: 0; top: calc(100% + 8px); z-index: 70; padding: 8px; background: #fff; border: 1px solid #dce6f5; border-radius: 14px; box-shadow: 0 8px 28px #42628c26; }
-.recent-search-title { padding: 6px 10px 8px; font-size: 13px; color: var(--ink-secondary); }
+.recent-search-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 8px; }
+.recent-search-title { font-size: 13px; color: var(--ink-secondary); }
+.recent-search-clear { flex-shrink: 0; padding: 2px 4px; border-radius: 6px; font-size: 13px; color: var(--ink-secondary); }
+.recent-search-clear:hover, .recent-search-clear:focus-visible { color: var(--primary); text-decoration: underline; }
+/* 한 번 더 묻는 자리. 제목 줄을 그대로 쓰므로 목록이 밀리지 않는다. */
+.recent-search-confirm { display: flex; align-items: center; gap: 8px; flex-shrink: 0; font-size: 13px; color: var(--ink-secondary); }
+.recent-search-confirm button { padding: 2px 4px; border-radius: 6px; font-size: 13px; color: var(--ink-secondary); }
+.recent-search-confirm button:hover, .recent-search-confirm button:focus-visible { text-decoration: underline; }
+.recent-search-confirm .is-danger { color: var(--color-destructive); font-weight: 600; }
+.recent-search-error { padding: 4px 10px 8px; font-size: 13px; color: var(--color-destructive); }
 .recent-search-empty { padding: 4px 10px 8px; font-size: 14px; color: var(--ink-secondary); }
 .recent-search-list { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; }
 .recent-search-list li { display: flex; align-items: center; gap: 4px; border-radius: 10px; }

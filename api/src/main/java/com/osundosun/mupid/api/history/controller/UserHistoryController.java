@@ -2,6 +2,7 @@ package com.osundosun.mupid.api.history.controller;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -55,6 +56,37 @@ public class UserHistoryController {
         return ResponseEntity.ok(BaseResponse.of(
             historyService.getRecentSearches((User)auth.getPrincipal(), size)
         ));
+    }
+
+    /**
+     * 최근 검색어 한 줄 지우기. 그 말로 남은 기록을 전부 지운다.
+     *
+     * 지울 말은 경로가 아니라 쿼리로 받는다. 검색어에는 `/` 도 `#` 도 들어갈 수
+     * 있어서 경로 변수로 두면 인코딩 실수 하나에 다른 엔드포인트로 새거나
+     * 404 가 난다.
+     *
+     * `keyword` 를 빼고 부르면 400 이다. 빈 값은 "전부" 가 아니다.
+     */
+    @DeleteMapping("/search")
+    public ResponseEntity<BaseResponse<Void>> deleteSearchHistory(
+        Authentication auth,
+        @RequestParam(defaultValue = "") String keyword
+    ) {
+        historyService.deleteRecentSearch((User)auth.getPrincipal(), keyword);
+        return ResponseEntity.ok(BaseResponse.message("최근 검색어를 지웠습니다."));
+    }
+
+    /**
+     * 최근 검색어 전체 지우기.
+     *
+     * 파라미터 없는 `DELETE /search` 를 전체 삭제로 쓰지 않는다. 그러면 화면이
+     * `keyword` 를 빠뜨린 것과 전부 지우려는 것이 서버에서 똑같아 보인다.
+     * 되돌릴 수 없는 쪽은 길을 따로 낸다.
+     */
+    @DeleteMapping("/search/all")
+    public ResponseEntity<BaseResponse<Void>> clearSearchHistory(Authentication auth) {
+        historyService.clearRecentSearches((User)auth.getPrincipal());
+        return ResponseEntity.ok(BaseResponse.message("최근 검색어를 모두 지웠습니다."));
     }
 
 }

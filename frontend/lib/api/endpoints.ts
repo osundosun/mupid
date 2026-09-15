@@ -530,6 +530,28 @@ export function createEndpoints(client: ApiClient) {
           query: { size },
           signal,
         }),
+
+      /**
+       * 최근 검색어 한 줄 지우기. 그 말로 남은 기록이 전부 사라진다.
+       *
+       * 목록의 한 줄은 기록 하나가 아니라 같은 말의 묶음이라 그렇다. 이미
+       * 없던 말이어도 성공이다.
+       */
+      removeRecentSearch: (keyword: string) =>
+        client.request<void>({
+          method: 'DELETE',
+          path: '/api/v1/user/history/search',
+          query: { keyword },
+          responseType: 'none',
+        }),
+
+      /** 최근 검색어 전체 지우기. 되돌릴 수 없어 경로가 따로 나 있다. */
+      clearRecentSearches: () =>
+        client.request<void>({
+          method: 'DELETE',
+          path: '/api/v1/user/history/search/all',
+          responseType: 'none',
+        }),
     },
 
     report: {

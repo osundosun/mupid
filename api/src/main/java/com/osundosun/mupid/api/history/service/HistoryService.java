@@ -24,4 +24,18 @@ public interface HistoryService {
     /** 최근 검색어. 같은 말은 한 번만, 최신순. */
     RecentSearchResponse getRecentSearches(User user, int size);
 
+    /**
+     * 최근 검색어 한 줄 지우기. 그 말로 남은 기록을 전부 지운다.
+     *
+     * @return 지운 기록 수. 이미 없던 말이면 0
+     */
+    int deleteRecentSearch(User user, String keyword);
+
+    /**
+     * 최근 검색어 전체 지우기.
+     *
+     * @return 지운 기록 수
+     */
+    int clearRecentSearches(User user);
+
 }

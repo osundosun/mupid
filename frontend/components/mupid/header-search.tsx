@@ -13,6 +13,10 @@ import { filterRecentSearches, matchKeyword } from '@/lib/recent-search';
  * 줄이 남았는지**를 눈으로 보여 준다.
  *
  * 기록은 로그인한 사람 것만 서버에 있다. 비로그인이면 목록을 열지 않는다.
+ *
+ * 지우기는 한 줄과 전체 둘 다 서버까지 간다. 한 줄을 지우면 그 말로 남은
+ * 기록이 전부 사라진다 — 목록의 한 줄이 기록 하나가 아니라 같은 말의 묶음이라
+ * 그렇다.
  */
 export function HeaderSearch({ model: m }: { model: MupidModel }) {
   const [open, setOpen] = useState(false);
@@ -25,8 +29,10 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
   const root = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const signedIn = m.demoSession?.kind === 'authenticated';
-  const { items, loading, error, dismiss } = useRecentSearches(open && signedIn);
+  const { items, loading, error, remove, clear } = useRecentSearches(open && signedIn);
   const visible = filterRecentSearches(items, draft);
+  // 전체 삭제를 한 번 더 묻는 중인가. 되돌릴 수 없어서 바로 지우지 않는다.
+  const [confirming, setConfirming] = useState(false);
 
   // 바깥에서 검색어가 바뀌면(탐색 화면의 "검색 해제" 등) 입력창도 따라간다.
   // 그리는 중에 맞추는 편이 효과로 미루는 것보다 한 번 덜 그린다.
@@ -37,18 +43,20 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
 
   // 치는 동안에는 안내 문구를 띄우지 않는다. 겹치는 게 없으면 그냥 닫힌다 —
   // "없어요" 가 입력할 때마다 깜빡이면 글자보다 그쪽에 눈이 간다.
-  const notice = error || (loading || items.length ? '' : '최근 검색어가 없어요.');
+  const notice = loading || items.length ? '' : '최근 검색어가 없어요.';
   const showNotice = !draft.trim() && !!notice;
-  const showPanel = open && signedIn && (visible.length > 0 || showNotice);
+  // 지우기가 실패했다면 치는 중이어도 알린다. 목록이 되돌아온 이유다.
+  const showPanel = open && signedIn && (visible.length > 0 || showNotice || !!error);
 
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      if (!root.current?.contains(event.target as Node)) { setOpen(false); setConfirming(false); }
     };
     const escape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       setOpen(false);
+      setConfirming(false);
       input.current?.focus();
     };
     document.addEventListener('pointerdown', outside);
@@ -60,7 +68,7 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
   }, [open]);
 
   // 화면을 옮기면 닫는다. 목록이 남아 다음 화면 위를 덮는 일이 없게.
-  useEffect(() => { setOpen(false); }, [m.page]);
+  useEffect(() => { setOpen(false); setConfirming(false); }, [m.page]);
 
   /**
    * 검색 확정. 엔터·검색 버튼·최근 검색어 선택, 이 셋만 여기로 온다.
@@ -70,6 +78,7 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
    */
   const submit = (keyword: string) => {
     setOpen(false);
+    setConfirming(false);
     setDraft(keyword.trim());
     m.submitSearch(keyword);
     m.go('search');
@@ -100,7 +109,22 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
       <button type="submit" aria-label="검색"><Search size={20} /></button>
     </form>
     {showPanel && <div className="recent-search-panel">
-      <p className="recent-search-title">최근 검색어</p>
+      <div className="recent-search-head">
+        <p className="recent-search-title">최근 검색어</p>
+        {/*
+          * 전체 삭제는 한 번 더 묻는다. 목록의 X 는 한 줄이라 잘못 눌러도 손해가
+          * 작지만, 이쪽은 되돌릴 수 없다. 서랍 안의 일이라 모달까지 띄우지 않고
+          * 같은 자리에서 묻는다.
+          */}
+        {items.length > 0 && (confirming
+          ? <span className="recent-search-confirm">
+              <span>모두 지울까요?</span>
+              <button type="button" className="is-danger" onClick={() => { setConfirming(false); clear(); }}>지우기</button>
+              <button type="button" onClick={() => setConfirming(false)}>취소</button>
+            </span>
+          : <button type="button" className="recent-search-clear" onClick={() => setConfirming(true)}>전체 삭제</button>)}
+      </div>
+      {error && <p className="recent-search-error" role="alert">{error}</p>}
       {showNotice ? <p className="recent-search-empty">{notice}</p> :
         <ul className="recent-search-list">
           {visible.map(({ keyword }) => <li key={keyword}>
@@ -108,12 +132,11 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
               <Clock3 size={16} aria-hidden="true" />
               <RecentKeyword keyword={keyword} query={draft} />
             </button>
-            {/* 서버 삭제 API 는 아직 없다. 지금은 이 목록에서만 지운다. */}
             <button
               type="button"
               className="recent-search-remove"
               aria-label={`최근 검색어 ${keyword} 지우기`}
-              onClick={() => dismiss(keyword)}
+              onClick={() => remove(keyword)}
             >
               <X size={16} aria-hidden="true" />
             </button>
