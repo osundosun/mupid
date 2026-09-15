@@ -42,6 +42,7 @@ flow_music_data/
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections import defaultdict
@@ -88,13 +89,11 @@ class TrackMeta:
         "artist_name",
         "album_key",
         "album_title",
-        "meta_sha256",
         "path",
     )
 
-    def __init__(self, path: Path, raw: dict, meta_sha256: str) -> None:
+    def __init__(self, path: Path, raw: dict) -> None:
         self.path = path
-        self.meta_sha256 = meta_sha256
         self.track_id = _require(raw, "track_id", path)
         self.title = _require(raw, "flow_title", path)
         self.release_date = _to_local_datetime(
@@ -141,7 +140,7 @@ def load_metadata(metadata_dir: Path) -> list[TrackMeta]:
     for path in files:
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)
-        tracks.append(TrackMeta(path, raw, compute_sha256(path)))
+        tracks.append(TrackMeta(path, raw))
 
     tracks.sort(key=lambda t: t.track_id)
     _check_key_collisions(tracks)
@@ -168,6 +167,19 @@ def _check_key_collisions(tracks: list[TrackMeta]) -> None:
                     f"{label} 키 하나에 이름이 둘입니다: {key} → {seen!r} / {name!r} "
                     f"({track.path.name})"
                 )
+
+
+def _fingerprint(*values: object) -> str:
+    """서버로 나가는 값들만 가지고 내는 지문.
+
+    파일 전체 해시를 쓰지 않는 이유: 메타데이터 한 파일에 곡 정보·아티스트·앨범·
+    가사가 함께 들어 있다. 파일 해시로 재면 **가사만 고쳐도 곡·아티스트·앨범이
+    전부 바뀐 것으로 보여** 쓸데없는 `PATCH` 가 1,300번 나간다.
+
+    그래서 대상마다 그 대상이 보내는 필드만 묶어 잰다.
+    """
+    payload = json.dumps(values, ensure_ascii=False, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def find_cover(covers_dir: Path, track_id: str) -> Path | None:
@@ -287,6 +299,9 @@ class CatalogRegistrar:
             "artists_created": 0,
             "albums_created": 0,
             "tracks_created": 0,
+            "artists_updated": 0,
+            "albums_updated": 0,
+            "tracks_updated": 0,
             "covers_uploaded": 0,
             "covers_missing": 0,
             "errors": [],
@@ -336,13 +351,60 @@ class CatalogRegistrar:
             logger.error("등록 실패: %s - %s", key, e)
             summary["errors"].append({"key": key, "error": str(e)})
 
+    def _sync(
+        self,
+        entry: dict,
+        digest: str,
+        summary: dict,
+        counter: str,
+        label: str,
+        patch,
+        changes: dict,
+    ) -> None:
+        """이미 등록된 것이 파일과 달라졌으면 그것만 고친다.
+
+        **지문이 같으면 아무 호출도 하지 않는다.** 1,351개 대상 중 바뀐 것만
+        `PATCH` 가 나간다.
+
+        지문이 아예 없는 항목(이 기능 이전에 등록된 것)은 서버가 파일과 같은지
+        알 길이 없어 **한 번 고치고 지문을 남긴다.** 파일이 기준이므로 고치는
+        쪽이 맞고, 다음 실행부터는 조용해진다.
+        """
+        previous = entry.get("fields_sha256")
+        if previous == digest:
+            return
+
+        reason = "지문 없음(최초 1회)" if previous is None else "내용 바뀜"
+        logger.info("%s 수정: %s → %s", label, reason, changes)
+        if not self.dry_run:
+            patch()
+
+        entry.update(changes)
+        entry["fields_sha256"] = digest
+        self._save()
+        summary[counter] += 1
+
     # ── 단계별 ──
 
     def _ensure_artist(self, grouping: Grouping, artist_key: str, summary: dict) -> None:
-        if self.registry.catalog_entry("artists", artist_key):
+        name = grouping.artist_name(artist_key)
+        digest = _fingerprint(name)
+
+        existing = self.registry.catalog_entry("artists", artist_key)
+        if existing:
+            self._sync(
+                entry=existing,
+                digest=digest,
+                summary=summary,
+                counter="artists_updated",
+                label=f"아티스트 {artist_key}",
+                patch=lambda: self.client.update_artist(
+                    existing["artist_id"], name=name
+                ),
+                changes={"name": name},
+            )
             return
 
-        name = grouping.artist_name(artist_key)
         representative = grouping.representative("artists", artist_key)
         cover = self._require_cover(representative, f"아티스트 {artist_key}")
 
@@ -358,6 +420,7 @@ class CatalogRegistrar:
                 "image_file_id": file_id,
                 "cover_track_id": representative.track_id,
                 "cover_sha256": compute_sha256(cover),
+                "fields_sha256": digest,
             },
         )
         self._save()
@@ -365,33 +428,56 @@ class CatalogRegistrar:
         logger.info("아티스트 등록: %s (%s) → %s", name, artist_key, artist_id)
 
     def _ensure_album(self, grouping: Grouping, album_key: str, summary: dict) -> None:
-        if self.registry.catalog_entry("albums", album_key):
-            return
-
         artist_key = grouping.album_artist_key(album_key)
         artist = self.registry.catalog_entry("artists", artist_key)
         if not artist:
             raise CatalogError(f"아티스트가 먼저 등록되지 않았습니다: {artist_key}")
 
         title = grouping.album_title(album_key)
+        release_date = grouping.album_release_date(album_key)
+        artist_id = artist["artist_id"]
+        digest = _fingerprint(title, release_date, artist_id)
+
+        existing = self.registry.catalog_entry("albums", album_key)
+        if existing:
+            self._sync(
+                entry=existing,
+                digest=digest,
+                summary=summary,
+                counter="albums_updated",
+                label=f"앨범 {album_key}",
+                patch=lambda: self.client.update_album(
+                    existing["album_id"],
+                    artist_id=artist_id,
+                    title=title,
+                    release_date=release_date,
+                ),
+                changes={
+                    "title": title,
+                    "release_date": release_date,
+                    "artist_id": artist_id,
+                },
+            )
+            return
+
         representative = grouping.representative("albums", album_key)
         cover = self._require_cover(representative, f"앨범 {album_key}")
 
         file_id = self._upload_cover("ALBUM", album_key, cover, summary)
-        album_id = self._create_album(
-            artist["artist_id"], title, file_id, grouping.album_release_date(album_key)
-        )
+        album_id = self._create_album(artist_id, title, file_id, release_date)
 
         self.registry.put_catalog_entry(
             "albums",
             album_key,
             {
                 "album_id": album_id,
-                "artist_id": artist["artist_id"],
+                "artist_id": artist_id,
                 "title": title,
+                "release_date": release_date,
                 "image_file_id": file_id,
                 "cover_track_id": representative.track_id,
                 "cover_sha256": compute_sha256(cover),
+                "fields_sha256": digest,
             },
         )
         self._save()
@@ -399,22 +485,39 @@ class CatalogRegistrar:
         logger.info("앨범 등록: %s (%s) → %s", title, album_key, album_id)
 
     def _ensure_music(self, track: TrackMeta, summary: dict) -> None:
-        existing = self.registry.catalog_entry("tracks", track.track_id)
-        if existing:
-            # 곡은 그대로 두고, 메타데이터가 바뀌었으면 그것만 알린다. 제목·발매일
-            # 수정은 사람이 판단할 일이라 배치가 말없이 덮어쓰지 않는다.
-            if existing.get("meta_sha256") != track.meta_sha256:
-                logger.warning(
-                    "메타데이터가 바뀌었지만 곡 정보는 그대로 둡니다: %s "
-                    "(고치려면 PATCH /api/v1/music/%s)",
-                    track.track_id,
-                    existing.get("music_id"),
-                )
-            return
-
         album = self.registry.catalog_entry("albums", track.album_key)
         if not album:
             raise CatalogError(f"앨범이 먼저 등록되지 않았습니다: {track.album_key}")
+
+        album_id = album["album_id"]
+        artist_id = album["artist_id"]
+        digest = _fingerprint(track.title, track.release_date, album_id, artist_id)
+
+        existing = self.registry.catalog_entry("tracks", track.track_id)
+        if existing:
+            self._sync(
+                entry=existing,
+                digest=digest,
+                summary=summary,
+                counter="tracks_updated",
+                label=track.track_id,
+                patch=lambda: self.client.update_music(
+                    existing["music_id"],
+                    album_id=album_id,
+                    artist_id=artist_id,
+                    title=track.title,
+                    release_date=track.release_date,
+                ),
+                changes={
+                    "title": track.title,
+                    "release_date": track.release_date,
+                    "album_id": album_id,
+                    "artist_id": artist_id,
+                    "album_key": track.album_key,
+                    "artist_key": track.artist_key,
+                },
+            )
+            return
 
         # 곡 커버는 없어도 등록한다. 화면이 앨범 커버로 내려간다.
         cover = find_cover(self.covers_dir, track.track_id)
@@ -428,22 +531,22 @@ class CatalogRegistrar:
             file_id = self._upload_cover("TRACK", track.track_id, cover, summary)
             cover_sha256 = compute_sha256(cover)
 
-        music_id = self._create_music(track, album["album_id"], file_id)
+        music_id = self._create_music(track, album_id, artist_id, file_id)
 
         self.registry.put_catalog_entry(
             "tracks",
             track.track_id,
             {
                 "music_id": music_id,
-                "album_id": album["album_id"],
-                "artist_id": album["artist_id"],
+                "album_id": album_id,
+                "artist_id": artist_id,
                 "album_key": track.album_key,
                 "artist_key": track.artist_key,
                 "title": track.title,
                 "release_date": track.release_date,
                 "image_file_id": file_id,
                 "cover_sha256": cover_sha256,
-                "meta_sha256": track.meta_sha256,
+                "fields_sha256": digest,
             },
         )
         self._save()
@@ -595,14 +698,17 @@ class CatalogRegistrar:
         return self.client.create_album(artist_id, title, file_id, release_date)
 
     def _create_music(
-        self, track: TrackMeta, album_id: int | None, file_id: int | None
+        self,
+        track: TrackMeta,
+        album_id: int | None,
+        artist_id: int | None,
+        file_id: int | None,
     ) -> int | None:
         if self.dry_run:
             return None
-        artist = self.registry.catalog_entry("artists", track.artist_key)
         return self.client.add_music(
             album_id=album_id,
-            artist_id=artist["artist_id"],
+            artist_id=artist_id,
             title=track.title,
             release_date=track.release_date,
             image_file_id=file_id,

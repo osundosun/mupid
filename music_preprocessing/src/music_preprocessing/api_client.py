@@ -278,13 +278,25 @@ class MupidClient:
         )
         return body["data"]["music_id"]
 
+    def update_music(self, music_id: int, **fields) -> None:
+        """곡 정보를 고친다. 준 필드만 바뀐다 (`PATCH` 규약).
+
+        받는 이름: `album_id` · `artist_id` · `title` · `release_date` ·
+        `image_file_id`.
+        """
+        self._request("PATCH", f"/api/v1/music/{music_id}", json_body=fields)
+
     def update_music_image(self, music_id: int, image_file_id: int) -> None:
         """곡 커버를 갈아 끼운다."""
-        self._request(
-            "PATCH",
-            f"/api/v1/music/{music_id}",
-            json_body={"image_file_id": image_file_id},
-        )
+        self.update_music(music_id, image_file_id=image_file_id)
+
+    def update_artist(self, artist_id: int, **fields) -> None:
+        """아티스트 정보를 고친다. 서버가 받는 것은 `name` 뿐이다."""
+        self._request("PATCH", f"/api/v1/artist/{artist_id}", json_body=fields)
+
+    def update_album(self, album_id: int, **fields) -> None:
+        """앨범 정보를 고친다. 받는 이름: `artist_id` · `title` · `release_date`."""
+        self._request("PATCH", f"/api/v1/album/{album_id}", json_body=fields)
 
     def get_lyrics(self, music_id: int) -> list[dict]:
         """곡에 붙어 있는 가사 줄 목록. 없으면 빈 목록이다 (404 가 아니다)."""

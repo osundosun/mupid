@@ -232,19 +232,60 @@ flow_music_data/
 }
 ```
 
-### 다시 돌려도 되는가
+### 바뀐 것만 보낸다
 
-됩니다. 등록 결과는 `registered.json` 의 `catalog` 아래에 남고, 이미 있는 것은
-건너뜁니다.
+모든 명령이 **파일 내용의 SHA-256 을 기억했다가, 달라진 것만 API 를 부릅니다.**
+아무것도 안 바뀌었으면 전체 실행에서 HTTP 호출이 **0건**입니다.
+
+| 무엇이 바뀌면 | 어느 명령이 | 무엇을 부르는가 |
+| --- | --- | --- |
+| 음원 `.mp3` | `batch` | 재청킹 → 기존 스트림 삭제 → 새 스트림·청크 |
+| 곡 제목 · 발매일 | `catalog` | `PATCH /api/v1/music/{id}` |
+| 아티스트명 | `catalog` | `PATCH /api/v1/artist/{id}` |
+| 앨범명 · 발매일 | `catalog` | `PATCH /api/v1/album/{id}` |
+| 곡이 다른 앨범/아티스트로 옮겨감 | `catalog` | `PATCH /api/v1/music/{id}` |
+| 커버 `.jpg` | `covers` | 같은 저장 키에 다시 업로드 |
+| 가사 | `lyrics` | `PUT /api/v1/music/{id}/lyric` |
+
+#### 지문은 파일 전체가 아니라 필드 단위다
+
+메타데이터 한 파일에 곡 정보·아티스트·앨범·가사가 **함께** 들어 있습니다.
+파일 해시로 재면 가사 한 줄만 고쳐도 곡·아티스트·앨범이 전부 바뀐 것으로 보여
+쓸데없는 `PATCH` 가 1,300번 나갑니다.
+
+그래서 대상마다 **그 대상이 서버로 보내는 필드만** 묶어 잽니다.
+
+| 대상 | 지문에 들어가는 것 |
+| --- | --- |
+| 아티스트 | `artist.name` |
+| 앨범 | `album.title` · 수록곡 중 가장 이른 발매일 · `artist_id` |
+| 곡 | `flow_title` · `generated_at` · `album_id` · `artist_id` |
+| 가사 | `lyrics_sync` 의 `(text, start_sec)` 목록 |
+| 커버 | 이미지 파일 바이트 |
+
+실제로 확인한 동작:
+
+```
+② 아무것도 안 바꾸고 다시   → 호출 없음
+③ 곡 제목 하나만 수정        → PATCH /api/v1/music/4  {title: "… (Remastered)"}   1건
+④ 가사 첫 줄만 수정          → 호출 없음   ← 곡·아티스트·앨범은 나가지 않는다
+⑤ 아티스트 이름 수정         → PATCH /api/v1/artist/12  {name: "Vellichor!"}      1건
+```
+
+#### 지문이 없는 옛 기록
+
+이 기능 이전에 등록된 항목에는 지문이 없습니다. 서버가 파일과 같은지 알 길이
+없으므로 **한 번 맞추고 지문을 남깁니다** — 파일이 기준이니 고치는 쪽이 맞습니다.
+그 한 번만 `PATCH` 가 몰려 나가고, 다음 실행부터는 조용합니다.
+
+#### 그 밖의 경우
 
 | 상황 | 동작 |
 | --- | --- |
-| 그대로 다시 실행 | 아무것도 호출하지 않는다 |
 | 곡이 늘어남 | 늘어난 곡만 등록한다. 아티스트·앨범은 이미 있으면 재사용 |
-| 메타데이터가 바뀜 | **곡 정보를 덮어쓰지 않고 경고만 남긴다.** 제목·발매일을 고칠지는 사람이 판단할 일이다 |
-| 커버가 바뀜 | `covers` 명령이 바뀐 것만 다시 올린다 (SHA-256 비교) |
-| 커버가 뒤늦게 생김 | `covers` 명령이 올린 뒤 `PATCH /api/v1/music/{id}` 로 곡에 잇는다 |
+| 커버가 뒤늦게 생김 | `covers` 가 올린 뒤 `PATCH /api/v1/music/{id}` 로 곡에 잇는다 |
 | 한 곡이 실패함 | 나머지는 계속 등록하고, 실패 목록을 마지막에 찍은 뒤 종료 코드 1 |
+| 메타데이터에서 곡이 사라짐 | **서버에서 지우지 않는다.** 배치 서버에서 파일 하나가 사라졌다고 서비스 중인 곡을 내리면 위험하다. 내리려면 `DELETE /api/v1/music/{musicId}` 를 직접 부른다 |
 | `registered.json` 을 지움 | **같은 곡이 한 번 더 만들어진다.** 지우지 마세요 |
 
 `covers` 는 이미 등록된 대상만 손댑니다. 저장 키가 고정이라 같은 키에 다시
@@ -527,6 +568,8 @@ Offset  Size  Description
 ```bash
 # 매일 새벽 2시 — 새 곡을 카탈로그에 등록하고
 0 2 * * * cd /opt/music_preprocessing && uv run music-preprocessing catalog -c config.json --yes --no-progress
+# 2시 15분 — 커버 (바뀐 그림만. 바뀐 게 없으면 호출 0건이라 공짜다)
+15 2 * * * cd /opt/music_preprocessing && uv run music-preprocessing covers -c config.json --yes --no-progress
 # 2시 30분 — 가사 (곡이 있어야 한다)
 30 2 * * * cd /opt/music_preprocessing && uv run music-preprocessing lyrics -c config.json --yes --no-progress
 # 새벽 3시 — 청킹과 스트림 등록

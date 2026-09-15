@@ -38,8 +38,10 @@ LOG_DIR="/var/log/music_preprocessing"   # config.json 의 log_dir 과 맞춘다
 # 곡마다 한 번씩 부른다 (502곡). 오래 걸리지 않는다.
 # 30 2 * * * cd $MUSIC_PREPROCESSING_DIR && $UV_BIN run music-preprocessing lyrics -c config.json --yes --no-progress
 
-# 커버만 다시 올리기 (그림을 갈아 끼웠을 때. 평소에는 catalog 만으로 충분하다)
-# 0 4 * * 0 cd $MUSIC_PREPROCESSING_DIR && $UV_BIN run music-preprocessing covers -c config.json --yes --no-progress
+# 커버 갱신 (바뀐 그림만 올린다)
+#
+# 매일 돌려도 된다. 바뀐 게 없으면 파일 해시만 비교하고 끝나 호출이 0건이다.
+# 15 2 * * * cd $MUSIC_PREPROCESSING_DIR && $UV_BIN run music-preprocessing covers -c config.json --yes --no-progress
 
 # ─────────────────────────────────────────────────────────
 # 로그 로테이션 (30일 이상 된 로그 삭제)

@@ -188,12 +188,22 @@ def catalog(
 
     table = Table(title="카탈로그 등록" + (" (dry-run)" if dry_run else ""), title_style="bold")
     table.add_column("대상")
-    table.add_column("만든 것", justify="right")
+    table.add_column("새로", justify="right")
+    table.add_column("수정", justify="right")
     table.add_column("전체", justify="right")
-    table.add_row("아티스트", str(result["artists_created"]), str(result["artists_total"]))
-    table.add_row("앨범", str(result["albums_created"]), str(result["albums_total"]))
-    table.add_row("곡", str(result["tracks_created"]), str(result["tracks_total"]))
-    table.add_row("커버 업로드", str(result["covers_uploaded"]), "-")
+    for label, created, updated, total in (
+        ("아티스트", "artists_created", "artists_updated", "artists_total"),
+        ("앨범", "albums_created", "albums_updated", "albums_total"),
+        ("곡", "tracks_created", "tracks_updated", "tracks_total"),
+    ):
+        changed = result[updated]
+        table.add_row(
+            label,
+            str(result[created]),
+            str(changed) if changed else "[dim]0[/]",
+            str(result[total]),
+        )
+    table.add_row("커버 업로드", str(result["covers_uploaded"]), "-", "-")
     console.print(table)
     if result["covers_missing"]:
         console.print(
