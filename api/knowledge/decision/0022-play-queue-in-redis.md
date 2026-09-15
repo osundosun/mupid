@@ -68,7 +68,7 @@ AOF 가 켜져 있고 디스크 볼륨이 붙어 있으므로 재시작해도 �
 **사용자당 JSON 문서 하나를 Redis 에 둔다.**
 
 ```
-키   {MUPID_REDIS_KEY_PREFIX}queue:{userId}
+키   queue:user:{userId}
 값   { "revision": 12, "currentTrackId": 3391, "trackIds": [41, 12, 887, ...] }
 ```
 
