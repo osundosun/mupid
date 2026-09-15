@@ -384,6 +384,21 @@ class MupidClient:
         )
         return body["data"]
 
+    def get_streams(self, music_id: int) -> list[dict]:
+        """곡에 달린 스트림 목록.
+
+        **완료(`DONE`)된 것만 돌려준다** — 서버가 그렇게 거른다
+        (`StreamServiceImpl.getStreamByMusicId`). 올리다 만 `PENDING` 스트림은
+        이 길로는 보이지 않는다.
+        """
+        body = self._request("GET", f"/api/v1/music/{music_id}/stream")
+        return body["data"]["streams"]
+
+    def get_chunks(self, stream_id: int) -> list[dict]:
+        """스트림에 기록된 청크 목록. 인덱스 오름차순."""
+        body = self._request("GET", f"/api/v1/chunk/{stream_id}")
+        return body["data"]["chunks"]
+
     def complete_stream(self, stream_id: int) -> None:
         self._request(
             "PATCH", f"/api/v1/stream/{stream_id}", json_body={"status": "DONE"}

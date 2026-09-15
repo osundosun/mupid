@@ -489,6 +489,20 @@ def batch(
     processed_log: Annotated[
         Path | None, typer.Option(help="처리 완료 로그", show_default=False)
     ] = None,
+    orphan_check: Annotated[
+        bool,
+        typer.Option(
+            "--orphan-check/--no-orphan-check",
+            help="끝나고 서버에 쓰이지 않는 스트림이 남았는지 훑는다 (읽기만 한다)",
+        ),
+    ] = True,
+    verify_chunks: Annotated[
+        bool,
+        typer.Option(
+            "--verify-chunks",
+            help="성한 스트림까지 청크 행 수를 대조한다. 곡 수만큼 호출이 더 나간다",
+        ),
+    ] = False,
     log_file: LogFileOpt = None,
     no_log_file: NoLogOpt = False,
     verbose: VerboseOpt = False,
@@ -515,7 +529,7 @@ def batch(
         if given:
             setattr(cfg, name, str(given))
 
-    result = run_batch(cfg)
+    result = run_batch(cfg, orphan_check=orphan_check, verify_chunks=verify_chunks)
 
     if result["status"] == "no_input":
         console.print("[yellow]입력 디렉터리가 비어 있습니다.[/]")
@@ -540,6 +554,7 @@ def batch(
         table.add_row("총 소요", f"{result['total_time_sec']}초")
         table.add_row("평균", f"{result['avg_time_per_file_sec']}초/파일")
     console.print(table)
+    _report_orphans(console, result.get("orphans"))
 
     failures = [
         *({"key": e["file"], "error": e["error"]} for e in result.get("error_details", [])),
@@ -700,6 +715,47 @@ def _confirm(console: Console, yes: bool, dry_run: bool, what: str) -> None:
     if not typer.confirm(f"{what} 계속할까요?", default=False):
         console.print("[dim]취소했습니다.[/]")
         raise typer.Exit(130)
+
+
+def _report_orphans(console: Console, report: dict | None) -> None:
+    """쓰이지 않는 스트림 점검 결과. **경고일 뿐 종료 코드를 바꾸지 않는다.**"""
+    if report is None:
+        return
+
+    rows = [
+        ("배치가 모르는 스트림", report["unknown"]),
+        ("겹치는 스트림", report["duplicate"]),
+        ("청크 수 불일치", report["count_mismatch"]),
+        ("청크 모자람", report["short"]),
+    ]
+    found = sum(len(items) for _, items in rows)
+    if not found:
+        console.print(
+            f"[dim]스트림 점검: 곡 {report['music_checked']}개 · "
+            f"스트림 {report['streams_seen']}개 — 쓰이지 않는 것 없음[/]"
+        )
+        return
+
+    console.print()
+    table = Table(
+        title=f"쓰이지 않는 스트림 {found}건 (지우지 않았습니다)",
+        title_style="bold yellow",
+    )
+    table.add_column("종류")
+    table.add_column("건수", justify="right")
+    table.add_column("예시 stream_id")
+    for label, items in rows:
+        if not items:
+            continue
+        sample = ", ".join(
+            str(item.get("stream_id") or item.get("stream_ids")) for item in items[:3]
+        )
+        table.add_row(label, str(len(items)), sample + (" …" if len(items) > 3 else ""))
+    console.print(table)
+    console.print(
+        "[yellow]확인 후[/] [cyan]DELETE /api/v1/stream/{streamId}[/] [yellow]로 치우세요."
+        " 자세한 목록은 로그 파일에.[/]"
+    )
 
 
 def _report_errors(console: Console, result: dict) -> None:
