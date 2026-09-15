@@ -39,7 +39,7 @@ examples:
               "birth_year": 2000,
               "gender": "M",
               "role": "ROLE_USER",
-              "status": "PENDING",
+              "status": "ACTIVE",
               "onboarding_submitted": true
             }
           }
@@ -77,11 +77,25 @@ docs: |-
   | `data.birth_year` | int | 출생 연도 |
   | `data.gender` | string | `M` / `F` / `ETC` |
   | `data.role` | string | `ROLE_USER` / `ROLE_SYSTEM` / `ROLE_ADMIN` |
-  | `data.status` | string | `PENDING` / `ACTIVE` / `WITHDRAW` |
+  | `data.status` | string | `PENDING` / `ACTIVE` / `WITHDRAW` (아래) |
   | `data.onboarding_submitted` | boolean | 온보딩 설문을 마쳤는가 |
 
   `image_url` 은 `UserImageService.getProfileImageUrl` 이 조합한 값입니다.
   저장된 프로필 사진이 없는 사용자는 `null` 을 받습니다.
+
+  ## status
+
+  | 값 | 뜻 |
+  | --- | --- |
+  | `PENDING` | 가입은 했고 온보딩 설문을 아직 마치지 않음 |
+  | `ACTIVE` | 온보딩을 마쳤거나 애초에 대상이 아님(관리자·`ROLE_SYSTEM`) |
+  | `WITHDRAW` | 탈퇴 |
+
+  `PENDING` 을 벗는 길은 `POST /api/v1/onboarding` 하나뿐입니다. 탈퇴한 계정은
+  이 API 로 조회되지 않으므로 `WITHDRAW` 를 받을 일은 없습니다.
+
+  온보딩 여부만 보려면 아래 `onboarding_submitted` 를 쓰는 편이 낫습니다 —
+  설문 테이블을 직접 보는 값이라 상태가 어긋난 계정에서도 정확합니다.
 
   ## onboarding_submitted
 

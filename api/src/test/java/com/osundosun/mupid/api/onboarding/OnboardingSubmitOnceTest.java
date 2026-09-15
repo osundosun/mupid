@@ -36,8 +36,9 @@ import jakarta.persistence.PersistenceContext;
  * 고쳐 쓰는 값이 아니고, 조합으로 깔아 두는 저장 형태라 부분 수정도 성립하지
  * 않는다.
  *
- * 닉네임은 회원가입이 받으므로 제출이 `users.nickname` 을 건드리지 않는다는
- * 것도 함께 본다. 로컬 MySQL 이 떠 있어야 하고 트랜잭션은 매번 롤백된다.
+ * 제출이 `PENDING` 계정을 `ACTIVE` 로 올린다는 것, 그리고 닉네임은 회원가입이
+ * 받으므로 제출이 `users.nickname` 을 건드리지 않는다는 것도 함께 본다.
+ * 로컬 MySQL 이 떠 있어야 하고 트랜잭션은 매번 롤백된다.
  */
 @SpringBootTest
 @Transactional
@@ -90,6 +91,27 @@ class OnboardingSubmitOnceTest {
     }
 
     @Test
+    @DisplayName("제출하면 PENDING 계정이 ACTIVE 가 된다")
+    void activatesPendingAccountOnSubmit() {
+        User pending = persistUser(UserStatus.PENDING);
+        em.flush();
+
+        onboardingService.submit(pending, request(List.of(calm.getCodeId()), List.of(jazz.getCodeId())));
+        em.flush();
+
+        assertEquals(UserStatus.ACTIVE, em.find(User.class, pending.getUserId()).getStatus());
+    }
+
+    @Test
+    @DisplayName("이미 ACTIVE 인 계정은 상태가 그대로다")
+    void keepsActiveStatus() {
+        onboardingService.submit(user, request(List.of(calm.getCodeId()), List.of(jazz.getCodeId())));
+        em.flush();
+
+        assertEquals(UserStatus.ACTIVE, em.find(User.class, user.getUserId()).getStatus());
+    }
+
+    @Test
     @DisplayName("제출은 계정 닉네임을 건드리지 않는다")
     void keepsAccountNickname() {
         String before = user.getNickname();
@@ -114,6 +136,10 @@ class OnboardingSubmitOnceTest {
     }
 
     private User persistUser() {
+        return persistUser(UserStatus.ACTIVE);
+    }
+
+    private User persistUser(UserStatus status) {
         User newUser = User.builder()
             /* 이메일이 유니크라 테스트끼리 부딪히지 않게 매번 새로 만든다 */
             .email("test-%s@mupid.test".formatted(UUID.randomUUID()))
@@ -122,7 +148,7 @@ class OnboardingSubmitOnceTest {
             .birthYear(1999)
             .gender(UserGender.ETC)
             .role(UserRole.ROLE_USER)
-            .status(UserStatus.ACTIVE)
+            .status(status)
             .build();
         em.persist(newUser);
         return newUser;
