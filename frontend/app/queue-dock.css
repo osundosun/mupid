@@ -16,9 +16,20 @@
   position: fixed;
   /* 미니 플레이어 위. 그 높이(72px)와 아래 여백(18px), 사이 간격 10px. */
   bottom: calc(var(--player-height) + 28px);
-  left: calc(210px + 30px);
+  /*
+   * 오른쪽에 붙인다. 여는 버튼이 미니 플레이어 오른쪽 끝에 있어 목록이 그 위로
+   * 올라오는 것이 눈으로 이어진다. 본문 너비 전체를 덮을 이유도 없다 —
+   * 곡 한 줄이 길어야 400px 남짓이고, 넓히면 제목과 빼기 버튼 사이가 휑해진다.
+   */
+  left: auto;
   right: 30px;
-  z-index: 31;
+  width: min(420px, calc(100vw - 300px));
+  /*
+   * AI 런처(`.chat-launcher`, z-index 40)보다 위다. 그 버튼이 독이 올라오는
+   * 자리(오른쪽 아래)에 그대로 겹쳐 있어, 낮으면 목록 위에 동그란 버튼이 떠 있는다.
+   * 열린 대화 패널(`.chat-panel`, 70)보다는 아래로 둔다 — 그건 독을 덮어야 맞다.
+   */
+  z-index: 45;
   display: flex;
   flex-direction: column;
   max-height: min(60vh, 560px);
@@ -31,12 +42,19 @@
 }
 
 /*
- * 접힌 상태는 `hidden` 으로 DOM 에서 지운다. 화면 밖으로 밀어 두기만 하면
- * 보이지 않는 버튼이 탭 순서에 남아 초점이 사라진 것처럼 보인다.
- * 그래서 여닫는 움직임은 열릴 때만 준다.
+ * 접고 펴는 움직임.
+ *
+ * 접힌 뒤에는 DOM 에서 지운다 — 화면 밖으로 밀어 두기만 하면 보이지 않는 버튼이
+ * 탭 순서에 남아 초점이 사라진 것처럼 보인다. 다만 **지우기 전에 닫는 움직임을
+ * 먼저 보여 준다.** 펴질 때만 움직이고 접힐 때 즉시 사라지면 같은 동작인데
+ * 한쪽만 뚝 끊긴다. 컴포넌트가 `animationend` 를 보고 그때 지운다.
  */
 .queue-dock.is-open {
   animation: queue-dock-rise 180ms ease-out;
+}
+
+.queue-dock.is-closing {
+  animation: queue-dock-sink 160ms ease-in forwards;
 }
 
 @keyframes queue-dock-rise {
@@ -47,6 +65,18 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* 나갈 때는 조금 빠르게. 기다리는 동작이 아니라 치우는 동작이다. */
+@keyframes queue-dock-sink {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px);
   }
 }
 
@@ -100,16 +130,10 @@
   display: none;
 }
 
+/* 본문이 가운데로 모이면 독도 그 오른쪽 끝을 따라간다. */
 @media (min-width: 1600px) {
   .queue-dock {
-    left: calc((100vw - 1600px) / 2 + 240px);
     right: calc((100vw - 1600px) / 2 + 30px);
-  }
-}
-
-@media (max-width: 1199px) {
-  .queue-dock {
-    left: 30px;
   }
 }
 
@@ -124,7 +148,9 @@
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 41;
+    /* 좁은 화면에서도 AI 런처 위다. 막(46)과 짝을 이룬다. */
+    z-index: 47;
+    width: auto;
     max-height: min(78vh, 680px);
     border-radius: 18px 18px 0 0;
     border-bottom: none;
@@ -135,12 +161,25 @@
     animation: queue-dock-slide 220ms ease-out;
   }
 
+  .queue-dock.is-closing {
+    animation: queue-dock-slide-out 200ms ease-in forwards;
+  }
+
   @keyframes queue-dock-slide {
     from {
       transform: translateY(100%);
     }
     to {
       transform: translateY(0);
+    }
+  }
+
+  @keyframes queue-dock-slide-out {
+    from {
+      transform: translateY(0);
+    }
+    to {
+      transform: translateY(100%);
     }
   }
 
@@ -166,12 +205,16 @@
     display: block;
     position: fixed;
     inset: 0;
-    z-index: 40;
+    z-index: 46;
     border: 0;
     padding: 0;
     background: #1b2c4a3d;
     backdrop-filter: blur(2px);
     animation: queue-dock-fade 180ms ease-out;
+  }
+
+  .queue-dock-scrim.is-closing {
+    animation: queue-dock-fade-out 200ms ease-in forwards;
   }
 
   @keyframes queue-dock-fade {
@@ -180,6 +223,15 @@
     }
     to {
       opacity: 1;
+    }
+  }
+
+  @keyframes queue-dock-fade-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
     }
   }
 
@@ -198,9 +250,21 @@
   }
 }
 
+/*
+ * 움직임을 줄여 달라고 한 사람에게는 애니메이션을 주지 않는다.
+ *
+ * 닫는 쪽은 `animation: none` 으로 끝내면 안 된다. 컴포넌트가 `animationend` 를
+ * 기다렸다가 지우는데, 그 사건이 아예 오지 않으면 독이 닫히지 않은 채로 남는다.
+ * 그래서 길이만 0 에 가깝게 줄여 사건은 그대로 나게 둔다.
+ */
 @media (prefers-reduced-motion: reduce) {
   .queue-dock.is-open,
   .queue-dock-scrim {
     animation: none;
+  }
+
+  .queue-dock.is-closing,
+  .queue-dock-scrim.is-closing {
+    animation-duration: 1ms;
   }
 }

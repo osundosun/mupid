@@ -29,17 +29,40 @@ import { QUEUE_LIMIT, type MupidModel } from '@/hooks/use-mupid';
  */
 export function QueueDock({ model: m }: { model: MupidModel }) {
   /*
-   * 접혀 있으면 **그리지 않는다.** 화면 밖으로 밀어 두기만 하면 보이지 않는
+   * 접힌 뒤에는 **그리지 않는다.** 화면 밖으로 밀어 두기만 하면 보이지 않는
    * 버튼들이 탭 순서에 남아 초점이 사라진 것처럼 보인다.
    *
    * 덤으로 목록 상태(고르던 곡·확인 대화상자)가 닫을 때 함께 사라진다. 다시
    * 열었을 때 예전 선택이 남아 있으면 무엇을 고른 상태인지 알 수 없다.
+   *
+   * 다만 **닫는 움직임이 끝나기를 기다렸다가** 지운다. 펼 때만 움직이고 접을 때
+   * 즉시 사라지면 같은 동작인데 한쪽만 뚝 끊긴다.
    */
-  if (!m.queueOpen) return null;
-  return <QueueDockPanel model={m} />;
+  const [rendered, setRendered] = useState(m.queueOpen);
+
+  // 효과가 아니라 렌더 중에 맞춘다. 효과로 하면 한 번 그린 뒤에 다시 그리게 되고,
+  // 그 사이 한 프레임 동안 독이 없는 화면이 나가 여는 움직임이 처음부터 시작하지 않는다.
+  if (m.queueOpen && !rendered) setRendered(true);
+
+  if (!rendered) return null;
+  return (
+    <QueueDockPanel
+      model={m}
+      open={m.queueOpen}
+      onClosed={() => setRendered(false)}
+    />
+  );
 }
 
-function QueueDockPanel({ model: m }: { model: MupidModel }) {
+function QueueDockPanel({
+  model: m,
+  open,
+  onClosed,
+}: {
+  model: MupidModel;
+  open: boolean;
+  onClosed: () => void;
+}) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const pick = useTrackSelection(m.queueTracks.map((t) => t.id));
   // 곡을 빼는 건 한 곡이든 여러 곡이든 똑같이 한 번 확인받는다.
@@ -52,6 +75,7 @@ function QueueDockPanel({ model: m }: { model: MupidModel }) {
   }, []);
 
   useEffect(() => {
+    if (!open) return;
     const escape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       // 확인 대화상자가 떠 있으면 그쪽이 먼저 닫혀야 한다.
@@ -60,7 +84,18 @@ function QueueDockPanel({ model: m }: { model: MupidModel }) {
     };
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);
-  }, [confirmRemove, m]);
+  }, [open, confirmRemove, m]);
+
+  /*
+   * 닫는 움직임이 끝나면 지운다.
+   *
+   * 여는 애니메이션도 같은 사건을 내므로 **닫는 중일 때만** 본다. 움직임을 줄여
+   * 달라고 한 사람에게도 이 사건은 나게 두었다(길이만 1ms) — 아예 없애면
+   * 독이 닫히지 않는다.
+   */
+  const onAnimationEnd = () => {
+    if (!open) onClosed();
+  };
 
   const count = m.queueTracks.length;
 
@@ -72,12 +107,20 @@ function QueueDockPanel({ model: m }: { model: MupidModel }) {
         목록을 열어 둔 채 다른 곳을 눌러 계속 쓸 수 있어야 한다.
       */}
       <button
-        className="queue-dock-scrim"
+        className={`queue-dock-scrim ${open ? '' : 'is-closing'}`}
         tabIndex={-1}
         aria-hidden="true"
         onClick={() => m.setQueueOpen(false)}
       />
-      <section id="queue-dock" className="queue-dock is-open" aria-label="재생 목록">
+      <section
+        id="queue-dock"
+        className={`queue-dock ${open ? 'is-open' : 'is-closing'}`}
+        aria-label="재생 목록"
+        onAnimationEnd={onAnimationEnd}
+        // 닫히는 동안에는 안의 버튼을 누를 수도, 탭으로 짚을 수도 없게 한다.
+        // 사라지는 중인 목록에서 곡을 빼는 일이 생기면 안 된다.
+        inert={!open}
+      >
         <header className="queue-dock-head">
           <h2>
             <ListMusic aria-hidden="true" />
