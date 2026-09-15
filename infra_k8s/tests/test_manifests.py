@@ -701,6 +701,19 @@ class DeployEndpointTest(unittest.TestCase):
                 checked += 1
         self.assertTrue(checked, "no rules found; the file shape changed")
 
+    def test_no_k8s_job_uploads_an_image_as_an_artifact(self):
+        """The API tar is ~220MB and the coordinator answers 413 Request Entity
+        Too Large, which fails the job after the build already succeeded. Build
+        and transmit belong in one job; the image goes straight to the server."""
+        jobs = yaml.safe_load((K8S / "ci" / "k8s-release.yml").read_text(encoding="utf-8"))
+        for name, body in jobs.items():
+            if not isinstance(body, dict):
+                continue
+            paths = (body.get("artifacts") or {}).get("paths", [])
+            for path in paths:
+                with self.subTest(job=name, path=path):
+                    self.assertNotIn(".release", path)
+
     def test_the_k8s_jobs_still_have_the_verify_jobs_they_need(self):
         """backend-verify and frontend-verify live in infra/ci/. Dropping those
         includes with the Compose deployment would leave `needs` pointing at
