@@ -29,6 +29,7 @@
 | [0019](0019-report-reads-clickhouse-directly.md) | 취향 리포트는 ClickHouse 를 직접 읽고, 결론만 MySQL 에 남긴다 | 채택 · 구현 완료 |
 | [0020](0020-lyric-bulk-replace.md) | 가사는 곡 단위로 통째로 갈아 끼운다 | 채택 · 구현 완료 |
 | [0021](0021-query-plan-instead-of-nl-interpreter.md) | 자연어는 대화 모델이 조건으로 바꾼다 — 별도 해석기를 세우지 않는다 | 채택 |
+| [0022](0022-play-queue-in-redis.md) | 재생 큐는 Redis 에 사용자당 문서 하나로 둔다 | 제안 |
 
 ## 먼저 볼 것
 
