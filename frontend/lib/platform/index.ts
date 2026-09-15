@@ -18,6 +18,7 @@ export {
   type CacheOptions,
 } from './cache';
 export { toImageSource } from './image';
+export { watchSafeArea, type SafeArea } from './safe-area';
 
 /**
  * 이 환경에 맞는 전송 계층.

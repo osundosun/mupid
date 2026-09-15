@@ -128,6 +128,19 @@
   --sky-tint: #e8f3ff;
   --sky-accent: #477dca;
   --sky-pink: #e88fbb;
+  /*
+   * 시스템 바가 가리는 자리.
+   *
+   * 화면은 `env(safe-area-inset-*)` 를 직접 쓰지 않고 이 속성을 거친다.
+   * 안드로이드 웹뷰의 `env()` 는 **노치만 셈에 넣고 상태바·내비게이션 바는
+   * 빼먹어서**, 노치 없는 기기에서는 넷 다 0 으로 떨어지기 때문이다. 앱에서는
+   * 안드로이드가 잰 값이 `<html>` 인라인 스타일로 이 자리를 덮어쓴다
+   * (`lib/platform/safe-area.ts`). 웹과 iOS 에서는 아래 `env()` 가 그대로 산다.
+   */
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
 }
 @layer base {
   * {

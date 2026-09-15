@@ -9,6 +9,7 @@
 | 저장소 | `localStorage` | **SQLite** — `src/db.rs`, `src/store/` |
 | 앨범 아트 | 원격 주소 그대로 | Rust 가 받아 `mupidimg` 스킴으로 |
 | 화면 | RSC 서버 (Cloudflare Worker) | `output: 'export'` 정적 번들 |
+| 시스템 바 여백 | `env(safe-area-inset-*)` | **안드로이드가 잰 인셋** — `gen/android/.../SafeArea.kt` |
 
 ## 왜 HTTP 를 Rust 로 옮겼나
 
@@ -45,6 +46,7 @@ cd app && cargo tauri android init
 ```bash
 cd app && cargo test          # 저장소 왕복·계정 분리·캐시 만료
 cd frontend && node --experimental-strip-types --test tests/platform-transport.test.mjs
+cd frontend && node --experimental-strip-types --test tests/safe-area.test.mjs
 ```
 
 Rust 시험은 실제 SQLite 파일을 쓴다. 메모리 DB 로는 WAL 과 마이그레이션이 돌지 않아
@@ -125,8 +127,51 @@ cd app && MUPID_API_ORIGIN=http://localhost:9900 cargo tauri android dev
 
 화면 쪽 짝은 `frontend/lib/platform/` 에 있다.
 
+## 상태바·내비게이션 바 여백
+
+화면을 시스템 바 밑까지 쓴다(`MainActivity` 의 `enableEdgeToEdge`). 그만큼을 비워
+두라고 CSS 에 일러 주는 것이 `env(safe-area-inset-*)` 인데, **안드로이드 웹뷰는 그
+값에 노치만 넣고 상태바·내비게이션 바는 넣지 않는다.** 노치 없는 기기에서는 넷 다
+0 이라, 비워 두라고 적어 둔 규칙이 아무 일도 하지 않고 상단바가 상태바 밑으로
+들어간다.
+
+그래서 안드로이드가 잰 값을 직접 건넨다.
+
+```
+WindowInsets ─▸ SafeArea.kt ─▸ window.__mupidSafeArea (기기 픽셀)
+                     │                    │
+                     │      화면이 뜰 때 한 번 읽고 ◂┘
+                     └─ 값이 바뀌면 mupid:safe-area 이벤트 ─▸ 다시 읽는다
+                                          │
+                     <html style="--safe-area-inset-top: 24px; …"
+```
+
+| 어디 | 무엇 |
+| --- | --- |
+| `gen/android/.../SafeArea.kt` | 인셋을 재서 읽어 갈 자리에 둔다 |
+| `frontend/lib/platform/safe-area.ts` | 읽어서 `<html>` 에 적는다. 웹에서는 아무 일도 안 한다 |
+| `frontend/app/globals.css` | `--safe-area-inset-*` 의 `env()` 기본값 |
+
+**CSS 는 `env()` 를 직접 부르지 않는다.** 한 군데라도 직접 부르면 그 자리만 조용히
+0 으로 떨어진다. `frontend/tests/safe-area.test.mjs` 가 이것을 지킨다.
+
+**값을 밀어 넣지 않고 읽어 가게 둔다.** 첫 인셋이 도착하는 시점과 화면이 뜨는
+시점의 순서를 보장할 수 없어서, 밀어 넣기만 하면 아직 빈 문서에 적히고 사라진다.
+화면이 뜰 때 스스로 한 번 읽고, 그 뒤로는 이벤트를 듣는다.
+
+**기기 픽셀로 건네고 CSS 픽셀로 바꾸는 일은 화면이 한다.** `devicePixelRatio` 는
+기기 밀도뿐 아니라 웹뷰가 잡은 배율까지 담고 있어, 네이티브의
+`displayMetrics.density` 보다 이쪽이 정확하다.
+
+**상태바 몫은 카드 바깥에서 비운다** (`responsive-polish.css` 의 셸 여백). 카드
+안쪽 헤더에서 비우면 둥근 윗모서리를 시각·배터리가 가로지른다.
+
 ## 아직 안 한 것
 
 - **iOS**: `cargo tauri ios init` 은 macOS 에서만 돈다. Rust 코드는 그대로 쓴다.
 - **오프라인 재생**: 오디오 청크는 캐시하지 않는다. 용량 상한과 만료 정책이 필요하다.
 - **깊은 링크 / 푸시 알림**: 아직 계획 없음.
+- **가로 화면의 좌우 인셋**: 값은 `--safe-area-inset-left/right` 로 이미 오지만
+  쓰는 규칙이 없다. 세로에서는 둘 다 0 이라 티가 나지 않는다. 가로로 돌렸을 때
+  노치나 제스처 바 쪽으로 붙는 것은 하단 메뉴와 미니 플레이어다.
+
