@@ -11,6 +11,7 @@
  * (`mupidService.savePreferences`)이 따로 맡는다.
  */
 
+import { ApiError } from './api/client';
 import { api } from './api/session';
 import type { CodeOption, OnboardingOptions } from './api/endpoints';
 import { genreOptions, moodOptions } from './mupid-data';
@@ -70,6 +71,16 @@ export class OnboardingOptionsStale extends Error {
     this.name = 'OnboardingOptionsStale';
   }
 }
+
+/**
+ * 계정에 이미 설문이 있다는 응답인가.
+ *
+ * 서버는 이 설문을 **한 번만** 받는다. 콜드스타트 입력이라 계속 고쳐 쓰는
+ * 값이 아니라는 서버 쪽 규약이고, 다시 보내면 409 다.
+ */
+const isAlreadySubmitted = (error: unknown): boolean =>
+  error instanceof ApiError &&
+  (error.status === 409 || error.code === 'MUPID_ONBOARDING_ALREADY_SUBMITTED');
 
 /** 서버에서 받은(또는 기본) 선택지를 이름만 뽑아 준다. 화면 칩이 쓰는 모양이다. */
 export const namesOf = (options: CodeOption[]): string[] => options.map((o) => o.name);
@@ -132,9 +143,19 @@ export async function saveOnboarding(choice: OnboardingChoice): Promise<void> {
         : '선택지가 바뀌었어요. 새로 불러왔으니 다시 골라 주세요.',
     );
   }
-  await api.onboarding.submit({
-    nickname: choice.nickname,
-    mood_code_ids: moodCodeIds,
-    genre_code_ids: genreCodeIds,
-  });
+  try {
+    await api.onboarding.submit({
+      nickname: choice.nickname,
+      mood_code_ids: moodCodeIds,
+      genre_code_ids: genreCodeIds,
+    });
+  } catch (error) {
+    // 이미 계정에 있으면 **목적은 이미 이뤄진 것**이다. 실패로 다루면 안 된다.
+    //
+    // 제출 여부를 미리 물을 길이 없을 때(`fetchOnboarding` 이 실패하는 서버가
+    // 있다) 화면은 온보딩을 다시 보여 주는데, 거기서 409 를 오류로 올리면
+    // 계정에 답이 있는 사람을 온보딩에 영영 가둔다. 통과시킨다.
+    if (isAlreadySubmitted(error)) return;
+    throw error;
+  }
 }
