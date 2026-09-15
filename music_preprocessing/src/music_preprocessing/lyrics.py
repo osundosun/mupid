@@ -42,11 +42,14 @@
 
 둘 다 실패로 세지 않는다. 사람이 원본을 고치기 전에는 다시 시도해도 같다.
 
-## 느린 이유
+## 곡마다 한 번
 
-서버에 가사를 한 줄씩 넣는 API(`POST /api/v1/lyric`)밖에 없어서 **줄 수만큼**
-호출한다 — 505곡에 23,675번이다. 곡 단위로는 다시 돌려도 안전하다: 올리기 전에
-그 곡의 기존 가사를 지우고 시작한다.
+`PUT /api/v1/music/{musicId}/lyric` 이 그 곡의 가사를 **통째로 갈아 끼운다.**
+줄마다 `POST` 를 부르던 때는 505곡에 23,628번이었지만 이제 505번이다.
+
+지우는 일도 서버가 한다. 배치가 기존 가사를 조회해 한 줄씩 지울 필요가 없다.
+곡 하나가 서버에서 한 트랜잭션이라, 중간에 끊겨도 반쯤 올라간 가사가 남지
+않는다.
 """
 
 from __future__ import annotations
@@ -56,7 +59,7 @@ import json
 import logging
 from pathlib import Path
 
-from .api_client import MupidApiError, MupidClient
+from .api_client import MupidClient
 from .catalog import CatalogError, ProgressReporter
 from .registrar import Registry
 
@@ -264,9 +267,9 @@ class LyricRegistrar:
     `catalog` 가 먼저 돌아 있어야 한다. 곡 번호는 `registered.json` 의
     `catalog.tracks` 에서 가져온다 — 메타데이터에는 곡 번호가 없다.
 
-    서버에 한 줄씩 넣는 API(`POST /api/v1/lyric`)밖에 없어서 **줄 수만큼**
-    호출한다 (516곡 · 23,675줄). 곡 단위로는 다시 돌려도 안전하다: 올리기 전에
-    그 곡의 기존 가사를 지우고 시작한다.
+    곡마다 `PUT /api/v1/music/{musicId}/lyric` 을 한 번 부른다. 그 호출이
+    기존 가사를 지우고 새 줄을 넣는 일을 한 트랜잭션으로 처리하므로, 다시
+    돌려도 두 벌이 겹치지 않는다.
     """
 
     def __init__(
@@ -305,7 +308,7 @@ class LyricRegistrar:
             "errors": [],
         }
 
-        self.progress.phase("가사 줄", sum(len(s) for s in sheets.values()))
+        self.progress.phase("가사", len(sheets))
         for track_id in sorted(sheets):
             sheet = sheets[track_id]
             try:
@@ -313,7 +316,7 @@ class LyricRegistrar:
             except Exception as e:  # noqa: BLE001 — 한 곡이 깨져도 나머지를 올린다
                 logger.error("가사 등록 실패: %s - %s", track_id, e)
                 summary["errors"].append({"key": track_id, "error": str(e)})
-            self.progress.advance("가사 줄", len(sheet))
+            self.progress.advance("가사")
 
         self._save()
         return summary
@@ -343,12 +346,9 @@ class LyricRegistrar:
             self._remember(sheet, music_id, 0)
             return
 
-        # 이미 올라간 줄을 먼저 치운다. 안 그러면 두 벌이 겹쳐 보인다.
-        # 지난번이 중간에 끊겨 반쯤 올라가 있을 수도 있어, 기록이 없어도 확인한다.
-        summary["lines_deleted"] += self._clear(music_id)
-
-        for time_ms, text in sheet.lines:
-            self._add(music_id, text, time_ms)
+        # 교체다. 지난번이 중간에 끊겨 반쯤 올라가 있어도 서버가 먼저 비운다.
+        result = self._replace(music_id, sheet.lines)
+        summary["lines_deleted"] += result.get("deleted", 0)
         summary["lines_written"] += len(sheet.lines)
         summary["lines_timed"] += sheet.timed
         summary["lines_interpolated"] += sheet.interpolated
@@ -379,26 +379,11 @@ class LyricRegistrar:
         )
         self._save()
 
-    def _clear(self, music_id: int) -> int:
-        """그 곡에 이미 붙어 있는 가사를 지운다. 지운 줄 수를 돌려준다."""
+    def _replace(self, music_id: int, lines: list[tuple[int, str]]) -> dict:
+        """곡 하나의 가사를 통째로 갈아 끼운다."""
         if self.dry_run:
-            return 0
-        try:
-            existing = self.client.get_lyrics(music_id)
-        except MupidApiError as e:
-            if e.status == 404:
-                return 0
-            raise
-        for line in existing:
-            self.client.delete_lyric(line["lyric_id"])
-        if existing:
-            logger.debug("기존 가사 %d줄 삭제: music_id=%s", len(existing), music_id)
-        return len(existing)
-
-    def _add(self, music_id: int, text: str, time_ms: int) -> None:
-        if self.dry_run:
-            return
-        self.client.add_lyric(music_id=music_id, text=text, time_ms=time_ms)
+            return {}
+        return self.client.replace_lyrics(music_id, lines)
 
     def _save(self) -> None:
         """dry-run 은 기록을 남기지 않는다 — 다음 실제 실행이 전부 건너뛰게 된다."""

@@ -35,7 +35,7 @@ LOG_DIR="/var/log/music_preprocessing"   # config.json 의 log_dir 과 맞춘다
 # 가사 등록 (metadata 의 lyrics_sync → lyrics 테이블)
 #
 # catalog 다음. 곡 번호가 있어야 가사를 붙일 수 있다.
-# 줄마다 API 를 부르므로 23,000번쯤 된다 — 넉넉히 잡는다.
+# 곡마다 한 번씩 부른다 (502곡). 오래 걸리지 않는다.
 # 30 2 * * * cd $MUSIC_PREPROCESSING_DIR && $UV_BIN run music-preprocessing lyrics -c config.json --yes --no-progress
 
 # 커버만 다시 올리기 (그림을 갈아 끼웠을 때. 평소에는 catalog 만으로 충분하다)

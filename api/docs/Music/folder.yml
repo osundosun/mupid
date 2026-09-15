@@ -48,7 +48,8 @@ docs:
     | `POST /api/v1/artist` | 아티스트 생성 | SYSTEM/ADMIN |
     | `PATCH /api/v1/artist/{artistId}` | 아티스트 수정 | SYSTEM/ADMIN |
     | `DELETE /api/v1/artist/{artistId}` | 아티스트 삭제 | SYSTEM/ADMIN |
-    | `POST /api/v1/lyric` | 가사 추가 | SYSTEM/ADMIN |
+    | `PUT /api/v1/music/{musicId}/lyric` | 가사 일괄 교체 | SYSTEM/ADMIN |
+    | `POST /api/v1/lyric` | 가사 추가 (한 줄) | SYSTEM/ADMIN |
     | `PATCH /api/v1/lyric/{lyricId}` | 가사 수정 | SYSTEM/ADMIN |
     | `DELETE /api/v1/lyric/{lyricId}` | 가사 삭제 | SYSTEM/ADMIN |
 
@@ -62,11 +63,16 @@ docs:
     3. `Storage / 이미지 업로드` (`ALBUM`) → `file_id` 획득
     4. `앨범 생성` (`artist_id`, `image_file_id` 필요) → `album_id` 획득
     5. `음악 추가` (`album_id`, `artist_id` 필요) → `music_id` 획득
-    6. `가사 추가` (`music_id` 필요)
+    6. `가사 일괄 교체` (`music_id` 필요)
     7. `Stream / 스트림 생성` → `청크 업로드` → `스트림 상태 변경(DONE)`
 
     1~7 전체를 `music_preprocessing` 배치가 자동으로 수행합니다. Bruno 로는 같은
     순서를 수동으로 호출하면 됩니다.
+
+    6번은 **곡 하나의 가사를 통째로 갈아 끼웁니다.** 줄 하나만 손보려면
+    `가사 추가`·`가사 수정`·`가사 삭제` 를 씁니다. 배치는 언제나 일괄 교체를
+    쓰는데, 줄마다 부르면 곡 하나가 수십 개의 트랜잭션으로 흩어져 중간에
+    끊겼을 때 반쪽짜리 가사가 남기 때문입니다.
 
     ## 삭제 정책
 

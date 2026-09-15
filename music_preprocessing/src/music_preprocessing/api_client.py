@@ -291,21 +291,28 @@ class MupidClient:
         body = self._request("GET", f"/api/v1/music/{music_id}/lyric")
         return body["data"]["lines"]
 
-    def add_lyric(self, music_id: int, text: str, time_ms: int) -> int:
-        """가사 한 줄을 붙인다.
+    def replace_lyrics(self, music_id: int, lines: list[tuple[int, str]]) -> dict:
+        """한 곡의 가사를 통째로 갈아 끼운다. **기존 가사는 지워진다.**
 
-        서버에 여러 줄을 한 번에 넣는 길이 없어 줄마다 부른다. 516곡이면
-        23,000번쯤 된다 — 배치가 오래 걸리는 것은 이 때문이다.
+        줄마다 `POST /api/v1/lyric` 을 부르던 것을 곡마다 한 번으로 줄인다
+        (505곡 23,628줄 → 505번). 곡 하나가 서버에서 한 트랜잭션이라 중간에
+        끊겨도 반쯤 올라간 가사가 남지 않는다.
+
+        Args:
+            lines: `(time_ms, text)` 를 **보일 순서대로**. 서버는 정렬하지
+                않으므로, 같은 `time_ms` 인 줄들은 여기 순서대로 보인다
+
+        Returns:
+            `{ "music_id": …, "deleted": 지운 줄 수, "created": 넣은 줄 수 }`
         """
         body = self._request(
-            "POST",
-            "/api/v1/lyric",
-            json_body={"music_id": music_id, "text": text, "time_ms": time_ms},
+            "PUT",
+            f"/api/v1/music/{music_id}/lyric",
+            json_body={
+                "lines": [{"text": text, "time_ms": time_ms} for time_ms, text in lines]
+            },
         )
-        return body["data"]["lyric_id"]
-
-    def delete_lyric(self, lyric_id: int) -> None:
-        self._request("DELETE", f"/api/v1/lyric/{lyric_id}")
+        return body["data"]
 
     def create_stream(
         self,
