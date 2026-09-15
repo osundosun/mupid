@@ -6,15 +6,15 @@ backend-verify:
   interruptible: true
   timeout: 15m
   variables:
-    GRADLE_USER_HOME: $CI_PROJECT_DIR/.gradle-ci
-  cache:
-    key:
-      files:
-        - api/gradle/wrapper/gradle-wrapper.properties
-        - api/build.gradle
-    paths:
-      - .gradle-ci/caches/
-      - .gradle-ci/wrapper/
+    # 러너의 /cache 볼륨에 직접 둔다. GitLab 의 `cache:` 기능을 쓰지 않는 이유는
+    # 그것이 캐시를 **zip 으로 말았다 푸는** 데 있다. 실측으로 이 job 286초 중
+    # 복원 80초 + 저장 71초가 압축·해제였고(53%), 실제 Gradle 빌드는 97초였다.
+    # 캐시가 약 470MB 인데 러너가 라즈베리파이 4 이고 SD카드 쓰기가 10.9 MB/s 다.
+    #
+    # /cache 는 러너가 프로젝트마다 붙여 주는 도커 볼륨이라 job 사이에 그대로
+    # 남는다 — 압축 없이 같은 효과를 낸다. 동시성이 1 이라 두 job 이 같은
+    # 디렉터리를 동시에 건드릴 일도 없다.
+    GRADLE_USER_HOME: /cache/gradle
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
