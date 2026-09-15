@@ -101,7 +101,7 @@ Wrangler 가 플러그인 import 시점에 로그 경로를 스냅샷하므로, 
 
 ```ts
 const go = (next: Page) => {
-  if (!onboardingSubmittedAt && next !== 'welcome') next = 'welcome';
+  if (!onboardingSubmitted && next !== 'welcome') next = 'welcome';
   ...
   if (next === 'home') url.searchParams.delete('view');
   else url.searchParams.set('view', next);
@@ -159,7 +159,7 @@ export type MupidModel = ReturnType<typeof useMupid>;
 
 ```ts
 saveQueue.current = saveQueue.current.catch(() => {}).then(() =>
-  mupidService.savePreferences({ onboardingSubmittedAt, nickname, moods, liked, ignored, history, moments, playlists })
+  mupidService.savePreferences({ onboardingSubmitted, nickname, moods, liked, ignored, history, moments, playlists })
 ).catch(() => { if (mountedRef.current) setToast('변경 내용을 저장하지 못했어요. 다시 시도해 주세요.'); });
 ```
 

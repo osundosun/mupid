@@ -23,6 +23,13 @@ export type UserInfo = {
   gender: 'M' | 'F' | 'ETC';
   role: 'ROLE_USER' | 'ROLE_SYSTEM' | 'ROLE_ADMIN';
   status: 'PENDING' | 'ACTIVE' | 'WITHDRAW';
+  /**
+   * 온보딩 설문을 마쳤는가. 거짓이면 온보딩 화면으로 보낸다.
+   *
+   * 제출한 **내용**을 받는 길은 없다. 콜드스타트 입력이라 화면이 되읽을 일이
+   * 없고, 읽는 것은 추천 서버뿐이다(`ROLE_SYSTEM` 전용 API).
+   */
+  onboarding_submitted: boolean;
 };
 
 export type SignupBody = {
@@ -124,16 +131,7 @@ export type OnboardingOptions = {
   genres: CodeOption[];
 };
 
-export type OnboardingStatus = {
-  submitted: boolean;
-  submitted_at: string | null;
-  nickname: string;
-  moods: CodeOption[];
-  genres: CodeOption[];
-};
-
 export type OnboardingBody = {
-  nickname: string;
   mood_code_ids: number[];
   genre_code_ids: number[];
 };
@@ -474,13 +472,12 @@ export function createEndpoints(client: ApiClient) {
           anonymous: true,
           signal,
         }),
-      /** 제출 여부와 제출한 내용. */
-      status: (signal?: AbortSignal) =>
-        client.request<OnboardingStatus>({
-          path: '/api/v1/onboarding',
-          signal,
-        }),
-      /** 제출. 이미 제출했으면 서버가 갈아 끼운다. */
+      /**
+       * 제출. **한 번만 할 수 있다** — 두 번째부터는 409
+       * (`MUPID_ONBOARDING_ALREADY_SUBMITTED`) 다.
+       *
+       * 제출 여부는 `user.me()` 의 `onboarding_submitted` 로 확인한다.
+       */
       submit: (body: OnboardingBody) =>
         client.request<void>({
           method: 'POST',

@@ -130,6 +130,12 @@ prior + shrinkage κ=5). 게다가 등급 우선순위·도달 마스킹·인접
 `serve/onboarding.parquet` 도 읽기 전용이다(`onboarding_of()`). Spring 에 온보딩 API 가 이미
 있는데 AI 쪽으로 흐르지 않는다. **이력이 없는 신규 사용자의 첫 추천 품질**이 여기 걸린다.
 
+> **Spring 쪽은 준비됐다** — `GET /api/v1/user/{userId}/onboarding` (`ROLE_SYSTEM` 전용).
+> `{user_id, submitted, submitted_at, moods[], genres[]}` 를 돌려준다. 남은 것은 이걸 당겨
+> `onboarding.parquet` 를 채우는 경로다. 다만 `onboarding_seeds()` 가 읽는 7축 중 Spring 이
+> 가진 것은 **`genre` · `mood` 둘뿐**이다. 나머지(`language` · `vocal_type` · `style` ·
+> `tempo` · `instrument`)는 `onboarding_survey` 에 칼럼이 없다 — ERD 변경이라 팀 합의가 먼저다.
+
 ### 11. 학습·라벨 갱신을 부를 방법
 
 `append_event` · `run_labeler` · `learn_incremental` 은 함수로만 있고 라우터가 없다.

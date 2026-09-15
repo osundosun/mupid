@@ -24,7 +24,8 @@
 | 스트리밍 | 스트림·청크 생성/업로드/조회/다운로드 | 연결 완료 |
 | 이미지 | `POST/GET/DELETE /api/v1/storage/image/{category}/{key}` | 연결 완료 |
 | 이벤트 수집 | `POST /api/v1/events` | 프론트 트래커 있음 |
-| 온보딩 | `GET /api/v1/onboarding/option`, `GET`, `POST /api/v1/onboarding` | 연결 완료 |
+| 온보딩 | `GET /api/v1/onboarding/option`, `POST /api/v1/onboarding` | 연결 완료 · **제출은 계정당 한 번** |
+| 온보딩(배치) | `GET /api/v1/user/{userId}/onboarding` | **`ROLE_SYSTEM` 전용** · 추천 서버가 콜드스타트에 씀 |
 | 좋아요·관심없음 | `PUT/DELETE /api/v1/music/{id}/reaction`, `GET /api/v1/user/reaction[/music]` | 연결 완료 |
 | 최근 감상 | `GET /api/v1/user/history` (적재는 이벤트 수집기가) | 연결 완료 |
 | 시점 댓글 | `GET/POST /api/v1/music/{id}/comment`, `PATCH/DELETE /api/v1/comment/{id}` | 연결 완료 |
@@ -118,8 +119,8 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 ### 3. 온보딩 설문 — ✅ 완료
 
 - `GET /api/v1/onboarding/option` — 고를 수 있는 분위기·장르 (**인증 불필요**)
-- `POST /api/v1/onboarding` — 닉네임·분위기·장르 제출 (재제출 시 교체)
-- `GET /api/v1/onboarding` — 제출 여부·제출 내용
+- `POST /api/v1/onboarding` — 분위기·장르 제출. **계정당 한 번**, 재제출은 409
+- `GET /api/v1/user/{userId}/onboarding` — 제출 내용. **`ROLE_SYSTEM` 전용**
 
 분위기·장르는 이름이 아니라 `codes` 표의 **번호**로 주고받는다. `codes` 는 기준
 데이터라 사람이 넣어야 한다 → [domain/seed-codes.sql](domain/seed-codes.sql).
@@ -134,13 +135,21 @@ raw Opus 프레임은 채널 매핑 패밀리 0(모노·스테레오)만 담는�
 따라온 것:
 
 - 온보딩 화면에 **장르 선택**을 추가했다. 장르 없이는 행을 만들 수 없다.
-- 제출한 닉네임이 계정 닉네임(`users.nickname`)에도 반영된다.
-- 프로필 화면의 "내가 좋아하는 분위기" 도 계정에 반영된다
-  (`useMupid` 의 `updateMoods`).
-- 로그인·세션 복원 시 계정에 있는 설문을 화면 상태로 끌어온다. 다른 기기에서
-  답했으면 온보딩 화면을 건너뛴다.
+- 로그인·세션 복원 시 `GET /api/v1/user` 의 `onboarding_submitted` 로 분기한다.
+  다른 기기에서 답했으면 온보딩 화면을 건너뛴다.
 - 비로그인은 예전처럼 브라우저 저장만 쓴다. 온보딩은 앱에 들어가는 관문이라
   서버가 없다고 막히면 안 된다.
+
+**콜드스타트 입력으로 못박았다** (2026-09-15). 이 설문은 이력이 없는 사람의 첫
+추천을 만드는 값이지 계속 고쳐 쓰는 취향 설정이 아니다 —
+[decision/0017](decision/0017-onboarding-survey-cross-product.md) 의 "고친 것".
+
+- 제출은 **계정당 한 번**이다. 두 번째는 `MUPID_ONBOARDING_ALREADY_SUBMITTED`(409).
+- **본인 조회 API 를 없앴다.** 화면이 답을 되돌려 받을 일이 없다. 진입 분기에
+  쓰는 불리언만 `GET /api/v1/user` 에 실었다.
+- 마이페이지의 취향 편집 칩을 지웠다. 누를 때마다 재제출하고 있었다.
+- 설문이 **닉네임을 받지 않는다.** 회원가입이 이미 받는다. 화면도 3단계에서
+  2단계로 줄었다.
 
 ### 4. 좋아요 / 관심 없음 — ✅ 완료
 

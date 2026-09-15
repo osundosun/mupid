@@ -124,7 +124,7 @@ ERD 반입 시점(2026-09-11)에 기존 엔티티 3개가 ERD 와 여러 곳에�
 |---|---|---|
 | `users.gender` | `ENUM('M','F','ETC')` | `UserGender` 상수를 `MALE`/`FEMALE` → **`M`/`F`** 로 바꿨다. 요청 `gender` 값도 `M`/`F`/`ETC` 다 |
 | `users.role` | `ENUM('ROLE_USER','ROLE_SYSTEM','ROLE_ADMIN')` | `UserRole` 상수를 `GUEST`/`USER`/`ADMIN` → **`ROLE_USER`/`ROLE_SYSTEM`/`ROLE_ADMIN`** 로 바꿨다. `GUEST` 는 없어졌고, 가입 시 권한은 `ROLE_USER` 다 |
-| `users` | `onboarding_submitted_at` 없음 | `User.onboardingSubmittedAt` 필드와 `UserGetInfoResponse` 의 `onboarding_submitted_at` 을 **제거했다.** 온보딩 제출 여부는 앞으로 `onboarding_survey` 로 판단한다 |
+| `users` | `onboarding_submitted_at` 없음 | `User.onboardingSubmittedAt` 필드와 `UserGetInfoResponse` 의 `onboarding_submitted_at` 을 **제거했다.** 온보딩 제출 여부는 `onboarding_survey` 로 판단한다 — `UserGetInfoResponse.onboardingSubmitted` 는 컬럼이 아니라 `OnboardingService.hasSubmitted` 가 그 표를 보고 만드는 값이다 |
 | `object_storage_files` | `file_type`·`category` NOT NULL, MIME 컬럼명은 `mime` | `FileType`(`IMG`/`MUSIC`)·`FileCategory` enum 을 추가하고 `contentType` 필드를 **`mime`** 으로 바꿨다. `StorageService.uploadFile` 이 두 값을 인자로 받는다 |
 | `email_verifications.verified_at` | NULL 허용 | 엔티티가 `nullable = false` 로 잘못 선언돼 있던 것을 `nullable = true` 로 고쳤다 |
 

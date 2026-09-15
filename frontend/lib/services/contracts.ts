@@ -1,11 +1,17 @@
 import type { Track, SavedMoment, Playlist } from '../mupid-data';
-export type AccountSession = { kind: 'demo' | 'authenticated'; nickname: string; userId?: number; onboardingSubmittedAt?: string | null };
+export type AccountSession = { kind: 'demo' | 'authenticated'; nickname: string; userId?: number; onboardingSubmitted?: boolean };
 // 서버 DTO를 UI에 직접 퍼뜨리지 않고 서비스 어댑터에서 이 타입으로 변환한다.
-// onboardingSubmittedAt이 없거나 null이면 로그인 이후 취향 설정이 필요한 것으로 판단한다.
+// onboardingSubmitted가 거짓이면 로그인 이후 취향 설정이 필요한 것으로 판단한다.
 
 /** Frontend domain contract, not a promise about the future backend's DTOs. Times are seconds. */
 export type Preferences = {
-  onboardingSubmittedAt: string | null;
+  /**
+   * 온보딩을 마쳤는가.
+   *
+   * 완료 **시각**은 어디에도 쓰지 않아 들고 있지 않는다. 화면이 묻는 것은
+   * "설문 화면으로 보내야 하는가" 하나뿐이다.
+   */
+  onboardingSubmitted: boolean;
   nickname: string; moods: string[]; genres: string[]; liked: number[]; ignored: number[];
   history: number[]; moments: SavedMoment[]; playlists: Playlist[];
   /** 마지막으로 재생한 곡. null이면 아직 한 곡도 듣지 않은 계정이다. */
