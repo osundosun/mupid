@@ -68,6 +68,8 @@ const PRELOAD_HEAD_SEC = 5;
 /** 수신 ↔ 디코딩 사이 완충. 청크 하나가 6초라 8개면 약 48초. */
 const RING_CAPACITY = 8;
 const FADE_SEC = 0.12;
+/** 재생을 끊을 때 소리를 줄이는 시간. 파형을 수직으로 자르면 딸깍 소리가 난다. */
+const STOP_FADE_SEC = 0.01;
 /**
  * 청크를 풀기 전에 디코더를 덥히는 데 쓸 앞 청크 프레임 수. 20ms × 24 = 480ms.
  *
@@ -85,6 +87,14 @@ const FADE_SEC = 0.12;
 const PRE_ROLL_FRAMES = 24;
 /** 꼬리를 들고 있을 청크 수. 받는 순서가 조금 뒤섞여도 프리롤이 남아 있게 한다. */
 const TAIL_KEEP = 4;
+/**
+ * 프리롤이 될 앞 청크를 기다려 주는 한도.
+ *
+ * 같이 요청한 둘이라 보통은 엇비슷하게 도착한다. 한쪽 응답만 매달리는 일은
+ * 모바일 회선에서 드물지 않은데, 그때까지 소리를 미루면 **잡음 한 번을 피하려고
+ * 정적을 몇 초씩 듣는 셈**이 된다. 한도를 넘기면 프리롤 없이 푼다.
+ */
+const PRE_ROLL_WAIT_SEC = 2;
 
 type ChunkSlot = ChunkInfo & { startSec: number; endSec: number };
 
@@ -105,6 +115,19 @@ type TrackSource = {
    * 그대로 두면 127KB 짜리 청크가 통째로 메모리에 남는다. 복사해서 담는다.
    */
   frameTails: Map<number, Uint8Array[]>;
+  /**
+   * 받아는 놨지만 아직 풀지 않은 청크의 프레임과, 그렇게 기다리기 시작한 시각.
+   *
+   * 앞 청크가 아직 오는 중이면 여기서 기다린다 — 그 꼬리가 있어야 프리롤이
+   * 붙기 때문이다. 자세한 이야기는 `drain` 에 있다.
+   */
+  pending: Map<number, { frames: Uint8Array[]; since: number }>;
+  /**
+   * 프리롤을 얻으려고 받아 본 청크. 재생에 꼭 필요한 청크가 아니라서
+   * **한 번만 시도한다** — 실패한 것을 계속 다시 받으면, 소리는 멀쩡히
+   * 나는 채로 회선만 갉아먹는다. 그 이음새는 프리롤 없이 간다.
+   */
+  tailTried: Set<number>;
 };
 
 const isAbort = (error: unknown) =>
@@ -142,6 +165,8 @@ export class PlayerEngine {
   private nextCtxTime = 0;
 
   private ticker: ReturnType<typeof setInterval> | null = null;
+  /** 프리롤을 기다리는 청크를 다시 볼 시계. `recheckPending` 이 건다. */
+  private pendingTimer: ReturnType<typeof setTimeout> | null = null;
   private loadToken = 0;
   private abort: AbortController | null = null;
 
@@ -414,7 +439,9 @@ export class PlayerEngine {
     this.schedule(buffer, when, position - slot.startSec);
 
     this.store.set({ status: 'playing' });
-    this.fadeIn();
+    // 소리가 실제로 나기 시작하는 시각을 넘긴다. 지금부터 올리면 첫 소리가
+    // 이미 절반쯤 올라간 게인으로 튀어나온다.
+    this.fadeIn(when);
     this.startTicker();
     this.pump();
   }
@@ -438,6 +465,9 @@ export class PlayerEngine {
    * **받는 즉시** 부른다. 디코딩할 때 부르면, 받는 순서와 푸는 순서가 어긋난
    * 사이에 앞 청크의 꼬리가 아직 없을 수 있다 (`fill` 이 여러 청크를 동시에
    * 받는다). 그러면 그 이음새만 프리롤 없이 풀려 소리가 튄다.
+   *
+   * 여기까지는 **도착한 청크**끼리의 순서 이야기다. 앞 청크가 아직 도착도
+   * 하지 않은 경우는 `drain` 이 기다려서 막는다.
    */
   private keepFrames(source: TrackSource, index: number, bytes: ArrayBuffer) {
     const { frames } = parseChunk(bytes);
@@ -475,9 +505,22 @@ export class PlayerEngine {
         void this.fill();
         return;
       }
-      this.schedule(buffer, this.nextCtxTime, 0);
-      this.nextCtxTime += source.chunks[this.nextIndex].endSec -
+      // 울릴 시각이 이미 지났을 수 있다. 화면이 한참 멈춰 있었다는 뜻인데,
+      // 모바일 WebView 는 앱이 뒤로 가면 타이머를 재우면서도 오디오 시계는
+      // 그대로 굴린다. 지난 시각으로 `start` 를 부르면 그 청크가 **처음부터
+      // 지금** 울리고, 뒤 청크들도 줄줄이 같은 순간에 겹쳐 울린다.
+      // 늦은 만큼 건너뛰고 울린다 — 타임라인은 그대로 유지된다.
+      const length = source.chunks[this.nextIndex].endSec -
         source.chunks[this.nextIndex].startSec;
+      const late = context.currentTime - this.nextCtxTime;
+      if (late < length) {
+        this.schedule(
+          buffer,
+          late > 0 ? context.currentTime : this.nextCtxTime,
+          Math.max(0, late),
+        );
+      }
+      this.nextCtxTime += length;
       this.nextIndex += 1;
     }
     void this.fill();
@@ -511,7 +554,10 @@ export class PlayerEngine {
       if (!source) return;
       const position = this.currentPosition();
       this.store.set({ positionSec: position, bufferedSec: this.bufferedUntil() });
-      if (position >= source.durationSec - 0.05) {
+      // 끝까지 울린 뒤에 정리한다. 예전에는 0.05초 먼저 끊었는데, 틱이
+      // 200ms 라 실제로는 곡이 끝나기 전 최대 50ms 를 파형 한가운데서
+      // 잘라내는 일이 생겼다 — 곡이 끝날 때마다 딸깍거리던 원인이다.
+      if (position >= source.durationSec) {
         this.stopSources();
         this.stopTicker();
         this.anchorPosition = source.durationSec;
@@ -527,15 +573,36 @@ export class PlayerEngine {
     this.ticker = null;
   }
 
+  /**
+   * 울리고 있는 소리를 멈춘다.
+   *
+   * 파형 한가운데서 그냥 끊으면 그 자리가 수직 절벽이 되어 딸깍 소리가 난다.
+   * 아주 짧게(10ms) 줄인 뒤 멈춘다 — 사람 귀에는 즉시 멈춘 것과 같고, 절벽은
+   * 사라진다. 이어서 다시 재생할 때는 `fadeIn` 이 게인을 되돌린다.
+   */
   private stopSources() {
+    if (this.playing.length === 0) return;
+    const context = this.context;
+    const gain = this.fadeGain;
+    const at = context && gain ? context.currentTime + STOP_FADE_SEC : null;
+    if (context && gain && at !== null) {
+      gain.gain.cancelScheduledValues(context.currentTime);
+      gain.gain.setValueAtTime(gain.gain.value, context.currentTime);
+      gain.gain.linearRampToValueAtTime(0.0001, at);
+    }
     for (const node of this.playing) {
       node.onended = null;
       try {
-        node.stop();
+        // 멈출 시각을 주면 그때까지는 소리가 이어진다. 위의 램프가 그 사이에
+        // 소리를 0 으로 내린다.
+        if (at !== null) node.stop(at);
+        else node.stop();
       } catch {
         /* 아직 시작 전이면 예외가 난다 */
       }
-      node.disconnect();
+      // 램프가 끝나기 전에 끊으면 소용이 없으니, 노드는 스스로 끝난 뒤에
+      // 정리되게 둔다.
+      setTimeout(() => node.disconnect(), STOP_FADE_SEC * 1000 + 50);
     }
     this.playing = [];
   }
@@ -568,14 +635,26 @@ export class PlayerEngine {
     await new Promise((resolve) => setTimeout(resolve, FADE_SEC * 1000));
   }
 
-  private fadeIn() {
+  /**
+   * 소리를 올린다. `at` 은 **소리가 실제로 나기 시작하는 시각**이다.
+   *
+   * 예약은 `context.currentTime` 이 아니라 조금 뒤(`startAt` 의 `when`)에
+   * 걸린다. 그런데도 램프를 지금부터 올리면, 첫 소리가 나는 순간에는 게인이
+   * 이미 40% 를 넘어 있다 — 무음에서 -8dB 로 수직으로 뛰는 셈이라 Seek 마다
+   * 앞머리가 '툭' 한다. `at` 까지는 눌러 두고 거기서부터 올린다.
+   */
+  private fadeIn(at?: number) {
     const gain = this.fadeGain;
     const context = this.context;
     if (!gain || !context) return;
     const now = context.currentTime;
+    const from = Math.max(at ?? now, now);
     gain.gain.cancelScheduledValues(now);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(1, now + FADE_SEC);
+    // 램프는 바로 앞 이벤트에서 출발한다. 이 점을 찍어 두어야 `from` 까지
+    // 눌러 두었다가 거기서부터 올라간다.
+    if (from > now) gain.gain.setValueAtTime(0.0001, from);
+    gain.gain.linearRampToValueAtTime(1, from + FADE_SEC);
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -618,6 +697,8 @@ export class PlayerEngine {
       decoded: new Map(),
       inflight: new Set(),
       frameTails: new Map(),
+      pending: new Map(),
+      tailTried: new Set(),
     };
   }
 
@@ -628,10 +709,31 @@ export class PlayerEngine {
     const from = Math.max(0, this.indexAt(this.currentPosition()));
     const untilSec = this.currentPosition() + SCHEDULE_AHEAD_SEC * 2;
 
+    // Seek 로 건너뛴 자리에는 앞 청크의 꼬리가 없다. 이어 듣는 중이면 앞
+    // 청크를 이미 받아 뒀으니 이 조건에 걸리지 않고, 건너뛴 자리에서만
+    // **앞 청크를 함께 요청해 프리롤을 얻는다.** 둘을 나란히 받으므로 기다림이
+    // 두 배가 되지는 않는다. 받아 둔 김에 풀어서 들고 있으면 조금 되감을 때도
+    // 바로 들린다 — 꼬리만 떼고 버리기에는 아까운 데이터다.
+    if (
+      from > 0 &&
+      !source.frameTails.has(from - 1) &&
+      !source.inflight.has(from - 1) &&
+      !source.tailTried.has(from - 1) &&
+      // 재생할 청크가 이미 풀려 있으면 프리롤은 쓸 데가 없다.
+      !source.decoded.has(from) &&
+      this.ring.size + source.pending.size < RING_CAPACITY
+    ) {
+      source.tailTried.add(from - 1);
+      source.inflight.add(from - 1);
+      void this.receive(source, from - 1);
+    }
+
     for (let index = from; index < source.chunks.length; index += 1) {
       if (source.chunks[index].startSec > untilSec) break;
       if (source.decoded.has(index) || source.inflight.has(index)) continue;
-      if (this.ring.isFull) break;
+      // 링버퍼에서 꺼내 `pending` 으로 옮겨 둔 것도 아직 메모리에 있는
+      // 청크다. 둘을 합쳐 세야 받아 두는 양이 원래 의도대로 묶인다.
+      if (this.ring.size + source.pending.size >= RING_CAPACITY) break;
       source.inflight.add(index);
       void this.receive(source, index);
     }
@@ -654,6 +756,9 @@ export class PlayerEngine {
       void this.drain(source);
     } catch (error) {
       source.inflight.delete(index);
+      // 이 청크를 프리롤로 기다리던 다음 청크가 있을 수 있다. 영영 오지
+      // 않게 됐으니 다시 깨워 프리롤 없이라도 풀게 한다.
+      void this.drain(source);
       if (isAbort(error)) return;
       // 한 청크 실패로 곡 전체를 죽이지 않는다. 다음 fill 에서 다시 받는다.
       if (this.source === source && this.store.get().status === 'buffering') {
@@ -664,15 +769,21 @@ export class PlayerEngine {
     }
   }
 
-  /** 링버퍼에서 하나씩 꺼내 PCM 으로 바꾼다. 한 번에 하나만 돈다. */
   /**
-   * 링버퍼에 쌓인 청크를 디코딩해 재생 가능한 상태로 옮긴다.
+   * 링버퍼에 쌓인 청크를 디코딩해 재생 가능한 상태로 옮긴다. 한 번에 하나만 돈다.
    *
    * 도는 동안 새 청크가 들어오면 **그 사실을 적어 두고 같은 실행에서 이어
    * 처리한다.** 예전에는 `draining` 이 켜져 있으면 그냥 돌아갔는데, 마침
    * 루프가 막 끝난 참이면 그 청크를 아무도 집지 않아 버퍼링 상태로 굳었다.
    * 버퍼링 중에는 타이머도 돌지 않아 스스로 빠져나오지 못했고, 곡이 끝나지
    * 않으니 다음 곡으로도 넘어가지 않았다.
+   *
+   * **도착한 순서가 아니라 프리롤이 준비된 순서로 푼다.** `fill` 은 청크
+   * 두셋을 동시에 받는데, 응답이 보낸 순서대로 돌아온다는 보장이 없다 —
+   * 모바일 회선에서는 뒤 청크가 앞 청크를 앞지르는 일이 잦다. 그러면 앞
+   * 청크의 꼬리가 아직 없어 그 이음새만 프리롤 없이 풀리고, 6초마다가
+   * 아니라 **어쩌다 한 번씩 '퍽' 하는 소리**가 된다. 앞 청크가 아직 오는
+   * 중이면 여기서 기다렸다가 꼬리가 생긴 뒤에 푼다.
    */
   private async drain(source: TrackSource) {
     if (this.draining) {
@@ -687,20 +798,34 @@ export class PlayerEngine {
       do {
         this.drainPending = false;
         for (;;) {
-          const item = this.ring.shift();
-          if (!item) break;
-          const slot = source.chunks[item.index];
-          if (!slot) continue;
+          // 링버퍼는 곧바로 비운다. 여기서 기다리게 두면 수신 쪽이 막힌다.
+          for (;;) {
+            const item = this.ring.shift();
+            if (!item) break;
+            if (source.chunks[item.index]) {
+              source.pending.set(item.index, {
+                frames: item.frames,
+                since: Date.now(),
+              });
+            } else {
+              source.inflight.delete(item.index);
+            }
+          }
+          const index = this.readyToDecode(source);
+          if (index === null) break;
+          const { frames } = source.pending.get(index)!;
+          source.pending.delete(index);
+          const slot = source.chunks[index];
           try {
-            const buffer = await decodeOpusFrames(context, item.frames, {
+            const buffer = await decodeOpusFrames(context, frames, {
               channels: source.channels,
               frameDurationMs: 20,
               expectedSamples: Math.round(
                 (slot.duration_ms / 1000) * OPUS_SAMPLE_RATE,
               ),
-              preRoll: source.frameTails.get(item.index - 1),
+              preRoll: source.frameTails.get(index - 1),
             });
-            source.decoded.set(item.index, buffer);
+            source.decoded.set(index, buffer);
           } catch (error) {
             if (this.source === source) {
               this.fail(
@@ -710,7 +835,7 @@ export class PlayerEngine {
               );
             }
           } finally {
-            source.inflight.delete(item.index);
+            source.inflight.delete(index);
           }
         }
       } while (this.drainPending);
@@ -718,6 +843,9 @@ export class PlayerEngine {
       this.draining = false;
       this.drainPending = false;
     }
+    // 프리롤을 기다리느라 남겨 둔 것이 있으면 한도가 지난 뒤 한 번 더 본다.
+    // 앞 청크의 응답이 끝내 매달려 있어도 소리가 멈추지 않는다.
+    this.recheckPending(source);
     // 버퍼링 때문에 멈춰 있었다면 여기서 이어서 시작한다.
     if (this.source === source && this.store.get().status === 'buffering') {
       this.store.set({ bufferedSec: this.bufferedUntil() });
@@ -726,6 +854,51 @@ export class PlayerEngine {
       }
     }
     void this.fill();
+  }
+
+  /**
+   * 지금 풀어도 되는 청크 중 가장 앞의 것. 하나도 없으면 null.
+   *
+   * 앞 청크가 아직 **오는 중이면** 기다린다 — 곧 꼬리가 생기고, 그래야
+   * 프리롤이 붙는다. 꼬리는 받는 즉시 적어 두므로(`keepFrames`) 앞 청크가
+   * 도착만 했으면 아직 풀기 전이어도 프리롤로 쓸 수 있다.
+   *
+   * 기다려도 소용없는 자리에서는 그냥 푼다. 첫 청크(앞이 없다), 앞 청크를
+   * 받아 봤지만 실패한 자리(`tailTried`), 그리고 `PRE_ROLL_WAIT_SEC` 를
+   * 넘겨 기다린 자리다. 그 이음새만 워밍업 잡음이 남는다.
+   */
+  private readyToDecode(source: TrackSource): number | null {
+    const now = Date.now();
+    let first: number | null = null;
+    for (const [index, item] of source.pending) {
+      if (first !== null && index >= first) continue;
+      const waiting =
+        index > 0 &&
+        !source.frameTails.has(index - 1) &&
+        source.inflight.has(index - 1) &&
+        now - item.since < PRE_ROLL_WAIT_SEC * 1000;
+      if (!waiting) first = index;
+    }
+    return first;
+  }
+
+  /**
+   * 프리롤을 기다리며 남겨 둔 청크를 한도가 지난 뒤 다시 본다.
+   *
+   * `drain` 은 새 청크가 들어올 때만 도는데, 기다리는 대상이 바로 그 청크다.
+   * 끝내 오지 않으면 아무도 깨우지 않으므로 여기서 시계를 걸어 둔다.
+   */
+  private recheckPending(source: TrackSource) {
+    if (this.pendingTimer !== null) return;
+    let wait = Infinity;
+    for (const item of source.pending.values()) {
+      wait = Math.min(wait, PRE_ROLL_WAIT_SEC * 1000 - (Date.now() - item.since));
+    }
+    if (!Number.isFinite(wait)) return;
+    this.pendingTimer = setTimeout(() => {
+      this.pendingTimer = null;
+      if (this.source === source) void this.drain(source);
+    }, Math.max(0, wait) + 10);
   }
 
   /** 대기열 곡의 앞부분을 미리 받아 둔다. */
