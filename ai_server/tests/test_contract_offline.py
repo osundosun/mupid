@@ -1484,3 +1484,121 @@ def test_onboarding_cli_has_no_dead_flag(capsys):
     help_text = capsys.readouterr().out
     assert "--from-id-map" not in help_text
     assert "--users-file" in help_text
+
+
+# ------------------------------------------------------------------ 5대 결함 회귀
+def test_onboarding_builds_the_catalog_itself(monkeypatch):
+    """배치는 서버 lifespan 을 타지 않는다. `CAT` 을 직접 만들지 않으면
+    `catalog_facets()` 가 NoneType 으로 **항상** 터져 장르 변환이 전부 실패한다."""
+    from ai_server.app import recommender
+    from ai_server.tools import fetch_onboarding as f
+
+    made = {"n": 0}
+
+    class _Cat:
+        pass
+
+    monkeypatch.setattr(recommender, "CAT", None)
+    monkeypatch.setattr(recommender, "Catalog", lambda: (made.__setitem__("n", 1), _Cat())[1])
+    monkeypatch.setattr(recommender, "catalog_facets",
+                        lambda: {"genre": [{"value": "K-pop"}]})
+    assert f.genre_catalog() == ["K-pop"]
+    assert made["n"] == 1, "Catalog() 를 만들지 않았다"
+
+
+def test_clickhouse_url_scheme_is_never_downgraded(monkeypatch):
+    """`https://` 로 적어 둔 ClickHouse 에 평문으로 붙으면 자격증명이 그대로 샌다."""
+    from ai_server.tools import push_sections as ps
+
+    monkeypatch.setenv("MUPID_CLICKHOUSE_URL", "https://ch.example.com:8443")
+    assert ps._http_base() == "https://ch.example.com:8443"
+
+    monkeypatch.setenv("MUPID_CLICKHOUSE_URL", "jdbc:clickhouse://ch:8443/default")
+    monkeypatch.setenv("MUPID_CLICKHOUSE_SECURE", "1")
+    assert ps._http_base() == "https://ch:8443"
+
+    monkeypatch.setenv("MUPID_CLICKHOUSE_SECURE", "")
+    assert ps._http_base() == "http://ch:8443"
+
+
+def test_play_events_reach_the_behaviour_signals():
+    """`user_behavior()` 는 PLAY_START 로 최근 재생을, PLAY_END 로 완주·초기 스킵을
+    센다. 두 이벤트가 들어오지 않으면 그 보정이 통째로 0 이 된다."""
+    from ai_server.tools import pull_signals as pl
+
+    class _IM:
+        def source_track_id(self, n):
+            return "T000001"
+
+    start = pl.to_play_event(
+        {"user_id": 7, "track_id": 1, "signal": "PLAY_START", "entry_path": "RECOMMEND",
+         "reason": "", "position_ms": 0, "play_id": "p1",
+         "ts": "2026-09-15 10:00:00.000"}, _IM())
+    assert start["event_type"] == "PLAY_START"
+    assert start["context"]["surface"] == "recommendation"
+
+    end = pl.to_play_event(
+        {"user_id": 7, "track_id": 1, "signal": "PLAY_END", "entry_path": "RECOMMEND",
+         "reason": "skip_next", "position_ms": 3200, "play_id": "p1",
+         "ts": "2026-09-15 10:00:03.200"}, _IM())
+    assert end["reason"] == "skip_next"
+    assert end["position_sec"] == 3.2        # 초기 스킵 판정이 초 단위다
+    assert end["event_id"] != start["event_id"]
+
+
+def test_play_surface_matches_the_recommendation_vocabulary():
+    """어휘가 어긋나면 추천 경로 스킵 판정이 통째로 빠진다."""
+    from ai_server.app import recommender
+    from ai_server.tools import pull_signals as pl
+
+    for entry, surface in pl.SURFACE.items():
+        if entry in ("RECOMMEND", "AUTO", "AUTOPLAY", "DAILY", "DAILY_RECOMMEND"):
+            assert surface in recommender.BEH_REC_SURFACES, (entry, surface)
+
+
+def test_behaviour_is_not_rescanned_for_every_request(tmp_path, monkeypatch):
+    """추천은 사용자가 기다리는 경로다. 요청마다 로그 전체를 훑으면 안 된다."""
+    from ai_server.app import recommender
+
+    log = tmp_path / "events.jsonl"
+    log.write_text(json.dumps({
+        "user_ref": "u1", "track_id": "T1", "event_type": "PLAY_START",
+        "occurred_at": "2026-09-15T10:00:00Z"}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(recommender, "EVENTS", log)
+    recommender._BEH_CACHE.clear()
+
+    reads = {"n": 0}
+    real_open = type(log).open
+
+    def counting_open(self, *a, **k):
+        if self == log:
+            reads["n"] += 1
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(type(log), "open", counting_open)
+    now = 1_800_000_000.0
+    a = recommender.user_behavior("u1", now=now)
+    b = recommender.user_behavior("u1", now=now)
+    assert reads["n"] == 1, f"로그를 {reads['n']}번 읽었다"
+    assert a["recent_play"] == b["recent_play"]
+
+    # 로그가 자라면 캐시를 버려야 한다
+    with real_open(log, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"user_ref": "u1", "track_id": "T2",
+                             "event_type": "PLAY_START",
+                             "occurred_at": "2026-09-15T10:00:01Z"}) + "\n")
+    recommender.user_behavior("u1", now=now)
+    assert reads["n"] == 2, "로그가 바뀌었는데 다시 읽지 않았다"
+
+
+def test_pull_signals_dedup_does_not_read_the_whole_log(tmp_path, monkeypatch):
+    """중복 확인 때문에 로그 전체를 읽던 것을 워터마크 파일로 옮겼다."""
+    from ai_server.tools import pull_signals as pl
+
+    wm = tmp_path / "wm.json"
+    monkeypatch.setattr(pl, "watermark_path", lambda: wm)
+    assert pl.recent_ids() == set()
+
+    pl.save_watermark("2026-09-15 10:00:00.000", 2, ["ch_a", "ch_b"])
+    assert pl.recent_ids() == {"ch_a", "ch_b"}
+    assert not wm.with_suffix(".json.tmp").exists(), "임시 파일이 남았다"

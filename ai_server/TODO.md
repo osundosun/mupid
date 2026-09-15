@@ -107,6 +107,11 @@ compose 서비스, CI, 헬스체크가 전부 없다.
 
 ### 8. 행동 신호를 ClickHouse 조회로 (S15P21A204-217)
 
+> **2026-09-15 해소.** `ai_server/tools/pull_signals.py` 가 `user_section_signals` 와
+> `listen_events`(PLAY_START·PLAY_END)를 워터마크 증분으로 읽어 행동 로그에 쌓는다.
+> 전수 스캔도 함께 걷어냈다 — `user_behavior()` 는 로그 크기·mtime 으로 캐시하고,
+> 중복 확인은 워터마크 파일의 직전 회차 ID 만 본다.
+
 `user_behavior()`(`recommender.py:773`)가 **요청마다 `events_service.jsonl` 을 전수 스캔**한다.
 p50 2.22초의 주범이다(콜드스타트는 0.30초).
 
@@ -117,6 +122,10 @@ MV 는 이벤트→구간 매핑과 가중치까지 이미 물고 있다.
 **효과가 가장 빨리 보이는 항목이다.** Spring 의 5초 타임아웃과도 직결된다.
 
 ### 9. 라벨 재생성 배치
+
+> **2026-09-15 해소.** `python -m ai_server.tools.run_labeler` 로 돌린다. 신호 수집
+> (`pull_signals`) 뒤에 이어 붙이면 된다. Kubernetes CronJob 으로 옮길 수 있게
+> 종료 코드만 쓰고 상태를 남기지 않는다.
 
 `labels_service.parquet` 이 없으면 **오류 없이 전원 콜드스타트**가 된다(README 가 이식 중 실제로
 겪었다고 적어 둔 사고). 지금 이 파일을 채우는 경로가 없다.
@@ -130,6 +139,11 @@ prior + shrinkage κ=5). 게다가 등급 우선순위·도달 마스킹·인접
 (최근성은 8번이 담당한다).
 
 ### 10. 온보딩 취향 유입
+
+> **2026-09-15 해소.** `ai_server/tools/fetch_onboarding.py` 가 받아
+> `serve/onboarding.parquet` 로 떨군다. **다만 어휘가 한 건도 겹치지 않아**
+> (mood 0/8 · genre 0/8) 변환표를 함께 둔 상태다. 축은 mood·genre 둘뿐이고,
+> 나머지 다섯은 ERD 변경이 선행이다.
 
 `serve/onboarding.parquet` 도 읽기 전용이다(`onboarding_of()`). Spring 에 온보딩 API 가 이미
 있는데 AI 쪽으로 흐르지 않는다. **이력이 없는 신규 사용자의 첫 추천 품질**이 여기 걸린다.
@@ -155,6 +169,10 @@ prior + shrinkage κ=5). 게다가 등급 우선순위·도달 마스킹·인접
 
 ### 12. 일일 추천 적재
 
+> **미해결 · 차단됨.** Spring 적재 API 가 없고 `daily_recommendation_tracks` 에
+> 구간을 가리킬 컬럼도 없다. 계약 제안은 `api/docs/AI/요구 2`,
+> 차단 사유는 `infra/AI-API-BLOCKERS.md`.
+
 Spring `GET /api/v1/recommendation/daily` 는 `daily_recommendations` 를 **읽기만** 한다
 (`api/knowledge/api-todo.md` #12). 채우는 잡이 필요하다.
 
@@ -162,6 +180,9 @@ Spring `GET /api/v1/recommendation/daily` 는 `daily_recommendations` 를 **읽�
 스키마 소유권은 Spring 에 둔다(decision/0011).
 
 ### 13. `/internal/similar` — 비슷한 구간·파생곡
+
+> **2026-09-15 해소(AI 쪽).** `POST /internal/similar` 로 열려 있다. Spring 쪽
+> 사용자용 엔드포인트는 아직 없다 — `api/docs/AI/요구 4` 와 `infra/AI-API-BLOCKERS.md`.
 
 `moments_emb.npy` 가 이미 있어 계산은 되는데 노출이 없다. 화면은 데모 정렬 중이다
 (api-todo #15, Pinecone S15P21A204-214).
@@ -177,6 +198,9 @@ Spring `GET /api/v1/recommendation/daily` 는 `daily_recommendations` 를 **읽�
 ## P4 — 실행기·운영·정리
 
 ### 15. 랭킹 실행기를 numpy 로 (torch 제거)
+
+> **2026-09-15 완료.** `app/stage1_np.py` 가 실행기이고 이미지에 torch 가 없다.
+> `tools/export_stage1_npz.py` 로 `stage1_weights.npz` 를 굽는다.
 
 서빙에서 torch 가 하는 일은 **요청당 forward 한 번**뿐이다. 구간 임베딩은
 `stage1_section.npy` 로 이미 구워져 있고 스코어링은 numpy matmul 이다(`recommender.py:1322`).

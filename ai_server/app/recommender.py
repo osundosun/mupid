@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -97,6 +98,9 @@ FLOW_W_ENERGY = 0.08           # 이어 듣기: 에너지가 튈 때의 감점 �
 FLOW_BPM_TOL = 0.5             # log2 배율 — 0.5 는 약 1.41배까지 허용
 BEH_SKIP_HALF_LIFE_DAYS = 7.0  # Early Skip 감점 반감기
 BEH_REC_SURFACES = ("autoplay", "recommendation", "daily_recommendation")
+# (user, 로그 크기, mtime, 분) -> 집계. 로그가 바뀌면 키가 달라져 자동으로 무효가 된다.
+_BEH_CACHE: dict = {}
+_BEH_CACHE_MAX = 256
 # 4시간 즉시 재추천 방지는 "정상 재생"에만 적용한다. Early Skip 은 영구 제외가 아니라 감점이다.
 BEH_PLAYED_REASONS = ("track_done", "user_stop", "replaced")
 
@@ -904,6 +908,15 @@ def user_behavior(user: str, now: float | None = None) -> dict:
            "complete": {}, "skip_pen": {}, "delta": {}, "recent_pen": {}, "events": 0}
     if not EVENTS.exists():
         return out
+
+    # 로그가 그대로면 다시 읽지 않는다. 추천은 사용자가 기다리는 경로라 요청마다
+    # 전체를 훑으면 로그 크기에 비례해 느려진다. 파일이 자라거나 바뀌면 캐시를 버린다.
+    # (시간이 흐르면 감쇠 값이 달라지므로 `now` 도 키에 넣는다 — 분 단위로 끊는다.)
+    st = EVENTS.stat()
+    ck = (user, st.st_size, st.st_mtime_ns, int(now // 60))
+    hit = _BEH_CACHE.get(ck)
+    if hit is not None:
+        return copy.deepcopy(hit)
     cut = now - RECENT_EXCLUDE_SEC
     recent_ts: dict[str, float] = {}    # track -> 최근 PLAY_START 시각
     toggles: dict[str, list] = {}       # track -> [(ts, event_type)]
@@ -993,6 +1006,9 @@ def user_behavior(user: str, now: float | None = None) -> dict:
             # 스킵 감점이 가점을 깎을 수는 있어도 음수로 끌어내리지는 못한다.
             d = max(d, 0.0)
         out["delta"][tid] = d
+    if len(_BEH_CACHE) > _BEH_CACHE_MAX:
+        _BEH_CACHE.clear()          # 사용자가 늘면 통째로 비운다. LRU 까지는 필요 없다
+    _BEH_CACHE[ck] = copy.deepcopy(out)
     return out
 
 

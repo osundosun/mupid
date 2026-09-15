@@ -6,13 +6,13 @@
 
     mysql ... -e "
       SELECT s.external_id AS source_section_uid,
-             s.music_section_id AS music_section_id,
+             s.music_section_analysis_id AS music_section_id,
              m.music_id
       FROM music_section_analysis s JOIN music m ON m.music_id = s.music_id
     " --batch > sections.tsv
 
-구간 PK 컬럼명이 아직 두 벌(`music_section_id` / `music_section_analysis_id`)이다. 별칭으로
-`music_section_id` 만 맞춰 주면 어느 쪽이든 읽는다.
+구간 PK 는 **`music_section_analysis_id`** 다(JPA 기준으로 확정, `erd.sql` 반영 완료).
+이 도구는 별칭 `music_section_id` 만 보므로 DB 컬럼명이 또 바뀌어도 SELECT 만 고치면 된다.
 
     MUPID_AI_ARTIFACT_DIR=/경로 python -m ai_server.tools.build_id_map sections.tsv
 

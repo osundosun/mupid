@@ -37,6 +37,16 @@ from ai_server.tools.push_sections import query
 KNOWN = ("SECTION_MARK", "SECTION_UNMARK", "LIKE", "UNLIKE", "DISLIKE",
          "PLAYLIST_ADD", "PLAYLIST_REMOVE", "COMMENT_ADD", "SEEK_BACK")
 
+# 곡 단위 재생 신호. 구간 신호와 달리 원본 `listen_events` 에서 읽는다 —
+# `user_section_signals` 는 구간 단위라 `reason`·`position_ms` 를 갖고 있지 않다.
+PLAY_EVENTS = ("PLAY_START", "PLAY_END")
+
+# ClickHouse `entry_path` → AI `context.surface`.
+# `user_behavior()` 는 **추천 경로에서 난 스킵만** 부정 신호로 센다. 어휘가 어긋나면
+# 그 판정이 통째로 빠지므로 여기서 맞춘다.
+SURFACE = {"RECOMMEND": "recommendation", "AUTO": "autoplay", "AUTOPLAY": "autoplay",
+           "DAILY": "daily_recommendation", "DAILY_RECOMMEND": "daily_recommendation"}
+
 EPOCH = "1970-01-01 00:00:00.000"
 
 
@@ -54,11 +64,18 @@ def load_watermark() -> str:
         return EPOCH
 
 
-def save_watermark(value: str, n: int) -> None:
+# 경계의 같은 밀리초를 다시 읽을 때만 쓰므로 많이 들고 있을 필요가 없다.
+RECENT_KEEP = 2000
+
+
+def save_watermark(value: str, n: int, recent: list[str] | None = None) -> None:
     p = watermark_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"occurred_at": value, "last_batch": n},
-                            ensure_ascii=False), encoding="utf-8")
+    body = {"occurred_at": value, "last_batch": n,
+            "recent_ids": (recent or [])[-RECENT_KEEP:]}
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(p)                 # 중간에 죽어도 반쪽 파일이 남지 않는다
 
 
 def fetch(since: str, limit: int) -> list[dict]:
@@ -76,26 +93,70 @@ def fetch(since: str, limit: int) -> list[dict]:
     return [json.loads(ln) for ln in text.splitlines() if ln.strip()]
 
 
+def fetch_plays(since: str, limit: int) -> list[dict]:
+    """재생·스킵 원본. 완주 가점·초기 스킵 감점·최근 4시간 제외가 여기서 나온다."""
+    types = ",".join(f"'{t}'" for t in PLAY_EVENTS)
+    sql = (
+        "SELECT user_id, track_id, event_type AS signal, entry_path, reason, "
+        "position_ms, toString(play_id) AS play_id, "
+        "toString(occurred_at) AS ts "
+        "FROM listen_events "
+        f"WHERE event_type IN ({types}) AND track_id > 0 "
+        f"AND occurred_at >= parseDateTime64BestEffort('{since}', 3) "
+        "ORDER BY occurred_at "
+        f"LIMIT {int(limit)} FORMAT JSONEachRow"
+    )
+    return [json.loads(ln) for ln in query(sql).splitlines() if ln.strip()]
+
+
+def to_play_event(r: dict, im) -> dict | None:
+    """곡 단위 재생 신호 한 건. 구간 경계가 없으므로 `section_uid` 도 없다."""
+    sig = str(r["signal"])
+    if sig not in PLAY_EVENTS:
+        return None
+    try:
+        track = im.source_track_id(int(r["track_id"]))
+    except Exception:
+        return None
+    ep = str(r.get("entry_path") or "").upper()
+    ev = {"event_id": event_id(r),
+          "user_ref": f"internal:{int(r['user_id'])}",
+          "track_id": track,
+          "event_type": sig,
+          "occurred_at": str(r["ts"]).replace(" ", "T") + "Z",
+          "entry_path": r.get("entry_path") or "",
+          # `user_behavior()` 가 context.surface 로 추천 경로를 가린다
+          "context": {"surface": SURFACE.get(ep, ep.lower())},
+          "play_id": r.get("play_id") or "",
+          "source": "clickhouse"}
+    if sig == "PLAY_END":
+        ev["reason"] = str(r.get("reason") or "")
+        # 초기 스킵 판정은 초 단위로 본다 (FAST_SKIP_SEC)
+        ev["position_sec"] = round(int(r.get("position_ms") or 0) / 1000.0, 3)
+    return ev
+
+
 def event_id(r: dict) -> str:
     """내용에서 만든다. 같은 신호를 두 번 받아도 한 번만 쌓인다."""
-    key = f"{r['user_id']}|{r['section_uid']}|{r['signal']}|{r['ts']}"
+    key = (f"{r['user_id']}|{r.get('section_uid') or r.get('track_id')}"
+           f"|{r['signal']}|{r['ts']}|{r.get('play_id', '')}")
     return "ch_" + hashlib.sha1(key.encode()).hexdigest()[:22]
 
 
-def seen_ids() -> set:
-    p = recommender.EVENTS
+def recent_ids() -> set:
+    """직전 회차에 넣은 이벤트 ID.
+
+    예전에는 중복을 막으려고 **로그 전체**를 읽었다. 로그가 커질수록 배치가 같이
+    느려지는데, 얻는 것은 경계의 같은 밀리초를 거르는 일뿐이다. 워터마크가 그 앞은
+    이미 걸러 주므로 직전 회차 ID 만 들고 있으면 충분하다.
+    """
+    p = watermark_path()
     if not p.exists():
         return set()
-    out = set()
-    for ln in p.open(encoding="utf-8"):
-        ln = ln.strip()
-        if not ln:
-            continue
-        try:
-            out.add(json.loads(ln).get("event_id"))
-        except Exception:
-            continue
-    return out
+    try:
+        return set(json.loads(p.read_text(encoding="utf-8")).get("recent_ids") or [])
+    except Exception:
+        return set()
 
 
 def to_event(r: dict, bounds: dict, im) -> dict | None:
@@ -134,26 +195,31 @@ def section_bounds() -> dict:
 
 def run(limit: int, dry_run: bool) -> dict:
     since = load_watermark()
-    rows = fetch(since, limit)
-    log(f"워터마크 {since} 이후 {len(rows)}건")
-    if not rows:
+    sig_rows = fetch(since, limit)
+    play_rows = fetch_plays(since, limit)
+    log(f"워터마크 {since} 이후 구간신호 {len(sig_rows)}건 · 재생신호 {len(play_rows)}건")
+    if not sig_rows and not play_rows:
         return {"fetched": 0, "appended": 0, "watermark": since}
 
     bounds, im = section_bounds(), ids.id_map()
-    known = seen_ids()
+    known = recent_ids()
     appended, dup, dropped = 0, 0, 0
     last = since
-    for r in rows:
-        ev = to_event(r, bounds, im)
+    fresh: list[str] = []
+
+    for r, maker in ([(r, "section") for r in sig_rows]
+                     + [(r, "play") for r in play_rows]):
+        ev = (to_event(r, bounds, im) if maker == "section"
+              else to_play_event(r, im))
         if ev is None:
             dropped += 1
         elif ev["event_id"] in known:
             dup += 1
-        elif not dry_run:
-            recommender.append_event(ev)
-            known.add(ev["event_id"])
-            appended += 1
         else:
+            if not dry_run:
+                recommender.append_event(ev)
+            known.add(ev["event_id"])
+            fresh.append(ev["event_id"])
             appended += 1
         last = max(last, str(r["ts"]))
 
@@ -161,10 +227,12 @@ def run(limit: int, dry_run: bool) -> dict:
     if dropped:
         log("  제외는 구간 표와 AI 색인이 어긋났다는 뜻이다 — push_sections 버전을 본다")
     if not dry_run:
-        save_watermark(last, len(rows))      # 성공했을 때만 전진한다
+        # 성공했을 때만 전진한다. 경계의 같은 밀리초를 다시 읽으므로 그때 쓸
+        # ID 목록을 함께 남긴다 — 로그 전체를 다시 훑지 않기 위해서다.
+        save_watermark(last, len(sig_rows) + len(play_rows), fresh)
         log(f"워터마크 → {last}")
-    return {"fetched": len(rows), "appended": appended, "duplicate": dup,
-            "dropped": dropped, "watermark": last}
+    return {"fetched": len(sig_rows) + len(play_rows), "appended": appended,
+            "duplicate": dup, "dropped": dropped, "watermark": last}
 
 
 def main() -> int:
@@ -176,7 +244,7 @@ def main() -> int:
     a = ap.parse_args()
 
     if a.reset:
-        save_watermark(EPOCH, 0)
+        save_watermark(EPOCH, 0, [])
         log("워터마크를 처음으로 되돌렸다")
 
     try:

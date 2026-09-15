@@ -94,6 +94,14 @@ class CatalogUnavailable(RuntimeError):
     """장르 어휘를 읽지 못했다. 조용히 빈 값을 쓰면 취향이 사라진다."""
 
 
+def ensure_catalog() -> None:
+    """`catalog_facets()` 는 전역 `CAT` 을 읽는다. 배치는 서버 lifespan 을 타지 않으므로
+    직접 만들어 줘야 한다 — 안 하면 `NoneType.by_track` 으로 **항상** 실패한다.
+    `run_labeler` 도 같은 이유로 같은 줄을 갖고 있다."""
+    if recommender.CAT is None:
+        recommender.CAT = recommender.Catalog()
+
+
 def genre_catalog() -> list[str]:
     """AI 카탈로그의 장르 어휘. 없으면 **멈춘다.**
 
@@ -102,6 +110,7 @@ def genre_catalog() -> list[str]:
     그 사용자는 영원히 개인화를 못 받는다.
     """
     try:
+        ensure_catalog()
         vals = [str(x["value"]) for x in recommender.catalog_facets().get("genre", [])]
     except Exception as e:
         raise CatalogUnavailable(f"장르 어휘를 읽지 못했다 ({type(e).__name__}: {e})") from None
