@@ -42,6 +42,11 @@ spec:
               valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_GMAIL_CLIENT_SECRET}}
             - name: MUPID_GMAIL_TOKEN
               valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_GMAIL_TOKEN}}
+            # ClickHouse now requires the mupid account (users/10-mupid-user.xml);
+            # the pool is created lazily, so an absent password shows up as a
+            # failing analytics query rather than a pod that will not start.
+            - name: MUPID_CLICKHOUSE_PASSWORD
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_CLICKHOUSE_PASSWORD}}
             - name: MUPID_S3_ACCESS_KEY
               valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_S3_ACCESS_KEY}}
             - name: MUPID_S3_SECRET

@@ -18,7 +18,9 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 K8S = ROOT / "infra_k8s"
-OVERLAYS = ("parallel", "cutover")
+# One overlay: the Compose stack is removed before this is applied, so
+# there is no port-sharing arrangement left to represent.
+OVERLAYS = ("cutover",)
 KUBECTL = shutil.which("kubectl")
 
 
@@ -62,6 +64,49 @@ class NginxCopyTest(unittest.TestCase):
             "infra/deploy/nginx.conf. Re-copy it; do not edit one side only.",
         )
 
+    def test_the_site_lands_where_nginx_looks_for_it(self):
+        """nginx.conf is the audited production file and is not edited here, so
+        the image has to put the site at the path it already names. A mismatch
+        serves 404 for every page while the pod stays Ready — /healthz never
+        touches the document root."""
+        conf = (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
+        root = re.search(r"^\s*root\s+(\S+);", conf, re.M)
+        self.assertTrue(root, "nginx.conf no longer sets a document root")
+        dockerfile = (K8S / "image" / "web.Dockerfile").read_text(encoding="utf-8")
+        copied = re.search(r"^COPY\s+\S+\s+(\S+)\s*$", dockerfile, re.M)
+        self.assertTrue(copied, "web.Dockerfile no longer copies the site in")
+        self.assertEqual(root.group(1), copied.group(1))
+
+
+class ClickHouseCopyTest(unittest.TestCase):
+    """base/clickhouse/ is a copy of api/clickhouse/. Every node-specific value
+    in those files is `from_env`, so one set serves both pods and there is no
+    reason for the two trees to diverge."""
+
+    COPIED = (
+        ("server", "00-cluster.xml"), ("server", "01-keeper.xml"),
+        ("server", "02-server.xml"), ("server", "10-macros.xml"),
+        ("users", "00-profile.xml"), ("users", "10-mupid-user.xml"),
+    )
+
+    def test_copies_match_the_originals(self):
+        for folder, name in self.COPIED:
+            with self.subTest(file=f"{folder}/{name}"):
+                self.assertEqual(
+                    NginxCopyTest._normalised(ROOT / "api" / "clickhouse" / folder / name),
+                    NginxCopyTest._normalised(K8S / "base" / "clickhouse" / folder / name),
+                    f"infra_k8s/base/clickhouse/{folder}/{name} has drifted from "
+                    f"api/clickhouse/{folder}/{name}. Re-copy it; do not edit one side.",
+                )
+
+    def test_keeper_config_is_the_one_deliberate_exception(self):
+        """Keeper is the only file that cannot be copied: raft_configuration
+        names the host others dial, which under Compose is a container name and
+        here has to be the pod's headless DNS."""
+        keeper = (K8S / "base" / "clickhouse" / "keeper" / "keeper_config.xml").read_text(encoding="utf-8")
+        self.assertIn("clickhouse-keeper-0.clickhouse-keeper", keeper)
+        self.assertNotIn("mupid-dev-ch-keeper", keeper, "copied without fixing the hostname")
+
 
 class SecretKeyTest(unittest.TestCase):
     """Every referenced Secret key must be one the administrator knows to set."""
@@ -99,37 +144,115 @@ class SecretKeyTest(unittest.TestCase):
 
 @unittest.skipUnless(KUBECTL, "kubectl not installed")
 class BuildTest(unittest.TestCase):
-    def test_both_overlays_build(self):
+    def test_every_overlay_builds(self):
         for overlay in OVERLAYS:
             with self.subTest(overlay=overlay):
                 self.assertTrue(build(overlay))
 
-    def test_every_workload_is_pinned_to_a_node_role(self):
-        """No registry means an image exists on exactly one node. An unpinned pod
-        would schedule onto the other one and fail with ErrImageNeverPull."""
+    def test_workloads_are_either_pinned_or_deliberately_spread(self):
+        """Two ways a pod lands on the wrong node, and they need different rules.
+
+        Our own images have no registry — each is imported into one node's
+        containerd — so a workload running one must be pinned or it fails with
+        ErrImageNeverPull. A public image may float, but only where the manifest
+        says it means to: unpinned with no anti-affinity is an accident, not a
+        decision. storage-volume is the one that spreads."""
         for overlay in OVERLAYS:
-            docs = build(overlay)
-            for doc in docs:
+            for doc in build(overlay):
                 if doc.get("kind") not in ("Deployment", "StatefulSet"):
                     continue
-                selector = doc["spec"]["template"]["spec"].get("nodeSelector") or {}
+                spec = doc["spec"]["template"]["spec"]
+                pinned = "mupid.io/role" in (spec.get("nodeSelector") or {})
+                locally_imported = any(
+                    c["image"].startswith("mupid-") for c in spec["containers"]
+                )
                 with self.subTest(overlay=overlay, name=doc["metadata"]["name"]):
-                    self.assertIn("mupid.io/role", selector)
+                    if locally_imported:
+                        self.assertTrue(pinned, "no registry; the image is on one node")
+                    elif not pinned:
+                        anti = (spec.get("affinity") or {}).get("podAntiAffinity") or {}
+                        rule = anti.get("requiredDuringSchedulingIgnoredDuringExecution")
+                        self.assertTrue(rule, "neither pinned nor spread")
+                        # preferred would let both copies share a node, which
+                        # satisfies replication 001 on paper and protects nothing.
+                        self.assertEqual("kubernetes.io/hostname", rule[0]["topologyKey"])
+                        self.assertEqual(2, doc["spec"]["replicas"])
 
-    def test_parallel_overlay_stays_off_the_production_ports(self):
-        edge = by_kind(build("parallel"), "Deployment", "edge")
-        ports = {p["name"]: p.get("hostPort") for p in containers(edge)[0]["ports"]}
-        self.assertEqual({"http": 8080, "https": 8443}, ports)
+    def test_every_clickhouse_shard_has_a_pod_and_every_pod_a_shard(self):
+        """00-cluster.xml lists the shards; the StatefulSet args map each pod
+        ordinal to one. Raising replicas without adding a <shard> would leave a
+        pod with no identity, and CH_SHARD empty makes two nodes share a Keeper
+        path — the way this breaks silently."""
+        cluster = (K8S / "base" / "clickhouse" / "server" / "00-cluster.xml").read_text(encoding="utf-8")
+        # <mupid> is the sharded cluster; <mupid_all> replicates one shard.
+        shards = cluster.split("<mupid>")[1].split("</mupid>")[0].count("<shard>")
+        self.assertGreater(shards, 1, "not a split deployment any more")
+        sts = by_kind(build("cutover"), "StatefulSet", "clickhouse")
+        self.assertEqual(shards, sts["spec"]["replicas"])
+        args = containers(sts)[0]["args"][0]
+        for ordinal in range(shards):
+            with self.subTest(ordinal=ordinal):
+                self.assertIn(f"{ordinal}) export CH_SHARD=", args)
 
-    def test_cutover_overlay_takes_the_production_ports(self):
+    def test_every_broker_name_the_ddl_uses_resolves(self):
+        """init/01-schema.sql fixes kafka_broker_list to literal hostnames. The
+        Compose deployment resolved them with extra_hosts; here each one needs a
+        Service or the Kafka engine table fails at first consume, long after the
+        DDL reported success."""
+        ddl = (ROOT / "api" / "clickhouse" / "init" / "01-schema.sql").read_text(encoding="utf-8")
+        listed = re.search(r"kafka_broker_list\s*=\s*'([^']+)'", ddl)
+        self.assertTrue(listed, "kafka_broker_list is gone from the DDL")
+        names = {entry.split(":")[0] for entry in listed.group(1).split(",")}
+        services = {d["metadata"]["name"] for d in build("cutover") if d["kind"] == "Service"}
+        for name in sorted(names):
+            with self.subTest(broker=name):
+                self.assertIn(name, services)
+
+    def test_kafka_advertises_an_address_other_pods_can_reach(self):
+        """Clients are redirected to the advertised listener after bootstrap, so
+        a loopback or node-local address here works from inside the pod and
+        nowhere else — including the ClickHouse on the other node."""
+        sts = by_kind(build("cutover"), "StatefulSet", "kafka")
+        env = {e["name"]: e.get("value") for e in containers(sts)[0]["env"]}
+        advertised = env["KAFKA_ADVERTISED_LISTENERS"]
+        self.assertNotIn("127.0.0.1", advertised)
+        self.assertNotIn("localhost", advertised)
+        self.assertIn("kafka-0.kafka", advertised)
+
+    def test_the_receiver_targets_containers_that_exist(self):
+        """receive-k8s.py sets an image on a named container of a named
+        workload. Renaming either in the manifests leaves a deploy command that
+        fails after the image is imported and the release recorded — the worst
+        moment to find out."""
+        source = (K8S / "deploy" / "receive-k8s.py").read_text(encoding="utf-8")
+        block = source.split("COMPONENTS = {", 1)[1].split("}", 1)[0]
+        table = re.findall(
+            r'"[\w-]+":\s*\("deployment/([\w-]+)",\s*"([\w-]+)",\s*"([\w-]+)"\)', block)
+        self.assertTrue(table, "COMPONENTS is no longer a readable table")
+        docs = build("cutover")
+        for workload, container, repository in table:
+            with self.subTest(workload=workload):
+                images = {c["name"]: c["image"] for c in containers(by_kind(docs, "Deployment", workload))}
+                self.assertIn(container, images)
+                self.assertTrue(
+                    images[container].startswith(repository + ":"),
+                    f"{workload}/{container} runs {images[container]}, not {repository}",
+                )
+
+    def test_the_edge_takes_the_production_ports(self):
+        """hostPort, not a Service: nginx terminates TLS with certbot's files
+        from the host, so it binds the node's 80 and 443 directly. Nothing else
+        may hold them — teardown.yml asserts they are free."""
         edge = by_kind(build("cutover"), "Deployment", "edge")
         ports = {p["name"]: p.get("hostPort") for p in containers(edge)[0]["ports"]}
         self.assertEqual({"http": 80, "https": 443}, ports)
 
-    def test_no_pod_mounts_the_compose_data_directories(self):
-        """The Compose stack keeps serving production during the parallel run.
-        Sharing its volumes would corrupt them."""
-        forbidden = ("/var/lib/docker", "/srv/mupid/config")
+    def test_no_pod_mounts_anything_from_the_removed_tree(self):
+        """/srv/mupid is deleted by teardown.yml. A pod that mounts a path under
+        it does not start — hostPath type: Directory — and a pod that mounts the
+        docker root reaches state the cluster does not own."""
+        # /srv/mupid/web is named because the site moved into the image.
+        forbidden = ("/var/lib/docker", "/srv/mupid/config", "/srv/mupid/web")
         for overlay in OVERLAYS:
             for doc in build(overlay):
                 if doc.get("kind") not in ("Deployment", "StatefulSet"):
@@ -159,8 +282,13 @@ class BuildTest(unittest.TestCase):
 
     def test_ai_thread_count_matches_its_cpu_limit(self):
         """torch and numpy size their pools from the host core count, not the
-        cgroup quota. Left alone the pod oversubscribes and gets slower."""
-        ai = containers(by_kind(build("parallel"), "Deployment", "ai"))[0]
+        cgroup quota. Left alone the pod oversubscribes and gets slower.
+
+        Read from the file, not from a build: ai.yaml is out of the current
+        cutover and not listed in the kustomization. The guard still has to hold
+        for the day it goes back in."""
+        docs = list(yaml.safe_load_all((K8S / "base" / "ai.yaml").read_text(encoding="utf-8")))
+        ai = containers(next(d for d in docs if d and d["kind"] == "Deployment"))[0]
         env = {e["name"]: e.get("value") for e in ai["env"]}
         limit = ai["resources"]["limits"]["cpu"]
         cores = str(int(limit[:-1]) // 1000 if limit.endswith("m") else int(limit))
@@ -172,17 +300,23 @@ class BuildTest(unittest.TestCase):
         """Both nodes have 4 vCPU. requests are reservations, so an overshoot
         leaves pods Pending rather than merely busy. See BASELINE.md."""
         budget_millicores = 2000
+        inventory = (K8S / "ansible" / "inventory.ini").read_text(encoding="utf-8")
+        roles = sorted(set(re.findall(r"node_role=(\S+)", inventory)))
         for overlay in OVERLAYS:
-            totals = {}
+            totals = dict.fromkeys(roles, 0)
             for doc in build(overlay):
                 if doc.get("kind") not in ("Deployment", "StatefulSet"):
                     continue
                 spec = doc["spec"]["template"]["spec"]
-                role = spec["nodeSelector"]["mupid.io/role"]
+                pinned = (spec.get("nodeSelector") or {}).get("mupid.io/role")
+                # A spread workload puts a pod on every node, so its request is
+                # charged to each of them rather than divided between them.
+                charged = [pinned] if pinned else roles
                 for container in spec["containers"]:
                     cpu = container["resources"]["requests"]["cpu"]
                     milli = int(cpu[:-1]) if cpu.endswith("m") else int(float(cpu) * 1000)
-                    totals[role] = totals.get(role, 0) + milli
+                    for role in charged:
+                        totals[role] += milli
             for role, milli in totals.items():
                 with self.subTest(overlay=overlay, role=role):
                     self.assertLessEqual(milli, budget_millicores, json.dumps(totals))
@@ -215,15 +349,64 @@ class AnsibleTest(unittest.TestCase):
                     with self.subTest(playbook=playbook.name, role=name):
                         self.assertTrue((self.ANSIBLE / "roles" / name / "tasks" / "main.yml").exists())
 
-    def test_inventory_uses_private_addresses_for_node_to_node(self):
-        """k3s must advertise the private address. Pointing k3s_node_ip at the
-        public one exposes the apiserver to the internet."""
+    def test_inventory_carries_no_addresses_or_key_paths(self):
+        """Connection values live in infra_k8s/.env, not in the repository. A
+        literal address creeping back in is a value that silently overrides the
+        operator's .env."""
         text = (self.ANSIBLE / "inventory.ini").read_text(encoding="utf-8")
-        found = re.findall(r"k3s_node_ip=(\S+)", text)
-        self.assertEqual(2, len(found))
-        for address in found:
-            with self.subTest(address=address):
-                self.assertTrue(address.startswith("172.26."))
+        for line in text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            with self.subTest(line=line):
+                self.assertNotRegex(line, r"\d+\.\d+\.\d+\.\d+")
+                self.assertNotRegex(line, r"=/home/|\.pem")
+
+    def test_inventory_reads_only_keys_that_env_example_documents(self):
+        """A lookup for a key absent from .env.example resolves to an empty
+        string and fails at run time with nothing to point the operator at."""
+        text = (self.ANSIBLE / "inventory.ini").read_text(encoding="utf-8")
+        read = set(re.findall(r"lookup\(\s*'env'\s*,\s*'([A-Z0-9_]+)'\s*\)", text))
+        self.assertTrue(read, "inventory no longer reads .env")
+        example = (K8S / ".env.example").read_text(encoding="utf-8")
+        documented = set(re.findall(r"^([A-Z0-9_]+)=", example, re.M))
+        self.assertEqual(set(), read - documented)
+
+    def test_env_example_holds_keys_but_no_values(self):
+        """It is a list of what to fill in. A value here is mistaken for
+        configuration and copied forward long after it stops being true."""
+        for line in (K8S / ".env.example").read_text(encoding="utf-8").splitlines():
+            if re.match(r"^[A-Z0-9_]+=", line):
+                with self.subTest(line=line):
+                    self.assertTrue(line.endswith("="), "value committed")
+
+    def test_env_check_asserts_the_advertised_address_is_private(self):
+        """This guard used to be static, against addresses written in the
+        inventory. The values moved to .env, so the same assertion has to run
+        before every play — k3s advertising the public address opens 6443 to
+        the internet."""
+        tasks = self._load(self.ANSIBLE / "roles" / "env_check" / "tasks" / "main.yml")[0]
+        conditions = " ".join(
+            str(t["ansible.builtin.assert"]["that"])
+            for t in tasks if "ansible.builtin.assert" in t
+        )
+        self.assertIn("k3s_node_ip is match", conditions)
+        # The RFC1918 prefixes, written as a regex, so the dots are escaped.
+        for prefix in ("10", "192", "168", "172"):
+            with self.subTest(prefix=prefix):
+                self.assertIn(prefix, conditions, "private-range check is gone")
+        self.assertIn("k3s_node_ip != ansible_host", conditions)
+
+    def test_both_playbooks_run_env_check_before_anything_else(self):
+        """An empty value has to stop the run with a message. Without this play
+        it surfaces as UNREACHABLE against an empty host."""
+        for playbook in ("preflight.yml", "cluster.yml", "teardown.yml"):
+            with self.subTest(playbook=playbook):
+                first = self._load(self.ANSIBLE / playbook)[0][0]
+                self.assertIn("env_check", first["roles"])
+                # It dials nothing, so it reports the real problem.
+                self.assertEqual("local", first["connection"])
+                # Otherwise --tags firewall would skip the check.
+                self.assertIn("always", first["tags"])
 
     def test_firewall_opens_forwarding_on_the_cni_interfaces(self):
         """The hosts default to `deny (routed)`. Without a route rule k3s comes up
@@ -232,6 +415,23 @@ class AnsibleTest(unittest.TestCase):
         tasks = self._load(self.ANSIBLE / "roles" / "firewall" / "tasks" / "main.yml")[0]
         routed = [t for t in tasks if (t.get("community.general.ufw") or {}).get("route")]
         self.assertTrue(routed, "no `ufw route` rule; pod networking will fail silently")
+
+    def test_teardown_refuses_to_run_without_a_confirmation(self):
+        """It deletes /srv/mupid and the data volumes. Every play in it has to
+        be gated, not just the first — `--tags` or a partial run must not reach
+        a destructive task through an ungated play."""
+        plays = self._load(self.ANSIBLE / "teardown.yml")[0]
+        for play in plays:
+            if "env_check" in (play.get("roles") or []):
+                continue
+            with self.subTest(play=play["name"]):
+                guards = [
+                    task for task in play["tasks"]
+                    if "confirm_destroy == 'DESTROY'" in str(
+                        (task.get("ansible.builtin.assert") or {}).get("that"))
+                ]
+                self.assertTrue(guards, "play has no confirmation guard")
+                self.assertIs(play["tasks"][0], guards[0], "the guard is not first")
 
     def test_system_reserved_covers_every_node_role_in_the_inventory(self):
         """kubelet cannot see the Compose stack or the GitLab Runner. A role with
@@ -250,9 +450,109 @@ class AnsibleTest(unittest.TestCase):
             for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
                 if not doc or doc.get("kind") not in ("Deployment", "StatefulSet"):
                     continue
-                wanted = doc["spec"]["template"]["spec"]["nodeSelector"]["mupid.io/role"]
+                # A spread workload carries no selector on purpose; that it says
+                # so is checked by test_workloads_are_either_pinned_or_spread.
+                selector = doc["spec"]["template"]["spec"].get("nodeSelector") or {}
+                if "mupid.io/role" not in selector:
+                    continue
                 with self.subTest(workload=doc["metadata"]["name"]):
-                    self.assertIn(wanted, roles)
+                    self.assertIn(selector["mupid.io/role"], roles)
+
+
+class DeployEndpointTest(unittest.TestCase):
+    """The deployment endpoint is reachable with a CI key, so its input shapes
+    are the security boundary."""
+
+    DEPLOY = K8S / "deploy"
+
+    def _forced_command_pattern(self):
+        script = (self.DEPLOY / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        # The pattern escapes its spaces as `\ `, so it cannot be read with \S+.
+        found = re.search(r"\$command =~ (.+?) \]\]", script)
+        self.assertTrue(found, "the forced command no longer matches a pattern")
+        # bash and python spell this pattern the same way.
+        return re.compile(found.group(1))
+
+    def test_the_forced_command_takes_nothing_but_a_versioned_upload(self):
+        pattern = self._forced_command_pattern()
+        good = "deploy-k8s api " + "a" * 40 + " " + "b" * 64
+        self.assertTrue(pattern.match(good))
+        for bad in (
+            good + "; rm -rf /",           # command injection
+            good + " extra",               # trailing argument
+            good.replace("api", "shell"),  # component not in the enumeration
+            good.replace("a" * 40, "A" * 40),   # uppercase is not hex here
+            good.replace("a" * 40, "a" * 39),   # short commit
+            good.replace("b" * 64, "b" * 63),   # short checksum
+            "deploy-k8s api",
+            "bash",
+        ):
+            with self.subTest(command=bad):
+                self.assertIsNone(pattern.match(bad))
+
+    def _components(self):
+        source = (self.DEPLOY / "receive-k8s.py").read_text(encoding="utf-8")
+        block = source.split("COMPONENTS = {", 1)[1].split("}", 1)[0]
+        found = re.findall(
+            r'"([\w-]+)":\s*\("([\w/-]+)",\s*"([\w-]+)",\s*"([\w-]+)"\)', block)
+        self.assertTrue(found, "COMPONENTS is no longer a readable table")
+        return {name: rest for name, *rest in [list(f) for f in found]}
+
+    def test_the_entrypoint_and_the_receiver_agree_on_the_components(self):
+        """A component the forced command allows but the receiver does not know
+        is a request that gets past the boundary and then fails as a usage
+        error; the reverse is an unreachable deployment path."""
+        pattern = self._forced_command_pattern()
+        allowed = set(re.search(r"\((\w+(?:\|\w+)*)\)", pattern.pattern).group(1).split("|"))
+        self.assertEqual(allowed, set(self._components()))
+
+    def test_the_receiver_never_holds_cluster_admin(self):
+        """k3s.yaml is cluster-admin. Reading it here would make a stolen deploy
+        key a cluster takeover, so the receiver uses the ServiceAccount token
+        from rbac.yaml instead. Comments may name the file; code may not."""
+        source = (self.DEPLOY / "receive-k8s.py").read_text(encoding="utf-8")
+        self.assertRegex(source, r'KUBECONFIG = ROOT / "deploy\.kubeconfig"')
+        for number, line in enumerate(source.splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            with self.subTest(line=number):
+                self.assertNotIn("/etc/rancher", line)
+
+    def test_every_k8s_ci_job_is_still_manual(self):
+        """The cluster does not exist yet and infra/ci/* still serves
+        production. A rule here without `when: manual` would deploy on a push
+        to a namespace that is not there."""
+        jobs = yaml.safe_load((K8S / "ci" / "k8s-release.yml").read_text(encoding="utf-8"))
+        checked = 0
+        for name, body in jobs.items():
+            if not isinstance(body, dict) or "rules" not in body:
+                continue
+            for rule in body["rules"]:
+                with self.subTest(job=name):
+                    self.assertEqual("manual", rule.get("when"))
+                checked += 1
+        self.assertTrue(checked, "no rules found; the file shape changed")
+
+    def test_the_k8s_ci_uses_its_own_credential(self):
+        """Sharing the Compose deploy key would let either path drive the
+        other, which is the thing two accounts were for."""
+        script = (K8S / "ci" / "deploy-k8s.sh").read_text(encoding="utf-8")
+        self.assertIn("MUPID_DEPLOY_K8S_SSH_KEY", script)
+        self.assertNotRegex(script, r"MUPID_DEPLOY_SSH_KEY\b")
+        self.assertIn("mupid-deploy-k8s@", script)
+
+    def test_the_deploy_role_cannot_create_or_delete_anything(self):
+        """The receiver only ever changes an image tag. Anything wider is reach
+        the endpoint does not need and an attacker would."""
+        docs = [d for d in yaml.safe_load_all(
+            (self.DEPLOY / "rbac.yaml").read_text(encoding="utf-8")) if d]
+        role = next(d for d in docs if d["kind"] == "Role")
+        for rule in role["rules"]:
+            with self.subTest(resources=rule["resources"]):
+                self.assertNotIn("secrets", rule["resources"])
+                for verb in ("create", "delete", "deletecollection", "*"):
+                    self.assertNotIn(verb, rule["verbs"])
+            self.assertNotIn("*", rule["apiGroups"])
 
 
 if __name__ == "__main__":

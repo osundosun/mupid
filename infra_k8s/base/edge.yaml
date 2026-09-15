@@ -27,7 +27,16 @@ spec:
       nodeSelector: {mupid.io/role: edge}
       containers:
         - name: nginx
-          image: nginx:1.27-alpine
+          # nginx plus the frontend build. The static files used to live in
+          # /srv/mupid/web with a `current` symlink the front-end receiver
+          # moved; baking them in makes the delivery path identical to the
+          # API's and the rollback a single `kubectl rollout undo`.
+          #
+          # The tag is the commit SHA, imported into k3s containerd by the
+          # deployment receiver — there is no registry, hence IfNotPresent and
+          # the node pin above.
+          image: mupid-web:placeholder
+          imagePullPolicy: IfNotPresent
           ports:
             - {name: http, containerPort: 80}
             - {name: https, containerPort: 443}
@@ -39,7 +48,6 @@ spec:
             # certbot stays on the host and owns renewal. Read-only here.
             - {name: letsencrypt, mountPath: /etc/letsencrypt, readOnly: true}
             - {name: acme, mountPath: /var/www/acme, readOnly: true}
-            - {name: web, mountPath: /srv/web, readOnly: true}
           readinessProbe:
             httpGet: {path: /healthz, port: 80}
             periodSeconds: 10
@@ -51,11 +59,17 @@ spec:
       volumes:
         - name: conf
           configMap: {name: edge-nginx}
-        # The only three paths this deployment reads from the existing /srv/mupid
-        # tree. All read-only; nothing here writes to the Compose deployment.
+        # The only two host paths left, both read-only and both certbot's: it
+        # keeps owning renewal on the host. /srv/mupid/web is gone — the site is
+        # in the image — and the acme webroot has moved under /srv/mupid-k8s,
+        # so nothing here reads /srv/mupid any more and that tree can be removed
+        # once the cutover has settled.
+        #
+        # certbot has to be repointed at the new webroot before this is applied,
+        # or renewal writes its challenge where nginx is not looking. Both
+        # directories must exist on the node: type: Directory means the pod does
+        # not start otherwise. See OPERATIONS-K8S.md.
         - name: letsencrypt
           hostPath: {path: /etc/letsencrypt, type: Directory}
         - name: acme
-          hostPath: {path: /srv/mupid/acme, type: Directory}
-        - name: web
-          hostPath: {path: /srv/mupid/web, type: Directory}
+          hostPath: {path: /srv/mupid-k8s/acme, type: Directory}

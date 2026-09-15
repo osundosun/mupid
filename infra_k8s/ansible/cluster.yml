@@ -8,9 +8,21 @@
 #   ansible-playbook -i inventory.ini cluster.yml --check --diff --tags firewall
 #   ansible-playbook -i inventory.ini cluster.yml
 #
-# Does not deploy any workload. The manifests are applied separately in Phase 3
-# (kubectl apply -k ../overlays/parallel), so this play can be run and verified
-# on its own while the Compose stack keeps serving production.
+# Does not deploy any workload. The manifests are applied separately
+# (kubectl apply -k ../overlays/cutover), so this play can be run and verified
+# on its own.
+#
+# teardown.yml must have run first: preflight asserts 80 and 443 are free and
+# the Compose nginx holds them.
+
+- name: Check the connection values from .env before any SSH
+  hosts: k3s
+  gather_facts: false
+  become: false
+  connection: local
+  # `always` so `--tags firewall` and `--tags k3s` still get the check.
+  tags: [always]
+  roles: [env_check]
 
 - name: Verify both nodes before changing anything
   hosts: k3s

@@ -43,8 +43,9 @@ apt 또는 pipx 를 쓴다.
 
 `~/.ssh/J15A204T.pem` (RSA 2048, `SHA256:iQ+s7IRfVw7i+z/kPMDuXK0vUxmK0eAJMWdYwbc8Ssc`).
 권한이 `0664` 로 올라와 있어 `0600` 으로 고쳤다 — SSH 는 그룹·기타 읽기 권한이 붙은
-개인키를 거부한다. 경로는 `inventory.ini` 의 `ansible_ssh_private_key_file` 에 넣었으므로
-매번 `-e` 로 줄 필요가 없다.
+개인키를 거부한다. 경로는 `../.env` 의 `MUPID_NODE_A_SSH_KEY`·`MUPID_NODE_B_SSH_KEY`
+에 넣으므로 매번 `-e` 로 줄 필요가 없다. `env_check` 가 절대 경로인지와 `0600` 인지를
+실행 전에 확인한다. `.env` 는 저장소에 올라가지 않는다.
 
 이 키는 두 EC2 의 관리자 접근을 연다. 전용 키로 좁히는 편이 낫지만(`ssh-keygen` 으로
 만들고 공개키만 `authorized_keys` 에 등록), 지금은 이 PEM 을 쓴다.
@@ -92,13 +93,19 @@ firewall 예행은 의도한 비대칭을 보여 준다. 6443 규칙은 node-a �
 스냅샷이므로 실제 운영에는 쓰지 않는다.** clone 한 뒤 지운다.
 
 ```bash
-git clone <저장소> ~/mupid && cd ~/mupid/infra_k8s/ansible
-ansible-playbook -i inventory.ini preflight.yml
+git clone <저장소> ~/mupid && cd ~/mupid/infra_k8s
+cp .env.example .env    # 값을 채운다. 저장소에 올라가지 않는다.
 ```
 
 ## 실행 순서
 
+`.env` 를 환경으로 내보내고 시작한다. `inventory.ini` 에는 주소도 키 경로도 없고
+`lookup('env', ...)` 만 있어서, 내보내지 않으면 값이 빈 문자열이 된다. 그 경우
+두 플레이북 첫머리의 `env_check` 플레이가 SSH 전에 무엇이 비었는지 말하고 멈춘다.
+
 ```bash
+cd ~/mupid/infra_k8s/ansible
+set -a; . ../.env; set +a
 ansible-playbook -i inventory.ini preflight.yml                        # 읽기 전용
 ansible-playbook -i inventory.ini cluster.yml --check --tags firewall  # 방화벽 예행
 ansible-playbook -i inventory.ini cluster.yml                          # 설치

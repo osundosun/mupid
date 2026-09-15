@@ -1,0 +1,57 @@
+---
+# infra_k8s/.env 에서 들어온 접속 값을 SSH 전에 검증한다.
+#
+# connection: local 인 플레이에서 호출된다. 값이 비어 있을 때 정체 모를
+# UNREACHABLE 이 아니라 무엇이 비었는지 말하고 멈추는 것이 목적이다.
+#
+# 여기 두 번째 단언은 예전에 inventory.ini 에 주소가 박혀 있을 때
+# tests/test_manifests.py 가 정적으로 검사하던 것이다. 값이 .env 로 빠졌으니
+# 같은 보장을 런타임에서 한다.
+
+- name: Every connection value arrived from .env
+  ansible.builtin.assert:
+    that:
+      - ansible_host | default('', true) | length > 0
+      - k3s_node_ip | default('', true) | length > 0
+      - ansible_user | default('', true) | length > 0
+      - ansible_ssh_private_key_file | default('', true) | length > 0
+    fail_msg: >-
+      {{ inventory_hostname }} 의 접속 값이 비어 있다. infra_k8s/.env 를 만들고
+      환경으로 내보냈는지 확인한다 — set -a; . ../.env; set +a
+    quiet: true
+
+- name: k3s advertises the private address, never the public one
+  ansible.builtin.assert:
+    that:
+      - k3s_node_ip is match('^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
+      - k3s_node_ip != ansible_host
+    fail_msg: >-
+      {{ inventory_hostname }} 의 k3s_node_ip 가 사설 주소가 아니다
+      ({{ k3s_node_ip }}). k3s 가 이 주소를 광고하므로 공인 주소를 넣으면
+      6443 이 인터넷에 열린다. MUPID_NODE_*_HOST_PRIVATE 를 고친다.
+    quiet: true
+
+# ~ 를 쓰면 stat 과 SSH 가 서로 다른 홈을 볼 수 있다. 절대 경로만 받는다.
+- name: The key path is absolute
+  ansible.builtin.assert:
+    that: ansible_ssh_private_key_file is match('^/')
+    fail_msg: >-
+      MUPID_NODE_*_SSH_KEY 는 절대 경로여야 한다 (지금:
+      {{ ansible_ssh_private_key_file }}). ~ 대신 /home/... 으로 적는다.
+    quiet: true
+
+- name: Look at the key on the control node
+  ansible.builtin.stat:
+    path: "{{ ansible_ssh_private_key_file }}"
+  register: key_file
+
+- name: SSH refuses a key other users can read
+  ansible.builtin.assert:
+    that:
+      - key_file.stat.exists
+      - key_file.stat.mode | default('0777') is match('0[0-7]00$')
+    fail_msg: >-
+      {{ ansible_ssh_private_key_file }} 이 없거나 권한이 너무 넓다
+      (mode {{ key_file.stat.mode | default('파일 없음') }}).
+      chmod 600 으로 고친다 — SSH 는 그룹·기타 읽기가 붙은 개인키를 거부한다.
+    quiet: true

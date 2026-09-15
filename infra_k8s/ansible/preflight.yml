@@ -7,6 +7,15 @@
 # Checks the same things the Phase 0 collection did, but as assertions, so it can
 # be re-run before every install instead of producing a report someone has to
 # read. The original snapshot is recorded in ../BASELINE.md.
+- name: Check the connection values from .env before any SSH
+  hosts: k3s
+  gather_facts: false
+  become: false
+  connection: local
+  # `always` so `--tags firewall` and `--tags k3s` still get the check.
+  tags: [always]
+  roles: [env_check]
+
 - name: Phase 0 preflight
   hosts: k3s
   gather_facts: true

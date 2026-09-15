@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<!--
+  ddl.sql 이 참조하는 두 클러스터. 같은 노드를 서로 다른 토폴로지로 바라본다.
+
+    mupid      : 샤드당 노드 1대.  cityHash64(user_id) 로 사용자 단위 분산.
+                 Keeper 경로에 {shard} 가 들어가 샤드별로 데이터가 분리된다.
+    mupid_all  : 1 샤드에 전 노드가 레플리카.  track 정보처럼 user_id 와 무관한
+                 데이터를 전 노드에 복제한다. track_sections 의 Keeper 경로에는
+                 {shard} 가 없어 두 노드가 서로의 레플리카가 된다.
+                 mv_user_section_signals 가 각 노드에서 dictGet 을 호출하므로
+                 모든 노드가 전체 구간 데이터를 갖고 있어야 한다.
+
+  호스트를 환경변수로 받으므로 이 파일은 로컬 컨테이너와 운영 서버에 그대로 쓴다.
+  replica 마다 계정을 명시하는 이유: 공식 이미지가 users.d/default-user.xml 을 만들어
+  default 를 127.0.0.1 / ::1 로 묶기 때문에, 계정을 지정하지 않으면 노드 간 접속이
+  default 로 시도되어 AUTHENTICATION_FAILED 가 난다.
+-->
+<clickhouse>
+    <remote_servers>
+        <mupid>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host from_env="CH_HOST_1"/>
+                    <port>9000</port>
+                    <user>mupid</user>
+                    <password from_env="MUPID_CLICKHOUSE_PASSWORD"/>
+                </replica>
+            </shard>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host from_env="CH_HOST_2"/>
+                    <port>9000</port>
+                    <user>mupid</user>
+                    <password from_env="MUPID_CLICKHOUSE_PASSWORD"/>
+                </replica>
+            </shard>
+        </mupid>
+
+        <mupid_all>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host from_env="CH_HOST_1"/>
+                    <port>9000</port>
+                    <user>mupid</user>
+                    <password from_env="MUPID_CLICKHOUSE_PASSWORD"/>
+                </replica>
+                <replica>
+                    <host from_env="CH_HOST_2"/>
+                    <port>9000</port>
+                    <user>mupid</user>
+                    <password from_env="MUPID_CLICKHOUSE_PASSWORD"/>
+                </replica>
+            </shard>
+        </mupid_all>
+    </remote_servers>
+</clickhouse>

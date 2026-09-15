@@ -8,6 +8,9 @@ include:
   - local: infra/ci/frontend.yml
   - local: infra/ci/backend.yml
   - local: infra/ci/release.yml
+  # k8s path. Every job in it is `when: manual` until the cluster exists and
+  # the cutover happens; it adds buttons, not automatic deployments.
+  - local: infra_k8s/ci/k8s-release.yml
 
 gemini-code-review:
   stage: ai-review

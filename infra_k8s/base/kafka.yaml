@@ -1,0 +1,108 @@
+# Kafka, single broker in KRaft mode. Pinned to the AI node, which is where the
+# Compose `kafka` profile ran it.
+#
+# One broker is deliberate and unrelated to the two ClickHouse nodes: two would
+# make the KRaft quorum 2, which tolerates no failure at all. HA starts at three.
+#
+# Compose had to advertise the host's address and publish 9092 so the ClickHouse
+# on the other machine could reach it. Here both are on the cluster network, so
+# it advertises its own pod DNS and the port never leaves the cluster.
+---
+# Governing headless Service: gives kafka-0.kafka, which is what the broker
+# advertises. A client that bootstraps anywhere is redirected to this name, so
+# it has to resolve from the ClickHouse pods on the other node.
+apiVersion: v1
+kind: Service
+metadata: {name: kafka, namespace: mupid}
+spec:
+  clusterIP: None
+  selector: {app: kafka}
+  ports:
+    - {name: broker, port: 9092, targetPort: 9092}
+---
+# init/01-schema.sql fixes kafka_broker_list to 'kafka1:9092,kafka2:9092'. The
+# Compose deployment resolved those two names with extra_hosts; here they are
+# two more Services onto the same pod. Both exist so the DDL is applied
+# unmodified — the same reason nginx.conf is copied rather than rewritten.
+#
+# A second broker later takes kafka2's selector; nothing in the DDL changes.
+apiVersion: v1
+kind: Service
+metadata: {name: kafka1, namespace: mupid}
+spec:
+  selector: {app: kafka}
+  ports: [{name: broker, port: 9092, targetPort: 9092}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: kafka2, namespace: mupid}
+spec:
+  selector: {app: kafka}
+  ports: [{name: broker, port: 9092, targetPort: 9092}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: kafka, namespace: mupid}
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector: {matchLabels: {app: kafka}}
+  template:
+    metadata: {labels: {app: kafka}}
+    spec:
+      nodeSelector: {mupid.io/role: ai}
+      securityContext: {fsGroup: 1000}
+      containers:
+        - name: kafka
+          image: apache/kafka:3.9.1
+          env:
+            - {name: TZ, value: Asia/Seoul}
+            # Baked into the log directory the first time the broker formats it.
+            # Changing it afterwards makes the broker refuse to start against
+            # existing data.
+            - name: CLUSTER_ID
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_KAFKA_CLUSTER_ID}}
+            - {name: KAFKA_NODE_ID, value: '1'}
+            - {name: KAFKA_PROCESS_ROLES, value: broker,controller}
+            - {name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: 1@127.0.0.1:9093}
+            - {name: KAFKA_LISTENERS, value: 'INTERNAL://:9092,CONTROLLER://:9093'}
+            # Its own pod DNS, not 127.0.0.1 and not a node address: this is the
+            # address every client is told to reconnect to after bootstrap.
+            - {name: KAFKA_ADVERTISED_LISTENERS, value: 'INTERNAL://kafka-0.kafka:9092'}
+            - {name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: 'INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'}
+            - {name: KAFKA_INTER_BROKER_LISTENER_NAME, value: INTERNAL}
+            - {name: KAFKA_CONTROLLER_LISTENER_NAMES, value: CONTROLLER}
+            # One broker, so the internal topics cannot ask for more copies.
+            - {name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: '1'}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: '1'}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: '1'}
+            # kafka/create-topics.sh sets the partition count; auto-creation
+            # would make a 1-partition topic first and strand five consumers.
+            - {name: KAFKA_AUTO_CREATE_TOPICS_ENABLE, value: 'false'}
+            # The Compose file mounts a volume at /var/lib/kafka/data without
+            # setting this, and the image defaults to /tmp/kraft-combined-logs —
+            # so that volume holds nothing and the log dir is inside the
+            # container. Set explicitly here so the claim below is really used.
+            - {name: KAFKA_LOG_DIRS, value: /var/lib/kafka/data}
+          ports:
+            - {containerPort: 9092}
+            - {containerPort: 9093}
+          resources:
+            requests: {cpu: 200m, memory: 512Mi}
+            limits: {memory: 2Gi}
+          volumeMounts: [{name: data, mountPath: /var/lib/kafka/data}]
+          readinessProbe:
+            # Same check the Compose healthcheck made. It is a real client
+            # round-trip, so it runs on a long period rather than every few
+            # seconds.
+            exec:
+              command: [/bin/sh, -c, '/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1']
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 12
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 20Gi}}

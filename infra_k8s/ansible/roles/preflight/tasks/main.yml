@@ -48,12 +48,15 @@
   register: listening
   changed_when: false
 
-- name: Assert the ports k3s and the edge overlay need are free
+- name: Assert the ports k3s and the edge need are free
   ansible.builtin.assert:
     that: "listening.stdout is not search(':' ~ item ~ '\\s')"
+    # 80 or 443 still held means the Compose stack is up: run teardown.yml
+    # first. The edge pod binds them as hostPort and cannot share.
     fail_msg: "port {{ item }} is already in use on this node"
   loop: >-
-    {{ [k3s_kubelet_port, k3s_flannel_port] + edge_parallel_ports
+    {{ [k3s_kubelet_port, k3s_flannel_port]
+       + (edge_ports if inventory_hostname in groups['k3s_server'] else [])
        + ([k3s_apiserver_port] if inventory_hostname in groups['k3s_server'] else []) }}
 
 - name: Check whether k3s is already installed

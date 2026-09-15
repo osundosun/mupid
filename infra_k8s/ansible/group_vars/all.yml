@@ -14,9 +14,10 @@ k3s_apiserver_port: 6443
 k3s_kubelet_port: 10250
 k3s_flannel_port: 8472
 
-# Ports the parallel-run overlay binds on the edge node. Checked by preflight so
-# the Compose stack's 80/443 are not disturbed and nothing else took these.
-edge_parallel_ports: [8080, 8443]
+# Ports the edge pod binds as hostPort on the edge node. Checked by preflight,
+# which therefore has to run after teardown.yml has stopped the Compose nginx —
+# until then these are held by the deployment being replaced.
+edge_ports: [80, 443]
 
 # kubelet cannot see the processes that are already on these hosts — the Docker
 # Compose stack on the edge node, the GitLab Runner and its job containers on the
