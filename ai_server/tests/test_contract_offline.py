@@ -222,3 +222,68 @@ def test_search_parse_failure_is_not_silently_downgraded():
     assert r.status_code == 500, r.text
     assert r.json()["error_code"] == "INTERNAL_ERROR"
     assert not called, "조건을 못 뽑았는데 추천을 계산했다"
+
+
+# ------------------------------------------------------------------ 태그 어휘
+def _fake_facets_svc():
+    """`catalog_facets()` 모양만 흉내 낸다. 산출물을 읽지 않는다."""
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    df = pd.DataFrame([{"track_id": "T1", "bpm": 90.0}, {"track_id": "T2", "bpm": 140.0}])
+    fac = {
+        "language": [{"value": "ko", "label": "ko", "tracks": 2}],
+        "vocal_type": [{"value": "female", "label": "female", "tracks": 1}],
+        "style": [{"value": "ko_ballad", "label": "ko_ballad", "tracks": 1}],
+        "genre": [{"value": "pop", "label": "pop", "tracks": 2}],
+        "mood": [{"value": "relaxing", "label": "relaxing", "tracks": 2}],
+        "instrument": [{"value": "piano", "label": "piano", "tracks": 2}],
+        "tempo": [], "section_label": [{"value": "chorus", "label": "chorus", "moments": 4}],
+        "_df": df,
+    }
+    pool = pd.DataFrame([{"track_id": "T1"}, {"track_id": "T2"}, {"track_id": "T2"}])
+    return SimpleNamespace(catalog_facets=lambda: fac, CAT=SimpleNamespace(pool=pool))
+
+
+@pytest.fixture
+def facets_payload(monkeypatch):
+    monkeypatch.setattr(internal_api, "_FACETS_CACHE", {})
+    return internal_api._facets_payload(_fake_facets_svc())
+
+
+def test_facets_reports_catalog_vocabulary(facets_payload):
+    assert facets_payload["catalog"] == {"tracks": 2, "moments": 3}
+    genre = facets_payload["fields"]["genre"]
+    assert {"value": "pop", "tracks": 2} in genre["values"]
+    # 장르 게이트는 style 에도 맞춰 본다 — 어휘를 함께 알려야 한다.
+    assert {"value": "ko_ballad", "tracks": 1} in genre["style_values"]
+    assert facets_payload["fields"]["flow"]["values"][0]["value"] == "chorus"
+    assert facets_payload["fields"]["bpm_min"]["range"] == [90, 140]
+
+
+def test_facets_states_how_each_field_is_enforced(facets_payload):
+    """`mood` 로 거를 수 있다고 믿게 두면 조건이 조용히 사라진다."""
+    f = facets_payload["fields"]
+    assert f["mood"]["enforcement"] == "score_only"
+    assert f["mood"]["excludable"] is True          # exclude.mood 는 게이트다
+    assert f["genre"]["enforcement"] == "gate"
+    assert f["activity"]["enforcement"] == "ignored"
+    assert f["tempo_direction"]["enforcement"] == "gate_with_reference"
+
+
+def test_facets_fields_match_the_recommender_plan_keys():
+    """어휘 표가 추천기가 실제로 읽는 키와 어긋나면 LLM 이 헛 조건을 만든다."""
+    src = (Path(__file__).resolve().parents[1] / "app" / "recommender.py").read_text(
+        encoding="utf-8")
+    body = src[src.index("def filter_query_pool"):src.index("def _flow_penalty")]
+    for name in internal_api._ENFORCEMENT:
+        assert f'"{name}"' in body, name
+
+
+def test_facets_payload_is_json_safe(facets_payload):
+    """`catalog_facets()` 는 DataFrame(`_df`)을 함께 돌려준다. 새면 직렬화가 터진다."""
+    import json
+
+    json.dumps(facets_payload)
+    assert "_df" not in json.dumps(facets_payload)

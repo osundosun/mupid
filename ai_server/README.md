@@ -81,6 +81,7 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 |---|---|---|
 | GET | `/health` | 프로세스 생존 |
 | GET | `/internal/ready` | 요청을 받을 수 있는가 |
+| GET | `/internal/facets` | QueryPlan 에 쓸 수 있는 태그 어휘 |
 | POST | `/internal/recommendations/daily` | 오늘의 추천 |
 | POST | `/internal/recommendations/next` | 이어 듣기 |
 | POST | `/internal/recommendations/search` | 자연어 검색 |
@@ -140,6 +141,41 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 | `INTERNAL_ERROR` | 500 | 그 밖. 재시도 대상 |
 
 읽기 타임아웃 **5초**, 재시도는 `503`·`500`·타임아웃에만 1회. `400`·`404` 는 재시도하지 않는다.
+
+### `/internal/facets`
+
+자연어를 QueryPlan 으로 바꾸는 쪽(외부 해석기든 Spring 의 LLM 이든)이 읽는다. 선택지는
+**카탈로그에서 직접** 만든다 — 없는 태그를 지어내면 조건이 어휘에 없어 후보가 0 이 된다.
+
+```json
+{ "catalog": { "tracks": 111, "moments": 65540 },
+  "fields": {
+    "genre":  { "enforcement": "gate", "excludable": true,
+                "values": [{ "value": "pop", "tracks": 42 }],
+                "style_values": [{ "value": "ko_ballad", "tracks": 9 }] },
+    "mood":   { "enforcement": "score_only", "excludable": true, "values": [...] },
+    "bpm_min": { "enforcement": "gate", "excludable": false, "range": [60, 180] }
+  },
+  "example": { "filters": { "genre": ["pop"], "instrument": ["piano"],
+                            "vocal": ["female"], "flow": ["chorus"] },
+               "exclude": { "mood": ["aggressive"] } } }
+```
+
+`enforcement` 를 반드시 읽을 것. **필드마다 적용 방식이 다르다.**
+
+| 값 | 뜻 |
+|---|---|
+| `gate` | 하드 필터. 맞지 않는 곡은 후보에서 빠진다 |
+| `score_only` | 걸러내지 않는다. 의미 점수에만 반영된다 |
+| `gate_with_reference` | 기준 곡이 있어야 적용된다. 없으면 무시되고 진단에 남는다 |
+| `ignored` | 받지만 아무 일도 하지 않는다 (카탈로그에 해당 필드가 없다) |
+
+특히 **`filters.mood` 는 걸러내지 않는다.** 무드는 추론 폭이 커서 의미 점수로만 쓴다.
+반대로 `exclude.mood` 는 게이트다. 이걸 모르면 "잔잔한 곡" 조건이 걸린 줄 알고 넘어간다.
+
+`filters` 에 쓰는 키는 `genre` · `language` · `vocal` · `instrument` · `mood` · `flow` ·
+`bpm_min` · `bpm_max` · `tempo_direction` · `energy_direction` 이다. `vocal_type` 이 아니라
+**`vocal`**, 구간은 `section_label` 이 아니라 **`flow`** 다.
 
 ### `/internal/ready`
 

@@ -285,6 +285,76 @@ def search(req: SearchRequest) -> RecommendationResponse:
     return to_response(req.recommendation_id, out, req.limit, True)
 
 
+# ------------------------------------------------------------------ 태그 어휘
+# 대화형 추천은 자연어를 QueryPlan 으로 바꿔야 한다. 그 변환을 누가 하든(외부 해석기든
+# Spring 의 LLM 이든) **이 카탈로그에 실제로 있는 말**을 써야 조건이 걸린다. 없는 태그를
+# 지어내면 `filter_query_pool` 이 "어휘에 없음" 으로 후보를 0 으로 만든다.
+#
+# 필드별 적용 방식이 다르다는 점이 중요하다. 이걸 알려주지 않으면 LLM 이 `mood` 로 거를 수
+# 있다고 믿고 조건을 만드는데, 실제로는 걸리지 않는다 — 조건이 조용히 사라지는 것과 같다.
+_ENFORCEMENT = {
+    "genre": "gate", "language": "gate", "vocal": "gate", "instrument": "gate",
+    "flow": "gate",
+    # filters.mood 는 게이트가 아니다. 무드는 추론 폭이 커서 의미 점수로만 반영한다.
+    # 반대로 exclude.mood 는 게이트다 ("이건 빼줘" 는 명시 조건으로 본다).
+    "mood": "score_only",
+    "bpm_min": "gate", "bpm_max": "gate",
+    # 기준 곡이 있어야 방향을 정할 수 있다. 없으면 무시되고 진단에 남는다.
+    "tempo_direction": "gate_with_reference", "energy_direction": "gate_with_reference",
+    # 카탈로그에 해당 필드가 없다. 받기는 하지만 아무 일도 하지 않는다.
+    "activity": "ignored", "goal": "ignored",
+}
+_EXCLUDABLE = {"genre", "language", "vocal", "instrument", "mood", "flow"}
+_FACETS_CACHE: dict = {}
+
+
+def _facets_payload(svc) -> dict:
+    """카탈로그가 기동 후 바뀌지 않으므로 한 번만 만든다."""
+    if _FACETS_CACHE:
+        return _FACETS_CACHE
+    fac = svc.catalog_facets()
+    df = fac["_df"]
+    bpm = [float(v) for v in df.bpm if float(v or 0) > 0]
+
+    def vals(key):
+        return [{"value": x["value"], "tracks": x.get("tracks", x.get("moments", 0))}
+                for x in fac.get(key, [])]
+
+    fields: dict = {}
+    for name in _ENFORCEMENT:
+        fields[name] = {"enforcement": _ENFORCEMENT[name],
+                        "excludable": name in _EXCLUDABLE}
+    fields["genre"]["values"] = vals("genre")
+    # 장르 게이트는 genre 와 style 양쪽에 맞춰 본다. 둘 다 골라도 된다.
+    fields["genre"]["style_values"] = vals("style")
+    fields["language"]["values"] = vals("language")
+    fields["vocal"]["values"] = vals("vocal_type")
+    fields["instrument"]["values"] = vals("instrument")
+    fields["mood"]["values"] = vals("mood")
+    fields["flow"]["values"] = [{"value": x["value"], "moments": x.get("moments", 0)}
+                                for x in fac.get("section_label", [])]
+    fields["bpm_min"]["range"] = fields["bpm_max"]["range"] = (
+        [round(min(bpm)), round(max(bpm))] if bpm else None)
+    fields["tempo_direction"]["values"] = [{"value": "up"}, {"value": "down"}]
+    fields["energy_direction"]["values"] = [{"value": "up"}, {"value": "down"}]
+
+    _FACETS_CACHE.update({
+        "catalog": {"tracks": int(svc.CAT.pool.track_id.nunique()),
+                    "moments": int(len(svc.CAT.pool))},
+        "fields": fields,
+        "example": {"filters": {"genre": ["pop"], "instrument": ["piano"],
+                                "vocal": ["female"], "flow": ["chorus"]},
+                    "exclude": {"mood": ["aggressive"]}},
+    })
+    return _FACETS_CACHE
+
+
+@router.get("/facets", summary="QueryPlan 에 쓸 수 있는 태그 어휘")
+def facets() -> dict:
+    """자연어를 QueryPlan 으로 바꾸는 쪽이 읽는다. 카탈로그에서 직접 만든다."""
+    return _facets_payload(_svc())
+
+
 def _pool_keys():
     pool = _svc().CAT.pool
     return (set(pool.track_id.astype(str)), set(pool.moment_id.astype(str)))
