@@ -31,13 +31,17 @@ Python **3.12**. GPU 도 `torch` 도 필요 없다 — 사용자 벡터 계산�
 | `MUPID_ID_MAP` | `<ARTIFACT_DIR>/data/proc/mupid/id_map.parquet` | 숫자 ID 매핑표. **시험용 매핑표를 물릴 때만** 지정한다 |
 | `MUPID_AI_NLP_URL` | (없음) | 자연어 해석기 주소. 비우면 `search` 가 501 |
 | `MUPID_POOL` | `flow` | 후보 풀의 주 출처 (`moments.parquet` 의 `source`) |
-| `MUPID_POOL_EXTRA` | `jamendo,own` | 주 출처에 **더해** 후보로 넣을 출처 (쉼표 구분) |
+| `MUPID_POOL_EXTRA` | `jamendo` | 주 출처에 **더해** 후보로 넣을 출처 (쉼표 구분) |
 | `MUPID_COMBINER` | `logistic_flow_stage1.json` | 점수 결합기 파일 이름 |
 | `MUPID_AI_INTERNAL_TOKEN` | (없음) | `/internal` 호출 토큰. 비우면 검사하지 않는다 |
 
 **`MUPID_POOL`·`MUPID_POOL_EXTRA`·`MUPID_COMBINER` 는 추천 결과 자체를 바꾼다.** 앞의 둘은
 후보에 오를 곡 집합을, 마지막은 순위를 바꾼다. 색인과 짝이 맞지 않는 결합기를 넣으면
 서비스는 정상처럼 뜨면서 순위만 틀어진다. 기본값을 그대로 두는 것을 권한다.
+
+설정한 출처가 실제로 몇 건 실렸는지는 `/health` 의 `catalog.by_source` 로 본다. 0 이면
+오타이거나 아직 안 실린 것이고 `catalog.empty_sources` 에도 나온다 — 풀이 조용히 비는 일이
+없어야 한다. `own`(자체 음원)은 지금 카탈로그에 0건이라 기본값에서 뺐다.
 
 경로 해석 결과는 `/health` 의 `paths` 와 `/internal/ready` 응답에서 확인한다. 설정한 대로
 읽고 있는지는 그 값으로 판별한다 — 환경변수 **값 자체는 응답에 싣지 않는다.**

@@ -58,11 +58,16 @@ NLP_PARSE_URL = os.environ.get("MUPID_AI_NLP_URL", "").strip()
 sys.path.insert(0, str(Path(__file__).resolve().parent / "legacy"))
 
 # ---------------------------- 설정 (조정 대상) ----------------------------
-POOL_SOURCE = __import__("os").environ.get("MUPID_POOL", "flow")
+POOL_SOURCE = os.environ.get("MUPID_POOL", "flow")
 # 후보 풀에 포함할 moments.source 집합. 출처 표기는 그대로 두고 선택만 넓힌다.
 # 해당 출처의 행이 없으면 기존 동작과 완전히 같다.
+#
+# 기본값에서 `own` 을 뺐다. 현재 카탈로그에 그 출처의 행이 0건이라 아무 일도 하지 않으면서
+# "자체 음원도 추천된다" 고 읽히기 때문이다. 실제로 넣을 때 환경변수로 다시 켠다.
+# 설정한 출처가 카탈로그에 없으면 기동 로그와 /health 가 알려준다 — 오타로 풀이 조용히
+# 비는 일이 없어야 한다.
 POOL_SOURCES = {POOL_SOURCE} | {
-    x.strip() for x in __import__("os").environ.get("MUPID_POOL_EXTRA", "jamendo,own").split(",")
+    x.strip() for x in os.environ.get("MUPID_POOL_EXTRA", "jamendo").split(",")
     if x.strip()}
 MAX_BPM_LOG2 = 0.40
 MIN_MOMENT_SEC = 8.0
@@ -147,6 +152,13 @@ class Catalog:
         self.meta = (pd.read_parquet(OUT_DIR / "flow_meta.parquet").set_index("track_id")
                      if (OUT_DIR / "flow_meta.parquet").exists() else pd.DataFrame())
         self.pool = self.mom[self.mom.source.isin(POOL_SOURCES)].reset_index(drop=True)
+        # 출처별 구간 수. 설정했는데 0건인 출처는 오타이거나 아직 안 실린 것이다.
+        counts = self.pool.source.value_counts().to_dict()
+        self.pool_sources = {src: int(counts.get(src, 0)) for src in sorted(POOL_SOURCES)}
+        self.pool_sources_empty = sorted(k for k, v in self.pool_sources.items() if not v)
+        if self.pool_sources_empty:
+            log(f"설정된 출처인데 구간이 0건이다 — {', '.join(self.pool_sources_empty)}"
+                f" (MUPID_POOL / MUPID_POOL_EXTRA 확인)")
         self.pool_rows = self.pool.emb_row.to_numpy()
         self.pool_x = np.asarray([self.idx.get(m, -1) for m in self.pool.moment_id])
         self.by_track = {t: g for t, g in self.pool.groupby("track_id", sort=False)}

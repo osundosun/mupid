@@ -131,7 +131,11 @@ def health() -> dict:
         "load_seconds": _STATE["load_seconds"],
         "error": _STATE["error"],
         "catalog": ({"tracks": int(cat.pool.track_id.nunique()),
-                     "moments": len(cat.pool)} if cat is not None else None),
+                     "moments": len(cat.pool),
+                     # 설정한 출처가 실제로 몇 건 실렸는지. 0 이면 오타이거나 미적재다.
+                     "by_source": cat.pool_sources,
+                     "empty_sources": cat.pool_sources_empty}
+                    if cat is not None else None),
         "integrity": (_STATE["integrity"] or {}).get("checks"),
         "artifacts": artifact_status(),
     }

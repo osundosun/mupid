@@ -267,3 +267,16 @@ def test_internal_api_end_to_end(svc, monkeypatch):
 
     assert c.get("/internal/ready").status_code == 200
     assert c.get("/internal/facets").json()["fields"]["genre"]["values"]
+
+
+def test_pool_source_counts_are_reported(svc):
+    """설정한 출처가 카탈로그에 없으면 풀이 조용히 빈다. 건수를 보여줘야 한다."""
+    assert svc.CAT.pool_sources["flow"] == 24
+    # 기본값에 있는 jamendo 는 이 합성 카탈로그에 없다 → 0 으로 드러난다.
+    assert svc.CAT.pool_sources.get("jamendo") == 0
+    assert "jamendo" in svc.CAT.pool_sources_empty
+
+
+def test_own_is_not_in_the_default_pool(svc):
+    """행이 0건인 출처를 기본값에 두면 '자체 음원도 추천된다' 고 잘못 읽힌다."""
+    assert "own" not in svc.POOL_SOURCES
