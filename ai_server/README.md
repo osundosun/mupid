@@ -71,7 +71,14 @@ CUDA 라이브러리를 끌고 와 수 GB 가 된다.
 서비스는 정상처럼 뜬다. 반드시 묶음으로 교체한다.
 
 `labels_service.parquet` 을 빠뜨리면 오류 없이 **모든 사용자가 콜드스타트 추천**을 받는다.
-이식 중 실제로 겪었다. 기동 로그의 곡·구간 수와 추천 `reason_code` 를 확인할 것.
+이식 중 실제로 겪었다. 이런 "있어도 되지만 없으면 기능이 조용히 꺼지는" 파일은 `/health`
+의 `artifacts` 가 이름과 이유를 함께 보여준다. 기동 로그에도 한 줄 남는다.
+
+```json
+"artifacts": { "missing": ["labels_service.parquet"],
+               "files": { "labels_service.parquet":
+                          { "exists": false, "why": "개인화. 없으면 모든 사용자가 콜드스타트다" } } }
+```
 
 ## API
 

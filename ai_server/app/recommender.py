@@ -1530,7 +1530,6 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             picked.append((int(i), float(final[int(i)]), 0))
             taken_tracks.add(r.track_id)
             vecs.append(V[int(i)])
-        order = order
 
     if explore and EXPLORE_SLOTS and len(picked) >= 3:
         rng = np.random.default_rng(int(time.time()) // 60)
@@ -1586,57 +1585,8 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
 
 
 # ------------------------------------------------------------------- 스키마
-class NextReq(BaseModel):
-    user_ref: str
-    n: int = 5
-    exclude: list[str] = []
-    explore: bool = True
-    query: Optional[str] = None
-    current_track_id: Optional[str] = None
-    current_moment_id: Optional[str] = None
-
-
-class FeedbackReq(BaseModel):
-    user_ref: str
-    track_id: str
-    event_type: str
-    start_sec: Optional[float] = None
-    end_sec: Optional[float] = None
-    from_sec: Optional[float] = None
-    to_sec: Optional[float] = None
-    trigger: Optional[str] = None
-    position_sec: Optional[float] = None
-    reason: Optional[str] = None
-    intervals: Optional[list[dict]] = None
-    value: Optional[int] = None
-    count: Optional[int] = None
-    session_id: Optional[str] = None
-    event_id: Optional[str] = None
-    play_id: Optional[str] = None
-    playlist_id: Optional[str] = None
-
-
 class LearnReq(BaseModel):
     user_ref: Optional[str] = None
     force: bool = False        # 전체 재계산(복구·검증용)
 
 
-class OnboardReq(BaseModel):
-    user_ref: str
-    language: list[str] = []
-    vocal_type: list[str] = []
-    style: list[str] = []
-    genre: list[str] = []
-    mood: list[str] = []
-    instrument: list[str] = []
-    tempo: list[str] = []
-    energy: list[str] = []          # 더 이상 선택지로 제공하지 않는다 (구답변 호환용)
-    section_label: list[str] = []
-    exclude_style: list[str] = []      # 절대 비선호 — 이력이 쌓여도 계속 제외
-
-
-class SimReq(BaseModel):
-    user_ref: str
-    rule: str = "chorus_energy"
-    tracks: int = 12
-    seed: int = 0

@@ -398,3 +398,33 @@ def test_query_plan_path_does_not_need_interpreter():
     assert r.status_code == 404, r.text          # 후보 0 → NO_CANDIDATES (501 아님)
     assert r.json()["error_code"] == "NO_CANDIDATES"
     assert seen["plan"] == {"filters": {"genre": ["pop"]}}
+
+
+# ------------------------------------------------------------------ 산출물 상태
+def test_artifact_status_names_what_is_missing(clean_env, tmp_path):
+    """없어도 서버는 뜬다. 그래서 무엇이 없는지 응답에 보여야 한다."""
+    clean_env.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
+    from ai_server.app import main, recommender
+
+    clean_env.setattr(recommender, "OUT_DIR", tmp_path / "data/proc/mupid")
+    st = main.artifact_status()
+    assert "labels_service.parquet" in st["missing"]
+    assert "id_map.parquet" in st["missing"]
+    # 왜 필요한지도 함께 — 없다는 사실만으로는 무엇이 꺼졌는지 알 수 없다.
+    assert st["files"]["labels_service.parquet"]["why"]
+
+
+def test_startup_uses_lifespan_not_deprecated_hook():
+    from ai_server.app import main
+
+    src = (Path(main.__file__)).read_text(encoding="utf-8")
+    assert 'on_event("startup")' not in src
+    assert main.app.router.lifespan_context is not None
+
+
+def test_demo_only_schemas_are_gone():
+    """데모 라우트가 없는 저장소다. 요청 스키마만 남아 있으면 계약을 오해하게 된다."""
+    src = (Path(__file__).resolve().parents[1] / "app" / "recommender.py").read_text(
+        encoding="utf-8")
+    for name in ("class NextReq", "class FeedbackReq", "class OnboardReq", "class SimReq"):
+        assert name not in src, name
