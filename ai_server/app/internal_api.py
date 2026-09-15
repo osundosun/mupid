@@ -10,7 +10,9 @@
 """
 from __future__ import annotations
 
+import hmac
 import os
+import time
 from typing import Optional
 
 from fastapi import APIRouter, FastAPI, Request
@@ -19,10 +21,21 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
-from . import ids
+from . import ids, metrics, paths
+from .log import log
 
 PREFIX = "/internal"
 MODEL_VERSION = "mupid-stage1-v1"       # /feedback 이 이미 내보내는 값과 같게 둔다
+EMBEDDING_VERSION = "mert-v1-95m"       # 구간 임베딩. 교체하면 닮은 구간 결과가 바뀐다
+AUTH_HEADER = "X-Internal-Token"
+
+# `/internal` 은 Spring 만 부르는 전제이고 지금은 네트워크 격리가 유일한 방어선이다.
+# 설정 실수 한 번이면 그대로 열린다. 공유 비밀을 넣어 두면 두 겹이 된다.
+#
+# **기본은 꺼져 있다.** 켜 두고 Spring 에 넣어 주지 않으면 추천이 통째로 401 이 되므로,
+# 값을 넣는 쪽이 켜는 쪽이 되게 한다. 값은 읽기만 하고 응답·로그에 싣지 않는다.
+def _expected_token() -> str:
+    return os.environ.get("MUPID_AI_INTERNAL_TOKEN", "").strip()
 BIGINT_MAX = 2 ** 63 - 1
 MAX_LIMIT = 50
 
@@ -64,7 +77,28 @@ class DailyRequest(_Base):
 
 
 class SearchRequest(_Base):
-    query: StrictStr = Field(..., min_length=1, max_length=500)
+    """자연어 검색. 조건을 **누가 뽑았느냐**에 따라 둘 중 하나를 채운다.
+
+    · `query_plan` — 호출자(Spring 의 LLM)가 이미 QueryPlan 으로 바꿔 보낸 경우.
+      해석기가 필요 없다. 쓸 수 있는 태그는 `GET /internal/facets` 가 알려준다.
+    · `query` — 원문만 보낸 경우. AI 서버가 `MUPID_AI_NLP_URL` 해석기를 부른다.
+      해석기가 없으면 501 이다.
+
+    둘 다 없으면 400 이다. 조건 없는 요청은 `daily`·`next` 로 보내야 한다 — 여기서
+    받아 주면 "검색했는데 조건이 안 걸린 결과" 가 나가고, 그게 이 API 의 실패 모드다.
+    """
+
+    query: Optional[StrictStr] = Field(None, min_length=1, max_length=500)
+    query_plan: Optional[dict] = Field(
+        None, description="QueryPlan v1. filters/exclude 만 읽는다")
+
+    @model_validator(mode="after")
+    def _one_of(self):
+        if not (self.query and self.query.strip()) and self.query_plan is None:
+            raise ValueError("query 또는 query_plan 중 하나는 있어야 합니다")
+        if self.query_plan is not None:
+            self.query_plan = _clean_plan(self.query_plan)
+        return self
 
 
 # ------------------------------------------------------------------ 응답 DTO
@@ -78,12 +112,45 @@ class RecommendationItem(BaseModel):
     score: float
     reason_code: str
     reason: str = Field(..., description="사람이 읽는 추천 이유")
+    # "당신이 저장한 이 구간과 닮아서" 를 만들 수 있는 최소한의 근거. **사용자 자신의**
+    # 구간이라 보여 줘도 새는 것이 없다. 모델 점수·확률·내부 ID 는 계속 내보내지 않는다.
+    ref_music_id: Optional[int] = Field(
+        None, description="이 추천의 근거가 된, 사용자가 좋아한 곡")
+    ref_music_section_id: Optional[int] = Field(
+        None, description="그 곡의 구간. 매핑이 없으면 비운다")
 
     @model_validator(mode="after")
     def _range(self):
         if self.end_time_ms <= self.start_time_ms:
             raise ValueError("end_time_ms 는 start_time_ms 보다 커야 한다")
         return self
+
+
+class SimilarRequest(BaseModel):
+    """기준 구간과 닮은 구간 찾기. 개인화가 없어 `user_id` 를 받지 않는다."""
+
+    model_config = {"extra": "forbid"}
+
+    music_section_id: StrictInt = Field(..., ge=1)
+    limit: StrictInt = Field(5, ge=1, le=MAX_LIMIT)
+    exclude_music_ids: list[StrictInt] = Field(default_factory=list)
+
+
+class SimilarItem(BaseModel):
+    music_id: int
+    music_section_id: int
+    start_time_ms: int = Field(..., ge=0)
+    end_time_ms: int = Field(..., ge=0)
+    section_label: str
+    rank_order: int = Field(..., ge=1)
+    similarity: float = Field(..., description="코사인. 개인 취향이 섞이지 않은 값이다")
+
+
+class SimilarResponse(BaseModel):
+    music_section_id: int
+    items: list[SimilarItem]
+    shortfall: int = Field(..., ge=0)
+    embedding_version: str
 
 
 class RecommendationResponse(BaseModel):
@@ -93,31 +160,100 @@ class RecommendationResponse(BaseModel):
     model_version: str
 
 
+def _clean_plan(plan: dict) -> dict:
+    """바깥에서 온 QueryPlan 을 읽는 키만 남긴다.
+
+    `filter_query_pool` 은 `filters`·`exclude` 만 본다. `_clap_embedding` 같은 밑줄 키는
+    **내부 전용**이다 — 바깥에서 넣을 수 있게 두면 호출자가 의미 점수 벡터를 직접
+    주입하게 된다.
+    """
+    if not isinstance(plan, dict):
+        raise ValueError("query_plan 은 객체여야 합니다")
+    out: dict = {}
+    for key in ("filters", "exclude"):
+        v = plan.get(key)
+        if v is None:
+            continue
+        if not isinstance(v, dict):
+            raise ValueError(f"query_plan.{key} 는 객체여야 합니다")
+        out[key] = {k: val for k, val in v.items() if not str(k).startswith("_")}
+    if not out:
+        raise ValueError("query_plan 에 filters 또는 exclude 가 있어야 합니다")
+    return out
+
+
 class ErrorResponse(BaseModel):
     error_code: str
     message: str
 
 
-ERRORS = {400: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
-          500: {"model": ErrorResponse}, 503: {"model": ErrorResponse}}
+ERRORS = {400: {"model": ErrorResponse}, 401: {"model": ErrorResponse},
+          404: {"model": ErrorResponse}, 500: {"model": ErrorResponse},
+          503: {"model": ErrorResponse}}
 
 
 # ------------------------------------------------------------------ 어댑터
-def _reason_code(item: dict, has_query: bool) -> str:
-    """기존 결과가 이미 들고 있는 값에서 사유 코드를 읽어낸다. 새로 계산하지 않는다."""
-    if has_query and item.get("clap_score") is not None:
-        return "QUERY_SEMANTIC_MATCH"
+def _reason_code(item: dict, has_query: bool, query_source: str) -> str:
+    """기존 결과가 이미 들고 있는 값에서 사유 코드를 읽어낸다. 새로 계산하지 않는다.
+
+    `query_source` 는 추천기가 무엇으로 질의 벡터를 만들었는지다(`labels`/`onboarding`/
+    `none`). 이걸 보지 않으면 온보딩으로 뽑은 추천까지 `COLD_START` 로 집계되어,
+    "콜드스타트 비율" 지표가 온보딩이 정상 작동할 때도 높게 나온다.
+    """
+    if has_query:
+        return ("QUERY_SEMANTIC_MATCH" if item.get("clap_score") is not None
+                else "QUERY_FILTER_MATCH")
     if item.get("slot_source") == "explore":
         return "EXPLORE_NEW"
     if item.get("matched_dna"):
-        return "SIMILAR_PREFERRED_MOMENT"
+        return ("ONBOARDING_MATCH" if query_source == "onboarding"
+                else "SIMILAR_PREFERRED_MOMENT")
     return "COLD_START"
+
+
+# 사용자에게 보이는 문장은 **코드에서 만든다.** 추천기 내부 `reason` 문자열에는 내부
+# ID(`dna3`, `JAMENDO_1083659#2`)와 모델 수치(유사도·확률·점수)가 들어 있다. 프론트가 그대로
+# 표시하므로 응답에 실으면 그게 곧 노출이다. 내부 문자열은 진단용으로 두고 내보내지 않는다.
+#
+# Spring 이 자체 문구를 쓰고 싶으면 `reason_code` 로 갈아끼우면 된다. 여기 문장은 그때까지의
+# 안전한 기본값이고, 모르는 코드에서도 빈 문자열이 나가지 않게 폴백을 둔다.
+_SECTION_KO = {"INTRO": "인트로", "VERSE": "벌스", "PRE_CHORUS": "프리코러스",
+               "CHORUS": "후렴", "BRIDGE": "브릿지", "BREAK": "브레이크",
+               "INST": "연주", "SOLO": "솔로", "OUTRO": "아웃트로"}
+
+# 실서비스 ERD 의 `music_section_analysis.section_label` ENUM. Spring 의 SectionLabel 과
+# 같아야 한다 — 여기에 없는 값을 보내면 저쪽 역직렬화에서 터진다.
+#
+# 추천기는 `other` 를 만들 수 있는데 ENUM 에는 없다. 그런 구간은 **내보내지 않고**
+# shortfall 로 센다. 억지로 다른 라벨에 끼워 넣으면 사용자에게 틀린 구간 유형을 말하게 된다.
+# ENUM 에 OTHER 를 추가할지는 ERD 변경이라 BE 와 합의가 필요하다.
+_SECTION_ENUM = frozenset(_SECTION_KO)
+
+_REASON_TEXT = {
+    "QUERY_SEMANTIC_MATCH": "요청하신 분위기에 가까운 {sec} 구간이에요.",
+    "QUERY_FILTER_MATCH": "요청하신 조건에 맞는 {sec} 구간이에요.",
+    "SIMILAR_PREFERRED_MOMENT": "최근 좋아한 구간과 비슷한 {sec} 구간이에요.",
+    "ONBOARDING_MATCH": "처음 고른 취향에 맞는 {sec} 구간이에요.",
+    "EXPLORE_NEW": "새로 들어볼 만한 {sec} 구간이에요.",
+    "COLD_START": "많이 듣는 {sec} 구간부터 들려드려요.",
+}
+_REASON_FALLBACK = "취향에 맞을 것 같은 구간이에요."
+
+
+def _reason_text(code: str, section_label: str) -> str:
+    tpl = _REASON_TEXT.get(code)
+    if tpl is None:
+        return _REASON_FALLBACK
+    return tpl.format(sec=_SECTION_KO.get(section_label, "이"))
 
 
 def to_response(rec_id: int, out: dict, limit: int,
                 has_query: bool) -> RecommendationResponse:
     """`recommend()` 결과를 공통 DTO 로 옮긴다. 순서·점수는 건드리지 않는다."""
     im = ids.id_map()
+    query_source = str(out.get("diagnostics", {}).get("query_source", ""))
+    metrics.observe_query_source(query_source)
+    unknown_labels: list[str] = []
     items: list[RecommendationItem] = []
     for r in out.get("results", []):
         src_t, src_s = str(r["track_id"]), str(r["moment_id"])
@@ -127,24 +263,43 @@ def to_response(rec_id: int, out: dict, limit: int,
         if e_ms <= s_ms:
             raise ApiError("INVALID_TIME_RANGE",
                            f"구간 시간이 뒤집혔거나 길이가 0 입니다: {src_s}")
+        # ERD ENUM 은 대문자다. 추천기는 소문자를 만들므로 경계에서만 맞춘다.
+        label = str(r.get("section_label", "")).upper()
+        if label not in _SECTION_ENUM:
+            unknown_labels.append(label or "(빈값)")
+            continue
+        code = _reason_code(r, has_query, query_source)
+        metrics.observe_reason(code)
+        ref_uid, ref_sid, ref_mid = str(r.get("matched_dna_rep") or ""), None, None
+        if ref_uid:
+            # 근거 구간이 매핑표에 없을 수 있다(추천 풀 밖의 오래된 취향 등).
+            # 그때는 추천 자체를 실패시키지 않고 근거만 비운다.
+            ref_sid = im.sec_to_num.get(ref_uid)
+            ref_mid = im.track_to_num.get(ref_uid.split("#")[0])
+            if ref_sid is None or ref_mid is None:
+                ref_sid = ref_mid = None
         items.append(RecommendationItem(
             music_id=mid, music_section_id=sid,
             start_time_ms=s_ms, end_time_ms=e_ms,
-            # ERD ENUM 은 대문자다. 추천기는 소문자를 만들므로 경계에서만 맞춘다.
-            section_label=str(r.get("section_label", "")).upper(),
+            section_label=label,
             rank_order=int(r["rank"]), score=float(r["final_score"]),
-            reason_code=_reason_code(r, has_query),
-            reason=str(r.get("reason", ""))))
+            reason_code=code, reason=_reason_text(code, label),
+            ref_music_id=ref_mid, ref_music_section_id=ref_sid))
+    if unknown_labels:
+        # 조용히 넘기면 "추천이 왜 적지" 로만 보인다. 원인을 로그에 남긴다.
+        log(f"ERD ENUM 에 없는 구간 라벨 {len(unknown_labels)}건 제외 — "
+              f"{sorted(set(unknown_labels))}")
     items, dropped = _dedupe_by_music_id(items)
     if dropped:
         # 여기서 걸렸다는 것은 매핑표가 N:1 이라는 뜻이다. 조용히 넘기면 원인이 묻힌다.
-        print(f"[internal] music_id 중복 {dropped}건 제거 — 매핑표 1:1 확인 필요",
-              flush=True)
+        log(f"music_id 중복 {dropped}건 제거 — 매핑표 1:1 확인 필요")
     if not items:
         raise ApiError("NO_CANDIDATES", "해당되는 노래가 없습니다.")
     # shortfall 은 추천기가 이미 센 값을 쓰되, 없으면 요청 수와의 차로 메운다.
+    # 경계에서 떨군 것(ENUM 밖 라벨·music_id 중복)도 부족분이다. 추천기가 센 값만 믿으면
+    # "10개 달라고 했는데 7개 왔고 shortfall 은 0" 이 되어 BE 가 원인을 찾을 수 없다.
     short = out.get("diagnostics", {}).get("shortfall")
-    short = int(short) if short is not None else max(0, limit - len(items))
+    short = max(int(short) if short is not None else 0, limit - len(items), 0)
     return RecommendationResponse(recommendation_id=rec_id, items=items,
                                   shortfall=short, model_version=MODEL_VERSION)
 
@@ -175,10 +330,16 @@ def _dedupe_by_music_id(
 _SVC_MOD = None          # install() 이 넣어 준다. 이름으로 재import 하지 않는다.
 
 
-def _svc():
+def _svc_mod():
+    """색인 준비 여부와 무관하게 서비스 모듈만 가져온다."""
     svc = _SVC_MOD
     if svc is None:                       # 직접 호출 등 예외 상황의 최후 수단
         from . import recommender as svc  # noqa: PLC0415
+    return svc
+
+
+def _svc():
+    svc = _svc_mod()
     if getattr(svc, "CAT", None) is None or len(svc.CAT.pool) == 0:
         raise ApiError("INDEX_NOT_READY", "추천 색인이 아직 준비되지 않았습니다.")
     return svc
@@ -222,22 +383,150 @@ def daily(req: DailyRequest) -> RecommendationResponse:
 
 # 자연어 검색은 외부 해석기가 있어야 조건을 뽑는다. 해석기 없이 열어 두면 사용자가 적은
 # 조건을 말없이 무시한 채 아무 곡이나 돌려주게 된다 — 조건을 몰래 푸는 것과 같다.
-# 그래서 해석기 주소가 없으면 501 로 "아직 준비되지 않았다"고 답한다. 확장은 S15P21A204-219.
-NLP_URL = os.environ.get("MUPID_AI_NLP_URL", "").strip()
+# 설정 여부 판단과 실제 호출은 **같은 환경변수**(MUPID_AI_NLP_URL)를 본다. 확장은
+# S15P21A204-219.
 
 
 @router.post("/recommendations/search", response_model=RecommendationResponse,
              responses=ERRORS, summary="자연어 검색 추천")
 def search(req: SearchRequest) -> RecommendationResponse:
-    if not NLP_URL:
-        raise ApiError("SEARCH_NOT_CONFIGURED",
-                       "자연어 해석기가 설정되지 않았습니다. "
-                       "MUPID_AI_NLP_URL 을 지정하세요. (S15P21A204-219)")
-    svc = _svc()
-    plan, _error = svc.parse_nlp_query(req.query.strip())
+    svc = _svc_mod()
+    if req.query_plan is not None:
+        # 호출자가 이미 조건을 뽑아 보냈다. 해석기가 필요 없다.
+        _svc()                              # 색인 준비 확인
+        plan = req.query_plan
+    else:
+        if not getattr(svc, "NLP_PARSE_URL", ""):
+            raise ApiError("SEARCH_NOT_CONFIGURED",
+                           "자연어 해석기가 설정되지 않았습니다. "
+                           "MUPID_AI_NLP_URL 을 지정하거나 query_plan 을 보내세요. "
+                           "(S15P21A204-219)")
+        _svc()                              # 색인 준비 확인
+        plan, error = svc.parse_nlp_query(req.query.strip())
+        if error is not None:
+            # 조건을 뽑지 못했다. 일반 추천으로 조용히 넘어가지 않는다.
+            raise ApiError(*error)
     out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
                         True, plan, None, None)
     return to_response(req.recommendation_id, out, req.limit, True)
+
+
+# ------------------------------------------------------------------ 태그 어휘
+# 대화형 추천은 자연어를 QueryPlan 으로 바꿔야 한다. 그 변환을 누가 하든(외부 해석기든
+# Spring 의 LLM 이든) **이 카탈로그에 실제로 있는 말**을 써야 조건이 걸린다. 없는 태그를
+# 지어내면 `filter_query_pool` 이 "어휘에 없음" 으로 후보를 0 으로 만든다.
+#
+# 필드별 적용 방식이 다르다는 점이 중요하다. 이걸 알려주지 않으면 LLM 이 `mood` 로 거를 수
+# 있다고 믿고 조건을 만드는데, 실제로는 걸리지 않는다 — 조건이 조용히 사라지는 것과 같다.
+_ENFORCEMENT = {
+    "genre": "gate", "language": "gate", "vocal": "gate", "instrument": "gate",
+    "flow": "gate",
+    # filters.mood 는 게이트가 아니다. 무드는 추론 폭이 커서 의미 점수로만 반영한다.
+    # 반대로 exclude.mood 는 게이트다 ("이건 빼줘" 는 명시 조건으로 본다).
+    "mood": "score_only",
+    "bpm_min": "gate", "bpm_max": "gate",
+    # 기준 곡이 있어야 방향을 정할 수 있다. 없으면 무시되고 진단에 남는다.
+    "tempo_direction": "gate_with_reference", "energy_direction": "gate_with_reference",
+    # 카탈로그에 해당 필드가 없다. 받기는 하지만 아무 일도 하지 않는다.
+    "activity": "ignored", "goal": "ignored",
+}
+_EXCLUDABLE = {"genre", "language", "vocal", "instrument", "mood", "flow"}
+_FACETS_CACHE: dict = {}
+
+
+def _facets_payload(svc) -> dict:
+    """카탈로그가 기동 후 바뀌지 않으므로 한 번만 만든다."""
+    if _FACETS_CACHE:
+        return _FACETS_CACHE
+    fac = svc.catalog_facets()
+    df = fac["_df"]
+    bpm = [float(v) for v in df.bpm if float(v or 0) > 0]
+
+    def vals(key):
+        return [{"value": x["value"], "tracks": x.get("tracks", x.get("moments", 0))}
+                for x in fac.get(key, [])]
+
+    fields: dict = {}
+    for name in _ENFORCEMENT:
+        fields[name] = {"enforcement": _ENFORCEMENT[name],
+                        "excludable": name in _EXCLUDABLE}
+    fields["genre"]["values"] = vals("genre")
+    # 장르 게이트는 genre 와 style 양쪽에 맞춰 본다. 둘 다 골라도 된다.
+    fields["genre"]["style_values"] = vals("style")
+    fields["language"]["values"] = vals("language")
+    fields["vocal"]["values"] = vals("vocal_type")
+    fields["instrument"]["values"] = vals("instrument")
+    fields["mood"]["values"] = vals("mood")
+    fields["flow"]["values"] = [{"value": x["value"], "moments": x.get("moments", 0)}
+                                for x in fac.get("section_label", [])]
+    fields["bpm_min"]["range"] = fields["bpm_max"]["range"] = (
+        [round(min(bpm)), round(max(bpm))] if bpm else None)
+    fields["tempo_direction"]["values"] = [{"value": "up"}, {"value": "down"}]
+    fields["energy_direction"]["values"] = [{"value": "up"}, {"value": "down"}]
+
+    _FACETS_CACHE.update({
+        "catalog": {"tracks": int(svc.CAT.pool.track_id.nunique()),
+                    "moments": int(len(svc.CAT.pool))},
+        "fields": fields,
+        "example": {"filters": {"genre": ["pop"], "instrument": ["piano"],
+                                "vocal": ["female"], "flow": ["chorus"]},
+                    "exclude": {"mood": ["aggressive"]}},
+    })
+    return _FACETS_CACHE
+
+
+@router.get("/facets", summary="QueryPlan 에 쓸 수 있는 태그 어휘")
+def facets() -> dict:
+    """자연어를 QueryPlan 으로 바꾸는 쪽이 읽는다. 카탈로그에서 직접 만든다."""
+    return _facets_payload(_svc())
+
+
+@router.post("/similar", response_model=SimilarResponse, responses=ERRORS,
+             summary="기준 구간과 닮은 다른 곡의 구간")
+def similar(req: SimilarRequest) -> SimilarResponse:
+    """`recommend` 와 달리 사용자 취향을 섞지 않는다. 같은 질문에 늘 같은 답이다."""
+    svc = _svc()
+    im = ids.id_map()
+    src_uid = im.source_section_uid(req.music_section_id)     # 없으면 MappingError
+    drop = {im.source_track_id(x) for x in req.exclude_music_ids}
+    rows = svc.similar_moments(src_uid, req.limit, drop)
+
+    items: list[SimilarItem] = []
+    for r in rows:
+        label = str(r["section_label"]).upper()
+        if label not in _SECTION_ENUM:            # ERD ENUM 밖은 내보내지 않는다
+            continue
+        s_ms, e_ms = ids.to_ms(r["start_sec"]), ids.to_ms(r["end_sec"])
+        if e_ms <= s_ms:
+            continue
+        items.append(SimilarItem(
+            music_id=im.music_id(r["track_id"]),
+            music_section_id=im.music_section_id(r["moment_id"]),
+            start_time_ms=s_ms, end_time_ms=e_ms, section_label=label,
+            rank_order=len(items) + 1, similarity=float(r["similarity"])))
+    if not items:
+        raise ApiError("NO_CANDIDATES", "닮은 구간을 찾지 못했습니다.")
+    return SimilarResponse(music_section_id=req.music_section_id, items=items,
+                           shortfall=max(0, req.limit - len(items)),
+                           embedding_version=EMBEDDING_VERSION)
+
+
+@router.get("/metrics", summary="운영 지표 (프로세스 내 카운터)")
+def metrics_view() -> dict:
+    """재시작하면 0 이다. 장기 추세는 수집기가 주기적으로 읽어 쌓는다.
+
+    `/internal/ready` 상태도 함께 싣는다 — 지표만 보고 "왜 실패율이 1.0 인가" 를
+    판단하려면 준비 여부가 같은 화면에 있어야 한다.
+    """
+    snap = metrics.snapshot()
+    try:
+        st = id_map_status()
+        snap["ready"] = {"ok": bool(st.get("ready")),
+                         "tracks_unmapped": st.get("tracks_unmapped"),
+                         "sections_unmapped": st.get("sections_unmapped")}
+    except Exception as e:                       # 색인 미적재 등
+        snap["ready"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    return snap
 
 
 def _pool_keys():
@@ -261,10 +550,19 @@ def ready() -> dict:
     """매핑이 하나라도 빠져 있으면 준비 완료가 아니다. 8100 데모와는 무관하다."""
     st = id_map_status()
     if not st.get("ready"):
+        pc = paths.check()
+        idm = pc["id_map"]
+        # 경로가 틀린 것인지 적재가 덜 된 것인지 응답만 보고 갈라야 한다.
+        where = ("매핑표 파일이 없습니다" if not idm["exists"] else "매핑이 부족합니다")
         raise ApiError("INDEX_NOT_READY",
-                       f"숫자 ID 매핑 미완료 — 곡 {st.get('tracks_unmapped', '?')}건, "
-                       f"구간 {st.get('sections_unmapped', '?')}건 미매핑")
-    return {"ready": True, "tracks": st["tracks"], "sections": st["sections"]}
+                       f"숫자 ID 매핑 미완료 — {where}. "
+                       f"곡 {st.get('tracks_unmapped', '?')}건, "
+                       f"구간 {st.get('sections_unmapped', '?')}건 미매핑. "
+                       f"id_map={idm['path']} (존재 {idm['exists']}, "
+                       f"MUPID_ID_MAP 지정 {idm['overridden']}), "
+                       f"artifact_dir={pc['artifact_dir']}")
+    return {"ready": True, "tracks": st["tracks"], "sections": st["sections"],
+            "paths": paths.check()}
 
 
 # ------------------------------------------------------------------ 설치
@@ -278,6 +576,26 @@ def install(app: FastAPI, service_module=None) -> None:
     if service_module is not None:
         _SVC_MOD = service_module
     app.include_router(router)
+
+    @app.middleware("http")
+    async def _observe(request: Request, call_next):
+        if not request.url.path.startswith(PREFIX):
+            return await call_next(request)
+        expected = _expected_token()
+        if expected:
+            got = request.headers.get(AUTH_HEADER, "")
+            # 상수 시간 비교. 길이·내용이 응답 시간으로 새지 않게 한다.
+            if not hmac.compare_digest(got, expected):
+                metrics.observe_request(request.url.path, 0.0, "HTTP_401")
+                return _err("UNAUTHORIZED", "내부 호출 토큰이 올바르지 않습니다.", 401)
+        t0 = time.perf_counter()
+        response = await call_next(request)
+        # 오류 코드는 예외 처리기가 본문에 실어 둔 것을 상태 코드로 갈음한다.
+        # 본문을 여기서 읽으면 스트리밍 응답을 소비해 버린다.
+        code = None if response.status_code < 400 else f"HTTP_{response.status_code}"
+        metrics.observe_request(request.url.path, time.perf_counter() - t0, code)
+        return response
+
     prev = app.exception_handlers.get(RequestValidationError)
 
     @app.exception_handler(ids.MappingError)

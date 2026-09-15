@@ -9,17 +9,40 @@
 from __future__ import annotations
 
 import time
+from contextlib import asynccontextmanager
 
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 
-from . import internal_api, recommender
-
-app = FastAPI(title="MUPID AI 추천 서비스", version="1.0.0")
+from . import internal_api, paths, recommender
+from .log import log
 
 _STARTED = time.time()
 _STATE: dict = {"loaded": False, "error": None, "integrity": None, "load_seconds": None}
+
+
+# 없어도 서비스가 뜨지만 **기능 하나가 조용히 사라지는** 파일들. 행 수 검사 대상이 아니라
+# 존재 여부만 본다. 예컨대 labels_service.parquet 이 없으면 오류 없이 모든 사용자가
+# 콜드스타트로 처리된다 — 서버는 정상으로 보이고 개인화만 없다.
+_OPTIONAL_ARTIFACTS = {
+    "labels_service.parquet": "개인화. 없으면 모든 사용자가 콜드스타트다",
+    "logistic_flow_stage1.json": "점수 결합기. 없으면 규칙 점수로 내려간다",
+    "stage1.pt": "랭킹 모델. 없으면 학습 점수를 쓰지 않는다",
+}
+
+
+def artifact_status() -> dict:
+    """선택 산출물과 매핑표의 적재 상태. `/health` 가 그대로 내보낸다."""
+    d = recommender.OUT_DIR
+    files = {name: {"exists": (d / name).exists(), "why": why}
+             for name, why in _OPTIONAL_ARTIFACTS.items()}
+    idm = paths.id_map_path()
+    files["id_map.parquet"] = {
+        "exists": idm.exists(), "path": str(idm),
+        "why": "숫자 ID 매핑. 없으면 /internal/ready 가 503 이다"}
+    return {"files": files,
+            "missing": sorted(k for k, v in files.items() if not v["exists"])}
 
 
 def check_integrity() -> dict:
@@ -53,26 +76,39 @@ def check_integrity() -> dict:
     return out
 
 
-@app.on_event("startup")
 def _startup() -> None:
     t0 = time.time()
+    miss = artifact_status()["missing"]
+    if miss:
+        # 죽이지 않는다. "정상처럼 뜬 채 기능만 없는" 상태를 로그와 /health 에 남긴다.
+        # 무결성 검사보다 **먼저** 찍는다 — 무결성이 깨지면 아래에서 돌아 나가기 때문이다.
+        log(f"선택 산출물 없음 — {', '.join(miss)}")
     integrity = check_integrity()
     _STATE["integrity"] = integrity
     if not integrity["ok"]:
         # 여기서 죽이지 않는다. /health 로 원인을 볼 수 있어야 하고 ready 만 막으면 된다.
         _STATE["error"] = "; ".join(integrity["errors"])
-        print(f"[ai_server] 산출물 무결성 실패 — {_STATE['error']}", flush=True)
+        log(f"산출물 무결성 실패 — {_STATE['error']}")
         return
     try:
         recommender.CAT = recommender.Catalog()
         _STATE["loaded"] = True
         _STATE["load_seconds"] = round(time.time() - t0, 3)
-        print(f"[ai_server] 적재 완료 {_STATE['load_seconds']}초 · "
+        log(f"적재 완료 {_STATE['load_seconds']}초 · "
               f"{recommender.CAT.pool.track_id.nunique()}곡 "
-              f"{len(recommender.CAT.pool)}구간", flush=True)
+              f"{len(recommender.CAT.pool)}구간")
     except Exception as e:
         _STATE["error"] = f"{type(e).__name__}: {e}"
-        print(f"[ai_server] 카탈로그 적재 실패 — {_STATE['error']}", flush=True)
+        log(f"카탈로그 적재 실패 — {_STATE['error']}")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _startup()
+    yield
+
+
+app = FastAPI(title="MUPID AI 추천 서비스", version="1.0.0", lifespan=lifespan)
 
 
 @app.get("/health", summary="프로세스가 떠 있는가")
@@ -83,12 +119,17 @@ def health() -> dict:
         "status": "ok",
         "uptime_seconds": round(time.time() - _STARTED, 1),
         "artifact_dir": str(recommender.ROOT),
+        "paths": paths.check(),
         "catalog_loaded": _STATE["loaded"],
+        # torch 판인지 NumPy 판인지. 이미지에서 torch 를 걷어낸 뒤 실제로 어느 쪽이
+        # 돌고 있는지 응답으로 확인할 수 있어야 한다.
+        "model_backend": getattr(recommender.CAT, "model_backend", None),
         "load_seconds": _STATE["load_seconds"],
         "error": _STATE["error"],
         "catalog": ({"tracks": int(cat.pool.track_id.nunique()),
                      "moments": len(cat.pool)} if cat is not None else None),
         "integrity": (_STATE["integrity"] or {}).get("checks"),
+        "artifacts": artifact_status(),
     }
 
 
