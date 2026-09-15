@@ -20,10 +20,13 @@
 | `playlist/PlaylistDetailAndDeleteTest` | `@SpringBootTest` | 상세·소프트 삭제 10건 |
 | `playlist/PlaylistTrackRemoveAndRenameTest` | `@SpringBootTest` | 곡 빼기·이름 변경 8건 |
 | `event/EventCollectBatchTest` | 순수 JUnit | 수집기의 배치 멱등·거부 격리 4건 |
+| `report/MubtiScorerTest` | 순수 JUnit | MuBTI 네 축 판정·표본 하한·이력 현상 11건 |
 
 `@SpringBootTest` 는 전부 `@Transactional` 로 매번 롤백한다.
 
 **`EventCollectBatchTest` 는 인프라 없이 돈다.** Redis 와 Kafka 를 가짜로 두었다 — 그 경로에서 확인할 것은 선점과 발행의 **순서와 개수**뿐이라 실물이 필요 없다. MySQL 이 떠 있어야 도는 테스트를 굳이 늘리지 않는다.
+
+**`MubtiScorerTest` 도 인프라가 없다.** `MubtiScorer` 가 리포지토리를 모르고 입력을 `MubtiInput` 한 덩어리로 받기 때문이다 — 판정 규칙을 DB 없이 검사할 수 있게 하려고 일부러 그렇게 갈랐다. 확인하는 것은 계수의 **값이 아니라 방향**이다("끝까지 듣는 사람은 F 다"). 값을 못 박으면 계수를 조율할 때마다 테스트를 같이 고치게 되고, 그러면 테스트가 아무것도 지키지 못한다.
 
 **나머지는 로컬 MySQL 이 떠 있어야 한다.** `.env` 의 `MUPID_MYSQL_URL` 이 가리키는 DB 에 스키마가 있어야 하고, 컨텍스트가 뜨면서 관리자 계정이 없으면 하나 만든다(`users` 에 행이 생긴다 — 테스트 롤백과 무관하다). Redis·Kafka·ClickHouse 는 기동 시점에 연결하지 않아 없어도 통과한다.
 
@@ -40,7 +43,7 @@ CI 에서 테스트를 뺀 것은 팀 결정이고 과정이 이력에 남아 �
 
 ### 프론트엔드
 
-`frontend/tests/` 에 `node:test` 기반 `.test.mjs` 21개가 추적되고 있다. `frontend/package.json` 의 scripts 는 `dev`/`build`/`start`/`lint`/`format` 뿐이라 `npm test` 가 없다. 실행 방법은 `frontend/README.md` 의 한 줄이 유일하다.
+`frontend/tests/` 에 `node:test` 기반 `.test.mjs` 24개가 추적되고 있다. `frontend/package.json` 의 scripts 는 `dev`/`build`/`start`/`lint`/`format` 뿐이라 `npm test` 가 없다. 실행 방법은 `frontend/README.md` 의 한 줄이 유일하다.
 
 ```bash
 npx tsc --noEmit --incremental false
