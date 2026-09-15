@@ -221,7 +221,22 @@ export class PlayerEngine {
       this.fail('이 브라우저는 Web Audio 를 지원하지 않아요.');
       return;
     }
-    const context = new Ctor({ sampleRate: OPUS_SAMPLE_RATE });
+    // `latencyHint: 'playback'` 은 **출력 버퍼를 키워 달라는 뜻**이다.
+    //
+    // 기본값('interactive')으로 만들면 이 기기의 `baseLatency` 가 0.004초,
+    // 곧 192프레임이었다. 오디오 스레드가 4ms 안에 다음 조각을 내놓지
+    // 못하면 그 자리가 언더런이다 — 하드웨어는 기다려 주지 않으므로 무음이나
+    // 직전 데이터를 대신 내보내고, 파형이 수직으로 끊겨 '퍽' 하고 들린다.
+    // 안드로이드는 코어 주파수를 낮추거나 스레드를 옮기는 일이 잦고 이 앱은
+    // 6초마다 Opus 청크를 푼다. 4ms 여유로는 빠듯하다.
+    //
+    // 'playback' 이면 1024프레임(약 21ms)으로 다섯 배 넉넉해진다. 음악
+    // 재생은 악기나 게임과 달리 출력 지연이 문제되지 않는다 — 예약은
+    // 컨텍스트 시계 기준이라 재생 위치 계산도 그대로다.
+    const context = new Ctor({
+      sampleRate: OPUS_SAMPLE_RATE,
+      latencyHint: 'playback',
+    });
     // 페이드용과 볼륨용을 나눈다. 섞어 쓰면 페이드 도중 볼륨을 바꿀 때
     // 서로의 램프를 덮어써 소리가 튄다.
     const fade = context.createGain();
