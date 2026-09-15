@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  사용자 여정 이벤트 명세 — 읽기용 렌더 페이지.
+
+  기준 문서는 domain/listening-events.md 다. 둘이 어긋나면 마크다운이 맞다.
+  이 파일은 브라우저로 바로 열 수 있는 한 장짜리 사본이고, 표를 한눈에 훑거나
+  프론트·백엔드가 같은 화면을 보며 이야기할 때 쓴다.
+  갱신할 때는 마크다운을 먼저 고치고 이 파일의 해당 표를 맞춘다.
+-->
+<style>html{color-scheme:light dark}body{margin:0}img{max-width:100%}</style>
+<title>사용자 여정 이벤트 명세</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+<style>
+:root{
+  --ground:#f6f8f6;
+  --surface:#ffffff;
+  --surface-2:#eef2ef;
+  --ink:#171d1b;
+  --ink-2:#4a5a56;
+  --ink-3:#7b8b86;
+  --rule:#dde4e0;
+  --rule-2:#c8d3ce;
+  --pos:#0f6e5c;
+  --pos-bg:#e2efeb;
+  --neg:#a8442a;
+  --neg-bg:#f7e8e3;
+  --flag:#8a6d1f;
+  --flag-bg:#f6efd9;
+  --sans:"IBM Plex Sans KR","Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;
+  --mono:"IBM Plex Mono","D2Coding",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#111614;
+    --surface:#181f1d;
+    --surface-2:#1f2725;
+    --ink:#e8eeeb;
+    --ink-2:#a6b4b0;
+    --ink-3:#7d8c88;
+    --rule:#2a3330;
+    --rule-2:#3a4642;
+    --pos:#5cc3a9;
+    --pos-bg:#153029;
+    --neg:#e08767;
+    --neg-bg:#33201a;
+    --flag:#d6b45c;
+    --flag-bg:#302713;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#111614;
+  --surface:#181f1d;
+  --surface-2:#1f2725;
+  --ink:#e8eeeb;
+  --ink-2:#a6b4b0;
+  --ink-3:#7d8c88;
+  --rule:#2a3330;
+  --rule-2:#3a4642;
+  --pos:#5cc3a9;
+  --pos-bg:#153029;
+  --neg:#e08767;
+  --neg-bg:#33201a;
+  --flag:#d6b45c;
+  --flag-bg:#302713;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-weight:400;
+  font-size:15px;
+  line-height:1.7;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:56px 28px 96px;display:flex;flex-direction:column;gap:56px}
+code,.m{font-family:var(--mono);font-size:.88em;font-weight:500;letter-spacing:-.01em}
+code{background:var(--surface-2);padding:.1em .38em;border-radius:3px;color:var(--ink)}
+a{color:var(--pos)}
+
+/* ---------- header ---------- */
+header{display:flex;flex-direction:column;gap:18px;border-bottom:2px solid var(--ink);padding-bottom:26px}
+.eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3)}
+h1{font-size:clamp(30px,4.4vw,44px);font-weight:700;letter-spacing:-.032em;line-height:1.12;margin:0;text-wrap:balance}
+.lede{font-size:17px;line-height:1.62;color:var(--ink-2);max-width:64ch;font-weight:300;margin:0}
+.pipe{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;color:var(--ink-2);margin-top:2px}
+.pipe span{background:var(--surface);border:1px solid var(--rule);border-radius:2px;padding:4px 9px;white-space:nowrap}
+.pipe span.hi{border-color:var(--pos);color:var(--pos);font-weight:600}
+.pipe i{color:var(--ink-3);font-style:normal}
+
+/* ---------- sections ---------- */
+section{display:flex;flex-direction:column;gap:16px}
+h2{font-size:12px;font-family:var(--mono);font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:var(--ink);margin:0;padding-bottom:9px;border-bottom:1px solid var(--rule-2)}
+h3{font-size:16px;font-weight:600;letter-spacing:-.012em;margin:14px 0 0}
+p{margin:0;max-width:70ch}
+.note{color:var(--ink-2);font-size:14px;line-height:1.65}
+
+/* ---------- tables ---------- */
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:5px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:620px}
+th{
+  text-align:left;font-family:var(--mono);font-size:10.5px;font-weight:600;
+  letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);
+  padding:11px 14px;border-bottom:1px solid var(--rule-2);white-space:nowrap;
+  background:var(--surface-2);
+}
+td{padding:11px 14px;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.55}
+tr:last-child td{border-bottom:none}
+td.ev{font-family:var(--mono);font-weight:600;white-space:nowrap;color:var(--ink)}
+td.f{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);min-width:180px}
+td.f b{color:var(--ink);font-weight:500}
+td.w{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12.5px}
+.matrix td:nth-child(4){min-width:230px;color:var(--ink-2)}
+
+/* ---------- chips ---------- */
+.g{display:inline-block;font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.05em;padding:2px 7px;border-radius:2px;white-space:nowrap}
+.g.req{background:var(--pos-bg);color:var(--pos)}
+.g.rec{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--rule-2)}
+.g.later{background:transparent;color:var(--ink-3);border:1px dashed var(--rule-2)}
+.sig{font-weight:600}
+.sig.p{color:var(--pos)}
+.sig.n{color:var(--neg)}
+.raw{color:var(--ink-3)}
+.warnmark{color:var(--flag);font-weight:600}
+
+/* ---------- value sets ---------- */
+.sets{display:grid;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:5px;overflow:hidden}
+.set{background:var(--surface);padding:14px 16px;display:flex;flex-direction:column;gap:9px}
+.set .k{font-family:var(--mono);font-size:12.5px;font-weight:600;color:var(--ink)}
+.set .v{display:flex;flex-wrap:wrap;gap:5px}
+.set .v em{font-family:var(--mono);font-style:normal;font-size:11.5px;background:var(--surface-2);border-radius:2px;padding:2px 7px;color:var(--ink-2)}
+
+/* ---------- diagram ---------- */
+figure{margin:0;background:var(--surface);border:1px solid var(--rule);border-radius:5px;padding:20px 20px 16px;overflow-x:auto}
+figure svg{display:block;min-width:560px;width:100%;height:auto}
+figcaption{margin-top:12px;font-size:13.5px;color:var(--ink-2);line-height:1.6;max-width:70ch}
+
+/* ---------- rules list ---------- */
+ol.rules{margin:0;padding:0;list-style:none;counter-reset:r;display:flex;flex-direction:column;gap:11px}
+ol.rules li{counter-increment:r;display:grid;grid-template-columns:26px 1fr;gap:12px;align-items:start}
+ol.rules li::before{
+  content:counter(r);font-family:var(--mono);font-size:11px;font-weight:600;
+  color:var(--ink-3);border:1px solid var(--rule-2);border-radius:2px;
+  text-align:center;line-height:22px;height:22px;margin-top:2px;
+}
+ol.rules b{font-weight:600}
+
+/* ---------- callout ---------- */
+.warn{border-left:3px solid var(--flag);background:var(--flag-bg);padding:13px 16px;border-radius:0 4px 4px 0;display:flex;flex-direction:column;gap:6px}
+.warn .t{font-weight:600;font-size:14px}
+.warn p{font-size:13.5px;line-height:1.6;color:var(--ink-2);max-width:none}
+
+/* ---------- files ---------- */
+.files{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+.file{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:11px 14px;display:flex;flex-direction:column;gap:3px}
+.file .p{font-family:var(--mono);font-size:12px;color:var(--ink);font-weight:500;word-break:break-all}
+.file .d{font-size:12.5px;color:var(--ink-3)}
+
+footer{border-top:1px solid var(--rule);padding-top:18px;font-size:12.5px;color:var(--ink-3);line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Mupid · 사용자 여정 데이터</div>
+  <h1>청취 이벤트 22종 명세</h1>
+  <p class="lede">사용자가 음악을 들을 때 남기는 행동 22종의 필드, 값 집합, 그리고 각 이벤트가 어떤 파생 신호로 이어지는지 정리한다. 수집 단계는 <b>원시 신호만</b> 남긴다 — 가중치와 분류는 분석 시점에 계산한다.</p>
+  <div class="pipe">
+    <span class="hi">frontend/lib/analytics</span><i>→</i>
+    <span>POST /api/v1/events</span><i>→</i>
+    <span>Kafka mupid.listen.events</span><i>→</i>
+    <span>listen_events</span><i>→</i>
+    <span>파생 3종</span>
+  </div>
+</header>
+
+<section>
+  <h2>모든 이벤트가 싣는 것</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>필드</th><th>타입</th><th>채우는 주체</th><th>비고</th></tr></thead>
+      <tbody>
+        <tr><td class="ev">event_id</td><td class="m">UUID</td><td>클라이언트</td><td>멱등 키. 수집기가 Redis 로 중복을 걸러낸다</td></tr>
+        <tr><td class="ev">event_type</td><td class="m">enum(22)</td><td>클라이언트</td><td>목록 밖이면 그 건만 버려진다</td></tr>
+        <tr><td class="ev">occurred_at</td><td class="m">ISO-8601</td><td>클라이언트</td><td><b>발생 즉시</b> 각인. 전송 시각이 아니다</td></tr>
+        <tr><td class="ev">user_id</td><td class="m">UInt32</td><td><b>서버</b></td><td>액세스 토큰에서 확정. 본문으로 받지 않는다</td></tr>
+        <tr><td class="ev">ext</td><td class="m">Map(≤10)</td><td>클라이언트 (선택)</td><td>스키마 변경 없이 덧붙이는 자리</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>재생 중에 일어난 이벤트가 더 싣는 것</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>필드</th><th>의미</th></tr></thead>
+      <tbody>
+        <tr><td class="ev">track_id</td><td>대상 곡</td></tr>
+        <tr><td class="ev">play_id</td><td>재생 1회를 묶는 키. <code>PLAY_START</code> 가 발급한다</td></tr>
+        <tr><td class="ev">entry_path</td><td>이 재생의 진입 경로. 재생의 <b>모든</b> 이벤트에 실린다</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note"><code>SEARCH</code> 는 재생 밖의 행동이라 이 셋이 없다. 라이브러리 목록에서 누른 <code>LIKE</code> 처럼 재생 중이 아닌 피드백은 <code>track_id</code> 만 따로 받는다.</p>
+</section>
+
+<section>
+  <h2>이벤트별 고유 필드</h2>
+  <p class="note">“소비” 는 이 이벤트가 파생 테이블로 이어지는지다. <span class="raw">원본만</span> 은 <code>listen_events</code> 에 남기만 하고 아직 아무 것도 읽지 않는다는 뜻 — 지금 쓰지 않을 뿐, 나중에 해석을 붙일 수 있도록 남긴다.</p>
+  <div class="scroll">
+    <table class="matrix">
+      <thead><tr><th>이벤트</th><th>등급</th><th>고유 필드</th><th>뜻</th><th>소비</th></tr></thead>
+      <tbody>
+        <tr><td class="ev">PLAY_START</td><td><span class="g req">필수</span></td><td class="f"><b>position_ms</b><br>rec_id · rec_type · rec_rank</td><td>재생 시작. 여기서 <code>play_id</code> 를 발급한다. 추천에서 들어왔으면 추천 3종을 함께 싣는다</td><td class="w raw">원본만</td></tr>
+        <tr><td class="ev">PLAY_PROGRESS</td><td><span class="g req">필수</span></td><td class="f"><b>from_ms</b> · <b>position_ms</b></td><td>5초 하트비트. <b>[from_ms, position_ms) 를 연속으로 들었다</b>는 뜻</td><td class="w">커버리지</td></tr>
+        <tr><td class="ev">PLAY_PAUSE</td><td><span class="g rec">권장</span></td><td class="f">position_ms</td><td>일시정지</td><td class="w raw">원본만</td></tr>
+        <tr><td class="ev">PLAY_RESUME</td><td><span class="g rec">권장</span></td><td class="f">position_ms</td><td>재개. 재생 포인터를 현재 위치로 다시 맞춘다</td><td class="w raw">원본만</td></tr>
+        <tr><td class="ev">PLAY_END</td><td><span class="g req">필수</span></td><td class="f">position_ms</td><td>자연 종료 — 스킵과 구분한다</td><td class="w raw">원본만</td></tr>
+        <tr><td class="ev">PLAY_STALL</td><td><span class="g later">나중</span></td><td class="f">position_ms</td><td>버퍼링. “안 들린 것” 을 “안 좋아한 것” 으로 세지 않으려고 남긴다</td><td class="w raw">원본만</td></tr>
+        <tr><td class="ev">PLAY_ERROR</td><td><span class="g rec">권장</span></td><td class="f">position_ms · <b>reason</b></td><td>재생 실패. <code>reason</code> 은 <code>MEDIA_ERR_NETWORK</code> 같은 코드 이름</td><td class="w raw">원본만</td></tr>
+        <tr><td class="ev">PLAYBACK_ABANDON</td><td><span class="g rec">권장</span></td><td class="f">position_ms</td><td>앱이 닫혀 끊김 — 의도한 스킵이 아니다</td><td class="w raw">원본만</td></tr>
+        <tr><td class="ev">SEEK_BACK</td><td><span class="g req">필수</span></td><td class="f"><b>from_ms</b> · position_ms</td><td>되감아 다시 들음 — <b>구간 선호의 핵심 신호</b></td><td class="w"><span class="sig p">+0.6</span></td></tr>
+        <tr><td class="ev">SEEK_FORWARD</td><td><span class="g req">필수</span></td><td class="f"><b>from_ms</b> · position_ms</td><td>앞으로 감기 = 구간 건너뜀</td><td class="w raw">원본만</td></tr>
+        <tr><td class="ev">TRACK_SKIP</td><td><span class="g req">필수</span></td><td class="f">position_ms · <b>skip_trigger</b></td><td>곡 넘김. <b>분류는 하지 않는다</b></td><td class="w">스킵 해석</td></tr>
+        <tr><td class="ev">LIKE</td><td><span class="g req">필수</span></td><td class="f">position_ms · <b>target</b></td><td>좋아요</td><td class="w"><span class="sig p">+1.0</span></td></tr>
+        <tr><td class="ev">UNLIKE</td><td><span class="g req">필수</span></td><td class="f">position_ms · <b>target</b></td><td>좋아요 취소</td><td class="w"><span class="sig n">−0.5</span></td></tr>
+        <tr><td class="ev">DISLIKE</td><td><span class="g req">필수</span></td><td class="f">position_ms · <b>target</b></td><td>관심 없음. 보통 <code>target=TRACK</code></td><td class="w"><span class="sig n">−1.0</span></td></tr>
+        <tr><td class="ev">UNDISLIKE</td><td><span class="g rec">권장</span></td><td class="f">target</td><td>관심 없음 취소</td><td class="w raw">원본만</td></tr>
+        <tr><td class="ev">SECTION_MARK</td><td><span class="g req">필수</span></td><td class="f"><b>start_ms</b> · <b>end_ms</b><br>position_ms</td><td>구간 직접 지정 (온보딩용)</td><td class="w"><span class="sig p">+1.5</span></td></tr>
+        <tr><td class="ev">SECTION_UNMARK</td><td><span class="g rec">권장</span></td><td class="f"><b>start_ms</b> · <b>end_ms</b><br>position_ms</td><td>지정 해제</td><td class="w"><span class="sig n">−1.5</span></td></tr>
+        <tr><td class="ev">PLAYLIST_ADD</td><td><span class="g req">필수</span></td><td class="f">position_ms · <b>playlist_id</b></td><td>플레이리스트에 담기</td><td class="w"><span class="sig p">+0.8</span></td></tr>
+        <tr><td class="ev">PLAYLIST_REMOVE</td><td><span class="g rec">권장</span></td><td class="f"><b>playlist_id</b></td><td>플레이리스트에서 빼기</td><td class="w"><span class="warnmark">⚠ 미발동</span></td></tr>
+        <tr><td class="ev">COMMENT_ADD</td><td><span class="g req">필수</span></td><td class="f">position_ms · <b>content</b><br>comment_id <span style="opacity:.7">(선택)</span></td><td>댓글 작성. <code>comment_id</code> 는 서버가 정해주므로 없을 수 있다</td><td class="w"><span class="sig p">+0.7</span></td></tr>
+        <tr><td class="ev">COMMENT_DELETE</td><td><span class="g req">필수</span></td><td class="f"><b>comment_id</b></td><td>댓글 삭제</td><td class="w raw">원본만</td></tr>
+        <tr><td class="ev">SEARCH</td><td><span class="g rec">권장</span></td><td class="f"><b>search_query</b></td><td>검색. 재생 맥락이 붙지 않는다</td><td class="w raw">원본만</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note"><b>22종 중 파생까지 이어지는 것은 11종.</b> 구간 신호 9종 + <code>TRACK_SKIP</code> + <code>PLAY_PROGRESS</code>. 나머지 11종은 원본에만 쌓인다.</p>
+</section>
+
+<section>
+  <h2>값 집합</h2>
+  <div class="sets">
+    <div class="set"><div class="k">entry_path</div><div class="v"><em>RECOMMEND</em><em>SEARCH</em><em>PLAYLIST</em></div></div>
+    <div class="set"><div class="k">skip_trigger</div><div class="v"><em>NEXT_BUTTON</em><em>OTHER_TRACK</em></div></div>
+    <div class="set"><div class="k">target</div><div class="v"><em>TRACK</em><em>SECTION</em></div></div>
+    <div class="set"><div class="k">rec_type</div><div class="v"><em>HOME</em><em>SECTION</em><em>CUSTOM</em></div></div>
+  </div>
+  <p class="note"><code>AUTOPLAY</code> 는 <code>entry_path</code> 에서 뺐다. 인플레이어 다음곡 추천이 없으므로 <b>검색 결과를 이어 듣는 것도 <code>SEARCH</code> 로 남긴다</b> — 그래야 나중에 “검색 유입이었는데 추천이 정확했다” 를 구분해 검색 노출 순서를 조정할 수 있다.</p>
+  <p class="note">값 검증은 수집기가 한다. 값 집합만 어긋난 경우 <b>그 칸만 비우고 이벤트는 받는다.</b> ClickHouse <code>CONSTRAINT</code> 로 막지 않는 이유는, 한 건이 어긋나면 블록 전체가 거부돼 Kafka 소비가 멈추기 때문이다.</p>
+</section>
+
+<section>
+  <h2>하트비트가 구간 경계에서 쪼개지는 방식</h2>
+  <figure>
+    <svg viewBox="0 0 740 196" role="img" aria-label="27000ms 에서 32000ms 까지의 하트비트가 30000ms 구간 경계에서 3000ms 와 2000ms 로 나뉘는 그림">
+      <text x="0" y="14" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="600" fill="var(--ink-3)" letter-spacing="1">PLAY_PROGRESS · from_ms=27000 · position_ms=32000</text>
+
+      <rect x="60" y="36" width="310" height="38" fill="var(--surface-2)" stroke="var(--rule-2)" stroke-width="1"></rect>
+      <rect x="370" y="36" width="310" height="38" fill="var(--surface-2)" stroke="var(--rule-2)" stroke-width="1"></rect>
+      <text x="215" y="60" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink-3)">s1001-intro</text>
+      <text x="525" y="60" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink-3)">s1001-hook</text>
+
+      <rect x="339" y="36" width="31" height="38" fill="var(--pos)" opacity="0.85"></rect>
+      <rect x="370" y="36" width="21" height="38" fill="var(--neg)" opacity="0.85"></rect>
+      <line x1="370" y1="28" x2="370" y2="86" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="3 3"></line>
+
+      <text x="60" y="100" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink-3)">0</text>
+      <text x="370" y="100" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink-2)" font-weight="600">30,000</text>
+      <text x="680" y="100" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink-3)">60,000</text>
+
+      <rect x="60" y="128" width="11" height="11" fill="var(--pos)" opacity="0.85"></rect>
+      <text x="82" y="138" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="var(--ink)">listened_ms = 3,000</text>
+      <text x="252" y="138" font-family="IBM Plex Sans KR, sans-serif" font-size="12.5" fill="var(--ink-3)">→ s1001-intro (27,000 ~ 30,000)</text>
+
+      <rect x="60" y="158" width="11" height="11" fill="var(--neg)" opacity="0.85"></rect>
+      <text x="82" y="168" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="var(--ink)">listened_ms = 2,000</text>
+      <text x="252" y="168" font-family="IBM Plex Sans KR, sans-serif" font-size="12.5" fill="var(--ink-3)">→ s1001-hook (30,000 ~ 32,000)</text>
+    </svg>
+    <figcaption>하트비트 하나가 두 구간에 걸치면 두 행이 나온다. 끝점(32,000)이 속한 구간으로 몰아주면 경계 뒤 구간이 과대 집계되는데, 하필 그 편향이 INTRO 노출 보정과 정면으로 부딪힌다. 그래서 딕셔너리 점 조회 대신 구간 테이블과 JOIN 해서 겹침을 계산한다.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>스킵 해석 — 수집과 분류가 나뉜다</h2>
+  <p class="note">프론트는 <b>무엇으로 넘겼는지</b>와 <b>언제 넘겼는지</b>만 보낸다. “이 사용자가 이 구간을 전에 들었는지” 도, 구간 경계가 어디인지도 프론트는 모르기 때문이다. 분류는 <code>v_track_skips</code> 가 <b>쿼리 시점에</b> 만든다 — 일반 VIEW 라 기준을 고치면 과거 이벤트까지 새 기준으로 다시 해석된다.</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>skip_type</th><th>조건</th><th>가중치</th></tr></thead>
+      <tbody>
+        <tr><td class="ev">SKIP_AFTER_HOOK</td><td>이 구간을 전에 절반 넘게 들은 재생이 있음 (싫증)</td><td class="w raw">0.0</td></tr>
+        <tr><td class="ev">EARLY_SKIP</td><td>구간 진입 5초 이내 또는 구간 길이의 20% 이내</td><td class="w"><span class="sig n">−1.0</span> <span class="raw">추천 유입 + NEXT_BUTTON</span><br><span class="sig n">−0.4</span> <span class="raw">그 외</span></td></tr>
+        <tr><td class="ev">LATE_SKIP</td><td>구간의 80% 이상 들음 — 사실상 약한 긍정</td><td class="w"><span class="sig p">+0.3</span></td></tr>
+        <tr><td class="ev">MID_SKIP</td><td>나머지. 명세 밖의 잔여 구간으로 저장소가 덧붙였다</td><td class="w raw">0.0</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">부정 판정을 <b>추천으로 들어온 경우에만</b> 강하게 준다. 사용자가 직접 검색해 튼 곡을 넘긴 것에 같은 점수를 주면 추천 평가가 왜곡된다.</p>
+</section>
+
+<section>
+  <h2>프론트가 지켜야 할 것</h2>
+  <ol class="rules">
+    <li><span><b>매번 재생기에서 위치를 실제로 읽어서</b> <code>position_ms</code> 를 만든다. 화면이 들고 있던 값을 쓰면 백그라운드 탭에서 틀어진다.</span></li>
+    <li><span><b>구간 번호를 보내지 않는다.</b> 밀리초만 보내고 구간 매핑은 백엔드가 한다.</span></li>
+    <li><span><b><code>occurred_at</code> 은 이벤트가 생긴 그 순간 각인한다.</b> 배치로 묶여 늦게 나가도 각 이벤트는 자기 시각을 들고 간다.</span></li>
+    <li><span><b><code>entry_path</code> 를 재생의 모든 이벤트에 싣는다.</b> 스킵 해석과 커버리지가 진입 경로를 필요로 하는데, 그때마다 <code>PLAY_START</code> 로 되짚는 JOIN 을 두지 않기 위해서다.</span></li>
+    <li><span><b>가중치도 분류도 계산하지 않는다.</b> 원시 신호만 남기고 해석은 분석 시점에 한다.</span></li>
+  </ol>
+  <p class="note">이 규칙은 <code>frontend/lib/analytics/</code> 가 지킨다. 화면에서 <code>fetch</code> 를 직접 부르지 말고 이 모듈을 쓴다.</p>
+</section>
+
+<section>
+  <h2>알려진 함정</h2>
+  <div class="warn">
+    <div class="t">구간 지정 이벤트는 <code>position_ms</code> 를 함께 보내야 한다</div>
+    <p>구간 매핑이 <code>position_ms</code> 한 점으로 이뤄지고 <code>position_ms &gt; 0</code> 을 요구한다. 범위만 보내면 조건에 걸려 <b>가장 강한 긍정 신호(+1.5)가 조용히 사라진다.</b> 라이브러리가 <code>position_ms = start_ms</code> 를 자동으로 넣는다. 지정 범위가 여러 구간에 걸치면 시작점이 속한 구간 하나만 잡힌다.</p>
+  </div>
+  <div class="warn">
+    <div class="t"><code>PLAYLIST_REMOVE</code> 의 −0.8 은 지금 발동하지 않는다</div>
+    <p>신호 목록에는 들어 있지만 이 행동에는 재생 위치라는 것이 없어 <code>position_ms</code> 가 0 이고, 같은 조건에 걸린다. 플레이리스트에서 빼는 행동은 애초에 <em>구간</em> 신호가 아니라 <em>곡</em> 신호라 이 자리가 맞지 않는다.</p>
+  </div>
+  <div class="warn">
+    <div class="t">중복은 Kafka 에 넣기 <b>전</b>에 걸러야 한다</div>
+    <p>원본 테이블은 같은 <code>event_id</code> 를 병합으로 정리하지만, 파생 뷰는 INSERT 시점에 이미 발화한 뒤다. 중복 <code>LIKE</code> 하나가 가중치를 +1.0 이 아니라 +2.0 으로 만들고 병합으로도 사라지지 않는다. 그래서 수집기가 Redis 로 <code>event_id</code> 를 먼저 거른다.</p>
+  </div>
+</section>
+
+<section>
+  <h2>구현 위치</h2>
+  <div class="files">
+    <div class="file"><div class="p">frontend/lib/analytics/</div><div class="d">추적 SDK — 큐·배치·재생 세션·오디오 바인딩</div></div>
+    <div class="file"><div class="p">api/…/api/event/</div><div class="d">수집기 — 검증·정규화·멱등·Kafka 발행</div></div>
+    <div class="file"><div class="p">api/clickhouse/init/01-schema.sql</div><div class="d">전체 DDL. 파생 뷰와 커버리지 MV</div></div>
+    <div class="file"><div class="p">api/docs/Event/</div><div class="d">Bruno 컬렉션 — 요청·응답 예시와 오류 표</div></div>
+    <div class="file"><div class="p">api/knowledge/domain/listening-events.md</div><div class="d">이 문서의 원본</div></div>
+    <div class="file"><div class="p">api/knowledge/decision/0014 · 0015</div><div class="d">왜 API 가 발행하는가 · 왜 해석을 저장하지 않는가</div></div>
+  </div>
+</section>
+
+<footer>
+  이 페이지는 저장소의 지식 저장소를 옮긴 것이다. 코드와 어긋나면 <code>api/knowledge/</code> 가 기준이다.
+</footer>
+
+</div>
+</body>
+</html>

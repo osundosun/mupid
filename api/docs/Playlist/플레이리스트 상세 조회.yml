@@ -1,0 +1,174 @@
+info:
+  name: 플레이리스트 상세 조회
+  type: http
+  seq: 5
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/playlist/{{PLAYLIST_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: PLAYLIST_ID
+      value: "12"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "playlist_id": 12,
+              "title": "새벽 드라이브",
+              "music_count": 2,
+              "created_at": "2026-09-14T14:02:11",
+              "updated_at": "2026-09-14T14:31:20",
+              "tracks": [
+                {
+                  "track_order": 1,
+                  "music_id": 42,
+                  "title": "푸른 오후",
+                  "artist_name": "LUME",
+                  "album_title": "Blue Static",
+                  "duration_ms": 13020,
+                  "selector": "USER",
+                  "added_at": "2026-09-14T14:31:20"
+                },
+                {
+                  "track_order": 2,
+                  "music_id": 43,
+                  "title": "새벽 드라이브",
+                  "artist_name": "LUME",
+                  "album_title": "Blue Static",
+                  "duration_ms": null,
+                  "selector": "AI",
+                  "added_at": "2026-09-14T14:33:02"
+                }
+              ]
+            }
+          }
+  - name: 200 수록곡 없음
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "playlist_id": 12,
+              "title": "새벽 드라이브",
+              "music_count": 0,
+              "created_at": "2026-09-14T14:02:11",
+              "updated_at": "2026-09-14T14:02:11",
+              "tracks": []
+            }
+          }
+  - name: 403 내 플레이리스트가 아님
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_PLAYLIST_ACCESS_DENIED",
+            "message": "플레이리스트에 접근할 권한이 없습니다.",
+            "error_details": null
+          }
+  - name: 404 플레이리스트 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_PLAYLIST_NOT_FOUND",
+            "message": "요청한 플레이리스트를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 플레이리스트 상세 조회
+
+  `GET /api/v1/playlist/{playlist_id}` · 인증 필요
+
+  플레이리스트 하나와 **수록곡 전부**를 트랙 순서대로 돌려줍니다. 목록 조회와 달리
+  곡이 함께 옵니다.
+
+  ## 응답 데이터
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `playlist_id` | int | 플레이리스트 번호 |
+  | `title` | string | 제목 |
+  | `music_count` | int | 역정규화된 수록곡 수 |
+  | `created_at` | datetime | 생성 일시 |
+  | `updated_at` | datetime | 수정 일시 |
+  | `tracks` | array | 수록곡. `track_order` 오름차순 |
+
+  ### `tracks[]`
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `track_order` | int | 플레이리스트 안에서의 재생 순서. 1부터 |
+  | `music_id` | int | 곡 번호. 재생은 이 번호로 스트림을 찾습니다 |
+  | `title` | string | 곡명 |
+  | `artist_name` | string | 아티스트명 |
+  | `album_title` | string | 앨범명 |
+  | `duration_ms` | int \| null | 재생 길이. **아직 인코딩되지 않았으면 null** |
+  | `selector` | string | `USER` \| `AI`. AI 추천으로 담긴 곡과 구분합니다 |
+  | `added_at` | datetime | 플레이리스트에 담은 일시 |
+
+  ## `music_count` 와 `tracks.length` 가 다를 수 있습니다
+
+  담은 뒤에 **삭제된 곡은 `tracks` 에서 빠집니다.** 화면에 없는 곡을 보여 줄 이유가
+  없어서입니다. 반면 `music_count` 는 `playlists` 테이블의 역정규화 값이라 그대로입니다.
+  **화면에 보여 줄 곡 수는 `tracks.length` 를 쓰세요.**
+
+  `duration_ms` 는 `music` 이 아니라 `streams` 에서 옵니다. DONE 인 스트림이 없으면
+  null 이고, 그 곡은 아직 재생할 수 없습니다.
+
+  ## 권한
+
+  **내 플레이리스트만 볼 수 있습니다.** 남의 것과 소유자가 없는 시스템/추천
+  플레이리스트는 403 입니다. 공유 기능이 생기면 이 규칙부터 손봐야 합니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_PLAYLIST_ACCESS_DENIED` | 403 | 내 플레이리스트가 아님 |
+  | `MUPID_PLAYLIST_NOT_FOUND` | 404 | 없거나 이미 삭제된 플레이리스트 |
+  | `MUPID_USER_NOT_FOUND` | 404 | 토큰의 사용자가 없음 |

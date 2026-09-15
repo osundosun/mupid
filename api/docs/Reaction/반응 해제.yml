@@ -1,0 +1,44 @@
+info:
+  name: 반응 해제
+  type: http
+  seq: 2
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/reaction"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 해제 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "반응을 해제했습니다.",
+            "data": null
+          }
+
+docs: |-
+  # 반응 해제
+
+  `DELETE /api/v1/music/{musicId}/reaction` · **인증 필요**
+
+  행을 지웁니다. 원래 반응이 없었어도 200 입니다 — 여러 번 눌러도 결과가 같아야
+  화면이 단순해집니다.
+
+  지운 반응이 `LIKE` 였으면 `music.like_count` 가 1 줄어듭니다.
+
+  없는 곡이면 404(`MUPID_MUSIC_NOT_FOUND`) 입니다.

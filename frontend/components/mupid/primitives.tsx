@@ -22,10 +22,10 @@ export function Brand({ className = '' }: { className?: string }) {
   return (
     <Image
       unoptimized
-      src="/mupid-logo-cupid-black.png"
+      src="/mupid-logo-cupid-sky.png"
       alt="Mupid"
-      width={1134}
-      height={638}
+      width={1180}
+      height={600}
       className={`mupid-logo ${className}`.trim()}
     />
   );
@@ -34,9 +34,11 @@ export function AlbumArt({
   track,
   className = '',
 }: {
-  track: Track;
+  // 아직 고른 곡이 없을 수 있다. 그때는 빈 자리만 남긴다.
+  track: Track | null;
   className?: string;
 }) {
+  if (!track) return <span className={`album-art album-art-empty ${className}`} aria-hidden="true" />;
   return (
     <span className={`album-art art-${track.id - 1} ${className}`}>
       <Image
@@ -122,7 +124,7 @@ export function TrackRow({
   selected?: boolean;
   onSelect?: () => void;
 }) {
-  const playing = m.playing && m.active.id === track.id;
+  const playing = m.playing && m.active?.id === track.id;
   const picking = !!onSelect;
   return (
     <article
@@ -309,8 +311,10 @@ export function LikeButton({
   track = m.active,
 }: {
   model: MupidModel;
-  track?: Track;
+  track?: Track | null;
 }) {
+  // 좋아요를 누를 곡이 없으면 버튼도 없다.
+  if (!track) return null;
   return (
     <button
       aria-label={m.liked.includes(track.id) ? '좋아요 취소' : '좋아요'}

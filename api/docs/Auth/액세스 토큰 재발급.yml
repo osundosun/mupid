@@ -7,8 +7,6 @@ http:
   method: GET
   url: "{{BASE_URL}}/api/v1/auth"
   headers:
-    - name: Authorization
-      value: Bearer {{ACCESS_TOKEN}}
     - name: Cookie
       value: refresh_token={{REFRESH_TOKEN}}
   auth: inherit
@@ -74,15 +72,35 @@ docs: |-
 
   ## 필요한 인증 정보
 
-  - `Cookie: refresh_token=...` — `@CookieValue(name = "refresh_token")` 로 읽습니다. 없으면 400.
-  - `Authorization: Bearer ...` — `SecurityConfig` 에서 `POST /api/v1/auth` 만
-    `permitAll` 이므로, 이 `GET` 요청은 `anyRequest().authenticated()` 에 걸려
-    **유효한 액세스 토큰도 함께 필요합니다.**
+  - `Cookie: refresh_token=...` — `@CookieValue(..., required = false)` 로 읽고
+    비어 있으면 **401** 입니다. `required = true` 로 두면 스프링이
+    `MissingRequestCookieException` 을 던져 500 이 나가는데, 로그인한 적 없는
+    첫 방문자가 늘 밟는 길이라 서버가 고장 난 것처럼 보입니다.
+  - **액세스 토큰은 필요 없습니다.** 액세스 토큰이 만료된 뒤에 부르는
+    엔드포인트라 액세스 토큰을 요구하면 재발급 자체가 불가능해집니다.
+    자격증명은 쿠키의 리프레시 토큰이고, `AuthService` 가 서명·만료·차단목록을
+    검증합니다.
 
   응답을 받으면 `ACCESS_TOKEN` 변수가 새 토큰으로 갱신됩니다.
+
+  ## 리프레시 토큰 회전
+
+  응답의 `Set-Cookie` 에 **새 리프레시 토큰**이 담겨 옵니다
+  (`AuthProvider.refresh` 가 매번 새로 발급). 브라우저는 자동으로 쿠키를
+  갈아끼우지만, 배치처럼 직접 보관하는 클라이언트는 이 값을 저장해 두어야
+  7일 만료에 걸리지 않고 계속 재발급받을 수 있습니다.
+
+  옛 리프레시 토큰도 만료 전까지는 계속 유효합니다 (로그아웃으로 차단목록에
+  들어간 경우만 무효). 회전 값을 한 번 놓쳐도 즉시 잠기지는 않습니다.
 
   ## 오류
 
   | 코드 | 상태 | 설명 |
   | --- | --- | --- |
-  | `MUPID_UNAUTHORIZED` | 401 | 리프레시 토큰이 만료·위조되었거나 로그아웃으로 차단됨 |
+  | `MUPID_UNAUTHORIZED` | 401 | 쿠키가 없거나, 리프레시 토큰이 만료·위조·모양이 깨졌거나, 로그아웃으로 차단됐거나, 탈퇴·삭제된 사용자를 가리킴 |
+
+  위 경우는 한때 **500** 이었습니다. 재발급은 필터가 아니라 컨트롤러에서
+  토큰을 푸는데, JJWT 의 `JwtException` 과 `BadCredentialsException` 에
+  핸들러가 없어 `@ExceptionHandler(Exception.class)` 에 먹혔습니다. 브라우저에
+  낡은 쿠키가 하나 남아 있으면 첫 화면부터 서버 장애처럼 보였습니다.
+  지금은 `GlobalExceptionHandler` 가 401 로 되돌립니다.

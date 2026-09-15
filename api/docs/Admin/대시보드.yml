@@ -1,0 +1,130 @@
+info:
+  name: 대시보드
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/admin/dashboard"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "resources": [
+                {
+                  "name": "user",
+                  "label": "회원",
+                  "table": "users",
+                  "category": "회원",
+                  "composite": false,
+                  "count": 3
+                }
+              ],
+              "runtime": {
+                "pid": 20852,
+                "java": "21.0.11",
+                "startedAt": "2026-09-14T08:09:58.825Z",
+                "uptimeSeconds": 165,
+                "processors": 22,
+                "threads": 31,
+                "heapUsed": 215138336,
+                "heapMax": 8459911168,
+                "nonHeapUsed": 182831792
+              },
+              "dependencies": [
+                {
+                  "name": "MySQL",
+                  "status": "UP",
+                  "target": "MySQL 8.4.11",
+                  "latency": 2,
+                  "detail": null
+                },
+                {
+                  "name": "Kafka",
+                  "status": "DOWN",
+                  "target": "localhost:19092",
+                  "latency": -1,
+                  "detail": "TimeoutException: Timed out waiting for a node assignment."
+                }
+              ],
+              "users": {
+                "byRole": { "ROLE_USER": 1, "ROLE_SYSTEM": 1, "ROLE_ADMIN": 1 },
+                "byStatus": { "PENDING": 1, "ACTIVE": 2, "WITHDRAW": 0 }
+              }
+            }
+          }
+  - name: 403 관리자가 아님
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_FORBIDDEN",
+            "message": "권한이 없습니다.",
+            "errorDetails": null
+          }
+
+docs: |-
+  # 대시보드
+
+  `GET /api/v1/admin/dashboard` · `ROLE_ADMIN`
+
+  관리자 화면 첫 화면이 쓰는 집계입니다. 자원별 행 수, JVM 상태, 붙어 있는 외부
+  저장소 상태, 회원 구성을 한 번에 돌려줍니다.
+
+  ## 왜 액추에이터가 아닌가
+
+  `/api/actuator/health` 는 `show-details: never` 라 `{"status":"UP"}` 밖에 주지
+  않습니다. 무엇이 죽었는지 알 수 없습니다.
+
+  이 검사를 액추에이터 헬스에 **붙이지 않은 것은 의도적**입니다. 운영 스택에서
+  nginx 는 `api` 컨테이너가 healthy 가 된 뒤에야 뜨는데, 헬스가 ClickHouse·Kafka·S3
+  까지 집계하면 분석 계통 하나가 죽었을 때 서비스 전체가 내려갑니다
+  (`analytics/config/ClickHouseConfig` 의 주석과 같은 이유). 관리자가 화면을 열 때만
+  도는 검사라 그 결합이 생기지 않습니다.
+
+  ## 응답
+
+  | 필드 | 설명 |
+  | --- | --- |
+  | `resources[]` | 자원별 행 수. 테이블마다 `COUNT` 가 한 번씩 돕니다 |
+  | `runtime` | JVM. 바이트·초 단위 raw 값이고 표기는 화면이 합니다 |
+  | `dependencies[]` | MySQL · Redis · ClickHouse · 오브젝트 스토리지 · Kafka 를 직접 찔러 본 결과 |
+  | `users` | 권한별·상태별 인원 |
+
+  `dependencies[].latency` 는 ms 이고, 실패하면 `-1` 에 `detail` 이 채워집니다.
+  각 검사의 대기 시간은 3초입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰 없음/만료 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

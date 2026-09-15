@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<!--
+  Keeper, k8s 판. api/clickhouse/keeper/keeper_config.xml 과 한 군데만 다르다.
+
+  raft_configuration 의 <hostname> 이 Compose 판에서는 컨테이너 이름으로 고정돼
+  있는데, 여기서는 Pod 의 헤드리스 DNS 여야 한다. Keeper 는 자기가 누구인지
+  <server_id> 로 정하고 <hostname> 은 다른 노드가 접속할 주소로 쓴다. 그래서
+  이 값만 바뀌고 나머지는 같다 — 사본 검사가 이 예외를 알고 있다.
+
+  단일 노드다. 이 클러스터는 EC2 두 대가 전부이고 Keeper 를 둘로 두면 쿼럼이
+  2 가 되어 한 대만 죽어도 전체가 멈춘다(홀수여야 하는 이유). 하나로 둔 것은
+  Compose 운영 구성과 같은 선택이며, 이 Pod 가 내려가면 복제 메타데이터와
+  ON CLUSTER DDL 이 멈춘다. 이미 적재된 데이터의 읽기는 계속된다.
+
+  노드가 3대가 되면 replicas 를 3 으로 올리고 <raft_configuration> 에 나머지
+  <server> 를 추가한 뒤, server_id 를 Pod ordinal 에서 받도록 바꾼다.
+-->
+<clickhouse>
+    <logger>
+        <level>information</level>
+        <console>1</console>
+    </logger>
+
+    <listen_host>0.0.0.0</listen_host>
+
+    <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse-keeper/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse-keeper/coordination/snapshots</snapshot_storage_path>
+
+        <coordination_settings>
+            <operation_timeout_ms>10000</operation_timeout_ms>
+            <session_timeout_ms>30000</session_timeout_ms>
+            <raft_logs_level>warning</raft_logs_level>
+        </coordination_settings>
+
+        <raft_configuration>
+            <server>
+                <id>1</id>
+                <hostname>clickhouse-keeper-0.clickhouse-keeper</hostname>
+                <port>9234</port>
+            </server>
+        </raft_configuration>
+    </keeper_server>
+</clickhouse>

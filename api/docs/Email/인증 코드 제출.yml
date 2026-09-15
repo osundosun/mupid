@@ -23,7 +23,7 @@ runtime:
     - name: VERIFICATION_ID
       value: "9"
     - name: VERIFICATION_TOKEN
-      value: 281FE265-83DB-4BDD-A2DF-233A66207D38
+      value: EP5HM0
 
 settings:
   encodeUrl: true

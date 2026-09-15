@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# 커밋 메시지 제목 끝에 브랜치명에서 추출한 JIRA 티켓 번호를 " [S15P21A204-xx]" 형태로 붙인다.
+# 커밋 메시지 제목 끝에 브랜치명에서 추출한 JIRA 티켓 번호를 " (S15P21A204-xx)" 형태로 붙인다.
 # - 'A204 회고 봇'의 자동 커밋은 예외로 둔다.
 # - merge / squash / rebase 로 만들어지는 커밋 메시지는 건드리지 않는다.
 
@@ -48,7 +48,7 @@ awk -v ticket="$TICKET" '
       tagged = 1
       if (index($0, ticket) == 0) {
         sub(/[[:space:]]+$/, "", $0)
-        $0 = $0 " [" ticket "]"
+        $0 = $0 " (" ticket ")"
       }
     }
     print

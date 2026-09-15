@@ -1,0 +1,71 @@
+---
+# k3s server on the edge node. Leaves the Docker Compose stack running and
+# untouched — k3s brings its own containerd at
+# /var/lib/rancher/k3s/agent/containerd, separate from Docker's, which is why
+# images are loaded with `k3s ctr images import` and not `docker load`.
+
+- name: Fetch the k3s installer
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /usr/local/bin/k3s-install.sh
+    mode: '0755'
+
+- name: Install the k3s server
+  ansible.builtin.command: /usr/local/bin/k3s-install.sh
+  args: {creates: /usr/local/bin/k3s}
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    # traefik and servicelb are disabled because the edge is our own nginx
+    # Deployment with hostPort, reusing the audited nginx.conf (auth_request and
+    # X-Accel-Redirect). A second ingress controller would fight it for 80/443.
+    # secrets-encryption: k3s stores Secrets unencrypted otherwise.
+    #
+    # node-name: without it k3s registers under the OS hostname
+    # (ip-172-26-6-231), the wait below looks for node/node-a and never finds
+    # it. Naming the node after the inventory host also makes `kubectl get
+    # nodes` read the same way the runbooks do.
+    INSTALL_K3S_EXEC: >-
+      server
+      --node-name={{ inventory_hostname }}
+      --node-ip={{ k3s_node_ip }}
+      --advertise-address={{ k3s_node_ip }}
+      --tls-san={{ k3s_node_ip }}
+      --node-label=mupid.io/role={{ node_role }}
+      --disable=traefik
+      --disable=servicelb
+      --secrets-encryption
+      --write-kubeconfig-mode=0600
+      --kubelet-arg=system-reserved=cpu={{ system_reserved[node_role].cpu }},memory={{ system_reserved[node_role].memory }}
+      --kubelet-arg=eviction-hard={{ eviction_hard }}
+
+- name: Wait for the node to report Ready
+  ansible.builtin.command: k3s kubectl wait --for=condition=Ready node/{{ inventory_hostname }} --timeout=180s
+  register: node_ready
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: node_ready.rc == 0
+
+- name: Read the join token
+  ansible.builtin.slurp: {src: /var/lib/rancher/k3s/server/node-token}
+  register: k3s_token_file
+  no_log: true
+
+# Handed to the agent play through hostvars. Never printed, never written to a
+# file in the repository, never passed on a command line where it would land in
+# the shell history of whoever runs this.
+- name: Publish the token to the agent play
+  ansible.builtin.set_fact:
+    k3s_join_token: "{{ k3s_token_file.content | b64decode | trim }}"
+  no_log: true
+
+- name: Record the installed version
+  ansible.builtin.command: k3s --version
+  register: k3s_installed_version
+  changed_when: false
+
+- name: Report
+  ansible.builtin.debug:
+    msg:
+      - "{{ k3s_installed_version.stdout_lines | first }}"
+      - "Pin this in group_vars/all.yml as k3s_version so both nodes match."

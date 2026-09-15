@@ -1,0 +1,221 @@
+info:
+  name: 청취 이벤트 수집
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/events"
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+  body:
+    type: json
+    data: |-
+      {
+        "events": [
+          {
+            "event_id": "11111111-1111-4111-8111-111111111111",
+            "event_type": "PLAY_START",
+            "occurred_at": "2026-09-10T10:00:00.000Z",
+            "track_id": 1001,
+            "play_id": "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+            "entry_path": "RECOMMEND",
+            "rec_id": "rec-0001",
+            "rec_type": "SECTION",
+            "rec_rank": 2,
+            "position_ms": 0
+          },
+          {
+            "event_id": "22222222-2222-4222-8222-222222222222",
+            "event_type": "PLAY_PROGRESS",
+            "occurred_at": "2026-09-10T10:00:32.000Z",
+            "track_id": 1001,
+            "play_id": "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+            "entry_path": "RECOMMEND",
+            "from_ms": 27000,
+            "position_ms": 32000
+          },
+          {
+            "event_id": "33333333-3333-4333-8333-333333333333",
+            "event_type": "TRACK_SKIP",
+            "occurred_at": "2026-09-10T10:00:35.000Z",
+            "track_id": 1001,
+            "play_id": "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+            "entry_path": "RECOMMEND",
+            "position_ms": 35000,
+            "skip_trigger": "NEXT_BUTTON"
+          }
+        ]
+      }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 202 수집 성공
+    response:
+      status: 202
+      statusText: Accepted
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "accepted": 3,
+              "duplicated": 0,
+              "rejected": 0
+            }
+          }
+  - name: 202 재시도 (같은 event_id)
+    response:
+      status: 202
+      statusText: Accepted
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "accepted": 0,
+              "duplicated": 3,
+              "rejected": 0
+            }
+          }
+  - name: 400 배치가 너무 큼
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_EVENT_BATCH_TOO_LARGE",
+            "message": "한 번에 보낼 수 있는 이벤트 수를 넘었습니다.",
+            "error_details": null
+          }
+  - name: 401 토큰 없음/만료
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_UNAUTHORIZED",
+            "message": "인증 정보가 유효하지 않거나 존재하지 않습니다.",
+            "error_details": null
+          }
+  - name: 503 Kafka 발행 실패
+    response:
+      status: 503
+      statusText: Service Unavailable
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_EVENT_PUBLISH_FAILED",
+            "message": "이벤트를 발행하지 못했습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 청취 이벤트 수집
+
+  `POST /api/v1/events` · 인증 필요
+
+  청취 행동 22종을 배치로 받습니다. 한 요청에 최대 **50건**(`event.max-batch-size`),
+  프론트 SDK 는 20건 또는 5초마다 보냅니다.
+
+  ## 요청 필드
+
+  `events` 배열 안의 각 항목입니다. 이름은 ClickHouse `listen_events` 컬럼과 같습니다.
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `event_id` | string(UUID) | O | 멱등 키. 클라이언트가 발급합니다 |
+  | `event_type` | string | O | 아래 22종 |
+  | `occurred_at` | string(ISO-8601) | O | **발생 시각**. 전송 시각이 아닙니다 |
+  | `track_id` | int | | 대상 곡 |
+  | `play_id` | string(UUID) | | 재생 1회를 묶는 키. `PLAY_START` 에서 발급 |
+  | `entry_path` | string | | `RECOMMEND` / `SEARCH` / `PLAYLIST` |
+  | `rec_id`, `rec_type`, `rec_rank` | string, string, int | | 추천 유입일 때. `rec_type` 은 `HOME` / `SECTION` / `CUSTOM` |
+  | `position_ms` | int | | 현재 재생 위치 |
+  | `from_ms` | int | | `SEEK_*` 는 seek 직전 위치, `PLAY_PROGRESS` 는 직전 하트비트 위치 |
+  | `start_ms`, `end_ms` | int | | `SECTION_MARK` / `SECTION_UNMARK` 범위 |
+  | `target` | string | | `TRACK` / `SECTION` |
+  | `skip_trigger` | string | | `NEXT_BUTTON` / `OTHER_TRACK` |
+  | `reason` | string(≤100) | | `PLAY_ERROR` 사유 |
+  | `playlist_id`, `comment_id` | int | | |
+  | `content` | string(≤1000) | | 댓글 본문 |
+  | `search_query` | string(≤500) | | 검색어 |
+  | `ext` | object(≤10) | | 스키마 변경 없이 추가 정보를 넣는 자리 |
+
+  > **`SECTION_MARK` / `SECTION_UNMARK` 는 `position_ms` 를 함께 보내야 합니다.**
+  > 백엔드 구간 매핑이 `position_ms` 한 점으로 이뤄지고 `position_ms > 0` 을 요구해서,
+  > 범위만 보내면 가장 강한 긍정 신호(+1.5)가 조용히 사라집니다.
+  > `frontend/lib/analytics` 의 `markSection()` 은 `position_ms = start_ms` 를 자동으로 넣습니다.
+
+  **`user_id` 는 받지 않습니다.** 액세스 토큰에서 서버가 확정합니다.
+  **`weight` / `skip_type` 도 받지 않습니다.** 가중치와 분류는 분석 시점에 계산합니다.
+
+  ### `event_type` 22종
+
+  `PLAY_START` `PLAY_PROGRESS` `PLAY_PAUSE` `PLAY_RESUME` `PLAY_END` `PLAY_STALL`
+  `PLAY_ERROR` `PLAYBACK_ABANDON` `SEEK_BACK` `SEEK_FORWARD` `TRACK_SKIP`
+  `LIKE` `UNLIKE` `DISLIKE` `UNDISLIKE` `SECTION_MARK` `SECTION_UNMARK`
+  `PLAYLIST_ADD` `PLAYLIST_REMOVE` `COMMENT_ADD` `COMMENT_DELETE` `SEARCH`
+
+  ## 응답 필드
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `data.accepted` | int | Kafka 로 넘긴 건수 |
+  | `data.duplicated` | int | 이미 받은 `event_id` 라 버린 건수 |
+  | `data.rejected` | int | 값이 규약에 맞지 않아 버린 건수 |
+
+  **한 건이 잘못되어도 배치 전체를 거부하지 않습니다.** 이벤트 하나 때문에 그 사용자의
+  청취 기록이 통째로 사라지는 쪽이 더 나쁘기 때문입니다. 버린 건수만 세어 돌려줍니다.
+
+  거부되는 경우는 `event_id` 가 UUID 가 아니거나, `event_type` 이 22종 밖이거나,
+  `occurred_at` 을 파싱할 수 없거나, `play_id` 가 UUID 가 아닐 때입니다.
+  `entry_path` 처럼 값 집합만 어긋난 경우에는 **그 칸만 비우고 이벤트는 받습니다.**
+
+  ## 정규화
+
+  - `occurred_at` 은 `72시간 전 ~ 5분 후` 창을 벗어나면 경계값으로 **자릅니다**(거부하지 않음).
+    오프라인 뒤 일괄 전송을 살리기 위해서입니다.
+  - 밀리초 필드는 `0 ~ 4294967295`(UInt32) 로 자릅니다. 음수는 0 입니다.
+  - `rec_rank` 는 `0 ~ 255`(UInt8) 로 자릅니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | `events` 가 비었거나 필수 필드 누락 |
+  | `MUPID_EVENT_BATCH_TOO_LARGE` | 400 | 50건 초과 |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_EVENT_PUBLISH_FAILED` | 503 | 브로커에 붙지 못함. 클라이언트는 그대로 재시도하면 됩니다 — 이미 넘어간 건은 `duplicated` 로 걸러집니다 |

@@ -1,0 +1,153 @@
+info:
+  name: 청크 업로드
+  type: http
+  seq: 3
+
+http:
+  method: PUT
+  url: "{{BASE_URL}}/upload/chunk/{{STREAM_ID}}/{{CHUNK_INDEX}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/octet-stream
+  body:
+    type: file
+    data:
+      - filePath: []
+        contentType: application/octet-stream
+  auth: inherit
+
+runtime:
+  variables:
+    - name: STREAM_ID
+      value: "1"
+    - name: CHUNK_INDEX
+      value: "0"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 201 업로드 성공 (스토리지 응답)
+    response:
+      status: 201
+      statusText: Created
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "name": "chunk_0000.rtp",
+            "size": 105098
+          }
+  - name: 401 토큰 없음/만료
+    response:
+      status: 401
+      statusText: Unauthorized
+      body:
+        type: text
+        data: (nginx 기본 401 페이지)
+  - name: 403 권한 없음
+    response:
+      status: 403
+      statusText: Forbidden
+      body:
+        type: text
+        data: (nginx 기본 403 페이지)
+  - name: 500 스프링이 거절 (사유는 헤더)
+    response:
+      status: 500
+      statusText: Internal Server Error
+      headers:
+        - name: X-Mupid-Error
+          value: MUPID_INVALID_CHUNK_INDEX
+      body:
+        type: text
+        data: (nginx 기본 500 페이지 — 본문은 사라진다)
+
+docs: |-
+  # 청크 업로드
+
+  `PUT /upload/chunk/{streamId}/{index}` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  오디오 등록 **2-a 단계**. 청크 바이너리를 올립니다.
+
+  ## ⚠ 이 요청은 `/api/` 아래가 아닙니다
+
+  **스프링은 이 요청의 본문을 보지 않습니다.** nginx 가 인증만 스프링에 묻고,
+  바이트는 오브젝트 스토리지로 그대로 흘려보냅니다.
+
+  ```
+  PUT /upload/chunk/1/0
+    │
+    ├─ (1) auth_request → GET /api/v1/chunk/1/0/upload-auth   ← 본문 없음
+    │       스프링: 권한·스트림 상태·순서·용량 검사
+    │       응답: 200 + X-Storage-Path: /buckets/mupid/music/1/opus128/chunk_0000.rtp
+    │
+    └─ (2) nginx → 스토리지로 본문 스트리밍 (JVM 을 거치지 않음)
+  ```
+
+  다운로드의 `X-Accel-Redirect` 와 짝이고 방향만 반대입니다. 고용량 음원이
+  `MultipartFile` 로 힙에 올라오는 것을 막으려는 구조입니다.
+
+  `X-Accel-Redirect` 는 응답 시점 리다이렉트라 본문이 있는 업로드에는 쓸 수
+  없어서, 업로드는 nginx `auth_request` 를 씁니다.
+
+  ## 요청
+
+  | 항목 | 값 |
+  | --- | --- |
+  | 메서드 | `PUT` |
+  | 본문 | 청크 바이너리 **그대로** (멀티파트 아님) |
+  | `Content-Type` | `application/octet-stream` |
+  | `Authorization` | `Bearer <SYSTEM/ADMIN 액세스 토큰>` |
+
+  성공하면 SeaweedFS 의 응답(`201`, `{"name":…,"size":…}`)이 그대로 돌아옵니다.
+  `BaseResponse` 형식이 **아닙니다.** 스프링을 거치지 않았기 때문입니다.
+
+  업로드만으로는 아직 스트림에 반영되지 않습니다. 이어서
+  `청크 등록` (`POST /api/v1/chunk/{streamId}/{index}`) 으로 커밋해야 합니다.
+
+  ## ⚠ 오류는 상태 코드가 아니라 헤더로 판단합니다
+
+  nginx `auth_request` 는 인증 서브요청의 **401·403 만** 그대로 넘기고, 그 밖의
+  4xx(404·409·413 등)는 전부 **500** 으로 바꾸며 본문도 버립니다.
+
+  그래서 스프링이 돌려준 오류 코드를 `X-Mupid-Error` **응답 헤더**로 살려
+  보냅니다. 500 을 받으면 이 헤더부터 보세요.
+
+  | X-Mupid-Error | 원래 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_STREAM_NOT_FOUND` | 404 | 스트림 없음 또는 음악이 삭제됨 |
+  | `MUPID_STREAM_ALREADY_DONE` | 409 | 완료된 스트림에는 올릴 수 없음 |
+  | `MUPID_INVALID_CHUNK_INDEX` | 400 | `index` 가 `0 ~ chunk_count-1` 범위 밖 |
+  | `MUPID_EMPTY_CHUNK_FILE` | 400 | `Content-Length` 가 0 |
+  | `MUPID_CHUNK_FILE_SIZE_EXCEEDED` | 413 | 10 MB 초과 |
+
+  헤더가 없는 401/403 은 인증·권한 문제입니다.
+
+  ## 저장 위치
+
+  `music/{musicId}/{codec소문자}{bitrate}/chunk_{index:04d}.rtp`
+  예: `music/12/opus128/chunk_0003.rtp`
+
+  경로는 스프링이 정합니다. 클라이언트는 알 필요가 없고, 알아도 `/storage/` 는
+  nginx `internal` 이라 직접 칠 수 없습니다.
+
+  ## 재시도
+
+  같은 `index` 를 다시 올리면 **덮어씁니다.** 배치가 중간에 죽어도 처음부터
+  다시 돌릴 수 있어야 하기 때문입니다.
+
+  ## 제한
+
+  - 청크 하나당 최대 10 MB — 스프링이 `Content-Length` 로 검사합니다
+  - nginx `client_max_body_size 100m` 이 최후의 방어선입니다
+    (`Content-Length` 없이 오는 요청 대비)

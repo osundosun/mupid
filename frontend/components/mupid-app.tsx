@@ -1,6 +1,10 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { mupidService } from '@/lib/services';
+import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
+import { useStore } from '@/lib/store';
+import { fetchCatalog } from '@/lib/stream-catalog';
+import { restoreSession, sessionStore } from '@/lib/api/session';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
 import {
@@ -19,6 +23,7 @@ import {
 import { useMupid } from '@/hooks/use-mupid';
 import { useDesktopPlayerDock } from '@/hooks/use-home-player-dock';
 import { MiniTimeline } from '@/components/mupid/mini-timeline';
+import { VolumeSlider } from '@/components/mupid/volume-slider';
 import { PlaybackStatus } from '@/components/mupid/playback-status';
 import {
   AlbumArt,
@@ -67,30 +72,59 @@ export function MupidApp() {
   const [data, setData] = useState<Bootstrap | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  /*
+   * 곡 목록은 **로그인한 사람만** 받을 수 있다(`SecurityConfig`). 그래서 세션을
+   * 먼저 복원하고 그 다음에 받는다. 순서가 뒤집히면 첫 방문자의 요청이 401 로
+   * 떨어져 로그인 화면에 "음악을 불러오지 못했어요" 가 뜬다.
+   *
+   * 비로그인이면 빈 목록으로 연다 — 곡이 없어도 앱은 그대로 돌아간다. 로그인
+   * 하면 계정이 바뀐 것을 보고 여기서 다시 받는다.
+   */
+  const accountId = useStore(sessionStore, s =>
+    s.status === 'authenticated' ? s.user?.user_id ?? 0 : 0);
   useEffect(() => {
     let live = true;
-    void mupidService.bootstrap().then(value => { if (live) setData(value); })
-      .catch(() => { if (live) setError('음악을 불러오지 못했어요.'); });
+    void (async () => {
+      try {
+        const session = await restoreSession();
+        const catalog = session.status === 'authenticated' ? await fetchCatalog() : [];
+        // 서버 카탈로그는 화면 쪽에서 받아 서비스 계층에 넘긴다.
+        // 서비스 계층은 브라우저 저장만 건드린다 (docs/server-integration.md).
+        const value = await mupidService.bootstrap(catalog);
+        if (live) setData(value);
+      } catch {
+        if (live) setError('음악을 불러오지 못했어요.');
+      }
+    })();
     return () => { live = false; };
-  }, [attempt]);
-  if (!data || !data.tracks.length) return <main className="mupid-shell" style={{ padding: 32 }} aria-busy={!error && !data}>
-    <output>{error || (data ? '아직 등록된 음악이 없어요.' : '음악을 준비하고 있어요…')}</output>
-    {(error || data) && <button className="secondary-button" onClick={() => { setError(''); setData(null); setAttempt(v => v + 1); }}>다시 불러오기</button>}
+  }, [attempt, accountId]);
+  /*
+   * 곡이 한 곡도 없어도 앱은 그대로 연다 — 음악이 없을 뿐이지 고장이 아니다.
+   * 마이페이지·플레이리스트처럼 곡이 필요 없는 화면은 평소처럼 써야 한다.
+   * 여기서 막는 것은 **아직 못 받아온 동안** 과 **못 받아온 경우** 뿐이다.
+   */
+  if (!data) return <main className="mupid-shell" style={{ padding: 32 }} aria-busy={!error}>
+    <output>{error || '음악을 준비하고 있어요…'}</output>
+    {error && <button className="secondary-button" onClick={() => { setError(''); setAttempt(v => v + 1); }}>다시 불러오기</button>}
   </main>;
   return <LoadedMupidApp bootstrap={data} />;
 }
 function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   const m = useMupid(bootstrap);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [photo, setPhoto] = useState('');
+  const photo = useStore(profilePhotoStore, s => s.url);
+  const ownPhoto = useStore(profilePhotoStore, s => !s.isDefault);
   const accountRef = useRef<HTMLDivElement>(null);
   const accountButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => { setAccountOpen(false); }, [m.page]);
+  // 상단바 사진. 예전에는 브라우저 저장(`readPhoto`)만 봐서 **계정에 올린
+  // 사진이 끝내 안 보였다.** 이제 마이페이지와 같은 자리에서 읽는다.
   useEffect(() => {
-    setAccountOpen(false);
-    let live = true;
-    void mupidService.readPhoto().then(value => { if (live) setPhoto(value); }).catch(() => {});
-    return () => { live = false; };
-  }, [m.page, m.demoSession]);
+    if (!m.demoSession) { profilePhoto.clear(); return; }
+    const abort = new AbortController();
+    void profilePhoto.refresh(abort.signal).catch(() => {});
+    return () => abort.abort();
+  }, [m.demoSession]);
   useEffect(() => {
     if (!accountOpen) return;
     const outside = (event: PointerEvent) => { if (!accountRef.current?.contains(event.target as Node)) setAccountOpen(false); };
@@ -100,9 +134,10 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [accountOpen]);
   const desktopDock = useDesktopPlayerDock();
-  const { audioRef } = m;
   const hideMini =
     m.page === 'welcome' ||
+    // 들을 곡이 없으면 띄울 것도 없다.
+    !m.active ||
     // 가입 직후처럼 아직 한 곡도 듣지 않았다면 띄우지 않는다.
     !m.hasPlayed ||
     // 플레이어 화면에는 큰 컨트롤이 있으니 미니 플레이어를 겹치지 않는다.
@@ -110,27 +145,18 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   const desktopNavPage =
     m.page === 'moment' ? 'player' : m.page === 'similar' ? 'search' : m.page;
   const navPage = desktopNavPage;
+  // 로그인 여부를 알기 전에는 아무 화면도 보여주지 않는다. 먼저 그리면 시작
+  // 화면이 깜빡였다가 바뀌고, 비로그인에게 앱 골격이 잠깐 노출된다.
+  if (!m.authReady) {
+    return <main className="mupid-shell" style={{ padding: 32 }} aria-busy="true">
+      <output>로그인 상태를 확인하고 있어요…</output>
+    </main>;
+  }
   return (
     <div className={`mupid-shell ${hideMini ? 'no-mini' : ''} page-${m.page}`}>
       <a href="#main-content" className="skip-link">
         본문으로 이동
       </a>
-      {/* Instrumental demo audio has no spoken content to caption. */}
-      {/* oxlint-disable-next-line jsx-a11y/media-has-caption -- Instrumental music sample. */}
-      <audio
-        ref={audioRef}
-        src={m.active.audio}
-        preload="none"
-        onPlay={() => m.setPlaying(true)}
-        onPause={() => m.setPlaying(false)}
-        onTimeUpdate={m.onTimeUpdate}
-        onEnded={m.onEnded}
-        onLoadedMetadata={m.onLoadedMetadata}
-        onError={() => {
-          m.setPlaying(false);
-          m.setToast('음원을 불러오지 못했어요. 다른 곡을 선택해 주세요.');
-        }}
-      />
       {m.page === 'welcome' ? (
         <main id="main-content">
           <WelcomeView model={m} />
@@ -163,7 +189,10 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
             </form>
             <div className="nav-account" ref={accountRef}>
               <button ref={accountButton} className="nav-avatar" aria-label={m.demoSession ? '내 계정 메뉴' : '로그인'} aria-expanded={accountOpen} aria-controls="nav-account-panel" disabled={!m.authReady} onClick={() => m.demoSession ? setAccountOpen(value => !value) : m.openLogin()}>
-                {m.demoSession ? photo ? <img src={photo} alt="내 프로필" /> : <UserRound size={22} aria-hidden="true" /> : <LogIn size={22} />}
+                {/* 사진을 올리지 않았으면 `photo` 에 기본 이미지가 담겨 온다.
+                    사람 아이콘은 그것마저 없을 때 — 토큰이 없는 체험 세션이나
+                    조회 실패 — 의 마지막 대비책이다. */}
+                {m.demoSession ? photo ? <img src={photo} alt={ownPhoto ? '내 프로필' : '기본 프로필'} /> : <UserRound size={22} aria-hidden="true" /> : <LogIn size={22} />}
               </button>
               {accountOpen && <div id="nav-account-panel" className="nav-account-panel">
                 <button onClick={() => { setAccountOpen(false); m.go('profile'); }}>마이페이지</button>
@@ -229,29 +258,21 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
                 onClick={() => m.go('player')}
                 aria-label="현재 곡 플레이어 열기"
               >
-                <AlbumArt track={m.active} />
+                <AlbumArt track={m.active!} />
               </button>
               <button className="track-info" onClick={() => m.go('player')}>
                 <span className="mini-title">
-                  <strong>{m.active.title}</strong>
+                  <strong>{m.active!.title}</strong>
                   <PlaybackStatus playing={m.playing} />
                 </span>
-                <span>{m.active.artist}</span>
+                <span>{m.active!.artist}</span>
               </button>
               <MiniTimeline model={m} />
               <PlayerControls model={m} compact />
               <LikeButton model={m} />
               <div className="volume-control">
                 <Volume2 />
-                <input
-                  type="range"
-                  aria-label="볼륨"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={m.volume}
-                  onChange={(e) => m.setVolume(Number(e.target.value))}
-                />
+                <VolumeSlider />
               </div>
               <button
                 className="icon-button queue-button"

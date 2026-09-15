@@ -1,0 +1,79 @@
+---
+# Phase 2: install k3s across the two nodes.
+#
+# --check is only meaningful for the firewall play. The k3s plays install with a
+# `creates:` guard, so under --check the install is skipped and the tasks that
+# wait for the node to be Ready then fail against a cluster that does not exist.
+# That failure is an artefact of check mode, not a problem with the host.
+#   ansible-playbook -i inventory.ini cluster.yml --check --diff --tags firewall
+#   ansible-playbook -i inventory.ini cluster.yml
+#
+# Does not deploy any workload. The manifests are applied separately
+# (kubectl apply -k ../overlays/cutover), so this play can be run and verified
+# on its own.
+#
+# teardown.yml must have run first: preflight asserts 80 and 443 are free and
+# the Compose nginx holds them.
+
+- name: Check the connection values from .env before any SSH
+  hosts: k3s
+  gather_facts: false
+  become: false
+  connection: local
+  # `always` so `--tags firewall` and `--tags k3s` still get the check.
+  tags: [always]
+  roles: [env_check]
+
+- name: Verify both nodes before changing anything
+  hosts: k3s
+  gather_facts: true
+  become: true
+  tags: [preflight]
+  roles: [preflight]
+
+# The firewall opens before k3s starts, so the agent's join is not the thing that
+# discovers a closed port.
+# This play is the only one that is meaningful under --check:
+#   ansible-playbook -i inventory.ini cluster.yml --check --diff --tags firewall
+- name: Open the host firewall
+  hosts: k3s
+  gather_facts: false
+  become: true
+  tags: [firewall]
+  roles: [firewall]
+
+- name: Install the k3s server
+  hosts: k3s_server
+  gather_facts: false
+  become: true
+  tags: [k3s]
+  roles: [k3s_server]
+
+- name: Install the k3s agent
+  hosts: k3s_agent
+  gather_facts: false
+  become: true
+  tags: [k3s]
+  roles: [k3s_agent]
+
+- name: Confirm the cluster
+  hosts: k3s_server
+  gather_facts: false
+  become: true
+  tags: [k3s]
+  tasks:
+    - name: List nodes
+      ansible.builtin.command: k3s kubectl get nodes -o wide
+      register: nodes
+      changed_when: false
+
+    - name: Report
+      ansible.builtin.debug: {var: nodes.stdout_lines}
+
+    - name: Assert both nodes carry a role label
+      ansible.builtin.command: >-
+        k3s kubectl get nodes
+        -l mupid.io/role -o jsonpath={.items[*].metadata.name}
+      register: labelled
+      changed_when: false
+      failed_when: labelled.stdout.split() | length != 2

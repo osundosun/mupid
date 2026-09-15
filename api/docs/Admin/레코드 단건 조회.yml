@@ -1,0 +1,120 @@
+info:
+  name: 레코드 단건 조회
+  type: http
+  seq: 5
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/admin/resource/{{ADMIN_RESOURCE}}/{{ADMIN_RECORD_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: ADMIN_RESOURCE
+      value: user
+    - name: ADMIN_RECORD_ID
+      value: "2"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "userId": 2,
+              "email": "admin@ssafy",
+              "password": null,
+              "nickname": "관리자",
+              "imageFile": null,
+              "imageFileId": null,
+              "birthYear": 2026,
+              "gender": "ETC",
+              "role": "ROLE_ADMIN",
+              "status": "ACTIVE",
+              "createdAt": "2026-09-14T01:19:28",
+              "updatedAt": "2026-09-14T01:19:28",
+              "_id": "2"
+            }
+          }
+  - name: 200 복합키 조회 성공
+    request:
+      url: "{{BASE_URL}}/api/v1/admin/resource/musicReaction/5,3"
+      method: GET
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "userId": 5,
+              "musicId": 3,
+              "reactionType": "LIKE",
+              "createdAt": "2026-09-14T15:06:41",
+              "updatedAt": "2026-09-14T15:06:41",
+              "_id": "5,3"
+            }
+          }
+  - name: 404 없는 행
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_RECORD_NOT_FOUND",
+            "message": "요청한 레코드를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 레코드 단건 조회
+
+  `GET /api/v1/admin/resource/{resource}/{id}` · `ROLE_ADMIN`
+
+  `{id}` 는 목록 응답의 `_id` 값입니다.
+
+  ## 복합키
+
+  `@EmbeddedId` 를 쓰는 자원은 구성 요소를 **스키마의 `ids` 순서대로** `,` 로 이어
+  붙입니다. `MusicReaction` 은 `ids: ["userId", "musicId"]` 이므로 `5,3` 이
+  `userId = 5, musicId = 3` 입니다.
+
+  구성 요소 수가 맞지 않으면 `MUPID_INVALID_RECORD_ID` 입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_RESOURCE_NOT_FOUND` | 404 | `{resource}` 가 관리 대상에 없음 |
+  | `MUPID_RECORD_NOT_FOUND` | 404 | 그 식별자의 행이 없음 |
+  | `MUPID_INVALID_RECORD_ID` | 400 | 구성 요소 수가 맞지 않음 |
+  | `MUPID_INVALID_FIELD_VALUE` | 400 | 식별자를 그 타입으로 바꾸지 못함 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

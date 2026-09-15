@@ -1,6 +1,29 @@
 # Mupid CI/CD 구축
 
-## 현재 구성
+## 2026-09-11 백엔드 직접 배포 변경 (로컬 구현, 서버 미적용)
+
+백엔드는 JAR 아티팩트와 Generic Packages를 거치지 않고, 배포 job에서 멀티스테이지 이미지 빌드 후 SSH로 전송하도록 변경했다. MR 빌드 검증과 `build -x test`는 유지한다. 재시도는 서버에 보관된 같은 SHA의 원본을 우선 사용한다. 프런트 경로는 기존 방식이다.
+
+**CI 병합 전 서버 수신기 두 파일을 먼저 설치해야 한다.** 설치·재시도·검증 범위는 [직접 배포 전환 절차](DIRECT-DEPLOY-MIGRATION.md)를 따른다. 아래 이전 문서의 백엔드 Generic Packages 경로는 변경 전 기록이다.
+
+## 현재 기준 (2026-09-09)
+
+- 백엔드 CI는 팀 결정으로 `build -x test`만 실행한다. 애플리케이션 테스트와 테스트 전용 서비스는 재도입하지 않았다.
+- 프런트 빌드 경로는 `frontend/`, 산출물은 `frontend/dist/client/`이다.
+- MR에서 관련 변경의 빌드를 검증하고, protected develop에서 배포 허용 변수가 true일 때 관련 서비스를 배포한다. API 배포는 API 코드/이미지/배포 입력 변경으로 제한된다.
+- 서버의 Compose·수신 스크립트는 CI가 자동 갱신하지 않는다. 새 환경변수 전달 및 배포 전 `config --quiet` 검사는 아래 적용 문서를 따라 설치해야 한다.
+- API 배포 후 상태 검사·실패 롤백과 프런트 HTTPS/버전 검사·링크 복구를 유지한다. API 교체에는 짧은 중단이 있다.
+- MySQL 백업은 격리 복원 후 추가 EC2에도 보관한다. 실패 알림, 보관 기간별 정리, AI 통합 및 무중단 배포는 후속 작업이다.
+
+문서: [운영 절차](OPERATIONS.md), [배포 규약·서버 적용](DEPLOYMENT-CONTRACT.md), [09/09 작업 보고](WORKLOG-2026-09-09.md), [진행 상태](PROGRESS.md).
+
+로컬 인프라 검증은 `python -B -m unittest discover -s infra/tests -v`로 실행한다. Docker Compose CLI가 필요하며 Docker 데몬·애플리케이션·네트워크는 사용하지 않는다. CI에 추가한 job은 없다.
+
+## 09/07 구축 당시 기록
+
+아래 내용은 당시 단계별 기록이며, 테스트 실행·경로·미완료 상태 표기는 위 현재 기준과 OPERATIONS.md를 우선한다.
+
+### 당시 구성
 
 - 기본 EC2: API / MySQL / Redis / Nginx HTTPS. `/srv/mupid/config`, 비밀값 `/srv/mupid/.env` (root 600).
 - 추가 EC2: 전용 GitLab Runner #2083, job 동시성 1, CPU 2 / 메모리 4GB. 향후 데이터 처리 작업과 자원 배분 필요.
@@ -23,6 +46,31 @@
 - API 교체 중 짧은 중단이 발생한다. 무중단 배포는 현재 범위 밖이다.
 - DB/Redis 볼륨을 보존한다. `down -v` 금지. 이미지 롤백은 DB 스키마/데이터를 되돌리지 않는다.
 - 애플리케이션 DB 계정은 mupid DB에만 권한을 부여한다. root 비밀번호는 API에 전달하지 않는다.
+
+## 음원 경로 적용 (서버에서 사람이 해야 하는 작업)
+
+`infra/deploy/nginx.conf` 와 `infra/deploy/compose.yml` 에 음원 업로드·다운로드
+경로가 추가됐다. **두 파일 모두 CI가 자동 교체하지 않으므로 서버에 직접 반영해야
+한다.** 반영 전까지 업로드는 404, 다운로드는 404 다.
+
+1. `infra/deploy/nginx.conf` → `/srv/mupid/config/nginx.conf` (기존 파일 백업 후)
+2. `infra/deploy/compose.yml` → `/srv/mupid/config/compose.yml`
+   - `storage` 서비스가 `networks: [backend, frontend]` 로 바뀐다. nginx 가
+     스토리지와 직접 바이트를 주고받기 때문이다. nginx 는 여전히 mysql·redis 에
+     닿지 못하고, storage 의 호스트 공개 포트도 그대로 없다.
+3. 적용:
+
+```bash
+docker compose --env-file /srv/mupid/.env -f /srv/mupid/config/compose.yml up -d storage
+docker compose --env-file /srv/mupid/.env -f /srv/mupid/config/compose.yml   up -d --no-deps --force-recreate nginx
+docker exec mupid-nginx nginx -t
+```
+
+`storage` 를 재생성하면 IP 가 바뀌고 nginx 는 업스트림 주소를 기동 시점에 한 번만
+해석하므로, **nginx 를 반드시 함께 재생성한다.** 순서를 바꾸면 502 가 난다.
+(`receive.sh` 가 API 교체 뒤 nginx 를 `--force-recreate` 하는 것과 같은 이유다.)
+
+배경과 설계는 `api/knowledge/decision/0016-audio-upload-three-step.md` 에 있다.
 
 ## GitLab 변수 연결 (남은 작업)
 

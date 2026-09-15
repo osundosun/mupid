@@ -1,0 +1,65 @@
+info:
+  name: 아티스트 상세 조회
+  type: http
+  seq: 4
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/artist/{{ARTIST_ID}}"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "artist_id": 1,
+              "name": "무피드 테스트 아티스트",
+              "image_url": "/api/v1/storage/image/ARTIST/..."
+            }
+          }
+  - name: 404 아티스트 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_ARTIST_NOT_FOUND",
+            "message": "요청한 아티스트를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 아티스트 상세 조회
+
+  `GET /api/v1/artist/{artistId}` · **액세스 토큰 필요**
+
+  응답은 `아티스트 목록 조회` 의 항목 하나와 같습니다. 목록에서 받은 값을
+  그대로 쓸 수 있으면 다시 부르지 않아도 됩니다.
+
+  그 아티스트의 앨범은 `앨범 목록 조회` 에 `artist_id` 를 주어 받습니다.
+  상세 응답에 끼워 넣지 않은 이유는 앨범이 많은 아티스트에서 페이징이
+  필요하기 때문입니다.
+
+  삭제된 아티스트는 404 입니다.

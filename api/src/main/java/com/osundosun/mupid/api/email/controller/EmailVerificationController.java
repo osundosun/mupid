@@ -4,6 +4,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,9 +27,15 @@ public class EmailVerificationController {
 
     private final EmailService emailService;
     
+    /**
+     * 인증 메일 발송.
+     *
+     * GET 이므로 본문이 아니라 쿼리 파라미터로 받는다
+     * (`?email=...`). 브라우저 fetch 는 GET 에 본문을 실을 수 없다.
+     */
     @GetMapping
     public ResponseEntity<BaseResponse<EmailAddressVerificationResponse>> sendAddressVerificationMail(
-        @Valid @RequestBody EmailAddressVerificationRequest request
+        @Valid @ModelAttribute EmailAddressVerificationRequest request
     ) {
         int verificationId = emailService.sendVerification(
             request.email(),

@@ -79,7 +79,7 @@ public class EmailVerification {
     /**
      * 인증 완료 일시
      */
-    @Column(nullable = false)
+    @Column(nullable = true)
     private LocalDateTime verifiedAt;
 
     /**

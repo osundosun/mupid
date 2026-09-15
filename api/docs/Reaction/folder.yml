@@ -1,0 +1,51 @@
+info:
+  name: Reaction
+  type: folder
+  seq: 10
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Reaction
+
+    곡 좋아요·관심없음입니다. 전부 **인증이 필요**합니다.
+
+    | 엔드포인트 | 동작 |
+    | --- | --- |
+    | `PUT /api/v1/music/{musicId}/reaction` | 설정 (`LIKE` / `DISLIKE`) |
+    | `DELETE /api/v1/music/{musicId}/reaction` | 해제 |
+    | `GET /api/v1/user/reaction` | 반응한 곡 **번호** |
+    | `GET /api/v1/user/reaction/music` | 반응한 곡 **목록**(곡 정보 포함) |
+
+    ## 한 곡에 반응은 하나
+
+    `music_reactions` 의 기본키가 `(user_id, music_id)` 입니다. 좋아요를 켜면
+    관심없음이 풀리고 그 반대도 같습니다. 해제하면 **행을 지웁니다.**
+
+    `PUT` 도 `DELETE` 도 여러 번 보내도 결과가 같습니다. 이미 같은 값이면
+    아무것도 바꾸지 않고, 없는 반응을 해제해도 오류가 아닙니다.
+
+    ## 조회가 둘인 이유
+
+    - `GET /user/reaction` 은 **번호만** 돌려주고 페이징이 없습니다. 화면이
+      어느 목록에서든 하트를 칠하려면 전부 필요한데, `int` 배열이라 곡을
+      수천 개 좋아해도 가볍습니다.
+    - `GET /user/reaction/music` 은 라이브러리 화면처럼 **곡 정보까지** 필요한
+      곳이 씁니다. 응답은 `곡 목록 조회` 와 같은 페이지 모양입니다.
+
+    ## 좋아요 수
+
+    `music.like_count` 는 비정규화된 집계라 반응과 함께 움직입니다.
+    `LIKE` 를 켜면 +1, 풀거나 `DISLIKE` 로 바꾸면 -1 입니다. `DISLIKE` 자체는
+    이 수를 건드리지 않습니다.
+
+    ## 오류
+
+    | 코드 | 상태 | 설명 |
+    | --- | --- | --- |
+    | `MUPID_MUSIC_NOT_FOUND` | 404 | 없거나 삭제된 곡 |
+    | `MUPID_INVALID_REQUEST_BODY` | 400 | `reaction_type` 누락, `type` 파라미터 오값 |
+    | `MUPID_UNAUTHORIZED` | 401 | 토큰 없음/만료 |

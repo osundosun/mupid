@@ -73,7 +73,12 @@ export function HomeView({ model: m }: { model: MupidModel }) {
           </div>
         </div>
         <aside className="now-sidebar">
-          <section className="now-card">
+          {/* 들을 곡이 없으면 이 카드 대신 그 사실만 알린다. */}
+          {!m.active ? <section className="now-card">
+            <MupidMascot size={96} />
+            <h2>아직 들을 곡이 없어요</h2>
+            <p>음악이 등록되면 여기에서 바로 들을 수 있어요.</p>
+          </section> : <section className="now-card">
             {m.playing && <span className="eyebrow">지금 재생 중</span>}
             <VinylRecord
               playing={m.playing}
@@ -104,7 +109,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
             <button className="text-link" onClick={() => m.go('player')}>
               플레이어 크게 보기 <ChevronRight />
             </button>
-          </section>
+          </section>}
           <section className="ai-invitation">
             <MupidMascot size={76} />
             <h3>이 노래, 다른 느낌으로</h3>

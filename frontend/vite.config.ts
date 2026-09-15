@@ -34,10 +34,28 @@ const localBindingConfig = {
     : [],
 };
 
+// 개발용 API 프록시.
+//
+// 서버에 CORS 설정이 없고 리프레시 토큰 쿠키가 SameSite=Strict + Secure 라,
+// 브라우저에게 같은 출처로 보이게 하는 것이 가장 단순하다. 청크 바이너리도
+// 이 경로로 흐르므로 버퍼링을 끄고 그대로 흘려보낸다.
+const apiProxy = {
+  '/api': {
+    target: process.env.MUPID_API_ORIGIN ?? 'http://localhost:9900',
+    changeOrigin: true,
+  },
+  // 청크 업로드 경로. 배치 전용이지만 프록시를 맞춰 두면 디버깅이 쉽다.
+  '/upload': {
+    target: process.env.MUPID_API_ORIGIN ?? 'http://localhost:9900',
+    changeOrigin: true,
+  },
+};
+
 export default defineConfig(async () => {
   if (process.env.MUPID_DEPLOY_TARGET === 'ec2') {
     return {
       css: { postcss: { plugins: [tailwindcss()] } },
+      server: { proxy: apiProxy },
       plugins: [vinext()],
     };
   }
@@ -52,9 +70,12 @@ export default defineConfig(async () => {
 
   return {
     css: { postcss: { plugins: [tailwindcss()] } },
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      proxy: apiProxy,
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+    },
     plugins: [
       vinext(),
       sites(),

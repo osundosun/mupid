@@ -1,0 +1,72 @@
+info:
+  name: 가사 조회
+  type: http
+  seq: 7
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/lyric"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "music_id": 2,
+              "lines": [
+                { "lyric_id": 2, "time_ms": 1000, "text": "두 번째 줄" },
+                { "lyric_id": 1, "time_ms": 3000, "text": "첫 줄 가사" }
+              ]
+            }
+          }
+  - name: 200 가사 없음
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "music_id": 2,
+              "lines": []
+            }
+          }
+
+docs: |-
+  # 가사 조회
+
+  `GET /api/v1/music/{musicId}/lyric` · **액세스 토큰 필요**
+
+  정렬은 **시간 오름차순**입니다. 같은 시간이면 등록 순입니다.
+
+  ## 가사가 없어도 200 입니다
+
+  아직 가사가 없는 곡이 많습니다. 그때는 `lines` 가 빈 배열입니다 — 곡은
+  있는데 가사만 없는 것은 오류가 아닙니다. 곡 자체가 없으면 404 입니다.
+
+  ## 등록은 다른 경로입니다
+
+  `가사 추가` · `가사 수정` · `가사 삭제` 는 **가사 번호**로 다루므로
+  `/api/v1/lyric` 아래에 있습니다. 조회만 곡에 매달려 있습니다.

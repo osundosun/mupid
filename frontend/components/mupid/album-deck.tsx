@@ -48,7 +48,7 @@ export function AlbumDeck({
 
   if (!selected)
     return <p className="album-deck-empty">지금 표시할 추천곡이 없어요.</p>;
-  const playing = m.active.id === selected.id && m.playing;
+  const playing = m.active?.id === selected.id && m.playing;
 
   return (
     <Carousel

@@ -1,0 +1,6 @@
+# 컨텍스트는 frontend/ 이고 빌드 산출물만 들어간다.
+# node_modules, 소스, .env 가 이미지 레이어에 섞이지 않게 한다.
+*
+!dist
+dist/*
+!dist/client

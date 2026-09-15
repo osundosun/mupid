@@ -35,12 +35,11 @@ examples:
               "user_id": 1,
               "email": "user@example.com",
               "nickname": "mupid",
-              "image_url": "/api/v1/user/image/1",
+              "image_url": "/api/v1/storage/image/profile/1",
               "birth_year": 2000,
-              "gender": "MALE",
-              "role": "USER",
-              "status": "PENDING",
-              "onboarding_submitted_at": null
+              "gender": "M",
+              "role": "ROLE_USER",
+              "status": "PENDING"
             }
           }
   - name: 401 토큰 없음/만료
@@ -73,16 +72,14 @@ docs: |-
   | `data.user_id` | int | 유저 번호 |
   | `data.email` | string | 이메일 (변경 불가) |
   | `data.nickname` | string | 닉네임 |
-  | `data.image_url` | string | 프로필 사진 경로. 항상 `/api/v1/user/image/{user_id}` 형태로 만들어 반환하며, 사진 등록 여부와 무관합니다 |
+  | `data.image_url` | string | 프로필 사진 경로. `/api/v1/storage/image/profile/{user_id}` 형태이며, 사진이 없으면 `null` 입니다 |
   | `data.birth_year` | int | 출생 연도 |
-  | `data.gender` | string | `MALE` / `FEMALE` / `ETC` |
-  | `data.role` | string | `GUEST` / `USER` / `ADMIN` |
+  | `data.gender` | string | `M` / `F` / `ETC` |
+  | `data.role` | string | `ROLE_USER` / `ROLE_SYSTEM` / `ROLE_ADMIN` |
   | `data.status` | string | `PENDING` / `ACTIVE` / `WITHDRAW` |
-  | `data.onboarding_submitted_at` | string(ISO-8601) | 온보딩 제출 일시. 미제출이면 `null` |
 
-  `image_url` 은 실제 파일 존재 여부를 확인하지 않고 조합만 하므로,
-  사진을 등록하지 않은 사용자도 값이 채워집니다. 그 경로로 조회하면
-  `MUPID_FILE_NOT_FOUND` 가 반환됩니다.
+  `image_url` 은 `UserImageService.getProfileImageUrl` 이 조합한 값입니다.
+  저장된 프로필 사진이 없는 사용자는 `null` 을 받습니다.
 
   ## 오류
 

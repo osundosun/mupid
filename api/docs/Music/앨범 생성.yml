@@ -1,0 +1,126 @@
+info:
+  name: 앨범 생성
+  type: http
+  seq: 15
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/album"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "artist_id": {{ARTIST_ID}},
+        "title": "{{ALBUM_TITLE}}",
+        "image_file_id": {{ALBUM_IMAGE_FILE_ID}},
+        "release_date": "{{ALBUM_RELEASE_DATE}}"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: ARTIST_ID
+      value: "1"
+    - name: ALBUM_TITLE
+      value: 첫 번째 앨범
+    - name: ALBUM_IMAGE_FILE_ID
+      value: "2"
+    - name: ALBUM_RELEASE_DATE
+      value: "2026-09-11T00:00:00"
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.data.album_id
+        method: jsonq
+      variable:
+        name: ALBUM_ID
+        scope: runtime
+      description: 생성된 앨범 번호를 ALBUM_ID 변수에 저장합니다.
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 생성 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "앨범이 생성되었습니다.",
+            "data": {
+              "album_id": 1
+            }
+          }
+  - name: 403 권한 없음
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_FORBIDDEN",
+            "message": "접근 권한이 없습니다.",
+            "errorDetails": null
+          }
+  - name: 404 아티스트 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_ARTIST_NOT_FOUND",
+            "message": "요청한 아티스트를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 앨범 생성
+
+  `POST /api/v1/album` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `artist_id` | int | ✅ | 아티스트 번호 |
+  | `title` | string | ✅ | 앨범명 |
+  | `release_date` | datetime | ✅ | 발매일 (ISO-8601) |
+
+  ## 응답
+
+  `data.album_id` 로 생성된 앨범 번호가 반환되고 `ALBUM_ID` 변수에 자동
+  저장됩니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FORBIDDEN` | 403 | SYSTEM/ADMIN 이 아닌 토큰 |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 검증 규칙 위반 |
+  | `MUPID_ARTIST_NOT_FOUND` | 404 | 아티스트 없음 또는 삭제됨 |

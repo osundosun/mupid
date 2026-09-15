@@ -1,0 +1,236 @@
+info:
+  name: AI 대화
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/ai/chat"
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+  body:
+    type: json
+    data: |-
+      {
+        "message": "이 곡보다 조금 더 잔잔하게",
+        "history": [
+          {
+            "role": "AI",
+            "content": "지금 듣는 곡의 저장한 순간에서 새로운 음악을 찾아볼까요? 원하는 느낌을 들려주세요."
+          }
+        ],
+        "music_id": {{MUSIC_ID}}
+      }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 추천까지 함께
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "reply": "지금 곡의 결은 그대로 두고, 잔향이 길게 남는 구간으로 골라 봤어요.",
+              "tracks": [
+                {
+                  "rank_order": 1,
+                  "music_id": 2,
+                  "title": "첫 번째 곡",
+                  "artist": "무피드 테스트 아티스트",
+                  "album": "무피드 테스트 앨범",
+                  "image_url": "/api/v1/storage/image/ALBUM/1-...",
+                  "music_section_id": null,
+                  "section_label": null,
+                  "start_time_ms": 0,
+                  "end_time_ms": 0,
+                  "score": 0.92,
+                  "reason_code": "COLD_START",
+                  "reason": "지금 곡보다 템포를 조금 낮추고 잔향을 길게 남긴 곡이에요."
+                }
+              ]
+            }
+          }
+  - name: 200 대화만
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "reply": "이 곡은 후반부로 갈수록 악기가 하나씩 빠지면서 여운이 길어져요.",
+              "tracks": []
+            }
+          }
+  - name: 400 메시지 없음
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_REQUEST_BODY",
+            "message": "데이터가 잘못 입력되었습니다.",
+            "error_details": {
+              "message": "메시지가 입력되지 않았습니다."
+            }
+          }
+  - name: 401 토큰 없음/만료
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_UNAUTHORIZED",
+            "message": "인증 정보가 유효하지 않거나 존재하지 않습니다.",
+            "error_details": null
+          }
+  - name: 502 게이트웨이 오류
+    response:
+      status: 502
+      statusText: Bad Gateway
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_AI_REQUEST_FAILED",
+            "message": "AI 응답을 받지 못했습니다.",
+            "error_details": null
+          }
+  - name: 503 키 미설정
+    response:
+      status: 503
+      statusText: Service Unavailable
+      headers:
+        - name: Content-Type
+          value: application/json;charset=UTF-8
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_AI_NOT_CONFIGURED",
+            "message": "AI 대화 기능이 설정되지 않았습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # AI 대화
+
+  `POST /api/v1/ai/chat` · 인증 필요
+
+  한 번의 문답입니다. 모델이 곡 추천이 필요하다고 판단하면 서버가 추천 툴을 실행하고,
+  답변과 함께 곡 목록을 돌려줍니다.
+
+  ## 요청 필드
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `message` | string(≤500) | O | 이번에 보낼 말 |
+  | `history` | array(≤100) | | 이전 대화. 없으면 새 대화입니다 |
+  | `history[].role` | string | O | `USER` 또는 `AI` (`SYSTEM`·`ETC` 는 무시) |
+  | `history[].content` | string(≤2000) | O | 그때 오간 말 |
+  | `music_id` | int | | 지금 듣고 있는 곡. 없는 번호면 조용히 무시합니다 |
+
+  **곡명·아티스트는 받지 않습니다.** `music_id` 로 서버가 찾습니다. 클라이언트가 보낸
+  이름을 프롬프트에 그대로 넣으면 없는 곡을 있는 것처럼 이야기하게 만들 수 있습니다.
+
+  **대화는 서버에 남지 않습니다.** `history` 는 `ai.max-history`(기본 20)마디까지만
+  프롬프트에 들어가고, 넘치면 **최근 것부터** 남깁니다.
+
+  > `role` 은 대문자입니다. `user` 처럼 소문자로 보내면 400 이 아니라
+  > **404 `MUPID_NOT_READABLE_MESSAGE`** 가 옵니다 (enum 파싱 실패가
+  > `HttpMessageNotReadableException` 으로 올라가고, 그 코드가 404 로 매핑돼
+  > 있습니다 — `api/knowledge/failure/auth-and-api.md`).
+
+  ## 응답 필드
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `data.reply` | string | 말풍선에 그릴 본문 |
+  | `data.tracks` | array | 추천 곡. 추천을 하지 않았으면 **빈 배열**(null 이 아닙니다) |
+
+  `tracks[]` 는 추천 서버의 `/internal` 계약(`ai_server/app/internal_api.py` 의
+  `RecommendationItem`)과 이름이 같습니다.
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `rank_order` | int | 1부터의 순위 |
+  | `music_id` | int | 곡 번호 |
+  | `title`, `artist`, `album` | string | 표시용. `music_id` 로 DB 에서 채웁니다 |
+  | `image_url` | string | 앨범 표지. 없으면 `null` |
+  | `music_section_id` | int | 추천된 구간. 목업은 채우지 않습니다(`null`) |
+  | `section_label` | string | `INTRO` `VERSE` `PRE_CHORUS` `CHORUS` `BRIDGE` `BREAK` `INST` `SOLO` `OUTRO` |
+  | `start_time_ms`, `end_time_ms` | int | 구간 범위 |
+  | `score` | number | 추천 점수 |
+  | `reason_code` | string | `QUERY_SEMANTIC_MATCH` `SIMILAR_PREFERRED_MOMENT` `EXPLORE_NEW` `COLD_START` |
+  | `reason` | string | 사람이 읽는 추천 이유 |
+
+  ## ⚠ 추천은 목업입니다
+
+  `recommend_music` 툴은 질의를 보지 않습니다. 카탈로그 앞쪽에서 몇 곡을 집어 정해진
+  사유를 붙일 뿐이라 **점수·사유·구간은 가짜**입니다. 곡 번호만 진짜라서 화면에서
+  재생됩니다. 카탈로그가 비어 있으면 재생되지 않는 고정 예시(`music_id` 9001~)로
+  돌아갑니다.
+
+  구간(`music_section_id`·`section_label`·`start_time_ms`·`end_time_ms`)은 목업이
+  채우지 않습니다 — 임의의 구간을 내보내면 화면이 곡의 엉뚱한 지점을 "추천된 순간"
+  으로 표시합니다. 외부 추천 API 를 붙이는 날 바뀌는 것은
+  `ai/tool/AiRecommendToolImpl.java` 하나입니다.
+
+  ## 화면은 카탈로그에 있는 곡만 그립니다
+
+  채팅 패널(`frontend/lib/ai-chat.ts`)은 `music_id` 로 곡을 찾아 재생 가능한 줄만
+  남깁니다. 카탈로그에 없는 번호가 오면 **조용히 버리고 답변만 보여 줍니다** — 눌러도
+  재생되지 않는 줄을 만들지 않으려는 것입니다.
+
+  ## 느립니다
+
+  추론 모델이라 응답까지 수 초에서 수십 초가 걸립니다. 툴을 부르면 게이트웨이를 두 번
+  타므로 더 걸립니다. 서버는 `ai.read-timeout`(기본 60초)까지 기다리고, 그동안 요청
+  스레드 하나가 묶입니다. Bruno 의 `timeout: 0`(무제한)을 그대로 두세요.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | `message` 가 비었거나 길이를 넘음 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 404 | `role` 값이 `USER`/`AI`/`SYSTEM`/`ETC` 밖 |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_AI_REQUEST_FAILED` | 502 | 게이트웨이가 오류를 냈거나 붙지 못함(타임아웃 포함) |
+  | `MUPID_AI_EMPTY_RESPONSE` | 502 | 응답에 본문이 없음 |
+  | `MUPID_AI_TOOL_ROUND_EXCEEDED` | 502 | 툴 호출만 반복하고 답을 끝내지 못함 |
+  | `MUPID_AI_NOT_CONFIGURED` | 503 | `MUPID_AI_GMS_KEY` 가 비어 있음 |

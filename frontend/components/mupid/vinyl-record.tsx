@@ -8,7 +8,7 @@ import { AlbumArt } from './primitives';
  * Keep its tonearm and printed label stationary; rotate the separate black disc.
  * A permanently mounted animation preserves its angle across pause/resume.
  */
-export function VinylRecord({ playing, track, className = '', ...imageProps }: ImageProps & { playing: boolean; track: Track }) {
+export function VinylRecord({ playing, track, className = '', ...imageProps }: ImageProps & { playing: boolean; track: Track | null }) {
   const label = useRef<HTMLSpanElement>(null);
   const motion = useRef({ angle: 0, speed: 0 });
   useEffect(() => {

@@ -1,24 +1,81 @@
-export type TrackComment = { id: string; trackId: number; at: number; body: string; author: string; authorId?: number; createdAt: number };
-// 기존 ID 없는 댓글은 읽기만 허용한다. 닉네임이 같다고 소유권을 부여하면 안 된다.
-export function commentUserId(session: {kind: string; userId?: number} | null): number | null {
-  // 음수 ID는 기기 내 체험 계정 전용이며 서버 회원 ID와 섞지 않는다.
-  if (session?.kind === 'demo' && session.userId === -1) return -1;
-  return session?.kind === 'authenticated' && Number.isSafeInteger(session.userId) && session.userId! > 0 ? session.userId! : null;
-}
-export function ownsComment(comment: TrackComment, userId: number | null) {
-  return userId !== null && comment.authorId === userId;
-}
-const key = 'mupid.track-comments.v1';
-export function validateComment(body: string, at: number, duration: number) {
-  return !!body.trim() && body.trim().length <= 500 && Number.isFinite(duration) && Number.isFinite(at) && at >= 0 && at <= duration;
-}
-/** Device-local UI adapter. Real author identity and authorization must come from the server later. */
+/**
+ * 곡 시점 댓글.
+ *
+ * 서버에 저장된다. 로그인해야 읽고 쓸 수 있고, 다른 사람의 댓글도 보인다.
+ * 데모 곡(`musicId` 없음)에는 댓글을 달 수 없다 — 서버에 그 곡이 없다.
+ *
+ * 화면이 쓰는 모양(`TrackComment`)과 서버 모양은 다르다. 여기서만 옮긴다.
+ * 댓글 번호는 서버에서 숫자로 오지만 화면은 문자열로 다루므로 여기서 맞춘다.
+ */
+
+import { api } from './api/session';
+import type { MusicComment } from './api/endpoints';
+import { analytics } from './analytics';
+import { commentable } from './comment-rules';
+import type { Track } from './mupid-data';
+
+export type TrackComment = {
+  /** 서버 댓글 번호를 문자열로 옮긴 값. */
+  id: string;
+  trackId: number;
+  /** 곡 내 시점(초). 서버는 ms 로 다룬다. */
+  at: number;
+  body: string;
+  author: string;
+  authorId?: number;
+  /** 내 댓글인가. **서버가 판정한 값이다.** */
+  mine: boolean;
+  createdAt: number;
+};
+
+// 통신 없이 쓸 수 있는 규칙은 `comment-rules` 에 있다. 화면이 한곳에서
+// 가져다 쓰도록 여기서 다시 내보낸다.
+export {
+  COMMENT_MAX_LENGTH,
+  commentable,
+  commentUserId,
+  ownsComment,
+  validateComment,
+} from './comment-rules';
+
+/** 한 번에 받아 올 댓글 수. 넘치면 페이징으로 바꾼다. */
+const PAGE_SIZE = 100;
+
+const toComment = (track: Track, comment: MusicComment): TrackComment => ({
+  id: String(comment.comment_id),
+  trackId: track.id,
+  at: comment.timestamp_ms / 1000,
+  body: comment.content,
+  author: comment.nickname,
+  authorId: comment.user_id,
+  mine: comment.mine,
+  createdAt: Date.parse(comment.created_at) || Date.now(),
+});
+
 export const trackComments = {
-  // 프론트 체험용 저장 경계. 추후 곡별 조회·등록·수정·삭제 API로 대체하며 사용자 ID를 서버에서 확인한다.
-  async list(): Promise<TrackComment[]> {
-    const raw: unknown = JSON.parse(localStorage.getItem(key) || '[]');
-    if (!Array.isArray(raw)) throw new Error('Invalid comments');
-    return raw.filter((item): item is TrackComment => item && typeof item.id === 'string' && Number.isFinite(item.trackId) && Number.isFinite(item.at) && item.at >= 0 && typeof item.body === 'string' && !!item.body.trim() && item.body.length <= 500 && typeof item.author === 'string' && Number.isFinite(item.createdAt) && Math.abs(item.createdAt) <= 8640000000000000);
+  async list(track: Track, signal?: AbortSignal): Promise<TrackComment[]> {
+    if (!commentable(track)) return [];
+    const page = await api.comment.list(track.musicId, { size: PAGE_SIZE }, signal);
+    return (page?.items ?? []).map((item) => toComment(track, item));
   },
-  async save(items: TrackComment[]) { localStorage.setItem(key, JSON.stringify(items)); },
+  async add(track: Track, at: number, body: string): Promise<TrackComment> {
+    if (!commentable(track)) throw new Error('이 곡에는 댓글을 남길 수 없어요.');
+    const saved = await api.comment.add(track.musicId, {
+      timestamp_ms: Math.round(at * 1000),
+      content: body.trim(),
+    });
+    // 저장된 뒤에 남긴다. 댓글 번호는 서버가 정해주므로 그 전에는 실을 수 없고,
+    // 저장에 실패한 댓글을 신호(+0.7)로 세면 안 된다.
+    analytics.addComment(body.trim(), Math.round(at * 1000), saved.comment_id, track.musicId);
+    return toComment(track, saved);
+  },
+  async update(track: Track, id: string, body: string): Promise<TrackComment> {
+    const saved = await api.comment.update(Number(id), body.trim());
+    return toComment(track, saved);
+  },
+  async remove(id: string): Promise<void> {
+    await api.comment.remove(Number(id));
+    // 삭제는 `comment_id` 하나면 된다. 곡·시점은 원본 이벤트를 되짚으면 나온다.
+    analytics.deleteComment(Number(id));
+  },
 };

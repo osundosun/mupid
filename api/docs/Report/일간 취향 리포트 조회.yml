@@ -1,0 +1,240 @@
+info:
+  name: 일간 취향 리포트 조회
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/report"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "date": "2026-09-15",
+              "generated_at": "2026-09-15T21:04:11",
+              "source": "LIVE",
+              "total_listening_ms": 3540000,
+              "unmatched_ms": 0,
+              "tracks": [
+                {
+                  "music_id": 2,
+                  "title": "첫 번째 곡",
+                  "artist_name": "무피드 테스트 아티스트",
+                  "album_title": "무피드 테스트 앨범",
+                  "image_url": "/api/v1/storage/image/ALBUM/...",
+                  "listening_ms": 420000,
+                  "share": 0.1186
+                }
+              ],
+              "keywords": [
+                { "name": "몽환적인", "kind": "MOOD", "weight": 0.31 },
+                { "name": "Indie", "kind": "GENRE", "weight": 0.22 }
+              ],
+              "mubti": {
+                "code": "VTFC",
+                "title": "보컬 인싸형",
+                "subtitle": "모두의 보컬은 곧 나의 최애",
+                "description": "지금 사랑받는 목소리를 끝까지 듣고, 마음에 든 곡은 오래 곁에 둬요.",
+                "image_url": null,
+                "axes": [
+                  {
+                    "axis": "A",
+                    "code": "V",
+                    "name": "보컬파",
+                    "opposite_code": "I",
+                    "opposite_name": "멜로디파",
+                    "score": 0.62,
+                    "confidence": 0.8
+                  },
+                  {
+                    "axis": "B",
+                    "code": "T",
+                    "name": "트렌드형",
+                    "opposite_code": "M",
+                    "opposite_name": "매니아형",
+                    "score": -0.21,
+                    "confidence": 1.0
+                  },
+                  {
+                    "axis": "C",
+                    "code": "F",
+                    "name": "완주형",
+                    "opposite_code": "S",
+                    "opposite_name": "스킵형",
+                    "score": 0.48,
+                    "confidence": 1.0
+                  },
+                  {
+                    "axis": "D",
+                    "code": "C",
+                    "name": "국밥형",
+                    "opposite_code": "E",
+                    "opposite_name": "개척형",
+                    "score": -0.33,
+                    "confidence": 0.75
+                  }
+                ]
+              },
+              "sample": {
+                "sufficient": true,
+                "play_count": 24,
+                "distinct_music_count": 11,
+                "listening_ms": 3540000
+              }
+            }
+          }
+
+  - name: 200 표본 부족
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "date": "2026-09-15",
+              "generated_at": "2026-09-15T08:12:40",
+              "source": "LIVE",
+              "total_listening_ms": 94000,
+              "unmatched_ms": 0,
+              "tracks": [
+                {
+                  "music_id": 2,
+                  "title": "첫 번째 곡",
+                  "artist_name": "무피드 테스트 아티스트",
+                  "album_title": "무피드 테스트 앨범",
+                  "image_url": "/api/v1/storage/image/ALBUM/...",
+                  "listening_ms": 94000,
+                  "share": 1.0
+                }
+              ],
+              "keywords": [],
+              "mubti": null,
+              "sample": {
+                "sufficient": false,
+                "play_count": 1,
+                "distinct_music_count": 1,
+                "listening_ms": 94000
+              }
+            }
+          }
+
+  - name: 400 미래 날짜
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+        - name: X-Mupid-Error
+          value: MUPID_REPORT_INVALID_DATE
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_REPORT_INVALID_DATE",
+            "message": "조회할 수 없는 날짜입니다.",
+            "error_details": null
+          }
+
+  - name: 503 유형 기준 데이터 없음
+    response:
+      status: 503
+      statusText: Service Unavailable
+      headers:
+        - name: Content-Type
+          value: application/json
+        - name: X-Mupid-Error
+          value: MUPID_REPORT_MUBTI_NOT_SEEDED
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_REPORT_MUBTI_NOT_SEEDED",
+            "message": "취향 유형 기준 데이터가 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 일간 취향 리포트 조회
+
+  `GET /api/v1/report` · **인증 필요**
+
+  ## 요청
+
+  | 파라미터 | 필수 | 뜻 |
+  | --- | --- | --- |
+  | `date` | 아니오 | `YYYY-MM-DD`. 생략하면 `Asia/Seoul` 기준 오늘 |
+
+  미래 날짜는 **400** 입니다.
+
+  ## 응답
+
+  | 필드 | 뜻 |
+  | --- | --- |
+  | `source` | `LIVE` 방금 집계 · `STORED` 저장된 스냅샷. 오늘은 항상 `LIVE` |
+  | `total_listening_ms` | 그날 실제로 들은 시간 전부. `tracks` 는 상위 40곡만 담으므로 **41곡 이상 들은 날에는 `tracks` 의 합보다 큽니다**. `share` 의 분모는 늘 이 값입니다 |
+  | `unmatched_ms` | 이벤트에는 있었지만 곡을 못 찾아 버린 청취량. **0 이 아니면 곡 번호가 어긋나는 중입니다** |
+  | `tracks` | 청취 시간 내림차순, 최대 40곡. `share` 가 곧 트리맵 타일 면적 |
+  | `keywords` | 분위기·장르를 청취 시간으로 가중한 상위 6개 |
+  | `mubti` | 표본이 모자라면 `null` |
+  | `sample.sufficient` | 판정할 만큼 들었는가 (5분 이상 · 3곡 이상) |
+  | `sample.play_count` | 그날 재생 횟수. `source` 가 `STORED` 면 저장하지 않아 `null` |
+
+  ### MuBTI 축
+
+  네 축 각각 `score` 가 **−1 ~ +1** 이고, 양수면 `code` 쪽입니다.
+
+  | 축 | 양수 | 음수 | 무엇을 보는가 |
+  | --- | --- | --- | --- |
+  | A | `V` 보컬파 | `I` 멜로디파 | 보컬곡 청취 비중의 카탈로그 기준선 대비 편차 |
+  | B | `M` 매니아형 | `T` 트렌드형 | 아티스트 집중도(HHI) vs 재생수 백분위·신곡 비중 |
+  | C | `F` 완주형 | `S` 스킵형 | `PLAY_END` / (`PLAY_END` + `TRACK_SKIP`), 앞으로감기 빈도 |
+  | D | `E` 개척형 | `C` 국밥형 | 90일 내 처음 듣는 곡의 **곡 수** 비중(0.7) + 청취 시간 비중(0.3) |
+
+  `confidence` 가 **0** 이면 판정할 근거가 없어 기본값으로 둔 축입니다. 화면은
+  그 축을 흐리게 그립니다. A축은 `music_analysis` 가 비어 있으면 늘 0 입니다.
+
+  ### 점수는 흐르고 글자는 잘 안 바뀝니다
+
+  `score` 는 들을수록 실시간으로 움직이지만 `code` 는 **반대편으로 0.15 만큼
+  넘어가야** 바뀝니다(이력 현상). 곡 하나 스킵할 때마다 `F` 와 `S` 가 번갈아
+  나오면 판정 자체를 못 믿게 되기 때문입니다.
+
+  화면은 이 둘을 다르게 씁니다 — 막대는 `score` 로 움직이고 유형 이름은 `code`
+  가 바뀔 때만 바뀝니다.
+
+  ## 언제 MySQL 에 남는가
+
+  | 시점 | 동작 |
+  | --- | --- |
+  | 오늘치 조회 | 5분에 한 번만 `reports` · `listening` 에 스냅샷 |
+  | 지난 날짜 조회 | 저장돼 있으면 그대로 읽고, 없으면 계산해 그 자리에서 저장 |
+  | 매일 00:05 KST | 전날 리포트를 확정 저장 (그날 들은 사용자만) |
+
+  조회할 때마다 쓰지 않는 이유는 화면이 30초마다 폴링하기 때문입니다. 그대로
+  두면 읽기 경로에 쓰기 폭풍이 붙습니다.

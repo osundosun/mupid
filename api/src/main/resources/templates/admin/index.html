@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Mupid 관리자</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0f1115;
+            --panel: #171a21;
+            --panel-2: #1d212a;
+            --line: #272b35;
+            --text: #e6e8ee;
+            --muted: #8b93a7;
+            --accent: #7aa2ff;
+            --ok: #56d364;
+            --warn: #e3b341;
+            --danger: #ff6b6b;
+            --sidebar: 260px;
+            --topbar: 52px;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font: 13px/1.6 "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                  "Malgun Gothic", sans-serif;
+        }
+
+        button, input, select, textarea { font: inherit; color: inherit; }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        /* ------------------------------------------------------------------ 뼈대 */
+
+        .topbar {
+            position: fixed;
+            inset: 0 0 auto 0;
+            height: var(--topbar);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 16px;
+            background: var(--panel);
+            border-bottom: 1px solid var(--line);
+            z-index: 20;
+        }
+
+        .brand { font-weight: 700; letter-spacing: -0.01em; }
+        .brand span { color: var(--muted); font-weight: 500; }
+        .spacer { flex: 1; }
+        .who { color: var(--muted); font-size: 12px; }
+
+        .sidebar {
+            position: fixed;
+            top: var(--topbar);
+            bottom: 0;
+            left: 0;
+            width: var(--sidebar);
+            padding: 12px;
+            overflow-y: auto;
+            background: var(--panel);
+            border-right: 1px solid var(--line);
+        }
+
+        .content {
+            margin: var(--topbar) 0 0 var(--sidebar);
+            padding: 20px;
+            min-height: calc(100vh - var(--topbar));
+        }
+
+        @media (max-width: 860px) {
+            .sidebar {
+                position: static;
+                width: auto;
+                border-right: 0;
+                border-bottom: 1px solid var(--line);
+                max-height: 40vh;
+            }
+            .content { margin: 0; padding: 16px; }
+            body { padding-top: var(--topbar); }
+        }
+
+        /* ------------------------------------------------------------ 왼쪽 자원 목록 */
+
+        /* 검색칸과 첫 항목(대시보드)이 붙어 버리지 않게 띄운다. 분류 묶음은 제
+           여백(.nav-group)을 갖지만 맨 위 항목 앞에는 묶음이 없다. */
+        #nav { margin-top: 10px; }
+
+        .nav-group { margin: 14px 0 4px; padding: 0 8px; color: var(--muted);
+                     font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            padding: 7px 8px;
+            background: none;
+            border: 0;
+            border-radius: 7px;
+            color: var(--text);
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .nav-item:hover { background: var(--panel-2); }
+        .nav-item[aria-current="true"] { background: rgba(122, 162, 255, 0.16); color: var(--accent); }
+        .nav-item .count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+        .nav-item .table-name { display: block; color: var(--muted); font-size: 11px; }
+
+        /* ---------------------------------------------------------------- 공통 부품 */
+
+        .btn {
+            padding: 7px 12px;
+            background: var(--accent);
+            border: 0;
+            border-radius: 7px;
+            color: #0b0d12;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .btn.ghost { background: var(--panel-2); border: 1px solid var(--line); color: var(--text); font-weight: 500; }
+        .btn.danger { background: var(--danger); color: #170a0a; }
+        .btn.small { padding: 4px 9px; font-size: 12px; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .field {
+            padding: 7px 10px;
+            background: #0f1218;
+            border: 1px solid var(--line);
+            border-radius: 7px;
+        }
+
+        .field:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+        .field:disabled { opacity: 0.55; }
+
+        .card {
+            padding: 16px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+        }
+
+        .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+
+        .stat .k { color: var(--muted); font-size: 12px; }
+        .stat .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+
+        .pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+        .pill.up { background: rgba(86, 211, 100, 0.16); color: var(--ok); }
+        .pill.down { background: rgba(255, 107, 107, 0.16); color: var(--danger); }
+
+        h2 { margin: 0 0 4px; font-size: 17px; letter-spacing: -0.01em; }
+        h3 { margin: 24px 0 10px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+        .sub { margin: 0 0 16px; color: var(--muted); font-size: 12px; }
+
+        /* -------------------------------------------------------------------- 표 */
+
+        .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0; }
+        .toolbar .grow { flex: 1; min-width: 180px; }
+
+        .table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+
+        table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+
+        th, td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+        thead th { position: sticky; top: 0; background: var(--panel-2); color: var(--muted); font-weight: 600; font-size: 12px; }
+        thead th.sortable { cursor: pointer; user-select: none; }
+        thead th.sortable:hover { color: var(--text); }
+        tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+        tbody td { font-variant-numeric: tabular-nums; }
+        td .cell { display: inline-block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+        td.actions { white-space: nowrap; }
+        .muted { color: var(--muted); }
+        .filter-row th { position: static; padding: 6px 8px; background: var(--panel); }
+        .filter-row .field { width: 100%; padding: 4px 7px; font-size: 12px; }
+
+        .pager { display: flex; align-items: center; gap: 10px; justify-content: flex-end; margin-top: 12px; color: var(--muted); }
+
+        /* ------------------------------------------------------------------ 모달 */
+
+        .backdrop {
+            position: fixed;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 40;
+        }
+
+        .modal {
+            width: min(100%, 620px);
+            max-height: 86vh;
+            display: flex;
+            flex-direction: column;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+        }
+
+        .modal header, .modal footer { padding: 14px 18px; }
+        .modal header { border-bottom: 1px solid var(--line); font-weight: 600; }
+        .modal .body { padding: 18px; overflow-y: auto; }
+        .modal footer { border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; }
+
+        .form-row { margin-bottom: 14px; }
+        .form-row label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 12px; }
+        .form-row .field { width: 100%; }
+        .form-row textarea.field { min-height: 90px; resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; }
+        .form-row .note { margin-top: 4px; color: var(--muted); font-size: 11px; }
+        .req { color: var(--warn); }
+
+        /* ------------------------------------------------------------------ 알림 */
+
+        .toast {
+            position: fixed;
+            left: 50%;
+            bottom: 24px;
+            transform: translateX(-50%);
+            padding: 10px 16px;
+            background: var(--panel-2);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            z-index: 60;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+        }
+
+        .toast.bad { border-color: rgba(255, 107, 107, 0.5); color: var(--danger); }
+
+        .empty { padding: 40px; color: var(--muted); text-align: center; }
+    </style>
+</head>
+<body>
+
+<header class="topbar">
+    <div class="brand">Mupid <span>관리자</span></div>
+    <div class="spacer"></div>
+    <span class="who" id="who"></span>
+    <button class="btn ghost small" id="reload">새로고침</button>
+    <button class="btn ghost small" id="logout">로그아웃</button>
+</header>
+
+<aside class="sidebar">
+    <input id="nav-filter" class="field" style="width:100%" placeholder="자원 이름 검색" autocomplete="off">
+    <nav id="nav"></nav>
+</aside>
+
+<main class="content" id="content">
+    <div class="empty">불러오는 중…</div>
+</main>
+
+<div id="modal-root"></div>
+<div id="toast-root"></div>
+
+<script>
+(function () {
+    'use strict';
+
+    var TOKEN_KEY = 'mupid.admin.token';
+    var USER_KEY = 'mupid.admin.user';
+    var LOGIN_URL = '/api/admin/login';
+    var API = '/api/v1/admin';
+
+    var state = {
+        resources: [],
+        dashboard: null,
+        view: 'dashboard',
+        resource: null,
+        schema: null,
+        page: 0,
+        size: 25,
+        sort: null,
+        direction: 'desc',
+        keyword: '',
+        filters: {},
+        rows: null
+    };
+
+    // ------------------------------------------------------------------ 인증
+
+    function token() {
+        return sessionStorage.getItem(TOKEN_KEY);
+    }
+
+    function toLogin() {
+        sessionStorage.removeItem(TOKEN_KEY);
+        sessionStorage.removeItem(USER_KEY);
+        location.replace(LOGIN_URL);
+    }
+
+    /**
+     * 액세스 토큰은 한 시간짜리다. 만료되면 리프레시 토큰 쿠키로 한 번 되살려 보고,
+     * 그것도 안 되면 로그인으로 돌려보낸다.
+     *
+     * 쿠키가 Secure 라 https 가 아닌 환경에서는 저장되지 않는다. 그때는 되살리기가
+     * 실패하고 그냥 다시 로그인하게 된다 — 조용히 실패하는 것보다 낫다.
+     */
+    var refreshing = null;
+
+    function refresh() {
+        if (!refreshing) {
+            refreshing = fetch('/api/v1/auth', { credentials: 'include' })
+                .then(function (response) {
+                    if (!response.ok) {
+                        throw new Error('만료');
+                    }
+                    return response.json();
+                })
+                .then(function (body) {
+                    sessionStorage.setItem(TOKEN_KEY, body.data.access_token);
+                    return body.data.access_token;
+                })
+                .finally(function () {
+                    refreshing = null;
+                });
+        }
+        return refreshing;
+    }
+
+    function request(path, options, retried) {
+        var config = Object.assign({ headers: {} }, options || {});
+        config.headers = Object.assign({}, config.headers, {
+            'Authorization': 'Bearer ' + token()
+        });
+        if (config.body) {
+            config.headers['Content-Type'] = 'application/json';
+        }
+
+        return fetch(API + path, config).then(function (response) {
+            if (response.status === 401 && !retried) {
+                return refresh().then(function () {
+                    return request(path, options, true);
+                }, function () {
+                    toLogin();
+                    throw new Error('로그인이 필요합니다.');
+                });
+            }
+            if (response.status === 204) {
+                return null;
+            }
+            return response.json().catch(function () {
+                return null;
+            }).then(function (body) {
+                if (!response.ok) {
+                    throw new Error((body && body.message) || ('요청이 실패했습니다 (' + response.status + ')'));
+                }
+                return body ? body.data : null;
+            });
+        });
+    }
+
+    // -------------------------------------------------------------------- 유틸
+
+    function el(id) {
+        return document.getElementById(id);
+    }
+
+    function escape(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function number(value) {
+        return Number(value).toLocaleString('ko-KR');
+    }
+
+    /**
+     * 행 수. 서버가 세지 못했으면 -1 로 온다 — 0 으로 그리면 "비었다" 는 거짓말이 된다.
+     */
+    function count(value) {
+        return Number(value) < 0 ? '?' : number(value);
+    }
+
+    function bytes(value) {
+        var units = ['B', 'KB', 'MB', 'GB'];
+        var size = Number(value);
+        var unit = 0;
+        while (size >= 1024 && unit + 1 < units.length) {
+            size = size / 1024;
+            unit = unit + 1;
+        }
+        return size.toFixed(unit === 0 ? 0 : 1) + ' ' + units[unit];
+    }
+
+    function duration(seconds) {
+        var total = Number(seconds);
+        var days = Math.floor(total / 86400);
+        var hours = Math.floor((total % 86400) / 3600);
+        var minutes = Math.floor((total % 3600) / 60);
+        if (days > 0) {
+            return days + '일 ' + hours + '시간';
+        }
+        if (hours > 0) {
+            return hours + '시간 ' + minutes + '분';
+        }
+        return minutes + '분';
+    }
+
+    function toast(message, bad) {
+        var root = el('toast-root');
+        root.innerHTML = '<div class="toast' + (bad ? ' bad' : '') + '">' + escape(message) + '</div>';
+        setTimeout(function () {
+            root.innerHTML = '';
+        }, bad ? 5000 : 2400);
+    }
+
+    function fail(error) {
+        toast(error && error.message ? error.message : '알 수 없는 오류입니다.', true);
+    }
+
+    // ---------------------------------------------------------------- 왼쪽 목록
+
+    function renderNav() {
+        var keyword = el('nav-filter').value.trim().toLowerCase();
+        var html = '<button class="nav-item" data-view="dashboard" aria-current="'
+            + (state.view === 'dashboard') + '"><strong>대시보드</strong></button>';
+
+        var category = null;
+        state.resources.forEach(function (resource) {
+            var hit = !keyword
+                || resource.label.toLowerCase().indexOf(keyword) >= 0
+                || resource.name.toLowerCase().indexOf(keyword) >= 0
+                || resource.table.toLowerCase().indexOf(keyword) >= 0;
+            if (!hit) {
+                return;
+            }
+            if (resource.category !== category) {
+                category = resource.category;
+                html += '<div class="nav-group">' + escape(category) + '</div>';
+            }
+            var current = state.view === 'resource' && state.resource === resource.name;
+            html += '<button class="nav-item" data-resource="' + escape(resource.name) + '"'
+                + ' aria-current="' + current + '">'
+                + '<span><strong>' + escape(resource.label) + '</strong>'
+                + '<span class="table-name">' + escape(resource.table) + '</span></span>'
+                + '<span class="count">' + count(resource.count) + '</span>'
+                + '</button>';
+        });
+
+        el('nav').innerHTML = html;
+    }
+
+    // ---------------------------------------------------------------- 대시보드
+
+    function renderDashboard() {
+        var data = state.dashboard;
+        if (!data) {
+            el('content').innerHTML = '<div class="empty">불러오는 중…</div>';
+            return;
+        }
+
+        var runtime = data.runtime;
+        var totalRows = data.resources.reduce(function (sum, resource) {
+            return resource.count < 0 ? sum : sum + resource.count;
+        }, 0);
+
+        var html = '<h2>대시보드</h2>'
+            + '<p class="sub">이 화면의 모든 수치는 요청한 순간의 값입니다.</p>';
+
+        html += '<div class="grid">'
+            + stat('전체 레코드', number(totalRows))
+            + stat('관리 자원', number(data.resources.length) + '종')
+            + stat('가동 시간', duration(runtime.uptimeSeconds))
+            + stat('힙 사용량', bytes(runtime.heapUsed) + ' / ' + bytes(runtime.heapMax))
+            + stat('스레드', number(runtime.threads))
+            + stat('JVM', 'Java ' + escape(runtime.java) + ' · PID ' + runtime.pid)
+            + '</div>';
+
+        html += '<h3>연결 상태</h3><div class="table-wrap"><table><thead><tr>'
+            + '<th>대상</th><th>상태</th><th>응답</th><th>비고</th>'
+            + '</tr></thead><tbody>';
+        data.dependencies.forEach(function (item) {
+            var up = item.status === 'UP';
+            html += '<tr><td><strong>' + escape(item.name) + '</strong>'
+                + (item.target && item.target !== '-' ? ' <span class="muted">' + escape(item.target) + '</span>' : '')
+                + '</td>'
+                + '<td><span class="pill ' + (up ? 'up' : 'down') + '">' + item.status + '</span></td>'
+                + '<td>' + (item.latency >= 0 ? item.latency + 'ms' : '-') + '</td>'
+                + '<td class="muted"><span class="cell">' + escape(item.detail || '') + '</span></td></tr>';
+        });
+        html += '</tbody></table></div>';
+
+        html += '<h3>회원 구성</h3><div class="grid">';
+        Object.keys(data.users.byRole).forEach(function (role) {
+            html += stat(role, number(data.users.byRole[role]));
+        });
+        Object.keys(data.users.byStatus).forEach(function (status) {
+            html += stat(status, number(data.users.byStatus[status]));
+        });
+        html += '</div>';
+
+        html += '<h3>레코드가 많은 자원</h3><div class="table-wrap"><table><thead><tr>'
+            + '<th>자원</th><th>테이블</th><th>분류</th><th>행 수</th>'
+            + '</tr></thead><tbody>';
+        data.resources.slice().sort(function (a, b) {
+            return b.count - a.count;
+        }).slice(0, 10).forEach(function (resource) {
+            html += '<tr><td><a href="#" data-resource="' + escape(resource.name) + '">'
+                + escape(resource.label) + '</a></td>'
+                + '<td class="muted">' + escape(resource.table) + '</td>'
+                + '<td class="muted">' + escape(resource.category) + '</td>'
+                + '<td>' + count(resource.count) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+
+        el('content').innerHTML = html;
+    }
+
+    function stat(key, value) {
+        return '<div class="card stat"><div class="k">' + escape(key) + '</div>'
+            + '<div class="v">' + value + '</div></div>';
+    }
+
+    // -------------------------------------------------------------------- 표
+
+    /**
+     * 표를 다시 그리면 입력 중이던 칸이 통째로 교체된다. 검색어를 한 글자 칠 때마다
+     * 포커스가 날아가면 검색을 쓸 수 없으므로, 어디에 커서가 있었는지 기억했다 되돌린다.
+     */
+    function keepFocus(render) {
+        var active = document.activeElement;
+        var mark = null;
+        if (active && active.dataset && (active.id === 'search' || active.dataset.filter)) {
+            mark = {
+                selector: active.id === 'search' ? '#search' : '[data-filter="' + active.dataset.filter + '"]',
+                start: active.selectionStart,
+                end: active.selectionEnd
+            };
+        }
+
+        render();
+
+        if (mark) {
+            var restored = document.querySelector(mark.selector);
+            if (restored) {
+                restored.focus();
+                if (restored.setSelectionRange && mark.start !== null) {
+                    restored.setSelectionRange(mark.start, mark.end);
+                }
+            }
+        }
+    }
+
+    function renderTable() {
+        var schema = state.schema;
+        var page = state.rows;
+        if (!schema || !page) {
+            el('content').innerHTML = '<div class="empty">불러오는 중…</div>';
+            return;
+        }
+
+        var html = '<h2>' + escape(schema.label) + '</h2>'
+            + '<p class="sub">' + escape(schema.table) + ' · ' + escape(schema.name)
+            + ' · 전체 ' + number(page.total) + '행</p>';
+
+        html += '<div class="toolbar">'
+            + '<input id="search" class="field grow" placeholder="문자열 컬럼 전체에서 검색" value="'
+            + escape(state.keyword) + '" autocomplete="off">'
+            + '<button class="btn ghost small" id="clear-filters">필터 초기화</button>'
+            + '<button class="btn small" id="create">새로 만들기</button>'
+            + '</div>';
+
+        html += '<div class="table-wrap"><table><thead><tr>';
+        schema.fields.forEach(function (field) {
+            var active = state.sort === field.name;
+            var arrow = active ? (state.direction === 'asc' ? ' ↑' : ' ↓') : '';
+            html += '<th class="sortable" data-sort="' + escape(field.name) + '">'
+                + escape(field.label) + arrow
+                + (field.id ? ' <span class="muted">#</span>' : '') + '</th>';
+        });
+        html += '<th></th></tr>';
+
+        html += '<tr class="filter-row">';
+        schema.fields.forEach(function (field) {
+            html += '<th>' + filterInput(field) + '</th>';
+        });
+        html += '<th></th></tr></thead><tbody>';
+
+        if (page.content.length === 0) {
+            html += '<tr><td colspan="' + (schema.fields.length + 1) + '" class="empty">조건에 맞는 행이 없습니다.</td></tr>';
+        }
+
+        page.content.forEach(function (row) {
+            html += '<tr>';
+            schema.fields.forEach(function (field) {
+                html += '<td>' + cell(field, row[field.name]) + '</td>';
+            });
+            html += '<td class="actions">'
+                + '<button class="btn ghost small" data-edit="' + escape(row._id) + '">편집</button> '
+                + '<button class="btn ghost small" data-delete="' + escape(row._id) + '">삭제</button>'
+                + '</td></tr>';
+        });
+
+        html += '</tbody></table></div>';
+
+        html += '<div class="pager">'
+            + '<select id="page-size" class="field">'
+            + [10, 25, 50, 100, 200].map(function (size) {
+                return '<option value="' + size + '"' + (size === state.size ? ' selected' : '') + '>'
+                    + size + '행</option>';
+            }).join('')
+            + '</select>'
+            + '<span>' + (page.total === 0 ? 0 : page.page + 1) + ' / ' + page.pages + ' 페이지</span>'
+            + '<button class="btn ghost small" id="prev"' + (page.page <= 0 ? ' disabled' : '') + '>이전</button>'
+            + '<button class="btn ghost small" id="next"'
+            + (page.page + 1 >= page.pages ? ' disabled' : '') + '>다음</button>'
+            + '</div>';
+
+        el('content').innerHTML = html;
+    }
+
+    function filterInput(field) {
+        var value = state.filters[field.name] || '';
+        if (field.type === 'enum' || field.type === 'boolean') {
+            var options = field.type === 'boolean' ? ['true', 'false'] : field.options;
+            var html = '<select class="field" data-filter="' + escape(field.name) + '">'
+                + '<option value="">전체</option>';
+            options.forEach(function (option) {
+                html += '<option value="' + escape(option) + '"'
+                    + (value === option ? ' selected' : '') + '>' + escape(option) + '</option>';
+            });
+            if (field.nullable) {
+                html += '<option value="__null__"' + (value === '__null__' ? ' selected' : '') + '>(비어 있음)</option>';
+            }
+            return html + '</select>';
+        }
+        return '<input class="field" data-filter="' + escape(field.name) + '" value="'
+            + escape(value) + '" placeholder="일치" autocomplete="off">';
+    }
+
+    function cell(field, value) {
+        if (field.sensitive) {
+            return '<span class="muted">••••••</span>';
+        }
+        if (value === null || value === undefined) {
+            return '<span class="muted">-</span>';
+        }
+        if (field.relation) {
+            return '<a href="#" data-relation="' + escape(field.relation) + '" data-id="'
+                + escape(value) + '">' + escape(value) + '</a>';
+        }
+        return '<span class="cell" title="' + escape(value) + '">' + escape(value) + '</span>';
+    }
+
+    // ------------------------------------------------------------------ 편집 폼
+
+    function openEditor(row) {
+        var schema = state.schema;
+        var creating = !row;
+        var title = escape(schema.label) + (creating ? ' 추가' : ' 편집');
+
+        var body = '';
+        schema.fields.forEach(function (field) {
+            var writable = creating ? field.insertable : field.updatable;
+            var value = row ? row[field.name] : null;
+            body += '<div class="form-row">'
+                + '<label>' + escape(field.label)
+                + (field.nullable || !writable ? '' : ' <span class="req">*</span>')
+                + ' <span class="muted">' + escape(field.type)
+                + (field.relation ? ' → ' + escape(field.relation) : '') + '</span></label>'
+                + editorInput(field, value, writable)
+                + (writable ? '' : '<div class="note">읽기 전용입니다.</div>')
+                + '</div>';
+        });
+
+        modal(title, body, '저장', function (close) {
+            var payload = {};
+            schema.fields.forEach(function (field) {
+                var writable = creating ? field.insertable : field.updatable;
+                if (!writable) {
+                    return;
+                }
+                var input = document.querySelector('[data-input="' + field.name + '"]');
+                if (!input) {
+                    return;
+                }
+                var raw = input.value;
+                if (field.sensitive) {
+                    // 비워 두면 "안 바꿈" 이다. 빈 문자열을 보내면 서버가 그대로 해시한다.
+                    if (raw !== '') {
+                        payload[field.name] = raw;
+                    }
+                    return;
+                }
+                var next = raw === '' ? null : raw;
+                var before = row[field.name];
+                if (!creating && String(before === null || before === undefined ? '' : before) === raw) {
+                    // 바뀐 것만 보낸다. 손대지 않은 칸이 다른 사람의 수정을 덮어쓰지 않게.
+                    return;
+                }
+                payload[field.name] = next;
+            });
+
+            var promise = creating
+                ? request('/resource/' + state.resource, { method: 'POST', body: JSON.stringify(payload) })
+                : request('/resource/' + state.resource + '/' + encodeURIComponent(row._id),
+                    { method: 'PATCH', body: JSON.stringify(payload) });
+
+            return promise.then(function () {
+                close();
+                toast(creating ? '추가했습니다.' : '수정했습니다.');
+                loadRows();
+                loadResources();
+            });
+        });
+    }
+
+    function editorInput(field, value, writable) {
+        var attrs = 'class="field" data-input="' + escape(field.name) + '"'
+            + (writable ? '' : ' disabled');
+        var text = value === null || value === undefined ? '' : String(value);
+
+        if (field.sensitive) {
+            return '<input type="password" ' + attrs + ' value="" placeholder="바꾸려면 새 비밀번호를 입력">';
+        }
+        if (field.type === 'enum' || field.type === 'boolean') {
+            var options = field.type === 'boolean' ? ['true', 'false'] : field.options;
+            var html = '<select ' + attrs + '>';
+            if (field.nullable) {
+                html += '<option value=""></option>';
+            }
+            options.forEach(function (option) {
+                html += '<option value="' + escape(option) + '"'
+                    + (text === option ? ' selected' : '') + '>' + escape(option) + '</option>';
+            });
+            return html + '</select>';
+        }
+        if (field.type === 'text') {
+            return '<textarea ' + attrs + '>' + escape(text) + '</textarea>';
+        }
+        if (field.type === 'datetime') {
+            // datetime-local 은 초 이하를 잘라 먹는다. 값이 있는 칸은 그대로 보이게 둔다.
+            return '<input type="text" ' + attrs + ' value="' + escape(text)
+                + '" placeholder="2026-09-14T21:30:00">';
+        }
+        if (field.type === 'date') {
+            return '<input type="date" ' + attrs + ' value="' + escape(text) + '">';
+        }
+        if (field.type === 'number' || field.type === 'relation') {
+            return '<input type="number" step="any" ' + attrs + ' value="' + escape(text) + '">';
+        }
+        return '<input type="text" ' + attrs + ' value="' + escape(text) + '">';
+    }
+
+    // -------------------------------------------------------------------- 모달
+
+    /**
+     * confirm()·alert() 를 쓰지 않는다. 브라우저 기본 대화상자는 페이지 스크립트를
+     * 통째로 멈춰 세워서, 화면 자동화나 스크린샷 도구가 걸리면 아무 반응이 없어진다.
+     */
+    function modal(title, body, confirmLabel, onConfirm) {
+        var root = el('modal-root');
+        root.innerHTML = '<div class="backdrop"><div class="modal">'
+            + '<header>' + title + '</header>'
+            + '<div class="body">' + body + '</div>'
+            + '<footer>'
+            + '<button class="btn ghost" data-modal="cancel">취소</button>'
+            + '<button class="btn" data-modal="confirm">' + escape(confirmLabel) + '</button>'
+            + '</footer></div></div>';
+
+        function close() {
+            root.innerHTML = '';
+            document.removeEventListener('keydown', onKey);
+        }
+
+        function onKey(event) {
+            if (event.key === 'Escape') {
+                close();
+            }
+        }
+
+        document.addEventListener('keydown', onKey);
+
+        root.querySelector('[data-modal="cancel"]').addEventListener('click', close);
+        root.querySelector('.backdrop').addEventListener('mousedown', function (event) {
+            if (event.target === event.currentTarget) {
+                close();
+            }
+        });
+
+        var confirmButton = root.querySelector('[data-modal="confirm"]');
+        confirmButton.addEventListener('click', function () {
+            confirmButton.disabled = true;
+            Promise.resolve()
+                .then(function () {
+                    return onConfirm(close);
+                })
+                .catch(function (error) {
+                    fail(error);
+                })
+                .then(function () {
+                    confirmButton.disabled = false;
+                });
+        });
+    }
+
+    function confirmDelete(id) {
+        modal('삭제', '<p>이 행을 지웁니다. 되돌릴 수 없습니다.</p>'
+            + '<p class="muted">' + escape(state.schema.table) + ' · ' + escape(id) + '</p>',
+            '삭제', function (close) {
+                return request('/resource/' + state.resource + '/' + encodeURIComponent(id),
+                    { method: 'DELETE' }).then(function () {
+                    close();
+                    toast('삭제했습니다.');
+                    loadRows();
+                    loadResources();
+                });
+            });
+    }
+
+    // ------------------------------------------------------------------ 불러오기
+
+    function loadResources() {
+        return request('/resource').then(function (resources) {
+            state.resources = resources;
+            renderNav();
+        });
+    }
+
+    function loadDashboard() {
+        state.view = 'dashboard';
+        state.resource = null;
+        renderNav();
+        el('content').innerHTML = '<div class="empty">서버 상태를 확인하는 중…</div>';
+        return request('/dashboard').then(function (dashboard) {
+            state.dashboard = dashboard;
+            state.resources = dashboard.resources;
+            renderNav();
+            renderDashboard();
+        }).catch(function (error) {
+            fail(error);
+            el('content').innerHTML = '<div class="empty">대시보드를 불러오지 못했습니다.</div>';
+        });
+    }
+
+    function openResource(name) {
+        state.view = 'resource';
+        state.resource = name;
+        state.schema = null;
+        state.rows = null;
+        state.page = 0;
+        state.sort = null;
+        state.direction = 'desc';
+        state.keyword = '';
+        state.filters = {};
+        renderNav();
+        el('content').innerHTML = '<div class="empty">불러오는 중…</div>';
+
+        return request('/resource/' + name + '/schema').then(function (schema) {
+            state.schema = schema;
+            state.sort = schema.ids[0];
+            return loadRows();
+        }).catch(fail);
+    }
+
+    function loadRows() {
+        var params = new URLSearchParams();
+        params.set('page', state.page);
+        params.set('size', state.size);
+        if (state.sort) {
+            params.set('sort', state.sort);
+        }
+        params.set('direction', state.direction);
+        if (state.keyword) {
+            params.set('q', state.keyword);
+        }
+        Object.keys(state.filters).forEach(function (key) {
+            if (state.filters[key] !== '') {
+                params.set('filter.' + key, state.filters[key]);
+            }
+        });
+
+        return request('/resource/' + state.resource + '?' + params.toString())
+            .then(function (rows) {
+                state.rows = rows;
+                keepFocus(renderTable);
+            })
+            .catch(function (error) {
+                fail(error);
+                el('content').innerHTML = '<div class="empty">목록을 불러오지 못했습니다.</div>';
+            });
+    }
+
+    // ---------------------------------------------------------------- 이벤트
+
+    var searchTimer = null;
+
+    document.addEventListener('click', function (event) {
+        if (!event.target || !event.target.closest) {
+            return;
+        }
+        var target = event.target.closest('[data-view], [data-resource], [data-relation],'
+            + ' [data-edit], [data-delete], [data-sort], #prev, #next, #create, #clear-filters');
+        if (!target) {
+            return;
+        }
+
+        if (target.dataset.view === 'dashboard') {
+            loadDashboard();
+            return;
+        }
+        if (target.dataset.resource) {
+            event.preventDefault();
+            openResource(target.dataset.resource);
+            return;
+        }
+        if (target.dataset.relation) {
+            event.preventDefault();
+            var relation = target.dataset.relation;
+            var id = target.dataset.id;
+            openResource(relation).then(function () {
+                var idField = state.schema.ids[0];
+                state.filters[idField] = id;
+                state.page = 0;
+                loadRows();
+            });
+            return;
+        }
+        if (target.dataset.edit) {
+            var row = state.rows.content.filter(function (candidate) {
+                return String(candidate._id) === target.dataset.edit;
+            })[0];
+            openEditor(row);
+            return;
+        }
+        if (target.dataset.delete) {
+            confirmDelete(target.dataset.delete);
+            return;
+        }
+        if (target.dataset.sort) {
+            if (state.sort === target.dataset.sort) {
+                state.direction = state.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                state.sort = target.dataset.sort;
+                state.direction = 'asc';
+            }
+            state.page = 0;
+            loadRows();
+            return;
+        }
+        if (target.id === 'prev') {
+            state.page = Math.max(state.page - 1, 0);
+            loadRows();
+            return;
+        }
+        if (target.id === 'next') {
+            state.page = state.page + 1;
+            loadRows();
+            return;
+        }
+        if (target.id === 'create') {
+            openEditor(null);
+            return;
+        }
+        if (target.id === 'clear-filters') {
+            state.filters = {};
+            state.keyword = '';
+            state.page = 0;
+            loadRows();
+        }
+    });
+
+    document.addEventListener('input', function (event) {
+        if (event.target.id === 'nav-filter') {
+            renderNav();
+            return;
+        }
+        if (event.target.id === 'search') {
+            state.keyword = event.target.value.trim();
+            state.page = 0;
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(loadRows, 320);
+        }
+    });
+
+    document.addEventListener('change', function (event) {
+        if (event.target.dataset && event.target.dataset.filter) {
+            state.filters[event.target.dataset.filter] = event.target.value.trim();
+            state.page = 0;
+            loadRows();
+            return;
+        }
+        if (event.target.id === 'page-size') {
+            state.size = Number(event.target.value);
+            state.page = 0;
+            loadRows();
+        }
+    });
+
+    el('reload').addEventListener('click', function () {
+        if (state.view === 'dashboard') {
+            loadDashboard();
+        } else {
+            loadResources();
+            loadRows();
+        }
+    });
+
+    el('logout').addEventListener('click', function () {
+        // 토큰을 서버의 차단 목록에도 올린다. 세션스토리지만 비우면 남은 한 시간 동안
+        // 그 토큰이 그대로 살아 있다. 실패해도 화면에서는 어차피 나간다.
+        fetch('/api/v1/auth', {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + token() },
+            credentials: 'include'
+        }).catch(function () {
+            return null;
+        }).then(toLogin);
+    });
+
+    // -------------------------------------------------------------------- 시작
+
+    if (!token()) {
+        toLogin();
+        return;
+    }
+
+    try {
+        var user = JSON.parse(sessionStorage.getItem(USER_KEY) || '{}');
+        el('who').textContent = user.email ? user.email + ' · ' + user.role : '';
+    } catch (error) {
+        el('who').textContent = '';
+    }
+
+    loadDashboard();
+}());
+</script>
+</body>
+</html>

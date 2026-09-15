@@ -1,0 +1,39 @@
+info:
+  name: Recommendation
+  type: folder
+  seq: 13
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Recommendation
+
+    오늘의 추천입니다. 홈 화면의 "오늘의 Mupid Mix" 가 씁니다.
+    **인증이 필요**합니다.
+
+    | 엔드포인트 | 동작 |
+    | --- | --- |
+    | `GET /api/v1/recommendation/daily` | 그날의 추천 묶음 |
+
+    ## 만드는 경로는 없습니다
+
+    `daily_recommendations` 를 채우는 것은 **추천 파이프라인**의 몫이고 아직
+    없습니다. 이 API 는 읽기만 합니다. 그래서 지금은 대부분 `groups` 가 빈
+    배열로 옵니다 — 404 가 아닙니다.
+
+    ## 없으면 최근 날짜로 되돌아갑니다
+
+    파이프라인이 매일 도는 보장이 없는데 화면이 빈 홈을 보여주면 곤란합니다.
+    요청한 날짜에 추천이 없으면 **가장 최근 추천이 있는 날**을 돌려주고,
+    응답의 `date` 가 실제로 무엇을 돌려줬는지 말해 줍니다.
+
+    ## 곡 표현
+
+    묶음 안의 곡은 `Music / 곡 목록 조회` 와 **완전히 같은 표현**입니다.
+    추천이 덧붙이는 것은 `rank` 와 `reason` 뿐이라 곡을 감싸는 모양입니다.
+
+    `music_count` 는 파이프라인이 적어 둔 값이라 `tracks` 길이와 다를 수
+    있습니다 — 추천이 만들어진 뒤 지워진 곡은 빠집니다.

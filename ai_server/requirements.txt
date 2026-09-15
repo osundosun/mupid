@@ -1,0 +1,13 @@
+# 실제 import 기준 최소 의존성. 학습·Jupyter·GPU 패키지는 넣지 않는다.
+fastapi==0.141.1
+uvicorn==0.52.4
+pydantic==2.13.5
+numpy==2.5.2
+pandas==3.0.5
+pyarrow==25.0.1
+# 선호 구간 묶음(build_dna)이 계층 군집에 쓴다. 빠뜨리면 추천 호출에서만 터진다.
+scipy==1.18.1
+
+# torch 는 CPU 빌드로 따로 받는다. 기본 PyPI 판은 CUDA 라이브러리를 끌고 와 수 GB 가 된다.
+# 이 서비스는 GPU 를 쓰지 않는다(랭킹 모델 349KB).
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0

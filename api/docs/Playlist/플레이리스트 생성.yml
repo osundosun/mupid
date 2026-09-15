@@ -1,0 +1,124 @@
+info:
+  name: 플레이리스트 생성
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/playlist"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "title": "{{PLAYLIST_TITLE}}"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: PLAYLIST_TITLE
+      value: 새벽 드라이브
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 생성 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "플레이리스트가 생성되었습니다.",
+            "data": {
+              "playlist_id": 12,
+              "title": "새벽 드라이브",
+              "music_count": 0,
+              "created_at": "2026-09-11T14:02:11"
+            }
+          }
+  - name: 400 제목 미입력
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_REQUEST_BODY",
+            "message": "데이터가 잘못 입력되었습니다.",
+            "error_details": {
+              "title": "플레이리스트 제목이 입력되지 않았습니다."
+            }
+          }
+  - name: 401 인증 없음
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_UNAUTHORIZED",
+            "message": "인증 정보가 유효하지 않거나 존재하지 않습니다.",
+            "errorDetails": null
+          }
+
+docs: |-
+  # 플레이리스트 생성
+
+  `POST /api/v1/playlist` · 인증 필요
+
+  액세스 토큰의 사용자를 소유자로 하는 빈 플레이리스트를 만듭니다. 수록곡은 함께 넣을 수 없습니다.
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 규칙 |
+  | --- | --- | --- | --- |
+  | `title` | string | ✅ | 1~100자, 공백만은 불가 |
+
+  **제목 중복을 막지 않습니다.** 같은 이름의 플레이리스트를 여러 개 만들 수 있고, 개수 상한도 없습니다.
+
+  ## 응답 데이터
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `playlist_id` | int | 생성된 플레이리스트 번호 |
+  | `title` | string | 저장된 제목 |
+  | `music_count` | int | 수록곡 수. 생성 직후에는 항상 `0` |
+  | `created_at` | datetime | 생성 일시 |
+
+  > 프론트의 플레이리스트 모델은 `id` / `name` 을 쓰므로 `playlist_id` → `id`,
+  > `title` → `name` 매핑이 필요합니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 제목이 비었거나 100자를 넘음 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 404 | 요청 본문 누락/파싱 실패 |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_USER_NOT_FOUND` | 404 | 토큰의 사용자가 없거나 이미 탈퇴 |
+
+  > 401 은 시큐리티 필터 단계에서 만들어져 **snake_case 가 적용되지 않습니다** —
+  > 이 응답만 `errorDetails` 로 나갑니다.

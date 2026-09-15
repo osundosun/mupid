@@ -1,0 +1,8 @@
+# 모델·색인은 Git 에 올리지 않는다. 전달은 별도 경로로 한다(README 참조).
+artifacts/
+manifest.json
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.env

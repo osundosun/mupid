@@ -1,0 +1,97 @@
+info:
+  name: Music
+  type: folder
+  seq: 7
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Music
+
+    음악·앨범·아티스트·가사 관리 API 입니다. 스트리밍 서비스에 콘텐츠를
+    등록할 때 쓰는 **관리자/시스템 전용** 엔드포인트입니다.
+
+    **조회(`GET`)는 로그인한 사용자면 누구나, 나머지는 SYSTEM/ADMIN 전용입니다.**
+    조회는 `*QueryController`, 등록 계열은 `@SystemRole` 이 붙은 컨트롤러로
+    나뉘어 있습니다.
+
+    조회는 한때 인증 없이 열려 있었습니다 — 첫 방문자가 로그인 전에 곡을
+    둘러본다고 보았기 때문입니다. 지금은 로그인하지 않으면 서비스를 쓸 수
+    없어(비로그인이 갈 수 있는 화면은 `/`·`/login`·`/signup` 뿐) 열어 둘
+    이유가 사라졌고, 열어 두면 곡·가사·분석이 통째로 공개됩니다.
+    **앨범·아티스트 이미지(`Storage / 이미지 조회`)만 예외로 열려 있습니다** —
+    `<img src>` 에는 Authorization 헤더를 붙일 수 없어 닫으면 목록의 표지가
+    전부 깨집니다.
+
+    등록 계열을 일반 사용자(`ROLE_USER`) 토큰으로 호출하면
+    403 (`MUPID_FORBIDDEN`) 이 반환됩니다.
+
+    | 엔드포인트 | 동작 | 인증 |
+    | --- | --- | --- |
+    | `GET /api/v1/music` | 곡 목록·검색 | 액세스 토큰 |
+    | `GET /api/v1/music/{musicId}` | 곡 상세 | 액세스 토큰 |
+    | `GET /api/v1/music/{musicId}/lyric` | 가사 | 액세스 토큰 |
+    | `GET /api/v1/music/{musicId}/analysis` | 구간·보컬·악기 | 액세스 토큰 |
+    | `GET /api/v1/artist` | 아티스트 목록·검색 | 액세스 토큰 |
+    | `GET /api/v1/artist/{artistId}` | 아티스트 상세 | 액세스 토큰 |
+    | `GET /api/v1/album` | 앨범 목록·검색 | 액세스 토큰 |
+    | `GET /api/v1/album/{albumId}` | 앨범 상세(수록곡 포함) | 액세스 토큰 |
+    | `POST /api/v1/music` | 음악 추가 | SYSTEM/ADMIN |
+    | `PATCH /api/v1/music/{musicId}` | 음악 수정 | SYSTEM/ADMIN |
+    | `DELETE /api/v1/music/{musicId}` | 음악 삭제 | SYSTEM/ADMIN |
+    | `POST /api/v1/album` | 앨범 생성 | SYSTEM/ADMIN |
+    | `PATCH /api/v1/album/{albumId}` | 앨범 수정 | SYSTEM/ADMIN |
+    | `DELETE /api/v1/album/{albumId}` | 앨범 삭제 | SYSTEM/ADMIN |
+    | `POST /api/v1/artist` | 아티스트 생성 | SYSTEM/ADMIN |
+    | `PATCH /api/v1/artist/{artistId}` | 아티스트 수정 | SYSTEM/ADMIN |
+    | `DELETE /api/v1/artist/{artistId}` | 아티스트 삭제 | SYSTEM/ADMIN |
+    | `POST /api/v1/lyric` | 가사 추가 | SYSTEM/ADMIN |
+    | `PATCH /api/v1/lyric/{lyricId}` | 가사 수정 | SYSTEM/ADMIN |
+    | `DELETE /api/v1/lyric/{lyricId}` | 가사 삭제 | SYSTEM/ADMIN |
+
+    ## 등록 순서
+
+    아티스트·앨범은 이미지가 **필수**(`image_file_id`)입니다. 먼저
+    `Storage / 이미지 업로드` 로 파일을 올려 `file_id` 를 받아야 합니다.
+
+    1. `Storage / 이미지 업로드` (`ARTIST`) → `file_id` 획득
+    2. `아티스트 생성` (`image_file_id` 필요) → `artist_id` 획득
+    3. `Storage / 이미지 업로드` (`ALBUM`) → `file_id` 획득
+    4. `앨범 생성` (`artist_id`, `image_file_id` 필요) → `album_id` 획득
+    5. `음악 추가` (`album_id`, `artist_id` 필요) → `music_id` 획득
+    6. `가사 추가` (`music_id` 필요)
+    7. `Stream / 스트림 생성` → `청크 업로드` → `스트림 상태 변경(DONE)`
+
+    1~7 전체를 `music_chunking` 배치가 자동으로 수행합니다. Bruno 로는 같은
+    순서를 수동으로 호출하면 됩니다.
+
+    ## 삭제 정책
+
+    - 음악·앨범·아티스트는 **소프트 삭제**(`is_deleted = true`) 입니다.
+      삭제된 대상을 다시 조회/수정/삭제하면 404 로 취급됩니다.
+    - 음악이 삭제되면 해당 음악의 스트림·청크도 조회되지 않습니다
+      (`MUPID_MUSIC_NOT_FOUND` / `MUPID_CHUNK_NOT_FOUND`).
+    - 가사는 **하드 삭제**(행 자체 삭제) 됩니다.
+
+    ## 발매일 형식
+
+    `release_date` 는 ISO-8601 LocalDateTime 형식입니다.
+    예: `2026-09-11T00:00:00`
+
+    ## 조회는 같은 표현을 씁니다
+
+    곡 표현(`곡 목록 조회` 의 항목)은 곡 상세·앨범 수록곡·좋아요 목록·최근
+    감상이 **전부 같습니다.** 화면이 목록에서 쓰던 코드를 그대로 씁니다.
+    서버에서는 `MusicSummaryAssembler` 하나가 만듭니다.
+
+    목록 응답 모양도 하나로 통일되어 있습니다 —
+    `{ items, page, size, total_elements, total_pages }`, `page` 는 0부터.
+
+    ## 아직 비어 있는 것
+
+    `genres` · `moods` 와 곡 분석(`analyzed: false`)은 분석 파이프라인이
+    돌기 전까지 비어 있습니다. 계약은 이미 정해져 있으니 화면은 미리 붙여도
+    됩니다.

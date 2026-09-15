@@ -1,0 +1,108 @@
+info:
+  name: 곡 분석 조회
+  type: http
+  seq: 8
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/analysis"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 분석 있음
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "music_id": 2,
+              "analyzed": true,
+              "has_vocal": true,
+              "vocal_gender": "F",
+              "sections": [
+                {
+                  "section_id": 1,
+                  "index": 0,
+                  "label": "INTRO",
+                  "start_ms": 0,
+                  "end_ms": 3000,
+                  "moods": ["잔잔한"],
+                  "instruments": ["피아노"]
+                },
+                {
+                  "section_id": 2,
+                  "index": 1,
+                  "label": "CHORUS",
+                  "start_ms": 3000,
+                  "end_ms": 13020,
+                  "moods": [],
+                  "instruments": []
+                }
+              ]
+            }
+          }
+  - name: 200 아직 분석 전
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "music_id": 2,
+              "analyzed": false,
+              "has_vocal": null,
+              "vocal_gender": null,
+              "sections": []
+            }
+          }
+
+docs: |-
+  # 곡 분석 조회
+
+  `GET /api/v1/music/{musicId}/analysis` · **액세스 토큰 필요**
+
+  플레이어의 구간 UI 와 "이 순간" 기능이 쓰는 값입니다.
+
+  ## 분석 전에도 200 입니다
+
+  분석 파이프라인이 아직 돌지 않아 **대부분의 곡은 `analyzed: false`** 로
+  옵니다. 404 가 아닙니다 — 곡은 있는데 분석만 없는 것은 오류가 아닙니다.
+  화면은 `analyzed` 를 보고 구간 UI 를 띄울지 정합니다.
+
+  ## 구간
+
+  | 필드 | 설명 |
+  | --- | --- |
+  | `index` | 곡 안에서의 순서. **0부터** |
+  | `label` | `INTRO` `VERSE` `PRE_CHORUS` `CHORUS` `BRIDGE` `BREAK` `INST` `SOLO` `OUTRO` |
+  | `start_ms` `end_ms` | 곡 내 시점(ms). 이 API 전체가 ms 를 씁니다 |
+  | `moods` `instruments` | 코드 이름. **구간마다** 다릅니다 |
+
+  악기는 곡이 아니라 **구간**에 달립니다 (`music_analysis_instruments` 의
+  외래키가 `music_section_analysis_id` 입니다).
+
+  ## 주의
+
+  `music_section_analysis.index` 는 MySQL 예약어라 컬럼명에 백틱이 필요합니다.
+  엔티티가 `@Column(name = "` + "`index`" + `")` 로 못 박아 두었습니다 —
+  빼면 INSERT·SELECT 가 문법 오류로 터집니다.

@@ -1,0 +1,51 @@
+# The credential receive-k8s.py uses. Namespace-scoped and image-only.
+#
+# The alternative is /etc/rancher/k3s/k3s.yaml, which is cluster-admin. That
+# file sitting behind an endpoint CI can reach means a stolen deploy key is a
+# cluster takeover; this one can change the image of a Deployment in one
+# namespace and read enough to watch the rollout.
+#
+# Deliberately absent: create and delete on everything, any access to Secrets,
+# and exec into pods. The receiver never needs them — manifests are applied by
+# an operator from the repository, not by this account.
+#
+#   kubectl apply -f rbac.yaml
+#   kubectl -n mupid create token deployer --duration=8760h
+#
+# then write /srv/mupid-k8s/deploy.kubeconfig with that token, chmod 600, owned
+# by root. The token is not committed and is not in .env; it lives only on the
+# node. Rotate it by creating another and replacing the file.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: deployer, namespace: mupid}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: deployer, namespace: mupid}
+rules:
+  # get/list to read the current state, patch for `kubectl set image` and for
+  # `rollout undo`. No create and no delete: this account cannot introduce a
+  # workload or remove one.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, patch]
+  # `rollout status` watches the Deployment rather than polling it.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [watch]
+  # `rollout undo` finds the previous pod template on the old ReplicaSet.
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: deployer, namespace: mupid}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: deployer
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: mupid

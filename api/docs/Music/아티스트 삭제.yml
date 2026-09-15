@@ -1,0 +1,71 @@
+info:
+  name: 아티스트 삭제
+  type: http
+  seq: 14
+
+http:
+  method: DELETE
+  url: "{{BASE_URL}}/api/v1/artist/{{ARTIST_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: ARTIST_ID
+      value: "1"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 삭제 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "아티스트가 삭제되었습니다.",
+            "data": null
+          }
+  - name: 404 아티스트 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_ARTIST_NOT_FOUND",
+            "message": "요청한 아티스트를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 아티스트 삭제
+
+  `DELETE /api/v1/artist/{artistId}` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  아티스트를 소프트 삭제합니다. 삭제된 아티스트를 앨범/음악에서
+  참조하려고 하면 `MUPID_ARTIST_NOT_FOUND` 가 반환됩니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FORBIDDEN` | 403 | SYSTEM/ADMIN 이 아닌 토큰 |
+  | `MUPID_ARTIST_NOT_FOUND` | 404 | 아티스트 없음 또는 이미 삭제됨 |

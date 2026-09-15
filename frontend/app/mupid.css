@@ -32,8 +32,7 @@
   width: 100%;
   height: auto;
   object-fit: contain;
-  /* Preserve the supplied raster; blend its white canvas into the light theme. */
-  mix-blend-mode: multiply;
+  /* 공급받은 원본 래스터를 그대로 쓴다. 배경이 투명해 블렌드가 필요 없다. */
 }
 .mupid-mascot {
   display: block;
@@ -357,6 +356,13 @@ h1 {
   overflow: hidden;
   border-radius: 12px;
   flex-shrink: 0;
+}
+/* 아직 고른 곡이 없을 때의 빈 커버. 덮개 그림자(::after)까지 지워 평평하게 둔다. */
+.album-art-empty {
+  background: #dde8f6;
+}
+.album-art-empty::after {
+  display: none;
 }
 .album-art img {
   width: 100%;

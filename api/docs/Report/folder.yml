@@ -1,0 +1,65 @@
+info:
+  name: Report
+  type: folder
+  seq: 14
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Report
+
+    '내 취향' 화면 한 장. 곡별 청취량 트리맵 · 음악 키워드 · MuBTI 판정.
+
+    | 엔드포인트 | 동작 | 인증 |
+    | --- | --- | --- |
+    | `GET /api/v1/report?date=YYYY-MM-DD` | 하루치 취향 리포트 | 필요 |
+
+    **하루 단위만 있습니다.** `period=week|month` 는 두지 않았습니다 — 화면에
+    없는 계약을 미리 열어 두면 채우지 않은 파라미터가 굳습니다.
+
+    ## 어디서 오는 값인가
+
+    ```
+    ClickHouse listen_events   곡별 청취량 · 재생 행동 · 전에 들어본 곡
+      + MySQL music 외         제목 · 아티스트 · 앨범아트 · 분위기 · 장르 · 보컬 유무
+      + MubtiScorer            네 축 판정 (조회 시점 계산)
+      → GET /api/v1/report
+      → MySQL reports · listening  (스냅샷 적재)
+    ```
+
+    청취량은 `PLAY_PROGRESS` 하트비트에서 집계합니다. 재생기가 돈 시간이 아니라
+    **실제로 귀에 닿은 시간**이라 일시정지·건너뛴 구간이 빠져 있습니다.
+
+    ## 반영이 즉시가 아닙니다
+
+    방금 들은 곡이 리포트에 나타나기까지 **평균 20초, 최악 45초** 걸립니다.
+
+    | 단계 | 지연 |
+    | --- | --- |
+    | 재생 → 다음 하트비트 | 0~5초 |
+    | 프론트 전송 큐 | 0~5초 |
+    | Kafka → ClickHouse (`kafka_flush_interval_ms`) | 0~15초 |
+
+    마지막 15초는 작은 파트가 쌓여 병합 압력이 오르는 것을 막으려고 일부러 올려
+    둔 값입니다. 이 화면 때문에 낮추지 않습니다.
+
+    ## 판정하지 않는 날이 있습니다
+
+    하루 청취가 **5분 미만이거나 서로 다른 곡이 3곡 미만**이면 `mubti` 가 `null`
+    이고 `sample.sufficient` 가 `false` 입니다. 오류가 아닙니다. 표본이 작을 때의
+    판정은 신뢰할 수 없고, `reports.mubti_id` 가 NOT NULL 이라 적재도 못 합니다.
+
+    ## 기준 데이터가 필요합니다
+
+    `mubti` 표 16행이 비어 있으면 **503 `MUPID_REPORT_MUBTI_NOT_SEEDED`** 입니다.
+    `api/knowledge/domain/seed-mubti.sql` 을 넣으세요. 온보딩이 `codes` 표에
+    걸리는 것과 같은 구조입니다.
+
+    ## 설계 배경
+
+    - 집계·판정 규칙 전부 → `api/knowledge/domain/mubti-report.md`
+    - 왜 해석을 저장하지 않는가 → `api/knowledge/decision/0015-derive-interpretation-at-query-time.md`
+    - 조회 계층을 어디에 뒀는가 → `api/knowledge/decision/0019-report-reads-clickhouse-directly.md`

@@ -1,0 +1,10 @@
+---
+# community.general provides the ufw module. 3.4.0 is the floor for the `route`
+# and `direction` options used by roles/firewall.
+#
+# NOT needed on the current control node: Debian 13's `apt install ansible`
+# ships community.general 11.2.1 already. Kept for any other control node.
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.general
+    version: '>=3.4.0'

@@ -21,31 +21,18 @@ backend-verify:
         - api/**/*
         - infra/image/**/*
         - infra/ci/backend.yml
-        - infra/ci/release.yml
         - infra/ci/package-image.sh
-        - infra/ci/deploy.sh
-        - infra/deploy/compose.yml
-        - infra/deploy/receive.sh
+        - infra_k8s/**/*
         - .gitlab-ci.yml
     - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
       changes:
         - api/**/*
         - infra/image/**/*
         - infra/ci/backend.yml
-        - infra/ci/release.yml
         - infra/ci/package-image.sh
-        - infra/ci/deploy.sh
-        - infra/deploy/compose.yml
-        - infra/deploy/receive.sh
+        - infra_k8s/**/*
         - .gitlab-ci.yml
     - if: '$CI_PIPELINE_SOURCE == "web"'
   script:
     - cd api
     - bash gradlew --no-daemon --console=plain build -x test
-    - mkdir -p build/release
-    - find build/libs -maxdepth 1 -name '*.jar' ! -name '*-plain.jar' -exec cp {} build/release/app.jar \;
-    - test -s build/release/app.jar
-  artifacts:
-    expire_in: 7 days
-    paths:
-      - api/build/release/app.jar
