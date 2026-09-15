@@ -23,6 +23,13 @@ export type UserInfo = {
   gender: 'M' | 'F' | 'ETC';
   role: 'ROLE_USER' | 'ROLE_SYSTEM' | 'ROLE_ADMIN';
   status: 'PENDING' | 'ACTIVE' | 'WITHDRAW';
+  /**
+   * 온보딩 설문을 마쳤는가. **화면 진입 분기는 이 값으로 한다.**
+   *
+   * `status` 도 제출 시점에 PENDING -> ACTIVE 로 함께 움직이지만, 이쪽이
+   * 설문 표를 직접 보고 만든 값이라 더 곧다.
+   */
+  onboarding_submitted: boolean;
 };
 
 export type SignupBody = {
@@ -120,14 +127,6 @@ export type Reactions = { like: number[]; dislike: number[] };
 export type CodeOption = { code_id: number; name: string };
 
 export type OnboardingOptions = {
-  moods: CodeOption[];
-  genres: CodeOption[];
-};
-
-export type OnboardingStatus = {
-  submitted: boolean;
-  submitted_at: string | null;
-  nickname: string;
   moods: CodeOption[];
   genres: CodeOption[];
 };
@@ -472,13 +471,12 @@ export function createEndpoints(client: ApiClient) {
           anonymous: true,
           signal,
         }),
-      /** 제출 여부와 제출한 내용. */
-      status: (signal?: AbortSignal) =>
-        client.request<OnboardingStatus>({
-          path: '/api/v1/onboarding',
-          signal,
-        }),
-      /** 제출. 이미 제출했으면 서버가 갈아 끼운다. */
+      /**
+       * 제출. **한 번만 받는다** — 이미 냈으면 409 다.
+       *
+       * 제출 여부는 회원정보(`user.me`)의 `onboarding_submitted` 로 본다.
+       * 예전에 있던 `GET /api/v1/onboarding` 은 서버에서 사라졌다.
+       */
       submit: (body: OnboardingBody) =>
         client.request<void>({
           method: 'POST',

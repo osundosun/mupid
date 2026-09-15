@@ -100,31 +100,6 @@ const idsOf = (options: CodeOption[], names: string[]): number[] => {
 };
 
 /**
- * 서버에 저장된 설문을 읽는다.
- *
- * 아직 제출하지 않았으면 `null`. 비로그인이거나 서버가 답하지 않아도 `null` 이라
- * 호출 쪽은 "서버에 없다"로만 다루면 된다.
- */
-export async function fetchOnboarding(
-  signal?: AbortSignal,
-): Promise<(OnboardingChoice & { submittedAt: string }) | null> {
-  try {
-    const status = await api.onboarding.status(signal);
-    if (!status?.submitted) return null;
-    return {
-      submittedAt: status.submitted_at ?? new Date().toISOString(),
-      nickname: status.nickname,
-      moods: namesOf(status.moods),
-      genres: namesOf(status.genres),
-    };
-  } catch (error) {
-    if (signal?.aborted) return null;
-    console.warn('[mupid] 온보딩 정보를 불러오지 못했어요.', error);
-    return null;
-  }
-}
-
-/**
  * 설문을 서버에 저장한다.
  *
  * 실패하면 던진다 — 브라우저 저장과 달리 이건 조용히 넘어가면 안 된다.
@@ -152,9 +127,9 @@ export async function saveOnboarding(choice: OnboardingChoice): Promise<void> {
   } catch (error) {
     // 이미 계정에 있으면 **목적은 이미 이뤄진 것**이다. 실패로 다루면 안 된다.
     //
-    // 제출 여부를 미리 물을 길이 없을 때(`fetchOnboarding` 이 실패하는 서버가
-    // 있다) 화면은 온보딩을 다시 보여 주는데, 거기서 409 를 오류로 올리면
-    // 계정에 답이 있는 사람을 온보딩에 영영 가둔다. 통과시킨다.
+    // 화면 진입 분기는 회원정보의 `onboarding_submitted` 로 하지만, 그 값을
+    // 못 받은 채 온보딩에 서 있을 수도 있다. 거기서 409 를 오류로 올리면
+    // 계정에 답이 있는 사람을 온보딩에 가둔다. 통과시킨다.
     if (isAlreadySubmitted(error)) return;
     throw error;
   }

@@ -6,7 +6,8 @@ import { mupidService } from '@/lib/services';
 import { login, logout, restoreSession } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
-import { fetchOnboarding, saveOnboarding } from '@/lib/onboarding';
+import { saveOnboarding } from '@/lib/onboarding';
+import type { UserInfo } from '@/lib/api/endpoints';
 import { fetchHistory, fetchReactions, pushReaction } from '@/lib/reactions';
 import * as playlistApi from '@/lib/playlists';
 import { analytics, bindPlayer, type EntryPath } from '@/lib/analytics';
@@ -264,21 +265,23 @@ export function useMupid(bootstrap: Bootstrap) {
     });
   };
   /**
-   * 계정에 저장된 온보딩을 화면 상태로 가져온다.
+   * 계정이 온보딩을 마쳤으면 화면을 통과시킨다.
    *
-   * 다른 기기에서 제출했으면 여기서 따라온다. 계정에 아직 없으면 브라우저에
-   * 있던 값을 그대로 두고 온보딩 화면으로도 보내지 않는다 — 이 기기에서 이미
-   * 답한 사람을 다시 묻는 꼴이 되기 때문이다.
+   * 판단은 회원정보의 `onboarding_submitted` 로 한다. 설문 **내용**을 읽는
+   * 길은 추천 서버 전용뿐이라, 화면이 쓸 수 있는 것은 진위 하나다. 취향
+   * 목록은 이 기기에 저장된 값을 그대로 둔다 — 서버가 못 주는 것을 빈
+   * 배열로 덮으면 멀쩡히 있던 설정이 사라진다.
+   *
+   * 다른 기기에서 제출했어도 여기서 따라온다. 이 기기에 기록이 없어 온보딩
+   * 화면에 서 있어도 계정에 답이 있으면 통과시킨다.
    */
-  const adoptServerOnboarding = async (signal?: AbortSignal) => {
-    const saved = await fetchOnboarding(signal);
-    if (!saved || signal?.aborted || !mountedRef.current) return;
-    setNickname(saved.nickname);
-    setMoods(saved.moods);
-    setGenres(saved.genres);
-    setOnboardingSubmittedAt(saved.submittedAt);
-    onboardingRef.current = saved.submittedAt;
-    // 이 기기에는 기록이 없어 온보딩 화면에 서 있다. 계정에 답이 있으니 통과시킨다.
+  const adoptServerOnboarding = (user: UserInfo) => {
+    if (!user.onboarding_submitted || !mountedRef.current) return;
+    // 서버는 '마쳤다'만 알려 준다. 화면이 보는 것은 진위뿐이라 그것으로 족하다.
+    const at = onboardingRef.current ?? new Date().toISOString();
+    setOnboardingSubmittedAt(at);
+    onboardingRef.current = at;
+    setNickname(user.nickname);
     setPage((current) => (current === 'welcome' ? 'home' : current));
   };
   /**
@@ -351,8 +354,8 @@ export function useMupid(bootstrap: Bootstrap) {
         sessionRef.current = restored;
         setNickname(session.user.nickname);
         setDemoSession(restored);
-        // 온보딩 여부는 가드가 쓰므로 기다린다. 나머지는 화면을 막지 않는다.
-        await adoptServerOnboarding(abort.signal);
+        // 온보딩 여부는 가드가 쓰므로 먼저 반영한다. 나머지는 화면을 막지 않는다.
+        adoptServerOnboarding(session.user);
         void adoptServerReactions(abort.signal);
         void adoptServerHistory(abort.signal);
         void adoptServerPlaylists(abort.signal);
@@ -366,8 +369,13 @@ export function useMupid(bootstrap: Bootstrap) {
     const user = await login(email, password);
     const session: AccountSession = { kind: 'authenticated', nickname: user.nickname, userId: user.user_id };
     sessionRef.current = session;
-    // 서버 UserInfo 에는 아직 온보딩 완료 시각이 없다. 로컬에 복원해 둔 값을 쓴다.
-    const completedAt = onboardingRef.current;
+    // 서버가 '마쳤다'고 하면 그것이 기준이다 — 이 기기에 기록이 없어도
+    // 통과시킨다. 완료 시각은 서버가 주지 않으므로 로컬 값을 쓰고, 없으면
+    // 지금으로 둔다. 화면이 보는 것은 진위뿐이다.
+    const completedAt = user.onboarding_submitted
+      ? onboardingRef.current ?? new Date().toISOString()
+      : null;
+    onboardingRef.current = completedAt;
     setOnboardingSubmittedAt(completedAt);
     setNickname(user.nickname);
     setDemoSession(session);
@@ -375,7 +383,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setPage(completedAt ? 'home' : 'welcome');
     router.replace(completedAt ? '/home' : '/onboarding');
     setToast('뮤피드에 오신 걸 환영해요.');
-    void adoptServerOnboarding();
+    adoptServerOnboarding(user);
     void adoptServerReactions();
     void adoptServerHistory();
     return true;
