@@ -1,9 +1,33 @@
-# 제어 노드 (라즈베리파이)
+# CONTROLLER (라즈베리파이)
 
-Ansible 은 에이전트리스라 제어 노드의 아키텍처가 타깃과 달라도 된다.
-**단, 이미지 빌드는 여기서 하지 않는다.** Pi 는 aarch64 이고 EC2 는 x86_64 이므로
-여기서 만든 이미지는 노드에서 돌지 않는다. AI 이미지는 지금처럼 CI(노드 B의 Runner)
-또는 x86 장비에서 만든다.
+Ansible 제어 노드이자 **GitLab Runner 호스트**다. 클러스터 멤버는 아니다.
+
+aarch64 라 EC2(x86_64)용 이미지를 그냥 빌드하면 노드에서 돌지 않는다. 그래서
+`infra/image/build.Dockerfile` 의 빌더 스테이지가 `--platform=$BUILDPLATFORM`
+이고 `package-image.sh` 가 `--opt platform=linux/amd64` 를 준다 — 컴파일은
+여기서 네이티브로 돌고 런타임 이미지만 amd64 로 나온다. 산출물이 jar 와 정적
+파일이라 아키텍처와 무관하기 때문에 성립한다.
+
+## GitLab Runner (2026-09-15 이전 완료)
+
+노드 B 에서 옮겨 왔다. 같은 등록(`id 2083`)을 그대로 쓰고 이름만
+`mupid-ci-ec2` → `mupid-ci-pi` 로 바꿨다. 노드 B 쪽은 `compose down` 으로 내렸다.
+
+```bash
+sudo docker ps --filter name=mupid-runner
+sudo docker exec mupid-runner-runner-1 gitlab-runner verify
+```
+
+**job 상한을 낮췄다.** EC2 는 15.4GB 였지만 Pi 는 3.8GB 이고 이미 다른 컨테이너가
+돌고 있다(dbstudio·mysql·nginx·tailscale, 합계 ~820MB). job 4g → **2g**,
+service 1g → **512m**. `infra/runner/configure.py` 가 이 값을 단언한다.
+
+CI 가 쓰는 이미지 네 개는 arm64 가 모두 있다 — `moby/buildkit@sha256:80b15f…`
+(digest 고정이지만 멀티아키 인덱스), `azul-zulu:21-jdk`, `node:22-bookworm-slim`,
+`alpine:3.22`. 실제로 받아지는 것을 확인했다.
+
+**SD 카드다.** 빌드 IO 가 EC2 보다 느리다. 디스크는 29G 중 여유 11G 로,
+Gradle 캐시·`node_modules`·BuildKit 캐시가 함께 들어가면 넉넉하지 않다.
 
 ## 현재 상태 (2026-09-14 확인)
 

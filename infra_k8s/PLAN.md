@@ -91,7 +91,7 @@ OOMKill 이다. 근거는 [BASELINE.md](BASELINE.md).
 - `deploy/` 수신기·강제 명령·RBAC, `ci/` 배포 job
 - `tests/test_manifests.py` — 클러스터 없이 도는 정적 검사
 
-### Phase 2 · 철거
+### Phase 2 · 철거 — **완료 (2026-09-15)**
 운영 데이터를 버리고 새로 구축하기로 했으므로 병행 운영도 데이터 이관도 없다.
 이용자가 없는 시점에 서비스를 내린다.
 
@@ -102,29 +102,32 @@ OOMKill 이다. 근거는 [BASELINE.md](BASELINE.md).
   - NODE_B 의 GitLab Runner 는 건드리지 않는다 — 아직 CI 를 담당한다
 - **여기가 되돌릴 수 없는 지점이다.** 이후로는 앞으로 가는 길만 있다.
 
-### Phase 3 · 클러스터와 기동
+### Phase 3 · 클러스터와 기동 — **완료 (2026-09-15)**
 - `ansible-playbook cluster.yml` — ufw, k3s server/agent, 노드 라벨
 - Secret 2종, 배포용 kubeconfig
 - `kubectl apply -k overlays/cutover` → 첫 배포로 api·web 이미지 적재
 - `certbot renew --dry-run` 통과 확인 — 엣지가 새 웹루트를 서빙해야 통과한다
 
-### Phase 4 · 데이터 부트스트랩
-빈 DB 로 시작하므로 **앱이 만들어 주지 않는다.** `ddl-auto` 가 `none` 이다.
+### Phase 4 · 데이터 부트스트랩 — **완료 (2026-09-15)**
+빈 DB 로 시작하므로 **테이블은 앱이 만들어 주지 않는다.** `ddl-auto` 가 `none` 이다.
 
-- MySQL: `erd.sql` → `seed-codes.sql`
-  - `erd.sql` 은 `onboarding_survey` 컬럼명이 낡았다(`erd.md` 의 "남은 차이"). 적용 후 확인
-  - `seed-codes.sql` 이 비면 온보딩이 503
-- Kafka 토픽 생성 → ClickHouse `01-schema.sql` (`ON CLUSTER` 라 한 노드에서)
-- 전 경로 검증 — 홈·`/api/actuator/health`·음원 업로드/다운로드
+- MySQL: `erd.sql` 적용 — 테이블/뷰 30, FK 48. `mupid_app` 계정은 자동 생성이 아니라
+  사람이 만든다(Compose 는 `prepare-env.py` 가 했다).
+- `codes` 는 이제 기동 때 `BootstrapRunner` 가 채운다. `seed-codes.sql` 은 앱을
+  띄우지 않고 DB 만 채울 때 쓴다.
+- Kafka 토픽 6파티션 → ClickHouse `01-schema.sql` (`ON CLUSTER`, 두 샤드에 17테이블)
+- 검증 완료 — 홈 200, `/api/actuator/health` UP, `certbot renew --dry-run` 통과
 
 ### Phase 5 · CI 전환
 - `k8s-release.yml` 의 `when: manual` 을 걷고 `.gitlab-ci.yml` 에서 `infra/ci/*` 를 뺀다
 - 배포가 두어 번 정상으로 돈 뒤에 한다
 
-### Phase 6 · CI/CD 를 CONTROLLER 로
-- Runner 를 Pi 로 이전, NODE_B 의 Runner 정지
-- `system_reserved` 재조정 — 현재 값은 Compose 와 Runner 가 호스트에 있다는 전제다
-- Pi 용량 실측 — 디스크 여유 8.6GB 에 Gradle 캐시·`node_modules`·BuildKit 캐시
+### Phase 6 · CI/CD 를 CONTROLLER 로 — **완료 (2026-09-15)**
+- Runner 를 Pi 로 이전하고 NODE_B 의 Runner 를 내렸다. 등록(`id 2083`)은 그대로 쓰고
+  이름만 `mupid-ci-pi` 로 바꿨다. job 상한은 호스트에 맞춰 4g → 2g.
+- CI 이미지 네 개가 arm64 에서 받아지는 것을 확인했다(buildkit digest 포함).
+- 남음: `system_reserved` 재조정. 현재 값은 Compose 와 Runner 가 호스트에 있다는
+  전제인데 둘 다 떠났다. NODE_B 는 이제 Kafka 와 ClickHouse 한 샤드뿐이다.
 
 ## 되돌릴 수 없는 지점
 
@@ -134,13 +137,14 @@ OOMKill 이다. 근거는 [BASELINE.md](BASELINE.md).
 
 ## 미해결
 
-- **`erd.sql` 과 실제 스키마의 차이** — `onboarding_survey.mood_id`·`genre_id` 가
-  코드에서는 `_code_id` 다. 새로 만드는 DB 는 코드를 따라야 하므로 Phase 4 에서
-  결정이 필요하다. ERD 수정은 사람이 판단한다(`erd.md` 규칙).
+- **Phase 5(CI 전환)만 남았다.** `mupid-deploy-k8s` 의 `authorized_keys` 에 CI 키를
+  넣고, `k8s-release.yml` 의 `when: manual` 을 걷고, `.gitlab-ci.yml` 에서
+  `infra/ci/*` 를 뺀다.
+- `system_reserved` 재조정 (Phase 6 참고)
 - `ai_server` RSS 실측, 아티팩트 전달 주체·용량·갱신 주기
-- CONTROLLER 의 빌드 자원 실측 (Phase 6)
-- BASELINE #7 은 차단 사항이 아니게 됐다(되돌아갈 배포가 없어졌다). 다만 원인이
-  코드에 있으면 새 이미지도 같은 이유로 기동하지 못한다.
+- CONTROLLER 의 빌드 자원 실측 — 아직 CI job 을 Pi 에서 돌려 보지 않았다.
+- **BASELINE #7 은 해소됐다.** 기존 서버에서 헬스체크에 실패하던 analytics 코드가
+  k8s 에서는 정상 기동한다. 원인이 ClickHouse 부재였다는 추정과 맞는다.
 
 ## 기존 운영에서 발견한 것
 
