@@ -35,56 +35,106 @@ metadata/*.json + covers/*.jpg → 커버 업로드 → 아티스트 → 앨범 
 uv sync
 
 # ── 카탈로그 등록 (곡·아티스트·앨범·커버) ──
-uv run python -m music_preprocessing catalog --config config.json --dry-run
-uv run python -m music_preprocessing catalog --config config.json
+uv run music-preprocessing catalog -c config.json --dry-run   # 먼저 세어 본다
+uv run music-preprocessing catalog -c config.json             # 확인을 묻고 올린다
 
 # 커버만 다시 올리기
-uv run python -m music_preprocessing covers --config config.json
+uv run music-preprocessing covers -c config.json
+
+# 어디까지 됐나
+uv run music-preprocessing status -c config.json
 
 # ── 청킹 ──
-uv run python -m music_preprocessing single -i song.mp3 -o ./output
-uv run python -m music_preprocessing batch -I ./input -O ./output
-uv run python -m music_preprocessing batch --config config.json
+uv run music-preprocessing single -i song.mp3 -o ./output
+uv run music-preprocessing batch -I ./input -O ./output
+uv run music-preprocessing batch -c config.json
 ```
 
-## CLI 옵션
+`uv` 없이 돌릴 수도 있습니다. 의존성(`typer`, `rich`)만 있으면 됩니다.
+
+```bash
+pip install typer rich
+PYTHONPATH=src python -m music_preprocessing --help
+```
+
+## CLI
+
+[Typer](https://typer.tiangolo.com) 로 만들었습니다. `--help` 를 붙이면 어느
+명령에서나 옵션 표가 나옵니다.
 
 ```
-music-preprocessing [-v] {single,batch,catalog,covers}
-
-single:
-  -i, --input           입력 파일 경로
-  -o, --output          출력 디렉토리 (기본: ./output)
-
-batch:
-  -I, --input-dir       입력 디렉토리 (기본: ./input)
-  -O, --output-dir      출력 디렉토리 (기본: ./output)
-  --config              JSON 설정 파일 경로
-  --processed-log       처리 완료 로그 (기본: ./processed.json)
-
-catalog · covers:
-  --config              JSON 설정 파일 경로
-  --metadata-dir        곡별 메타데이터 JSON 디렉터리 (기본: 설정의 metadata_dir)
-  --covers-dir          곡별 커버 이미지 디렉터리 (기본: 설정의 covers_dir)
-  --api-base-url        Mupid API 루트
-  --dry-run             서버에 붙지 않고 무엇이 만들어질지만 센다
-
-covers 전용:
-  --force               내용이 그대로여도 다시 올린다
-
-공통:
-  -b, --bitrate         비트레이트 (기본: 128k)
-  --segment-time        세그먼트 길이 초 (기본: 6)
-  --frame-duration      Opus 프레임 길이 ms (기본: 20)
-  --workers             병렬 워커 수 (기본: CPU 코어 수)
-  --ffmpeg-threads      파일당 FFMPEG 스레드 수 (기본: 2)
-  -v, --verbose         DEBUG 레벨 로그 출력
-
-API 등록:
-  --api-base-url             Mupid API 루트. 비우면 등록하지 않음
-  --api-refresh-token-file   리프레시 토큰 파일 (기본: ./refresh_token.txt)
-  --api-registry-log         등록 결과 기록 (기본: ./registered.json)
+music-preprocessing {catalog,covers,status,single,batch}
 ```
+
+| 명령 | 하는 일 |
+| --- | --- |
+| `catalog` | 곡별 메타데이터·커버를 읽어 아티스트·앨범·곡을 등록한다 |
+| `covers` | 이미 등록된 대상의 커버만 다시 올린다 |
+| `status` | 무엇이 등록됐고 무엇이 남았는지 센다. **서버에 붙지 않는다** |
+| `single` | 파일 하나를 Opus 청크 + RTP 로 쪼갠다 |
+| `batch` | 입력 디렉터리를 통째로 청킹하고 스트림·청크를 등록한다 |
+
+### 손으로 돌릴 때
+
+```bash
+# 1. 무엇이 만들어질지 본다 (서버에 붙지 않음)
+uv run music-preprocessing catalog -c config.json --dry-run
+
+# 2. 몇 곡만 먼저 올려 본다
+uv run music-preprocessing catalog -c config.json --limit 5
+
+# 3. 어디까지 됐나 본다
+uv run music-preprocessing status -c config.json
+
+# 4. 나머지를 올린다
+uv run music-preprocessing catalog -c config.json
+```
+
+`catalog` 와 `covers` 는 서버에 행을 만들거나 파일을 덮어쓰므로, **무엇이 어디에
+몇 개 만들어지는지 보여 주고 한 번 묻습니다.** 되돌리는 길이 `DELETE` 를 곡 수만큼
+부르는 것뿐이라, 운영 서버를 향해 실수로 미는 것을 막으려는 것입니다.
+
+### 주요 옵션
+
+| 옵션 | 명령 | 설명 |
+| --- | --- | --- |
+| `-c`, `--config` | 전부 | JSON 설정 파일 |
+| `--metadata-dir` · `--covers-dir` | `catalog` `covers` `status` | 설정 파일보다 우선 |
+| `--api-base-url` | `catalog` `covers` `batch` | 등록할 서버 |
+| `--dry-run` | `catalog` `covers` | 서버에 붙지 않고 세기만 한다 |
+| `--limit N` | `catalog` | 앞에서 N곡만. 처음 붙일 때 시험용 |
+| `--force` | `covers` | 바뀌지 않은 커버도 다시 올린다 |
+| `-y`, `--yes` | `catalog` `covers` | 확인 프롬프트를 건너뛴다 (크론용) |
+| `--no-progress` | `catalog` `covers` | 진행률 막대를 끈다 |
+| `--log-file` · `--no-log-file` | 전부 | 로그 파일 경로 / 남기지 않기 |
+| `-v`, `--verbose` | 전부 | DEBUG 까지 남기고 화면에도 전부 찍는다 |
+
+`single` · `batch` 는 인코딩 옵션(`-b/--bitrate`, `--segment-time`,
+`--frame-duration`, `--workers`, `--ffmpeg-threads`)을 그대로 받습니다.
+
+### 로그는 파일로 간다
+
+배치 하나가 HTTP 를 2천 번 넘게 부릅니다. 그걸 전부 터미널에 쏟으면 진행률도
+실패 목록도 스크롤 위로 흘러가므로 둘로 나눕니다.
+
+| 어디 | 무엇이 | 서식 |
+| --- | --- | --- |
+| 터미널 | 진행률 막대 · 결과 표 · 경고/오류만 | Rich (색 있음) |
+| 파일 | INFO 전부 (`--verbose` 면 DEBUG) | Rich 열 정렬, **색 없음** |
+
+파일은 실행마다 새로 만듭니다 — `logs/catalog-20260915-115852.log`. 위치는
+설정의 `log_dir`, 또는 `--log-file` 로 직접 줍니다.
+
+```
+2026-09-15 11:58:58 INFO   메타데이터 1060건을 읽었습니다: …/metadata      catalog.py:148
+                    INFO   아티스트 등록: Halcyon (female_english_…) → 1   catalog.py:365
+```
+
+색을 끄는 이유는 `grep` · `less` 로 읽을 때 ANSI 이스케이프가 섞이면 지저분해서
+입니다. 색만 빼면 Rich 의 열 정렬(시각 │ 레벨 │ 메시지 │ 위치)은 그대로 남습니다.
+
+화면 출력은 **표준 출력**, 로그는 **표준 오류**로 갑니다. 크론에서
+`> out.log 2> err.log` 로 갈라도 결과 요약과 로그가 섞이지 않습니다.
 
 ## 카탈로그 등록 (`catalog` · `covers`)
 
@@ -281,7 +331,7 @@ input/
 
 ```bash
 cp config.example.json config.json   # api_base_url 을 채운다
-uv run python -m music_preprocessing batch --config config.json
+uv run music-preprocessing batch -c config.json
 ```
 
 ### 등록 순서
@@ -372,10 +422,17 @@ Offset  Size  Description
 
 ```bash
 # 매일 새벽 2시 — 새 곡을 카탈로그에 등록하고
-0 2 * * * cd /opt/music_preprocessing && uv run python -m music_preprocessing catalog --config config.json >> /var/log/music_preprocessing/catalog.log 2>&1
+0 2 * * * cd /opt/music_preprocessing && uv run music-preprocessing catalog -c config.json --yes --no-progress
 # 새벽 3시 — 청킹과 스트림 등록
-0 3 * * * cd /opt/music_preprocessing && uv run python -m music_preprocessing batch --config config.json >> /var/log/music_preprocessing/batch.log 2>&1
+0 3 * * * cd /opt/music_preprocessing && uv run music-preprocessing batch -c config.json
 ```
+
+크론에는 `--yes` 를 붙입니다. 붙이지 않으면 확인 프롬프트에서 입력을 받지 못해
+종료 코드 130 으로 끝납니다. `--no-progress` 는 터미널이 아니면 자동으로
+꺼지지만, 명시해 두면 의도가 드러납니다.
+
+리다이렉션이 없는 것은 **로그가 이미 파일로 가기 때문입니다** (설정의
+`log_dir`). 크론 메일로 오는 것은 화면 요약과 실패 표뿐입니다.
 
 `catalog` 를 `batch` 보다 먼저 두는 것이 중요합니다. 곡이 먼저 있어야 `batch`
 가 그 곡에 스트림을 붙입니다. 순서가 뒤집히면 `batch` 는 사이드카가 없는 곡을
@@ -385,8 +442,9 @@ Offset  Size  Description
 
 ## 요구사항
 
-- Python ≥ 3.14
-- FFMPEG (libopus 포함)
+- Python ≥ 3.12 (원격 배치 서버의 기본 파이썬에 맞췄습니다. 로컬 개발은 3.14)
+- FFMPEG (libopus 포함) — 청킹에만 필요합니다. `catalog` · `covers` 는 없어도 됩니다
 - (등록 기능을 쓸 경우) Mupid API 와 `ROLE_SYSTEM` 계정
 
-외부 패키지 의존성은 없습니다. HTTP 호출도 표준 라이브러리(`urllib`)로 합니다.
+의존성은 CLI 와 로그 서식용 **`typer` · `rich` 둘뿐**입니다. HTTP 호출은 그대로
+표준 라이브러리(`urllib`)로 합니다 — 등록 경로에는 외부 패키지가 없습니다.

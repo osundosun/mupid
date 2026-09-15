@@ -219,6 +219,25 @@ class Grouping:
 
 
 # ─────────────────────────────────────────────────────────────
+# 진행 보고
+# ─────────────────────────────────────────────────────────────
+
+
+class ProgressReporter:
+    """등록이 어디까지 갔는지 알린다. 기본 구현은 아무것도 하지 않는다.
+
+    등록기가 Rich 를 직접 부르지 않는 이유: 크론으로 돌 때는 그릴 화면이 없고,
+    시험은 진행률 없이 돌려야 한다. 화면을 그리는 쪽이 이 자리를 채운다.
+    """
+
+    def phase(self, name: str, total: int) -> None:
+        """새 단계를 시작한다 (`아티스트` · `앨범` · `곡` · `커버`)."""
+
+    def advance(self, name: str, step: int = 1) -> None:
+        """그 단계에서 `step` 만큼 진행했다."""
+
+
+# ─────────────────────────────────────────────────────────────
 # 등록
 # ─────────────────────────────────────────────────────────────
 
@@ -237,11 +256,13 @@ class CatalogRegistrar:
         registry: Registry,
         covers_dir: Path,
         dry_run: bool = False,
+        progress: ProgressReporter | None = None,
     ) -> None:
         self.client = client
         self.registry = registry
         self.covers_dir = Path(covers_dir)
         self.dry_run = dry_run
+        self.progress = progress or ProgressReporter()
         if not dry_run and client is None:
             raise CatalogError("dry-run 이 아니면 API 클라이언트가 있어야 합니다.")
 
@@ -271,26 +292,32 @@ class CatalogRegistrar:
             "errors": [],
         }
 
+        self.progress.phase("아티스트", len(grouping.artist_tracks))
         for artist_key in sorted(grouping.artist_tracks):
             self._guard(
                 summary,
                 artist_key,
                 lambda key=artist_key: self._ensure_artist(grouping, key, summary),
             )
+            self.progress.advance("아티스트")
 
+        self.progress.phase("앨범", len(grouping.album_tracks))
         for album_key in sorted(grouping.album_tracks):
             self._guard(
                 summary,
                 album_key,
                 lambda key=album_key: self._ensure_album(grouping, key, summary),
             )
+            self.progress.advance("앨범")
 
+        self.progress.phase("곡", len(tracks))
         for index, track in enumerate(tracks, start=1):
             self._guard(
                 summary,
                 track.track_id,
                 lambda item=track: self._ensure_music(item, summary),
             )
+            self.progress.advance("곡")
             if index % 100 == 0:
                 logger.info("곡 등록 %d/%d", index, len(tracks))
 
@@ -447,11 +474,12 @@ class CatalogRegistrar:
             "errors": [],
         }
 
-        for section, keys in (
-            ("artists", sorted(grouping.artist_tracks)),
-            ("albums", sorted(grouping.album_tracks)),
+        for section, label, keys in (
+            ("artists", "아티스트 커버", sorted(grouping.artist_tracks)),
+            ("albums", "앨범 커버", sorted(grouping.album_tracks)),
         ):
             category = "ARTIST" if section == "artists" else "ALBUM"
+            self.progress.phase(label, len(keys))
             for key in keys:
                 self._guard(
                     summary,
@@ -460,13 +488,16 @@ class CatalogRegistrar:
                         grouping, sec, cat, k, force, summary
                     ),
                 )
+                self.progress.advance(label)
 
+        self.progress.phase("곡 커버", len(tracks))
         for track in tracks:
             self._guard(
                 summary,
                 track.track_id,
                 lambda item=track: self._refresh_track_cover(item, force, summary),
             )
+            self.progress.advance("곡 커버")
 
         self._save()
         return summary
