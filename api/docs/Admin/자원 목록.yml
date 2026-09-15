@@ -1,0 +1,90 @@
+info:
+  name: 자원 목록
+  type: http
+  seq: 2
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/admin/resource"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": [
+              {
+                "name": "user",
+                "label": "회원",
+                "table": "users",
+                "category": "회원",
+                "composite": false,
+                "count": 3
+              },
+              {
+                "name": "musicReaction",
+                "label": "음악 반응",
+                "table": "music_reactions",
+                "category": "소셜",
+                "composite": true,
+                "count": 1
+              }
+            ]
+          }
+
+docs: |-
+  # 자원 목록
+
+  `GET /api/v1/admin/resource` · `ROLE_ADMIN`
+
+  관리 대상 자원 전부와 각 테이블의 행 수입니다.
+
+  **이 목록은 손으로 관리되지 않습니다.** `AdminResourceRegistry` 가 기동할 때 JPA
+  메타모델을 읽어 `@Entity` 전부를 자원으로 만듭니다. 엔티티를 추가하면 여기에도
+  저절로 나타납니다. 한글 이름(`label`)과 분류(`category`)만 레지스트리의 표에서
+  손으로 관리하고, 표에 없는 엔티티는 클래스 이름과 `"기타"` 로 나옵니다.
+
+  정렬은 분류 순 → 한글 이름 순입니다. 화면 왼쪽 목록의 순서가 곧 이 순서입니다.
+
+  ## 응답
+
+  | 필드 | 설명 |
+  | --- | --- |
+  | `name` | URL 에 쓰는 이름. 엔티티 이름의 첫 글자를 내린 것 |
+  | `label` | 화면에 보일 한글 이름 |
+  | `table` | 실제 테이블 이름 (`@Table(name=...)`) |
+  | `category` | 화면 왼쪽 목록의 묶음 |
+  | `composite` | `@EmbeddedId` 복합키인가 |
+  | `count` | 전체 행 수 |
+
+  `count` 때문에 자원 수만큼 `COUNT` 쿼리가 돕니다. 행이 아주 많아지면 이 엔드포인트가
+  느려질 수 있습니다.
+
+  세지 못한 자원은 `count` 가 **`-1`** 입니다 (테이블이 없는 등). 자원 하나가 깨졌다고
+  목록 전체가 실패하지는 않습니다. 화면은 `-1` 을 물음표로 그립니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰 없음/만료 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

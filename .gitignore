@@ -16,3 +16,6 @@ __pycache__/
 /music_chunking/processed.json
 /music_chunking/input/
 /music_chunking/output/
+
+# infra_k8s 노드 접속 정보 (.env.example 를 복사해 만든 것)
+/infra_k8s/.env

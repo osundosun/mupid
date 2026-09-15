@@ -113,6 +113,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   const m = useMupid(bootstrap);
   const [accountOpen, setAccountOpen] = useState(false);
   const photo = useStore(profilePhotoStore, s => s.url);
+  const ownPhoto = useStore(profilePhotoStore, s => !s.isDefault);
   const accountRef = useRef<HTMLDivElement>(null);
   const accountButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { setAccountOpen(false); }, [m.page]);
@@ -188,7 +189,10 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
             </form>
             <div className="nav-account" ref={accountRef}>
               <button ref={accountButton} className="nav-avatar" aria-label={m.demoSession ? '내 계정 메뉴' : '로그인'} aria-expanded={accountOpen} aria-controls="nav-account-panel" disabled={!m.authReady} onClick={() => m.demoSession ? setAccountOpen(value => !value) : m.openLogin()}>
-                {m.demoSession ? photo ? <img src={photo} alt="내 프로필" /> : <UserRound size={22} aria-hidden="true" /> : <LogIn size={22} />}
+                {/* 사진을 올리지 않았으면 `photo` 에 기본 이미지가 담겨 온다.
+                    사람 아이콘은 그것마저 없을 때 — 토큰이 없는 체험 세션이나
+                    조회 실패 — 의 마지막 대비책이다. */}
+                {m.demoSession ? photo ? <img src={photo} alt={ownPhoto ? '내 프로필' : '기본 프로필'} /> : <UserRound size={22} aria-hidden="true" /> : <LogIn size={22} />}
               </button>
               {accountOpen && <div id="nav-account-panel" className="nav-account-panel">
                 <button onClick={() => { setAccountOpen(false); m.go('profile'); }}>마이페이지</button>

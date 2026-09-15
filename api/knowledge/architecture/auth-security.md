@@ -164,18 +164,32 @@ permitAll 목록 (코드에 적힌 순서·주석 그대로):
 | 매처 | 주석 |
 |---|---|
 | `POST /api/v1/auth` | 로그인 |
+| `GET /api/v1/auth` | 토큰 재발급 (자격증명이 쿠키의 리프레시 토큰이라 액세스 토큰을 요구할 수 없다) |
 | `POST /api/v1/user` | 회원가입 |
 | `/api/v1/user/reset` (메서드 무관) | 패스워드 초기화 |
 | `/api/v1/mail/verification` (메서드 무관) | 이메일 인증 |
 | `GET /api/v1/mail/verification/**` | 이메일 인증 확인 |
 | `GET /api/actuator/**` | Health Check |
+| `GET /api/v1/storage/image/ALBUM/*` | 앨범 표지 (`<img src>` 에는 Authorization 을 붙일 수 없다) |
+| `GET /api/v1/storage/image/ARTIST/*` | 아티스트 이미지 (같은 이유) |
+| `GET /api/v1/onboarding/option` | 온보딩 선택지 (무드·장르 이름. 마스터 데이터) |
+| `GET /api/admin`, `GET /api/admin/login` | 관리자 화면의 **HTML 골격만** |
 
 나머지는 `anyRequest().authenticated()`.
+
+곡 카탈로그(목록·상세·아티스트·앨범·가사·분석)는 **열지 않는다.** 한때 열려 있었으나
+비로그인이 곡을 보는 화면 자체가 없어져서 닫았다 — 근거는 `SecurityConfig` 의 주석 블록.
+
+관리자 화면 두 장이 열려 있는 것은 **어쩔 수 없어서**다. 브라우저 주소창으로 들어오는
+요청에는 `Authorization` 헤더를 붙일 수 없고 `AuthFilter` 는 헤더만 보므로, 닫아 두면
+관리자도 들어올 수 없다. 그 HTML 에는 데이터가 없고 화면이 fetch 로 부르는
+`/api/v1/admin/**` 가 `@AdminRole` 로 막혀 있다 — 실제 방어선은 그쪽 하나다. 자세한
+것은 [관리자 화면](admin-console.md).
 
 없는 것도 알아 둬야 한다.
 
 - **CORS 설정이 없다.** `.cors(...)` 도, `@CrossOrigin` 도, nginx 의 `Access-Control-*` 헤더도 없다.
-- **메서드 보안이 없다.** `@EnableMethodSecurity` / `@PreAuthorize` / `hasRole` / `hasAuthority` 가 한 곳도 없다. 그래서 `AuthForbiddenHandler`(403) 는 빈으로만 등록돼 있고 현재 인가 규칙으로는 실행될 경로가 없다.
+- **메서드 보안은 애너테이션 두 개로만 쓴다.** `SecurityConfig` 에 `@EnableMethodSecurity` 가 붙어 있고, 실제로 쓰는 것은 `common/annotation` 의 `@SystemRole`(`hasAnyRole('SYSTEM','ADMIN')`) 과 `@AdminRole`(`hasRole('ADMIN')`) 뿐이다. 컨트롤러에 `@PreAuthorize` 를 직접 적지 않고 이 둘 중 하나를 붙인다.
 - 권한 문자열은 `UserRole.name()` 을 그대로 쓴다. ERD 에 맞춰 상수명이 `ROLE_USER` / `ROLE_SYSTEM` / `ROLE_ADMIN` 이 되면서 Spring 의 `hasRole` 규약과도 맞게 됐다.
 
 ## 401 / 403 응답
@@ -296,7 +310,7 @@ TLS 종단 위치도 알아 둔다. 실제 배포는 `infra/deploy/nginx.conf` �
 - **`jwt.secret` 사용처는 두 곳(`JwtProvider`, `AuthProvider`)이다.** 키 생성 로직을 바꾸면 둘 다 고친다.
 - **새 설정 키를 만들면** `.env.example` 의 해당 섹션과 `additional-spring-configuration-metadata.json` 을 함께 갱신한다. 환경변수는 예외 없이 `MUPID_` 접두사를 쓴다 (`api/AGENTS.md`).
 - **엔드포인트를 추가하면 `api/docs/` Bruno 컬렉션에 같은 이름의 `.yml` 을 추가한다.** 인증이 필요한지, permitAll 인지를 `docs` 블록에 적는다.
-- **인가 규칙을 추가한다면 `hasAuthority("ADMIN")` 을 쓴다.** 권한에 `ROLE_` 접두사가 없어 `hasRole("ADMIN")` 은 매칭되지 않는다.
+- **인가 규칙은 `common/annotation` 의 `@SystemRole` · `@AdminRole` 로 붙인다.** 권한 문자열이 `ROLE_ADMIN` 이라 `hasRole("ADMIN")` 이 정상 매칭된다.
 
 ## 이 영역의 함정
 

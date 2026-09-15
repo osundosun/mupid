@@ -1,0 +1,49 @@
+---
+# k3s agent on the AI node. Leaves the GitLab Runner container alone.
+
+# Fails with a clear message rather than a five-minute join timeout. If this
+# fails, one of the two firewall layers is still closed: ufw on the server node,
+# or the AWS security group.
+- name: Check that the apiserver is reachable over the private address
+  ansible.builtin.wait_for:
+    host: "{{ k3s_server_ip }}"
+    port: "{{ k3s_apiserver_port }}"
+    timeout: 10
+    msg: >-
+      cannot reach {{ k3s_server_ip }}:{{ k3s_apiserver_port }}. Check ufw on the
+      server node and the AWS security group (cluster/security-group.md).
+
+- name: Fetch the k3s installer
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /usr/local/bin/k3s-install.sh
+    mode: '0755'
+
+- name: Install the k3s agent
+  ansible.builtin.command: /usr/local/bin/k3s-install.sh
+  args: {creates: /usr/local/bin/k3s}
+  no_log: true
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    K3S_URL: "https://{{ k3s_server_ip }}:{{ k3s_apiserver_port }}"
+    K3S_TOKEN: "{{ hostvars[groups['k3s_server'][0]].k3s_join_token }}"
+    # system-reserved here covers the GitLab Runner and the job containers it
+    # starts. Those run on host Docker and are invisible to kubelet; a BuildKit
+    # job can take several GB. Reserving keeps the AI pod out of memory that CI
+    # is about to use.
+    INSTALL_K3S_EXEC: >-
+      agent
+      --node-name={{ inventory_hostname }}
+      --node-ip={{ k3s_node_ip }}
+      --node-label=mupid.io/role={{ node_role }}
+      --kubelet-arg=system-reserved=cpu={{ system_reserved[node_role].cpu }},memory={{ system_reserved[node_role].memory }}
+      --kubelet-arg=eviction-hard={{ eviction_hard }}
+
+- name: Wait for the agent to register with the server
+  ansible.builtin.command: k3s kubectl wait --for=condition=Ready node/{{ inventory_hostname }} --timeout=180s
+  delegate_to: "{{ groups['k3s_server'][0] }}"
+  register: agent_ready
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: agent_ready.rc == 0

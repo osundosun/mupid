@@ -308,6 +308,45 @@ export type ChunkInfo = {
   file_hash: string;
 };
 
+/** AI 대화에 실어 보내는 이전 한 마디. 역할 이름은 서버 enum 이라 대문자다. */
+export type AiChatTurn = { role: 'USER' | 'AI'; content: string };
+
+export type AiChatBody = {
+  /** 이번에 보낼 말. 500자까지. */
+  message: string;
+  history?: AiChatTurn[];
+  /** 지금 듣고 있는 곡. 서버가 이 번호로 곡 문맥을 만든다. */
+  music_id?: number;
+};
+
+/**
+ * 추천 툴이 돌려준 곡 하나.
+ *
+ * 필드는 추천 서버(`ai_server`)의 `/internal` 계약과 같다. **`music_id` 가
+ * 카탈로그에 없을 수 있다** — 지금 서버 쪽 추천이 목업이면 그렇다. 화면은
+ * 카탈로그에서 찾은 곡만 보여 준다 (`lib/ai-chat.ts`).
+ */
+export type AiRecommendedTrack = {
+  rank_order: number;
+  music_id: number;
+  title: string;
+  artist: string;
+  album: string;
+  image_url: string | null;
+  music_section_id: number | null;
+  /** INTRO · VERSE · PRE_CHORUS · CHORUS · BRIDGE · BREAK · INST · SOLO · OUTRO */
+  section_label: string | null;
+  start_time_ms: number;
+  end_time_ms: number;
+  /** 0~1. 화면에서는 일치율(%)로 쓴다. */
+  score: number;
+  reason_code: string;
+  reason: string;
+};
+
+/** 추천을 하지 않았으면 `tracks` 는 빈 배열이다 (null 이 아니다). */
+export type AiChatResult = { reply: string; tracks: AiRecommendedTrack[] };
+
 export function createEndpoints(client: ApiClient) {
   return {
     auth: {
@@ -722,6 +761,25 @@ export function createEndpoints(client: ApiClient) {
           signal,
           // 청크 하나가 100KB 남짓이지만 모바일 회선을 감안해 넉넉히 둔다.
           timeoutMs: 30000,
+        }),
+    },
+
+    ai: {
+      /**
+       * AI 대화 한 번. 곡 추천이 필요하다고 모델이 판단하면 `tracks` 가 함께 온다.
+       *
+       * **서버가 대화를 저장하지 않는다.** 이전 대화는 `history` 로 매번 함께 보낸다.
+       *
+       * 기본 타임아웃(15초)으로는 모자란다. 추론 모델이라 답까지 수십 초가 걸리고,
+       * 툴을 부르면 게이트웨이를 두 번 탄다. 서버 쪽 상한이 60초라 그보다 조금 길게 준다.
+       */
+      chat: (body: AiChatBody, signal?: AbortSignal) =>
+        client.request<AiChatResult>({
+          method: 'POST',
+          path: '/api/v1/ai/chat',
+          json: body,
+          signal,
+          timeoutMs: 70000,
         }),
     },
   };

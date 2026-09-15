@@ -4,14 +4,33 @@ import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
 
-void test('brand asset retains the supplied logo dimensions', async () => {
-  const metadata = await sharp(
-    fileURLToPath(
-      new URL('../public/mupid-logo-cupid-black.png', import.meta.url),
-    ),
-  ).metadata();
-  assert.equal(metadata.width, 1134);
-  assert.equal(metadata.height, 638);
+void test('brand asset trims the master margin without cropping the mark', async () => {
+  const url = (name) => fileURLToPath(new URL('../public/' + name, import.meta.url));
+  const master = await sharp(url('mupid-logo-cupid-sky-master.png')).metadata();
+  assert.equal(master.width, 1710);
+  assert.equal(master.height, 920);
+
+  const metadata = await sharp(url('mupid-logo-cupid-sky.png')).metadata();
+  assert.equal(metadata.width, 1180);
+  assert.equal(metadata.height, 600);
+  assert.equal(metadata.hasAlpha, true);
+
+  // 여백만 걷어냈을 뿐 그림 자체는 원본과 같은 크기로 남아 있어야 한다.
+  // 재인코딩하면서 가장자리 안티에일리어싱이 1px 흔들릴 수 있어 여유를 둔다.
+  const inkOf = async (name) => {
+    const { info } = await sharp(url(name))
+      .trim({ threshold: 1 })
+      .toBuffer({ resolveWithObject: true });
+    return info;
+  };
+  const ink = await inkOf('mupid-logo-cupid-sky.png');
+  const masterInk = await inkOf('mupid-logo-cupid-sky-master.png');
+  assert.ok(Math.abs(ink.width - masterInk.width) <= 2);
+  assert.ok(Math.abs(ink.height - masterInk.height) <= 2);
+
+  // 그림이 배포용 캔버스의 대부분을 채워야 헤더에서 작아 보이지 않는다.
+  assert.ok(ink.width / metadata.width > 0.9);
+  assert.ok(ink.height / metadata.height > 0.85);
 });
 
 void test('header and welcome use one uncropped logo component', async () => {
@@ -23,7 +42,7 @@ void test('header and welcome use one uncropped logo component', async () => {
     source('components/mupid/collection.tsx'),
     source('app/mupid.css'),
   ]);
-  assert.match(primitives, /src="\/mupid-logo-cupid-black.png"/);
+  assert.match(primitives, /src="\/mupid-logo-cupid-sky.png"/);
   assert.match(app, /<Brand \/>/);
   assert.match(collection, /<Brand className="welcome-logo" \/>/);
   assert.ok(!primitives.includes('mupid-sky-logo.svg'));

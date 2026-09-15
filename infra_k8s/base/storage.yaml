@@ -1,0 +1,232 @@
+# SeaweedFS, split into the three roles that actually differ.
+#
+# It was one `weed server -filer -s3` process holding master, volume, filer and
+# the S3 gateway together. Volume servers now run on both nodes, so the roles
+# that have to stay single-instance are separated from the one that scales.
+#
+#   storage-master   volume topology and file-id assignment. One instance.
+#   storage          filer + S3 gateway. One instance, pinned to its metadata.
+#   storage-volume   the file data. One per node.
+#
+# The S3 gateway is NOT a fourth workload. `weed s3` is a stateless translator
+# from S3 calls to filer gRPC — it holds nothing, so it has no reason to be
+# scheduled on its own. `-s3` runs it in the filer process on 8333, which is
+# what the Compose deployment already did.
+#
+# The Service in front of the filer stays named `storage` on 8888: nginx.conf
+# hardcodes `server storage:8888` (upstream mupid_storage) and that file must
+# stay byte-identical to the audited production one.
+---
+# Filer metadata and the S3 gateway. Single instance by construction: filer.toml
+# selects leveldb2, which is an embedded store on this pod's own disk. A second
+# replica would not share it, so this cannot be scaled without changing stores.
+apiVersion: v1
+kind: Service
+metadata: {name: storage, namespace: mupid}
+spec:
+  selector: {app: storage}
+  ports:
+    - {name: filer, port: 8888, targetPort: 8888}
+    - {name: filer-grpc, port: 18888, targetPort: 18888}
+    - {name: s3, port: 8333, targetPort: 8333}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: storage, namespace: mupid}
+spec:
+  serviceName: storage
+  replicas: 1
+  selector: {matchLabels: {app: storage}}
+  template:
+    metadata: {labels: {app: storage}}
+    spec:
+      nodeSelector: {mupid.io/role: edge}
+      containers:
+        - name: storage
+          image: chrislusf/seaweedfs@sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62
+          args:
+            - filer
+            # -ip is what this filer advertises to the master and the S3
+            # gateway; the Service above makes the name resolve. It is NOT a
+            # bind address: the name resolves to the Service ClusterIP, which
+            # no pod can bind, so the listener is opened separately on 0.0.0.0.
+            # Under Compose these were the same thing because the container
+            # name resolved to the container's own address.
+            - -ip=storage
+            - -ip.bind=0.0.0.0
+            - -master=storage-master:9333
+            - -s3
+            - -s3.port=8333
+            - -s3.config=/etc/seaweedfs/s3.json
+          ports:
+            - {containerPort: 8888}
+            - {containerPort: 18888}
+            - {containerPort: 8333}
+          resources:
+            requests: {cpu: 150m, memory: 200Mi}
+            limits: {memory: 768Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: s3-config, mountPath: /etc/seaweedfs/s3.json, subPath: s3.json, readOnly: true}
+            - {name: filer-config, mountPath: /etc/seaweedfs/filer.toml, subPath: filer.toml, readOnly: true}
+          readinessProbe:
+            # An unauthenticated request to the S3 gateway must be refused. The
+            # Compose healthcheck asserts 403; an HTTP probe treats 403 as failure,
+            # so this checks the filer port instead and leaves the 403 assertion to
+            # the verification step in OPERATIONS-K8S.md.
+            httpGet: {path: /, port: 8888}
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 10
+      volumes:
+        - name: s3-config
+          secret: {secretName: mupid-storage-s3}
+        - name: filer-config
+          configMap: {name: storage-filer}
+  volumeClaimTemplates:
+    # Metadata only now that file data lives on the volume servers.
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 10Gi}}
+---
+# The master. Holds the volume topology and hands out file ids; every read and
+# write starts by asking it where a volume lives.
+#
+# One instance, so there is no raft quorum to get wrong. It is a restart-time
+# dependency for the filer and the volume servers, not a per-request one — they
+# cache the topology — but a master that is down for long stops new writes.
+apiVersion: v1
+kind: Service
+metadata: {name: storage-master, namespace: mupid}
+spec:
+  selector: {app: storage-master}
+  ports:
+    - {name: http, port: 9333, targetPort: 9333}
+    - {name: grpc, port: 19333, targetPort: 19333}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: storage-master, namespace: mupid}
+spec:
+  serviceName: storage-master
+  replicas: 1
+  selector: {matchLabels: {app: storage-master}}
+  template:
+    metadata: {labels: {app: storage-master}}
+    spec:
+      nodeSelector: {mupid.io/role: edge}
+      containers:
+        - name: master
+          image: chrislusf/seaweedfs@sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62
+          args:
+            - master
+            # Advertised, not bound — see the filer above.
+            - -ip=storage-master
+            - -ip.bind=0.0.0.0
+            - -mdir=/data
+            - -volumeSizeLimitMB=1024
+            # 001 = one replica on a different server in the same rack. This is
+            # the reason there are two volume servers: every file exists on both
+            # nodes, so losing a node's disk loses no data.
+            #
+            # The cost is write availability. With exactly two servers, a node
+            # that is down means new volumes cannot be created and writes to
+            # under-replicated volumes are refused; reads keep working from the
+            # surviving copy. Set 000 instead to trade that redundancy for writes
+            # that continue during a single-node outage.
+            - -defaultReplication=001
+          ports:
+            - {containerPort: 9333}
+            - {containerPort: 19333}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts: [{name: data, mountPath: /data}]
+          readinessProbe:
+            httpGet: {path: /cluster/status, port: 9333}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 10
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 1Gi}}
+---
+# The file data. One per node.
+#
+# No nodeSelector: this is the one workload that must land on both nodes. The
+# image is public, so it does not depend on the per-node `ctr images import`
+# that pins our own images. The anti-affinity is `required` rather than
+# `preferred` — two copies on one node would satisfy replication 001 on paper
+# while giving none of its protection.
+#
+# Each server advertises its own pod DNS name. The master hands that address to
+# clients, so it has to be resolvable from the filer: a headless Service gives
+# `storage-volume-0.storage-volume`, which resolves inside the namespace.
+apiVersion: v1
+kind: Service
+metadata: {name: storage-volume, namespace: mupid}
+spec:
+  clusterIP: None
+  # Without this a headless Service only publishes ready endpoints, and the
+  # volume server cannot become ready because it binds to its own DNS name at
+  # startup: the pod waits for a record that waits for the pod.
+  publishNotReadyAddresses: true
+  selector: {app: storage-volume}
+  ports:
+    - {name: http, port: 8080, targetPort: 8080}
+    - {name: grpc, port: 18080, targetPort: 18080}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: storage-volume, namespace: mupid}
+spec:
+  serviceName: storage-volume
+  replicas: 2
+  selector: {matchLabels: {app: storage-volume}}
+  template:
+    metadata: {labels: {app: storage-volume}}
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: storage-volume}}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: volume
+          image: chrislusf/seaweedfs@sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62
+          args:
+            - volume
+            - -mserver=storage-master:9333
+            - -ip=$(POD_NAME).storage-volume
+            - -port=8080
+            - -dir=/data
+            # 45 volumes x 1024MB fits the 50Gi claim with headroom. The Compose
+            # file said 5, which capped a 50Gi disk at 5GB — carried over from a
+            # default and never revisited.
+            - -max=45
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+          ports:
+            - {containerPort: 8080}
+            - {containerPort: 18080}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          volumeMounts: [{name: data, mountPath: /data}]
+          readinessProbe:
+            httpGet: {path: /status, port: 8080}
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 10
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 50Gi}}

@@ -18,7 +18,12 @@ grep -q '^COPY --from=builder ' "$directory/context/Dockerfile"
 chown -R 1000:1000 "$directory"
 export MUPID_IMAGE_NAME="mupid-api:$CI_COMMIT_SHA"
 export MUPID_BUILD_DIRECTORY="$directory"
-su user -c 'buildctl-daemonless.sh build --frontend dockerfile.v0 --local context="$MUPID_BUILD_DIRECTORY/context" --local dockerfile="$MUPID_BUILD_DIRECTORY/context" --output type=docker,name="$MUPID_IMAGE_NAME",dest="$MUPID_BUILD_DIRECTORY/image.tar"'
+# platform is pinned rather than inherited from the runner: the servers are
+# x86_64, and a runner on another architecture would otherwise build an image
+# that loads without complaint and then cannot execute. On an amd64 runner this
+# resolves to what it already produced, so the output is unchanged. The builder
+# stage in build.Dockerfile is $BUILDPLATFORM, so the compile still runs native.
+su user -c 'buildctl-daemonless.sh build --frontend dockerfile.v0 --local context="$MUPID_BUILD_DIRECTORY/context" --local dockerfile="$MUPID_BUILD_DIRECTORY/context" --opt platform=linux/amd64 --output type=docker,name="$MUPID_IMAGE_NAME",dest="$MUPID_BUILD_DIRECTORY/image.tar"'
 mkdir -p .release
 gzip -n -c "$directory/image.tar" > .release/image.tar.gz
 size=$(wc -c < .release/image.tar.gz)

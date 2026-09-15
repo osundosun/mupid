@@ -1,0 +1,5 @@
+# These files are consumed on Linux — the Ansible control node and the two EC2
+# nodes. CRLF already cost us once: a shell script copied through Windows made
+# bash read `set -uo pipefail` as `pipefail<CR>` and fail on the first line.
+# Keep the whole tree LF regardless of the checkout platform.
+* text eol=lf

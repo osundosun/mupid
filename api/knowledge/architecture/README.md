@@ -11,6 +11,7 @@
 | [api-conventions.md](api-conventions.md) | 공통 응답 래퍼, 에러 코드↔HTTP 매핑, 에러 추가 절차, Bruno 컬렉션 갱신 |
 | [persistence.md](persistence.md) | 엔티티·관계·작성 규약·삭제 정책, 스키마 관리 실태 |
 | [auth-security.md](auth-security.md) | 로그인·재발급·로그아웃 흐름, JWT 수명, SecurityConfig, 이메일 인증 |
+| [admin-console.md](admin-console.md) | 관리자 화면 — 메타모델 기반 자원 CRUD, `/api/admin` 경로, 화면이 열려 있는 이유 |
 | [cache-redis.md](cache-redis.md) | 캐시 키 규약과 TTL — 범용 캐시가 아니라 JWT 차단 목록 전용 |
 | [analytics-clickhouse.md](analytics-clickhouse.md) | 클러스터 토폴로지, 스키마 설계, Kafka 연동, 로컬 기동·검증 |
 | [integrations.md](integrations.md) | S3 호환 스토리지, Gmail API, 메일 템플릿, 자격증명 취급 |

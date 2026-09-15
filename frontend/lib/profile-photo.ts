@@ -10,6 +10,17 @@
  * `Authorization` 헤더를 달 수 없으므로 토큰을 붙여 바이트를 받아 온 뒤
  * object URL 로 바꿔 쓴다. 앨범·아티스트 이미지는 공개라 URL 을 그대로 쓴다.
  *
+ * ## 왜 `url` 만으로는 모자란가
+ *
+ * 사진을 올린 적이 없는 사람의 `image_url` 은 `/default` 를 가리키고, 그 키에
+ * 파일은 없지만 백엔드가 기본 이미지를 돌려준다. 예전에는 이 URL 을 보고 그냥
+ * 빈 문자열을 반환했는데, 그래서 **기본 이미지가 어디에도 보이지 않았다** —
+ * 상단바는 사람 아이콘을, 마이페이지는 마스코트를 대신 그렸다.
+ *
+ * 지금은 기본 이미지도 받아 온다. 다만 "본인이 올린 사진"과는 구분해야 한다.
+ * 삭제 버튼 노출과 `사진 등록`/`사진 변경` 문구가 그걸로 갈리기 때문이다.
+ * 그 구분이 `isDefault` 다. **화면은 `url` 로 그리고 `isDefault` 로 가른다.**
+ *
  * ## 왜 스토어를 여기 두는가
  *
  * 사진을 보여 주는 자리가 둘이다 — 상단바의 동그란 아이콘과 마이페이지의 편집
@@ -36,38 +47,53 @@ export const releasePhoto = (url: string) => {
 };
 
 export type ProfilePhotoState = {
-  /** 화면에 바로 넣을 수 있는 URL. 사진이 없으면 빈 문자열이다. */
+  /** 화면에 바로 넣을 수 있는 URL. 받아오지 못했으면 빈 문자열이다. */
   url: string;
+  /** 지금 들고 있는 것이 본인이 올린 사진이 아니라 기본 이미지인가. */
+  isDefault: boolean;
   /** 아직 한 번도 읽지 않았는가. 처음 그릴 때 깜빡임을 막는 데 쓴다. */
   loaded: boolean;
 };
 
 export const profilePhotoStore = createStore<ProfilePhotoState>({
   url: '',
+  isDefault: true,
   loaded: false,
 });
 
 /** 늦게 도착한 응답이 새 사진을 덮지 않게 한다. */
 let readToken = 0;
 
-const put = (url: string) => {
+const put = (url: string, isDefault: boolean) => {
   const previous = profilePhotoStore.get().url;
   if (previous !== url) releasePhoto(previous);
-  profilePhotoStore.set({ url, loaded: true });
+  profilePhotoStore.set({ url, isDefault, loaded: true });
 };
 
+type Photo = { url: string; isDefault: boolean };
+
 /** 지금 저장된 사진을 읽어 온다. 화면에 바로 넣을 수 있는 URL 이다. */
-const fetchPhoto = async (signal?: AbortSignal): Promise<string> => {
+const fetchPhoto = async (signal?: AbortSignal): Promise<Photo> => {
   const user = signedIn();
-  if (!user) return mupidService.readPhoto();
+  // 체험 세션은 토큰이 없다. 기본 이미지는 비공개 경로라 받아올 수 없으므로
+  // 브라우저에 저장한 사진만 본다. 그것도 없으면 화면이 대체 그림을 그린다.
+  if (!user) {
+    const stored = await mupidService.readPhoto();
+    return { url: stored, isDefault: !stored };
+  }
 
   const info = await api.user.me(signal);
   const url = info?.image_url ?? '';
-  // 기본 이미지를 가리키면 "사진 없음" 이다. 화면은 마스코트를 보여준다.
-  if (!url || url.endsWith(DEFAULT_KEY)) return '';
+  if (!url) return { url: '', isDefault: true };
 
+  // `/default` 키에도 받아올 것이 있다 — 백엔드가 기본 이미지를 돌려준다.
+  // 그래서 여기서 끊지 않고 똑같이 받아 오되, 올린 사진과 구분만 해 둔다.
+  const isDefault = url.endsWith(DEFAULT_KEY);
   const bytes = await api.storage.image(url, signal);
-  return URL.createObjectURL(new Blob([bytes], { type: 'image/*' }));
+  return {
+    url: URL.createObjectURL(new Blob([bytes], { type: 'image/*' })),
+    isDefault,
+  };
 };
 
 export const profilePhoto = {
@@ -75,13 +101,13 @@ export const profilePhoto = {
   async refresh(signal?: AbortSignal): Promise<void> {
     const mine = ++readToken;
     try {
-      const url = await fetchPhoto(signal);
+      const photo = await fetchPhoto(signal);
       // 그 사이 저장·삭제·계정 변경이 있었으면 지금 읽은 쪽이 낡았다.
       if (mine !== readToken) {
-        releasePhoto(url);
+        releasePhoto(photo.url);
         return;
       }
-      put(url);
+      put(photo.url, photo.isDefault);
     } catch (error) {
       if (mine === readToken) profilePhotoStore.set({ loaded: true });
       throw error;
@@ -94,20 +120,29 @@ export const profilePhoto = {
     if (!user) {
       await mupidService.savePhoto(dataUrl);
       readToken += 1;
-      put(dataUrl);
+      put(dataUrl, false);
       return;
     }
     await api.storage.uploadProfileImage(user.user_id, blob);
     readToken += 1;
-    put(URL.createObjectURL(blob));
+    put(URL.createObjectURL(blob), false);
   },
 
   async remove(): Promise<void> {
     const user = signedIn();
-    if (!user) await mupidService.removePhoto();
-    else await api.storage.deleteProfileImage(user.user_id);
+    if (!user) {
+      await mupidService.removePhoto();
+      readToken += 1;
+      put('', true);
+      return;
+    }
+    await api.storage.deleteProfileImage(user.user_id);
     readToken += 1;
-    put('');
+    put('', true);
+    // 지운 자리에는 백엔드가 기본 이미지를 준다. 다시 읽어 그 자리에서 보여
+    // 준다. 여기서 실패해도 삭제 자체는 끝났으므로 예외를 올리지 않는다 —
+    // 올리면 호출부가 "삭제하지 못했어요" 를 띄운다.
+    await profilePhoto.refresh().catch(() => {});
   },
 
   /** 로그아웃할 때 화면에서 지운다. 다음 사람에게 앞사람 사진이 보이면 안 된다. */
@@ -115,7 +150,7 @@ export const profilePhoto = {
     readToken += 1;
     const previous = profilePhotoStore.get().url;
     releasePhoto(previous);
-    profilePhotoStore.set({ url: '', loaded: false });
+    profilePhotoStore.set({ url: '', isDefault: true, loaded: false });
   },
 
   /** 지금 어디에 저장되는가. 화면이 안내 문구에 쓴다. */

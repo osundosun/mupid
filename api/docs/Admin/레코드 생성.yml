@@ -1,0 +1,137 @@
+info:
+  name: 레코드 생성
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/admin/resource/{{ADMIN_RESOURCE}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "email": "probe@example.com",
+        "password": "probe-pass-1234",
+        "nickname": "점검용",
+        "birthYear": 1999,
+        "gender": "ETC",
+        "role": "ROLE_USER",
+        "status": "PENDING"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: ADMIN_RESOURCE
+      value: user
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 생성 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "추가되었습니다.",
+            "data": {
+              "userId": 130,
+              "email": "probe@example.com",
+              "password": null,
+              "nickname": "점검용",
+              "imageFile": null,
+              "imageFileId": null,
+              "birthYear": 1999,
+              "gender": "ETC",
+              "role": "ROLE_USER",
+              "status": "PENDING",
+              "createdAt": "2026-09-14T17:12:00.881",
+              "updatedAt": "2026-09-14T17:12:00.881",
+              "_id": "130"
+            }
+          }
+  - name: 400 DB 가 쓰기를 거부
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_RECORD_WRITE_FAILED",
+            "message": "레코드를 저장하지 못했습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 레코드 생성
+
+  `POST /api/v1/admin/resource/{resource}` · `ROLE_ADMIN`
+
+  본문은 `필드 이름 → 값` 의 평평한 객체입니다. 스키마에서 `insertable: true` 인
+  필드만 쓰이고, 나머지는 **오류 없이 무시**됩니다 (`_id` 를 그대로 되돌려 보내도
+  됩니다).
+
+  ## 값의 모양
+
+  값은 전부 문자열로 보내도 됩니다. 서버가 그 필드의 자바 타입으로 바꿉니다.
+
+  | 타입 | 보내는 값 |
+  | --- | --- |
+  | `number` | `1999` 또는 `"1999"` |
+  | `boolean` | `true` / `"true"` / `"1"` |
+  | `enum` | 상수 이름 (`"ROLE_USER"`) |
+  | `datetime` | `"2026-09-14T21:30:00"` — 초 생략과 `T` 대신 공백도 받습니다 |
+  | `date` · `time` | `"2026-09-14"` · `"21:30:00"` |
+  | `relation` | **대상의 식별자** (`"imageFile": 7`). 없는 식별자면 404 |
+  | 빈 문자열 | `null` 로 봅니다 (`string` 타입은 빈 문자열 그대로) |
+
+  ## 비밀번호
+
+  `sensitive: true` 필드에 보낸 평문은 서버가 BCrypt 로 해싱해 저장합니다. 그대로
+  넣으면 로그인이 되지 않기 때문입니다. 응답에는 다시 실리지 않습니다.
+
+  ## 도메인 규칙을 타지 않습니다
+
+  회원가입(`POST /api/v1/user`)과 달리 이메일 인증을 요구하지 않습니다. 관리자가
+  데이터를 바로잡는 통로이므로 도메인 서비스를 거치지 않고 JPA 로 바로 씁니다.
+  대신 되돌릴 수 없는 것만 따로 막습니다 — 아래 수정·삭제 문서 참고.
+
+  ## 알려진 한계
+
+  `MusicGenre` · `MusicMood` · `MusicAnalysisInstrument` ·
+  `MusicSectionAnalysisMood` **네 개는 생성이 실패합니다**
+  (`MUPID_RECORD_WRITE_FAILED`). 엔티티가 같은 컬럼을 `@EmbeddedId` 와 `@ManyToOne`
+  양쪽에 매핑하고 있어 Hibernate 가 컬럼이 중복된 `INSERT` 를 만듭니다. 관리자 화면과
+  무관한 **엔티티 매핑 문제**이고, 조회·수정·삭제는 정상입니다 —
+  [함정과 실패 사례](../../knowledge/failure/auth-and-api.md) 참고.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_RESOURCE_NOT_FOUND` | 404 | `{resource}` 가 관리 대상에 없음 |
+  | `MUPID_UNKNOWN_FIELD` | 400 | 스키마에 없는 필드 |
+  | `MUPID_INVALID_FIELD_VALUE` | 400 | 값을 그 필드의 타입으로 바꾸지 못함 |
+  | `MUPID_RECORD_NOT_FOUND` | 404 | 연관으로 지정한 대상이 없음 |
+  | `MUPID_RECORD_WRITE_FAILED` | 400 | DB 가 거부 (중복 키·`NOT NULL` 위반 등). 사유는 서버 로그 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

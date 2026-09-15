@@ -11,6 +11,7 @@ import { fetchHistory, fetchReactions, pushReaction } from '@/lib/reactions';
 import * as playlistApi from '@/lib/playlists';
 import { analytics, bindPlayer, type EntryPath } from '@/lib/analytics';
 import { fetchSections } from '@/lib/music-analysis';
+import { chatErrorMessage, requestChat } from '@/lib/ai-chat';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
   getSongSectionAt,
@@ -105,7 +106,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const messageEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatButtonRef = useRef<HTMLButtonElement>(null);
-  const chatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 진행 중인 AI 요청. 화면을 떠나거나 다음 요청이 오면 끊는다. */
+  const chatAbort = useRef<AbortController | null>(null);
 
   // 어디서 들어왔든 그 화면으로 돌아간다. 앱을 바로 열었으면 홈으로.
   const goBack = () => {
@@ -136,7 +138,7 @@ export function useMupid(bootstrap: Bootstrap) {
     });
     return () => {
       mountedRef.current = false;
-      if (chatTimer.current) clearTimeout(chatTimer.current);
+      chatAbort.current?.abort();
     };
   }, [initial.onboardingSubmittedAt]);
   useEffect(() => {
@@ -979,33 +981,55 @@ export function useMupid(bootstrap: Bootstrap) {
     setChatOpen(false);
     requestAnimationFrame(() => chatButtonRef.current?.focus());
   };
+  /**
+   * AI 에게 한 마디 보낸다.
+   *
+   * 답은 서버가 만든다 (`POST /api/v1/ai/chat`). 예전의 인위적인 지연(650ms)은
+   * 없앴다 — 실제로 수 초에서 수십 초가 걸리고, 그동안 패널이 "찾고 있어요" 를
+   * 그린다. 화면을 떠나면 요청을 끊는다.
+   */
   const sendMessage = (prompt = chatInput) => {
     if (!prompt.trim() || chatLoading) return;
     const text = prompt.trim().slice(0, 500),
-      current = activeRef.current;
+      current = activeRef.current,
+      // 이번에 보낼 말은 history 에 넣지 않는다. 서버가 message 로 따로 받는다.
+      previous = messages;
     setMessages((list) => [...list, { id: Date.now(), role: 'user', text }]);
     setChatInput('');
     setChatLoading(true);
-    chatTimer.current = setTimeout(async () => {
+    chatAbort.current?.abort();
+    const controller = new AbortController();
+    chatAbort.current = controller;
+    void (async () => {
       try {
-      const answer = await mupidService.recommend(
-        text,
-        current,
-        tracks.filter((t) => !ignored.includes(t.id)),
-      );
-      if (!mountedRef.current) return;
-      setMessages((list) => [
-        ...list,
-        {
-          id: Date.now() + 1,
-          role: 'assistant',
-          text: answer.text,
-          tracks: answer.tracks,
-        },
-      ]);
-      } catch { if (mountedRef.current) setToast('추천을 불러오지 못했어요. 다시 요청해 주세요.'); }
-      finally { if (mountedRef.current) setChatLoading(false); }
-    }, 650);
+        const answer = await requestChat({
+          prompt: text,
+          current,
+          // 숨긴 곡은 추천에서 빼고 보여 준다. 서버는 아직 제외 목록을 받지 않는다.
+          catalog: tracks.filter((t) => !ignored.includes(t.id)),
+          history: previous,
+          signal: controller.signal,
+        });
+        if (!mountedRef.current || controller.signal.aborted) return;
+        setMessages((list) => [
+          ...list,
+          {
+            id: Date.now() + 1,
+            role: 'assistant',
+            text: answer.text,
+            tracks: answer.tracks.length ? answer.tracks : undefined,
+          },
+        ]);
+      } catch (error) {
+        if (!mountedRef.current || controller.signal.aborted) return;
+        setToast(chatErrorMessage(error));
+      } finally {
+        if (mountedRef.current && chatAbort.current === controller) {
+          chatAbort.current = null;
+          setChatLoading(false);
+        }
+      }
+    })();
   };
   /**
    * 플레이리스트를 만든다. 곡을 함께 주면 그 곡을 담은 채로 만든다.

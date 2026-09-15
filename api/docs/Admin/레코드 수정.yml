@@ -1,0 +1,119 @@
+info:
+  name: 레코드 수정
+  type: http
+  seq: 7
+
+http:
+  method: PATCH
+  url: "{{BASE_URL}}/api/v1/admin/resource/{{ADMIN_RESOURCE}}/{{ADMIN_RECORD_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "nickname": "점검용 계정",
+        "status": "ACTIVE"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: ADMIN_RESOURCE
+      value: user
+    - name: ADMIN_RECORD_ID
+      value: "130"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 수정 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "수정되었습니다.",
+            "data": {
+              "userId": 130,
+              "email": "probe@example.com",
+              "password": null,
+              "nickname": "점검용 계정",
+              "imageFile": null,
+              "imageFileId": null,
+              "birthYear": 1999,
+              "gender": "ETC",
+              "role": "ROLE_USER",
+              "status": "ACTIVE",
+              "createdAt": "2026-09-14T17:12:00.881",
+              "updatedAt": "2026-09-14T17:12:11.356",
+              "_id": "130"
+            }
+          }
+  - name: 400 자기 계정의 권한 변경
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_SELF_MODIFICATION_NOT_ALLOWED",
+            "message": "자기 자신의 계정은 이 화면에서 바꿀 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 레코드 수정
+
+  `PATCH /api/v1/admin/resource/{resource}/{id}` · `ROLE_ADMIN`
+
+  본문에 담긴 필드만 고칩니다. 스키마에서 `updatable: true` 인 필드만 쓰이고 나머지는
+  무시됩니다. 값의 모양은 [레코드 생성](레코드%20생성.yml) 과 같습니다.
+
+  식별자는 고칠 수 없습니다. 옮겨야 한다면 지우고 새로 만듭니다.
+
+  비밀번호는 **비워 두면 바뀌지 않습니다.** 빈 문자열을 보내면 그걸 해싱해 버려
+  로그인이 막히기 때문에, 빈 값은 "안 바꿈" 으로 봅니다.
+
+  ## 되돌릴 수 없는 것은 막습니다
+
+  `user` 자원에만 걸리는 두 가지입니다. 값을 덮어쓰기 **전에** 검사합니다.
+
+  | 막는 것 | 이유 |
+  | --- | --- |
+  | 자기 계정의 권한 변경 · 자기 계정의 `WITHDRAW` | 그 순간 이 화면에 다시 들어올 수 없습니다. DB 를 직접 고치는 것 말고는 되돌릴 방법이 없습니다 |
+  | 마지막 관리자의 권한 강등 · `WITHDRAW` | 관리자가 한 명도 남지 않습니다 |
+
+  다른 관리자 계정의 권한은 바꿀 수 있고, 자기 계정이라도 닉네임 같은 나머지 필드는
+  고칠 수 있습니다. 탈퇴 처리된 계정은 로그인할 수 없으므로 관리자 수에서 빠집니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_RESOURCE_NOT_FOUND` | 404 | `{resource}` 가 관리 대상에 없음 |
+  | `MUPID_RECORD_NOT_FOUND` | 404 | 그 행이 없거나, 연관으로 지정한 대상이 없음 |
+  | `MUPID_UNKNOWN_FIELD` | 400 | 스키마에 없는 필드 |
+  | `MUPID_INVALID_FIELD_VALUE` | 400 | 값을 그 필드의 타입으로 바꾸지 못함 |
+  | `MUPID_INVALID_RECORD_ID` | 400 | 복합키 구성 요소 수가 맞지 않음 |
+  | `MUPID_SELF_MODIFICATION_NOT_ALLOWED` | 400 | 자기 계정의 권한·탈퇴 처리 |
+  | `MUPID_LAST_ADMIN_PROTECTED` | 400 | 마지막 관리자의 권한 강등·탈퇴 |
+  | `MUPID_RECORD_WRITE_FAILED` | 400 | DB 가 거부. 사유는 서버 로그 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

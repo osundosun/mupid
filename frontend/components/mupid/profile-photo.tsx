@@ -11,6 +11,9 @@ const EDGE = 256;
 
 export function ProfilePhoto() {
   const photo = useStore(profilePhotoStore, (s) => s.url);
+  // 기본 이미지도 `photo` 에 담겨 온다. "본인이 올린 사진이 있는가" 는 이걸로
+  // 판단해야 한다 — 삭제 버튼과 등록·변경 문구가 여기서 갈린다.
+  const mine = useStore(profilePhotoStore, (s) => !s.isDefault);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(true);
   const input = useRef<HTMLInputElement>(null);
@@ -29,11 +32,12 @@ export function ProfilePhoto() {
       });
     return () => abort.abort();
   }, [account]);
-  return <div className={`profile-photo-editor ${photo ? 'has-photo' : ''}`}>
+  return <div className={`profile-photo-editor ${mine ? 'has-photo' : ''}`}>
     {/* 눌러서 바꾸는 자리라는 걸 알 수 있게 사진 위에 카메라 배지를 얹는다. */}
-    <button type="button" className="profile-photo-pick" aria-label={photo ? '프로필 사진 바꾸기' : '프로필 사진 등록하기'} onClick={() => input.current?.click()} disabled={busy}>
+    <button type="button" className="profile-photo-pick" aria-label={mine ? '프로필 사진 바꾸기' : '프로필 사진 등록하기'} onClick={() => input.current?.click()} disabled={busy}>
       <span className="profile-photo-frame">
-        {photo ? <img src={photo} alt="내 프로필 사진" width={116} height={116} /> : <MupidMascot size={104} alt="기본 프로필" />}
+        {/* 기본 이미지도 받아와 그린다. 못 받아왔을 때만 마스코트로 떨어진다. */}
+        {photo ? <img src={photo} alt={mine ? '내 프로필 사진' : '기본 프로필'} width={116} height={116} /> : <MupidMascot size={104} alt="기본 프로필" />}
       </span>
       <span className="profile-photo-badge" aria-hidden="true"><Camera /></span>
     </button>
@@ -61,9 +65,9 @@ export function ProfilePhoto() {
     }} />
     <div className="profile-photo-actions">
       <button className="secondary-button profile-photo-main" disabled={busy} onClick={() => input.current?.click()}>
-        <Camera />{busy ? '저장 중…' : photo ? '사진 변경' : '사진 등록'}
+        <Camera />{busy ? '저장 중…' : mine ? '사진 변경' : '사진 등록'}
       </button>
-      {photo && <button className="profile-photo-remove" disabled={busy} onClick={async () => { setBusy(true); try { await profilePhoto.remove(); setMessage('기본 프로필로 변경했어요.'); } catch { setMessage('삭제하지 못했어요. 다시 시도해 주세요.'); } finally { setBusy(false); } }}>
+      {mine && <button className="profile-photo-remove" disabled={busy} onClick={async () => { setBusy(true); try { await profilePhoto.remove(); setMessage('기본 프로필로 변경했어요.'); } catch { setMessage('삭제하지 못했어요. 다시 시도해 주세요.'); } finally { setBusy(false); } }}>
         <Trash2 />삭제
       </button>}
     </div>

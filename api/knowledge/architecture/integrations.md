@@ -1,6 +1,6 @@
-# 외부 연동 (S3 · Gmail)
+# 외부 연동 (S3 · Gmail · LLM 게이트웨이)
 
-이 저장소가 밖으로 나가는 경로는 두 개뿐이다 — S3 호환 오브젝트 스토리지와 Gmail API. 프로필 사진을 다루거나, 메일을 새로 보내거나, 메일 템플릿을 고치거나, `MUPID_S3_*` / `MUPID_GMAIL_*` 값을 세팅하다 막혔을 때 이 문서를 읽는다. 실제로 밟게 되는 함정의 상세는 [함정과 실패 사례](../failure/integrations.md) 에 있다.
+이 저장소가 밖으로 나가는 경로는 셋이다 — S3 호환 오브젝트 스토리지, Gmail API, 그리고 OpenAI 호환 LLM 게이트웨이. 프로필 사진을 다루거나, 메일을 새로 보내거나, 메일 템플릿을 고치거나, AI 대화를 손보거나, `MUPID_S3_*` / `MUPID_GMAIL_*` / `MUPID_AI_*` 값을 세팅하다 막혔을 때 이 문서를 읽는다. 실제로 밟게 되는 함정의 상세는 [함정과 실패 사례](../failure/integrations.md) 에 있다.
 
 ## 한눈에 보기
 
@@ -9,10 +9,11 @@
 | S3 오브젝트 스토리지 | `aws.s3` | `storage/config/StorageConfig.java` | `StorageService` | `UserImageServiceImpl` (유일) |
 | Gmail API | `gmail` | `common/gmail/GmailConfig.java` | `GmailProvider.sendEmail` | `EmailServiceImpl` (유일) |
 | 메일 템플릿 | 없음 (Boot 기본값) | 없음 | `EmailTemplateService.buildHtml` | `EmailServiceImpl` (유일) |
+| LLM 게이트웨이 | `ai` | `ai/config/AiConfig.java` | `OpenAiClient.complete` | `AiChatServiceImpl` (유일) |
 
-세 경로 모두 소비자가 하나뿐이다. 새 소비자를 붙이기 전에 아래의 키 규칙·트랜잭션 경계를 먼저 확인할 것.
+네 경로 모두 소비자가 하나뿐이다. 새 소비자를 붙이기 전에 아래의 키 규칙·트랜잭션 경계를 먼저 확인할 것.
 
-세 경로 모두 재시도·백오프·`@Async`·아웃박스가 없다. 실패는 예외로 올라가 트랜잭션을 롤백시킨다.
+네 경로 모두 재시도·백오프·`@Async`·아웃박스가 없다. 실패는 예외로 올라간다 (LLM 경로만 트랜잭션 밖이다 — 아래 참고).
 
 ---
 
@@ -287,6 +288,45 @@ api/src/main/resources/templates/mail/
 
 ---
 
+## LLM 게이트웨이 (OpenAI 호환)
+
+Mupid AI 대화(`POST /api/v1/ai/chat`)가 쓴다. 기본 대상은 SSAFY GMS 프록시이고, 경로가 OpenAI 와 같기만 하면 `MUPID_AI_BASE_URL` 하나로 다른 게이트웨이나 로컬 모델로 갈아탈 수 있다.
+
+### 파일 배치
+
+```
+api/src/main/java/com/osundosun/mupid/api/ai/
+├── config/AiConfig.java                # RestClient 빈 (타임아웃만 잡는다)
+├── properties/AiProperties.java        # @ConfigurationProperties("ai") record
+├── client/AiJson.java                  # 와이어 전용 ObjectMapper (SNAKE_CASE)
+├── client/OpenAiClient.java            # chat/completions 한 방 호출
+├── client/OpenAi*.java                 # 요청·응답 레코드
+├── tool/AiRecommendTool(+Impl).java    # 곡 추천 툴 — 지금은 목업
+├── service/AiChatService(+Impl).java   # 대화 루프 (툴 실행·재질의)
+└── controller/AiController.java
+```
+
+### 대화 한 번의 흐름
+
+```
+messages = [developer 프롬프트, (이전 대화), user 메시지]
+  → POST {base-url}/chat/completions   (tools: recommend_music)
+  → tool_calls 가 오면 서버가 툴을 실행하고 tool 메시지를 붙여 다시 호출
+  → content 가 오면 그것이 답변                       최대 ai.max-tool-rounds 회
+```
+
+`tool` 메시지는 **자신을 부른 assistant 메시지 바로 뒤**에 와야 한다. 모델이 돌려준 assistant 메시지를 그대로 되붙이지 않으면 게이트웨이가 거부한다.
+
+### 알아 둘 것
+
+- **Authorization 헤더를 `AiConfig` 에서 붙이지 않는다.** 키가 비었을 때 `Bearer ` 만 실린 요청이 나가면 저쪽 401 을 우리 오류로 오해한다. 키 검사는 `OpenAiClient` 가 하고, 없으면 요청을 만들지 않고 503(`AI_NOT_CONFIGURED`)을 낸다.
+- **와이어 JSON 은 애플리케이션 매퍼를 쓰지 않는다.** Boot 4 의 Jackson 빈은 Jackson 3(`tools.jackson`)이라 `com.fasterxml` ObjectMapper 를 주입할 수 없고, `tool_calls`·`tool_call_id` 같은 이름은 우리 설정이 아니라 저쪽 API 가 정한 계약이다. `AiJson` 이 전용 매퍼를 들고 있다 — `EventServiceImpl` 과 같은 이유.
+- **본문은 바이트로 오간다.** `application/json` 에 charset 을 적지 않아도 한글이 깨지지 않게 하려는 것이다.
+- **`AiChatServiceImpl` 에 `@Transactional` 이 없다.** DB 작업은 곡 한 건 조회뿐인데, 감싸면 응답을 기다리는 수십 초 동안 커넥션을 쥐게 된다.
+- **곡 선정은 LLM 이 하지 않는다.** 모델은 원하는 느낌을 한 문장으로 정리해 `recommend_music` 툴에 넘기고, 곡은 추천 파이프라인이 고른다. 지금은 그 자리가 목업(`AiRecommendToolImpl`)이라 질의를 보지 않고 카탈로그 앞쪽 곡에 정해진 사유를 붙인다 — **곡 번호만 진짜다.** 없는 번호를 돌려주면 화면이 재생할 수 없는 줄을 그린다. 외부 추천 API(`ai_server/` 의 `POST /internal/recommendations/{daily,next,search}`)를 붙이는 날 바뀌는 것은 이 클래스 하나다. 대화가 쓰는 자연어 경로(`search`)는 해석기가 없으면 501 이므로, 붙일 때 `next` 로 갈아탈지 먼저 정해야 한다 (S15P21A204-219).
+- **대화를 저장하지 않는다.** `ai_chat_sessions`·`ai_chat_messages` 엔티티는 있지만 쓰지 않는다. 켜려면 DDL 부터 봐야 한다 — ERD 의 `ai_chat_session_id` 는 `AUTO_INCREMENT` 없는 `INT NOT NULL` 인데 엔티티는 `GenerationType.IDENTITY` 다.
+- gpt-5 계열이라 시스템 프롬프트 역할이 `system` 이 아니라 **`developer`** 이고, `temperature`·`max_tokens` 를 보내지 않는다.
+
 ## 설정과 자격증명
 
 ### 의존성
@@ -327,7 +367,14 @@ aws:
     access-key: ${MUPID_S3_ACCESS_KEY}
     secret-key: ${MUPID_S3_SECRET}
     bucket-name: ${MUPID_S3_BUCKET}
+
+ai:
+  base-url: ${MUPID_AI_BASE_URL:https://gms.ssafy.io/gmsapi/api.openai.com/v1}
+  api-key: ${MUPID_AI_GMS_KEY:${MUPID_AI_GMS:}}
+  model: ${MUPID_AI_MODEL:gpt-5-mini}
 ```
+
+`ai` 블록만 `${...:기본값}` 을 쓴다. 다만 **기본값은 변수가 아예 없을 때만 쓰인다** — `.env` 에 `MUPID_AI_BASE_URL=` 처럼 키만 두면 빈 문자열이 그대로 들어간다. `.env.example` 이 키를 비워 두는 규약이라 실제로 밟는 함정이어서, `AiProperties` 의 compact 생성자가 빈 값을 기본값으로 되돌린다.
 
 | 변수 | 쓰이는 곳 | `.env.example` 의 안내 |
 |---|---|---|
@@ -340,6 +387,9 @@ aws:
 | `MUPID_S3_SECRET` | `aws.s3.secret-key` + compose 의 `AWS_SECRET_ACCESS_KEY` | `openssl rand -hex 32` |
 | `MUPID_S3_BUCKET` | `aws.s3.bucket-name` + `storage-init` 의 버킷 이름 | — |
 | `MUPID_CLIENT_WEBSITE` | `mupid-client.website` → 메일의 `verifyUrl` | — |
+| `MUPID_AI_GMS_KEY` | `ai.api-key` (`MUPID_AI_GMS` 도 받는다) | https://gms.ssafy.io 에서 발급 |
+| `MUPID_AI_BASE_URL` | `ai.base-url` | 비우면 `https://gms.ssafy.io/gmsapi/api.openai.com/v1` |
+| `MUPID_AI_MODEL` | `ai.model` | 비우면 `gpt-5-mini` |
 
 `MUPID_S3_ACCESS_KEY` / `MUPID_S3_SECRET` 은 앱과 SeaweedFS 컨테이너가 **같은 값을 공유**한다. SeaweedFS 는 이 두 값으로 S3 관리자 identity 를 만들므로, 한쪽만 바꾸면 곧바로 403 이 난다.
 
@@ -361,7 +411,7 @@ aws:
 
 1. `application.yaml` 에 `${MUPID_...}` 참조를 넣는다.
 2. `api/.env.example` 에 키를 넣는다 — 값은 비우고, 발급처·형식을 줄 끝 주석으로 적는다.
-3. `api/src/main/resources/META-INF/additional-spring-configuration-metadata.json` 에 메타데이터를 넣는다. 현재 여기 등록된 건 `jwt.secret`, `gmail.client-id`, `gmail.client-secret` 셋뿐이고 `gmail.token`, `gmail.send-address`, `aws.s3.*` 는 빠져 있다.
+3. `api/src/main/resources/META-INF/additional-spring-configuration-metadata.json` 에 메타데이터를 넣는다. 현재 여기 등록된 건 `jwt.secret`, `gmail.client-id`, `gmail.client-secret`, `ai.base-url`, `ai.api-key`, `ai.model` 여섯이고 `gmail.token`, `gmail.send-address`, `aws.s3.*` 는 빠져 있다.
 
 주의: `.env` 는 Spring 이 `.properties` 로도 읽는다(`spring.config.import: optional:file:.env[.properties]`). properties 문법에서는 줄 끝 주석이 값에 포함되므로, **실제 값을 채우는 항목에는 줄 끝 주석을 남기지 않는다.**
 
@@ -380,6 +430,8 @@ aws:
 | `GmailProvider.sendEmail` | `MessagingException \| IOException` 을 잡아 `log.error("Gmail 발송 실패: ...")` 후 `GmailException`(RuntimeException) 으로 감싸 던진다 |
 | `EmailServiceImpl.sendVerification` | 클래스 레벨 `@Transactional`. `repository.save(verification)` 이 먼저라 발송이 실패하면 **인증 레코드까지 롤백된다** |
 | `StorageServiceImpl` | SDK 예외를 잡지 않는다. AWS SDK 기본 재시도 정책만 적용된다 |
+| `OpenAiClient.complete` | 오류 상태·연결 실패·읽기 타임아웃을 잡아 `BusinessException(AI_REQUEST_FAILED)` 502 로 바꾼다. 재시도는 없다 |
+| `AiChatServiceImpl.runTool` | **툴 실패는 예외로 올리지 않는다.** 모델에게 실패를 알려 주고 답을 이어가게 둔다 |
 
 `GmailException` 도 AWS SDK 예외도 전용 `@ExceptionHandler` 가 없다. `GlobalExceptionHandler` 의 `@ExceptionHandler(Exception.class)` 로 떨어져 `MUPID_INTERNAL_SERVER_ERROR` 500 이 나간다. `StorageErrorCode` 에는 `FILE_NOT_FOUND` 하나뿐이고 이건 DB 메타데이터가 없을 때만 쓰이므로, S3 에서 오브젝트만 사라진 경우는 404 가 아니라 500 이다.
 
@@ -391,10 +443,11 @@ Spring Retry·`@Async`·아웃박스 테이블은 저장소 어디에도 없다.
 
 ## 검증 수단
 
-이 영역에는 자동화 테스트가 없다. `api/src/test` 에는 `ApiApplicationTests.java` 하나뿐이다. 손으로 확인할 때는 `api/docs/` 의 Bruno 컬렉션을 쓴다.
+S3·Gmail 경로에는 자동화 테스트가 없다. LLM 경로는 와이어 포맷만 `ai/client/AiJsonTest` 가 잡아 준다 (스프링 컨텍스트도 DB 도 쓰지 않는다). 형식이 어긋나면 대화가 실패하는 게 아니라 **툴 호출만 조용히 사라지기** 때문이다. 나머지는 손으로 확인하며, `api/docs/` 의 Bruno 컬렉션을 쓴다.
 
 | 확인할 것 | 컬렉션 |
 |---|---|
 | 프로필 사진 업로드 / 조회 / 삭제 | `api/docs/User/프로필 사진 수정.yml`, `프로필 사진 조회.yml`, `프로필 사진 삭제.yml` |
 | 인증 메일 발송 / 코드 제출 / 상태 확인 | `api/docs/Email/` |
 | 비밀번호 재설정 메일 | `api/docs/User/비밀번호 재설정 메일 발송.yml` |
+| AI 대화 · 툴 호출 | `api/docs/AI/AI 대화.yml` · 화면은 `frontend/tests/ai-chat.test.mjs` |

@@ -34,5 +34,6 @@ export interface MupidService {
   readPhoto(): Promise<string>;
   savePhoto(data: string): Promise<void>;
   removePhoto(): Promise<void>;
-  recommend(prompt: string, current: Track | null, candidates: Track[]): Promise<{ text: string; tracks: Track[] }>;
+  // 추천·대화는 이 계약에 없다. 서버가 한다 — `lib/ai-chat.ts` (`POST /api/v1/ai/chat`).
+  // 여기에 두면 브라우저 규칙으로 고른 곡과 서버가 고른 곡, 두 갈래가 조용히 갈라진다.
 }

@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!--
+  쿼리(user) 레벨 설정. 이 값들을 config.d 최상위에 두면
+  UNKNOWN_ELEMENT_IN_CONFIG 로 서버가 기동하지 않는다. 반드시 users.d 의
+  <profiles> 안에 있어야 한다.
+
+  로컬과 운영 모두 필요한 설정이다.
+-->
+<clickhouse>
+    <profiles>
+        <default>
+            <!-- 기본 180초. 컨테이너/서버 기동 직후 ON CLUSTER DDL 에 여유를 준다. -->
+            <distributed_ddl_task_timeout>300</distributed_ddl_task_timeout>
+
+            <!--
+              v_track_skips 는 Distributed 테이블(listen_events)에 또 Distributed 를
+              읽는 서브쿼리 두 개(st: PLAY_START, r: play_section_coverage)를 JOIN 한다.
+              기본값 'deny' 에서는 DISTRIBUTED_IN_JOIN_SUBQUERY_DENIED 로 실패한다.
+              샤드가 1개면 로컬로 최적화돼서 이 오류가 안 보이므로, 단일 노드에서만
+              테스트하면 놓치고 운영에서 터진다.
+
+              서브쿼리를 _local 로 바꾸는 건 안 된다. Kafka 적재 경로가 user_id 샤딩을
+              타지 않아서(아래 README 참고) 다른 샤드의 PLAY_START 를 놓치고 weight 가
+              틀리게 계산된다. 그래서 이니시에이터에서 계산해 각 샤드로 broadcast 한다.
+
+              단 st/r 서브쿼리는 이벤트 전체 이력을 훑으므로 데이터가 쌓이면
+              broadcast 비용이 커진다. 규모가 커지면 뷰 재설계가 필요하다.
+            -->
+            <distributed_product_mode>global</distributed_product_mode>
+        </default>
+    </profiles>
+</clickhouse>

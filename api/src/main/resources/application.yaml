@@ -78,6 +78,20 @@ event:
   # 브로커가 죽었을 때 send 가 요청 스레드를 오래 잡지 않도록 짧게 잡는다.
   kafka-max-block: 3s
 
+ai:
+  # OpenAI 호환 게이트웨이. `/chat/completions` 앞까지의 주소다.
+  base-url: ${MUPID_AI_BASE_URL:https://gms.ssafy.io/gmsapi/api.openai.com/v1}
+  # 팀 .env 에 먼저 자리 잡은 이름이 MUPID_AI_GMS 라 둘 다 받는다. 앞의 것이 우선이다.
+  api-key: ${MUPID_AI_GMS_KEY:${MUPID_AI_GMS:}}
+  model: ${MUPID_AI_MODEL:gpt-5-mini}
+  connect-timeout: 5s
+  # 추론 모델은 첫 응답까지 수십 초가 걸린다. 그동안 요청 스레드가 묶이므로 더 늘리지 않는다.
+  read-timeout: 60s
+  # 툴 호출 -> 결과 주입 -> 재질의 반복 상한. 넘으면 502 로 끊는다.
+  max-tool-rounds: 3
+  # 클라이언트가 함께 보낸 이전 대화를 몇 마디까지 프롬프트에 넣을 것인가.
+  max-history: 20
+
 redis:
   key-prefix: ${MUPID_REDIS_KEY_PREFIX}
 
