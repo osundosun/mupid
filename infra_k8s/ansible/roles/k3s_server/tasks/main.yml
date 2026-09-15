@@ -19,8 +19,14 @@
     # Deployment with hostPort, reusing the audited nginx.conf (auth_request and
     # X-Accel-Redirect). A second ingress controller would fight it for 80/443.
     # secrets-encryption: k3s stores Secrets unencrypted otherwise.
+    #
+    # node-name: without it k3s registers under the OS hostname
+    # (ip-172-26-6-231), the wait below looks for node/node-a and never finds
+    # it. Naming the node after the inventory host also makes `kubectl get
+    # nodes` read the same way the runbooks do.
     INSTALL_K3S_EXEC: >-
       server
+      --node-name={{ inventory_hostname }}
       --node-ip={{ k3s_node_ip }}
       --advertise-address={{ k3s_node_ip }}
       --tls-san={{ k3s_node_ip }}

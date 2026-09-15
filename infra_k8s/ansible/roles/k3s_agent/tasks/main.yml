@@ -33,6 +33,7 @@
     # is about to use.
     INSTALL_K3S_EXEC: >-
       agent
+      --node-name={{ inventory_hostname }}
       --node-ip={{ k3s_node_ip }}
       --node-label=mupid.io/role={{ node_role }}
       --kubelet-arg=system-reserved=cpu={{ system_reserved[node_role].cpu }},memory={{ system_reserved[node_role].memory }}
