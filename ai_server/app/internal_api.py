@@ -111,6 +111,12 @@ class RecommendationItem(BaseModel):
     score: float
     reason_code: str
     reason: str = Field(..., description="사람이 읽는 추천 이유")
+    # "당신이 저장한 이 구간과 닮아서" 를 만들 수 있는 최소한의 근거. **사용자 자신의**
+    # 구간이라 보여 줘도 새는 것이 없다. 모델 점수·확률·내부 ID 는 계속 내보내지 않는다.
+    ref_music_id: Optional[int] = Field(
+        None, description="이 추천의 근거가 된, 사용자가 좋아한 곡")
+    ref_music_section_id: Optional[int] = Field(
+        None, description="그 곡의 구간. 매핑이 없으면 비운다")
 
     @model_validator(mode="after")
     def _range(self):
@@ -263,12 +269,21 @@ def to_response(rec_id: int, out: dict, limit: int,
             continue
         code = _reason_code(r, has_query, query_source)
         metrics.observe_reason(code)
+        ref_uid, ref_sid, ref_mid = str(r.get("matched_dna_rep") or ""), None, None
+        if ref_uid:
+            # 근거 구간이 매핑표에 없을 수 있다(추천 풀 밖의 오래된 취향 등).
+            # 그때는 추천 자체를 실패시키지 않고 근거만 비운다.
+            ref_sid = im.sec_to_num.get(ref_uid)
+            ref_mid = im.track_to_num.get(ref_uid.split("#")[0])
+            if ref_sid is None or ref_mid is None:
+                ref_sid = ref_mid = None
         items.append(RecommendationItem(
             music_id=mid, music_section_id=sid,
             start_time_ms=s_ms, end_time_ms=e_ms,
             section_label=label,
             rank_order=int(r["rank"]), score=float(r["final_score"]),
-            reason_code=code, reason=_reason_text(code, label)))
+            reason_code=code, reason=_reason_text(code, label),
+            ref_music_id=ref_mid, ref_music_section_id=ref_sid))
     if unknown_labels:
         # 조용히 넘기면 "추천이 왜 적지" 로만 보인다. 원인을 로그에 남긴다.
         print(f"[internal] ERD ENUM 에 없는 구간 라벨 {len(unknown_labels)}건 제외 — "

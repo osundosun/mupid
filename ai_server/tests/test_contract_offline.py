@@ -840,3 +840,61 @@ def test_scipy_is_not_required_to_import_the_app():
             assert not any(a.name.startswith("scipy") for a in node.names)
         elif isinstance(node, ast.ImportFrom):
             assert not (node.module or "").startswith("scipy"), node.module
+
+
+# ------------------------------------------------------------------ 추천 근거
+def _out_with_ref(rep_uid):
+    return {"diagnostics": {"query_source": "labels", "shortfall": 0},
+            "results": [{"rank": 1, "track_id": "A", "moment_id": "A#0",
+                         "section_label": "chorus", "start_sec": 1.0, "end_sec": 2.0,
+                         "final_score": 1.0, "matched_dna": "u#dna0",
+                         "matched_dna_rep": rep_uid, "slot_source": "dna0",
+                         "clap_score": None, "prob": 0.9, "model_score": 0.5}]}
+
+
+def test_reference_section_is_returned_as_numeric_ids(mapped):
+    """'당신이 저장한 이 구간과 닮아서' 를 만들 수 있어야 한다."""
+    item = internal_api.to_response(1, _out_with_ref("B#0"), 1, False).items[0]
+    assert item.ref_music_id == 2 and item.ref_music_section_id == 22
+
+
+def test_unmapped_reference_empties_the_field_not_the_response(mapped):
+    """근거 구간이 매핑표에 없다고 추천 전체를 실패시키지 않는다."""
+    item = internal_api.to_response(1, _out_with_ref("Z#9"), 1, False).items[0]
+    assert item.ref_music_id is None and item.ref_music_section_id is None
+    assert item.music_id == 1, "추천 자체는 살아 있어야 한다"
+
+
+def test_reference_does_not_reintroduce_scores(mapped):
+    """근거를 노출한다고 모델 수치까지 따라 나가면 3번을 되돌리는 것이다."""
+    import json
+
+    body = json.dumps(internal_api.to_response(1, _out_with_ref("B#0"), 1,
+                                               False).model_dump())
+    for leaked in ("0.9", "prob", "model_score", "moment_similarity", "matched_dna_rep",
+                   "A#0", "B#0"):
+        assert leaked not in body, leaked
+
+
+# ------------------------------------------------------------------ 배치 도구
+@pytest.mark.parametrize("mod", ["run_labeler", "export_stage1_npz"])
+def test_tools_import_and_expose_main(mod):
+    """cron 이 부르는 진입점이다. import 조차 안 되면 돌려 봐야 안다."""
+    import importlib
+
+    m = importlib.import_module(f"ai_server.tools.{mod}")
+    assert callable(m.main)
+
+
+def test_run_labeler_reports_failure_with_nonzero_exit(monkeypatch, tmp_path, capsys):
+    """cron 이 실패를 알아차려야 한다. 조용히 0 으로 끝나면 개인화가 꺼진 줄 모른다."""
+    import sys
+
+    from ai_server.app import main as appmain
+    from ai_server.tools import run_labeler
+
+    monkeypatch.setattr(appmain, "check_integrity",
+                        lambda: {"ok": False, "errors": ["색인 없음"], "checks": {}})
+    monkeypatch.setattr(sys, "argv", ["run_labeler"])
+    assert run_labeler.main() == 1
+    assert "색인 없음" in capsys.readouterr().err
