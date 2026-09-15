@@ -1,6 +1,11 @@
 package com.osundosun.mupid.api.bootstrap;
 
 import java.io.IOException;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -147,6 +152,99 @@ public class BootstrapRunner implements ApplicationRunner {
     }
 
     /**
+     * 글자가 깨진 채로 들어간 코드가 있으면 기동 로그에 남긴다.
+     *
+     * <p>{@code mysql} 클라이언트에 {@code --default-character-set=utf8mb4} 를 빼고
+     * 시드 SQL 을 부으면, 파일의 UTF-8 바이트를 클라이언트가 cp1252 로 읽어 다시
+     * 인코딩한다. `잔잔한` 이 `ìž”ìž”í•œ` 이 된다.
+     * <b>오류가 나지 않는다</b> — 행 수도 맞고 SQL 도 성공한다
+     * ({@code knowledge/failure/database-and-jpa.md}).
+     *
+     * <p>이 배치는 (용도, 이름) 으로 대조하므로 깨진 행을 <b>고치지도, 알아채지도</b>
+     * 못한다. 제대로 된 이름이 따로 들어오면 두 벌이 공존하고, 온보딩 화면에
+     * 선택지가 두 배로 뜬다. 그래서 여기서 찾아 알린다.
+     *
+     * <p>고치는 것은 사람이 한다 — {@code code_id} 를 온보딩 응답이 참조하므로
+     * 함부로 지울 수 없다.
+     */
+    private void warnGarbled(List<Code> codes) {
+        for (Code code : codes) {
+            String recovered = recoverDoubleEncoded(code.getCodeName());
+            if (recovered == null) {
+                continue;
+            }
+            log.warn("""
+                글자가 깨진 공통 코드가 있습니다: code_id={} {}:'{}' (원래 값으로 보이는 것: '{}').
+                시드 SQL 을 --default-character-set=utf8mb4 없이 부으면 이렇게 됩니다.
+                이 행은 배치가 고치지 않습니다 — code_id 를 온보딩 응답이 참조하므로                 참조를 확인한 뒤 사람이 지워야 합니다.""",
+                code.getCodeId(), code.getCodeType(), code.getCodeName(), recovered);
+        }
+    }
+
+    /**
+     * MySQL {@code latin1} 로 잘못 읽힌 UTF-8 인지 보고, 맞으면 원래 글자를 돌려준다.
+     * 아니면 null.
+     *
+     * <p>판정은 되돌려 보는 것으로 한다 — 한 글자씩 <b>바이트 하나로</b> 되돌릴 수
+     * 있고, 그 바이트열이 <b>온전한 UTF-8</b> 이며, 되살린 결과에 한글이 있으면 그렇게
+     * 들어간 것이다. 영문 장르명({@code R&B}·{@code Hip-hop})은 되돌려도 한글이
+     * 나오지 않으므로 걸리지 않는다.
+     *
+     * <p>순수 cp1252 로는 부족하다. {@code 0x81}·{@code 0x8D}·{@code 0x8F}·
+     * {@code 0x90}·{@code 0x9D} 다섯 칸은 cp1252 에 정의가 없는데, MySQL 의
+     * {@code latin1} 은 그 칸을 C1 제어문자로 그대로 통과시킨다. `몽환적인` 의
+     * UTF-8 에 {@code 0x81} 이 들어 있어, 이 다섯 칸을 빼먹으면 절반만 잡힌다.
+     */
+    static String recoverDoubleEncoded(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        byte[] raw = new byte[value.length()];
+        for (int i = 0; i < value.length(); i++) {
+            Byte b = MYSQL_LATIN1_REVERSE.get(value.charAt(i));
+            if (b == null) {
+                return null;  // 바이트 하나로 되돌릴 수 없는 글자 — 이 경우가 아니다
+            }
+            raw[i] = b;
+        }
+        try {
+            String recovered = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(raw))
+                .toString();
+            return hasHangul(recovered) ? recovered : null;
+        } catch (CharacterCodingException e) {
+            return null;  // UTF-8 로 안 읽힌다 — 그냥 그런 글자였다
+        }
+    }
+
+    private static boolean hasHangul(String value) {
+        return value.codePoints().anyMatch(cp -> cp >= 0xAC00 && cp <= 0xD7A3);
+    }
+
+    /**
+     * MySQL {@code latin1} 의 글자 → 바이트 역매핑.
+     *
+     * <p>cp1252 가 정의한 251칸은 그 표대로, 나머지 다섯 칸은 바이트 값을 그대로
+     * 코드포인트로 쓴다 — MySQL 이 그렇게 흘려보낸다.
+     */
+    private static final java.util.Map<Character, Byte> MYSQL_LATIN1_REVERSE = buildLatin1Reverse();
+
+    private static java.util.Map<Character, Byte> buildLatin1Reverse() {
+        Charset cp1252 = Charset.forName("windows-1252");
+        java.util.Map<Character, Byte> map = new java.util.HashMap<>(256);
+        for (int b = 0; b < 256; b++) {
+            String decoded = new String(new byte[] {(byte) b}, cp1252);
+            char c = decoded.length() == 1 && decoded.charAt(0) != '�'
+                ? decoded.charAt(0)
+                : (char) b;          // cp1252 에 없는 칸 — 바이트 값이 곧 코드포인트다
+            map.putIfAbsent(c, (byte) b);
+        }
+        return java.util.Map.copyOf(map);
+    }
+
+    /**
      * 한 덩어리를 채운다. 실패해도 다음 덩어리는 계속 간다.
      *
      * <p>기준 데이터 하나가 안 들어갔다고 애플리케이션이 못 뜰 이유는 없다. 테이블이
@@ -172,9 +270,11 @@ public class BootstrapRunner implements ApplicationRunner {
      */
     private void seedCodes() {
         Set<CodeSeed> existing = new HashSet<>();
-        for (Code code : codeRepository.findAll()) {
+        List<Code> all = codeRepository.findAll();
+        for (Code code : all) {
             existing.add(new CodeSeed(code.getCodeType(), code.getCodeName()));
         }
+        warnGarbled(all);
 
         List<Code> missing = new ArrayList<>();
         for (CodeSeed seed : CODE_SEEDS) {

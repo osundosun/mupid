@@ -3,7 +3,10 @@ package com.osundosun.mupid.api.bootstrap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.InputStream;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -99,4 +102,56 @@ class BootstrapSeedTest {
         assertThat(distinct).hasSize(BootstrapRunner.CODE_SEEDS.size());
     }
 
+    @Test
+    @DisplayName("깨져 들어간 한글을 전부 찾아 원래 값을 되살린다")
+    void detectsDoubleEncodedKorean() {
+        /* 운영 DB 에서 실제로 나온 값. 눈에 안 보이는 글자(NBSP·C1)가 섞여 있어
+           소스에 붙여 넣지 않고 같은 규칙으로 만들어 쓴다. */
+        for (String name : List.of("잔잔한", "벅찬", "몽환적인", "신나는",
+                                   "집중되는", "감성적인", "강렬한", "설레는")) {
+            assertThat(BootstrapRunner.recoverDoubleEncoded(garble(name)))
+                .as(name).isEqualTo(name);
+        }
+    }
+
+    @Test
+    @DisplayName("멀쩡한 이름은 깨진 것으로 보지 않는다")
+    void leavesHealthyNamesAlone() {
+        for (String name : List.of("잔잔한", "몽환적인", "집중되는", "감성적인",
+                                   "R&B", "Hip-hop", "Electronic", "Jazz")) {
+            assertThat(BootstrapRunner.recoverDoubleEncoded(name)).as(name).isNull();
+        }
+        assertThat(BootstrapRunner.recoverDoubleEncoded(null)).isNull();
+        assertThat(BootstrapRunner.recoverDoubleEncoded("  ")).isNull();
+    }
+
+    @Test
+    @DisplayName("시드 목록 자체에는 깨진 이름이 없다")
+    void seedsAreNotGarbled() {
+        BootstrapRunner.CODE_SEEDS.forEach(seed ->
+            assertThat(BootstrapRunner.recoverDoubleEncoded(seed.name())).as(seed.name()).isNull());
+        BootstrapRunner.MUBTI_SEEDS.forEach(seed -> {
+            assertThat(BootstrapRunner.recoverDoubleEncoded(seed.title())).as(seed.title()).isNull();
+            assertThat(BootstrapRunner.recoverDoubleEncoded(seed.subtitle())).as(seed.subtitle()).isNull();
+        });
+    }
+
+    /**
+     * 시드 SQL 을 {@code --default-character-set=utf8mb4} 없이 부었을 때 일어나는 일.
+     *
+     * <p>UTF-8 바이트를 MySQL {@code latin1}(= cp1252 + 정의 없는 다섯 칸은 그대로)
+     * 로 읽는다. 오류가 나지 않아 조용히 들어간다.
+     */
+    private static String garble(String korean) {
+        byte[] utf8 = korean.getBytes(StandardCharsets.UTF_8);
+        Charset cp1252 = Charset.forName("windows-1252");
+        StringBuilder out = new StringBuilder(utf8.length);
+        for (byte b : utf8) {
+            String decoded = new String(new byte[] {b}, cp1252);
+            out.append(decoded.length() == 1 && decoded.charAt(0) != '�'
+                ? decoded.charAt(0)
+                : (char) (b & 0xFF));
+        }
+        return out.toString();
+    }
 }

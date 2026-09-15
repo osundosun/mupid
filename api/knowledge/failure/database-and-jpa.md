@@ -49,7 +49,33 @@
 - **원인**: `docker exec -i ... mysql ... < seed-*.sql` 이 `--default-character-set` 없이 돌면 클라이언트가 파일의 UTF-8 바이트를 **latin1 로 읽어 다시 인코딩**한다. `보컬 소개팅형` 이 `ë³´ì»¬ ì†Œê°œíŒ…í˜•` 로 들어간다. **오류가 나지 않는다** — 행 수도 맞고 SQL 도 성공한다.
 - **증상**: `SELECT CHAR_LENGTH(title)` 이 눈에 보이는 글자 수보다 훨씬 크다(7 글자가 19). `HEX(LEFT(title,1))` 가 `C3AB`(= `Ã«`) 처럼 나오면 그렇게 들어간 것이다. 정상이면 한글 한 글자가 `EBB3B4` 같은 3바이트다.
 - **해결**: `mysql` 에 `--default-character-set=utf8mb4` 를 붙인다. 이미 들어간 행은 고칠 수 없으므로 지우고 다시 넣는다. `seed-codes.sql` · `seed-mubti.sql` 머리말에 이 플래그가 붙은 명령을 적어 두었다.
-- **근거**: `api/knowledge/domain/seed-mubti.sql`, `api/knowledge/domain/seed-codes.sql`
+- **기동 때 잡는다**: `BootstrapRunner` 가 `codes` 를 읽을 때 이렇게 들어간 행을 찾아
+  경고로 남긴다(`recoverDoubleEncoded`). 판정은 되돌려 보는 것이다 — 한 글자씩 바이트
+  하나로 되돌릴 수 있고, 그 바이트열이 온전한 UTF-8 이며, 되살린 값에 한글이 있으면
+  그렇다. **순수 cp1252 로는 절반만 잡힌다** — `0x81`·`0x8D`·`0x8F`·`0x90`·`0x9D`
+  다섯 칸은 cp1252 에 정의가 없는데 MySQL `latin1` 은 그대로 흘려보낸다. `몽환적인` 의
+  UTF-8 에 `0x81` 이 들어 있다.
+- **배치는 고치지 못한다**: `BootstrapRunner` 는 (용도, 이름) 으로 대조하므로 깨진 행을
+  "없는 코드" 가 아니라 **다른 코드**로 본다. 제대로 된 이름이 따로 들어오면 두 벌이
+  공존하고 온보딩 화면에 선택지가 두 배로 뜬다. 2026-09-15 운영 DB 가 그 상태였다
+  (무드 16개 중 8개가 깨진 중복).
+- **지울 때**: `code_id` 를 `onboarding_survey` 가 참조한다. 참조부터 확인한다.
+
+  ```sql
+  -- 1) 깨진 행 확인 (한글 한 글자가 EBB3B4 같은 3바이트면 정상)
+  SELECT code_id, code_type, code_name, HEX(code_name), CHAR_LENGTH(code_name)
+    FROM codes WHERE code_type = 'MOOD';
+
+  -- 2) 그 행을 참조하는 응답이 있는가
+  SELECT s.mood_code_id, COUNT(*) FROM onboarding_survey s
+    JOIN codes c ON c.code_id = s.mood_code_id
+   WHERE c.code_name NOT REGEXP '^[가-힣 ]+$' GROUP BY s.mood_code_id;
+
+  -- 3) 참조가 없을 때만
+  DELETE FROM codes WHERE code_type = 'MOOD' AND code_name NOT REGEXP '^[가-힣 ]+$';
+  ```
+- **근거**: `api/knowledge/domain/seed-mubti.sql`, `api/knowledge/domain/seed-codes.sql`,
+  `api/src/main/java/com/osundosun/mupid/api/bootstrap/BootstrapRunner.java`
 
 ### `DATETIME` 컬럼에 "그날의 마지막 순간" 을 넣으면 다음 날이 된다
 
