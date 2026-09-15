@@ -88,6 +88,25 @@ const PRE_ROLL_FRAMES = 24;
 /** 꼬리를 들고 있을 청크 수. 받는 순서가 조금 뒤섞여도 프리롤이 남아 있게 한다. */
 const TAIL_KEEP = 4;
 /**
+ * 청크를 못 받았을 때 다시 받기까지 기다리는 시간. 시도할수록 늘린다.
+ *
+ * 곧바로 다시 부르면 안 된다 — `receive` 실패가 `drain` → `fill` → `receive`
+ * 를 다시 부르는 구조라, 서버가 잠깐 흔들리는 동안 같은 청크를 쉬지 않고
+ * 두드리며 스스로 회복을 방해한다 (실측: 1초에 17번).
+ */
+const RETRY_BASE_MS = 400;
+const RETRY_MAX_MS = 4000;
+/**
+ * 연속 실패가 이만큼 쌓이면 화면에 사정을 알린다. **재시도는 멈추지 않는다.**
+ *
+ * 네트워크 실패로 재생을 `error` 로 끝내면 안 된다 — `fail()` 은 티커를 멈추고
+ * status 를 'error' 로 바꾸는데, 그러면 `pump` 도 `drain` 의 복구 조건도 다시는
+ * 성립하지 않아 **회선이 돌아와도 그 곡은 영영 재개되지 않는다.** 실측으로
+ * 확인했다: nginx 를 36초 멈췄다 되살렸더니 이후 70초 동안 예약이 0건이었다.
+ */
+const RETRY_NOTICE = 6;
+
+/**
  * 프리롤이 될 앞 청크를 기다려 주는 한도.
  *
  * 같이 요청한 둘이라 보통은 엇비슷하게 도착한다. 한쪽 응답만 매달리는 일은
@@ -122,6 +141,10 @@ type TrackSource = {
    * 붙기 때문이다. 자세한 이야기는 `drain` 에 있다.
    */
   pending: Map<number, { frames: Uint8Array[]; since: number }>;
+  /** 연속으로 못 받은 횟수. 하나라도 성공하면 0 으로 돌아간다. */
+  failures: number;
+  /** 이 시각(Date.now 기준) 전에는 다시 받지 않는다. 실패 뒤 물러서기. */
+  retryAfter: number;
   /**
    * 프리롤을 얻으려고 받아 본 청크. 재생에 꼭 필요한 청크가 아니라서
    * **한 번만 시도한다** — 실패한 것을 계속 다시 받으면, 소리는 멀쩡히
@@ -699,6 +722,8 @@ export class PlayerEngine {
       frameTails: new Map(),
       pending: new Map(),
       tailTried: new Set(),
+      failures: 0,
+      retryAfter: 0,
     };
   }
 
@@ -706,6 +731,9 @@ export class PlayerEngine {
   private async fill() {
     const source = this.source;
     if (!source) return;
+    // 방금 실패했으면 잠깐 쉰다. 이 문을 두지 않으면 실패가 곧바로 다음
+    // 요청을 부르고, 그 실패가 또 부른다.
+    if (Date.now() < source.retryAfter) return;
     const from = Math.max(0, this.indexAt(this.currentPosition()));
     const untilSec = this.currentPosition() + SCHEDULE_AHEAD_SEC * 2;
 
@@ -747,6 +775,10 @@ export class PlayerEngine {
         this.abort?.signal,
       );
       if (this.source !== source && !this.preloaded.has(source.musicId)) return;
+      // 하나라도 받았으면 회선이 돌아온 것이다. 물러서기와 안내를 되돌린다.
+      source.failures = 0;
+      source.retryAfter = 0;
+      if (this.store.get().error) this.store.set({ error: null });
       const frames = this.keepFrames(source, index, bytes);
       if (!this.ring.push({ index, frames })) {
         // 링버퍼가 가득 찼다. 이 청크는 잊고 나중에 다시 요청한다.
@@ -760,12 +792,25 @@ export class PlayerEngine {
       // 않게 됐으니 다시 깨워 프리롤 없이라도 풀게 한다.
       void this.drain(source);
       if (isAbort(error)) return;
-      // 한 청크 실패로 곡 전체를 죽이지 않는다. 다음 fill 에서 다시 받는다.
-      if (this.source === source && this.store.get().status === 'buffering') {
-        this.fail(
-          error instanceof Error ? error.message : '음원을 받지 못했어요.',
-        );
+      if (this.source !== source) return;
+
+      // 한 청크 실패로 곡 전체를 죽이지 않는다 — 예전에는 버퍼링 중이면
+      // 곧바로 `fail()` 을 불렀는데, 그러면 status 가 'error' 가 되어 티커가
+      // 멈추고 `pump` 도 `drain` 의 복구 조건도 다시는 성립하지 않았다.
+      // **서버가 3초 만에 돌아와도 그 곡은 영영 재개되지 않았다.**
+      source.failures += 1;
+      const wait = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * source.failures);
+      source.retryAfter = Date.now() + wait;
+      // 오래 이어지면 사정을 알린다. 다만 status 는 그대로 둔다 — 되살아날
+      // 길을 막지 않기 위해서다. 회선이 돌아오면 아래 타이머가 이어받는다.
+      if (source.failures === RETRY_NOTICE) {
+        this.store.set({
+          error: error instanceof Error ? error.message : '음원을 받지 못했어요.',
+        });
       }
+      setTimeout(() => {
+        if (this.source === source) void this.fill();
+      }, wait + 10);
     }
   }
 
