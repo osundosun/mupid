@@ -35,7 +35,9 @@ warnings.filterwarnings("ignore")
 # 모델·색인 경로는 MUPID_AI_ARTIFACT_DIR 하나로 통일한다. 계산은 paths 한 곳에서만 한다
 # — 값은 종전과 같다(미설정 시 ai_server/artifacts).
 ROOT = paths.artifact_root()
-SRC = ROOT / "src"
+# 라벨러는 **코드와 함께** 배포된다(app/legacy). 산출물 디렉터리에는 없다 — 예전 데모의
+# <저장소>/src 배치를 그대로 들고 오면 subprocess 가 조용히 실패한다.
+LEGACY = Path(__file__).resolve().parent / "legacy"
 OUT_DIR = ROOT / "data" / "proc" / "mupid"
 SERVE = OUT_DIR / "serve"
 EVENTS = OUT_DIR / "logs" / "events_service.jsonl"
@@ -505,7 +507,7 @@ def run_labeler() -> dict:
         return {"ok": False, "reason": "이벤트 로그가 없다"}
     src_events = normalized_events()
     r = subprocess.run(
-        [sys.executable, str(SRC / "m09_labels.py"), "--events", str(src_events),
+        [sys.executable, str(LEGACY / "m09_labels.py"), "--events", str(src_events),
          "--out", str(LABELS), "--pool", "service"],
         capture_output=True, text=True, cwd=ROOT)
     return {"ok": r.returncode == 0 and LABELS.exists(),
@@ -591,6 +593,51 @@ def user_event_state(user: str) -> dict:
             last_id = str(e.get("event_id") or last_id)
             last_at = str(e.get("occurred_at") or last_at)
     return {"n_events": n, "last_event_id": last_id, "last_occurred_at": last_at}
+
+
+def learn(req: "LearnReq") -> dict:
+    """라벨을 다시 만들고 사용자별 선호 구간을 `prefs.parquet` 으로 굳힌다.
+
+    데모의 `POST /learn` 본문을 그대로 옮긴 것이다. 이식 때 라우트만 걷어 내면서 함수까지
+    빠져 `learn_incremental()` 이 NameError 로 죽어 있었다. 이 저장소에는 라우트가 없으므로
+    HTTP 예외 대신 평범한 예외를 던진다 — 배치에서 불릴 수도 있다.
+    """
+    r = run_labeler()
+    if not r["ok"]:
+        raise RuntimeError(f"라벨 생성 실패: {r.get('reason') or r.get('stderr', '')[-300:]}")
+    lab = pd.read_parquet(LABELS)
+    c = CAT
+    minfo = c.mom.set_index("moment_id")
+    rows = []
+    users = [req.user_ref] if req.user_ref else sorted(lab.user_ref.unique())
+    for u in users:
+        C, W, meta = build_dna(u)
+        p = lab[(lab.user_ref == u) & (lab.grade == "L1")]
+        for r_ in p.itertuples():
+            if r_.section_key not in minfo.index:
+                continue
+            mi = minfo.loc[r_.section_key]
+            rows.append({
+                "user_ref": u, "moment_id": r_.section_key, "track_id": r_.track_id,
+                "title": c.track_info(r_.track_id)["title"],
+                "section_label": mi.section_label,
+                "start_sec": round(float(mi.start_sec), 2),
+                "end_sec": round(float(mi.end_sec), 2),
+                "grade": r_.grade, "evidence": r_.evidence,
+                "is_merged": bool(r_.is_merged),
+                "dna_clusters": len(C), "created_at": now_iso(),
+                "source": "auto",
+            })
+    SERVE.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame(rows)
+    if PREFS.exists() and len(df):
+        old = pd.read_parquet(PREFS)
+        old = old[~old.user_ref.isin(df.user_ref.unique())]
+        df = pd.concat([old, df], ignore_index=True)
+    if len(df):
+        df.to_parquet(PREFS, index=False)
+    return {"ok": True, "users": users, "labels": int(len(lab)),
+            "preferences_saved": int(len(rows)), "path": str(PREFS)}
 
 
 def learn_incremental(user: str, force: bool = False) -> dict:

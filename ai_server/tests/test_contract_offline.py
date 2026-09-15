@@ -482,3 +482,49 @@ def test_section_enum_matches_spring(mapped):
     names = set(re.findall(r"^\s{4}([A-Z_]+)\(", java.read_text(encoding="utf-8"),
                            flags=re.M))
     assert names == set(internal_api._SECTION_ENUM), names ^ set(internal_api._SECTION_ENUM)
+
+
+# ------------------------------------------------------------------ 이름 해석
+def _unresolved_globals(module) -> list[str]:
+    """함수가 참조하는 전역 이름 중 어디에도 없는 것. 호출해야만 터지는 NameError 를
+    호출하지 않고 찾아낸다 — `learn_incremental()` 이 실제로 그 상태였다."""
+    import builtins
+    import symtable
+
+    src = Path(module.__file__).read_text(encoding="utf-8")
+    known = set(vars(module)) | set(dir(builtins))
+    bad: list[str] = []
+
+    def walk(table, path: str):
+        for child in table.get_children():
+            here = f"{path}.{child.get_name()}"
+            if child.get_type() == "function":
+                for sym in child.get_symbols():
+                    if sym.is_global() and not sym.is_assigned() \
+                            and sym.get_name() not in known:
+                        bad.append(f"{here}: {sym.get_name()}")
+            walk(child, here)
+
+    walk(symtable.symtable(src, module.__file__, "exec"), Path(module.__file__).stem)
+    return bad
+
+
+@pytest.mark.parametrize("name", ["recommender", "internal_api", "ids", "main", "paths"])
+def test_every_referenced_global_exists(name):
+    import importlib
+
+    mod = importlib.import_module(f"ai_server.app.{name}")
+    assert _unresolved_globals(mod) == []
+
+
+def test_labeler_script_ships_with_the_code(clean_env):
+    """라벨러는 산출물이 아니라 코드와 함께 온다. 경로가 틀리면 subprocess 가 조용히 실패한다."""
+    from ai_server.app import recommender
+
+    assert (recommender.LEGACY / "m09_labels.py").exists()
+
+
+def test_learn_is_callable():
+    from ai_server.app import recommender
+
+    assert callable(recommender.learn)
