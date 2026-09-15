@@ -41,7 +41,8 @@ image/     web.Dockerfile   프론트엔드를 구운 엣지 nginx 이미지
            ai.Dockerfile    ai_server 이미지 (이번 전환 범위 밖)
 base/      네임스페이스·ConfigMap·워크로드 + nginx/default.conf
            clickhouse/      api/clickhouse 의 사본 + k8s 용 keeper_config.xml
-deploy/    ssh-entrypoint-k8s.sh  receive-k8s.py  rbac.yaml
+deploy/    ssh-entrypoint-k8s.sh  receive-k8s.py  rbac.yaml  apply.sh
+           schema-dump.sh  schema-check.py   DB 가 코드와 맞는지 대조
 ci/        k8s-release.yml  package-web.sh  deploy-k8s.sh
 overlays/  cutover(80·443)             기존 배포를 걷어낸 뒤 적용한다
 tests/     test_manifests.py            클러스터 없이 도는 정적 검사
