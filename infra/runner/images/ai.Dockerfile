@@ -25,7 +25,13 @@ RUN apt-get update \
 # 이미지가 어떤 requirements 로 구워졌는지 남긴다. job 이 이것과 저장소의
 # 파일을 대조해서, 의존성이 바뀌었는데 이미지를 다시 굽지 않았으면 **낡은
 # 환경으로 조용히 통과하는 대신 크게 실패**한다.
-COPY requirements.txt /opt/mupid/requirements.txt
-RUN python -m pip install --quiet --upgrade pip \
+COPY requirements.txt /tmp/requirements.txt
+# 줄바꿈을 LF 로 맞춘다. 윈도우 체크아웃에서 구우면 CRLF 가 들어오는데 CI
+# 체크아웃은 LF 라, 내용이 같아도 대조가 틀어진다. 실제로 처음 굽고 그렇게
+# 실패했다 — 가드가 잡아 준 것이고, 가드는 인코딩이 아니라 내용을 봐야 한다.
+RUN mkdir -p /opt/mupid \
+ && tr -d '\r' < /tmp/requirements.txt > /opt/mupid/requirements.txt \
+ && rm /tmp/requirements.txt \
+ && python -m pip install --quiet --upgrade pip \
  && python -m pip install --quiet -r /opt/mupid/requirements.txt pytest httpx \
  && python -m pip check

@@ -1040,7 +1040,11 @@ class PrebuiltJobImageTest(unittest.TestCase):
         self.assertIn("exit 1", guard)
         # 이미지가 그 사본을 실제로 넣어 두어야 대조가 성립한다.
         dockerfile = (self.RUNNER / "images" / "ai.Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("COPY requirements.txt /opt/mupid/requirements.txt", dockerfile)
+        self.assertIn("/opt/mupid/requirements.txt", dockerfile)
+        # 양쪽 다 줄바꿈을 걷어내야 한다. 윈도우 체크아웃에서 구운 이미지는
+        # CRLF 를, CI 체크아웃은 LF 를 들고 있어 내용이 같아도 어긋난다.
+        self.assertIn(r"tr -d '\r'", dockerfile)
+        self.assertIn(r"tr -d '\r'", guard)
 
     def test_the_ai_image_carries_git(self):
         """test_env_files_are_ignored 가 git check-ignore 를 부른다. git 이 없으면
