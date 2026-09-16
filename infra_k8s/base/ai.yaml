@@ -85,6 +85,10 @@ spec:
           env:
             - {name: MUPID_AI_PORT, value: '8100'}
             - {name: MUPID_AI_ARTIFACT_DIR, value: /artifacts/current}
+            # 배치가 쓰는 자리. 서빙도 여기서 선호 구간·온보딩 씨앗을 읽으므로
+            # **배치와 같은 곳**을 봐야 한다 — 갈리면 배치는 도는데 화면에는
+            # 아무것도 안 나오는, 오류 없는 고장이 된다.
+            - {name: MUPID_AI_STATE_DIR, value: /state}
             # 행동 데이터를 요청마다 직접 읽는다 — 배치로 파일에 옮겨 담지
             # 않는다 (app/clickhouse.py 의 설명). 라벨도 여기로 옮긴다.
             - {name: MUPID_CLICKHOUSE_URL, value: 'http://clickhouse:8123'}
@@ -111,6 +115,8 @@ spec:
             # 읽기 전용이다. 이 파드는 색인을 만들지 않는다 — 배치가 만들고
             # CI 가 올린다. 쓸 수 있게 두면 파드가 노드 디스크를 고칠 수 있다.
             - {name: artifacts, mountPath: /artifacts, readOnly: true}
+            # 상태는 읽기 전용이 아니다. `learn` 이 선호 구간을 여기 쓴다.
+            - {name: state, mountPath: /state}
           resources:
             # 임베딩은 mmap 으로 읽는다(np.load mmap_mode="r") — 파일이 61MB 라도
             # 만진 페이지만 올라온다. 인계 문서 실측은 산출물 없이 유휴 80MB 였다.
@@ -136,3 +142,8 @@ spec:
       volumes:
         - name: artifacts
           hostPath: {path: /srv/mupid-k8s/ai-artifacts, type: DirectoryOrCreate}
+        # 색인과 **다른 자리**다. 색인은 판마다 새 디렉터리로 올라오고 current
+        # 링크가 갈아 끼워지는데, 상태를 거기 두면 판을 교체할 때마다 워터마크가
+        # 사라져 신호를 처음부터 다시 당긴다.
+        - name: state
+          hostPath: {path: /srv/mupid-k8s/ai-state, type: DirectoryOrCreate}
