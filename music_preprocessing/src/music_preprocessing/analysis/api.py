@@ -1,16 +1,22 @@
 """운영 입력·출력 — Spring 내부 API 클라이언트.
 
+    요구 1   PUT   /api/v1/music/{id}/section              구간 적재 + 숫자 ID 회수
     요구 5   GET   /internal/music/pending-analysis        무엇을 분석할까
     요구 6   PATCH /internal/music/{id}/analysis-status    PROCESSING · FAILED
-    요구 1   PUT   /internal/music/{id}/section            구간 적재 + 숫자 ID 회수
 
-계약은 `api/docs/AI/` 에 있다. **셋 다 아직 Spring 에 없다** — 여기 있는 것은 그 계약을
-그대로 부르는 클라이언트이고, 서버가 없으면 배치는 **교체를 보류**하고 끝난다.
-가짜로 성공 처리하지 않는다.
+계약은 `api/docs/AI/` 에 있다. **요구 1 은 2026-09-16 에 구현됐고, 나머지 둘은 아직
+없다.** 서버가 없으면 배치는 **교체를 보류**하고 끝난다. 가짜로 성공 처리하지 않는다.
+
+## 인증이 둘이다
+
+요구 1 은 확정된 계약대로 **일반 경로 + `Authorization: Bearer`** 다. 토큰은 저장소의
+`MupidClient` 가 리프레시 토큰으로 그때그때 받아 쓰고 회전까지 맡는다 — 여기서 다시
+만들지 않는다. 요구 5·6 은 아직 제안 단계라 `/internal/*` + `X-Internal-Token` 으로
+적어 두었다. **BE 확정이 나면 이쪽도 요구 1 과 같은 형태가 될 가능성이 높다.**
 
 ## 의존성을 늘리지 않는다
 
-`urllib` 만 쓴다. 저장소의 `api_client.py` 와 같은 방침이다.
+요구 5·6 은 `urllib` 만 쓴다. 저장소의 `api_client.py` 와 같은 방침이다.
 
 ## 곡 ID
 
@@ -158,17 +164,6 @@ class InternalApi:
         return self.call("PATCH",
                          f"/api/v1/internal/music/{music_id}/analysis-status", body=body)
 
-    # ------------------------------------------------------------- 요구 1
-
-    def put_sections(self, music_id, sections: list[dict], audio_sha256: str, *,
-                     allow_section_change: bool = False) -> dict:
-        body = {"analysis_version": self.analysis_version,
-                "audio_sha256": audio_sha256, "sections": sections}
-        return self.call("PUT", f"/api/v1/internal/music/{music_id}/section",
-                         params={"allow_section_change":
-                                 "true" if allow_section_change else "false"},
-                         body=body)
-
     # ------------------------------------------------------------- 음원
 
     def download(self, url: str, dst: Path, sha256: str) -> str:
@@ -310,19 +305,22 @@ class HttpRegistrar:
     받은 `music_section_analysis_id` 를 **staging 판 안의** `id_map.parquet` 에 쓴다.
     새 판에는 교체 전 시점의 낡은 매핑표가 복사돼 있어서, 여기서 갱신하지 않으면
     확인 단계가 반드시 막힌다 — 그리고 그게 맞다. 한 곡이라도 미매핑이면 교체하지 않는다.
+
+    호출은 `MupidClient.replace_sections` 가 한다. 확정된 계약은 곡 단위 통째 교체라
+    중복 방지 인자가 없다 — 같은 음원을 다시 분석하지 않는 일은 배치가 SHA-256 으로
+    앞단에서 끝낸다.
     """
 
-    api: InternalApi
-    sha: dict = field(default_factory=dict)
-    allow_section_change: bool = False
+    client: object                               # MupidClient
+    analysis_version: str = "v1"
     registered: list = field(default_factory=list)
     errors: list = field(default_factory=list)
 
     def available(self) -> tuple[bool, str]:
-        if not self.api.base_url:
-            return False, "API 주소가 없다 (요구 1·5·6 미설정)"
-        if not self.api.token:
-            return False, "내부 토큰이 없다"
+        if self.client is None:
+            return False, "API 클라이언트가 없다 (요구 1 미설정)"
+        if not getattr(self.client, "base_url", ""):
+            return False, "API 주소가 없다 (api_base_url)"
         return True, ""
 
     def register(self, tracks: Sequence, new_dir: Path) -> dict:
@@ -330,15 +328,15 @@ class HttpRegistrar:
         for t in tracks:
             mid = str(t.track_id)
             payload = sections_payload(t)
-            d = self.api.put_sections(mid, payload, self.sha.get(mid, ""),
-                                      allow_section_change=self.allow_section_change)
-            for s in d.get("sections") or []:
+            d = self.client.replace_sections(int(mid), payload, self.analysis_version)
+            got = d.get("sections") or []
+            for s in got:
                 rows.append({"source_track_id": mid,
                              "music_id": int(d.get("music_id") or mid),
                              "source_section_uid": _uid_to_moment(str(s["external_id"])),
                              "music_section_id": int(s["music_section_analysis_id"])})
             self.registered.append({"track_id": mid,
-                                    "sections": int(d.get("section_count") or 0)})
+                                    "sections": int(d.get("replaced") or len(got))})
         n = merge_id_map(Path(new_dir), rows)
         return {"tracks": len(self.registered), "sections": len(rows), "id_map_rows": n}
 

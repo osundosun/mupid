@@ -35,6 +35,7 @@ from ai_server.app import paths                                      # noqa: E40
 bt = pytest.importorskip("music_preprocessing.analysis.batch",
                          reason="analysis 선택 의존성이 없다")
 ap = pytest.importorskip("music_preprocessing.analysis.api")
+mc = pytest.importorskip("music_preprocessing.api_client")
 sg = pytest.importorskip("music_preprocessing.analysis.segmenter")
 ix = pytest.importorskip("music_preprocessing.analysis.indexer")
 pl = pytest.importorskip("music_preprocessing.analysis.pipeline")
@@ -48,6 +49,8 @@ MISSING = [n for n in NEEDED if not (D / n).exists()]
 pytestmark = pytest.mark.skipif(bool(MISSING), reason=f"산출물이 없다: {MISSING}")
 
 TOKEN = "test-internal-token"
+REFRESH = "test-refresh-token"
+ACCESS = "test-access-token"
 BASE_SHA = ix.sha256(D / "features_v1.npz") if not MISSING else ""
 
 
@@ -104,6 +107,14 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _bearer(self) -> bool:
+        """요구 1 은 확정 계약대로 사용자 인증을 쓴다 — 내부 토큰이 아니다."""
+        if self.headers.get("Authorization") == f"Bearer {ACCESS}":
+            return True
+        self._json(403, {"errorCode": "MUPID_FORBIDDEN",
+                         "message": "접근 권한이 없습니다.", "errorDetails": None})
+        return False
+
     def _auth(self) -> bool:
         if self.headers.get("X-Internal-Token") == TOKEN:
             return True
@@ -119,6 +130,15 @@ class _Handler(BaseHTTPRequestHandler):
     # ---- 요구 5 · 음원
     def do_GET(self):
         s = self.server
+        if self.path == "/api/v1/auth":
+            # 리프레시 토큰 → 액세스 토큰. `MupidClient` 가 호출 직전에 받아 간다.
+            if f"refresh_token={REFRESH}" not in (self.headers.get("Cookie") or ""):
+                self._json(401, {"errorCode": "MUPID_UNAUTHORIZED",
+                                 "message": "리프레시 토큰이 올바르지 않습니다."})
+                return
+            s.calls.append(("GET", "auth", "", ""))
+            self._json(200, {"message": None, "data": {"access_token": ACCESS}})
+            return
         if self.path.startswith("/audio/"):
             mid = self.path.rsplit("/", 1)[-1]
             blob = s.audio.get(mid)
@@ -167,7 +187,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ---- 요구 1
     def do_PUT(self):
-        if not self._auth():
+        if not self._bearer():
             return
         s, b = self.server, self._body()
         mid = self.path.split("/music/")[1].split("/")[0]
@@ -184,8 +204,13 @@ class _Handler(BaseHTTPRequestHandler):
             s.next_section_id += 1
         self._json(200, {"message": None, "data": {
             "music_id": int(mid), "analysis_version": b.get("analysis_version"),
-            "section_count": len(out), "created": len(out), "updated": 0,
-            "sections": out, "removed_section_ids": []}})
+            "replaced": len(out), "sections": out}})
+
+
+def mupid(spring):
+    """요구 1 클라이언트. 리프레시 토큰은 파일에 저장하지 않는다(`token_file=None`)."""
+    return mc.MupidClient(base_url=spring.url, refresh_token=REFRESH,
+                          token_file=None, max_retries=2)
 
 
 @pytest.fixture(scope="module")
@@ -372,7 +397,7 @@ def test_one_track_goes_all_the_way(spring, sandbox, tmp_path):
 
     sha = {"9501": pend[0]["audio_sha256"]}
     reporter = ap.StatusReporter(api=api, sha=sha)
-    reg = ap.HttpRegistrar(api=api, sha=sha)
+    reg = ap.HttpRegistrar(client=mupid(spring))
 
     s = bt.run(tracks, data, state_path=tmp_path / "state.json",
                summary_path=tmp_path / "sum.jsonl", registrar=reg,
@@ -388,6 +413,9 @@ def test_one_track_goes_all_the_way(spring, sandbox, tmp_path):
     # 요구 1 — 구간 수만큼 실렸다
     put = spring.kinds("section")
     assert len(put) == 1 and put[0][3] == len(seed.sections)
+    # 요구 1 은 내부 토큰이 아니라 사용자 인증이다. 액세스 토큰을 받아 갔어야 한다
+    # (안 받았으면 가짜 서버가 403 을 냈을 것이고, 위에서 이미 터졌다).
+    assert spring.kinds("auth"), "액세스 토큰을 받지 않고 요구 1 을 불렀다"
     # 순서: PROCESSING 이 PUT 보다 먼저다
     order = [c[1] for c in spring.calls if c[1] in ("status", "section")]
     assert order == ["status", "section"], order
@@ -425,7 +453,7 @@ def test_second_run_skips_by_sha256(spring, sandbox, tmp_path):
         write_sections(seed, float(seed.track_dur_sec), tr.sections_json)
         sha = {"9502": t["audio_sha256"]}
         return bt.run([tr], data, state_path=state, summary_path=tmp_path / "s.jsonl",
-                      registrar=ap.HttpRegistrar(api=api, sha=sha),
+                      registrar=ap.HttpRegistrar(client=mupid(spring)),
                       status=ap.StatusReporter(api=api, sha=sha),
                       analyze=fake_analyze({"9502": seed}))
 
@@ -456,7 +484,7 @@ def test_registration_failure_blocks_the_swap(spring, sandbox, tmp_path):
 
     s = bt.run([tr], data, state_path=tmp_path / "state3.json",
                summary_path=tmp_path / "s.jsonl",
-               registrar=ap.HttpRegistrar(api=api, sha=sha),
+               registrar=ap.HttpRegistrar(client=mupid(spring)),
                status=ap.StatusReporter(api=api, sha=sha),
                analyze=fake_analyze({"9503": seed}))
 
@@ -488,7 +516,7 @@ def test_analysis_failure_reports_failed(spring, sandbox, tmp_path):
 
     s = bt.run([tr], data, state_path=tmp_path / "state4.json",
                summary_path=tmp_path / "s.jsonl",
-               registrar=ap.HttpRegistrar(api=api, sha=sha),
+               registrar=ap.HttpRegistrar(client=mupid(spring)),
                status=ap.StatusReporter(api=api, sha=sha),
                analyze=fake_analyze({"9504": seed}))
 

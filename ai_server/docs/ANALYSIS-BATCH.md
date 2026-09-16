@@ -178,8 +178,8 @@ stage    sections · embed · features · section_vecs · done
 전량** 있어야 한다. 절반만 매핑된 채 교체하면 그 곡이 뽑힐 때마다 404 다.
 
 > 등록기(`Registrar`)는 **주입한다.** 기본값 `UnavailableRegistrar` 는 아무것도 하지 않고
-> 보류로 끝낸다 — `요구 1` 이 아직 없고, 숫자 ID 를 지어내면 실제 DB 와 어긋난 순간
-> 엉뚱한 곡을 추천한다. 배치 자체는 MySQL·ClickHouse 에 붙는 길이 없다.
+> 보류로 끝낸다 — 설정이 없으면 숫자 ID 를 받을 곳이 없고, 지어내면 실제 DB 와 어긋난
+> 순간 엉뚱한 곡을 추천한다. 배치 자체는 MySQL·ClickHouse 에 붙는 길이 없다.
 
 ### 종료 코드
 
@@ -383,22 +383,32 @@ python 3.14.3   numpy 2.5.3 · scipy 1.18.1 · pandas 3.0.5 · pyarrow 25.0.1 ·
 ### 7.2 운영 입력·출력 (`analysis/api.py`)
 
 ```
+요구 1  PUT   /api/v1/music/{id}/section            구간 적재 + 숫자 ID 회수     [구현됨]
 요구 5  GET   /internal/music/pending-analysis      무엇을 분석할까 (limit·cursor 전량 순회)
 요구 6  PATCH /internal/music/{id}/analysis-status  PROCESSING · FAILED
-요구 1  PUT   /internal/music/{id}/section          구간 적재 + 숫자 ID 회수
 ```
 
-**셋 다 아직 Spring 에 없다.** 계약대로 부르는 클라이언트만 있고, 서버가 없으면 배치는
-**교체를 보류**하고 끝난다(`exit 20`). 가짜로 성공 처리하지 않는다. 의존성은 늘리지
-않았다 — `urllib` 만 쓴다(`api_client.py` 와 같은 방침).
+**요구 1 은 2026-09-16 에 구현됐다.** 제안과 달라진 것이 둘이다 — 경로가 `/internal/*`
+이 아니고, 인증이 내부 토큰이 아니라 **ROLE_SYSTEM 계정의 `Authorization: Bearer`** 다.
+그래서 이 호출만 저장소의 `MupidClient.replace_sections()` 를 쓴다. 리프레시 토큰으로
+액세스 토큰을 그때그때 받고 회전까지 그쪽이 맡는다 — 토큰 다루는 곳을 둘로 늘리면
+회전된 값이 갈린다.
+
+확정 계약에는 `audio_sha256` 도 `allow_section_change` 도 **없다.** 곡 단위 통째 교체가
+기본이고, 같은 음원을 다시 분석하지 않는 일은 배치가 SHA-256 으로 앞단에서 끝낸다.
+
+**요구 5·6 은 아직 Spring 에 없다.** 제안 형태(`/internal/*` + `X-Internal-Token`)로
+적어 두었고 `urllib` 만 쓴다. 요구 1 이 일반 경로로 확정된 것을 보면 **이 둘도 같은
+형태로 바뀔 가능성이 높다** — BE 확정이 나면 맞춘다. 서버가 없으면 배치는 **교체를
+보류**하고 끝난다(`exit 20`). 가짜로 성공 처리하지 않는다.
 
 | | 규칙 |
 |---|---|
 | 음원 | `audio_download_url` 로 받고 **`audio_sha256` 를 검증**한다. 어긋나면 파일을 지우고 그 곡만 실패 |
 | 임시 음원 | 곡 처리 뒤 지운다(`temp_audio`). 1,000곡이면 수 GB 가 남는다 |
-| 재시도 | **`500`·`503`·timeout 에만 1회.** `400`·`401`·`404`·`409` 는 다시 불러도 같다 |
+| 재시도 | **`500`·`503`·timeout 에만.** `400`·`401`·`403`·`404`·`409` 는 다시 불러도 같다. 요구 5·6 은 1회, 요구 1 은 `MupidClient` 의 정책을 따른다 |
 | 상태 | 분석 **전에** `PROCESSING`, 실패 시 `FAILED` + 짧은 코드. **`DONE` 은 보내지 않는다** — 요구 1 의 적재 성공이 그 자리를 맡는다 |
-| 비밀 | 내부 토큰과 다운로드 URL 을 로그·예외 메시지에 싣지 않는다. 토큰은 **파일로만** 받는다 |
+| 비밀 | 토큰과 다운로드 URL 을 로그·예외 메시지에 싣지 않는다. 토큰은 **파일로만** 받는다 — 요구 1 은 `api_refresh_token_file`, 요구 5·6 은 `analysis_internal_token_file` |
 
 **곡 ID 는 `music_id` 문자열이다.** 구간은 `<music_id>#<index>` 이고 `external_id` 와
 `moment_id` 가 같은 모양이다. 그래서 색인에는 `JAMENDO_1083659` 같은 기존 ID 와 `1001`
@@ -595,14 +605,18 @@ CPU 로 판정하려 했으나 그 전제가 성립하지 않는다는 것이 �
 
 ## 10. 외부 의존 — **Spring 에 남은 요청**
 
-클라이언트는 다 붙였다(`analysis/api.py`, §7.2). **세 API 가 Spring 에 없어서** 운영에서
-돌지 않는다. 그동안 배치는 새 판을 만들어 두고 `exit 20`(교체 보류)으로 끝난다.
+클라이언트는 다 붙였다(`analysis/api.py`, §7.2). **요구 1 은 구현됐고 둘이 남았다.**
+그동안 배치는 새 판을 만들어 두고 `exit 20`(교체 보류)으로 끝난다.
 
 | 계약 | 하는 일 | 없으면 |
 |---|---|---|
+| `요구 1 · 구간 분석 결과 적재` | **구현됨 (2026-09-16)** — 구간 저장 + `music_section_analysis_id` 반환 | — |
 | `요구 5 · 분석 대상 곡 조회` | 무엇을 분석할지 · 음원 URL · `audio_sha256` | 배치가 새 곡을 알 수 없다. `manifest.json` 으로만 돈다 |
-| `요구 1 · 구간 분석 결과 적재` | 구간 저장 + `music_section_analysis_id` 반환 + `DONE` 전이 | 숫자 ID 를 받을 곳이 없어 **교체가 영영 보류**된다 |
 | `요구 6 · 곡 분석 상태 갱신` | `PROCESSING` · `FAILED` 기록 | 같은 곡을 두 배치가 동시에 집고, 실패 이유가 다음 실행에 남지 않는다 |
+
+**BE 에 물을 것:** 요구 5·6 도 요구 1 처럼 일반 경로 + `Authorization: Bearer` 로 갈
+것인가. 그렇다면 `analysis/api.py` 의 `InternalApi` 를 걷어내고 요구 1 과 같은
+`MupidClient` 하나로 합친다.
 
 **ERD 쪽에서 필요한 것**(AI 가 고치지 않았다 — `infra/AI-API-BLOCKERS.md` 와 함께 본다):
 

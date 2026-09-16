@@ -572,7 +572,28 @@ def _collect(a, cfg):
         # 모으다 깨진 곡도 이유를 남긴다. 다음 배치가 맹목적으로 다시 돌지 않게.
         status.failed(tid, "INGEST_FAILED", why)
     log(f"요구 5 — 대상 {len(tracks)}곡 · 수집 실패 {len(info['failed'])}곡")
-    return tracks, ai.HttpRegistrar(api=client, sha=sha), status
+    return tracks, ai.HttpRegistrar(client=_mupid_client(cfg),
+                                    analysis_version=getattr(cfg, "analysis_version", "v1")), status
+
+
+def _mupid_client(cfg):
+    """요구 1 을 부를 클라이언트.
+
+    요구 1 은 확정된 계약이라 `/internal/*` 이 아니라 일반 경로 + `Authorization:
+    Bearer` 다. 토큰 발급·회전은 저장소가 이미 쓰고 있는 `MupidClient` 에 맡긴다 —
+    리프레시 토큰을 여기서 또 다루면 회전된 값이 두 곳으로 갈린다.
+    """
+    from ..api_client import MupidClient
+
+    f = Path(getattr(cfg, "api_refresh_token_file", "") or "")
+    if not f.exists():
+        raise SystemExit(
+            f"리프레시 토큰 파일이 없다: {f}. 관리자 계정으로 POST /api/v1/user/system 을 "
+            "불러 ROLE_SYSTEM 계정을 만들고 응답의 refresh_token 을 이 파일에 둔다.")
+    token = f.read_text(encoding="utf-8").strip()
+    if not token:
+        raise SystemExit(f"리프레시 토큰 파일이 비어 있다: {f}")
+    return MupidClient(base_url=cfg.api_base_url, refresh_token=token, token_file=f)
 
 
 def _read_token(path: str) -> str:
