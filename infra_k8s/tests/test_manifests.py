@@ -966,6 +966,34 @@ class LabelRoutingTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, block)
 
+    def test_the_login_failure_is_not_read_as_success(self):
+        """JupyterHub 는 틀린 비밀번호에 401 이 아니라 200 + 로그인 폼을 준다.
+        상태 코드만 올려보면 실패한 채로 계속 진행하고, 그 다음 요청들이
+        엉뚱한 곳에서 깨진다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        login = script.split("def _login", 1)[1].split("def ", 1)[0]
+        self.assertIn("allow_redirects=False", login)
+        self.assertIn("(302, 303)", login)
+
+    def test_the_user_server_xsrf_is_picked_by_path(self):
+        """`_xsrf` 쿠키는 허브와 유저 서버 양쪽에서 같은 이름으로 내려온다.
+        허브 것을 보내면 업로드가 403 이다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        self.assertIn('path=f"/user/{self.user}/"', script)
+        # 비-GET 요청에 XSRF 헤더가 붙어야 한다. 토큰 인증이면 필요 없던 것이다.
+        for call in ("put_file", "ensure_directory", "run"):
+            with self.subTest(call=call):
+                body = script.split(f"def {call}", 1)[1].split("\n    def ", 1)[0]
+                self.assertIn("_headers()", body)
+
+    def test_the_password_never_reaches_the_log(self):
+        """CI 변수를 마스킹해도 스크립트가 직접 찍으면 의미가 없다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        for line in script.splitlines():
+            if "print(" in line or "echo" in line:
+                with self.subTest(line=line.strip()[:60]):
+                    self.assertNotIn("password", line.lower())
+
     def test_the_crontab_block_is_marked_off(self):
         """마커가 없으면 배포가 남의 크론 항목까지 덮어쓴다."""
         crontab = (ROOT / "music_preprocessing" / "crontab.sh").read_text(encoding="utf-8")

@@ -4,9 +4,10 @@
 그 서버는 SSH 가 닫혀 있고 80/443 만 열려 있다(확인함). 그래서 다른 배포와
 달리 tar 를 밀어 넣지 못하고 JupyterHub HTTP API 로 간다.
 
-  1. /hub/api/users/<user>/server   유저 서버가 떠 있는지 확인하고 없으면 띄운다
-  2. /user/<user>/api/contents/...  코드 파일을 올린다
-  3. /user/<user>/api/kernels + ws  uv sync 와 crontab 설치를 실행한다
+  1. /hub/login                     아이디·비밀번호로 세션 쿠키를 받는다
+  2. /hub/spawn/<user>              유저 서버를 띄운다 (브라우저와 같은 경로)
+  3. /user/<user>/api/contents/...  코드 파일을 올린다
+  4. /user/<user>/api/kernels + ws  uv sync 와 crontab 설치를 실행한다
 
 **공용 서버다.** 팀의 다른 작업이 같은 홈을 쓴다. 그래서 이 스크립트는
 두 가지를 지킨다.
@@ -19,10 +20,21 @@
 .python-version 도 올리지 않는다. 3.14 로 적혀 있는데 서버 기본 파이썬은 3.12 라
 uv 가 3.14 를 새로 받으려 든다.
 
+**API 토큰을 쓰지 않는다.** 이 허브는 토큰 발급이 불가능해서 사람이 브라우저로
+하는 것과 같은 길로 간다 — `/hub/login` 에 아이디·비밀번호를 POST 하고 세션
+쿠키를 받는다. 그래서 토큰 인증이면 필요 없었을 것이 둘 붙는다.
+
+  - 로그인 실패를 상태 코드로 판별해야 한다. JupyterHub 는 틀린 비밀번호에
+    401 이 아니라 **200 으로 로그인 폼을 다시 준다.** raise_for_status 만
+    보면 실패를 성공으로 읽는다.
+  - 쿠키 인증은 비-GET 요청마다 XSRF 토큰이 필요하다. 그런데 `_xsrf` 쿠키는
+    허브(`/hub/`)와 유저 서버(`/user/<id>/`) 양쪽에서 같은 이름으로 내려온다.
+    유저 서버 것을 골라 써야 한다 — 허브 것을 보내면 403 이다.
+
 필요한 환경변수:
   MUPID_JUPYTER_BASE_URL   https://lab.tailf237b8.ts.net
   MUPID_JUPYTER_USER       j15a204
-  MUPID_JUPYTER_TOKEN      JupyterHub API 토큰 (마스킹된 CI 변수)
+  MUPID_JUPYTER_PASSWORD   그 계정의 비밀번호 (마스킹·보호된 CI 변수)
   MUPID_JUPYTER_DIR        홈 기준 상대 경로 (기본 music_preprocessing)
 
   --dry-run 을 주면 무엇을 올릴지만 찍고 아무것도 바꾸지 않는다.
@@ -32,6 +44,7 @@ import base64
 import json
 import os
 import pathlib
+import re
 import sys
 import time
 import uuid
@@ -69,37 +82,63 @@ def die(message):
 
 
 class Hub:
-    def __init__(self, base, user, token):
+    def __init__(self, base, user, password):
         self.base = base.rstrip("/")
         self.user = user
         self.session = requests.Session()
-        self.session.headers["Authorization"] = f"token {token}"
+        self._login(password)
 
     def _url(self, path):
         return f"{self.base}/user/{self.user}/api/{path}"
 
+    def _login(self, password):
+        """브라우저가 하는 것과 같은 폼 로그인. 비밀번호는 어디에도 찍지 않는다."""
+        page = self.session.get(f"{self.base}/hub/login", timeout=30)
+        page.raise_for_status()
+        found = re.search(r'name="_xsrf"\s+value="([^"]+)"', page.text)
+        if not found:
+            die("로그인 폼에 _xsrf 가 없다. JupyterHub 쪽이 바뀌었는지 본다.")
+        done = self.session.post(
+            f"{self.base}/hub/login",
+            data={"_xsrf": found.group(1), "username": self.user,
+                  "password": password},
+            allow_redirects=False, timeout=60,
+        )
+        # 틀린 비밀번호는 401 이 아니라 200 + 로그인 폼이다. 리다이렉트가
+        # 왔는지로 본다.
+        if done.status_code not in (302, 303):
+            die("로그인이 되지 않았다. 아이디·비밀번호를 확인한다 "
+                f"(응답 {done.status_code})")
+
+    def _xsrf(self):
+        """유저 서버의 _xsrf 를 고른다. 허브 것과 이름이 같아 경로로 가른다."""
+        token = self.session.cookies.get("_xsrf", path=f"/user/{self.user}/")
+        if not token:
+            die("유저 서버의 _xsrf 쿠키가 없다. 서버가 떠 있는지 본다.")
+        return token
+
     def start_server(self, timeout=180):
-        """유저 서버가 떠 있어야 contents·kernels 가 응답한다."""
-        info = self.session.get(
-            f"{self.base}/hub/api/users/{self.user}", timeout=30)
-        if info.status_code == 403:
-            die("토큰이 이 사용자를 볼 권한이 없다. 토큰을 다시 발급한다.")
-        info.raise_for_status()
-        if (info.json().get("servers") or {}):
-            return "이미 떠 있음"
-        started = self.session.post(
-            f"{self.base}/hub/api/users/{self.user}/server", timeout=60)
-        if started.status_code not in (201, 202, 400):
-            die(f"서버를 띄우지 못했다: {started.status_code} {started.text[:200]}")
+        """유저 서버가 떠 있어야 contents·kernels 가 응답한다.
+
+        /hub/api 는 토큰을 요구하므로 쓰지 않는다. 브라우저처럼 유저 서버를
+        직접 열어 스폰을 유도하고, contents API 가 답할 때까지 기다린다."""
         deadline = time.time() + timeout
+        first = None
         while time.time() < deadline:
-            info = self.session.get(
-                f"{self.base}/hub/api/users/{self.user}", timeout=30)
-            servers = (info.json().get("servers") or {})
-            if servers and all(s.get("ready") for s in servers.values()):
-                return "새로 띄움"
+            got = self.session.get(
+                self._url(f"contents/?content=0"), timeout=60)
+            if got.status_code == 200:
+                return "이미 떠 있음" if first is None else "새로 띄움"
+            if first is None:
+                first = got.status_code
+                # 스폰을 시킨다. 리다이렉트를 따라가면 spawn-pending 을 거친다.
+                self.session.get(f"{self.base}/hub/spawn/{self.user}", timeout=120)
             time.sleep(3)
-        die(f"{timeout}초 안에 유저 서버가 준비되지 않았다")
+        die(f"{timeout}초 안에 유저 서버가 준비되지 않았다 (첫 응답 {first})")
+
+    def _headers(self):
+        # 토큰 인증이면 필요 없다. 쿠키 인증이라 비-GET 마다 붙여야 한다.
+        return {"X-XSRFToken": self._xsrf()}
 
     def ensure_directory(self, path):
         got = self.session.get(self._url(f"contents/{path}"), timeout=30)
@@ -107,7 +146,7 @@ class Hub:
             return
         self.session.put(
             self._url(f"contents/{path}"),
-            json={"type": "directory"}, timeout=30,
+            json={"type": "directory"}, headers=self._headers(), timeout=30,
         ).raise_for_status()
 
     def put_file(self, path, data):
@@ -116,19 +155,24 @@ class Hub:
             "format": "base64",
             "content": base64.b64encode(data).decode(),
         }
-        done = self.session.put(self._url(f"contents/{path}"), json=body, timeout=120)
+        done = self.session.put(self._url(f"contents/{path}"), json=body,
+                                headers=self._headers(), timeout=120)
         if done.status_code not in (200, 201):
             die(f"{path} 업로드 실패: {done.status_code} {done.text[:200]}")
 
     def run(self, code, timeout=900):
         """커널에서 파이썬을 실행하고 stdout 을 모아 돌려준다."""
-        made = self.session.post(self._url("kernels"), json={}, timeout=60)
+        made = self.session.post(self._url("kernels"), json={},
+                                 headers=self._headers(), timeout=60)
         made.raise_for_status()
         kernel = made.json()["id"]
         ws_base = self.base.replace("https://", "wss://").replace("http://", "ws://")
+        # 웹소켓도 같은 세션으로 붙어야 한다. requests 의 쿠키를 그대로 넘긴다.
+        cookies = "; ".join(f"{c.name}={c.value}" for c in self.session.cookies)
         sock = websocket.create_connection(
             f"{ws_base}/user/{self.user}/api/kernels/{kernel}/channels",
-            header=[f"Authorization: token {self.session.headers['Authorization'].split()[1]}"],
+            cookie=cookies,
+            header=[f"X-XSRFToken: {self._xsrf()}"],
             timeout=timeout,
         )
         message_id = uuid.uuid4().hex
@@ -163,7 +207,8 @@ class Hub:
                     break
         finally:
             sock.close()
-            self.session.delete(self._url(f"kernels/{kernel}"), timeout=30)
+            self.session.delete(self._url(f"kernels/{kernel}"),
+                                headers=self._headers(), timeout=30)
         text = "".join(output)
         if status != "ok":
             die(f"원격 실행이 실패했다 ({status}):\n{text}")
@@ -254,9 +299,10 @@ def main():
 
     base = os.environ.get("MUPID_JUPYTER_BASE_URL") or die("MUPID_JUPYTER_BASE_URL 이 없다")
     user = os.environ.get("MUPID_JUPYTER_USER") or die("MUPID_JUPYTER_USER 가 없다")
-    token = os.environ.get("MUPID_JUPYTER_TOKEN") or die("MUPID_JUPYTER_TOKEN 이 없다")
+    password = os.environ.get("MUPID_JUPYTER_PASSWORD") or die(
+        "MUPID_JUPYTER_PASSWORD 가 없다")
 
-    hub = Hub(base, user, token)
+    hub = Hub(base, user, password)
     print("유저 서버:", hub.start_server())
 
     # 부모부터 만든다. src/music_preprocessing 을 먼저 요청하면 404 다.
