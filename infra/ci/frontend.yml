@@ -19,7 +19,7 @@ frontend-verify:
     # 브랜치 파이프라인에는 CI_MERGE_REQUEST_LABELS 가 없다. 경로로 판단한다.
     - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
       changes: [frontend/**/*, infra/ci/frontend.yml, infra_k8s/**/*, .gitlab-ci.yml]
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/'
   script:
     - cd frontend
     - npm ci --prefer-offline --no-audit --no-fund

@@ -1144,6 +1144,25 @@ class LabelRoutingTest(unittest.TestCase):
                  ("catalog", "covers", "lyrics", "batch")]
         self.assertEqual(order, sorted(order), "배치 순서가 뒤바뀌었다")
 
+    def test_manual_jobs_can_be_started_without_the_web_ui(self):
+        """수동 job 이 web 소스만 받으면 UI 에서만 띄울 수 있다. 자동화가
+        POST /projects/:id/pipeline 으로 만든 파이프라인은 source 가 api 라
+        그 job 이 아예 나타나지 않는다 — 빨간 불이 아니라 '없는' 쪽이라
+        한참 헤맨다.
+
+        권한은 같다. 어느 쪽이든 그 ref 에 파이프라인을 만들 수 있어야 하므로
+        api 를 받아도 넓어지는 것이 없다."""
+        for name in ("data.yml", "backend.yml", "frontend.yml", "ai-server.yml"):
+            path = self.CI / name
+            with self.subTest(file=name):
+                text = path.read_text(encoding="utf-8")
+                self.assertNotRegex(
+                    text, r'CI_PIPELINE_SOURCE == "web"',
+                    f"{name} 이 web 만 받는다. api 도 받아야 한다",
+                )
+        k8s = (ROOT / "infra_k8s" / "ci" / "k8s-release.yml").read_text(encoding="utf-8")
+        self.assertNotRegex(k8s, r'CI_PIPELINE_SOURCE == "web"')
+
     def test_two_batches_never_overlap(self):
         """같은 곡을 두 프로세스가 동시에 올리면 registered.json 이 서로를
         덮는다."""
