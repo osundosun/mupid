@@ -73,6 +73,10 @@
 k8s-deploy-api:
   extends: .k8s-deploy
   needs:
+    # 매니페스트가 먼저다. 새 매니페스트가 요구하는 것(볼륨·Secret 키)이
+    # 없는 상태로 이미지만 바뀌면 파드가 못 뜬다.
+    - job: k8s-deploy-manifests
+      artifacts: false
     - job: backend-verify
       artifacts: false
       # Skipped when the commit changed nothing under api/. This job's own
@@ -90,6 +94,10 @@ k8s-deploy-api:
 k8s-deploy-web:
   extends: .k8s-deploy
   needs:
+    # 매니페스트가 먼저다. 새 매니페스트가 요구하는 것(볼륨·Secret 키)이
+    # 없는 상태로 이미지만 바뀌면 파드가 못 뜬다.
+    - job: k8s-deploy-manifests
+      artifacts: false
     - job: frontend-verify
       # 게이트일 뿐이다. 이 job 이 프론트엔드를 소스부터 다시 굽는다 —
       # package-web.sh 참고. api 쪽과 같은 모양이다.
@@ -116,6 +124,9 @@ k8s-deploy-env:
   stage: deploy
   image: alpine:3
   tags: [mupid-ci]
+  needs:
+    - job: k8s-deploy-manifests
+      artifacts: false
   resource_group: mupid-k8s
   interruptible: false
   timeout: 15m
@@ -127,3 +138,30 @@ k8s-deploy-env:
     - apk add --no-cache openssh-client
   script:
     - sh infra_k8s/ci/deploy-env.sh
+
+# 매니페스트를 클러스터에 적용한다. **이미지와 무관하다.**
+#
+# 저장소에서 고쳐 머지해도 클러스터는 모른다 — 사람이 노드에 올려 mupid-apply 를
+# 돌려야 반영된다. 그 탓에 하루에 세 번 같은 사고가 났다: Secret 은 갱신됐는데
+# 파드가 그 키를 안 읽고, nginx 수정이 k8s 사본에만 없고, APK 는 올라갔는데
+# /download/ 가 404 였다. 셋 다 "머지했으니 됐다" 고 생각한 뒤 한참 뒤에 드러났다.
+#
+# 이미지 배포보다 **먼저** 돈다. 새 매니페스트가 요구하는 것(볼륨·Secret 키)이
+# 없는 상태로 이미지만 바뀌면 파드가 못 뜬다.
+#
+# kubectl apply 는 멱등이라 매 푸시마다 돌려도 바뀐 게 없으면 unchanged 만 찍는다.
+k8s-deploy-manifests:
+  stage: deploy
+  image: alpine:3
+  tags: [mupid-ci]
+  resource_group: mupid-k8s
+  interruptible: false
+  timeout: 20m
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      when: manual
+  before_script:
+    - apk add --no-cache openssh-client
+  script:
+    - sh infra_k8s/ci/deploy-manifests.sh

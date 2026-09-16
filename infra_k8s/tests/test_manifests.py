@@ -1458,6 +1458,65 @@ class ApkDownloadTest(unittest.TestCase):
         )
 
 
+class ManifestApplyTest(unittest.TestCase):
+    """매니페스트는 저장소에서 고친다고 클러스터에 반영되지 않는다. 하루에 세 번
+    같은 사고가 났다 — Secret 은 갱신됐는데 파드가 그 키를 안 읽고, nginx 수정이
+    k8s 사본에만 없고, APK 는 올라갔는데 /download/ 가 404 였다.
+
+    이 엔드포인트는 다른 둘보다 힘이 세다. 이미지 수신기는 태그만, 환경변수
+    수신기는 Secret 하나만 건드리지만 여기는 클러스터의 모양을 바꾼다."""
+
+    CI = K8S / "ci"
+    DEPLOY = K8S / "deploy"
+
+    def test_the_forced_command_takes_nothing_but_a_versioned_bundle(self):
+        script = (self.DEPLOY / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        found = re.search(r"\$command =~ (\^apply-manifests.+?) \]\]", script)
+        self.assertTrue(found, "apply-manifests 를 받는 규칙이 없다")
+        pattern = re.compile(found.group(1))
+        good = "apply-manifests " + "a" * 40 + " " + "b" * 64
+        self.assertTrue(pattern.match(good))
+        for bad in (good + "; rm -rf /", good + " extra", "apply-manifests",
+                    good.replace("a" * 40, "A" * 40),
+                    good.replace("b" * 64, "b" * 63)):
+            with self.subTest(command=bad):
+                self.assertIsNone(pattern.match(bad))
+
+    def test_the_receiver_refuses_a_bundle_that_reaches_outside(self):
+        """tar 는 `../` 와 절대경로로 밖에 쓸 수 있다. 이건 root 로 돈다."""
+        receiver = (self.DEPLOY / "receive-manifests.py").read_text(encoding="utf-8")
+        self.assertIn('name.startswith("/")', receiver)
+        self.assertIn('".." in pathlib.PurePosixPath(name).parts', receiver)
+        # 경로를 열거로 묶는다. 저 둘 밖은 애초에 받지 않는다.
+        self.assertIn('ALLOWED = ("infra_k8s/base/", "infra_k8s/overlays/")', receiver)
+        # 심볼릭 링크로도 밖을 가리킬 수 있다.
+        self.assertIn("member.isfile()", receiver)
+
+    def test_the_receiver_refuses_manifests_for_another_namespace(self):
+        """CI 키를 훔친 쪽이 ClusterRole 을 심으면 클러스터 전체를 쥔다."""
+        receiver = (self.DEPLOY / "receive-manifests.py").read_text(encoding="utf-8")
+        self.assertIn("assert_only_our_namespace", receiver)
+        self.assertIn('CLUSTER_KINDS = {"Namespace"}', receiver)
+
+    def test_the_apply_goes_through_the_guarded_script(self):
+        """`kubectl apply -k` 를 직접 쓰면 이미지 태그가 placeholder 로 덮인다.
+        maxUnavailable 이 0 이라 옛 Pod 가 계속 서빙해서 겉으로는 멀쩡해 보이고,
+        그 Pod 가 죽는 순간 서비스가 내려간다. mupid-apply 가 그 함정 때문에
+        존재한다."""
+        receiver = (self.DEPLOY / "receive-manifests.py").read_text(encoding="utf-8")
+        self.assertIn("/usr/local/sbin/mupid-apply", receiver)
+        self.assertNotRegex(receiver, r'"apply",\s*"-k"')
+
+    def test_images_wait_for_the_manifests(self):
+        """새 매니페스트가 요구하는 것(볼륨·Secret 키)이 없는 상태로 이미지만
+        바뀌면 파드가 못 뜬다."""
+        jobs = yaml.safe_load((self.CI / "k8s-release.yml").read_text(encoding="utf-8"))
+        for name in ("k8s-deploy-api", "k8s-deploy-web", "k8s-deploy-env"):
+            with self.subTest(job=name):
+                needs = {n["job"] for n in jobs[name].get("needs", [])}
+                self.assertIn("k8s-deploy-manifests", needs)
+
+
 class CiVariableDocTest(unittest.TestCase):
     """CI 변수 이름이 코드 어딘가에만 있고 아무 데도 적혀 있지 않으면, 새 사람이
     '왜 이 job 이 안 뜨지' 로 반나절을 쓴다. 실제로 이 저장소에서 한 번 있었다 —

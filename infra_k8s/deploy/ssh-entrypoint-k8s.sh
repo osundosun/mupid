@@ -40,5 +40,15 @@ if [[ $command =~ ^upload-env\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
     "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 fi
 
+# apply-manifests <40-hex commit> <64-hex sha256>
+# 오버레이 전체를 적용한다. **이 동사가 셋 중 가장 힘이 세다** — 이미지 수신기는
+# 태그만, 환경변수 수신기는 Secret 하나만 건드리지만 여기는 클러스터의 모양을
+# 바꾼다. 수신기가 받은 내용을 그대로 믿지 않고 경로·네임스페이스를 검사하고,
+# 적용은 반드시 mupid-apply 를 거친다(placeholder 함정 때문).
+if [[ $command =~ ^apply-manifests\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
+  exec sudo /usr/local/sbin/mupid-receive-manifests \
+    "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+fi
+
 echo 'Only versioned k8s deployment uploads are accepted' >&2
 exit 64
