@@ -1,12 +1,35 @@
 # Git · 커밋 규약
 
-9건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+10건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
 ---
 
 ## Git · 커밋 규약
+
+### 라벨 없이 MR 을 만들면 CI 가 빨간불로 남는다
+
+- **원인**: `require-area-label`(`infra/ci/labels.yml`)이 영역 라벨이 없는 MR 을 막는다. GitLab 의
+  `rules` 는 **파이프라인을 만드는 시점**에 `CI_MERGE_REQUEST_LABELS` 를 읽는데, MR 을 만든 직후
+  라벨을 붙이면 그 시점의 값은 이미 비어 있다.
+- **증상**: job 이 **하나뿐**인 파이프라인(`require-area-label` 만)이 실패한다. 로그 끝에
+  `지금 붙어 있는 라벨: Backend,Frontend` 가 찍혀 라벨이 있는데도 실패한 것처럼 보여 더 헷갈린다 —
+  job 스크립트는 **실행 시점**에 변수를 읽고 rules 는 **생성 시점**에 읽기 때문이다.
+  `backend-verify`·`frontend-verify` 는 `when: never` 로 조용히 빠져 있어 함께 확인할 수 없다.
+- **해결**: 라벨을 **MR 생성과 같은 명령에서** 붙인다. 나중에 붙였다면 파이프라인을 다시 돌린다.
+  ```bash
+  # 만들 때 함께 (이렇게 해야 rules 가 처음부터 라벨을 본다)
+  glab mr create --label Backend --label Frontend ...
+  # 이미 만들었다면 라벨을 붙인 뒤 재실행
+  glab api --method POST "projects/<프로젝트>/merge_requests/<iid>/pipelines"
+  ```
+  재실행 후에는 `require-area-label` 이 **목록에서 사라지고** 영역 verify job 이 나타나야 정상이다.
+  그게 라벨이 인식된 증거다.
+- **주의**: 라벨을 나중에 붙여도 **이미 만들어진 파이프라인은 되살아나지 않는다.** GitLab 은
+  라벨 변경으로 MR 파이프라인을 다시 돌리지 않는다.
+- **근거**: `infra/ci/labels.yml`, `infra/ci/backend.yml`·`frontend.yml` 의 `rules`,
+  `knowledge/convention/merge-request.md`(영역 라벨 항목)
 
 ### 클론만 했는데 티켓 번호 없는 커밋이 그대로 만들어진다
 

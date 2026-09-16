@@ -17,9 +17,9 @@
 | [integrations.md](integrations.md) | 13 | S3 호환 스토리지, Gmail API 인증, 메일 템플릿 |
 | [windows-gitbash.md](windows-gitbash.md) | 7 | 경로 자동 변환, 포트 점유, `NODE_ENV` 때문에 devDependency 가 빠지는 경우 |
 | [cicd-and-ops.md](cicd-and-ops.md) | 21 | GitLab CI, 배포·롤백, 백업, 러너 |
-| [git-and-convention.md](git-and-convention.md) | 9 | husky 훅, 브랜치·커밋 규약 위반 |
+| [git-and-convention.md](git-and-convention.md) | 10 | husky 훅, 브랜치·커밋 규약 위반, 라벨 없이 만든 MR |
 | [frontend.md](frontend.md) | 28 | vinext·RSC 빌드와 자산 파이프라인, 재생기(이어듣기·seek·볼륨), 세션·로그인 상태, 큐 저장 유실, 끌어서 순서 바꾸기, 개발 서버 캐시 |
-| [doc-drift.md](doc-drift.md) | 11 | **문서가 코드와 어긋난 곳.** 문서를 계약으로 믿기 전에 본다 |
+| [doc-drift.md](doc-drift.md) | 12 | **문서가 코드와 어긋난 곳.** 문서를 계약으로 믿기 전에 본다 |
 
 ## 추가하는 법
 
