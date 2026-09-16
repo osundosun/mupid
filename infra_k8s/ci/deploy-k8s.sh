@@ -107,8 +107,10 @@ check_web() {
 case "$component" in
   api) confirm check_api ;;
   web) confirm check_web ;;
-  # ai 는 확인하지 않는다. replicas 가 0 이라 뜨는 파드가 없고, nginx 도
-  # /internal 을 밖으로 내보내지 않아 엣지를 통해 닿을 길이 없다. 태그가
-  # 바뀐 것은 수신기가 이미 확인했다. replicas 를 올릴 때 여기에 확인을 붙인다.
-  ai)  echo 'ai: replicas 0 이라 엣지를 통한 확인은 건너뛴다' ;;
+  # ai 는 **엣지로** 확인하지 않는다. nginx 가 /internal 을 밖으로 내보내지 않아
+  # 러너에서 닿을 길이 없다. 대신 수신기가 노드에서 `kubectl rollout status` 를
+  # 기다리고, replicas 가 1 이 된 지금은 그것이 곧 **readinessProbe 통과**를 뜻한다
+  # (`/internal/ready` — 색인 네 개가 행 수까지 맞고 카탈로그가 올라왔는가).
+  # replicas 가 0 이던 때에는 rollout status 가 즉시 성공해 아무 의미가 없었다.
+  ai)  echo 'ai: 준비 여부는 노드의 rollout status 가 확인했다 (엣지 경로 없음)' ;;
 esac
