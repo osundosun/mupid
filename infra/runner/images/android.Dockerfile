@@ -63,6 +63,20 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile min
  && rm -rf /usr/local/cargo/registry /usr/local/cargo/git \
  && chmod -R a+rX /usr/local/cargo /usr/local/rustup
 
+# Tauri 의 리눅스 데스크톱 의존성.
+#
+# APK 만 구우면 필요 없어 보이지만 `cargo test` 가 요구한다 — 시험은
+# **호스트용으로** 컴파일되고(안드로이드 바이너리는 러너에서 실행할 수 없다),
+# 호스트 빌드는 tauri -> wry -> webkit2gtk -> glib 를 탄다. 이것이 없으면
+# `The system library glib-2.0 required by crate glib-sys was not found` 로
+# 멈춘다.
+#
+# 앞 레이어(SDK·NDK·Rust)를 다시 굽지 않으려고 뒤에 둔다.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+      libayatana-appindicator3-dev patchelf \
+ && rm -rf /var/lib/apt/lists/*
+
 # job 이 무엇을 들고 있는지 로그 첫 줄에서 보이게 한다.
 RUN printf '%s\n' \
       "jdk=$(java -version 2>&1 | head -1)" \
