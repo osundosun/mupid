@@ -589,6 +589,23 @@ def normalized_events() -> Path:
             k = (e.get("user_ref"), str(e.get("track_id")))
             if not state.get(k, {}).get("pl"):     # 전부 빠졌으면 가점을 넘기지 않는다
                 continue
+        if m[0] == "SEEK" and ("from_sec" not in e or "to_sec" not in e):
+            # 라벨러의 SEEK 는 `from_sec`·`to_sec` 를 읽어 방향을 가린다. ClickHouse 에서
+            # 온 신호에는 그 둘이 없다 — `user_section_signals` 는 **닿은 구간**만 알고
+            # 어디서 왔는지는 들고 있지 않다. 없는 채로 넘기면 `float(r.from_sec)` 에서
+            # AttributeError 가 나고 **라벨 배치가 통째로 죽는다.**
+            #
+            # 구간 경계로 같은 판정을 만든다. 되감기는 이 구간으로 들어온 것이므로
+            # 도착을 구간 시작에 두어 to < from 이 되게 하고, 건너뛰기는 이 구간에서
+            # 빠져나간 것이므로 출발을 구간 시작에 둔다. 라벨러는 되감기에서 to 가,
+            # 건너뛰기에서 from 이 든 구간을 집으므로 어느 쪽이든 이 구간이 잡힌다.
+            start, end = float(e.get("start_sec", 0.0)), float(e.get("end_sec", 0.0))
+            if end <= start:
+                end = start + 1.0
+            if et == "SEEK_BACK":
+                e["from_sec"], e["to_sec"] = end, start
+            else:
+                e["from_sec"], e["to_sec"] = start, end
         e["event_type"] = m[0]
         e.update(m[1])
         lines.append(json.dumps(e, ensure_ascii=False))
@@ -601,10 +618,14 @@ def run_labeler() -> dict:
     if not EVENTS.exists():
         return {"ok": False, "reason": "이벤트 로그가 없다"}
     src_events = normalized_events()
+    # 출력 인코딩을 못 박는다. 지정하지 않으면 파이썬이 **콘솔 기본 인코딩**으로
+    # 디코드하는데, Windows 는 cp949 라서 자식이 찍은 한국어 한 줄에 UnicodeDecodeError
+    # 로 죽는다. 라벨은 제대로 만들어진 뒤에 출력을 읽다가 터지는 것이라, 증상이
+    # "라벨 생성 실패" 로만 보여 원인이 인코딩이라는 것이 드러나지 않는다.
     r = subprocess.run(
         [sys.executable, str(LEGACY / "m09_labels.py"), "--events", str(src_events),
          "--out", str(LABELS), "--pool", "service"],
-        capture_output=True, text=True, cwd=ROOT)
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=ROOT)
     return {"ok": r.returncode == 0 and LABELS.exists(),
             "stdout": r.stdout[-1500:], "stderr": r.stderr[-800:]}
 
