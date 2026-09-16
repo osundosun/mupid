@@ -20,8 +20,9 @@ import lombok.RequiredArgsConstructor;
  * 곡 단위로 구간 분석 결과를 다루는 API.
  *
  * AI 가 곡을 분석해 만든 구간을 `music_section_analysis` 에 넣는다. **이 표가
- * 채워져야 숫자 `music_section_id` 가 생기고, 그래야 추천 응답이 구간을 가리킬 수
- * 있다.** 비어 있는 동안 추천 서버의 `/internal/ready` 는 503 이고 곡 추천은 0건이다.
+ * 번역표다.** 추천 서버는 구간을 문자열 `external_id` 로만 가리키고, 우리가 그 값을
+ * 여기서 찾아 곡·구간 번호로 옮긴다. 비어 있으면 추천 응답의 모든 줄이 찾을 곳을 잃어
+ * 버려지고, 오류가 아니라 <b>빈 추천 목록</b>이 된다.
  *
  * 구간 조회는 `GET /api/v1/music/{musicId}/analysis` 가 이미 하고 있어 여기에는
  * 적재만 둔다. 적재는 배치(`ROLE_SYSTEM`)만 한다.

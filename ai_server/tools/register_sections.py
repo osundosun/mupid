@@ -1,8 +1,12 @@
 """AI 구간 분석 결과 → Spring `music_section_analysis`, 그리고 `id_map.parquet`.
 
-**이것이 없으면 추천이 통째로 503 이다.** 추천 응답은 구간을 숫자 `music_section_id` 로
-가리키는데, 그 번호는 MySQL 이 발급한다. 표가 비어 있으면 매핑을 만들 수 없고,
-매핑이 없으면 `/internal/ready` 가 영구 503 이다.
+**이것이 없으면 추천 결과가 통째로 버려진다.** 추천 서버는 구간을 문자열
+`external_id` 로 가리키고, Spring 이 그 값을 `music_section_analysis` 에서 찾아 곡으로
+옮긴다. 표가 비어 있으면 찾을 것이 없어 모든 줄이 버려지고 추천이 0건으로 나온다 —
+오류가 아니라 빈 목록이라, 화면은 "추천할 곡이 없다" 로 보인다.
+
+ClickHouse `track_sections` 도 이 단계가 받아 오는 숫자 번호를 쓴다. 그래서
+`id_map.parquet` 은 서빙에서 빠졌어도 적재 절차에는 그대로 필요하다.
 
     moments.parquet ──PUT /api/v1/music/{musicId}/section──> music_section_analysis
                                      │
