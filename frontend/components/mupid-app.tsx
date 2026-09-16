@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { mupidService } from '@/lib/services';
+import { clearBootstrap, readBootstrap, writeBootstrap } from '@/lib/services/bootstrap-cache';
 import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
 import { useStore } from '@/lib/store';
 import { fetchCatalog } from '@/lib/stream-catalog';
@@ -71,12 +72,6 @@ const mobileNavigation = [
   navigation[3],
 ] as const;
 export function MupidApp() {
-  const [data, setData] = useState<Bootstrap | null>(null);
-  const [error, setError] = useState('');
-  const [attempt, setAttempt] = useState(0);
-  // 시스템 바가 가리는 자리를 CSS 에 건넨다. 곡을 받기 전 화면도 상태바 밑으로
-  // 들어가면 안 되므로 여기, 가장 바깥에서 한 번만 건다.
-  useEffect(() => watchSafeArea(), []);
   /*
    * 곡 목록은 **로그인한 사람만** 받을 수 있다(`SecurityConfig`). 그래서 세션을
    * 먼저 복원하고 그 다음에 받는다. 순서가 뒤집히면 첫 방문자의 요청이 401 로
@@ -87,7 +82,21 @@ export function MupidApp() {
    */
   const accountId = useStore(sessionStore, s =>
     s.status === 'authenticated' ? s.user?.user_id ?? 0 : 0);
+  // 이미 받아 둔 값이 있으면 그것으로 시작한다. 이 컴포넌트가 다시 마운트돼도
+  // 로딩 화면을 거치지 않아야 아래 `LoadedMupidApp` 이 살아남고, 그래야 듣던
+  // 곡과 재생 목록이 그대로 남는다 (`lib/services/bootstrap-cache.ts`).
+  const [data, setData] = useState<Bootstrap | null>(() => readBootstrap(accountId));
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  // 시스템 바가 가리는 자리를 CSS 에 건넨다. 곡을 받기 전 화면도 상태바 밑으로
+  // 들어가면 안 되므로 여기, 가장 바깥에서 한 번만 건다.
+  useEffect(() => watchSafeArea(), []);
   useEffect(() => {
+    // 같은 계정 몫을 이미 받아 뒀으면 그대로 쓴다. 화면을 옮길 때마다 카탈로그를
+    // 다시 받으면 그동안 로딩 화면이 뜨고 재생이 끊긴다. 계정이 바뀌었을 때는
+    // 열쇠가 달라 여기서 걸리지 않으므로 아래로 내려가 새로 받는다.
+    const cached = readBootstrap(accountId);
+    if (cached) { setData(cached); return; }
     let live = true;
     void (async () => {
       try {
@@ -96,6 +105,9 @@ export function MupidApp() {
         // 서버 카탈로그는 화면 쪽에서 받아 서비스 계층에 넘긴다.
         // 서비스 계층은 브라우저 저장만 건드린다 (docs/server-integration.md).
         const value = await mupidService.bootstrap(catalog);
+        // 저장은 `live` 와 무관하게 남긴다. 화면이 먼저 사라졌더라도 받아 온
+        // 값은 다음 마운트가 쓸 수 있고, 그래야 두 번 받지 않는다.
+        writeBootstrap(accountId, value);
         if (live) setData(value);
       } catch {
         if (live) setError('음악을 불러오지 못했어요.');
@@ -110,7 +122,8 @@ export function MupidApp() {
    */
   if (!data) return <main className="mupid-shell" style={{ padding: 32, paddingTop: 'calc(32px + var(--safe-area-inset-top))' }} aria-busy={!error}>
     <output>{error || '음악을 준비하고 있어요…'}</output>
-    {error && <button className="secondary-button" onClick={() => { setError(''); setAttempt(v => v + 1); }}>다시 불러오기</button>}
+    {/* 받아 둔 값을 먼저 버린다. 남겨 두면 "다시 불러오기" 가 캐시만 되읽고 끝난다. */}
+    {error && <button className="secondary-button" onClick={() => { setError(''); clearBootstrap(); setAttempt(v => v + 1); }}>다시 불러오기</button>}
   </main>;
   return <LoadedMupidApp bootstrap={data} />;
 }
