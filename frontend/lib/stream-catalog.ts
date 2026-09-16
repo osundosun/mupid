@@ -10,7 +10,7 @@
 
 import { api } from './api/session';
 import type { MusicSummary } from './api/endpoints';
-import type { Track } from './mupid-data';
+import { DEFAULT_ALBUM_COVER, type Track } from './mupid-data';
 import { toImageSource, withCache } from './platform';
 
 /**
@@ -27,6 +27,14 @@ const CATALOG_SIZE = 100;
 const toTrack = (music: MusicSummary): Track => {
   const duration = (music.duration_ms ?? 0) / 1000;
   const tags = [...music.genres, ...music.moods];
+  // 곡마다 표지가 따로 있는 카탈로그(flow_music)가 있고, 앨범 커버만 있는 곡도
+  // 있다. 곡 표지 → 앨범 커버 순으로 내려간다.
+  //
+  // `??` 가 아니라 `||` 인 것은 빈 문자열 때문이다. 없다는 뜻으로 `null` 이
+  // 오기도 하고 `""` 가 오기도 하는데, `??` 는 `""` 를 값으로 쳐서 앨범 커버
+  // 차례를 통째로 건너뛴다 — 곡 표지만 비어 있고 앨범 커버는 멀쩡한 곡이
+  // 기본 커버로 떨어지던 자리다.
+  const cover = music.image_url?.trim() || music.album.image_url?.trim() || '';
   return {
     id: ID_OFFSET + music.music_id,
     musicId: music.music_id,
@@ -41,12 +49,16 @@ const toTrack = (music: MusicSummary): Track => {
     // 추천 점수·추천 이유는 아직 서버가 주지 않는다 (api-todo P3).
     match: 100,
     reason: '',
-    // 곡마다 표지가 따로 있는 카탈로그(flow_music)가 있고, 앨범 커버만 있는
-    // 곡도 있다. 곡 표지 → 앨범 커버 → 기본 이미지 순으로 내려간다.
-    //
     // 앱에서는 원격 이미지를 웹뷰가 직접 받지 않는다. `toImageSource` 가
     // `mupidimg` 로 감싸고 Rust 가 대신 받아 온다 (`app/src/image.rs`).
-    image: toImageSource(music.image_url ?? music.album.image_url) || '/sky-background.webp',
+    //
+    // 주소가 아예 없을 때만 여기서 기본 커버로 내려간다. **주소는 있는데 받아
+    // 오지 못하는 경우는 여기서 알 수 없다** — 등록된 커버 파일이 사라졌거나
+    // 임시값으로 들어가 있으면 서버가 그 경로에 `FILE_NOT_FOUND` 를 준다
+    // (`api` 의 `StorageImageServiceImpl`: ALBUM·TRACK 은 기본 이미지 콜백이
+    // 없다). 그쪽은 화면이 이미지를 걸어 본 뒤에야 알 수 있어서 `AlbumArt` 의
+    // `onError` 가 받아 낸다.
+    image: toImageSource(cover) || DEFAULT_ALBUM_COVER,
     tags: tags.length ? tags : ['스트리밍'],
     // 구간은 `GET /api/v1/music/{id}/analysis` 가 준다. 다만 분석 파이프라인이
     // 아직 돌지 않아 대부분 비어 있어서, 여기서는 곡을 둘로 나눠 둔다.
