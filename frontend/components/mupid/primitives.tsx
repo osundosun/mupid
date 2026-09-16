@@ -140,6 +140,12 @@ export function TrackRow({
   // 여러 곡 고르기. onSelect가 오면 체크 박스가 붙고 나머지 버튼은 잠시 물러난다.
   selected = false,
   onSelect,
+  /*
+   * 체크 박스를 줄 **안에** 그릴지. 재생 목록처럼 줄 앞에 이미 자리(끌기 손잡이
+   * 칸)가 있는 곳에서는 끈다 — 그 칸에 체크를 넣으면 커버와 제목이 제자리를
+   * 지키는데, 줄 안에 넣으면 그 폭만큼 통째로 밀린다.
+   */
+  showCheck = true,
 }: {
   track: Track;
   model: MupidModel;
@@ -149,6 +155,7 @@ export function TrackRow({
   queueable?: boolean;
   selected?: boolean;
   onSelect?: () => void;
+  showCheck?: boolean;
 }) {
   const playing = m.playing && m.active?.id === track.id;
   const picking = !!onSelect;
@@ -156,7 +163,7 @@ export function TrackRow({
     <article
       className={`track-row ${playing ? 'is-playing' : ''} ${picking ? 'is-selectable' : ''} ${selected ? 'is-selected' : ''}`}
     >
-      {picking && (
+      {picking && showCheck && (
         <input
           type="checkbox"
           className="track-check"

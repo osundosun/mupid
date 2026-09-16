@@ -26,6 +26,7 @@
 @import './readability.css';
 @import './responsive-polish.css';
 @import './dialog-viewport.css';
+@import './queue-dock.css';
 @custom-variant dark (&:is(.dark *));
 /*
  * Pretendard 는 직접 담는다.

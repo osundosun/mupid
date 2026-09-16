@@ -26,6 +26,7 @@ import com.osundosun.mupid.api.playlist.repository.PlaylistTrackRepository;
 import com.osundosun.mupid.api.playlist.request.PlaylistCreateRequest;
 import com.osundosun.mupid.api.playlist.request.PlaylistRenameRequest;
 import com.osundosun.mupid.api.playlist.request.PlaylistTrackAddRequest;
+import com.osundosun.mupid.api.queue.dto.PlayQueueDocument;
 import com.osundosun.mupid.api.stream.entity.Stream;
 import com.osundosun.mupid.api.stream.service.StreamService;
 import com.osundosun.mupid.api.user.entity.User;
@@ -117,6 +118,15 @@ public class PlaylistServiceImpl implements PlaylistService {
         PlaylistTrack duplicated = trackRepository.findByPlaylistAndMusic(playlist, music).orElse(null);
         if (duplicated != null) {
             return new PlaylistTrackAddResult(duplicated, true);
+        }
+
+        /*
+         * 상한은 재생 큐의 것과 같다 — 플레이리스트 전체 재생이 큐를 통째로
+         * 갈아끼우기 때문이다(decision/0022 규칙 7). 중복 확인 **뒤에** 센다.
+         * 이미 담긴 곡을 다시 담는 것은 자리를 늘리지 않으므로 상한과 무관하다.
+         */
+        if (trackRepository.countByPlaylist(playlist) >= PlayQueueDocument.LIMIT) {
+            throw new BusinessException(PlaylistErrorCode.PLAYLIST_TRACK_LIMIT_EXCEEDED);
         }
 
         int trackOrder = trackRepository.findLastTrackOrder(playlist) + 1;
