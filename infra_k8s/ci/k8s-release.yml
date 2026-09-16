@@ -17,9 +17,16 @@
 # jobs below need them as gates. Neither deliverable travels as an artifact: the
 # jar and the frontend bundle are both compiled inside the image build here.
 #
-# The api and web paths have separate `changes` filters on purpose. Sharing one
-# would rebuild and redeploy the edge image on an api-only commit — a pod
-# restart and a 220MB transfer for bytes that did not change.
+# 배포는 **변경 경로를 보지 않는다.** master 에 올라가면 api·web 을 다시 굽고
+# 올린다.
+#
+# 예전에는 `changes:` 로 걸렀는데, 그러면 "코드는 그대로인데 설정만 바뀐" 경우가
+# 통째로 빠진다. 실제로 환경변수를 바꿨는데 배포가 뜨지 않아 반영되지 않은 일이
+# 있었다. 러너를 맥으로 옮긴 뒤 api 173초·web 45초라 매번 돌려도 부담이 크지
+# 않고, 같은 이미지를 다시 올리면 수신기가 ALREADY_DEPLOYED 로 끝낸다.
+#
+# master 푸시에는 라벨이 없다(CI_MERGE_REQUEST_LABELS 는 MR 파이프라인 전용).
+# 그래서 "라벨이 있으면 배포" 를 그대로 쓸 수 없고, 대신 거르지 않는 쪽을 택했다.
 
 .api-changes: &api_changes
   - api/**/*
@@ -74,7 +81,6 @@ k8s-deploy-api:
       optional: true
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
-      changes: *api_changes
     - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
       when: manual
   script:
@@ -91,9 +97,33 @@ k8s-deploy-web:
       optional: true
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
-      changes: *web_changes
     - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
       when: manual
   script:
     - sh infra_k8s/ci/package-web.sh
     - sh infra_k8s/ci/deploy-k8s.sh web
+
+# 운영 환경변수를 갈아 끼운다. **이미지와 무관하다** — 코드가 그대로여도
+# MUPID_API_ENV 가 바뀌면 여기서 반영된다.
+#
+# CI 는 내용을 보내기만 하고 Secret 을 만드는 것은 노드의 root 다. 배포 계정의
+# RBAC 은 secrets 를 막고 있고(rbac.yaml), 열면 CI 키를 훔친 쪽이 DB 비밀번호와
+# JWT 서명키를 읽는다.
+#
+# 내용이 예전과 같으면 수신기가 UNCHANGED 를 돌려주고 아무것도 하지 않는다.
+# 그래서 master 푸시마다 돌려도 api 가 매번 재시작하지 않는다.
+k8s-deploy-env:
+  stage: deploy
+  image: alpine:3
+  tags: [mupid-ci]
+  resource_group: mupid-k8s
+  interruptible: false
+  timeout: 15m
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true" && $MUPID_API_ENV'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true" && $MUPID_API_ENV'
+      when: manual
+  before_script:
+    - apk add --no-cache openssh-client
+  script:
+    - sh infra_k8s/ci/deploy-env.sh

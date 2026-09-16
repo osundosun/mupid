@@ -60,6 +60,34 @@ spec:
               valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_S3_BUCKET}}
             - name: MUPID_GMAIL_SEND_ADDRESS
               valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_GMAIL_SEND_ADDRESS}}
+            # LLM 게이트웨이 키. 이것이 비면 /api/v1/ai/chat 이 503 이다.
+            #
+            # Secret 은 envFrom 으로 통째로 주입하지 않고 이름을 하나씩 적는다.
+            # 그 안에는 api 가 쓸 일이 없는 MUPID_MYSQL_ROOT_PASSWORD 같은 것도
+            # 있어서, 통째로 넣으면 이 컨테이너가 필요 없는 비밀까지 들고 있게
+            # 된다. 그래서 새 비밀을 더할 때는 .env 와 **여기 둘 다** 고친다.
+            #
+            # 짝이 되는 MUPID_AI_BASE_URL·MUPID_AI_MODEL 은 비밀이 아니라
+            # api-config(ConfigMap)에 있다. 그쪽은 envFrom 으로 통째로 온다.
+            #
+            # optional: true 다. Secret 에 아직 이 키가 없는 상태에서 이
+            # 매니페스트를 적용하면 파드가 CreateContainerConfigError 로 아예
+            # 뜨지 않는다 — 대화 하나 때문에 서비스 전체가 내려간다. 없으면
+            # 비어 있는 채로 뜨고 /api/v1/ai/chat 만 503 이다. 추천 서버를
+            # 비워 두었을 때와 같은 방식이다.
+            - name: MUPID_AI_GMS_KEY
+              valueFrom:
+                secretKeyRef: {name: mupid-secrets, key: MUPID_AI_GMS_KEY, optional: true}
+            # 주소와 모델은 비밀이 아니지만 키와 같은 묶음으로 관리한다
+            # (MUPID_API_ENV = 개발 환경 api/.env 와 같은 구성). 나눠 두면
+            # 어느 쪽이 이기는지 헷갈린다. 없으면 스프링 기본값으로 가는데
+            # 그 기본값이 맞는 값이다.
+            - name: MUPID_AI_BASE_URL
+              valueFrom:
+                secretKeyRef: {name: mupid-secrets, key: MUPID_AI_BASE_URL, optional: true}
+            - name: MUPID_AI_MODEL
+              valueFrom:
+                secretKeyRef: {name: mupid-secrets, key: MUPID_AI_MODEL, optional: true}
           resources:
             requests: {cpu: 500m, memory: 700Mi}
             limits: {memory: 2Gi}
