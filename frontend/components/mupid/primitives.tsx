@@ -16,7 +16,7 @@ import {
   Shuffle,
 } from 'lucide-react';
 import type { MupidModel, RepeatMode } from '@/hooks/use-mupid';
-import { formatTime, resolveAlbumCover, type Track } from '@/lib/mupid-data';
+import { formatTime, getSongSectionAt, resolveAlbumCover, type Track } from '@/lib/mupid-data';
 
 export function Brand({ className = '' }: { className?: string }) {
   return (
@@ -119,6 +119,16 @@ export function PageHeader({
     </div>
   );
 }
+/**
+ * 목록에 적을 구간 이름.
+ *
+ * 예전에는 `"Chorus"` 를 그대로 박아 두어, 서버가 브리지를 권해도 화면에는 후렴이라고
+ * 적혔다. 추천으로 온 곡은 서버가 고른 구간 이름을 쓰고, 그 밖에는 분석 결과에서
+ * 위치로 찾는다. 분석 전이면 `getSongSectionAt` 이 `전체` 를 돌려준다.
+ */
+const sectionNameOf = (track: Track): string =>
+  track.recommended?.sectionLabel || getSongSectionAt(track, track.moment).label;
+
 export function TrackRow({
   track,
   model: m,
@@ -160,7 +170,7 @@ export function TrackRow({
         <strong>{track.title}</strong>
         <span>{track.artist}</span>
         <span className="moment-meta">
-          {detail || `Chorus · ${formatTime(track.moment)}`}
+          {detail || `${sectionNameOf(track)} · ${formatTime(track.moment)}`}
         </span>
       </button>
       {!picking && action}

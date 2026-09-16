@@ -39,46 +39,49 @@ SeaweedFS 에 음원을 올린 **다음**부터의 절차다. 곡 1,063 · 구�
 실패하면: FK 오류면 참조 데이터 차례를, `Field 'is_deleted' doesn't have a default value`
 면 INSERT 컬럼 목록을 본다.
 
-## 2. 구간 API
+## 2. 구간 적재
 
-> **이 API 는 아직 없다. BE 대기 사항이다.** 이 저장소 어디에도 구현이 없어서, 지금
-> 부르면 404(`MUPID_NOT_FOUND`, "Endpoint가 존재하지 않습니다")가 돌아온다. 원인이
-> "아직 만들어지지 않았다" 라는 것이 응답에 드러나지 않으니, 404 를 보면 먼저 이 줄을
-> 떠올릴 것. 계약은 `api/docs/AI/요구 1 · 구간 분석 결과 적재` 에 있고 담당은 BE 다.
->
-> 그때까지는 **3번의 내보내기 쿼리가 보는 모양대로** MySQL 에 직접 넣는다
-> (`music_section_analysis` 의 music_id · section_label · `index` · start_time_ms ·
-> end_time_ms · external_id). 임시방편이라는 것을 분명히 해 둔다 — 아래의 upsert 와
-> 검증이 전부 빠지므로, 재분석으로 구간이 바뀐 곡에서 `music_section_analysis_id` 가
-> 새로 발급되고 `id_map` 과 ClickHouse 딕셔너리가 옛 번호를 든 채 남는다. **그 상태에서도
-> 서비스는 정상처럼 뜬다.** 아래 내용은 API 가 생긴 뒤의 절차다.
+    PUT /api/v1/music/{musicId}/section
 
-    PUT /api/v1/internal/music/{musicId}/section
-    X-Internal-Token: <MUPID_RECOMMENDER_INTERNAL_TOKEN 과 같은 값>
+곡당 한 번, 총 1,063회. **`ROLE_SYSTEM` 계정만 부를 수 있다** — 토큰 헤더가 아니라
+평범한 로그인이고, `tools/_api_auth.py` 가 리프레시 토큰으로 액세스 토큰을 받아 온다.
 
-곡당 한 번, 총 1,063회. 응답의 `sections[]` 가 `external_id` 와 발급된
-`music_section_analysis_id` 를 짝지어 준다. **숫자 ID 를 AI 가 만들지 않는다.**
+**추가가 아니라 교체다.** 한 곡의 구간은 분석 한 번의 결과로 함께 정해진다. 구간마다
+넣으면 재분석 중간에 옛 구간과 새 구간이 섞이고, 그 상태로도 조회가 정상으로 보인다.
+같은 본문을 두 번 보내면 결과가 같다 — 다만 **번호는 새로 발급된다.** `id_map` 과
+ClickHouse 딕셔너리가 옛 번호를 든 채 남으므로, 다시 부른 곡이 있으면 3·4번을 함께
+다시 밟는다.
 
-`external_id` 를 키로 한 upsert 다. 같은 본문을 두 번 보내도 번호가 바뀌지 않는다 —
-번호가 바뀌면 `id_map` 과 ClickHouse 딕셔너리가 옛 번호를 든 채 남고, **그 상태에서도
-서비스는 정상처럼 뜬다.**
+응답의 `sections[]` 가 `externalId` 와 발급된 `musicSectionAnalysisId` 를 짝지어 준다.
+**숫자 ID 를 AI 가 만들지 않는다.**
 
-재분석으로 구간 수가 바뀐 곡만 `?allow_section_change=true` 로 부른다. 그때 응답의
-`removed_section_ids` 가 비어 있지 않으면 4·5번을 다시 밟아야 한다는 신호다.
+`moods` 는 **코드 이름**으로 보낸다(`잔잔한`·`신나는`…). 번호는 Spring 이 붙인다 —
+AI 는 MySQL 이 발급한 코드 번호를 모른다. 코드표에 없는 이름은 버리고 센다.
 
 | 기대 | 확인 |
 | --- | --- |
 | `music_section_analysis` 10,007행 | `SELECT COUNT(*) FROM music_section_analysis` |
-| 두 번 불러도 같은 번호 | 응답 `created=0`, `updated=<구간 수>` |
+| 분위기가 붙은 구간 | `SELECT COUNT(*) FROM music_section_analysis_mood` |
 
-실패하면: 401 이면 Spring `MUPID_RECOMMENDER_INTERNAL_TOKEN` 과 AI
-`MUPID_AI_INTERNAL_TOKEN` 이 같은 값인지 본다 — **한쪽만 채우면 전부 401 이다.**
-409 `SECTION_SET_CHANGED` 는 구간 집합이 달라졌다는 뜻이고, 재분석이 맞으면
-`allow_section_change=true` 로 다시 부른다.
+실패하면: 401 이면 `MUPID_API_REFRESH_TOKEN` 이 `ROLE_SYSTEM` 계정의 것인지 본다.
+400 `구간 external_id 는 64자를 넘을 수 없습니다` 는 컬럼이 `VARCHAR(64)` 라 먼저 막은
+것이다 — 넘치면 MySQL 이 조용히 잘라 저장하고, 잘린 값끼리는 1:1 검사까지 통과한다.
 
 ## 3. id_map
 
-MySQL 에서 내보내 만든다. 문자열을 해시하거나 순번을 붙여 숫자를 지어내지 않는다.
+2번과 **같은 도구가 함께 만든다.** 적재 응답이 번호를 돌려주므로 따로 조회하지 않는다.
+
+    MUPID_AI_ARTIFACT_DIR=/경로 python -m ai_server.tools.register_sections         --track-map track_map.csv
+
+`--track-map` 은 필수다. `track_id`(`T000148`) → `music_id` 표이고, **없는 곡은 건너뛰고
+센다.** 문자열을 해시하거나 순번을 붙여 숫자를 지어내지 않는다 — 그럴듯하게 돌다가 실제
+DB 와 어긋난 순간 엉뚱한 곡을 추천한다.
+
+    source_track_id,music_id
+    T000148,1001
+
+MySQL 에서 이미 적재된 것을 내보내 만드는 길도 남아 있다(`build_id_map`). 2번을 다른
+경로로 밟았을 때 쓴다.
 
     SELECT s.external_id AS source_section_uid,
            s.music_section_analysis_id AS music_section_id,
@@ -87,14 +90,15 @@ MySQL 에서 내보내 만든다. 문자열을 해시하거나 순번을 붙여 
 
     python -m ai_server.tools.build_id_map sections.tsv
 
-`source_track_id` 컬럼이 없으면 구간 UID 의 `#` 앞을 잘라 쓰는 것이 정식 경로다.
-
 | 기대 | 확인 |
 | --- | --- |
 | 매핑 10,007건 · 곡 1,063 | 도구가 `곡 1063 · 구간 10007` 로 찍는다 |
 
 실패하면: 1:1 검증에 걸리면 파일을 만들지 않는다. 그게 맞는 동작이다 — 절반만 매핑된
 표를 두면 곡이 소리 없이 사라진다.
+
+**`id_map` 은 이제 서빙이 읽지 않는다.** 숫자 ID 번역은 Spring 이 맡는다. 그래도 4번이
+읽으므로 이 절차에서는 빠지지 않는다.
 
 ## 4. ClickHouse 구간 적재
 
@@ -107,9 +111,14 @@ MySQL 에서 내보내 만든다. 문자열을 해시하거나 순번을 붙여 
 | `구간 65540개 중 10007개 적재 대상` | 도구 출력 |
 | `track_sections` +10,007 | `SELECT count() FROM track_sections WHERE analysis_version='v1'` |
 
-이 시점에서 `/internal/ready` 가 **503 → 200** 으로 바뀐다. 전량 적재 전에는
-`tracks_unmapped=1063 · sections_unmapped=10007` 로 503 이다. 부분 매핑 상태로 서비스를
-열면 추천기가 매핑에 없는 곡을 골라 404(`MUSIC_ID_MAPPING_NOT_FOUND`)가 난다.
+> **2026-09-16 변경.** 예전에는 이 시점에서 `/internal/ready` 가 503 → 200 으로
+> 바뀌었다. 지금은 **매핑이 `ready` 에 영향을 주지 않는다** — 숫자 ID 번역을 Spring 이
+> 맡으면서 그 검사를 뺐고, 색인만 올라오면 200 이다
+> (`infra/AI-SPRING-CONTRACT.md` 의 "2026-09-16 계약 변경").
+>
+> **`id_map` 자체는 이 절차에 그대로 필요하다.** ClickHouse `track_sections` 가 숫자
+> `track_id` 를 쓰기 때문에 바로 앞 단계(`push_sections`)가 읽는다. 없어진 것은 서빙
+> 경로의 의존과 `/internal/id-map` 엔드포인트다.
 
 ## 5. 행동 신호 수집
 

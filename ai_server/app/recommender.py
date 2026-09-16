@@ -437,7 +437,14 @@ def _onb_list(v) -> list:
     return []
 
 
-def onboarding_of(user: str) -> dict | None:
+def onboarding_of(user: str, injected: dict | None = None) -> dict | None:
+    """온보딩 답변. `injected` 를 주면 그것을 쓴다(요청에 실려 온 경우).
+
+    주지 않으면 종전대로 `serve/onboarding.parquet` 를 읽는다 — 배치와 오프라인
+    테스트가 그 경로로 돈다.
+    """
+    if injected is not None:
+        return injected
     if not ONBOARD.exists():
         return None
     d = pd.read_parquet(ONBOARD)
@@ -448,10 +455,11 @@ def onboarding_of(user: str) -> dict | None:
     return {k: (_onb_list(v) if k in ONB_LIST_FIELDS else v) for k, v in r.items()}
 
 
-def onboarding_seeds(user: str) -> tuple[np.ndarray, np.ndarray, list[dict]]:
+def onboarding_seeds(user: str,
+                     injected: dict | None = None) -> tuple[np.ndarray, np.ndarray, list[dict]]:
     """조사 답변으로 씨앗 질의 벡터를 만든다. 라벨이 없어도 개인화가 된다."""
     c = CAT
-    ans = onboarding_of(user)
+    ans = onboarding_of(user, injected)
     if not ans:
         return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
     fac = catalog_facets()
@@ -931,42 +939,14 @@ def dismissed_moments(user: str) -> set:
     return out
 
 
-def user_behavior(user: str, now: float | None = None) -> dict:
-    """사용자 행동 로그를 **한 번만** 훑어 하드 필터와 점수 보정을 함께 만든다.
+def _file_events(user: str):
+    """파일 로그 → 정규화된 이벤트. ClickHouse 판(`app/clickhouse.py`)과 같은 키를 쓴다.
 
-    반환
-      recent_play  최근 RECENT_EXCLUDE_SEC 안에 정상 재생된 곡      (하드 필터)
-      dislike      활성 DISLIKE 곡                                  (하드 필터)
-      like         활성 LIKE 곡
-      complete     곡별 정상 완주 횟수
-      skip_pen     곡별 시간 감쇠된 Early Skip 감점 (양수)
-      delta        곡별 최종 점수 보정값 (가점 - 감점)
-
-    Early Skip 판정은 라벨러(m09_labels)의 기준을 그대로 쓴다:
-    PLAY_END · reason='skip_next' · position_sec <= FAST_SKIP_SEC, 추천 경로에서 발생한 것만.
+    두 출처가 같은 모양으로 들어와야 집계를 한 벌로 둘 수 있다. 두 벌이 되면 한쪽만
+    고쳐져 같은 사용자에게 다른 점수가 나간다.
     """
-    try:
-        from m09_labels import FAST_SKIP_SEC
-    except Exception:
-        FAST_SKIP_SEC = 5.0
-    now = time.time() if now is None else now
-    out = {"recent_play": set(), "dislike": set(), "like": set(),
-           "complete": {}, "skip_pen": {}, "delta": {}, "recent_pen": {}, "events": 0}
     if not EVENTS.exists():
-        return out
-
-    # 로그가 그대로면 다시 읽지 않는다. 추천은 사용자가 기다리는 경로라 요청마다
-    # 전체를 훑으면 로그 크기에 비례해 느려진다. 파일이 자라거나 바뀌면 캐시를 버린다.
-    # (시간이 흐르면 감쇠 값이 달라지므로 `now` 도 키에 넣는다 — 분 단위로 끊는다.)
-    st = EVENTS.stat()
-    ck = (user, st.st_size, st.st_mtime_ns, int(now // 60))
-    hit = _BEH_CACHE.get(ck)
-    if hit is not None:
-        return copy.deepcopy(hit)
-    cut = now - RECENT_EXCLUDE_SEC
-    recent_ts: dict[str, float] = {}    # track -> 최근 PLAY_START 시각
-    toggles: dict[str, list] = {}       # track -> [(ts, event_type)]
-    skips: dict[str, dict] = {}         # track -> {play_key: ts}  (중복 집계 방지)
+        return
     for ln in EVENTS.open(encoding="utf-8"):
         try:
             e = json.loads(ln)
@@ -974,14 +954,46 @@ def user_behavior(user: str, now: float | None = None) -> dict:
             continue
         if e.get("user_ref") != user:
             continue
-        out["events"] += 1
-        tid = str(e.get("track_id"))
-        et = str(e.get("event_type"))
         try:
             ts = datetime.fromisoformat(
                 str(e["occurred_at"]).replace("Z", "+00:00")).timestamp()
         except Exception:
             continue
+        yield {
+            "track_id": str(e.get("track_id")),
+            "event_type": str(e.get("event_type")),
+            "ts": ts,
+            "reason": str(e.get("reason") or ""),
+            # 값이 없으면 Early Skip 으로 보지 않는다. ClickHouse 쪽은 position_ms 가
+            # 항상 있어 0 이 "바로 넘겼다" 라는 뜻이지만, 파일 로그의 누락은 모름이다.
+            "position_sec": float(e.get("position_sec") or 1e9),
+            "surface": str((e.get("context") or {}).get("surface") or ""),
+            "play_id": str(e.get("play_id") or e.get("session_id") or ""),
+        }
+
+
+def _aggregate_behavior(events, now: float) -> dict:
+    """정규화된 이벤트를 **한 번만** 훑어 하드 필터와 점수 보정을 함께 만든다.
+
+    출처가 파일이든 ClickHouse 든 여기 하나로 모인다.
+    """
+    try:
+        from m09_labels import FAST_SKIP_SEC
+    except Exception:
+        FAST_SKIP_SEC = 5.0
+
+    out = {"recent_play": set(), "dislike": set(), "like": set(),
+           "complete": {}, "skip_pen": {}, "delta": {}, "recent_pen": {}, "events": 0}
+    cut = now - RECENT_EXCLUDE_SEC
+    recent_ts: dict[str, float] = {}    # track -> 최근 PLAY_START 시각
+    toggles: dict[str, list] = {}       # track -> [(ts, event_type)]
+    skips: dict[str, dict] = {}         # track -> {play_key: ts}  (중복 집계 방지)
+
+    for e in events:
+        out["events"] += 1
+        tid = e["track_id"]
+        et = e["event_type"]
+        ts = e["ts"]
         if et in ("LIKE", "UNLIKE", "DISLIKE", "UNDISLIKE"):
             toggles.setdefault(tid, []).append((ts, et))
             continue
@@ -993,16 +1005,14 @@ def user_behavior(user: str, now: float | None = None) -> dict:
             continue
         if et != "PLAY_END":
             continue
-        reason = str(e.get("reason") or "")
-        surface = str((e.get("context") or {}).get("surface") or "")
+        reason = e["reason"]
         if reason == "skip_next":
-            if float(e.get("position_sec") or 1e9) > FAST_SKIP_SEC:
+            if e["position_sec"] > FAST_SKIP_SEC:
                 continue
-            if surface not in BEH_REC_SURFACES:      # 추천 경로에서 난 것만 부정 신호
+            if e["surface"] not in BEH_REC_SURFACES:  # 추천 경로에서 난 것만 부정 신호
                 continue
             # 같은 재생(play)에서 나온 같은 부정 신호는 한 번만 센다
-            key = e.get("play_id") or f"{e.get('session_id')}|{int(ts)}"
-            skips.setdefault(tid, {})[str(key)] = ts
+            skips.setdefault(tid, {})[e["play_id"] or f"{int(ts)}"] = ts
             continue
         if reason in BEH_PLAYED_REASONS:
             if ts >= cut:
@@ -1052,6 +1062,48 @@ def user_behavior(user: str, now: float | None = None) -> dict:
             # 스킵 감점이 가점을 깎을 수는 있어도 음수로 끌어내리지는 못한다.
             d = max(d, 0.0)
         out["delta"][tid] = d
+    return out
+
+
+def user_behavior(user: str, now: float | None = None,
+                  events: list | None = None) -> dict:
+    """사용자 행동을 집계해 하드 필터와 점수 보정을 만든다.
+
+    반환
+      recent_play  최근 RECENT_EXCLUDE_SEC 안에 정상 재생된 곡
+      dislike      활성 DISLIKE 곡                                  (하드 필터)
+      like         활성 LIKE 곡
+      complete     곡별 정상 완주 횟수
+      skip_pen     곡별 시간 감쇠된 Early Skip 감점 (양수)
+      delta        곡별 최종 점수 보정값 (가점 - 감점)
+
+    `events` 를 주면 그것을 쓴다(ClickHouse 직접 조회 경로). 주지 않으면 종전대로
+    `events_service.jsonl` 을 읽는다 — 배치와 오프라인 테스트가 그 경로로 돈다.
+
+    Early Skip 판정은 라벨러(m09_labels)의 기준을 그대로 쓴다:
+    reason='skip_next' · position_sec <= FAST_SKIP_SEC, 추천 경로에서 발생한 것만.
+    """
+    now = time.time() if now is None else now
+
+    if events is not None:
+        # 요청마다 새로 읽어 온 것이다. 캐시하면 최신성을 버리는 셈이라 그대로 집계한다.
+        return _aggregate_behavior(events, now)
+
+    if not EVENTS.exists():
+        return {"recent_play": set(), "dislike": set(), "like": set(),
+                "complete": {}, "skip_pen": {}, "delta": {}, "recent_pen": {},
+                "events": 0}
+
+    # 로그가 그대로면 다시 읽지 않는다. 추천은 사용자가 기다리는 경로라 요청마다
+    # 전체를 훑으면 로그 크기에 비례해 느려진다. 파일이 자라거나 바뀌면 캐시를 버린다.
+    # (시간이 흐르면 감쇠 값이 달라지므로 `now` 도 키에 넣는다 — 분 단위로 끊는다.)
+    st = EVENTS.stat()
+    ck = (user, st.st_size, st.st_mtime_ns, int(now // 60))
+    hit = _BEH_CACHE.get(ck)
+    if hit is not None:
+        return copy.deepcopy(hit)
+
+    out = _aggregate_behavior(_file_events(user), now)
     if len(_BEH_CACHE) > _BEH_CACHE_MAX:
         _BEH_CACHE.clear()          # 사용자가 늘면 통째로 비운다. LRU 까지는 필요 없다
     _BEH_CACHE[ck] = copy.deepcopy(out)
@@ -1523,17 +1575,21 @@ def _flow_penalty(pool: pd.DataFrame, current_track_id: Optional[str],
 
 
 def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_plan: Optional[dict] = None,
-              current_track_id: Optional[str] = None, current_moment_id: Optional[str] = None) -> dict:
+              current_track_id: Optional[str] = None, current_moment_id: Optional[str] = None,
+              beh_events: Optional[list] = None,
+              onboarding: Optional[dict] = None) -> dict:
     c = CAT
     C, W, dna_meta = build_dna(user)
     query_source = "labels" if len(C) else "none"
     if not len(C):
-        C, W, dna_meta = onboarding_seeds(user)
+        C, W, dna_meta = onboarding_seeds(user, onboarding)
         if len(C):
             query_source = "onboarding"
     zu = model_user_vec(user)
     _t_beh = time.perf_counter()
-    beh = user_behavior(user)
+    # `beh_events` 는 요청 경계에서 ClickHouse 로 읽어 온 것이다. 없으면 종전대로
+    # 파일 로그를 읽는다 — 배치와 오프라인 테스트가 그 경로로 돈다.
+    beh = user_behavior(user, events=beh_events)
     metrics.observe_behavior(time.perf_counter() - _t_beh)
     # 하드 필터 = 현재 목록/세션 재생곡 + 활성 DISLIKE
     # 최근 4시간 재생곡은 **제외하지 않는다** — 감점만 주고 4시간에 걸쳐 복구한다.
@@ -1541,6 +1597,11 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     hard = set(exclude) | beh["dislike"]
     diag: dict[str, Any] = {"dna": len(C), "model_vector": zu is not None,
                             "query_source": query_source,
+                            "behavior_source": ("clickhouse" if beh_events is not None
+                                                else "file"),
+                            "onboarding_source": ("request" if onboarding is not None
+                                                  else "file"),
+                            "behavior_events": beh["events"],
                             "dropped_bpm": 0, "dropped_short": 0, "excluded": len(hard),
                             "excluded_session": len(set(exclude)),
                             "excluded_recent_play": 0,   # 하드 제외 폐지 (감점으로 전환)
@@ -1660,7 +1721,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     # BPM 게이트 (사용자 선호 BPM 중앙값 기준)
     keep = np.ones(len(pool), dtype=bool)
     # ---- 명시 선호 게이트: 청취 이력 유무와 무관하게 항상 적용 (게이트 인계) ----
-    ans = onboarding_of(user) or {}
+    ans = onboarding_of(user, onboarding) or {}
     if ans:
         fac = catalog_facets()["_df"].set_index("track_id")   # 온보딩 게이트. 캐시된 df 다
         wl = ans.get("language") or []

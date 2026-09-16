@@ -49,6 +49,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ai_server.app import clickhouse as _ch
 from ai_server.app import ids, paths
 from ai_server.app.log import log
 
@@ -65,44 +66,14 @@ SECTION_ENUM = ("INTRO", "VERSE", "PRE_CHORUS", "CHORUS", "BRIDGE",
                 "BREAK", "INST", "SOLO", "OUTRO")
 
 
-def _http_base() -> str:
-    """`jdbc:clickhouse://host:port/db` 도 받는다 — .env 가 그 형태로 적혀 있다.
-
-    **스킴을 낮추지 않는다.** 예전에는 무조건 `http://` 를 붙여서, `https://` 로 적어 둔
-    ClickHouse 에도 평문으로 붙었다. 자격증명이 헤더에 실려 나가므로 그대로 새는 길이다.
-    jdbc 형태는 스킴 정보가 없어 `MUPID_CLICKHOUSE_SECURE=1` 로 표시한다.
-    """
-    raw = os.environ.get("MUPID_CLICKHOUSE_URL", "").strip()
-    if not raw:
-        raise SystemExit("MUPID_CLICKHOUSE_URL 이 비어 있다.")
-    m = re.match(r"^jdbc:clickhouse://([^/?]+)", raw)
-    if m:
-        secure = os.environ.get("MUPID_CLICKHOUSE_SECURE", "").strip().lower()
-        scheme = "https" if secure in ("1", "true", "yes") else "http"
-        return f"{scheme}://{m.group(1)}"
-    m = re.match(r"^(https?)://([^/?]+)", raw)
-    if m:
-        return f"{m.group(1)}://{m.group(2)}"          # 적어 준 스킴을 그대로 쓴다
-    return f"http://{raw.split('/')[0]}"               # 스킴이 없으면 host 만 온 것이다
-
-
-def _auth() -> str:
-    u = os.environ.get("MUPID_CLICKHOUSE_USER", "").strip()
-    p = os.environ.get("MUPID_CLICKHOUSE_PASSWORD", "")
-    if not u:
-        raise SystemExit("MUPID_CLICKHOUSE_USER 가 비어 있다.")
-    return "Basic " + b64encode(f"{u}:{p}".encode()).decode()
+# 접속부는 서빙과 공유한다 (`app/clickhouse.py`). 배치와 서빙이 각자 들고 있으면
+# 한쪽만 고쳐져 접속 방식이 갈린다 — 스킴을 낮추지 않는 처리가 특히 그렇다.
+_http_base = _ch._http_base
+_auth = _ch._auth
 
 
 def query(sql: str, body: bytes | None = None) -> str:
-    url = f"{_http_base()}/?query={urllib.parse.quote(sql)}" if body else _http_base() + "/"
-    req = urllib.request.Request(url, data=body if body else sql.encode(), method="POST")
-    req.add_header("Authorization", _auth())
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            return r.read().decode()
-    except urllib.error.HTTPError as e:
-        raise SystemExit(f"ClickHouse 오류 {e.code}: {e.read().decode()[:400]}") from None
+    return _ch.query(sql, body, timeout=TIMEOUT)
 
 
 def build_rows(mom: pd.DataFrame, im, version: str) -> tuple[list[dict], dict]:

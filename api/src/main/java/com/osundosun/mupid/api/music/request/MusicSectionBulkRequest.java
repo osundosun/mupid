@@ -1,0 +1,50 @@
+package com.osundosun.mupid.api.music.request;
+
+import java.util.List;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Size;
+
+/**
+ * 한 곡의 구간 분석 결과 전체.
+ *
+ * **추가가 아니라 교체다.** 한 곡의 구간은 분석 한 번의 결과로 함께 정해진다.
+ * 개별로 넣으면 재분석 중간에 옛 구간과 새 구간이 섞이고, 그 상태로도 조회가
+ * 정상으로 보인다. 가사(`PUT /api/v1/music/{musicId}/lyric`)가 같은 이유로
+ * 통째 교체다.
+ *
+ * 빈 목록을 막아 둔 것도 가사와 같다 — 배치의 실수 하나가 곡의 구간을 통째로
+ * 날리면 그 곡은 추천 대상에서 조용히 사라진다(`decision/0006`: 구간 분석이
+ * 없는 곡은 추천 대상이 될 수 없다).
+ */
+public record MusicSectionBulkRequest(
+
+    /**
+     * 분석 버전. 현재 `v1`.
+     *
+     * **저장하지 않고 응답으로 되돌려주기만 한다.** `music_section_analysis` 에
+     * 버전 컬럼이 없기 때문이다. 계약(`api/docs/AI/요구 1`)이 이 필드를 요구하고
+     * 있어 받기는 하되, 어디에도 남지 않는다는 것을 여기 적어 둔다. 실제로
+     * 기록하려면 ERD 변경이 선행이다.
+     */
+    @NotBlank(message = "분석 버전이 입력되지 않았습니다.")
+    @Size(max = 20, message = "분석 버전은 20자를 넘을 수 없습니다.")
+    String analysisVersion,
+
+    @NotEmpty(message = "구간이 입력되지 않았습니다.")
+    @Size(max = MAX_SECTIONS, message = "한 번에 올릴 수 있는 구간은 200개입니다.")
+    List<@Valid MusicSectionBulkLine> sections
+
+) {
+
+    /**
+     * 한 요청에 담을 수 있는 구간 수.
+     *
+     * 지금 카탈로그는 곡당 중앙값 9구간, 최대 25구간이라 여유가 크다. 상한을 두는
+     * 것은 잘못된 요청 하나가 트랜잭션을 오래 붙들지 못하게 하려는 것이다.
+     */
+    public static final int MAX_SECTIONS = 200;
+
+}

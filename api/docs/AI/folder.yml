@@ -16,8 +16,8 @@ docs:
 
     | 파일 | 상태 | 동작 |
     | --- | --- | --- |
-    | `AI 대화` | **구현됨** | `POST /api/v1/ai/chat` — 한 번의 문답 (추천은 아직 목업) |
-    | `요구 1 · 구간 분석 결과 적재` | **BE 구현 필요** | AI → Spring. `music_section_analysis` 채우기 |
+    | `AI 대화` | **구현됨** | `POST /api/v1/ai/chat` — 한 번의 문답 |
+    | `요구 1 · 구간 분석 결과 적재` | **구현됨 (2026-09-16)** | AI → Spring. `music_section_analysis` 채우기 |
     | `요구 2 · 오늘의 추천 적재` | **BE 구현 필요** | AI → Spring. `daily_recommendations` 채우기 |
     | `요구 3 · 자동재생 다음 곡` | **BE 구현 필요** | 사용자 → Spring → AI |
     | `요구 4 · 선택 구간 유사 추천` | **BE 구현 필요** | 사용자 → Spring → AI |
@@ -26,8 +26,9 @@ docs:
 
     ## 요구 · 참고
 
-    `요구` 는 **BE 에 만들어 달라고 요청하는 API** 입니다. 아직 구현되어 있지 않고,
-    필요한 ERD 변경·담당·차단 사유는 `infra/AI-API-BLOCKERS.md` 에 있습니다.
+    `요구` 는 **BE 에 만들어 달라고 요청하는 API** 입니다. `요구 1` 은 2026-09-16 에
+    구현됐고(경로·인증이 제안과 달라졌습니다 — 그 파일의 설명을 보십시오), 나머지
+    셋의 차단 사유는 `infra/AI-API-BLOCKERS.md` 에 있습니다.
     **임의로 구현하지 않았습니다.**
 
     `참고` 는 **AI 서버에 이미 있는 내부 API** 입니다. 그대로 부를 수 있습니다.
@@ -59,18 +60,19 @@ docs:
     느낌을 한 문장으로 정리해 `recommend_music` 툴에 넘기고, 어떤 곡이 나올지는
     추천 파이프라인이 정합니다. 없는 곡을 지어내지 않게 하려는 구조입니다.
 
-    ## ⚠ 추천은 아직 목업입니다
+    ## 추천은 실제 추천 서버가 합니다
 
-    `recommend_music` 은 질의를 보지 않습니다. 카탈로그 앞쪽에서 몇 곡을 집어 정해진
-    사유를 붙일 뿐입니다 (`ai/tool/AiRecommendToolImpl.java`). **점수·취향·구간은
-    가짜입니다.** 다만 곡 번호는 실제 카탈로그의 것이라 화면에서 재생됩니다 — 카탈로그가
-    비어 있을 때만 재생되지 않는 고정 예시로 돌아갑니다.
+    `recommend_music` 은 `ai_server/` 를 실제로 부릅니다 (`RecommenderClient`).
+    목업은 2026-09-15 에 걷혔습니다.
 
-    지금 확인할 수 있는 것은 "모델이 툴을 부르고, 결과를 받아 한국어로 풀어 말하는가"
-    까지입니다. 진짜 추천은 `ai_server/` 의 `POST /internal/recommendations/search` 가
-    하게 됩니다. **다만 그 경로는 자연어 해석기(`MUPID_AI_NLP_URL`)가 없으면 501 입니다** —
-    지금은 `/internal/recommendations/next` 만 실제로 답합니다 (S15P21A204-219).
-    응답 필드를 그쪽 계약(`RecommendationItem`)에 맞춰 두었습니다.
+    모델이 조건을 뽑아내면 `POST /internal/recommendations/search` 에 `query_plan` 으로
+    보내고, 조건이 하나도 없으면 `POST /internal/recommendations/next` 를 부릅니다.
+    자연어 원문은 보내지 않습니다 — 그 경로는 해석기(`MUPID_AI_NLP_URL`)가 없으면
+    501 이고, 우리는 이미 대화 모델을 쓰고 있기 때문입니다 (S15P21A204-219).
+
+    **다만 추천 서버의 `/internal/ready` 가 200 이어야 실제 곡이 나옵니다.**
+    `music_section_analysis` 가 비어 있으면 숫자 ID 매핑을 만들 수 없어 503 이고,
+    그동안 곡 추천은 0건입니다 — 그것을 채우는 것이 `요구 1` 입니다.
 
     ## 대화를 저장하지 않습니다
 

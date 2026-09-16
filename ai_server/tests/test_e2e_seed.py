@@ -127,9 +127,14 @@ def test_seed_pipeline_end_to_end():
         manifest.save()
         assert len(id_of_track) == len(track_ids)
 
-        # ── 중간 상태에서 ready 가 503 인지 한 번만 본다 (id_map 이 아직 없다)
-        ready_before = probe_ready(env)
-        assert ready_before == 503, f"매핑 전에는 503 이어야 한다 (받은 값 {ready_before})"
+        # 매핑 전에 `ready` 가 503 인지 보던 자리다. **더 이상 그렇지 않다** —
+        # 숫자 ID 번역을 Spring 이 맡으면서 `/internal/ready` 에서 매핑 검사를 뺐다
+        # (`infra/AI-SPRING-CONTRACT.md` 의 "2026-09-16 계약 변경"). 색인만 올라오면
+        # 200 이므로 여기서 확인할 중간 상태가 없다.
+        #
+        # 매핑 자체는 여전히 필요하다. 아래 (d)(e) 가 그것을 쓴다 — ClickHouse
+        # `track_sections` 가 숫자 `track_id` 를 쓰기 때문이다.
+        assert probe_ready(env) == 200, "색인을 붙였는데 준비 완료가 아니다"
 
         # ── (c) 구간
         se.seed_sections(manifest, pool, id_of_track)
@@ -158,7 +163,7 @@ def test_seed_pipeline_end_to_end():
                            "WHERE analysis_version = 'v1'").strip())
         assert loaded >= 10007, f"track_sections {loaded}건"
 
-        # 전량 적재 뒤에는 200 이어야 한다
+        # 구간을 붙인 뒤에도 준비 완료 상태가 유지된다
         assert probe_ready(env) == 200
 
         # 라벨이 생기기 **전** 추천. 뒤에 비교할 기준이라 여기서 받아 둔다.
@@ -254,8 +259,8 @@ def probe_ready(env: dict) -> int:
     `with` 로 열어야 lifespan 이 돈다. 그냥 부르면 카탈로그가 적재되지 않아 매핑이
     멀쩡해도 늘 503 이고, 이유는 "색인이 준비되지 않았다" 로만 보인다.
 
-    실패했을 때 본문과 `/internal/id-map` 을 함께 찍는다. 코드만 보면 "매핑표가 없다" 와
-    "매핑이 모자라다" 가 똑같이 503 이라, 어느 쪽인지 알아내려고 다시 돌려야 한다.
+    실패했을 때 본문을 함께 찍는다. 상태 코드만으로는 색인이 없는 것인지 깨진 것인지
+    알 수 없다. (`/internal/id-map` 은 매핑 검사와 함께 없앴다.)
     """
     script = """
 from fastapi.testclient import TestClient
@@ -266,7 +271,6 @@ with client:
     r = client.get("/internal/ready")
     print("STATUS", r.status_code)
     print("BODY", r.text[:900])
-    print("IDMAP", client.get("/internal/id-map").text[:900])
 """
     out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                          cwd=str(REPO_ROOT), env=env, encoding="utf-8")
@@ -274,7 +278,7 @@ with client:
     for line in (out.stdout or "").splitlines():
         if line.startswith("STATUS"):
             status = int(line.split()[1])
-        elif line.startswith(("BODY", "IDMAP")):
+        elif line.startswith("BODY"):
             print("  ", line[:700])
     if status is None:
         pytest.skip(f"/internal/ready 를 부를 수 없다: {out.stderr.strip()[-500:]}")

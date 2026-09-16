@@ -13,8 +13,10 @@ import {
 } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { AlbumArt, Heading, Waveform, PlayerControls } from './primitives';
+import { forYouHeading, pickForYou } from '@/lib/recommendations';
 export function HomeView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
+  const forYou = forYouHeading(m.recommendationsReady);
   return (
     <>
       <DesktopHome model={m} />
@@ -32,8 +34,8 @@ export function HomeView({ model: m }: { model: MupidModel }) {
           {/* 상단 헤더에 검색창이 이미 있어 홈에서는 중복이라 뺐다. */}
           <TodayMoment model={m} />
           <Heading
-            eyebrow="당신을 위한 추천"
-            title="취향에 이어지는 음악"
+            eyebrow={forYou.eyebrow}
+            title={forYou.title}
             action="모두 보기"
             onAction={() => {
               m.setLibraryTab('playlists');
@@ -44,7 +46,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
           <AlbumDeck
             model={m}
             label="취향에 이어지는 음악"
-            items={tracks.filter((t) => !m.ignored.includes(t.id)).slice(0, 6)}
+            items={pickForYou(m.forYou, tracks, m.ignored)}
           />
           <Heading
             eyebrow="다시 듣기"

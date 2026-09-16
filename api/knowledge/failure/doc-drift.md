@@ -1,6 +1,6 @@
 # 문서가 코드와 어긋난 곳
 
-9건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+11건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -79,3 +79,10 @@
 - **확인**: 컬렉션 `.yml` 83개를 `yaml.safe_load` 로 통과시키면 여러 줄 `docs` 블록의 들여쓰기 실수를 잡을 수 있다. 문서를 고친 뒤 반드시 돌린다.
 - **곁들여**: 엔드포인트 누락은 컨트롤러의 `@*Mapping` 과 요청 파일의 `http.url` 을 뽑아 대조하면 드러난다. 2026-09-14 기준 누락 없음.
 - **근거**: `api/docs/opencollection.yml`, `api/docs/Music/folder.yml`, `api/knowledge/convention/api-docs.md`
+
+### Bruno 요청에 인증 헤더가 빠져 401 이 난다 — `auth: inherit` 이 아무것도 상속하지 않는다
+
+- **원인**: Bruno 의 `auth: inherit` 는 **부모(폴더·컬렉션)에 실제로 정의된 인증을 상속**한다. 이 컬렉션은 `opencollection.yml` 에도 각 `folder.yml` 에도 `request.auth` 를 정의한 적이 없다 — `opencollection.yml:12` 의 `auth:` 는 `config.proxy.auth`(프록시 자격증명)이고 인증 방식이 아니다. 그래서 `auth: inherit` 는 **아무 헤더도 붙이지 않는다.** 기존 요청 51개는 `http.headers` 에 `Authorization: Bearer {{ACCESS_TOKEN}}` 를 손으로 적어 우회하고 있었는데, 나중에 추가된 25개는 그 줄이 빠졌다. `forwardAuthorizationHeader: true` 를 인증이 켜지는 스위치로 오해하기 쉬운데, 그 설정의 실제 이름은 **"Forward Authorization on Redirect"** 이고 **다른 오리진으로 리다이렉트될 때 `Authorization` 헤더를 계속 보낼지**만 정한다. 헤더를 새로 만들지 않는다.
+- **해결**: 인증이 필요한 요청에는 기존 관례대로 `http.headers` 에 `Authorization: Bearer {{ACCESS_TOKEN}}` 을 적는다. `opencollection.yml` 에 `request.auth: {type: bearer, token: "{{ACCESS_TOKEN}}"}` 를 넣어 한 번에 상속시키는 방법도 있으나, **이미 헤더를 적어 둔 51개 파일과 겹쳐 `Authorization` 이 중복**되고, `permitAll` 요청(로그인·회원가입·이메일 인증)에 만료된 토큰이 실려 나갈 수 있어 택하지 않았다. 2026-09-16 에 25건을 헤더로 맞췄다.
+- **확인**: 요청 파일의 `http` 블록에서 `auth: inherit` 인데 `name: Authorization` 이 없는 것을 찾으면 남은 구멍이 보인다. 헤더가 없어야 정상인 것은 `SecurityConfig` 의 `permitAll` 경로(`/api/v1/auth`, `POST /api/v1/user`, `/api/v1/user/reset`, `/api/v1/mail/verification`, `/api/actuator`, `/api/v1/onboarding/option`, 앨범·아티스트·곡 커버 이미지, 관리자 HTML·ClickHouse 콘솔)와 내부 토큰(`X-Internal-Token`) 요청뿐이다. 프로필 사진(`PROFILE`)은 `permitAll` 이 아니므로 헤더가 있어야 한다.
+- **근거**: `api/docs/opencollection.yml:12`, `api/docs/Comment/댓글 목록 조회.yml`(수정 전) vs `api/docs/User/회원정보 조회.yml:10`, `api/src/main/java/com/osundosun/mupid/api/auth/filter/AuthFilter.java:55`, `api/src/main/java/com/osundosun/mupid/api/common/config/SecurityConfig.java:57`

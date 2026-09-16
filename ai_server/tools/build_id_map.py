@@ -88,6 +88,33 @@ def check(out: pd.DataFrame) -> list[str]:
     return problems
 
 
+def write_map(out: pd.DataFrame, dst: Path, force: bool = False) -> tuple[int, int]:
+    """검증한 뒤에만 쓴다. 곡 수·구간 수를 돌려준다.
+
+    `register_sections` 가 같은 경로로 쓰기 위해 `main()` 에서 빼냈다. 매핑표를
+    만드는 길이 둘인데 검증이 한쪽에만 있으면, 없는 쪽으로 만든 표가 1:1 을 깨뜨린
+    채 서비스에 올라간다.
+    """
+    problems = check(out)
+    for problem in problems:
+        print(f"경고: {problem}", file=sys.stderr)
+    if problems and not force:
+        raise SystemExit("쓰지 않는다. 고친 뒤 다시 돌리거나 --force 를 준다.")
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_suffix(".parquet.tmp")
+    out.to_parquet(tmp, index=False)
+
+    # 서비스가 읽는 그대로 한 번 적재해 본다. 1:1 위반이면 여기서 막힌다.
+    try:
+        im = ids.IdMap(path=tmp, strict=True)
+    except ids.MapIntegrityError as e:
+        tmp.unlink(missing_ok=True)
+        raise SystemExit(f"매핑표가 1:1 이 아니다. 쓰지 않는다." + chr(10) + f"{e}") from None
+    tmp.replace(dst)
+    return len(im.track_to_num), len(im.sec_to_num)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("table", help="MySQL 에서 내보낸 CSV/TSV")
@@ -106,27 +133,9 @@ def main() -> int:
         return 2
 
     out = build(read_table(src), a.derive_track_id)
-    problems = check(out)
-    for p in problems:
-        print(f"경고: {p}", file=sys.stderr)
-    if problems and not a.force:
-        print("쓰지 않는다. 고친 뒤 다시 돌리거나 --force 를 준다.", file=sys.stderr)
-        return 1
-
     dst = Path(a.out) if a.out else paths.id_map_path()
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_suffix(".parquet.tmp")
-    out.to_parquet(tmp, index=False)
-
-    # 서비스가 읽는 그대로 한 번 적재해 본다. 1:1 위반이면 여기서 막힌다.
-    try:
-        im = ids.IdMap(path=tmp, strict=True)
-    except ids.MapIntegrityError as e:
-        tmp.unlink(missing_ok=True)
-        print(f"매핑표가 1:1 이 아니다. 쓰지 않는다.\n{e}", file=sys.stderr)
-        return 1
-    tmp.replace(dst)
-    print(f"저장 {dst} · 곡 {len(im.track_to_num)} · 구간 {len(im.sec_to_num)}")
+    tracks, sections = write_map(out, dst, a.force)
+    print(f"저장 {dst} · 곡 {tracks} · 구간 {sections}")
     return 0
 
 

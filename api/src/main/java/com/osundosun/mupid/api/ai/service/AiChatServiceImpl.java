@@ -82,18 +82,23 @@ public class AiChatServiceImpl implements AiChatService {
 
         // 툴이 여러 번 불려도 화면에는 한 번만 보여야 한다. 곡 번호로 접는다.
         Map<Integer, AiRecommendedTrack> tracks = new LinkedHashMap<>();
+        // 마지막으로 곡을 돌려준 추천 묶음의 번호. 화면이 재생 이벤트에 되돌려 싣는다.
+        long[] recommendationId = {0L};
 
         for (int round = 0; round <= props.maxToolRounds(); round++) {
             OpenAiMessage answer = openAiClient.complete(messages, tools);
 
             if (!answer.hasToolCalls()) {
-                return new AiChatResponse(replyText(answer), List.copyOf(tracks.values()));
+                return new AiChatResponse(
+                    replyText(answer),
+                    recommendationId[0] == 0L ? null : recommendationId[0],
+                    List.copyOf(tracks.values()));
             }
 
             // 툴 결과 앞에는 그것을 요청한 assistant 메시지가 반드시 있어야 한다.
             messages.add(answer);
             for (OpenAiToolCall call : answer.toolCalls()) {
-                messages.add(runTool(user, request, call, tracks));
+                messages.add(runTool(user, request, call, tracks, recommendationId));
             }
         }
 
@@ -112,7 +117,8 @@ public class AiChatServiceImpl implements AiChatService {
         User user,
         AiChatRequest request,
         OpenAiToolCall call,
-        Map<Integer, AiRecommendedTrack> tracks
+        Map<Integer, AiRecommendedTrack> tracks,
+        long[] recommendationId
     ) {
         String name = call.function() != null ? call.function().name() : null;
         if (!AiRecommendTool.NAME.equals(name)) {
@@ -127,7 +133,12 @@ public class AiChatServiceImpl implements AiChatService {
 
         List<AiRecommendedTrack> found;
         try {
-            found = recommendTool.recommend(user.getUserId(), request.musicId(), arguments);
+            AiRecommendTool.Result result =
+                recommendTool.recommend(user.getUserId(), request.musicId(), arguments);
+            found = result.tracks();
+            if (!result.isEmpty()) {
+                recommendationId[0] = result.recommendationId();
+            }
         } catch (BusinessException e) {
             // 추천 서버가 죽었다고 대화까지 끊지 않는다. 모델에게 사실을 알려 주면
             // "지금은 곡을 찾아드릴 수 없다" 고 말할 수 있다. 여기서 502 를 올리면

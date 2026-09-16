@@ -48,6 +48,7 @@ api/docs/
   ```
 
 - **`examples` 의 `response.headers` 에 `Content-Type: application/json` 을 반드시 넣는다.** 저장된 Example 은 파일에 적힌 헤더만 보고 표시 형식을 정하므로, 빠뜨리면 Raw 로 보인다 (`opencollection.yml` 의 "응답이 Raw 로 보일 때" 절).
+- **인증이 필요한 요청에는 `http.headers` 에 `Authorization: Bearer {{ACCESS_TOKEN}}` 을 직접 적는다.** `auth: inherit` 은 컬렉션·폴더에 정의된 인증이 없어 **아무 헤더도 붙이지 않는다** (`opencollection.yml` 의 `auth:` 는 `config.proxy.auth` 이지 인증 방식이 아니다). `forwardAuthorizationHeader` 는 "Forward Authorization on Redirect" 라 **새 헤더를 만들지 않는다**. `permitAll` 요청(로그인·회원가입·이메일 인증, 온보딩 선택지, 앨범·아티스트·곡 이미지)과 내부 토큰(`X-Internal-Token`) 요청만 헤더가 없다. 배경은 [함정과 실패 사례](../failure/doc-drift.md).
 - `api/docs/environments/Local.yml` 의 토큰류 변수는 `value: ""` 로 비우고 `description` 에 채워지는 경로(자동 저장인지 수기 입력인지)를 적는다.
 - 계정·비밀번호 같은 값을 요청 파일에 박지 않는다. `api/docs/.gitignore` 가 막는 것은 `.env*`, `node_modules`, `.DS_Store`, `Thumbs.db` 네 항목이라 `.yml` 안의 값은 걸러지지 않는다. 기존 위반 사례는 [함정과 실패 사례](../failure/git-and-convention.md).
 
