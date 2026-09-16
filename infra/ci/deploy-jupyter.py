@@ -34,7 +34,10 @@ uv 가 3.14 를 새로 받으려 든다.
 필요한 환경변수:
   MUPID_JUPYTER_BASE_URL   https://lab.tailf237b8.ts.net
   MUPID_JUPYTER_USER       j15a204
-  MUPID_JUPYTER_PASSWORD   그 계정의 비밀번호 (마스킹·보호된 CI 변수)
+  MUPID_JUPYTER_PASSWORD   그 계정의 비밀번호. **File 형식·보호된** CI 변수로
+                           넣는다 — 8자 미만이면 GitLab 이 마스킹을 거부하는데,
+                           File 형식은 환경에 경로만 들어가 그 문제가 없다.
+                           Variable 형식으로 넣어도 읽는다(read_secret 참고).
   MUPID_JUPYTER_DIR        홈 기준 상대 경로 (기본 music_preprocessing)
 
   --dry-run 을 주면 무엇을 올릴지만 찍고 아무것도 바꾸지 않는다.
@@ -79,6 +82,30 @@ MARKER_END = "# END music_preprocessing"
 
 def die(message):
     raise SystemExit(f"배포 실패: {message}")
+
+
+def read_secret(value):
+    """CI 변수를 읽는다. File 형식이면 값이 아니라 **경로**가 온다.
+
+    GitLab 은 8자 미만인 값을 마스킹해 주지 않는다("The value must have 8
+    characters"). 마스킹 안 된 변수는 job 이 한 번이라도 출력하면 그대로 로그에
+    남고 그 로그는 프로젝트 구성원이 볼 수 있다. 이 세션에서 실제로 그렇게
+    개인키가 샌 적이 있다.
+
+    File 형식이면 그 문제가 사라진다 — 환경에 들어가는 것이 내용이 아니라
+    경로라서 `echo $VAR` 가 경로만 찍는다. 길이·문자 제한도 없다. 이 저장소는
+    배포 SSH 키를 이미 그렇게 넣고 있고(infra_k8s/ci/deploy-k8s.sh 의
+    read_secret), 여기도 같은 처리를 둔다. 둘 다 받아 주므로 어느 형식으로
+    등록해도 돈다.
+    """
+    try:
+        path = pathlib.Path(value)
+        if path.is_file():
+            value = path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        # 경로로 볼 수 없는 문자열이면 값 그대로다.
+        pass
+    return value.strip("\r\n")
 
 
 class Hub:
@@ -299,8 +326,10 @@ def main():
 
     base = os.environ.get("MUPID_JUPYTER_BASE_URL") or die("MUPID_JUPYTER_BASE_URL 이 없다")
     user = os.environ.get("MUPID_JUPYTER_USER") or die("MUPID_JUPYTER_USER 가 없다")
-    password = os.environ.get("MUPID_JUPYTER_PASSWORD") or die(
-        "MUPID_JUPYTER_PASSWORD 가 없다")
+    password = read_secret(
+        os.environ.get("MUPID_JUPYTER_PASSWORD") or die("MUPID_JUPYTER_PASSWORD 가 없다"))
+    if not password:
+        die("MUPID_JUPYTER_PASSWORD 가 비어 있다 (File 형식이면 파일이 비었는지 본다)")
 
     hub = Hub(base, user, password)
     print("유저 서버:", hub.start_server())

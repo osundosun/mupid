@@ -12,6 +12,7 @@ import re
 import pathlib
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -985,6 +986,31 @@ class LabelRoutingTest(unittest.TestCase):
             with self.subTest(call=call):
                 body = script.split(f"def {call}", 1)[1].split("\n    def ", 1)[0]
                 self.assertIn("_headers()", body)
+
+    def test_the_password_variable_can_be_a_file(self):
+        """비밀번호가 8자 미만이면 GitLab 이 마스킹을 거부한다. File 형식이면
+        환경에 경로만 들어가 마스킹이 필요 없다 — 그래서 값과 경로를 모두 받아야
+        한다. 배포 SSH 키가 이미 그 형식이다.
+
+        이건 실제로 돌려 본다. 소스만 보면 '경로였는데 값으로 읽어' 로그인에
+        실패하는 경우를 못 잡는다."""
+        import importlib.util
+        if not all(importlib.util.find_spec(m) for m in ("requests", "websocket")):
+            self.skipTest("requests/websocket 이 없다")
+        spec = importlib.util.spec_from_file_location(
+            "deploy_jupyter", self.CI / "deploy-jupyter.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "pw"
+            # File 형식 변수는 내용 끝에 줄바꿈이 붙는 일이 흔하다.
+            path.write_text("s3cret\n", encoding="utf-8")
+            self.assertEqual(module.read_secret(str(path)), "s3cret")
+        # Variable 형식이면 값 그대로다.
+        self.assertEqual(module.read_secret("s3cret"), "s3cret")
+        # 경로로 해석할 수 없는 문자열이어도 죽지 않는다.
+        self.assertEqual(module.read_secret("a\0b/../:*?"), "a\0b/../:*?")
 
     def test_the_password_never_reaches_the_log(self):
         """CI 변수를 마스킹해도 스크립트가 직접 찍으면 의미가 없다."""
