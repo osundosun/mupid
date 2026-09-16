@@ -152,6 +152,12 @@ GPU 는 필요 없다. 서빙 경로에 torch 가 없다.
 
 ## 7. Job · CronJob
 
+> **2026-09-16 변경.** `fetch_onboarding` 은 없앴다 — 온보딩이 요청에 실려 온다.
+> 그리고 **서버 파드에도 `MUPID_CLICKHOUSE_*` 가 필요해졌다.** 행동 데이터를 요청마다
+> 직접 조회하기 때문이다(§6 의 "배치에만 준다" 는 더 이상 맞지 않는다). 읽기 전용
+> 계정이면 충분하다.
+
+
 배치는 전부 CLI 진입점이 있다. 이미지 안에서 도는 것까지 확인했다.
 
 ```
@@ -166,7 +172,6 @@ python -m ai_server.tools.<이름>
 | `push_sections --audit` | 하루 1회 | 대사. 차이가 있으면 **종료 코드 3** |
 | `pull_signals` | 짧은 주기 | ClickHouse 신호 → 행동 로그 (워터마크 증분) |
 | `run_labeler` | 신호 수집 뒤 | 라벨·선호 구간 갱신 |
-| `fetch_onboarding --users-file -` | 신규 가입 뒤 | 온보딩 답변 수신 |
 | `export_stage1_npz` | 모델 교체 시 | `stage1.pt` → `stage1_weights.npz` |
 
 **재생할 때마다 도는 것은 하나도 없다.** `push_sections` 는 곡이 늘거나 경계가 바뀔 때만

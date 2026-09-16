@@ -95,62 +95,57 @@ def test_onboarding_is_not_counted_as_cold_start():
     assert internal_api._reason_code(item, False, "onboarding") != "COLD_START"
 
 
-# ------------------------------------------------------------------ 문장 노출
-_LEAK = re.compile(r"#|dna\d|\d+\.\d+|JAMENDO_|T\d{6}")
-
-
-@pytest.mark.parametrize("code", sorted(internal_api._REASON_TEXT))
-def test_reason_text_has_no_internal_values(code):
-    for label in ("CHORUS", "VERSE", "OTHER", ""):
-        text = internal_api._reason_text(code, label)
-        assert text, (code, label)
-        assert not _LEAK.search(text), text
-
-
-def test_unknown_reason_code_falls_back():
-    assert internal_api._reason_text("SOMETHING_NEW_v2", "CHORUS") == \
-        internal_api._REASON_FALLBACK
-
-
-def test_every_reason_code_has_text():
-    """코드를 늘리면서 문장을 빠뜨리면 폴백으로 조용히 뭉개진다."""
-    produced = set()
-    for has_query in (False, True):
-        for src in ("labels", "onboarding", "none"):
-            for item in (_item(), _item(matched_dna="d"), _item(slot_source="explore"),
-                         _item(clap_score=0.1)):
-                produced.add(internal_api._reason_code(item, has_query, src))
-    assert produced <= set(internal_api._REASON_TEXT), produced - set(internal_api._REASON_TEXT)
-
-
 # ------------------------------------------------------------------ 응답 경계
-def test_to_response_drops_internal_fields(monkeypatch):
-    """추천기 내부 문자열·ID·점수가 응답으로 새지 않는지 본다."""
-    im = ids.IdMap(path=Path("/nonexistent.parquet"), strict=False)
-    im.track_to_num = {"JAMENDO_1083659": 900108}
-    im.sec_to_num = {"JAMENDO_1083659#2": 9001318}
-    monkeypatch.setattr(ids, "_MAP", im)
+def test_to_response_carries_only_the_contract_fields():
+    """추천기 내부 문자열·점수·진단이 응답으로 새지 않는지 본다.
 
+    숫자 ID·시간·구간 종류·문구는 **애초에 싣지 않는다** — Spring 이 `external_id` 로
+    MySQL 에서 가져온다. 두 벌이 되면 어긋날 자리만 생긴다.
+    """
     out = {
         "diagnostics": {"query_source": "labels", "shortfall": 0},
         "results": [{
             "rank": 1, "track_id": "JAMENDO_1083659", "moment_id": "JAMENDO_1083659#2",
             "section_label": "chorus", "start_sec": 79.49, "end_sec": 92.74,
             "final_score": 1.0, "matched_dna": "u#dna3",
-            "matched_dna_rep": "JAMENDO_1083659#2", "slot_source": "dna3",
+            "matched_dna_rep": "JAMENDO_1083659#3", "slot_source": "dna3",
             "clap_score": None, "prob": 0.634, "model_score": 0.551,
             "moment_similarity": 0.812,
-            "reason": "내 선호 구간 묶음 u#dna3(대표 JAMENDO_1083659#2)와 이 곡 2번 "
-                      "chorus 구간 79~93초가 유사도 0.812 · 선호 확률 0.634",
+            "reason": "내 선호 구간 묶음 u#dna3(대표 …)와 유사도 0.812 · 확률 0.634",
         }],
     }
     resp = internal_api.to_response(5001, out, 10, False)
     item = resp.items[0]
-    assert item.music_id == 900108 and item.music_section_id == 9001318
-    assert item.section_label == "CHORUS"
+    assert item.external_id == "JAMENDO_1083659#2"
+    assert item.ref_external_id == "JAMENDO_1083659#3"
     assert item.reason_code == "SIMILAR_PREFERRED_MOMENT"
-    assert not _LEAK.search(item.reason), item.reason
-    assert "dna" not in item.reason and "0.812" not in item.reason
+    assert item.rank_order == 1 and item.score == 1.0
+
+    blob = resp.model_dump_json()
+    for leaked in ("prob", "model_score", "moment_similarity", "matched_dna",
+                   "slot_source", "diagnostics", "dna3",
+                   "0.812", "0.634", "0.551"):     # 모델 수치는 내보내지 않는다
+        assert leaked not in blob, leaked
+    assert "reason" not in blob.replace("reason_code", ""), "내부 문구가 실렸다"
+
+
+def test_to_response_keeps_one_section_per_track():
+    """같은 곡이 두 번 나오면 목록이 한 곡으로 채워진다. 점수가 높은 구간만 남긴다."""
+    out = {"diagnostics": {"shortfall": 0}, "results": [
+        {"rank": 1, "moment_id": "T1#0", "final_score": 0.5},
+        {"rank": 2, "moment_id": "T1#3", "final_score": 0.9},
+        {"rank": 3, "moment_id": "T2#1", "final_score": 0.4},
+    ]}
+    resp = internal_api.to_response(1, out, 3, False)
+    assert [i.external_id for i in resp.items] == ["T1#3", "T2#1"]
+    assert [i.rank_order for i in resp.items] == [1, 2]
+    assert resp.shortfall == 1, "떨군 만큼 부족분에 적어야 한다"
+
+
+def test_track_id_is_the_part_before_the_hash():
+    """곡 문자열 ID 는 구간 UID 의 `#` 앞이다 (Q3)."""
+    assert internal_api._track_of("JAMENDO_1083659#2") == "JAMENDO_1083659"
+    assert internal_api._track_of("T000901") == "T000901"
 
 
 # ------------------------------------------------------------------ 자연어 검색
@@ -384,8 +379,9 @@ def test_query_plan_path_does_not_need_interpreter():
 
     seen: dict = {}
 
-    def _recommend(user, n, exclude, explore, plan, ct, cm):
+    def _recommend(user, n, exclude, explore, plan, ct, cm, **kw):
         seen["plan"] = plan
+        seen.update(kw)      # 주입 인자가 늘어도 이 가짜는 깨지지 않는다
         return {"results": [], "diagnostics": {"shortfall": 0}}
 
     fake = SimpleNamespace(NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]),
@@ -399,6 +395,8 @@ def test_query_plan_path_does_not_need_interpreter():
     assert r.status_code == 404, r.text          # 후보 0 → NO_CANDIDATES (501 아님)
     assert r.json()["error_code"] == "NO_CANDIDATES"
     assert seen["plan"] == {"filters": {"genre": ["pop"]}}
+    # ClickHouse 주소가 없으면 None 이고, 그때는 종전의 파일 경로로 간다.
+    assert "beh_events" in seen
 
 
 # ------------------------------------------------------------------ 산출물 상태
@@ -432,57 +430,22 @@ def test_demo_only_schemas_are_gone():
 
 
 # ------------------------------------------------------------------ 구간 라벨 ENUM
-def _out_with_label(label: str) -> dict:
-    return {"diagnostics": {"query_source": "labels", "shortfall": 0},
-            "results": [{"rank": 1, "track_id": "A", "moment_id": "A#0",
-                         "section_label": label, "start_sec": 1.0, "end_sec": 2.0,
-                         "final_score": 1.0, "matched_dna": "u#dna0",
-                         "slot_source": "dna0", "clap_score": None},
-                        {"rank": 2, "track_id": "B", "moment_id": "B#0",
-                         "section_label": "chorus", "start_sec": 1.0, "end_sec": 2.0,
-                         "final_score": 0.9, "matched_dna": "u#dna0",
-                         "slot_source": "dna0", "clap_score": None}]}
+# 라벨 검사는 **적재 경계**로 옮겼다. ENUM 밖 라벨은 `register_sections` 가 MySQL 에
+# 넣지 않으므로, 추천이 그 구간을 골라도 Spring 이 external_id 를 찾지 못해 떨어진다.
+# 응답 경계에서 또 거를 이유가 없다 → test_register_sections_drops_labels_outside_the_erd_enum
 
 
-@pytest.fixture
-def mapped(monkeypatch):
-    im = ids.IdMap(path=Path("/nonexistent.parquet"), strict=False)
-    im.track_to_num = {"A": 1, "B": 2}
-    im.sec_to_num = {"A#0": 11, "B#0": 22}
-    monkeypatch.setattr(ids, "_MAP", im)
-    return im
+def test_section_enum_matches_spring():
+    """Spring 의 SectionLabel 과 어긋나면 그 차이가 곧 적재 실패다."""
+    from ai_server.tools.push_sections import SECTION_ENUM
 
-
-def test_section_label_outside_erd_enum_is_not_sent(mapped):
-    """추천기는 `other` 를 만들 수 있지만 ERD ENUM 에는 없다.
-    그대로 보내면 Spring 의 SectionLabel 역직렬화가 터진다."""
-    resp = internal_api.to_response(1, _out_with_label("other"), 2, False)
-    assert [i.section_label for i in resp.items] == ["CHORUS"]
-    assert resp.items[0].rank_order == 1, "남은 것의 순번은 다시 붙인다"
-
-
-def test_dropped_label_is_counted_in_shortfall(mapped):
-    """떨궜으면 부족분에 적어야 한다. 아니면 BE 가 왜 적게 왔는지 알 수 없다."""
-    resp = internal_api.to_response(1, _out_with_label("other"), 2, False)
-    assert resp.shortfall == 1
-
-
-def test_known_labels_pass_through(mapped):
-    for label in ("intro", "verse", "pre_chorus", "chorus", "bridge",
-                  "break", "inst", "solo", "outro"):
-        resp = internal_api.to_response(1, _out_with_label(label), 2, False)
-        assert len(resp.items) == 2, label
-
-
-def test_section_enum_matches_spring(mapped):
-    """Spring 의 SectionLabel 과 어긋나면 그 차이가 곧 500 이다."""
     java = (Path(__file__).resolve().parents[2] / "api/src/main/java/com/osundosun"
             / "mupid/api/music/enumerate/SectionLabel.java")
     if not java.exists():
         pytest.skip("api 모듈이 없는 체크아웃")
     names = set(re.findall(r"^\s{4}([A-Z_]+)\(", java.read_text(encoding="utf-8"),
                            flags=re.M))
-    assert names == set(internal_api._SECTION_ENUM), names ^ set(internal_api._SECTION_ENUM)
+    assert names == set(SECTION_ENUM), names ^ set(SECTION_ENUM)
 
 
 # ------------------------------------------------------------------ 이름 해석
@@ -572,16 +535,9 @@ def _srow(track, idx, label="chorus", sim=0.8):
 
 
 @pytest.fixture
-def similar_client(monkeypatch):
+def similar_client():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-
-    im = ids.IdMap(path=Path("/nonexistent.parquet"), strict=False)
-    im.track_to_num = {"A": 1, "B": 2, "C": 3}
-    im.num_to_track = {v: k for k, v in im.track_to_num.items()}
-    im.sec_to_num = {"A#0": 10, "B#1": 21, "C#2": 32}
-    im.num_to_sec = {v: k for k, v in im.sec_to_num.items()}
-    monkeypatch.setattr(ids, "_MAP", im)
 
     def build(rows):
         app = FastAPI()
@@ -591,44 +547,39 @@ def similar_client(monkeypatch):
     return build
 
 
-def test_similar_returns_numeric_ids(similar_client):
+def test_similar_returns_string_ids(similar_client):
+    """숫자 ID·시간·구간 종류를 싣지 않는다 — Spring 이 external_id 로 찾는다."""
     c = similar_client([_srow("B", 1, sim=0.91), _srow("C", 2, sim=0.77)])
-    r = c.post("/internal/similar", json={"music_section_id": 10, "limit": 5})
+    r = c.post("/internal/similar", json={"external_id": "A#0", "limit": 5})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert [i["music_id"] for i in body["items"]] == [2, 3]
-    assert [i["music_section_id"] for i in body["items"]] == [21, 32]
+    assert [i["external_id"] for i in body["items"]] == ["B#1", "C#2"]
     assert [i["rank_order"] for i in body["items"]] == [1, 2]
-    assert body["items"][0]["start_time_ms"] == 10_000
+    assert body["external_id"] == "A#0", "기준 구간을 그대로 돌려준다"
     assert body["embedding_version"]
+    for gone in ("music_id", "music_section_id", "start_time_ms", "section_label"):
+        assert gone not in body["items"][0], gone
 
 
 def test_similar_has_no_personalization_field(similar_client):
     """개인화가 없으므로 사유·점수 필드를 만들어 붙이지 않는다."""
     c = similar_client([_srow("B", 1)])
-    body = c.post("/internal/similar", json={"music_section_id": 10}).json()
+    body = c.post("/internal/similar", json={"external_id": "A#0"}).json()
     assert "reason" not in body["items"][0]
     assert "reason_code" not in body["items"][0]
 
 
-def test_similar_rejects_unknown_section(similar_client):
+def test_similar_reports_shortfall(similar_client):
+    """후보가 모자라면 임의로 채우지 않고 부족분을 적는다."""
     c = similar_client([_srow("B", 1)])
-    r = c.post("/internal/similar", json={"music_section_id": 999})
-    assert r.status_code == 404
-    assert r.json()["error_code"] == "SECTION_ID_MAPPING_NOT_FOUND"
-
-
-def test_similar_drops_labels_outside_erd_enum(similar_client):
-    c = similar_client([_srow("B", 1, label="other"), _srow("C", 2)])
-    body = c.post("/internal/similar", json={"music_section_id": 10, "limit": 2}).json()
-    assert [i["section_label"] for i in body["items"]] == ["CHORUS"]
-    assert body["shortfall"] == 1
+    body = c.post("/internal/similar", json={"external_id": "A#0", "limit": 3}).json()
+    assert len(body["items"]) == 1 and body["shortfall"] == 2
 
 
 def test_similar_rejects_user_id(similar_client):
     """개인화 API 가 아니다. user_id 를 받으면 계약을 오해한 것이다."""
     c = similar_client([_srow("B", 1)])
-    r = c.post("/internal/similar", json={"music_section_id": 10, "user_id": 1})
+    r = c.post("/internal/similar", json={"external_id": "A#0", "user_id": 1})
     assert r.status_code == 400
 
 
@@ -675,7 +626,7 @@ def test_error_rate_and_codes(fresh_metrics):
 
 def test_metrics_endpoint_includes_ready(similar_client, fresh_metrics):
     c = similar_client([_srow("B", 1)])
-    c.post("/internal/similar", json={"music_section_id": 10})
+    c.post("/internal/similar", json={"external_id": "A#0"})
     body = c.get("/internal/metrics").json()
     assert body["requests"]["total"] >= 1
     assert "/internal/similar" in body["requests"]["by_path"]
@@ -697,13 +648,13 @@ def test_internal_is_open_by_default(similar_client, monkeypatch):
     """기본은 꺼져 있어야 한다. 켜 두고 Spring 에 넣어 주지 않으면 추천이 통째로 막힌다."""
     monkeypatch.delenv("MUPID_AI_INTERNAL_TOKEN", raising=False)
     c = similar_client([_srow("B", 1)])
-    assert c.post("/internal/similar", json={"music_section_id": 10}).status_code == 200
+    assert c.post("/internal/similar", json={"external_id": "A#0"}).status_code == 200
 
 
 def test_internal_token_is_enforced_when_set(similar_client, monkeypatch):
     monkeypatch.setenv("MUPID_AI_INTERNAL_TOKEN", "s3cret")
     c = similar_client([_srow("B", 1)])
-    body = {"music_section_id": 10}
+    body = {"external_id": "A#0"}
 
     r = c.post("/internal/similar", json=body)
     assert r.status_code == 401 and r.json()["error_code"] == "UNAUTHORIZED"
@@ -861,27 +812,26 @@ def _out_with_ref(rep_uid):
                          "clap_score": None, "prob": 0.9, "model_score": 0.5}]}
 
 
-def test_reference_section_is_returned_as_numeric_ids(mapped):
-    """'당신이 저장한 이 구간과 닮아서' 를 만들 수 있어야 한다."""
+def test_reference_section_is_returned(mapped=None):
+    """'저장하신 이 구간과 닮아서' 를 만들 수 있어야 한다."""
     item = internal_api.to_response(1, _out_with_ref("B#0"), 1, False).items[0]
-    assert item.ref_music_id == 2 and item.ref_music_section_id == 22
+    assert item.ref_external_id == "B#0"
 
 
-def test_unmapped_reference_empties_the_field_not_the_response(mapped):
-    """근거 구간이 매핑표에 없다고 추천 전체를 실패시키지 않는다."""
-    item = internal_api.to_response(1, _out_with_ref("Z#9"), 1, False).items[0]
-    assert item.ref_music_id is None and item.ref_music_section_id is None
-    assert item.music_id == 1, "추천 자체는 살아 있어야 한다"
+def test_missing_reference_empties_the_field_not_the_response():
+    """근거가 없다고 추천 전체를 실패시키지 않는다."""
+    item = internal_api.to_response(1, _out_with_ref(None), 1, False).items[0]
+    assert item.ref_external_id is None
+    assert item.external_id == "A#0", "추천 자체는 살아 있어야 한다"
 
 
-def test_reference_does_not_reintroduce_scores(mapped):
-    """근거를 노출한다고 모델 수치까지 따라 나가면 3번을 되돌리는 것이다."""
+def test_reference_does_not_reintroduce_scores():
+    """근거를 노출한다고 모델 수치까지 따라 나가면 안 된다."""
     import json
 
     body = json.dumps(internal_api.to_response(1, _out_with_ref("B#0"), 1,
                                                False).model_dump())
-    for leaked in ("0.9", "prob", "model_score", "moment_similarity", "matched_dna_rep",
-                   "A#0", "B#0"):
+    for leaked in ("0.9", "prob", "model_score", "moment_similarity", "matched_dna"):
         assert leaked not in body, leaked
 
 
@@ -1177,69 +1127,6 @@ def _onb_body(user_id=42, submitted=True):
                      "genres": [{"code_id": 15, "name": "Jazz"}] if submitted else []}}
 
 
-def test_fetch_onboarding_maps_submitted_answer():
-    """제출한 사용자는 user_ref 와 두 축이 채워진 한 줄이 된다.
-
-    저장되는 것은 **카탈로그 어휘로 옮긴 값**이다. Spring 의 한국어 분위기를 그대로
-    넣으면 AI 태그와 한 건도 맞지 않아 필터가 통째로 비어 버린다."""
-    from ai_server.tools import fetch_onboarding as f
-
-    row = f.to_row(_onb_body()["data"], ["Contemporary Jazz"])
-    assert row["user_ref"] == "internal:42"
-    assert "relaxing" in json.loads(row["mood"])        # 잔잔한 →
-    assert "space" in json.loads(row["mood"])           # 몽환적인 →
-    assert json.loads(row["genre"]) == ["Contemporary Jazz"]
-
-
-def test_fetch_onboarding_skips_unsubmitted():
-    """미제출은 오류가 아니라 건너뛸 일이다 — 줄을 만들지 않는다."""
-    from ai_server.tools import fetch_onboarding as f
-
-    assert f.to_row(_onb_body(submitted=False)["data"]) is None
-
-
-def test_fetch_onboarding_fills_every_axis_the_recommender_reads():
-    """빈 축을 키째 빼면 옛 행과 concat 할 때 NaN 이 되고, NaN 은 truthy 라
-    `x not in NaN` 에서 터진다(2026-09-07 에 실제로 겪었다)."""
-    from ai_server.app import recommender
-    from ai_server.tools import fetch_onboarding as f
-
-    row = f.to_row(_onb_body()["data"])
-    for axis in recommender.ONB_LIST_FIELDS:
-        assert axis in row, axis
-        assert isinstance(json.loads(row[axis]), list)
-
-
-def test_fetch_onboarding_rewrites_instead_of_appending(tmp_path):
-    """같은 사용자를 다시 받아도 줄이 늘지 않는다."""
-    import pandas as pd
-
-    from ai_server.tools import fetch_onboarding as f
-
-    dst = tmp_path / "onboarding.parquet"
-    first = pd.DataFrame([f.to_row(_onb_body()["data"])])
-    f.merge_into(first, dst).to_parquet(dst, index=False)
-
-    again = pd.DataFrame([f.to_row(_onb_body()["data"])])
-    out = f.merge_into(again, dst)
-    assert len(out) == 1
-    assert out.user_ref.tolist() == ["internal:42"]
-
-
-def test_fetch_onboarding_requires_credentials(monkeypatch):
-    """자격이 없으면 조용히 빈 결과를 내지 않고 멈춘다."""
-    from ai_server.tools import fetch_onboarding as f
-
-    monkeypatch.setenv("MUPID_API_BASE_URL", "http://x")
-    monkeypatch.delenv("MUPID_API_REFRESH_TOKEN", raising=False)
-    with pytest.raises(SystemExit):
-        f.access_token()
-
-    monkeypatch.delenv("MUPID_API_BASE_URL", raising=False)
-    with pytest.raises(SystemExit):
-        f._base()
-
-
 # ------------------------------------------------------------------ 어휘 변환
 _AI_GENRE = ["K-pop", "Ballad", "Alternative Rock", "Contemporary R&B", "Downtempo",
              "House", "Pop Rock", "Indie Rock", "Synthwave", "J-pop", "Cloud Rap",
@@ -1252,7 +1139,7 @@ _SPRING_GENRE = ["Electronic", "Indie", "R&B", "Rock", "Pop", "Hip-hop", "Jazz",
 def test_every_spring_code_reaches_the_catalog():
     """Spring 코드표와 AI 어휘는 **한 건도 그대로 겹치지 않는다**(2026-09-15 실측).
     변환이 하나라도 비면 그 답변은 추천에 전혀 반영되지 않는다."""
-    from ai_server.tools import fetch_onboarding as f
+    from ai_server.app import onboarding as f
 
     dead_mood = [m for m in _SPRING_MOOD if not f.map_mood([m])]
     dead_genre = [g for g in _SPRING_GENRE if not f.map_genre([g], _AI_GENRE)]
@@ -1262,7 +1149,7 @@ def test_every_spring_code_reaches_the_catalog():
 
 def test_mapped_values_exist_in_the_catalog():
     """지어낸 값을 넣으면 필터가 아무것도 고르지 못한다."""
-    from ai_server.tools import fetch_onboarding as f
+    from ai_server.app import onboarding as f
 
     for g in _SPRING_GENRE:
         for v in f.map_genre([g], _AI_GENRE):
@@ -1271,13 +1158,13 @@ def test_mapped_values_exist_in_the_catalog():
 
 def test_raw_answer_is_kept_for_tracing():
     """변환이 어긋났을 때 되짚을 근거가 없으면 원인을 못 찾는다."""
-    from ai_server.tools import fetch_onboarding as f
+    from ai_server.app import onboarding as f
 
-    row = f.to_row(_onb_body()["data"], _AI_GENRE)
-    assert json.loads(row["mood_raw"]) == ["잔잔한", "몽환적인"]
-    assert json.loads(row["genre_raw"]) == ["Jazz"]
-    assert json.loads(row["genre"]) == ["Contemporary Jazz", "Jazzy Hip-Hop"]
-    assert "relaxing" in json.loads(row["mood"])
+    ans = f.from_request({"moods": ["잔잔한", "몽환적인"], "genres": ["Jazz"]}, _AI_GENRE)
+    assert ans["mood_raw"] == ["잔잔한", "몽환적인"]
+    assert ans["genre_raw"] == ["Jazz"]
+    assert ans["genre"] == ["Contemporary Jazz", "Jazzy Hip-Hop"]
+    assert "relaxing" in ans["mood"]
 
 
 # ------------------------------------------------------------------ 구간 적재
@@ -1441,71 +1328,51 @@ def test_pull_signals_watermark_survives_a_missing_file(tmp_path, monkeypatch):
 
 
 # ------------------------------------------------------------------ 온보딩 결함 회귀
-def test_missing_genre_catalog_stops_instead_of_dropping_taste(monkeypatch):
-    """예전에는 카탈로그를 못 읽으면 장르를 빈 값으로 저장하고 **성공으로** 끝냈다.
-    온보딩은 콜드스타트의 유일한 입력이라, 조용히 비면 그 사용자는 영원히 개인화를
-    못 받는다."""
-    from ai_server.app import recommender
-    from ai_server.tools import fetch_onboarding as f
+def test_missing_genre_catalog_does_not_kill_the_request():
+    """장르 어휘를 못 읽어도 추천은 나가야 한다.
 
-    monkeypatch.setattr(recommender, "catalog_facets",
-                        lambda: (_ for _ in ()).throw(RuntimeError("색인 없음")))
-    with pytest.raises(f.CatalogUnavailable):
-        f.genre_catalog()
+    배치 시절에는 어휘를 못 읽으면 **멈추는** 것이 옳았다 — 빈 값을 parquet 에 적으면
+    그 사용자가 영원히 개인화를 못 받기 때문이다. 요청마다 받는 지금은 다르다. 한 요청의
+    장르가 빠질 뿐이라 멈추는 쪽이 더 나쁘다. 대신 mood 는 살아 있어야 하고, 무슨 일이
+    있었는지는 로그로 남는다.
+    """
+    from types import SimpleNamespace
 
-    monkeypatch.setattr(recommender, "catalog_facets", lambda: {"genre": []})
-    with pytest.raises(f.CatalogUnavailable):
-        f.genre_catalog()
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    seen: dict = {}
+
+    def _recommend(user, n, exclude, explore, plan, ct, cm, **kw):
+        seen.update(kw)
+        return {"results": [], "diagnostics": {"shortfall": 0}}
+
+    def _boom():
+        raise RuntimeError("색인 없음")
+
+    fake = SimpleNamespace(NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]),
+                           recommend=_recommend, catalog_facets=_boom)
+    app = FastAPI()
+    internal_api.install(app, fake)
+    r = TestClient(app).post("/internal/recommendations/daily",
+                             json={"recommendation_id": 1, "user_id": 1,
+                                   "onboarding": {"moods": ["잔잔한"],
+                                                  "genres": ["Jazz"]}})
+    assert r.status_code == 404, r.text          # 후보 0 → NO_CANDIDATES (500 아님)
+    assert "relaxing" in seen["onboarding"]["mood"], "mood 까지 잃으면 안 된다"
+    assert seen["onboarding"]["genre"] == []
+    assert seen["onboarding"]["genre_raw"] == ["Jazz"], "원문은 되짚을 수 있어야 한다"
 
 
 def test_empty_genre_is_reported_and_raw_answer_survives():
     """어휘가 안 맞아 비더라도 사람이 고른 원문은 남아야 되짚을 수 있다."""
-    from ai_server.tools import fetch_onboarding as f
+    from ai_server.app import onboarding as onb
 
-    row = f.to_row(_onb_body()["data"], [])        # 카탈로그를 못 받은 상황
-    assert json.loads(row["genre"]) == []
-    assert json.loads(row["genre_raw"]) == ["Jazz"]
-
-
-def test_onboarding_cli_has_no_dead_flag(capsys):
-    """`--from-id-map` 은 선언만 되고 읽는 곳이 없었다. id_map 은 곡 매핑표라
-    사용자 번호가 애초에 없다 — 개념이 맞지 않는 옵션이었다."""
-    import sys
-
-    from ai_server.tools import fetch_onboarding as f
-
-    argv = sys.argv
-    try:
-        sys.argv = ["fetch_onboarding", "--help"]
-        with pytest.raises(SystemExit):
-            f.main()
-    finally:
-        sys.argv = argv
-    help_text = capsys.readouterr().out
-    assert "--from-id-map" not in help_text
-    assert "--users-file" in help_text
+    ans = onb.from_request({"moods": ["잔잔한"], "genres": ["Jazz"]}, [])
+    assert ans["genre"] == [] and ans["genre_raw"] == ["Jazz"]
 
 
 # ------------------------------------------------------------------ 5대 결함 회귀
-def test_onboarding_builds_the_catalog_itself(monkeypatch):
-    """배치는 서버 lifespan 을 타지 않는다. `CAT` 을 직접 만들지 않으면
-    `catalog_facets()` 가 NoneType 으로 **항상** 터져 장르 변환이 전부 실패한다."""
-    from ai_server.app import recommender
-    from ai_server.tools import fetch_onboarding as f
-
-    made = {"n": 0}
-
-    class _Cat:
-        pass
-
-    monkeypatch.setattr(recommender, "CAT", None)
-    monkeypatch.setattr(recommender, "Catalog", lambda: (made.__setitem__("n", 1), _Cat())[1])
-    monkeypatch.setattr(recommender, "catalog_facets",
-                        lambda: {"genre": [{"value": "K-pop"}]})
-    assert f.genre_catalog() == ["K-pop"]
-    assert made["n"] == 1, "Catalog() 를 만들지 않았다"
-
-
 def test_clickhouse_url_scheme_is_never_downgraded(monkeypatch):
     """`https://` 로 적어 둔 ClickHouse 에 평문으로 붙으면 자격증명이 그대로 샌다."""
     from ai_server.tools import push_sections as ps
@@ -1602,3 +1469,291 @@ def test_pull_signals_dedup_does_not_read_the_whole_log(tmp_path, monkeypatch):
     pl.save_watermark("2026-09-15 10:00:00.000", 2, ["ch_a", "ch_b"])
     assert pl.recent_ids() == {"ch_a", "ch_b"}
     assert not wm.with_suffix(".json.tmp").exists(), "임시 파일이 남았다"
+
+
+# ------------------------------------------------------- 구간 적재 · id_map 생성
+def _moments_frame():
+    """스키마만 진짜인 구간 표. 산출물이 없어도 돈다."""
+    import pandas as pd
+
+    return pd.DataFrame([
+        # track_id, moment_id, section_idx, section_label, start_sec, end_sec
+        ("T000001", "T000001#0", 0, "intro", 0.0, 15.5),
+        ("T000001", "T000001#1", 1, "chorus", 15.5, 45.0),
+        # ERD ENUM 에 없는 라벨. 억지로 끼워 넣지 않고 빠져야 한다.
+        ("T000001", "T000001#2", 2, "other", 45.0, 60.0),
+        # 길이가 0 인 구간. 보내면 Spring 이 400 을 준다.
+        ("T000001", "T000001#3", 3, "verse", 60.0, 60.0),
+    ], columns=["track_id", "moment_id", "section_idx", "section_label",
+                "start_sec", "end_sec"])
+
+
+def test_register_sections_drops_labels_outside_the_erd_enum():
+    """추천기는 `other` 를 만들 수 있는데 ERD ENUM 에는 없다.
+
+    다른 라벨에 끼워 넣으면 사용자에게 틀린 구간 유형을 말하게 된다. 빼고 센다."""
+    from ai_server.tools import register_sections as rs
+
+    rows, stat = rs.build_payload(_moments_frame())
+    assert [r["section_label"] for r in rows] == ["INTRO", "CHORUS"]
+    assert stat["unknown_label"] == 1
+    assert stat["bad_range"] == 1
+
+
+def test_register_sections_converts_seconds_to_int_ms():
+    """계약은 정수 밀리초다. 초 단위 실수를 그대로 보내면 400 이다."""
+    from ai_server.tools import register_sections as rs
+
+    rows, _ = rs.build_payload(_moments_frame())
+    assert rows[0] == {"section_index": 0, "external_id": "T000001#0",
+                       "section_label": "INTRO", "start_time_ms": 0,
+                       "end_time_ms": 15500}
+    assert all(isinstance(r["start_time_ms"], int) for r in rows)
+
+
+def test_register_sections_drops_uid_longer_than_the_column():
+    """컬럼이 VARCHAR(64) 다. 넘기면 MySQL 이 조용히 잘라 저장하고, 잘린 값끼리는
+    1:1 검사까지 통과해 매핑이 어긋난 채 서비스가 올라온다."""
+    import pandas as pd
+
+    from ai_server.tools import register_sections as rs
+
+    long_uid = "T" + "x" * 70 + "#0"
+    df = pd.DataFrame([("T1", long_uid, 0, "verse", 0.0, 10.0)],
+                      columns=["track_id", "moment_id", "section_idx",
+                               "section_label", "start_sec", "end_sec"])
+    rows, stat = rs.build_payload(df)
+    assert rows == []
+    assert stat["long_uid"] == 1
+
+
+def test_register_sections_track_map_refuses_to_guess(tmp_path):
+    """`track_id` → `music_id` 는 받은 표에서만 읽는다. 지어내지 않는다."""
+    from ai_server.tools import register_sections as rs
+
+    good = tmp_path / "map.csv"
+    good.write_text("source_track_id,music_id\nT000001,1001\n", encoding="utf-8")
+    assert rs.read_track_map(good) == {"T000001": 1001}
+
+    # 곡 하나에 번호가 둘이면 어느 쪽이 맞는지 알 수 없다. 멈춘다.
+    bad = tmp_path / "dup.csv"
+    bad.write_text("source_track_id,music_id\nT1,1\nT1,2\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        rs.read_track_map(bad)
+
+    # 컬럼 이름이 다르면 무엇을 읽어야 할지 알 수 없다.
+    wrong = tmp_path / "wrong.csv"
+    wrong.write_text("track,id\nT1,1\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        rs.read_track_map(wrong)
+
+
+def test_register_sections_writes_id_map_from_issued_numbers(tmp_path):
+    """응답으로 받은 번호 짝이 그대로 매핑표가 된다. 숫자를 만들지 않는다."""
+    import pandas as pd
+
+    from ai_server.app import ids
+    from ai_server.tools import build_id_map
+
+    pairs = [
+        {"source_track_id": "T000001", "music_id": 1001,
+         "source_section_uid": "T000001#0", "music_section_id": 4101},
+        {"source_track_id": "T000001", "music_id": 1001,
+         "source_section_uid": "T000001#1", "music_section_id": 4102},
+    ]
+    dst = tmp_path / "id_map.parquet"
+    tracks, sections = build_id_map.write_map(
+        pd.DataFrame(pairs)[list(ids.COLS)], dst)
+    assert (tracks, sections) == (1, 2)
+
+    im = ids.IdMap(path=dst, strict=True)
+    assert im.music_id("T000001") == 1001
+    assert im.music_section_id("T000001#1") == 4102
+    assert im.source_section_uid(4101) == "T000001#0"
+
+
+def test_register_sections_id_map_rejects_two_songs_sharing_a_number(tmp_path):
+    """`music_id` 하나에 원본이 둘이면 곡이 중복 노출된다. 쓰지 않는다."""
+    import pandas as pd
+
+    from ai_server.app import ids
+    from ai_server.tools import build_id_map
+
+    pairs = [
+        {"source_track_id": "T1", "music_id": 7,
+         "source_section_uid": "T1#0", "music_section_id": 1},
+        {"source_track_id": "T2", "music_id": 7,
+         "source_section_uid": "T2#0", "music_section_id": 2},
+    ]
+    dst = tmp_path / "id_map.parquet"
+    with pytest.raises(SystemExit):
+        build_id_map.write_map(pd.DataFrame(pairs)[list(ids.COLS)], dst)
+    assert not dst.exists(), "1:1 이 깨졌는데 파일을 남겼다"
+
+
+# ------------------------------------------- ClickHouse 행동 조회 (요청마다 직접)
+def _ch_row(event_type, src="T000001", ts_ms=1_700_000_000_000, position_ms=0,
+            entry_path="RECOMMEND", play_id="p1"):
+    return {"event_type": event_type, "src_track": src, "ts_ms": str(ts_ms),
+            "position_ms": str(position_ms), "entry_path": entry_path,
+            "play_id": play_id}
+
+
+def test_clickhouse_maps_track_skip_to_early_skip():
+    """파일 로그는 Early Skip 을 `PLAY_END` + `reason='skip_next'` 로 적었는데
+    ClickHouse 에는 `TRACK_SKIP` 이 따로 있다. 옮겨 주지 않으면 스킵 감점이 통째로
+    빠진 채 조용히 돈다."""
+    from ai_server.app import clickhouse as ch
+
+    e = ch._to_recommender_shape(_ch_row("TRACK_SKIP", position_ms=2000))
+    assert e["event_type"] == "PLAY_END"
+    assert e["reason"] == "skip_next"
+    assert e["position_sec"] == 2.0
+    assert e["surface"] == "recommendation"
+
+
+def test_clickhouse_maps_play_end_to_completion():
+    """ClickHouse 의 PLAY_END 는 곡이 끝난 것이다 — 의도한 스킵은 TRACK_SKIP 이다."""
+    from ai_server.app import clickhouse as ch
+
+    e = ch._to_recommender_shape(_ch_row("PLAY_END"))
+    assert (e["event_type"], e["reason"]) == ("PLAY_END", "track_done")
+
+
+def test_clickhouse_surface_vocabulary_matches_the_recommender():
+    """`entry_path` 를 그대로 넘기면 `BEH_REC_SURFACES` 와 한 건도 안 맞아
+    스킵 감점이 전부 버려진다."""
+    from ai_server.app import clickhouse as ch
+    from ai_server.app import recommender
+
+    mapped = ch.SURFACE["RECOMMEND"]
+    assert mapped in recommender.BEH_REC_SURFACES
+
+
+def test_behavior_aggregation_is_the_same_from_either_source():
+    """출처가 파일이든 ClickHouse 든 같은 점수가 나와야 한다.
+
+    집계가 두 벌이 되면 한쪽만 고쳐져 같은 사용자에게 다른 추천이 나간다."""
+    from ai_server.app import clickhouse as ch
+    from ai_server.app import recommender
+
+    now = 1_700_000_100.0
+    ts_ms = 1_700_000_000_000
+
+    # ClickHouse 판: 완주 1회 + LIKE
+    ch_events = [ch._to_recommender_shape(_ch_row("PLAY_END", ts_ms=ts_ms)),
+                 ch._to_recommender_shape(_ch_row("LIKE", ts_ms=ts_ms + 1000))]
+
+    # 파일 판: 같은 내용을 파일 로그 어휘로
+    file_events = [
+        {"track_id": "T000001", "event_type": "PLAY_END", "ts": ts_ms / 1000,
+         "reason": "track_done", "position_sec": 1e9,
+         "surface": "recommendation", "play_id": "p1"},
+        {"track_id": "T000001", "event_type": "LIKE", "ts": ts_ms / 1000 + 1,
+         "reason": "", "position_sec": 1e9, "surface": "recommendation",
+         "play_id": "p1"},
+    ]
+
+    a = recommender._aggregate_behavior(ch_events, now)
+    b = recommender._aggregate_behavior(file_events, now)
+    assert a["delta"] == b["delta"]
+    assert a["like"] == b["like"] == {"T000001"}
+    assert a["complete"] == b["complete"] == {"T000001": 1}
+
+
+def test_early_skip_outside_recommendation_is_not_a_negative_signal():
+    """검색으로 들어와 넘긴 것은 추천의 잘못이 아니다. 감점하지 않는다."""
+    from ai_server.app import clickhouse as ch
+    from ai_server.app import recommender
+
+    now = 1_700_000_100.0
+    from_search = [ch._to_recommender_shape(
+        _ch_row("TRACK_SKIP", position_ms=1000, entry_path="SEARCH"))]
+    from_rec = [ch._to_recommender_shape(
+        _ch_row("TRACK_SKIP", position_ms=1000, entry_path="RECOMMEND"))]
+
+    assert recommender._aggregate_behavior(from_search, now)["skip_pen"] == {}
+    assert recommender._aggregate_behavior(from_rec, now)["skip_pen"], "추천 경로 스킵이 무시됐다"
+
+
+def test_behavior_injection_skips_the_file_entirely(tmp_path, monkeypatch):
+    """`events` 를 주면 파일을 읽지 않는다 — 파일이 없어도 돌아야 한다."""
+    from ai_server.app import recommender
+
+    monkeypatch.setattr(recommender, "EVENTS", tmp_path / "없는파일.jsonl")
+    out = recommender.user_behavior("internal:1", now=1_700_000_100.0, events=[])
+    assert out["events"] == 0 and out["delta"] == {}
+
+
+# ------------------------------------------------ 온보딩을 요청으로 받기
+def test_onboarding_from_request_maps_spring_vocabulary():
+    """Spring 코드표와 AI 태그는 한 건도 겹치지 않는다. 옮기지 않으면 씨앗이 빈다."""
+    from ai_server.app import onboarding as onb
+
+    ans = onb.from_request({"moods": ["잔잔한"], "genres": ["Jazz"]},
+                           ["Contemporary Jazz", "Rock"])
+    assert "relaxing" in ans["mood"]
+    assert ans["genre"] == ["Contemporary Jazz"]
+    # 원문은 남긴다 — 변환이 어긋났을 때 되짚을 근거다.
+    assert ans["mood_raw"] == ["잔잔한"] and ans["genre_raw"] == ["Jazz"]
+
+
+def test_onboarding_from_request_fills_every_axis_the_recommender_reads():
+    """빈 축을 키째 빼면 NaN 이 되고, NaN 은 truthy 라 `x not in NaN` 에서 터진다."""
+    from ai_server.app import onboarding as onb
+    from ai_server.app import recommender
+
+    ans = onb.from_request({"moods": ["잔잔한"], "genres": []}, [])
+    for axis in recommender.ONB_LIST_FIELDS:
+        assert axis in ans, axis
+        assert isinstance(ans[axis], list)
+
+
+def test_onboarding_from_request_is_none_when_nothing_was_answered():
+    """답이 없으면 None 이다 — 빈 답변을 온보딩으로 치면 콜드스타트를 숨긴다."""
+    from ai_server.app import onboarding as onb
+
+    assert onb.from_request(None) is None
+    assert onb.from_request({"moods": [], "genres": []}) is None
+
+
+def test_onboarding_batch_is_gone():
+    """온보딩은 요청으로 온다. 아무도 읽지 않는 parquet 를 채우는 배치를 남기지 않는다."""
+    import importlib
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("ai_server.tools.fetch_onboarding")
+
+
+def test_injected_onboarding_wins_over_the_file():
+    """요청으로 온 답변이 우선이다. 파일은 없을 수도 있다."""
+    from ai_server.app import recommender
+
+    injected = {"mood": ["relaxing"], "genre": []}
+    assert recommender.onboarding_of("internal:1", injected) is injected
+
+
+def test_request_carries_onboarding_into_recommend():
+    """DTO 에 실린 온보딩이 추천기까지 닿는지. 중간에서 떨어지면 개인화가 0 이다."""
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    seen: dict = {}
+
+    def _recommend(user, n, exclude, explore, plan, ct, cm, **kw):
+        seen.update(kw)
+        return {"results": [], "diagnostics": {"shortfall": 0}}
+
+    fake = SimpleNamespace(
+        NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]), recommend=_recommend,
+        catalog_facets=lambda: {"genre": [{"value": "Contemporary Jazz"}]})
+    app = FastAPI()
+    internal_api.install(app, fake)
+    TestClient(app).post("/internal/recommendations/daily",
+                         json={"recommendation_id": 1, "user_id": 1,
+                               "onboarding": {"moods": ["잔잔한"], "genres": ["Jazz"]}})
+    assert seen["onboarding"] is not None, "온보딩이 추천기까지 닿지 않았다"
+    assert "relaxing" in seen["onboarding"]["mood"]
+    assert seen["onboarding"]["genre"] == ["Contemporary Jazz"]
