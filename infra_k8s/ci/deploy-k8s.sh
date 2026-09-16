@@ -17,10 +17,11 @@ set -eu
 : "${MUPID_DEPLOY_K8S_KNOWN_HOSTS:?GitLab file variable required}"
 printf '%s\n' "${CI_COMMIT_SHA:?}" | grep -Eq '^[0-9a-f]{40}$'
 
-component=${1:?Expected api or web}
+component=${1:?Expected api, web or ai}
 case "$component" in
   api) archive=.release/image.tar.gz ;;
   web) archive=.release/web/image.tar.gz ;;
+  ai)  archive=.release/ai/image.tar.gz ;;
   *) echo 'Unknown component' >&2; exit 64 ;;
 esac
 [ -s "$archive" ] || { echo "No archive at $archive; run the package job first" >&2; exit 64; }
@@ -93,4 +94,8 @@ check_web() {
 case "$component" in
   api) confirm check_api ;;
   web) confirm check_web ;;
+  # ai 는 확인하지 않는다. replicas 가 0 이라 뜨는 파드가 없고, nginx 도
+  # /internal 을 밖으로 내보내지 않아 엣지를 통해 닿을 길이 없다. 태그가
+  # 바뀐 것은 수신기가 이미 확인했다. replicas 를 올릴 때 여기에 확인을 붙인다.
+  ai)  echo 'ai: replicas 0 이라 엣지를 통한 확인은 건너뛴다' ;;
 esac

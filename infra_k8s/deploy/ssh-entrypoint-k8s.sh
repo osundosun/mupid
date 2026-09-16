@@ -16,7 +16,7 @@ command=${SSH_ORIGINAL_COMMAND:-}
 # deploy-k8s <component> <40-hex commit> <64-hex sha256>
 # The component is an enumeration, not a free string: it selects a workload and
 # a container name inside the receiver, and both come from this list.
-if [[ $command =~ ^deploy-k8s\ (api|web)\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
+if [[ $command =~ ^deploy-k8s\ (api|web|ai)\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
   exec sudo /usr/local/sbin/mupid-receive-k8s \
     "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
 fi
@@ -48,6 +48,17 @@ fi
 if [[ $command =~ ^apply-manifests\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
   exec sudo /usr/local/sbin/mupid-receive-manifests \
     "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+fi
+
+# upload-index <40-hex commit> <64-hex sha256>
+# 추천 색인(풀만 잘라 낸 약 80MB)을 노드에 놓는다. **클러스터를 건드리지 않는다** —
+# 파일을 풀어 놓고 current 심볼릭 링크를 원자적으로 갈아 끼울 뿐이다. 새 판을 파드가
+# 보게 하는 롤아웃은 CI 가 별도로 지시한다.
+#
+# 지금까지 이 디렉터리는 사람이 채웠다. 매니페스트를 손으로 적용하던 때와 같은 모양이고,
+# 그때 "고쳤는데 클러스터에 닿지 않은" 사고가 하루 세 번 났다.
+if [[ $command =~ ^upload-index\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
+  exec sudo /usr/local/sbin/mupid-receive-index     "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 fi
 
 echo 'Only versioned k8s deployment uploads are accepted' >&2

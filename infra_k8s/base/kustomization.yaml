@@ -12,11 +12,13 @@ resources:
   - dbstudio.yaml
   - api.yaml
   - edge.yaml
-# ai.yaml is deliberately not listed. ai_server is still being written, so it is
-# out of this cutover; the manifest stays because the work on it is done and the
-# AI node's budget is reserved for it. Add the line back when the image exists —
-# nothing else has to change, and api-config already points MUPID_AI_BASE_URL at
-# the Service the file creates.
+  # ai.yaml 은 들어오되 **replicas 가 0 이다.** 배포 경로(이미지 빌드·전송·태그
+  # 교체)를 먼저 세워 두고 파드는 나중에 올린다 — 코드가 아직 파일 산출물에
+  # 의존해서 지금 띄우면 /internal/ready 가 503 이다.
+  #
+  # 목록에서 빼 두면 배포 경로를 시험할 수 없고, 올릴 때가 되어서야 처음 돌려
+  # 보게 된다. 그때 문제가 나면 원인이 배포인지 코드인지 가려내기 어렵다.
+  - ai.yaml
 # The hash suffix is deliberate: editing nginx.conf produces a new ConfigMap name
 # and therefore a new pod. Without it the file would change on disk while the
 # running nginx kept the old configuration.
