@@ -11,20 +11,74 @@
 
 ## 실행
 
-`uv` 로 만든다. 로컬 파이썬이 3.12 가 아니어도 uv 가 받아 준다 — 3.11 에서 돌리면
-의존성은 깔리는데 기동 뒤에야 어긋난다.
+### 처음 한 번
 
 ```bash
 cd ai_server
 uv venv --python 3.12
 uv pip install -r requirements.txt
-
-export MUPID_AI_ARTIFACT_DIR=/모델·색인을/둔/경로
-.venv/Scripts/python -m uvicorn ai_server.app.main:app --host 0.0.0.0 --port 8100
+cp .env.example .env        # 값을 채운다 (아래 "환경변수")
 ```
 
+`uv` 로 만든다. 로컬 파이썬이 3.12 가 아니어도 uv 가 받아 준다 — 3.11 에서 돌리면
+의존성은 깔리는데 기동 뒤에야 어긋난다.
+
 `pyproject.toml` 은 두지 않는다 — 배포 이미지가 `requirements.txt` 를 그대로 쓰고,
-둘을 함께 두면 어느 쪽이 기준인지 갈린다.
+둘을 함께 두면 어느 쪽이 기준인지 갈린다. 그래서 `uv run --project ai_server` 도 쓰지
+않는다(pyproject 가 없어 엉뚱한 파이썬을 잡는다).
+
+### 띄우기
+
+**저장소 루트에서** 한 줄이다.
+
+```bash
+ai_server/.venv/Scripts/python -m ai_server.tools.serve      # Linux: .venv/bin/python
+```
+
+`.env` 를 읽어 산출물 경로·ClickHouse 자격을 세우고, **뜨기 전에 무엇이 없는지
+말한 다음** 기동한다.
+
+```
+[ai_server] ai_server/.env 에서 5개 읽음
+[ai_server] 산출물  C:\Workspace\mupid-artifacts
+[ai_server]   ✓ 색인 4종 65,540행 일치 · emb_row 연속
+[ai_server] 행동 저장소  http://localhost:18123  ✓ 연결
+[ai_server] 후보 풀  flow, jamendo
+[ai_server] http://127.0.0.1:8100  ·  /health · /internal/ready
+```
+
+이 줄들이 있는 이유는 이 저장소가 반복해서 밟은 함정이 **"없어도 서비스는 정상처럼
+뜨고 기능만 조용히 꺼지는 것"** 이기 때문이다. `labels_service.parquet` 이 없으면 모든
+사용자가 콜드스타트가 되고, `stage1_weights.npz` 가 없으면 학습 점수가 통째로 빠진다.
+둘 다 오류를 내지 않는다.
+
+| 옵션 | |
+|---|---|
+| `--check` | 띄우지 않고 준비 상태만 본다 |
+| `--artifacts PATH` | 산출물 경로. `.env` 보다 세다 |
+| `--port N` · `--host H` | 기본 `8100` · `127.0.0.1` |
+| `--env-file PATH` | 기본 `ai_server/.env` |
+| `--reload` | 코드가 바뀌면 다시 띄운다 (개발용) |
+
+셸 환경변수가 `.env` 보다 세다. 한 번만 다르게 띄울 때 파일을 고치지 않아도 된다.
+
+```bash
+MUPID_AI_PORT=8200 ai_server/.venv/Scripts/python -m ai_server.tools.serve
+```
+
+**색인이 성하지 않으면 띄우지 않는다.** 색인 4종은 같은 행 번호로 서로를 가리키므로,
+어긋난 채 뜨면 엉뚱한 곡을 추천하면서 정상처럼 보인다.
+
+### uvicorn 을 직접 부를 때
+
+컨테이너는 이 경로를 쓴다(`Dockerfile`). 환경변수를 모두 직접 세워야 한다.
+
+```bash
+uvicorn ai_server.app.main:app --host 0.0.0.0 --port 8100 --workers 1
+```
+
+워커는 하나다. 카탈로그를 프로세스마다 통째로 올리므로 늘리면 메모리가 배로 든다
+(임베딩만 402MB).
 
 Python **3.12**. GPU 도 `torch` 도 필요 없다 — 사용자 벡터 계산을 NumPy 로 옮겼다. 대신
 산출물에 `stage1_weights.npz` 가 있어야 학습 점수가 산다(아래 "랭킹 모델 백엔드").

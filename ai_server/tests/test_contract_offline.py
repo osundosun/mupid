@@ -1757,3 +1757,65 @@ def test_request_carries_onboarding_into_recommend():
     assert seen["onboarding"] is not None, "온보딩이 추천기까지 닿지 않았다"
     assert "relaxing" in seen["onboarding"]["mood"]
     assert seen["onboarding"]["genre"] == ["Contemporary Jazz"]
+
+
+# ------------------------------------------------------------------ 로컬 실행 CLI
+def test_serve_env_file_does_not_override_the_shell(tmp_path, monkeypatch):
+    """셸에서 준 값이 파일보다 세다 — 한 번만 다르게 띄울 때 파일을 고치지 않는다."""
+    import os
+
+    from ai_server.tools import serve
+
+    env = tmp_path / ".env"
+    env.write_text("MUPID_AI_PORT=8100\nMUPID_POOL=flow\n", encoding="utf-8")
+    monkeypatch.setenv("MUPID_AI_PORT", "9999")
+    monkeypatch.delenv("MUPID_POOL", raising=False)
+
+    serve.load_env_file(env)
+    assert os.environ["MUPID_AI_PORT"] == "9999", "셸 값을 덮었다"
+    assert os.environ["MUPID_POOL"] == "flow"
+
+
+def test_serve_env_file_parses_comments_and_quotes(tmp_path, monkeypatch):
+    """주석·빈 줄·따옴표를 그대로 환경에 올리면 경로가 조용히 틀어진다."""
+    import os
+
+    from ai_server.tools import serve
+
+    env = tmp_path / ".env"
+    env.write_text('# 주석\n\nMUPID_POOL="flow"\nMUPID_COMBINER=a.json  \n'
+                   'BROKEN_LINE\n', encoding="utf-8")
+    for key in ("MUPID_POOL", "MUPID_COMBINER"):
+        monkeypatch.delenv(key, raising=False)
+
+    assert serve.load_env_file(env) == 2
+    assert os.environ["MUPID_POOL"] == "flow"
+    assert os.environ["MUPID_COMBINER"] == "a.json"
+
+
+def test_serve_env_file_is_optional(tmp_path):
+    """없어도 돈다 — 배포는 환경변수로만 준다."""
+    from ai_server.tools import serve
+
+    assert serve.load_env_file(tmp_path / "없는파일") == 0
+
+
+def test_serve_reports_what_is_missing_instead_of_starting(clean_env, tmp_path):
+    """산출물이 없으면 띄우지 않고 무엇이 없는지 말한다.
+
+    이 저장소가 반복해서 밟은 함정이 "없어도 정상처럼 뜨고 기능만 조용히 꺼지는" 것이다.
+    """
+    from ai_server.tools import serve
+
+    clean_env.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
+    ok, lines = serve.preflight()
+    assert not ok, "색인이 없는데 뜰 수 있다고 했다"
+    assert any("data/proc/mupid" in line for line in lines), lines
+
+
+def test_serve_is_listed_as_a_tool():
+    """cron·문서가 `python -m ai_server.tools.<이름>` 으로 부른다. import 가 돼야 한다."""
+    import importlib
+
+    m = importlib.import_module("ai_server.tools.serve")
+    assert callable(m.main) and callable(m.preflight)
