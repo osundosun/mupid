@@ -1366,6 +1366,98 @@ class AiEndpointNamesTest(unittest.TestCase):
                       "추천 서버 쪽 짝 이름이 적혀 있지 않다")
 
 
+class ApkDownloadTest(unittest.TestCase):
+    """APK 는 웹 이미지에 굽지 않고 노드의 디렉터리에 두고 nginx 가 읽는다.
+    그 사이에 맞아야 하는 것이 넷이고, 하나라도 어긋나면 받는 사람이 404 를
+    본다 — 올린 쪽은 성공했다고 나온다."""
+
+    DEPLOY = K8S / "deploy"
+
+    def _nginx(self):
+        return (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
+
+    def _edge(self):
+        for doc in yaml.safe_load_all(
+                (K8S / "base" / "edge.yaml").read_text(encoding="utf-8")):
+            if doc and doc.get("kind") == "Deployment":
+                return doc["spec"]["template"]["spec"]
+        raise AssertionError("edge Deployment 를 찾지 못했다")
+
+    def test_nginx_serves_the_apk_from_where_the_pod_mounts_it(self):
+        """alias 가 가리키는 곳과 파드가 마운트하는 곳이 다르면 404 다."""
+        alias = re.search(r"location = /download/mupid\.apk \{[^}]*?alias\s+(\S+);",
+                          self._nginx(), re.S)
+        self.assertTrue(alias, "nginx 에 /download/mupid.apk 가 없다")
+        served = pathlib.PurePosixPath(alias.group(1)).parent.as_posix()
+        mounts = {m["mountPath"] for c in self._edge()["containers"]
+                  for m in c.get("volumeMounts", [])}
+        self.assertIn(served, mounts, f"{served} 를 엣지 파드가 마운트하지 않는다")
+
+    def test_the_mount_comes_from_the_node_directory_the_receiver_writes(self):
+        """수신기가 쓰는 곳과 파드가 읽는 곳이 같아야 한다."""
+        spec = self._edge()
+        volume = next(v for v in spec["volumes"] if v["name"] == "downloads")
+        host = volume["hostPath"]["path"]
+        receiver = (self.DEPLOY / "receive-apk.py").read_text(encoding="utf-8")
+        self.assertIn(f'DOWNLOADS = ROOT / "{pathlib.PurePosixPath(host).name}"', receiver)
+        # 한 번도 올리지 않은 클러스터에서도 파드가 떠야 한다. Directory 면
+        # 디렉터리가 없을 때 파드가 아예 스케줄되지 않는다.
+        self.assertEqual(volume["hostPath"]["type"], "DirectoryOrCreate")
+
+    def test_the_forced_command_takes_nothing_but_a_versioned_apk(self):
+        """이 엔드포인트는 CI 키로 닿는다. 모양이 하나라도 헐거우면 그 키를
+        훔친 쪽이 다른 일을 할 수 있다."""
+        script = (self.DEPLOY / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        # 패턴 안에 [0-9a-f] 가 있어 ] 로 끊으면 안 된다. 기존
+        # DeployEndpointTest 와 같은 방식으로 게으르게 잡는다.
+        found = re.search(r"\$command =~ (\^upload-apk.+?) \]\]", script)
+        self.assertTrue(found, "upload-apk 를 받는 규칙이 없다")
+        pattern = re.compile(found.group(1))
+        good = "upload-apk " + "a" * 40 + " " + "b" * 64
+        self.assertTrue(pattern.match(good))
+        for bad in (
+            good + "; rm -rf /",
+            good + " extra",
+            good.replace("a" * 40, "A" * 40),
+            good.replace("b" * 64, "b" * 63),
+            "upload-apk",
+            "upload-apk ../../etc/passwd " + "b" * 64,
+        ):
+            with self.subTest(command=bad):
+                self.assertIsNone(pattern.match(bad))
+
+    def test_the_receiver_never_takes_a_path_from_the_caller(self):
+        """파일 이름에 들어가는 것은 40자 hex 로 검증한 커밋뿐이다."""
+        receiver = (self.DEPLOY / "receive-apk.py").read_text(encoding="utf-8")
+        self.assertIn('RELEASE = re.compile(r"^[0-9a-f]{40}$")', receiver)
+        self.assertIn("if not RELEASE.match(release)", receiver)
+        # 올라온 것이 APK 인지 본다. 공개 URL 로 아무 파일이나 나가면 안 된다.
+        self.assertIn("def is_apk", receiver)
+        self.assertIn("SIZE_LIMIT", receiver)
+
+    def test_the_apk_build_refuses_an_unsigned_artifact(self):
+        """서명 없는 APK 는 안드로이드가 설치를 거부한다. 그것을 받는 사람이
+        겪게 두면 안 된다."""
+        build = (ROOT / "infra" / "ci" / "build-apk.sh").read_text(encoding="utf-8")
+        self.assertIn("! -name '*unsigned*'", build)
+        self.assertIn("apksigner", build)
+
+    def test_signing_is_optional_for_a_local_build(self):
+        """키스토어가 없다고 로컬에서 `cargo tauri android build` 가 막히면
+        안 된다. CI 만 서명한다."""
+        gradle = (ROOT / "app" / "gen" / "android" / "app"
+                  / "build.gradle.kts").read_text(encoding="utf-8")
+        self.assertIn("keystorePropertiesFile.exists()", gradle)
+        self.assertIn("signingConfig = signingConfigs.getByName(\"release\")", gradle)
+        ignored = (ROOT / "app" / "gen" / "android" / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("keystore.properties", ignored)
+        # 키스토어 자체가 커밋되면 서명 키가 저장소에 들어간다.
+        self.assertEqual(
+            [], [p for p in (ROOT / "app").rglob("*.jks")],
+            "키스토어가 작업 트리에 있다",
+        )
+
+
 class CiVariableDocTest(unittest.TestCase):
     """CI 변수 이름이 코드 어딘가에만 있고 아무 데도 적혀 있지 않으면, 새 사람이
     '왜 이 job 이 안 뜨지' 로 반나절을 쓴다. 실제로 이 저장소에서 한 번 있었다 —
