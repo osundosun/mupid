@@ -749,6 +749,13 @@ export function useMupid(bootstrap: Bootstrap) {
     // **담겨 있던 자리를 먼저 잇는다.** 예전에는 카탈로그 순서로 큐를 통째로
     // 새로 만들어서, 애써 끌어 바꿔 둔 재생 목록 순서가 목록 밖 곡을 한 번
     // 누르는 것만으로 사라졌다.
+    /*
+     * 지금 울리는 곡을 다시 누른 것인가. 그렇다면 아래에서 일시정지·재개로 갈린다.
+     * **그 길에서는 큐를 건드리지 않는다** — 멈췄다 트는 것뿐인데 순서가 바뀌면
+     * 듣던 자리를 잃는다.
+     */
+    const sameTrack = activeRef.current?.id === track.id;
+
     let picked: string | undefined;
     if (!queue.some((entry) => entry.trackId === track.id)) {
       const head = queueEntry(track.id);
@@ -770,6 +777,20 @@ export function useMupid(bootstrap: Bootstrap) {
         currentUidRef.current = head.uid;
         setCurrentUid(head.uid);
       }
+    } else if (!sameTrack) {
+      /*
+       * 이미 담겨 있는 곡을 골라 틀었다. **맨 위로 올린다** — 방금 튼 곡이
+       * 목록 한참 아래에 그대로 있으면 지금 무엇을 듣는지 목록에서 찾기 어렵다.
+       * 중복으로 한 줄 더 만들지는 않는다(decision/0023 규칙 3).
+       *
+       * 자동으로 다음 곡이 넘어가는 길은 여기를 지나지 않는다(`startPlayback`
+       * 직접 호출). 넘어갈 때마다 맨 위로 끌어올리면 애써 잡은 순서가 매 곡마다
+       * 뒤집힌다.
+       */
+      const placed = placeInQueue(queue, track.id, 'top', currentUidRef.current, QUEUE_LIMIT);
+      setQueue(placed.entries);
+      // 큐 갱신은 다음 렌더에나 보이므로 이번 재생의 자리는 여기서 직접 넘긴다.
+      picked = placed.uid;
     }
     const player = getPlayer();
     // 지금 울리는 곡을 다시 누르면 멈춘다. 멈춘 곡을 누르면 이어서 튼다.

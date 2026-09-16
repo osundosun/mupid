@@ -113,3 +113,23 @@ test('원래 배열을 건드리지 않는다', () => {
   placeInQueue(queue, 9, 'top', null, 3);
   assert.deepEqual(queue.map((e) => e.trackId), [1, 2, 3]);
 });
+
+// 재생한 곡은 큐 맨 위로 온다 (`use-mupid` 의 `play`). 그 동작이 기대는 규칙을
+// 여기서 함께 고정한다 — 중복을 만들지 않고, 자리만 맨 위로 옮긴다.
+test('이미 담긴 곡을 재생하면 맨 위로 올라온다', () => {
+  const queue = toQueueEntries([1, 2, 3, 4]);
+  const placed = placeInQueue(queue, 3, 'top', null, 100);
+
+  assert.deepEqual(ids(placed), [3, 1, 2, 4]);
+  assert.equal(placed.moved, true);
+  assert.equal(new Set(ids(placed)).size, 4, '재생했다고 같은 곡이 두 줄이 되면 안 된다');
+});
+
+test('재생으로 맨 위에 올릴 때도 재생 중인 자리는 밀려나지 않는다', () => {
+  const queue = toQueueEntries([1, 2, 3]);
+  const current = queue[2].uid; // 맨 아래를 듣는 중 — 위로 담으면 그쪽이 퇴출 대상이다
+  const placed = placeInQueue(queue, 9, 'top', current, 3);
+
+  assert.notEqual(placed.evictedTrackId, 3);
+  assert.ok(ids(placed).includes(3));
+});
