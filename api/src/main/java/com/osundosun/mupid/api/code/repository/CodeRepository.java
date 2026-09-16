@@ -1,6 +1,7 @@
 package com.osundosun.mupid.api.code.repository;
 
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -13,5 +14,13 @@ public interface CodeRepository extends JpaRepository<Code, Integer> {
     List<Code> findAllByCodeTypeOrderByCodeIdAsc(CodeType codeType);
 
     List<Code> findAllByCodeIdIn(List<Integer> codeIds);
+
+    /**
+     * 종류와 이름으로 하나.
+     *
+     * 표의 UNIQUE 키가 `(code_type, code_name)` 이라 최대 하나다. 코드 추가가
+     * 멱등이어야 해서 필요하다 — 배치가 같은 값을 두 번 보내도 새로 만들지 않는다.
+     */
+    Optional<Code> findByCodeTypeAndCodeName(CodeType codeType, String codeName);
 
 }
