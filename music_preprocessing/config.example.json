@@ -19,5 +19,14 @@
   "api_refresh_token_file": "./refresh_token.txt",
   "api_registry_log": "./registered.json",
   "api_timeout": 30,
-  "api_max_retries": 3
+  "api_max_retries": 3,
+  "analysis_enabled": false,
+  "analysis_artifact_dir": "",
+  "analysis_work_dir": "./analysis_work",
+  "analysis_internal_token_file": "./ai_internal_token.txt",
+  "analysis_version": "v1",
+  "analysis_limit": 200,
+  "analysis_device": "",
+  "analysis_segmenter_python": "",
+  "analysis_keep_versions": 3
 }
