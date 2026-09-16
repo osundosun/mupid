@@ -351,6 +351,54 @@ export type AiRecommendedTrack = {
   reason: string;
 };
 
+/**
+ * 서버가 고른 구간 하나. `next`·`similar`·`daily` 가 같은 모양을 쓴다.
+ *
+ * **곡 번호·시간·구간 종류가 전부 서버에서 온다.** 화면이 카탈로그에서 다시 찾지
+ * 않는다 — 추천된 그 구간을 그대로 틀기 위해서다.
+ */
+export type RecommendedSection = {
+  rank_order: number;
+  music: MusicSummary;
+  music_section_id: number | null;
+  /** INTRO · VERSE · PRE_CHORUS · CHORUS · BRIDGE · BREAK · INST · SOLO · OUTRO */
+  section_label: string | null;
+  start_time_ms: number;
+  end_time_ms: number;
+  reason_code: string;
+  reason: string;
+};
+
+/** 이어 듣기 응답. 조건에 맞는 곡이 없으면 `tracks` 가 비고 `shortfall` 이 찬다. */
+export type NextTrackResult = {
+  /** 재생 이벤트에 되돌려 싣는 상관 키(`rec_id`). 저장되지는 않는다. */
+  recommendation_id: number;
+  tracks: RecommendedSection[];
+  shortfall: number;
+};
+
+/** 닮은 구간 응답. 개인화가 없어 `recommendation_id` 가 없다. */
+export type SimilarSectionResult = {
+  music_section_id: number;
+  tracks: Array<Omit<RecommendedSection, 'reason_code' | 'reason'> & { similarity: number }>;
+  shortfall: number;
+  embedding_version: string;
+};
+
+/** 오늘의 모먼트. 배치가 하루 한 번 만들어 둔 것이라 하루 동안 같다. */
+export type DailyRecommendationResult = {
+  /** 실제로 돌려준 날짜. 요청한 날에 없으면 가장 최근 날로 되돌아간다. */
+  date: string;
+  groups: Array<{
+    recommendation_id: number;
+    title: string;
+    reason: string;
+    mood: string;
+    music_count: number;
+    tracks: Array<{ rank: number; reason: string; music: MusicSummary }>;
+  }>;
+};
+
 /** 추천을 하지 않았으면 `tracks` 는 빈 배열이다 (null 이 아니다). */
 export type AiChatResult = {
   reply: string;
@@ -652,6 +700,23 @@ export function createEndpoints(client: ApiClient) {
           path: `/api/v1/music/${musicId}`,
           signal,
         }),
+      /**
+       * 고른 구간과 소리가 닮은 다른 곡의 구간.
+       *
+       * **개인 취향을 섞지 않는다** — 같은 구간에는 누가 물어도 같은 답이다.
+       * 기준 곡 자신은 결과에서 빠진다.
+       */
+      similarSection: (
+        musicId: number,
+        sectionId: number,
+        limit?: number,
+        signal?: AbortSignal,
+      ) =>
+        client.request<SimilarSectionResult>({
+          path: `/api/v1/music/${musicId}/section/${sectionId}/similar`,
+          query: { limit },
+          signal,
+        }),
       /** 가사. 시간 오름차순. 가사가 없으면 `lines` 가 빈 배열이다. */
       lyrics: (musicId: number, signal?: AbortSignal) =>
         client.request<MusicLyrics>({
@@ -815,6 +880,44 @@ export function createEndpoints(client: ApiClient) {
         }),
     },
 
+    recommendation: {
+      /**
+       * 오늘의 모먼트. **배치가 만들어 둔 것을 읽기만 한다.**
+       *
+       * 그날 것이 없으면 서버가 가장 최근 날로 되돌아가고, 응답의 `date` 가 실제로
+       * 무엇을 돌려줬는지 말한다. 아직 한 번도 안 돌았으면 `groups` 가 빈 배열이다.
+       */
+      daily: (date?: string, signal?: AbortSignal) =>
+        client.request<DailyRecommendationResult>({
+          path: '/api/v1/recommendation/daily',
+          query: { date },
+          signal,
+        }),
+      /**
+       * 다음에 들을 곡. 재생 이력을 보고 고른다.
+       *
+       * 홈의 "당신을 위한 추천" 도 이 경로다 — 목록 길이만 다르다.
+       * 지금 듣던 곡은 서버가 알아서 뺀다.
+       *
+       * 이력이 있는 사용자는 응답이 2초를 넘기도 한다(행동 로그를 훑는다).
+       */
+      next: (
+        body: {
+          current_music_id?: number;
+          current_music_section_id?: number;
+          exclude_music_ids?: number[];
+          limit?: number;
+        } = {},
+        signal?: AbortSignal,
+      ) =>
+        client.request<NextTrackResult>({
+          method: 'POST',
+          path: '/api/v1/recommendation/next',
+          json: body,
+          timeoutMs: 20_000,
+          signal,
+        }),
+    },
     ai: {
       /**
        * AI 대화 한 번. 곡 추천이 필요하다고 모델이 판단하면 `tracks` 가 함께 온다.

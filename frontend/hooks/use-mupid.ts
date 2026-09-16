@@ -1,11 +1,16 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { guardPath, pageForPath, pagePaths } from '@/lib/routes';
 import { mupidService } from '@/lib/services';
 import { login, logout, restoreSession } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
+import {
+  fetchNextTracks,
+  fetchSimilarSections,
+  fetchTodayMoments,
+} from '@/lib/recommendations';
 import {
   queueEntry,
   queueIndexOf,
@@ -62,6 +67,16 @@ export function useMupid(bootstrap: Bootstrap) {
   // 완료 **시각**은 들고 있지 않는다. 화면이 묻는 것은 "설문으로 보내야
   // 하는가" 하나뿐이고, 서버도 `GET /api/v1/user` 로 불리언만 준다.
   const [onboardingSubmitted, setOnboardingSubmitted] = useState(false);
+  /**
+   * 서버 추천. 못 받으면 빈 배열이고, 화면이 카탈로그로 물러난다.
+   *
+   * 물러났다는 사실을 `recommendationsReady` 로 알린다 — 조용히 대신 채우면
+   * "추천이 도는 줄" 알고 넘어간다.
+   */
+  const [todayMoments, setTodayMoments] = useState<Track[]>([]);
+  const [todayMomentNote, setTodayMomentNote] = useState('');
+  const [forYou, setForYou] = useState<Track[]>([]);
+  const [recommendationsReady, setRecommendationsReady] = useState(false);
   const onboardingRef = useRef(false);
   const sessionRef = useRef<AccountSession | null>(null);
   // 새로고침 시 세션 복원은 아직 미연결이다. 추후 서버의 세션 확인 응답으로 초기화해야 한다.
@@ -187,6 +202,50 @@ export function useMupid(bootstrap: Bootstrap) {
       mupidService.savePreferences({ onboardingSubmitted, nickname, moods, genres, liked, ignored, history, moments, playlists, lastPlayedId })
     ).catch(() => { if (mountedRef.current) setToast('변경 내용을 저장하지 못했어요. 다시 시도해 주세요.'); });
   }, [ready, onboardingSubmitted, nickname, moods, genres, liked, ignored, history, moments, playlists, lastPlayedId]);
+  /**
+   * 서버 추천을 한 번 받아 둔다.
+   *
+   * 실패해도 화면을 세우지 않는다 — 추천 서버가 아직 준비되지 않았거나(색인 미적재)
+   * 배치가 한 번도 안 돌았을 수 있다. 그때는 카탈로그로 물러나고, 물러났다는 것은
+   * `recommendationsReady` 가 말한다.
+   */
+  useEffect(() => {
+    if (!ready || !sessionRef.current) return;
+    const ac = new AbortController();
+    void (async () => {
+      const [today, next] = await Promise.all([
+        fetchTodayMoments(ac.signal).catch(() => null),
+        fetchNextTracks({ limit: 6 }, ac.signal).catch(() => null),
+      ]);
+      if (!mountedRef.current || ac.signal.aborted) return;
+      if (today?.tracks.length) {
+        setTodayMoments(today.tracks);
+        setTodayMomentNote(today.note);
+      }
+      if (next?.length) setForYou(next);
+      setRecommendationsReady(Boolean(today?.tracks.length || next?.length));
+    })();
+    return () => ac.abort();
+  }, [ready]);
+
+  /**
+   * 고른 구간과 닮은 구간. 화면이 부를 때마다 받는다.
+   *
+   * 캐시하지 않는다 — 개인화가 없어 서버가 캐시할 수 있고, 여기서 또 들고 있으면
+   * 구간을 옮겼을 때 옛 결과가 남는다.
+   */
+  // 화면이 `useEffect` 의존성에 넣는다. 렌더마다 새 함수면 구간을 옮기지 않아도 다시 묻는다.
+  const loadSimilarSections = useCallback(
+    async (musicId: number, sectionId: number, limit = 8) => {
+      try {
+        return await fetchSimilarSections(musicId, sectionId, limit);
+      } catch {
+        return [];
+      }
+    },
+    [],
+  );
+
   /**
    * 온보딩 결과를 저장한다. **계정당 한 번뿐이다.**
    *
@@ -1213,6 +1272,11 @@ export function useMupid(bootstrap: Bootstrap) {
     onboardingSubmitted,
     completeOnboarding,
     tracks,
+    todayMoments,
+    todayMomentNote,
+    forYou,
+    recommendationsReady,
+    loadSimilarSections,
     page,
     go,
     goBack,

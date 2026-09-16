@@ -2,6 +2,14 @@ export type SongSection = {
   label: string;
   start: number;
   end: number;
+  /**
+   * `music_section_analysis_id`. **서버가 분석한 구간에만 있다** —
+   * 길이만 보고 둘로 나눈 임시 구간(`lib/stream-catalog.ts`)에는 없다.
+   *
+   * 「닮은 구간」을 물으려면 이 번호가 필요하다. 없으면 물을 수 없고, 화면은
+   * 그때 곡 목록으로 물러난다.
+   */
+  sectionId?: number;
 };
 
 /**
