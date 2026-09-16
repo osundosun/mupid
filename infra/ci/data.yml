@@ -2,8 +2,9 @@
 #
 # 배포 대상이 k8s 가 아니라 JupyterHub 배치 서버다. 그 서버는 SSH 가 닫혀 있고
 # 80/443 만 열려 있어서(확인함) 다른 배포처럼 이미지 tar 를 밀어 넣지 못한다.
-# infra/ci/deploy-jupyter.py 가 JupyterHub HTTP API 로 파일을 올리고 crontab 을
-# 다시 건다.
+# infra/ci/deploy-jupyter.py 가 JupyterHub HTTP API 로 파일을 올리고 배치를
+# 돌린다. cron 은 쓰지 못한다 — 그 계정은 cron 스풀에 쓸 권한이 없다.
+# 스케줄은 GitLab 파이프라인 스케줄이 대신한다 (data-batch).
 
 # MR 에서는 라벨이 고른다 — infra/ci/labels.yml
 data-verify:
@@ -42,9 +43,9 @@ data-verify:
 
 # 서버에 붙어 상태만 읽는다. 아무것도 쓰지 않는다.
 #
-# 첫 배포 전에 눌러 본다. 설정이 실재하는 곳을 가리키는지, 서버에 이미 걸린
-# crontab 이 무엇인지 여기서 확인한다 — 경로가 하나 틀리면 배치가 오류 없이
-# 0곡을 처리하고 끝나서, 로그를 봐도 한참 모른다.
+# 첫 배포 전에 눌러 본다. 설정이 실재하는 곳을 가리키는지 여기서 확인한다 —
+# 경로가 하나 틀리면 배치가 오류 없이 0곡을 처리하고 끝나서, 로그를 봐도
+# 한참 모른다.
 data-check:
   stage: verify
   image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
@@ -68,7 +69,7 @@ data-deploy:
     - job: data-verify
       artifacts: false
       optional: true
-  # 한 번에 하나만. crontab 을 읽고 고쳐 쓰므로 둘이 겹치면 서로를 덮는다.
+  # 한 번에 하나만. 배치가 도는 중에 코드를 갈아 끼우면 반쪽짜리 상태가 된다.
   resource_group: mupid-jupyter
   # 배포가 중간에 끊기면 코드 일부만 올라간 상태가 된다.
   interruptible: false
@@ -98,3 +99,35 @@ data-deploy:
   script:
     - uv run --python 3.12 --with requests --with websocket-client
         python infra/ci/deploy-jupyter.py
+
+# 배치 한 바퀴. **cron 을 대신한다.**
+#
+# 그 계정은 cron 스풀에 쓸 권한이 없다 — `crontab -` 가
+# `/var/spool/cron/: mkstemp: Permission denied` 로 실패한다(실측). 그래서
+# "언제" 는 GitLab 파이프라인 스케줄이 정하고, "무엇을" 은 저장소의
+# music_preprocessing/run_batch.sh 가 정한다. 순서와 명령이 저장소에 있어야
+# 리뷰와 이력이 남는다.
+#
+# 스케줄은 Settings → CI/CD → Pipeline schedules 에 있다. 스케줄을 끄면
+# 배치가 멈춘다.
+data-batch:
+  stage: deploy
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  tags: [mupid-ci]
+  # 배포와 겹치면 안 된다. 코드를 갈아 끼우는 중에 배치가 돌면 반쪽짜리
+  # 상태로 실행된다.
+  resource_group: mupid-jupyter
+  interruptible: false
+  # 청킹이 길다. 서버에서 분리해 띄우고 로그만 따라가므로 러너는 거의 놀지만,
+  # job 이 먼저 끝나 버리면 결과를 못 본다.
+  timeout: 6h
+  variables:
+    UV_CACHE_DIR: /cache/uv
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $MUPID_DATA_ENV'
+    # 손으로 한 바퀴 돌리고 싶을 때.
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DATA_ENV'
+      when: manual
+  script:
+    - uv run --python 3.12 --with requests --with websocket-client
+        python infra/ci/deploy-jupyter.py --batch
