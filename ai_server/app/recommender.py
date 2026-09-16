@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
-from . import metrics, paths, stage1_np
+from . import labels_store, metrics, paths, stage1_np
 from .log import log
 
 warnings.filterwarnings("ignore")
@@ -42,6 +42,8 @@ ROOT = paths.artifact_root()
 OUT_DIR = ROOT / "data" / "proc" / "mupid"
 SERVE = OUT_DIR / "serve"
 EVENTS = OUT_DIR / "logs" / "events_service.jsonl"
+# 라벨의 정본은 ClickHouse 다(`app/labels_store.py`). 이 파일은 ClickHouse 가
+# 없는 개발·오프라인에서만 쓰이고, 배치가 만든 중간 산출물이기도 하다.
 LABELS = OUT_DIR / "labels_service.parquet"
 PREFS = SERVE / "prefs.parquet"
 ONBOARD = SERVE / "onboarding.parquet"
@@ -622,8 +624,74 @@ def run_labeler() -> dict:
          "--out", str(LABELS), "--pool", "service"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         cwd=paths.PKG_ROOT.parent)
-    return {"ok": r.returncode == 0 and LABELS.exists(),
-            "stdout": r.stdout[-1500:], "stderr": r.stderr[-800:]}
+    out = {"ok": r.returncode == 0 and LABELS.exists(),
+           "stdout": r.stdout[-1500:], "stderr": r.stderr[-800:]}
+    if out["ok"] and labels_store.configured():
+        # 라벨러는 parquet 으로 내놓는다(중간 산출물). 서빙이 읽는 정본은
+        # ClickHouse 이므로 여기서 한 판을 통째로 올린다.
+        #
+        # **적재에 실패하면 실패로 돌려준다.** 성공으로 처리하면 배치는 초록인데
+        # 서빙은 어제 라벨을 계속 보게 되고, 그 차이는 아무 데도 드러나지 않는다.
+        run_id = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            out["loaded"] = labels_store.write(pd.read_parquet(LABELS), run_id)
+            out["run_id"] = run_id
+        except Exception as e:
+            out["ok"] = False
+            out["reason"] = f"라벨 적재 실패: {type(e).__name__}: {e}"
+            log(out["reason"])
+    return out
+
+
+# ------------------------- 라벨 읽기 (ClickHouse / 파일) -------------------------
+# 다섯 곳이 각자 `pd.read_parquet(LABELS)` 를 부르고 있었다. 저장소가 둘이 되면
+# 그 다섯 곳이 따로 갈라지므로 여기 하나로 모은다. **판단 기준은 하나다** —
+# `labels_store.configured()`. 읽기와 쓰기가 서로 다른 곳을 보는 상태를 만들지
+# 않기 위해서다.
+def labels_available() -> bool:
+    if labels_store.configured():
+        try:
+            return labels_store.has_any()
+        except Exception as e:
+            # 추천을 죽이지 않는다. 개인화만 빠지고 그 사실이 로그에 남는다.
+            log(f"라벨 저장소 조회 실패 — {type(e).__name__}: {e}")
+            return False
+    return LABELS.exists()
+
+
+def labels_for(user: str) -> pd.DataFrame:
+    """사용자 한 명의 라벨. 없으면 빈 표(호출부가 `.empty` 로 본다)."""
+    if labels_store.configured():
+        try:
+            return labels_store.user_labels(user)
+        except Exception as e:
+            log(f"라벨 조회 실패 ({user}) — {type(e).__name__}: {e}")
+            return pd.DataFrame()
+    if not LABELS.exists():
+        return pd.DataFrame()
+    lab = pd.read_parquet(LABELS)
+    return lab[lab.user_ref == user]
+
+
+def labels_all() -> pd.DataFrame:
+    """전체. 배치(`learn`)만 쓴다 — 요청 경로에서 부르지 않는다."""
+    if labels_store.configured():
+        return labels_store.all_labels()
+    return pd.read_parquet(LABELS) if LABELS.exists() else pd.DataFrame()
+
+
+def other_positives(user: str) -> pd.DataFrame:
+    """남들의 L1 라벨. 질의 측 개인화 보정(`build_dna`)이 쓴다."""
+    if labels_store.configured():
+        try:
+            return labels_store.other_user_positives(user)
+        except Exception as e:
+            log(f"타 사용자 라벨 조회 실패 — {type(e).__name__}: {e}")
+            return pd.DataFrame()
+    if not LABELS.exists():
+        return pd.DataFrame()
+    lab = pd.read_parquet(LABELS)
+    return lab[(lab.user_ref != user) & (lab.grade == "L1")]
 
 
 def decay_weights(df: pd.DataFrame) -> np.ndarray:
@@ -717,7 +785,7 @@ def learn(req: "LearnReq") -> dict:
     r = run_labeler()
     if not r["ok"]:
         raise RuntimeError(f"라벨 생성 실패: {r.get('reason') or r.get('stderr', '')[-300:]}")
-    lab = pd.read_parquet(LABELS)
+    lab = labels_all()
     c = CAT
     minfo = c.mom.set_index("moment_id")
     rows = []
@@ -867,10 +935,10 @@ def _seed_rows(user: str) -> list[dict]:
 
 def _pref_sections(user: str, include_dismissed: bool = False) -> list[dict]:
     """라벨(L1/L2) + override 를 합쳐 화면용 선호 구간 목록을 만든다."""
-    if not LABELS.exists():
+    lab = labels_for(user)
+    if lab.empty:
         return []
-    lab = pd.read_parquet(LABELS)
-    mine = lab[(lab.user_ref == user) & (lab.grade.isin(["L1", "L2"]))]
+    mine = lab[lab.grade.isin(["L1", "L2"])]
     if mine.empty:
         return []
     c = CAT
@@ -926,10 +994,10 @@ def dismissed_moments(user: str) -> set:
     if not ov:
         return set()
     out = set()
-    if not LABELS.exists():
+    lab = labels_for(user)
+    if lab.empty:
         return out
-    lab = pd.read_parquet(LABELS)
-    for k in lab.loc[lab.user_ref == user, "section_key"].unique():
+    for k in lab["section_key"].unique():
         if ov.get(pref_id(user, str(k)), {}).get("status") == "DISMISSED":
             out.add(str(k))
     return out
@@ -1107,10 +1175,10 @@ def user_behavior(user: str, now: float | None = None,
 
 
 def user_positives(user: str) -> pd.DataFrame:
-    if not LABELS.exists():
+    lab = labels_for(user)
+    if lab.empty:
         return pd.DataFrame()
-    lab = pd.read_parquet(LABELS)
-    pos = lab[(lab.user_ref == user) & (lab.grade == "L1") & (~lab.is_merged)]
+    pos = lab[(lab.grade == "L1") & (~lab.is_merged)]
     drop = dismissed_moments(user)          # 화면에서 지운 구간은 Moment DNA 에서도 뺀다
     if drop:
         pos = pos[~pos.section_key.isin(drop)]
@@ -1208,9 +1276,8 @@ def build_dna(user: str) -> tuple[np.ndarray, np.ndarray, list[dict]]:
 
     # 2) 다른 사용자 평균 (질의 측 개인화 보정용)
     OV = None
-    if LABELS.exists():
-        others = pd.read_parquet(LABELS)
-        o = others[(others.user_ref != user) & (others.grade == "L1")]
+    o = other_positives(user)
+    if not o.empty:
         ok = [k for k in o.section_key if k in rowmap.index]
         if ok:
             OV = center(np.asarray(c.Z[rowmap.loc[ok].to_numpy()], dtype=np.float32)).mean(0)

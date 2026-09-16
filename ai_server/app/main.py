@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 
-from . import internal_api, paths, recommender
+from . import internal_api, labels_store, paths, recommender
 from .log import log
 
 _STARTED = time.time()
@@ -26,7 +26,6 @@ _STATE: dict = {"loaded": False, "error": None, "integrity": None, "load_seconds
 # 존재 여부만 본다. 예컨대 labels_service.parquet 이 없으면 오류 없이 모든 사용자가
 # 콜드스타트로 처리된다 — 서버는 정상으로 보이고 개인화만 없다.
 _OPTIONAL_ARTIFACTS = {
-    "labels_service.parquet": "개인화. 없으면 모든 사용자가 콜드스타트다",
     "logistic_flow_stage1.json": "점수 결합기. 없으면 규칙 점수로 내려간다",
     # 둘 중 **하나**는 있어야 학습 점수가 산다. npz 가 있으면 torch 가 필요 없다.
     "stage1_weights.npz": "랭킹 모델(NumPy 판). 권장 — 이미지에 torch 가 필요 없다",
@@ -47,6 +46,13 @@ def artifact_status() -> dict:
     d = recommender.OUT_DIR
     files = {name: {"exists": (d / name).exists(), "why": why}
              for name, why in _OPTIONAL_ARTIFACTS.items()}
+    # 라벨은 파일이 아닐 수 있다. ClickHouse 를 쓰면 그쪽에 있는지로 판단해야
+    # 하고, 파일만 보면 **개인화가 멀쩡한 배포를 콜드스타트로 잘못 보고한다.**
+    labels_ok = recommender.labels_available()
+    files["labels_service.parquet"] = {
+        "exists": labels_ok,
+        "store": "clickhouse" if labels_store.configured() else "file",
+        "why": "개인화. 없으면 모든 사용자가 콜드스타트다"}
     missing = sorted(k for k, v in files.items() if not v["exists"])
     idm = paths.id_map_path()
     files["id_map.parquet"] = {
