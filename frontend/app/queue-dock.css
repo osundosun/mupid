@@ -290,3 +290,60 @@
     animation-duration: 1ms;
   }
 }
+
+/*
+ * 담을 위치 고르기.
+ *
+ * 라디오를 알약 모양 버튼처럼 보이게 한다. 실제 `input` 은 남겨 둔다 —
+ * 화살표 키로 고르기·읽어 주기 순서가 공짜로 따라오고, `fieldset`/`legend` 가
+ * "이 셋은 한 묶음" 이라는 것을 보조기기에 알린다.
+ */
+.queue-insert-position {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 4px 10px;
+  padding: 0;
+  border: 0;
+}
+
+.queue-insert-position legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 0;
+  font-size: 0.75rem;
+  color: #6b81a6;
+}
+
+.queue-insert-position label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid #dfe9f9;
+  border-radius: 999px;
+  background: #f7fbff;
+  font-size: 0.8125rem;
+  color: #46608c;
+  cursor: pointer;
+}
+
+.queue-insert-position label.is-picked {
+  border-color: #9dbdea;
+  background: #e8f1ff;
+  color: #27457a;
+  font-weight: 600;
+}
+
+/* 초점은 알약 전체에 보인다. 동그란 라디오만 빛나면 어디가 골라졌는지 안 보인다. */
+.queue-insert-position label:focus-within {
+  outline: 2px solid #5883cf;
+  outline-offset: 2px;
+}
+
+.queue-insert-position input {
+  margin: 0;
+  accent-color: #5883cf;
+}

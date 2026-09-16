@@ -14,7 +14,25 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { QUEUE_LIMIT, type MupidModel } from '@/hooks/use-mupid';
+import {
+  INSERT_POSITION_LABEL,
+  QUEUE_LIMIT,
+  type MupidModel,
+  type QueueInsertPosition,
+} from '@/hooks/use-mupid';
+
+/**
+ * 고를 수 있는 담기 위치. 기본값인 '맨 아래' 를 먼저 둔다.
+ *
+ * '재생 중인 곡 다음' 은 듣고 있는 곡이 없으면 맨 아래로 내려간다 — 그때는
+ * 모델이 토스트로 알린다. 고를 수 없게 막지는 않는다. 곧 곡을 틀 사람에게는
+ * 미리 골라 두는 것이 자연스럽다.
+ */
+const QUEUE_INSERT_CHOICES: { value: QueueInsertPosition; label: string }[] = [
+  { value: 'bottom', label: INSERT_POSITION_LABEL.bottom },
+  { value: 'top', label: INSERT_POSITION_LABEL.top },
+  { value: 'afterCurrent', label: INSERT_POSITION_LABEL.afterCurrent },
+];
 
 /**
  * 재생 목록 독.
@@ -143,8 +161,31 @@ function QueueDockPanel({
           <p className="queue-dock-hint">
             {pick.active
               ? '뺄 곡을 고르세요. 전체 선택으로 한 번에 비울 수도 있어요.'
-              : `손잡이를 끌어 순서를 바꿀 수 있어요. ${QUEUE_LIMIT}곡이 넘으면 맨 아래 곡부터 빠져요.`}
+              : `손잡이를 끌어 순서를 바꿀 수 있어요. ${QUEUE_LIMIT}곡이 넘으면 가장 오래 담긴 곡부터 빠져요.`}
           </p>
+
+          {/*
+            담은 곡이 어디로 들어갈지 고른다. 목록 바로 위에 두는 것은,
+            담기 버튼이 흩어져 있어(곡 목록·플레이어·추천) 그 옆마다 붙일 수 없고
+            결과가 보이는 자리에서 고르는 편이 무엇이 달라지는지 읽히기 때문이다.
+          */}
+          {!pick.active && (
+            <fieldset className="queue-insert-position">
+              <legend>담을 위치</legend>
+              {QUEUE_INSERT_CHOICES.map(({ value, label }) => (
+                <label key={value} className={m.queueInsertPosition === value ? 'is-picked' : ''}>
+                  <input
+                    type="radio"
+                    name="queue-insert-position"
+                    value={value}
+                    checked={m.queueInsertPosition === value}
+                    onChange={() => m.setQueueInsertPosition(value)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
+          )}
 
           {!!count && (
             <SelectionToolbar
