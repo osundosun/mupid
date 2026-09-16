@@ -87,7 +87,9 @@ public class StorageImageServiceImpl implements StorageImageService {
 
     @Override
     public String getStorageKey(FileCategory category, String key) {
-        return "image/%s/%s".formatted(category.name().toLowerCase(), key);
+        // 모양을 아는 곳은 `StorageImageService.storageKey` 하나다 — 조회 URL 이 그 모양을
+        // 되짚어 만들어지므로, 여기서 손으로 적으면 둘이 조용히 갈라진다.
+        return StorageImageService.storageKey(category, key);
     }
 
     /**

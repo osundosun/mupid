@@ -1,12 +1,27 @@
 # Docker · compose · nginx
 
-13건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+18건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
 ---
 
 ## Docker · compose
+
+### 다른 워크트리에서 띄운 컨테이너는 그 워크트리를 지우면 마운트가 깨진 채로 계속 돈다
+
+- **원인**: `docker compose up` 은 **bind 마운트 소스를 절대 경로로 컨테이너에 굳혀 둔다.** 그래서 다른 워크트리에서 스택을 띄운 뒤 그 워크트리를 지워도 컨테이너는 그대로 뜬 상태로 남고, 마운트가 가리키는 호스트 경로만 사라진다. 이때 컨테이너 안에서 그 파일들은 **`?????????` (읽을 수 없음)** 으로 보인다 — 빈 파일도 아니고 `cat` 이 "No such file" 을 낸다. **재기동도 안 된다**: `Cannot restart container …: error while creating mount source path …: mkdir …: file exists`.
+- **증상**: 컨테이너는 `Up N days (healthy)` 인데 설정이 하나도 안 실려 있다. 개발 스택에서 실제로 겪은 것 — ClickHouse 의 `config.d`·`users.d` 가 통째로 비어 `mupid` 계정이 사라졌고, 그래서 `GET /api/v1/report` 가 ClickHouse `AUTHENTICATION_FAILED (Code: 516)` → `MUPID_REPORT_ANALYTICS_UNAVAILABLE` 503 이 됐다. **DB 안의 데이터는 멀쩡하다**(named volume). 헬스체크는 `default` 계정을 127.0.0.1 로 쓰므로 계속 통과해서 더 헷갈린다.
+- **해결**: 그 워크트리를 되살리지 않는다면 컨테이너를 **지우고 지금 워크트리에서 다시 만든다.** 데이터는 named volume(`mysql-data`·`ch1-data` …)에 있으므로 `-v` 를 쓰지 않는다.
+  ```bash
+  docker compose down          # -v 금지. 볼륨이 사라진다
+  docker compose up -d
+  ```
+- **어느 컨테이너가 걸렸는지 보는 법**: bind 마운트만 보면 된다. named volume 만 쓰는 MySQL·Redis·Storage·Kafka 는 영향받지 않는다 — 그래서 "일부만 이상한" 모습이 나온다.
+  ```bash
+  docker inspect <컨테이너> --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}{{end}}'
+  ```
+- **예방**: 워크트리를 지우기 전에 그 워크트리에서 스택을 내린다(`docker compose down`).
 
 ### `addgroup -S` 가 실패한다 / 헬스체크에서 `curl: not found`
 

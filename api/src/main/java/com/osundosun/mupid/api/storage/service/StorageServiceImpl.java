@@ -190,6 +190,33 @@ public class StorageServiceImpl implements StorageService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public Optional<byte[]> getFileDataByKey(String key) {
+        GetObjectRequest request = GetObjectRequest.builder()
+            .bucket(props.bucketName())
+            .key(key)
+            .build();
+        try {
+            return Optional.of(s3Client.getObjectAsBytes(request).asByteArray());
+        } catch (NoSuchKeyException e) {
+            return Optional.empty();
+        } catch (S3Exception e) {
+            // SeaweedFS 는 없는 키에 404 만 주고 NoSuchKey 로 매핑되지 않을 때가 있다
+            // (statObject 와 같은 사정).
+            if (e.statusCode() == 404) {
+                return Optional.empty();
+            }
+            throw e;
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = false)
+    public int renameStorageObjectKey(String stale, String wanted) {
+        return repository.renameStorageObjectKey(stale, wanted);
+    }
+
+    @Override
     @Transactional(readOnly = false)
     public boolean isFileExists(String key) {
         ObjectStorageFile metaData = repository
@@ -199,5 +226,25 @@ public class StorageServiceImpl implements StorageService {
         }
         return true;
     }
-    
+
+    @Override
+    @Transactional(readOnly = false)
+    public void deleteObjectQuietly(String key) {
+        DeleteObjectRequest request = DeleteObjectRequest.builder()
+            .bucket(props.bucketName())
+            .key(key)
+            .build();
+        try {
+            s3Client.deleteObject(request);
+            // 이 키로 메타데이터 행이 남아 있으면 함께 정리한다. 위에서 말한 대로 그 행이
+            // 있다는 보장이 없다 — SeaweedFS 처럼 객체와 메타데이터가 한 경로인 스토리지에서는
+            // 객체를 지우는 순간 행도 같이 사라진다.
+            repository.findByStorageObjectKeyAndIsDeletedFalse(key)
+                .ifPresent(metaData -> metaData.setIsDeleted(true));
+        } catch (RuntimeException e) {
+            // 옛 키 정리는 뒷정이다. 실패해도 본래 하려던 일(새 키로 올리기)은 이미 끝났다.
+            log.warn("쓰이지 않는 오브젝트를 지우지 못했습니다. key={}", key, e);
+        }
+    }
+
 }

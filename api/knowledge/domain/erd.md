@@ -206,3 +206,5 @@ MySQL 도메인을 만들 때는 **`music_id` 를 쓴다.** ERD 에 `track_id` �
 [seed-codes.sql](seed-codes.sql) — `codes` 기준 데이터. 비어 있으면 온보딩이 503 이다. 기동 때 `bootstrap/BootstrapRunner` 가 같은 목록으로 빠진 것만 채우므로 보통은 손댈 일이 없다. 테이블 자체는 `ddl-auto` 가 `none` 이라 사람이 만들어야 한다.
 
 `mubti` 16종도 같은 러너가 채운다. 이쪽은 SQL 파일이 없다 — `image_file_id` 가 NOT NULL 이라 행만 넣을 수 없고, 캐릭터 이미지를 오브젝트 스토리지에 올린 뒤 그 `file_id` 를 물려야 하기 때문이다. 이미지는 `src/main/resources/bootstrap/mubti-characters.zip` 에 WebP 로 들어 있고 파일 이름이 곧 네 축의 조합(`VTFC.webp`)이다. 그래서 이 표는 **앱을 한 번 띄워야** 채워진다.
+
+캐릭터의 저장 키는 **`image/mubti/{CODE}.webp`** 다 — 다른 이미지와 같은 `image/{카테고리}/` 규약이다. 이 접두사가 빠져 있던 시절의 이미지는 기동할 때 `BootstrapRunner.repairMubtiImageKeys` 가 제자리로 옮긴다. 자세한 사정은 [mubti-report.md](mubti-report.md).
