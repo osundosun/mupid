@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Component;
@@ -13,7 +14,12 @@ import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
 import com.osundosun.mupid.api.ai.dto.AiRecommendedTrack;
 import com.osundosun.mupid.api.music.entity.Music;
+import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
+import com.osundosun.mupid.api.music.service.MusicSectionService;
+import com.osundosun.mupid.api.onboarding.dto.CodeOption;
+import com.osundosun.mupid.api.onboarding.response.OnboardingResultResponse;
+import com.osundosun.mupid.api.onboarding.service.OnboardingService;
 import com.osundosun.mupid.api.storage.service.StorageImageService;
 
 import lombok.RequiredArgsConstructor;
@@ -55,6 +61,8 @@ public class AiRecommendToolImpl implements AiRecommendTool {
 
     private final RecommenderClient recommender;
     private final MusicRepository musicRepository;
+    private final MusicSectionService musicSectionService;
+    private final OnboardingService onboardingService;
 
     @Override
     public OpenAiTool declaration() {
@@ -131,7 +139,7 @@ public class AiRecommendToolImpl implements AiRecommendTool {
     }
 
     @Override
-    public List<AiRecommendedTrack> recommend(Integer userId, Integer currentMusicId, Arguments arguments) {
+    public Result recommend(Integer userId, Integer currentMusicId, Arguments arguments) {
         int limit = DEFAULT_LIMIT;
         String query = null;
         Map<String, Object> filters = Map.of();
@@ -148,7 +156,11 @@ public class AiRecommendToolImpl implements AiRecommendTool {
         // 추천 한 묶음을 가리키는 번호. 아직 노출 기록(rec_impressions)을 남기지 않아
         // 저장되지는 않는다. 그 작업이 붙으면 발급처를 그쪽으로 옮긴다.
         long recommendationId = System.currentTimeMillis();
-        List<Integer> excludeIds = currentMusicId == null ? List.of() : List.of(currentMusicId);
+        // 추천 서버는 숫자 ID 를 모른다. 지금 듣는 곡을 문자열 ID 로 옮겨 보낸다.
+        String currentTrack = currentMusicId == null ? null
+            : musicSectionService.trackExternalIdOf(currentMusicId).orElse(null);
+        List<String> excludeTracks = currentTrack == null ? List.of() : List.of(currentTrack);
+        RecommenderDto.Onboarding onboarding = onboardingOf(userId);
         boolean conditioned = !filters.isEmpty() || !exclude.isEmpty();
 
         log.info("추천 툴 호출 user_id={} current_music_id={} limit={} 조건={} query={}",
@@ -164,16 +176,17 @@ public class AiRecommendToolImpl implements AiRecommendTool {
                 plan.put("exclude", exclude);
             }
             items = recommender.search(new RecommenderDto.SearchRequest(
-                recommendationId, userId, limit, excludeIds, null, plan));
+                recommendationId, userId, limit, excludeTracks, null, plan, onboarding));
         } else {
             items = recommender.next(new RecommenderDto.NextRequest(
-                recommendationId, userId, limit, excludeIds, currentMusicId, null));
+                recommendationId, userId, limit, excludeTracks, currentTrack, null,
+                onboarding));
         }
         if (items.isEmpty()) {
             log.info("조건에 맞는 곡이 없다 user_id={} 조건={}", userId, filters);
-            return List.of();
+            return Result.empty();
         }
-        return withMusicDetails(items);
+        return new Result(recommendationId, withMusicDetails(items));
     }
 
     /**
@@ -201,24 +214,63 @@ public class AiRecommendToolImpl implements AiRecommendTool {
     }
 
     /**
-     * 곡 제목·아티스트·앨범·표지를 MySQL 에서 채운다. 추천 서버는 이 값을 모른다 —
-     * 숫자 ID 만 주고받는 것이 계약이다.
+     * 이력이 없는 사용자의 첫 추천 근거. 없으면 콜드스타트다.
      *
-     * 카탈로그에 없는 `music_id` 는 **버린다.** 화면이 재생할 수 없는 줄을 그리게 되기
-     * 때문이다. 이런 일이 생겼다면 추천 서버의 매핑표가 실제 DB 와 어긋났다는 뜻이라
-     * 로그에 남긴다.
+     * 코드표 이름을 **그대로** 보낸다. AI 카탈로그 태그로 옮기는 것은 추천 서버 몫이고,
+     * 두 어휘는 한 건도 겹치지 않아서 우리가 어설프게 옮기면 조건이 조용히 사라진다.
+     *
+     * 조회에 실패해도 추천을 죽이지 않는다 — 온보딩 없이 부른다.
+     */
+    private RecommenderDto.Onboarding onboardingOf(Integer userId) {
+        if (userId == null) {
+            return null;
+        }
+        try {
+            OnboardingResultResponse r = onboardingService.getResult(userId);
+            if (!r.submitted()) {
+                return null;
+            }
+            return new RecommenderDto.Onboarding(
+                r.moods().stream().map(CodeOption::name).toList(),
+                r.genres().stream().map(CodeOption::name).toList());
+        } catch (RuntimeException e) {
+            log.warn("온보딩을 읽지 못했다 user_id={} — 콜드스타트로 추천한다", userId, e);
+            return null;
+        }
+    }
+
+    /**
+     * 추천 서버가 돌려준 문자열 ID 를 숫자 ID·곡 정보로 옮긴다.
+     *
+     * 추천 서버는 `external_id` 와 순위·사유만 준다. 곡 번호·구간 번호·시간·구간 종류·
+     * 제목·아티스트·표지는 **전부 여기서** 나온다. 어차피 제목을 붙이려고 하는 조회라
+     * 조회 조건만 `external_id` 로 바뀐 것이다.
+     *
+     * MySQL 에 없는 `external_id` 는 **버린다.** 화면이 재생할 수 없는 줄을 그리게 되기
+     * 때문이다. 그런 일이 생겼다면 구간 적재가 색인보다 낡았다는 뜻이라 로그에 남긴다.
      */
     private List<AiRecommendedTrack> withMusicDetails(List<RecommenderDto.Item> items) {
-        List<Integer> ids = items.stream().map(RecommenderDto.Item::musicId).distinct().toList();
+        List<String> externalIds = items.stream()
+            .map(RecommenderDto.Item::externalId).filter(Objects::nonNull).distinct().toList();
+        Map<String, MusicSectionAnalysis> sections =
+            musicSectionService.findByExternalIds(externalIds);
+
+        List<Integer> ids = sections.values().stream()
+            .map(row -> row.getMusic().getMusicId()).distinct().toList();
         Map<Integer, Music> byId = musicRepository.findDetailAllByIds(ids).stream()
             .collect(Collectors.toMap(Music::getMusicId, m -> m, (a, b) -> a));
 
         List<AiRecommendedTrack> out = new ArrayList<>();
         for (RecommenderDto.Item item : items) {
-            Music music = byId.get(item.musicId());
+            MusicSectionAnalysis section = sections.get(item.externalId());
+            if (section == null) {
+                log.warn("추천된 external_id={} 가 DB 에 없다 — 구간 적재가 색인보다 낡았다",
+                    item.externalId());
+                continue;
+            }
+            Music music = byId.get(section.getMusic().getMusicId());
             if (music == null) {
-                log.warn("추천된 music_id={} 가 카탈로그에 없다 — id_map 과 DB 가 어긋났다",
-                    item.musicId());
+                log.warn("구간 external_id={} 의 곡을 찾지 못했다", item.externalId());
                 continue;
             }
             out.add(new AiRecommendedTrack(
@@ -228,13 +280,13 @@ public class AiRecommendToolImpl implements AiRecommendTool {
                 music.getArtist().getName(),
                 music.getAlbum().getTitle(),
                 StorageImageService.imageUrl(music.getAlbum().getImageFile()),
-                item.musicSectionId(),
-                item.sectionLabel(),
-                item.startTimeMs(),
-                item.endTimeMs(),
+                section.getMusicSectionAnalysisId(),
+                section.getSectionLabel(),
+                section.getStartTimeMs(),
+                section.getEndTimeMs(),
                 item.score(),
                 item.reasonCode(),
-                item.reason()
+                RecommendReason.of(item.reasonCode(), section.getSectionLabel())
             ));
         }
         return List.copyOf(out);

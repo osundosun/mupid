@@ -3,8 +3,6 @@ package com.osundosun.mupid.api.ai.client;
 import java.util.List;
 import java.util.Map;
 
-import com.osundosun.mupid.api.music.enumerate.SectionLabel;
-
 /**
  * 추천 서버 `/internal` 계약의 요청·응답.
  *
@@ -13,6 +11,17 @@ import com.osundosun.mupid.api.music.enumerate.SectionLabel;
  * 순간 계약이 조용히 깨진다. LLM 게이트웨이와 같은 이유다.
  *
  * <p>요청 타입이 엄격하다. {@code "5001"} 같은 문자열이나 실수 {@code limit} 은 400 이다.
+ *
+ * <h2>곡·구간은 문자열 ID 로 주고받는다</h2>
+ *
+ * <p>추천 서버는 숫자 ID 를 모른다. 그쪽 색인의 키는 {@code "T000901#2"} 같은 문자열이고,
+ * MySQL 의 {@code music_section_analysis.external_id} 가 그 값을 그대로 들고 있다.
+ * 번역은 **우리가** 한다 → {@code MusicSectionService}.
+ *
+ * <p>응답에 제목·아티스트·이미지를 붙이려면 어차피 MySQL 을 조회해야 한다. 조회 조건을
+ * {@code music_id} 대신 {@code external_id} 로 두는 것뿐이라 쿼리 수는 같다.
+ *
+ * <p>예외는 {@code userId} 다. 추천 서버가 ClickHouse 를 그 번호로 조회한다.
  */
 public final class RecommenderDto {
 
@@ -23,15 +32,29 @@ public final class RecommenderDto {
      * 이어 듣기·오늘의 추천 요청.
      *
      * @param recommendationId Spring 이 발급하는 BIGINT. 추천 한 묶음을 가리킨다
-     * @param excludeMusicIds  이미 보여 준 곡. 지금 듣는 곡은 여기 넣는다
+     * @param excludeTracks    이미 보여 준 곡의 문자열 ID. 지금 듣는 곡도 여기 넣는다
+     * @param onboarding       이력이 없는 사용자의 첫 추천 근거. 없으면 콜드스타트다
      */
     public record NextRequest(
         long recommendationId,
         int userId,
         int limit,
-        List<Integer> excludeMusicIds,
-        Integer currentMusicId,
-        Integer currentMusicSectionId
+        List<String> excludeTracks,
+        String currentTrack,
+        String currentSection,
+        Onboarding onboarding
+    ) {
+    }
+
+    /**
+     * 온보딩 답변. **우리 코드표의 이름 그대로** 보낸다.
+     *
+     * <p>AI 카탈로그 태그로 옮기는 것은 추천 서버 몫이다. 두 어휘는 한 건도 겹치지
+     * 않아서, 옮기지 않으면 조건이 조용히 사라진다.
+     */
+    public record Onboarding(
+        List<String> moods,
+        List<String> genres
     ) {
     }
 
@@ -51,9 +74,58 @@ public final class RecommenderDto {
         long recommendationId,
         int userId,
         int limit,
-        List<Integer> excludeMusicIds,
+        List<String> excludeTracks,
         String query,
-        Map<String, Object> queryPlan
+        Map<String, Object> queryPlan,
+        Onboarding onboarding
+    ) {
+    }
+
+    /**
+     * 오늘의 모먼트 요청. 배치가 사용자마다 한 번씩 부른다.
+     *
+     * <p>이어 듣기와 달리 기준 곡이 없다 — 그날 무엇을 들려줄지는 행동 이력과 온보딩만
+     * 보고 정한다.
+     */
+    public record DailyRequest(
+        long recommendationId,
+        int userId,
+        int limit,
+        List<String> excludeTracks,
+        Onboarding onboarding
+    ) {
+    }
+
+    /**
+     * 닮은 구간 요청. **개인화가 없다** — `userId` 를 보내지 않는다.
+     *
+     * <p>같은 구간에는 누가 물어도 같은 답이 나온다. 그래서 캐시할 수 있고
+     * {@code recommendationId} 도 필요 없다.
+     */
+    public record SimilarRequest(
+        String externalId,
+        int limit,
+        List<String> excludeTracks
+    ) {
+    }
+
+    /** 닮은 구간 응답. 취향이 섞이지 않은 코사인 값만 온다. */
+    public record SimilarResponse(
+        String externalId,
+        List<SimilarItem> items,
+        int shortfall,
+        String embeddingVersion
+    ) {
+        public List<SimilarItem> safeItems() {
+            return items == null ? List.of() : items;
+        }
+    }
+
+    public record SimilarItem(
+        String externalId,
+        int rankOrder,
+        /** 코사인. 순위 근거일 뿐 확률이 아니다. */
+        double similarity
     ) {
     }
 
@@ -70,23 +142,20 @@ public final class RecommenderDto {
     }
 
     /**
-     * 추천된 구간 하나.
+     * 추천된 구간 하나. **문자열 ID 와 순위·사유뿐이다.**
      *
-     * <p>{@code sectionLabel} 은 {@link SectionLabel} 과 같은 대문자로 온다. 추천 서버가
-     * ENUM 밖 값(예: {@code OTHER})을 내보내지 않도록 경계에서 막고 있다 — 막지 않으면
-     * 여기 역직렬화가 터진다.
+     * <p>곡 번호·시간·구간 종류는 오지 않는다. 우리가 {@code externalId} 로 MySQL 에서
+     * 가져오는 값이라 두 벌이 되면 어긋날 자리만 생긴다.
+     *
+     * <p>사람이 읽는 문구도 오지 않는다. {@code reasonCode} 로 우리가 만든다.
      */
     public record Item(
-        int musicId,
-        int musicSectionId,
-        int startTimeMs,
-        int endTimeMs,
-        SectionLabel sectionLabel,
+        String externalId,
         int rankOrder,
         double score,
         String reasonCode,
-        /** 추천 서버가 만든 안전한 기본 문장. 내부 ID·모델 수치는 들어 있지 않다. */
-        String reason
+        /** 이 추천의 근거가 된, 사용자 자신이 좋아한 구간. 없으면 null 이다. */
+        String refExternalId
     ) {
     }
 

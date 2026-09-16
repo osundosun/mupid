@@ -73,6 +73,24 @@ class ChunkConfig:
     api_timeout: int = 30
     api_max_retries: int = 3
 
+    # ── 구간 분석 (`analysis/`, `python -m music_preprocessing.analysis.batch`) ──
+    #
+    # 청킹 배치와 **다른 배치**다. 여기 있는 이유는 배포 규약 때문이다 — 서버 설정은
+    # `config.json` 의 필드 이름을 대문자로 쓴 것만 받고, 모르는 이름이면 배포가 멈춘다
+    # (`deploy.env.example`). 이름 공간 밖의 환경변수에만 기대면 배포로 값을 넣을 수 없다.
+    #
+    # 기본값은 **꺼짐**이다. 청킹만 쓰는 쪽의 동작이 달라지지 않는다.
+    # 내부 토큰은 값이 아니라 **파일 경로**로 받는다 (`api_refresh_token_file` 과 같은 방식).
+    analysis_enabled: bool = False
+    analysis_artifact_dir: str = ""          # 비우면 $MUPID_AI_ARTIFACT_DIR
+    analysis_work_dir: str = "./analysis_work"
+    analysis_internal_token_file: str = "./ai_internal_token.txt"
+    analysis_version: str = "v1"
+    analysis_limit: int = 200                # 요구 5 한 페이지 곡 수
+    analysis_device: str = ""                # cuda:0 · cpu. 비우면 있는 쪽
+    analysis_segmenter_python: str = ""      # All-In-One(3.10) 실행 파일. 비우면 같은 프로세스
+    analysis_keep_versions: int = 3          # 롤백용으로 남길 이전 색인 판 수
+
     def __post_init__(self) -> None:
         if self.max_workers <= 0:
             self.max_workers = max(1, multiprocessing.cpu_count())
@@ -113,4 +131,13 @@ class ChunkConfig:
             "api_registry_log": self.api_registry_log,
             "api_timeout": self.api_timeout,
             "api_max_retries": self.api_max_retries,
+            "analysis_enabled": self.analysis_enabled,
+            "analysis_artifact_dir": self.analysis_artifact_dir,
+            "analysis_work_dir": self.analysis_work_dir,
+            "analysis_internal_token_file": self.analysis_internal_token_file,
+            "analysis_version": self.analysis_version,
+            "analysis_limit": self.analysis_limit,
+            "analysis_device": self.analysis_device,
+            "analysis_segmenter_python": self.analysis_segmenter_python,
+            "analysis_keep_versions": self.analysis_keep_versions,
         }

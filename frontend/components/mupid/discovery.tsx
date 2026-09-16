@@ -4,7 +4,7 @@ import { Lyrics } from './lyrics';
 import { TrackMenu } from './track-menu';
 import { TrackComments } from './track-comments';
 import { MupidMascot } from './mascot';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Check,
   Bookmark,
@@ -31,6 +31,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
+import type { Track } from '@/lib/mupid-data';
 import {
   EmptyState,
   LikeButton,
@@ -97,7 +98,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
               {momentSaved ? <BookmarkMinus /> : <Bookmark />}
               {momentSaved ? '저장 취소' : '이 순간 저장'}
             </button>
-            <button className="secondary-button" onClick={() => { m.setLibraryTab('queue'); m.go('library'); }}><ListMusic />재생목록</button>
+            <button className="secondary-button" aria-expanded={m.queueOpen} aria-controls="queue-dock" onClick={m.toggleQueue}><ListMusic />재생목록</button>
             <button className="secondary-button" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
               <Heart className="pink" fill={m.liked.includes(active.id) ? 'currentColor' : 'none'} />
               좋아요
@@ -238,22 +239,76 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
 }
 export { SearchView } from './explore';
 export function SimilarView({ model: m }: { model: MupidModel }) {
-  // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
+  // 지금 듣고 있는 구간이 질문이다. 「이 순간과 닮은 것」이므로 곡이 아니라 구간이다.
+  const part = active ? getSongSectionAt(active, m.time || active.moment) : null;
+  const musicId = active?.musicId;
+  const sectionId = part?.sectionId;
+  /**
+   * 무엇을 물었는지 답과 함께 들고 있는다.
+   *
+   * 「물어보는 중」을 따로 저장하지 않는다 — 물은 것과 답이 붙어 있으면 둘을
+   * 비교해 알 수 있고, 구간을 옮긴 순간 옛 답이 잠깐 새 구간의 답인 척하는 일도
+   * 생기지 않는다.
+   */
+  const askKey =
+    typeof musicId === 'number' && typeof sectionId === 'number'
+      ? `${musicId}:${sectionId}`
+      : '';
+  const [answer, setAnswer] = useState<{ key: string; tracks: Track[] }>({
+    key: '',
+    tracks: [],
+  });
+  // 모델 전체가 아니라 이 함수만 의존성에 넣는다. `m` 은 렌더마다 새 객체다.
+  const loadSimilarSections = m.loadSimilarSections;
+
+  /**
+   * 서버에 닮은 구간을 묻는다.
+   *
+   * **분석된 구간에만 번호가 있다.** 아직 분석 전인 곡은 임시 구간이라 물어볼
+   * 대상이 없고, 그때는 아래에서 카탈로그로 물러난다.
+   */
+  useEffect(() => {
+    if (typeof musicId !== 'number' || typeof sectionId !== 'number') return;
+    let alive = true;
+    void loadSimilarSections(musicId, sectionId).then((rows) => {
+      if (alive) setAnswer({ key: `${musicId}:${sectionId}`, tracks: rows });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [musicId, sectionId, loadSimilarSections]);
+
+  // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
+  const answered = answer.key === askKey;
+  const asking = Boolean(askKey) && !answered;
   const tracks = m.tracks;
-  const pool = tracks.filter(
+  const served = (answered ? answer.tracks : []).filter(
     (t) => t.id !== active.id && !m.ignored.includes(t.id),
   );
+  // 서버가 답을 주면 그것만 쓴다. 카탈로그를 섞으면 어느 줄이 추천인지 알 수 없다.
+  const fromServer = served.length > 0;
+  const pool = fromServer
+    ? served
+    : tracks.filter((t) => t.id !== active.id && !m.ignored.includes(t.id));
   const results = m.showAllSimilar ? pool : pool.slice(0, 4);
   return (
     <div className="content-page similar-page">
       <PageHeader title="비슷한 순간 추천" onBack={() => m.go('moment')} />
-      <p className="eyebrow source-label">이 순간에서 시작했어요</p>
+      <p className="eyebrow source-label">
+        {part ? `${part.label} 구간에서 시작했어요` : '이 순간에서 시작했어요'}
+      </p>
       <TrackRow model={m} track={active} />
       <div className="intro-copy">
         <h2>이런 순간은 어때요?</h2>
-        <p>저장한 순간의 분위기를 이어가 보세요.</p>
+        <p>
+          {asking
+            ? '닮은 순간을 찾고 있어요.'
+            : fromServer
+              ? '고른 구간과 소리가 가까운 순간이에요.'
+              : '아직 닮은 순간을 찾지 못해, 둘러볼 만한 곡을 모았어요.'}
+        </p>
       </div>
       <div className="track-list">
         {results.map((t) => (

@@ -21,4 +21,7 @@ public interface DailyRecommendationTrackRepository extends JpaRepository<
     List<DailyRecommendationTrack> findByRecommendationIds(
         @Param("recommendationIds") List<Integer> recommendationIds);
 
+    /** 묶음 하나의 곡을 통째로 지운다. 다시 만들 때 옛 곡이 섞이면 안 된다. */
+    void deleteByDailyRecommendationTrackId_DailyRecommendationId(Integer recommendationId);
+
 }

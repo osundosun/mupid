@@ -12,8 +12,8 @@
 
 출력: labels_<pool>.parquet
 
-  python src/m09_labels.py --pool local
-  python src/m09_labels.py --pool fma
+  python -m ai_server.app.labeler --pool local
+  python -m ai_server.app.labeler --pool fma
 """
 from __future__ import annotations
 
@@ -28,11 +28,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# 산출물 경로는 recommender 와 같은 환경변수를 쓴다. 서로 다른 곳을 보면
-# 색인 일부만 다른 판이 섞여도 서비스가 정상처럼 뜬다.
-import os as _os
-ROOT = Path(_os.environ.get("MUPID_AI_ARTIFACT_DIR",
-                            Path(__file__).resolve().parents[2] / "artifacts"))
+from . import paths
+
+# 산출물 루트는 paths 한 곳에서만 계산한다. 예전에는 이 모듈이 따로 셈해서
+# `MUPID_AI_ARTIFACT_DIR=` (빈 값) 일 때 recommender 와 다른 곳을 봤다 —
+# os.environ.get 의 기본값은 빈 문자열을 덮지 않아 Path('') 가 되기 때문이다.
+ROOT = paths.artifact_root()
 OUT_DIR = ROOT / "data" / "proc" / "mupid"
 LOG_DIR = OUT_DIR / "logs"
 

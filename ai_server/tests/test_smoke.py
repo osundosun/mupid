@@ -5,13 +5,12 @@
     export MUPID_AI_ARTIFACT_DIR=/경로/artifacts
     pytest ai_server/tests -q
 
-숫자 ID 매핑은 **시험용 임시 파일**을 만들어 쓴다. 운영 경로에 남기지 않는다 —
-실제 매핑은 MySQL 이 발급한 값이어야 하고, 여기서 만든 번호는 형식만 같은 시험 데이터다.
+숫자 ID 매핑표는 **만들지 않는다.** 응답이 문자열 `external_id` 로 나가고 번역은 Spring
+이 하므로(`3847f95`), 이 서버가 확인할 매핑이 없다 — `/internal/ready` 도 보지 않는다.
 """
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -25,25 +24,11 @@ pytestmark = pytest.mark.skipif(
 )
 
 POOL_SOURCES = ("flow", "jamendo", "own")
-MUSIC_BASE, SECTION_BASE = 900_000, 9_000_000
 
 
 @pytest.fixture(scope="session")
 def client():
-    """임시 매핑표를 만들고 앱을 띄운다. 매핑표는 세션이 끝나면 지운다."""
     import numpy as np  # noqa: F401  (색인 적재에 필요)
-    import pandas as pd
-
-    mom = pd.read_parquet(MOM)
-    pool = mom[mom.source.isin(POOL_SOURCES)]
-    tracks = {t: MUSIC_BASE + i for i, t in enumerate(sorted(pool.track_id.astype(str).unique()))}
-    rows = [{"source_track_id": str(r.track_id), "music_id": tracks[str(r.track_id)],
-             "source_section_uid": str(r.moment_id), "music_section_id": SECTION_BASE + i}
-            for i, r in enumerate(pool.sort_values(["track_id", "section_idx"]).itertuples())]
-
-    tmp = Path(tempfile.mkdtemp(prefix="mupid_test_idmap_")) / "id_map.parquet"
-    pd.DataFrame(rows).to_parquet(tmp, index=False)
-    os.environ["MUPID_ID_MAP"] = str(tmp)
 
     from fastapi.testclient import TestClient
 
@@ -51,7 +36,6 @@ def client():
 
     with TestClient(app) as c:
         yield c
-    tmp.unlink(missing_ok=True)
 
 
 def test_health(client):
@@ -92,20 +76,29 @@ def test_daily_returns_items(client):
 
 
 def test_item_fields(client):
+    """응답은 **문자열 `external_id`** 다.
+
+    숫자 ID·시간·구간 종류·사람이 읽는 문장은 싣지 않는다 — Spring 이
+    `music_section_analysis.external_id` 로 MySQL 에서 가져오는 값이라 두 벌이 되면
+    어긋날 자리만 생긴다(`app/internal_api.py`).
+    """
     for it in _items(client)["items"]:
-        for k in ("music_id", "music_section_id", "start_time_ms", "end_time_ms",
-                  "rank_order"):
-            assert isinstance(it[k], int), (k, it[k])
-        assert it["end_time_ms"] > it["start_time_ms"] >= 0
-        assert it["section_label"] and it["section_label"].isupper()
-        assert it["reason_code"]
-        assert it["reason"]
-        assert not any(k in it for k in ("track_id", "moment_id", "source_track_id"))
+        assert isinstance(it["external_id"], str) and "#" in it["external_id"]
+        assert isinstance(it["rank_order"], int) and it["rank_order"] >= 1
+        assert isinstance(it["score"], (int, float))
+        assert isinstance(it["reason_code"], str) and it["reason_code"]
+        ref = it["ref_external_id"]
+        assert ref is None or (isinstance(ref, str) and ref)
+        assert not any(k in it for k in ("track_id", "moment_id", "source_track_id",
+                                         "music_id", "music_section_id", "reason",
+                                         "start_time_ms", "end_time_ms",
+                                         "section_label"))
 
 
-def test_no_duplicate_music_id(client):
-    ids_ = [i["music_id"] for i in _items(client)["items"]]
-    assert len(ids_) == len(set(ids_)), ids_
+def test_no_duplicate_track(client):
+    """한 곡에서 두 구간이 함께 나오지 않는다. 같은 노래가 두 번 걸린 것처럼 보인다."""
+    tracks = [i["external_id"].split("#", 1)[0] for i in _items(client)["items"]]
+    assert len(tracks) == len(set(tracks)), tracks
 
 
 def test_rank_order_is_contiguous(client):
@@ -122,7 +115,7 @@ def test_no_candidates_is_not_a_server_error(client):
     """조건에 맞는 곡이 없을 때 아무거나 채우지 않고 사유를 돌려준다."""
     r = client.post("/internal/recommendations/next",
                     json={"recommendation_id": 5002, "user_id": 15, "limit": 3,
-                          "exclude_music_ids": []})
+                          "exclude_tracks": []})
     assert r.status_code in (200, 404)
     if r.status_code == 404:
         assert r.json()["error_code"] == "NO_CANDIDATES"

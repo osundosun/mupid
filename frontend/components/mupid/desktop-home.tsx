@@ -12,6 +12,7 @@ import {
   Volume2,
 } from 'lucide-react';
 import { pickTodayMoments, todayMomentNote } from './today-moment';
+import { forYouHeading, pickForYou } from '@/lib/recommendations';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { VolumeSlider } from './volume-slider';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
@@ -21,9 +22,8 @@ import { AlbumDeck } from './album-deck';
 
 export function DesktopHome({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
-  const recommendations = tracks
-    .filter((track) => !m.ignored.includes(track.id))
-    .slice(0, 6);
+  const recommendations = pickForYou(m.forYou, tracks, m.ignored);
+  const forYou = forYouHeading(m.recommendationsReady);
   const recent = m.history.slice(0, 4).flatMap((id) => {
     const track = tracks.find((item) => item.id === id);
     return track ? [track] : [];
@@ -114,8 +114,10 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             </label>
             <button
               className="icon-button"
-              aria-label="재생목록 열기"
-              onClick={() => { m.setLibraryTab('queue'); m.go('library'); }}
+              aria-label={m.queueOpen ? '재생 목록 접기' : '재생 목록 펼치기'}
+              aria-expanded={m.queueOpen}
+              aria-controls="queue-dock"
+              onClick={m.toggleQueue}
             >
               <ListMusic />
             </button>
@@ -161,8 +163,8 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
         <section className="desktop-recommendations">
           <header>
             <div>
-              <span className="eyebrow">당신을 위한 추천</span>
-              <h2>취향에 이어지는 음악</h2>
+              <span className="eyebrow">{forYou.eyebrow}</span>
+              <h2>{forYou.title}</h2>
             </div>
             <button className="text-link" onClick={() => m.go('search')}>
               더 둘러보기 <ArrowUpRight />

@@ -47,6 +47,7 @@ import {
   ReportView,
   WelcomeView,
 } from '@/components/mupid/collection';
+import { QueueDock } from '@/components/mupid/queue-dock';
 import { FloatingChat } from '@/components/mupid/chat';
 import { AppDialogs } from '@/components/mupid/dialogs';
 import { DemoLoginDialog } from '@/components/mupid/demo-login';
@@ -289,10 +290,16 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
                 <Volume2 />
                 <VolumeSlider />
               </div>
+              {/*
+                예전에는 보관함의 '재생목록' 탭으로 **화면을 옮겼다.** 곡을 고르다
+                목록을 확인하면 고르던 자리를 잃었다. 지금은 이 자리에서 독을 여닫는다.
+              */}
               <button
                 className="icon-button queue-button"
-                aria-label="재생목록 열기"
-                onClick={() => { m.setLibraryTab('queue'); m.go('library'); }}
+                aria-label={m.queueOpen ? '재생 목록 접기' : '재생 목록 펼치기'}
+                aria-expanded={m.queueOpen}
+                aria-controls="queue-dock"
+                onClick={m.toggleQueue}
               >
                 <ListMusic />
               </button>
@@ -314,6 +321,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
               </button>
             ))}
           </nav>
+          <QueueDock model={m} />
           <FloatingChat model={m} />
         </>
       )}

@@ -1,12 +1,16 @@
 """실서비스(Spring) 가 호출하는 내부 API. `/internal` 아래에만 둔다.
 
-기존 8100 데모 API 는 문자열 ID 와 초 단위 실수를 쓴다. 실서비스 계약은 숫자 ID 와 정수
-밀리초다. **추천 로직은 그대로 두고 입출력 경계에서만 형식을 바꾼다** — 이 파일은 기존
-`recommend()` 결과를 공통 DTO 로 옮겨 담는 얇은 어댑터일 뿐이고 점수·가중치·필터·중복
-제거에 손대지 않는다.
+**이 서버는 숫자 ID 를 다루지 않는다.** 요청도 응답도 AI 문자열 ID(`T000901#2`)를 쓰고,
+`music_id`·`music_section_id` 로의 번역은 Spring 이 `music_section_analysis.external_id`
+로 한다 — 제목·아티스트·이미지를 붙이려고 어차피 하는 조회라 비용이 같다.
 
-문자열 ID(`JAMENDO_1083659`, `JAMENDO_1083659#3`)는 출처 추적용으로 내부에만 남고 응답에
-나가지 않는다. 숫자 매핑이 없으면 만들어내지 않고 오류를 낸다 → `ids.py`.
+예외는 `user_id` 하나다. ClickHouse `listen_events` 의 조회 키가 숫자라 번역 없이 쓴다.
+
+추천 로직은 그대로 두고 입출력 경계에서만 형식을 바꾼다 — 이 파일은 `recommend()` 결과를
+계약 DTO 로 옮겨 담는 얇은 어댑터일 뿐이고 점수·가중치·필터·중복 제거에 손대지 않는다.
+
+상태는 들고 있지 않는다. 온보딩은 요청에 실려 오고(`app/onboarding.py` 가 어휘를 옮긴다),
+행동은 요청마다 ClickHouse 에서 직접 읽는다(`app/clickhouse.py`).
 """
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
-from . import ids, metrics, paths
+from . import clickhouse, metrics, onboarding as onb, paths
 from .log import log
 
 PREFIX = "/internal"
@@ -38,6 +42,9 @@ def _expected_token() -> str:
     return os.environ.get("MUPID_AI_INTERNAL_TOKEN", "").strip()
 BIGINT_MAX = 2 ** 63 - 1
 MAX_LIMIT = 50
+# `music_section_analysis.external_id` 가 VARCHAR(64) 다. 그보다 긴 값은
+# MySQL 에 있을 수 없으므로 받아도 번역되지 않는다.
+UID_MAX = 64
 
 
 class ApiError(Exception):
@@ -53,6 +60,19 @@ def _err(code: str, message: str, status: int = 400) -> JSONResponse:
 
 
 # ------------------------------------------------------------------ 요청 DTO
+class OnboardingInput(BaseModel):
+    """요청에 실려 오는 온보딩 답변. **Spring 코드표의 이름 그대로** 보낸다.
+
+    AI 카탈로그 태그로 옮기는 것은 이쪽 일이다(`app/onboarding.py`) — 두 어휘는 한
+    건도 겹치지 않아서, 옮기지 않으면 조건이 조용히 사라진다.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    moods: list[StrictStr] = Field(default_factory=list)
+    genres: list[StrictStr] = Field(default_factory=list)
+
+
 class _Base(BaseModel):
     """세 경로가 공유하는 부분. Strict 타입이라 문자열 "148" 은 거부된다."""
 
@@ -62,12 +82,23 @@ class _Base(BaseModel):
                                          description="Spring 이 발급하는 BIGINT")
     user_id: StrictInt = Field(..., ge=1)
     limit: StrictInt = Field(5, ge=1, le=MAX_LIMIT)
-    exclude_music_ids: list[StrictInt] = Field(default_factory=list)
+    exclude_tracks: list[StrictStr] = Field(
+        default_factory=list, description="이미 보여 준 곡의 문자열 ID")
+    onboarding: Optional[OnboardingInput] = Field(
+        None, description="이력이 없는 사용자의 첫 추천 근거. 없으면 콜드스타트다")
 
 
 class NextRequest(_Base):
-    current_music_id: Optional[StrictInt] = Field(None, ge=1)
-    current_music_section_id: Optional[StrictInt] = Field(None, ge=1)
+    """지금 듣는 곡을 기준으로 이어 듣기.
+
+    곡·구간을 **문자열 ID** 로 받는다. Spring 이 `music_section_analysis.external_id`
+    에서 꺼내 보낸다 — 숫자 ID 는 이 서버가 모른다.
+    """
+
+    current_track: Optional[StrictStr] = Field(
+        None, min_length=1, max_length=UID_MAX, description="예: T000901")
+    current_section: Optional[StrictStr] = Field(
+        None, min_length=1, max_length=UID_MAX, description="예: T000901#2")
     position_ms: Optional[StrictInt] = Field(
         None, ge=0, description="재생 위치. 현재 추천 로직은 이 값을 쓰지 않는다")
 
@@ -103,27 +134,22 @@ class SearchRequest(_Base):
 
 # ------------------------------------------------------------------ 응답 DTO
 class RecommendationItem(BaseModel):
-    music_id: int
-    music_section_id: int
-    start_time_ms: int = Field(..., ge=0)
-    end_time_ms: int = Field(..., ge=0)
-    section_label: str = Field(..., description="구간 종류. ERD ENUM 과 같은 대문자")
+    """추천된 구간 하나.
+
+    **숫자 ID·시간·구간 종류를 싣지 않는다.** 전부 Spring 이 `external_id` 로 MySQL 에서
+    가져오는 값이라 두 번 보낼 이유가 없고, 두 벌이 되면 어긋날 자리만 생긴다.
+
+    사람이 읽는 문구도 싣지 않는다 — `reason_code` 를 주고 문장은 Spring 이 만든다.
+    """
+
+    external_id: str = Field(..., description="AI 문자열 구간 ID. 예: T000901#2")
     rank_order: int = Field(..., ge=1)
     score: float
     reason_code: str
-    reason: str = Field(..., description="사람이 읽는 추천 이유")
-    # "당신이 저장한 이 구간과 닮아서" 를 만들 수 있는 최소한의 근거. **사용자 자신의**
-    # 구간이라 보여 줘도 새는 것이 없다. 모델 점수·확률·내부 ID 는 계속 내보내지 않는다.
-    ref_music_id: Optional[int] = Field(
-        None, description="이 추천의 근거가 된, 사용자가 좋아한 곡")
-    ref_music_section_id: Optional[int] = Field(
-        None, description="그 곡의 구간. 매핑이 없으면 비운다")
-
-    @model_validator(mode="after")
-    def _range(self):
-        if self.end_time_ms <= self.start_time_ms:
-            raise ValueError("end_time_ms 는 start_time_ms 보다 커야 한다")
-        return self
+    # "저장하신 이 구간과 닮아서" 를 만들 수 있는 근거. **사용자 자신의** 구간이라
+    # 보여 줘도 새는 것이 없다. 모델 점수·확률은 계속 내보내지 않는다.
+    ref_external_id: Optional[str] = Field(
+        None, description="이 추천의 근거가 된, 사용자가 좋아한 구간")
 
 
 class SimilarRequest(BaseModel):
@@ -131,23 +157,19 @@ class SimilarRequest(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    music_section_id: StrictInt = Field(..., ge=1)
+    external_id: StrictStr = Field(..., min_length=1, max_length=UID_MAX)
     limit: StrictInt = Field(5, ge=1, le=MAX_LIMIT)
-    exclude_music_ids: list[StrictInt] = Field(default_factory=list)
+    exclude_tracks: list[StrictStr] = Field(default_factory=list)
 
 
 class SimilarItem(BaseModel):
-    music_id: int
-    music_section_id: int
-    start_time_ms: int = Field(..., ge=0)
-    end_time_ms: int = Field(..., ge=0)
-    section_label: str
+    external_id: str
     rank_order: int = Field(..., ge=1)
     similarity: float = Field(..., description="코사인. 개인 취향이 섞이지 않은 값이다")
 
 
 class SimilarResponse(BaseModel):
-    music_section_id: int
+    external_id: str = Field(..., description="기준 구간. 요청 값을 그대로 돌려준다")
     items: list[SimilarItem]
     shortfall: int = Field(..., ge=0)
     embedding_version: str
@@ -211,117 +233,62 @@ def _reason_code(item: dict, has_query: bool, query_source: str) -> str:
     return "COLD_START"
 
 
-# 사용자에게 보이는 문장은 **코드에서 만든다.** 추천기 내부 `reason` 문자열에는 내부
-# ID(`dna3`, `JAMENDO_1083659#2`)와 모델 수치(유사도·확률·점수)가 들어 있다. 프론트가 그대로
-# 표시하므로 응답에 실으면 그게 곧 노출이다. 내부 문자열은 진단용으로 두고 내보내지 않는다.
-#
-# Spring 이 자체 문구를 쓰고 싶으면 `reason_code` 로 갈아끼우면 된다. 여기 문장은 그때까지의
-# 안전한 기본값이고, 모르는 코드에서도 빈 문자열이 나가지 않게 폴백을 둔다.
-_SECTION_KO = {"INTRO": "인트로", "VERSE": "벌스", "PRE_CHORUS": "프리코러스",
-               "CHORUS": "후렴", "BRIDGE": "브릿지", "BREAK": "브레이크",
-               "INST": "연주", "SOLO": "솔로", "OUTRO": "아웃트로"}
-
-# 실서비스 ERD 의 `music_section_analysis.section_label` ENUM. Spring 의 SectionLabel 과
-# 같아야 한다 — 여기에 없는 값을 보내면 저쪽 역직렬화에서 터진다.
-#
-# 추천기는 `other` 를 만들 수 있는데 ENUM 에는 없다. 그런 구간은 **내보내지 않고**
-# shortfall 로 센다. 억지로 다른 라벨에 끼워 넣으면 사용자에게 틀린 구간 유형을 말하게 된다.
-# ENUM 에 OTHER 를 추가할지는 ERD 변경이라 BE 와 합의가 필요하다.
-_SECTION_ENUM = frozenset(_SECTION_KO)
-
-_REASON_TEXT = {
-    "QUERY_SEMANTIC_MATCH": "요청하신 분위기에 가까운 {sec} 구간이에요.",
-    "QUERY_FILTER_MATCH": "요청하신 조건에 맞는 {sec} 구간이에요.",
-    "SIMILAR_PREFERRED_MOMENT": "최근 좋아한 구간과 비슷한 {sec} 구간이에요.",
-    "ONBOARDING_MATCH": "처음 고른 취향에 맞는 {sec} 구간이에요.",
-    "EXPLORE_NEW": "새로 들어볼 만한 {sec} 구간이에요.",
-    "COLD_START": "많이 듣는 {sec} 구간부터 들려드려요.",
-}
-_REASON_FALLBACK = "취향에 맞을 것 같은 구간이에요."
-
-
-def _reason_text(code: str, section_label: str) -> str:
-    tpl = _REASON_TEXT.get(code)
-    if tpl is None:
-        return _REASON_FALLBACK
-    return tpl.format(sec=_SECTION_KO.get(section_label, "이"))
+def _track_of(external_id: str) -> str:
+    """구간 UID 의 `#` 앞이 곧 곡 문자열 ID 다 (Q3 — MySQL 에 곡 문자열 ID 를 두지 않는다)."""
+    return external_id.split("#", 1)[0]
 
 
 def to_response(rec_id: int, out: dict, limit: int,
                 has_query: bool) -> RecommendationResponse:
-    """`recommend()` 결과를 공통 DTO 로 옮긴다. 순서·점수는 건드리지 않는다."""
-    im = ids.id_map()
+    """`recommend()` 결과를 계약 DTO 로 옮긴다. 순서·점수는 건드리지 않는다.
+
+    **숫자 ID 로 바꾸지 않는다.** Spring 이 `external_id` 로 MySQL 에서 찾는다 — 제목·
+    아티스트·이미지를 붙이려고 어차피 하는 조회라 비용이 같다.
+    """
     query_source = str(out.get("diagnostics", {}).get("query_source", ""))
     metrics.observe_query_source(query_source)
-    unknown_labels: list[str] = []
     items: list[RecommendationItem] = []
     for r in out.get("results", []):
-        src_t, src_s = str(r["track_id"]), str(r["moment_id"])
-        mid = im.music_id(src_t)                      # 없으면 MappingError
-        sid = im.music_section_id(src_s)
-        s_ms, e_ms = ids.to_ms(r["start_sec"]), ids.to_ms(r["end_sec"])
-        if e_ms <= s_ms:
-            raise ApiError("INVALID_TIME_RANGE",
-                           f"구간 시간이 뒤집혔거나 길이가 0 입니다: {src_s}")
-        # ERD ENUM 은 대문자다. 추천기는 소문자를 만들므로 경계에서만 맞춘다.
-        label = str(r.get("section_label", "")).upper()
-        if label not in _SECTION_ENUM:
-            unknown_labels.append(label or "(빈값)")
-            continue
         code = _reason_code(r, has_query, query_source)
         metrics.observe_reason(code)
-        ref_uid, ref_sid, ref_mid = str(r.get("matched_dna_rep") or ""), None, None
-        if ref_uid:
-            # 근거 구간이 매핑표에 없을 수 있다(추천 풀 밖의 오래된 취향 등).
-            # 그때는 추천 자체를 실패시키지 않고 근거만 비운다.
-            ref_sid = im.sec_to_num.get(ref_uid)
-            ref_mid = im.track_to_num.get(ref_uid.split("#")[0])
-            if ref_sid is None or ref_mid is None:
-                ref_sid = ref_mid = None
+        ref = r.get("matched_dna_rep")
         items.append(RecommendationItem(
-            music_id=mid, music_section_id=sid,
-            start_time_ms=s_ms, end_time_ms=e_ms,
-            section_label=label,
-            rank_order=int(r["rank"]), score=float(r["final_score"]),
-            reason_code=code, reason=_reason_text(code, label),
-            ref_music_id=ref_mid, ref_music_section_id=ref_sid))
-    if unknown_labels:
-        # 조용히 넘기면 "추천이 왜 적지" 로만 보인다. 원인을 로그에 남긴다.
-        log(f"ERD ENUM 에 없는 구간 라벨 {len(unknown_labels)}건 제외 — "
-              f"{sorted(set(unknown_labels))}")
-    items, dropped = _dedupe_by_music_id(items)
+            external_id=str(r["moment_id"]),
+            rank_order=int(r["rank"]),
+            score=float(r["final_score"]),
+            reason_code=code,
+            ref_external_id=(str(ref) if ref else None)))
+    items, dropped = _dedupe_by_track(items)
     if dropped:
-        # 여기서 걸렸다는 것은 매핑표가 N:1 이라는 뜻이다. 조용히 넘기면 원인이 묻힌다.
-        log(f"music_id 중복 {dropped}건 제거 — 매핑표 1:1 확인 필요")
+        # 추천기가 이미 곡 단위로 거르므로 여기서 걸리면 그쪽이 샌 것이다.
+        log(f"같은 곡이 {dropped}건 겹쳐 정리했다 — 추천기 중복 제거 확인 필요")
     if not items:
         raise ApiError("NO_CANDIDATES", "해당되는 노래가 없습니다.")
-    # shortfall 은 추천기가 이미 센 값을 쓰되, 없으면 요청 수와의 차로 메운다.
-    # 경계에서 떨군 것(ENUM 밖 라벨·music_id 중복)도 부족분이다. 추천기가 센 값만 믿으면
-    # "10개 달라고 했는데 7개 왔고 shortfall 은 0" 이 되어 BE 가 원인을 찾을 수 없다.
+    # shortfall 은 추천기가 이미 센 값을 쓰되, 경계에서 떨군 것도 부족분이다.
+    # 추천기가 센 값만 믿으면 "10개 달라고 했는데 7개 왔고 shortfall 은 0" 이 된다.
     short = out.get("diagnostics", {}).get("shortfall")
     short = max(int(short) if short is not None else 0, limit - len(items), 0)
     return RecommendationResponse(recommendation_id=rec_id, items=items,
                                   shortfall=short, model_version=MODEL_VERSION)
 
 
-
-def _dedupe_by_music_id(
+def _dedupe_by_track(
         items: list["RecommendationItem"]) -> tuple[list["RecommendationItem"], int]:
-    """곡 중복을 숫자 ID 로 최종 확인한다. 제목·문자열 ID 로는 거르지 않는다.
+    """같은 곡은 한 번만 내보낸다. 최종 점수가 가장 높은 구간 하나만 남긴다.
 
-    같은 곡의 여러 구간이 있으면 **최종 점수가 가장 높은 구간 하나만** 남긴다.
-    남은 것들의 상대 순서는 그대로 두고 rank_order 만 1부터 다시 붙인다.
+    남은 것들의 상대 순서는 그대로 두고 `rank_order` 만 1부터 다시 붙인다.
     """
-    best: dict[int, "RecommendationItem"] = {}
-    order: list[int] = []
+    best: dict[str, "RecommendationItem"] = {}
+    order: list[str] = []
     for it in items:
-        cur = best.get(it.music_id)
+        t = _track_of(it.external_id)
+        cur = best.get(t)
         if cur is None:
-            best[it.music_id] = it
-            order.append(it.music_id)
+            best[t] = it
+            order.append(t)
         elif it.score > cur.score:
-            best[it.music_id] = it
-    kept = [best[m] for m in order]
+            best[t] = it
+    kept = [best[t] for t in order]
     for rank, it in enumerate(kept, 1):
         it.rank_order = rank
     return kept, len(items) - len(kept)
@@ -345,14 +312,61 @@ def _svc():
     return svc
 
 
+# 행동을 얼마나 거슬러 읽을 것인가. Early Skip 감점의 반감기가 7일이라 90일이면
+# 그 너머는 사실상 0 이다. 더 넓히면 조회만 무거워진다.
+BEHAVIOR_WINDOW_SEC = 90 * 86400
+
+
+def _behavior_events(user_id: int) -> Optional[list]:
+    """ClickHouse 에서 행동을 읽어 온다. **요청마다 직접 조회한다.**
+
+    실패해도 추천을 죽이지 않는다 — 대신 빈 목록으로 계산하고 그 사실을 지표에
+    남긴다. 조용히 파일로 물러나면 "연결은 됐는데 개인화만 0" 인 상태를 아무도
+    눈치채지 못한다.
+
+    주소가 아예 없으면 `None` 을 돌려 종전의 파일 경로로 간다(개발·오프라인).
+    """
+    if not clickhouse.configured():
+        metrics.observe_behavior_source("file")
+        return None
+    try:
+        rows = clickhouse.behavior_events(user_id, time.time() - BEHAVIOR_WINDOW_SEC)
+    except Exception as e:                       # 연결·쿼리 실패
+        metrics.observe_behavior_source("unavailable")
+        log(f"행동 조회 실패 — 개인화 없이 추천한다 ({type(e).__name__}: {e})")
+        return []
+    metrics.observe_behavior_source("clickhouse")
+    return rows
+
+
+def _genre_catalog(svc) -> list[str]:
+    """AI 카탈로그의 장르 어휘. 없으면 빈 목록이고, 그때는 장르가 반영되지 않는다."""
+    try:
+        return [str(x["value"]) for x in svc.catalog_facets().get("genre", [])]
+    except Exception as e:
+        log(f"장르 어휘를 읽지 못했다 — 온보딩 장르가 반영되지 않는다 ({type(e).__name__})")
+        return []
+
+
+def _onboarding(req: "_Base", svc) -> Optional[dict]:
+    """요청의 온보딩을 카탈로그 어휘로 옮긴다. 없으면 None (파일 경로로 간다)."""
+    if req.onboarding is None:
+        return None
+    ans = onb.from_request(req.onboarding.model_dump(), _genre_catalog(svc))
+    if ans is not None and not ans["mood"] and not ans["genre"]:
+        # 답변은 왔는데 하나도 못 옮겼다. 조용히 넘기면 "연결은 됐는데 개인화가 0" 이다.
+        log(f"온보딩 변환 결과가 비었다 — mood={ans['mood_raw']} genre={ans['genre_raw']}")
+    return ans
+
+
 def _user_ref(user_id: int) -> str:
     """데모 저장소는 문자열 사용자 키를 쓴다. 숫자 user_id 를 그 이름공간에 얹는다."""
     return f"internal:{int(user_id)}"
 
 
 def _exclude(req: _Base) -> set[str]:
-    im = ids.id_map()
-    return {im.source_track_id(x) for x in req.exclude_music_ids}
+    """이미 보여 준 곡. 문자열로 오므로 번역이 필요 없다."""
+    return {str(x) for x in req.exclude_tracks}
 
 
 # ------------------------------------------------------------------ 라우터
@@ -363,12 +377,13 @@ router = APIRouter(prefix=PREFIX, tags=["internal"])
              responses=ERRORS, summary="이어 듣기 추천")
 def next_(req: NextRequest) -> RecommendationResponse:
     svc = _svc()
-    im = ids.id_map()
-    cur_t = im.source_track_id(req.current_music_id) if req.current_music_id else None
-    cur_m = (im.source_section_uid(req.current_music_section_id)
-             if req.current_music_section_id else None)
+    # 문자열로 왔으므로 번역이 없다. 구간만 주고 곡을 안 줬으면 `#` 앞에서 뽑는다.
+    cur_m = req.current_section
+    cur_t = req.current_track or (_track_of(cur_m) if cur_m else None)
     out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
-                        True, None, cur_t, cur_m)
+                        True, None, cur_t, cur_m,
+                        beh_events=_behavior_events(req.user_id),
+                        onboarding=_onboarding(req, svc))
     return to_response(req.recommendation_id, out, req.limit, False)
 
 
@@ -377,7 +392,9 @@ def next_(req: NextRequest) -> RecommendationResponse:
 def daily(req: DailyRequest) -> RecommendationResponse:
     svc = _svc()
     out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
-                        True, None, None, None)
+                        True, None, None, None,
+                        beh_events=_behavior_events(req.user_id),
+                        onboarding=_onboarding(req, svc))
     return to_response(req.recommendation_id, out, req.limit, False)
 
 
@@ -407,7 +424,9 @@ def search(req: SearchRequest) -> RecommendationResponse:
             # 조건을 뽑지 못했다. 일반 추천으로 조용히 넘어가지 않는다.
             raise ApiError(*error)
     out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
-                        True, plan, None, None)
+                        True, plan, None, None,
+                        beh_events=_behavior_events(req.user_id),
+                        onboarding=_onboarding(req, _svc()))
     return to_response(req.recommendation_id, out, req.limit, True)
 
 
@@ -486,27 +505,14 @@ def facets() -> dict:
 def similar(req: SimilarRequest) -> SimilarResponse:
     """`recommend` 와 달리 사용자 취향을 섞지 않는다. 같은 질문에 늘 같은 답이다."""
     svc = _svc()
-    im = ids.id_map()
-    src_uid = im.source_section_uid(req.music_section_id)     # 없으면 MappingError
-    drop = {im.source_track_id(x) for x in req.exclude_music_ids}
-    rows = svc.similar_moments(src_uid, req.limit, drop)
-
-    items: list[SimilarItem] = []
-    for r in rows:
-        label = str(r["section_label"]).upper()
-        if label not in _SECTION_ENUM:            # ERD ENUM 밖은 내보내지 않는다
-            continue
-        s_ms, e_ms = ids.to_ms(r["start_sec"]), ids.to_ms(r["end_sec"])
-        if e_ms <= s_ms:
-            continue
-        items.append(SimilarItem(
-            music_id=im.music_id(r["track_id"]),
-            music_section_id=im.music_section_id(r["moment_id"]),
-            start_time_ms=s_ms, end_time_ms=e_ms, section_label=label,
-            rank_order=len(items) + 1, similarity=float(r["similarity"])))
+    rows = svc.similar_moments(req.external_id, req.limit,
+                               {str(x) for x in req.exclude_tracks})
+    items = [SimilarItem(external_id=str(r["moment_id"]), rank_order=i + 1,
+                         similarity=float(r["similarity"]))
+             for i, r in enumerate(rows)]
     if not items:
         raise ApiError("NO_CANDIDATES", "닮은 구간을 찾지 못했습니다.")
-    return SimilarResponse(music_section_id=req.music_section_id, items=items,
+    return SimilarResponse(external_id=req.external_id, items=items,
                            shortfall=max(0, req.limit - len(items)),
                            embedding_version=EMBEDDING_VERSION)
 
@@ -520,48 +526,41 @@ def metrics_view() -> dict:
     """
     snap = metrics.snapshot()
     try:
-        st = id_map_status()
-        snap["ready"] = {"ok": bool(st.get("ready")),
-                         "tracks_unmapped": st.get("tracks_unmapped"),
-                         "sections_unmapped": st.get("sections_unmapped")}
+        _svc()
+        snap["ready"] = {"ok": True, "behavior_store": behavior_store_status()}
     except Exception as e:                       # 색인 미적재 등
         snap["ready"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
     return snap
 
 
-def _pool_keys():
-    pool = _svc().CAT.pool
-    return (set(pool.track_id.astype(str)), set(pool.moment_id.astype(str)))
-
-
-@router.get("/id-map", summary="숫자 ID 매핑 적재 상태")
-def id_map_status() -> dict:
-    st = ids.id_map().stats()
+def behavior_store_status() -> dict:
+    """행동 저장소(ClickHouse)에 닿는가. `/internal/ready` 와 지표가 함께 쓴다."""
+    if not clickhouse.configured():
+        # 주소가 없으면 개인화 없이 도는 것이 정상이다(개발·오프라인).
+        return {"ok": True, "configured": False}
     try:
-        tracks, uids = _pool_keys()
-        st.update(ids.id_map().readiness(tracks, uids))
-    except Exception as e:                       # 색인 미적재 등
-        st.update({"ready": False, "readiness_error": f"{type(e).__name__}: {e}"})
-    return st
+        clickhouse.query("SELECT 1")
+        return {"ok": True, "configured": True}
+    except Exception as e:
+        return {"ok": False, "configured": True, "error": f"{type(e).__name__}: {e}"}
 
 
 @router.get("/ready", summary="실서비스 준비 완료 여부")
 def ready() -> dict:
-    """매핑이 하나라도 빠져 있으면 준비 완료가 아니다. 8100 데모와는 무관하다."""
-    st = id_map_status()
-    if not st.get("ready"):
-        pc = paths.check()
-        idm = pc["id_map"]
-        # 경로가 틀린 것인지 적재가 덜 된 것인지 응답만 보고 갈라야 한다.
-        where = ("매핑표 파일이 없습니다" if not idm["exists"] else "매핑이 부족합니다")
-        raise ApiError("INDEX_NOT_READY",
-                       f"숫자 ID 매핑 미완료 — {where}. "
-                       f"곡 {st.get('tracks_unmapped', '?')}건, "
-                       f"구간 {st.get('sections_unmapped', '?')}건 미매핑. "
-                       f"id_map={idm['path']} (존재 {idm['exists']}, "
-                       f"MUPID_ID_MAP 지정 {idm['overridden']}), "
-                       f"artifact_dir={pc['artifact_dir']}")
-    return {"ready": True, "tracks": st["tracks"], "sections": st["sections"],
+    """색인이 올라왔는가.
+
+    **숫자 ID 매핑은 더 이상 보지 않는다.** 번역을 Spring 이 하므로 이 서버가 확인할
+    매핑이 없다.
+
+    행동 저장소 상태는 **싣기만 하고 막지는 않는다.** ClickHouse 가 죽으면 개인화가
+    빠진 콜드스타트 추천이 나가지만 추천 자체는 된다. 그때 준비 완료를 거두면 모든
+    파드가 한꺼번에 빠져 품질 저하가 장애로 번진다.
+    """
+    svc = _svc()                       # 카탈로그 미적재면 INDEX_NOT_READY (503)
+    return {"ready": True,
+            "tracks": int(svc.CAT.pool.track_id.nunique()),
+            "moments": int(len(svc.CAT.pool)),
+            "behavior_store": behavior_store_status(),
             "paths": paths.check()}
 
 
@@ -597,10 +596,6 @@ def install(app: FastAPI, service_module=None) -> None:
         return response
 
     prev = app.exception_handlers.get(RequestValidationError)
-
-    @app.exception_handler(ids.MappingError)
-    async def _mapping(request: Request, exc: ids.MappingError):
-        return _err(exc.code, exc.message, 404)
 
     @app.exception_handler(ApiError)
     async def _api(request: Request, exc: ApiError):

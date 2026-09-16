@@ -6,6 +6,11 @@ info:
 http:
   method: PATCH
   url: "{{BASE_URL}}/api/v1/comment/{{COMMENT_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
   body: json
   auth: inherit
 

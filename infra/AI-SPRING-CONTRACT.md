@@ -10,6 +10,57 @@
 
 ---
 
+## 2026-09-16 계약 변경 — 숫자 ID 를 AI 에 보내지 않는다
+
+**아래 §1·§4·§5 의 ID 규약이 바뀌었다.** 옛 내용은 맥락을 위해 남겨 두되, 지금 구현은
+이쪽이다.
+
+### 무엇이 바뀌었나
+
+| | 옛 계약 | 지금 |
+|---|---|---|
+| 요청의 곡·구간 | `current_music_id: 1796` · `exclude_music_ids` | `current_track: "T000901"` · `current_section` · `exclude_tracks` |
+| 응답 항목 | `music_id` · `music_section_id` · `start_time_ms` · `end_time_ms` · `section_label` · `reason` | `external_id` · `rank_order` · `score` · `reason_code` · `ref_external_id` |
+| 번역 주체 | AI (`id_map.parquet`) | **Spring** (`music_section_analysis.external_id` 조회) |
+| 사람이 읽는 문구 | AI 가 만들어 보냄 | **Spring** 이 `reason_code` 로 만듦 (`RecommendReason`) |
+| 온보딩 | 배치(`fetch_onboarding`)가 미리 받아 둠 | **요청 본문**에 실어 보냄 |
+| 행동 데이터 | 배치가 파일로 옮겨 둠 | **요청마다 ClickHouse 직접 조회** |
+| `/internal/ready` | 추천 풀 **전량** 매핑 필요 | 색인 적재만 확인 |
+
+`user_id` 는 그대로 숫자다 — ClickHouse `listen_events` 의 조회 키다.
+
+### 왜
+
+AI 색인의 키는 문자열(`T000901#2`)이고 MySQL 은 정수다. 둘을 잇는 것은
+`music_section_analysis.external_id` 한 컬럼뿐이다. 그 번역을 **AI 가 하면** 매핑표를
+보관해야 하고, 전량이 채워질 때까지 `/internal/ready` 가 503 이라 곡 한 곡만 덜 적재돼도
+추천이 통째로 멈췄다.
+
+**Spring 이 하면** 그 문제가 사라진다. Spring 은 응답에 제목·아티스트·이미지를 붙이려고
+어차피 MySQL 을 조회한다 — 조회 조건을 `music_id` 에서 `external_id` 로 바꾸는 것뿐이라
+쿼리 수가 같다.
+
+결과로 AI 는 모델과 임베딩 색인만 들고 나머지는 받거나 직접 읽는다. §0 의 "FastAPI 는
+추천 계산만. 상태를 갖지 않는다" 가 원래 그 뜻이었다.
+
+### Spring 이 지켜야 할 것 (추가)
+
+| # | |
+|---|---|
+| A | MySQL 에 없는 `external_id` 는 **버리고 센다.** 지어내지 않는다 |
+| B | 응답 조회는 순서를 보장하지 않는다. `rank_order` 로 다시 정렬한다 |
+| C | 모르는 `reason_code` 에서 **빈 문자열을 화면에 내보내지 않는다** — 폴백 문장을 둔다 |
+| D | 온보딩은 **코드표 이름 그대로** 보낸다. AI 태그로 옮기는 것은 저쪽 일이다 |
+
+### 남은 것
+
+- `id_map.parquet` 은 **배치에만** 남는다. ClickHouse `track_sections` 가 숫자 `track_id` 를
+  쓰기 때문에 `push_sections` 가 필요로 한다. 서빙은 읽지 않는다
+- `labels_service.parquet`(선호 구간 등급)은 **배치 유지**. 전체 사용자 통계로 정해지고
+  모델이 그 정의로 학습돼 있어, 요청마다 한 사람치로 바꾸면 점수 분포가 달라진다
+
+---
+
 ## 0. 자리 배치
 
 ```
@@ -31,6 +82,9 @@ Frontend 는 FastAPI·Pinecone·MySQL·ClickHouse 를 직접 부르지 않는다
 ---
 
 ## 1. 식별자와 변환 규칙
+
+> **2026-09-16 변경됨.** 아래 표의 내부 JSON 칸은 옛 계약이다. 지금은 AI 에
+> 숫자 ID 를 보내지 않는다 → 위 "2026-09-16 계약 변경".
 
 | 대상 | MySQL | 내부 JSON (Spring→AI) | 공개 JSON (FE) | Java |
 |---|---|---|---|---|
@@ -211,6 +265,10 @@ moment:{music_section_id}:mert-v1
 
 ## 4. FastAPI 내부 API
 
+> **2026-09-16 변경됨.** 요청·응답 필드가 문자열 ID 기반으로 바뀌었고,
+> `/internal/facets`·`/internal/similar`·`/internal/metrics` 가 추가됐다.
+> 현재 계약은 `ai_server/README.md` 의 "API" 절이 기준이다.
+
 전 경로 `/internal` 아래. Spring 에서만 호출한다.
 
 | 메서드 | 경로 | 용도 |
@@ -385,6 +443,9 @@ GET /internal/ready   503
 ---
 
 ## 5. Spring DTO 예시
+
+> **2026-09-16 변경됨.** 실제 DTO 는
+> `api/src/main/java/com/osundosun/mupid/api/ai/client/RecommenderDto.java` 다.
 
 작성 예시이며 백엔드가 프로젝트 규약에 맞춰 조정한다.
 

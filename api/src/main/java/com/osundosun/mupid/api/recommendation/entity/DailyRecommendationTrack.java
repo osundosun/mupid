@@ -14,6 +14,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.MapsId;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
@@ -43,6 +44,15 @@ public class DailyRecommendationTrack {
     /**
      * 모먼트
      */
+    /**
+     * 속한 묶음.
+     *
+     * <p>`@MapsId` 로 복합키의 한쪽을 이 관계에서 채운다. 예전에는 관계와
+     * `@EmbeddedId` 가 같은 컬럼을 각자 매핑해 **읽기는 되는데 INSERT 가 컬럼을 두 번
+     * 실어** 터졌다(`No value specified for parameter 5`). 이 표에 쓴 적이 없어
+     * 드러나지 않았다 — `MusicSectionAnalysisMood` 도 같은 모양이었다.
+     */
+    @MapsId("dailyRecommendationId")
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "daily_recommendation_id", nullable = false)
     private DailyRecommendation dailyRecommendation;
@@ -74,14 +84,20 @@ public class DailyRecommendationTrack {
     @Embeddable
     @Getter
     @AllArgsConstructor
-    @NoArgsConstructor(access = AccessLevel.PROTECTED)
+    // `@MapsId` 가 묶음 번호를 채우므로 바깥에서 순번만 담은 키를 만든다.
+    @NoArgsConstructor
     @EqualsAndHashCode
     public static class DailyRecommendationTrackId {
 
         /**
          * 모먼트 번호 (조회 전용)
          */
-        @Column(name = "daily_recommendation_id", insertable = false, updatable = false)
+        /**
+         * 묶음 번호. `@MapsId` 가 관계에서 채운다.
+         *
+         * <p>`insertable = false` 를 두면 안 된다 — INSERT 에서 값이 빠진다.
+         */
+        @Column(name = "daily_recommendation_id")
         private Integer dailyRecommendationId;
 
         /**

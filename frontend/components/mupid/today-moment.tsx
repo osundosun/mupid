@@ -4,8 +4,20 @@ import type { MupidModel } from '@/hooks/use-mupid';
 import { formatTime, getSongSectionAt, type Track } from '@/lib/mupid-data';
 import { AlbumArt } from './primitives';
 
-// 취향은 제외 조건이 아니라 정렬 기준이다. 데모 곡이 적어도 목록이 비지 않게 채운다.
+/**
+ * 오늘의 Moment 에 보여 줄 곡.
+ *
+ * **서버가 만들어 둔 것이 있으면 그것을 쓴다.** 배치가 매일 정오에 한 번 만들고,
+ * 하루 동안 같은 곡이 나온다 — 열 때마다 바뀌면 "오늘의" 가 성립하지 않는다.
+ *
+ * 없으면 카탈로그를 취향으로 정렬해 채운다. 배치가 아직 안 돌았거나 추천 서버가
+ * 준비되지 않았을 수 있고, 그때 홈이 비면 곤란하다. **물러났다는 사실은
+ * `todayMomentNote` 가 말한다** — 조용히 대신 채우면 추천이 도는 줄 알고 넘어간다.
+ */
 export function pickTodayMoments(m: MupidModel): Track[] {
+  if (m.todayMoments.length) {
+    return m.todayMoments.filter((track) => !m.ignored.includes(track.id)).slice(0, 4);
+  }
   const moods = m.onboardingSubmitted ? [...new Set(m.moods)] : [];
   const genres = m.onboardingSubmitted ? m.genres : [];
   return m.tracks
@@ -20,10 +32,13 @@ export function pickTodayMoments(m: MupidModel): Track[] {
 }
 
 export function todayMomentNote(m: MupidModel) {
+  // 서버가 만든 묶음에는 이유가 함께 온다. 우리가 지어내지 않는다.
+  if (m.todayMoments.length && m.todayMomentNote) return m.todayMomentNote;
+  if (m.todayMoments.length) return '오늘 들어볼 음악을 골랐어요.';
   const tuned = m.onboardingSubmitted && (m.moods.length || m.genres.length);
   return tuned
-    ? '선택한 취향의 곡부터, 새롭게 발견할 음악까지 만나보세요.'
-    : '오늘 들어볼 음악을 골랐어요.';
+    ? '아직 오늘의 추천이 준비되지 않아, 고른 취향으로 먼저 골랐어요.'
+    : '아직 오늘의 추천이 준비되지 않아, 둘러볼 만한 곡을 골랐어요.';
 }
 
 // 데스크톱 사이드바와 같은 추천을 모바일 홈에서도 보여 준다.

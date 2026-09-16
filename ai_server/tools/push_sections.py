@@ -46,9 +46,11 @@ import urllib.parse
 import urllib.request
 from base64 import b64encode
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
+from ai_server.app import clickhouse as _ch
 from ai_server.app import ids, paths
 from ai_server.app.log import log
 
@@ -65,48 +67,39 @@ SECTION_ENUM = ("INTRO", "VERSE", "PRE_CHORUS", "CHORUS", "BRIDGE",
                 "BREAK", "INST", "SOLO", "OUTRO")
 
 
-def _http_base() -> str:
-    """`jdbc:clickhouse://host:port/db` 도 받는다 — .env 가 그 형태로 적혀 있다.
-
-    **스킴을 낮추지 않는다.** 예전에는 무조건 `http://` 를 붙여서, `https://` 로 적어 둔
-    ClickHouse 에도 평문으로 붙었다. 자격증명이 헤더에 실려 나가므로 그대로 새는 길이다.
-    jdbc 형태는 스킴 정보가 없어 `MUPID_CLICKHOUSE_SECURE=1` 로 표시한다.
-    """
-    raw = os.environ.get("MUPID_CLICKHOUSE_URL", "").strip()
-    if not raw:
-        raise SystemExit("MUPID_CLICKHOUSE_URL 이 비어 있다.")
-    m = re.match(r"^jdbc:clickhouse://([^/?]+)", raw)
-    if m:
-        secure = os.environ.get("MUPID_CLICKHOUSE_SECURE", "").strip().lower()
-        scheme = "https" if secure in ("1", "true", "yes") else "http"
-        return f"{scheme}://{m.group(1)}"
-    m = re.match(r"^(https?)://([^/?]+)", raw)
-    if m:
-        return f"{m.group(1)}://{m.group(2)}"          # 적어 준 스킴을 그대로 쓴다
-    return f"http://{raw.split('/')[0]}"               # 스킴이 없으면 host 만 온 것이다
-
-
-def _auth() -> str:
-    u = os.environ.get("MUPID_CLICKHOUSE_USER", "").strip()
-    p = os.environ.get("MUPID_CLICKHOUSE_PASSWORD", "")
-    if not u:
-        raise SystemExit("MUPID_CLICKHOUSE_USER 가 비어 있다.")
-    return "Basic " + b64encode(f"{u}:{p}".encode()).decode()
+# 접속부는 서빙과 공유한다 (`app/clickhouse.py`). 배치와 서빙이 각자 들고 있으면
+# 한쪽만 고쳐져 접속 방식이 갈린다 — 스킴을 낮추지 않는 처리가 특히 그렇다.
+_http_base = _ch._http_base
+_auth = _ch._auth
 
 
 def query(sql: str, body: bytes | None = None) -> str:
-    url = f"{_http_base()}/?query={urllib.parse.quote(sql)}" if body else _http_base() + "/"
-    req = urllib.request.Request(url, data=body if body else sql.encode(), method="POST")
-    req.add_header("Authorization", _auth())
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            return r.read().decode()
-    except urllib.error.HTTPError as e:
-        raise SystemExit(f"ClickHouse 오류 {e.code}: {e.read().decode()[:400]}") from None
+    return _ch.query(sql, body, timeout=TIMEOUT)
 
 
-def build_rows(mom: pd.DataFrame, im, version: str) -> tuple[list[dict], dict]:
-    """구간 표 한 벌을 만든다. 넣지 못한 것은 이유별로 센다."""
+def server_now() -> str:
+    """**ClickHouse 의 시계**로 현재 시각을 얻는다. 로컬 시계를 쓰지 않는다.
+
+    서버 타임존이 `Asia/Seoul` 인데 예전에는 `pd.Timestamp.now("UTC")` 를 타임존 표시
+    없이 넣었다. 그러면 `created_at` 이 **9시간 과거로 저장된다.**
+
+    `created_at` 은 `ReplacingMergeTree` 의 **버전 컬럼**이다. 이 도구가 쓴 행(9시간
+    과거)과 `DEFAULT now()` 로 들어간 행이 섞이면 항상 후자가 이겨, 이 도구로 고친
+    구간이 조용히 옛 값으로 되돌아간다.
+
+        SELECT toString(now())          → '2026-09-16 10:51:12'  (서버 타임존)
+        SELECT toString(now('UTC'))     → '2026-09-16 01:51:12'
+    """
+    return query("SELECT toString(now())").strip()
+
+
+def build_rows(mom: pd.DataFrame, im, version: str,
+               created_at: Optional[str] = None) -> tuple[list[dict], dict]:
+    """구간 표 한 벌을 만든다. 넣지 못한 것은 이유별로 센다.
+
+    `created_at` 은 호출자가 **서버에서 받아** 넘긴다 (`server_now()`). 비우면 아예
+    싣지 않아 ClickHouse 의 `DEFAULT now()` 가 채운다 — 어느 쪽이든 서버 시계다.
+    """
     stat = {"unmapped_track": 0, "unknown_label": 0, "bad_range": 0}
     unmapped: set[str] = set()
     rows = []
@@ -126,7 +119,7 @@ def build_rows(mom: pd.DataFrame, im, version: str) -> tuple[list[dict], dict]:
         if e_ms <= s_ms:
             stat["bad_range"] += 1
             continue
-        rows.append({
+        row = {
             "track_id": int(num),
             "analysis_version": version,
             "section_index": int(r.section_idx),
@@ -137,8 +130,10 @@ def build_rows(mom: pd.DataFrame, im, version: str) -> tuple[list[dict], dict]:
             # 구간 안 최대 에너지 지점을 아직 산출하지 않는다. 0 은 "구간 밖" 과
             # 구분이 안 되므로 시작점을 넣는다 — 추천도 구간 시작부터 튼다.
             "peak_ms": s_ms,
-            "created_at": pd.Timestamp.now("UTC").strftime("%Y-%m-%d %H:%M:%S"),
-        })
+        }
+        if created_at:
+            row["created_at"] = created_at
+        rows.append(row)
     stat["unmapped_sample"] = sorted(unmapped)[:5]
     return rows, stat
 
@@ -221,7 +216,10 @@ def main() -> int:
         print("id_map 이 적재되지 않았다. 숫자 ID 없이는 넣을 수 없다.", file=sys.stderr)
         return 1
 
-    rows, stat = build_rows(mom, im, a.version)
+    # 시각은 ClickHouse 에 물어서 얻는다. 로컬 시계를 쓰면 서버 타임존과 어긋난다.
+    created_at = server_now()
+    log(f"서버 시각 {created_at} (created_at 으로 쓴다)")
+    rows, stat = build_rows(mom, im, a.version, created_at)
     log(f"구간 {len(mom)}개 중 {len(rows)}개 적재 대상")
     for k in ("unmapped_track", "unknown_label", "bad_range"):
         if stat[k]:

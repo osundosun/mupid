@@ -9,6 +9,7 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import com.osundosun.mupid.api.ai.tool.RecommendReason;
 import com.osundosun.mupid.api.music.enumerate.SectionLabel;
 
 /**
@@ -24,14 +25,17 @@ class RecommenderDtoTest {
     @DisplayName("검색 요청은 snake_case 로 나가고 비어 있는 칸은 빠진다")
     void writeSearchRequest() {
         RecommenderDto.SearchRequest request = new RecommenderDto.SearchRequest(
-            5001L, 15, 3, List.of(148), null,
-            Map.of("filters", Map.of("genre", List.of("pop"))));
+            5001L, 15, 3, List.of("T000901"), null,
+            Map.of("filters", Map.of("genre", List.of("pop"))),
+            new RecommenderDto.Onboarding(List.of("잔잔한"), List.of("Jazz")));
 
         String json = new String(AiJson.writeBytes(request), StandardCharsets.UTF_8);
 
         assertThat(json).contains("\"recommendation_id\":5001");
         assertThat(json).contains("\"user_id\":15");
-        assertThat(json).contains("\"exclude_music_ids\":[148]");
+        assertThat(json).contains("\"exclude_tracks\":[\"T000901\"]");
+        // 온보딩은 **우리 코드표 이름 그대로** 나간다. 옮기는 것은 저쪽 몫이다.
+        assertThat(json).contains("\"moods\":[\"잔잔한\"]");
         assertThat(json).contains("\"query_plan\"");
         // 추천 서버는 `extra = forbid` 다. 안 쓰는 칸을 null 로라도 보내면 400 이 아니라
         // 값이 들어간 것으로 읽힐 수 있어, 아예 빠지는 편이 안전하다.
@@ -42,25 +46,24 @@ class RecommenderDtoTest {
     @DisplayName("이어 듣기 요청도 같은 규칙을 따른다")
     void writeNextRequest() {
         RecommenderDto.NextRequest request =
-            new RecommenderDto.NextRequest(7L, 15, 5, List.of(), 148, null);
+            new RecommenderDto.NextRequest(7L, 15, 5, List.of(), "T000901", null, null);
 
         String json = new String(AiJson.writeBytes(request), StandardCharsets.UTF_8);
 
-        assertThat(json).contains("\"current_music_id\":148");
-        assertThat(json).doesNotContain("current_music_section_id");
+        assertThat(json).contains("\"current_track\":\"T000901\"");
+        assertThat(json).doesNotContain("current_section");
+        assertThat(json).doesNotContain("onboarding");
     }
 
     @Test
-    @DisplayName("응답의 구간 라벨은 SectionLabel 로 그대로 들어온다")
+    @DisplayName("응답은 문자열 ID·순위·사유뿐이다")
     void readResponse() {
         String body = """
             { "recommendation_id": 5001,
               "items": [
-                { "music_id": 900108, "music_section_id": 9001318,
-                  "start_time_ms": 79490, "end_time_ms": 92740,
-                  "section_label": "CHORUS", "rank_order": 1, "score": 1.0,
+                { "external_id": "T000901#2", "rank_order": 1, "score": 1.0,
                   "reason_code": "SIMILAR_PREFERRED_MOMENT",
-                  "reason": "최근 좋아한 구간과 비슷한 후렴 구간이에요." }
+                  "ref_external_id": "T000148#3" }
               ],
               "shortfall": 0, "model_version": "mupid-stage1-v1" }
             """;
@@ -71,32 +74,25 @@ class RecommenderDtoTest {
         assertThat(response.recommendationId()).isEqualTo(5001L);
         assertThat(response.modelVersion()).isEqualTo("mupid-stage1-v1");
         RecommenderDto.Item item = response.safeItems().getFirst();
-        assertThat(item.musicId()).isEqualTo(900108);
-        assertThat(item.musicSectionId()).isEqualTo(9001318);
-        assertThat(item.sectionLabel()).isEqualTo(SectionLabel.CHORUS);
-        assertThat(item.startTimeMs()).isEqualTo(79490);
+        assertThat(item.externalId()).isEqualTo("T000901#2");
+        assertThat(item.refExternalId()).isEqualTo("T000148#3");
+        assertThat(item.rankOrder()).isEqualTo(1);
         assertThat(item.reasonCode()).isEqualTo("SIMILAR_PREFERRED_MOMENT");
     }
 
     @Test
-    @DisplayName("사유 문장에 내부 ID·모델 수치가 실려 오지 않는다")
-    void reasonIsUserFacing() {
-        String body = """
-            { "recommendation_id": 1, "shortfall": 0, "model_version": "v",
-              "items": [ { "music_id": 1, "music_section_id": 2,
-                "start_time_ms": 0, "end_time_ms": 1, "section_label": "VERSE",
-                "rank_order": 1, "score": 0.5, "reason_code": "COLD_START",
-                "reason": "많이 듣는 벌스 구간부터 들려드려요." } ] }
-            """;
-
-        RecommenderDto.Item item =
-            AiJson.read(body.getBytes(StandardCharsets.UTF_8), RecommenderDto.Response.class)
-                .safeItems().getFirst();
-
-        // 화면에 그대로 나가는 문장이다. `dna3` 나 `0.812` 같은 것이 섞이면 사용자에게
-        // 내부 값이 노출된다 — 추천 서버가 경계에서 막고 있고, 여기서 한 번 더 본다.
-        assertThat(item.reason()).doesNotContain("#").doesNotContain("dna");
-        assertThat(item.reason()).doesNotMatch(".*\\d+\\.\\d+.*");
+    @DisplayName("사유 문장은 우리가 만든다 — 저쪽이 보내지 않는다")
+    void reasonIsBuiltHere() {
+        // 화면에 나가는 문장이다. `dna3` 나 `0.812` 같은 내부 값이 섞이면 안 된다.
+        for (String code : List.of("COLD_START", "SIMILAR_PREFERRED_MOMENT",
+                                   "EXPLORE_NEW", "처음 보는 코드")) {
+            String text = RecommendReason.of(code, SectionLabel.CHORUS);
+            assertThat(text).isNotBlank();
+            assertThat(text).doesNotContain("#").doesNotContain("dna");
+            assertThat(text).doesNotMatch(".*\\d+\\.\\d+.*");
+        }
+        // 모르는 코드에서 빈 문자열이 나가면 화면이 빈다.
+        assertThat(RecommendReason.of(null, SectionLabel.VERSE)).isNotBlank();
     }
 
     @Test

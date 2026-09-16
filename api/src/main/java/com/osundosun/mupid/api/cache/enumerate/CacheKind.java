@@ -47,7 +47,17 @@ public enum CacheKind {
     /**
      * 자정 배치 선점. API 를 여러 벌 띄워도 하루치 확정 저장은 한 번만 돈다.
      */
-    ReportBatch("report:batch");
+    ReportBatch("report:batch"),
+
+    /** 오늘의 모먼트 생성 배치 선점. 스케줄러는 인스턴스마다 돈다. */
+    DailyRecommendationBatch("recommendation:daily:batch"),
+    /**
+     * 사용자별 재생 큐. `queue:user:{userId}` 한 자리에 큐 한 벌이 통째로 들어간다.
+     *
+     * **이 Redis 에서 유일하게 오래 사는(90일) 키다.** 나머지는 잃어도 다시 만들 수
+     * 있는 값이지만 큐는 사용자가 직접 담은 것이라 복구할 길이 없다 — decision/0022.
+     */
+    PlayQueue("queue:user");
 
     private final String redisKey;
     

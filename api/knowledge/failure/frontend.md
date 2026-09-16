@@ -171,3 +171,49 @@
 - **확인**: 위치 → 이득 `0→0, .25→.062, .5→.25, .75→.562, 1→1`. 100칸 끌기가 **32.07ms/칸 → 4.47ms/칸**(약 7배).
 - **건드리지 말 것**: 값을 이득에 바로 꽂지 않고 `setTargetAtTime(…, 0.02)` 로 20ms에 걸쳐 옮기는 것은 '지직' 소리를 막는 장치다. 데스크톱 홈의 `<label>` 감싸개도 `.desktop-audio-options label` 에 배치가 걸려 있어 그대로 두어야 한다.
 - **근거**: `frontend/lib/player/engine.ts`, `frontend/lib/player/index.ts`, `frontend/components/mupid/volume-slider.tsx`
+
+### 재생 목록 순서를 바꾸자마자 새로고침하면 옛 순서로 돌아간다 — 해소됨
+
+- **원인**: 큐 저장은 조작마다 보내지 않고 **1.2초 모았다가** 보낸다(`QUEUE_SAVE_DELAY`). 그래서 보내는 순간과 사용자가 새로고침하는 순간이 자주 겹치는데, **요청이 안 나간 것이 아니라 나간 요청이 취소된다.** 평범한 `fetch` 는 문서가 사라지면 함께 버려진다. 계측에서 본문까지 올바른 요청이 그대로 죽는 것을 확인했다.
+
+  ```
+  PUT /api/v1/user/queue  keepalive=false
+  body={"music_ids":[310,67,68,309],"current_music_id":314,"revision":2}
+  ```
+
+  서버 판본은 오르지 않았고, 다시 열면 직전에 저장된 순서가 내려왔다. 화면만 새 순서였으므로 "저장이 안 된다" 가 아니라 "저장했는데 사라진다" 로 보인다.
+- **해결**: 큐 저장을 `keepalive` 로 보낸다(`endpoints.ts` 의 `queue.replace`). 브라우저가 문서와 무관하게 전송을 마친다. 곡 번호 목록뿐이라 keepalive 의 64KB 상한과는 거리가 멀다. 아직 타이머가 돌지 않은 변경은 떠날 때 한 번 더 밀어낸다(`use-mupid.ts` 의 flush).
+- **주의 1**: 떠나는 것을 `beforeunload` 로 잡으면 안 된다. 모바일 브라우저는 탭을 버릴 때 그걸 부르지 않는 경우가 많다. `visibilitychange`(hidden)와 `pagehide` 를 본다.
+- **주의 2**: 대기 중인 저장을 **보내기 시작할 때 지우면 안 된다.** 요청이 도는 중에 떠나면 "밀어낼 것이 없다" 고 판단해 그대로 유실된다. 서버가 받았다고 확인해 준 뒤에 지운다. 그래서 같은 내용이 두 번 나갈 수 있는데, 판본이 함께 가므로 뒤의 것은 409 로 거절되고 아무것도 바뀌지 않는다.
+- **확인**: 언로드 시점에 같은 주소로 두 요청을 띄워 보면 `keepalive: true` 만 도착하고 평범한 `fetch` 는 도착하지 않는다. 고친 뒤 "순서 변경 직후 즉시 새로고침" 을 두 번 돌려 순서가 유지되는 것과 Redis 값이 일치하는 것을 확인했다.
+- **근거**: `frontend/lib/api/endpoints.ts` 의 `queue.replace`, `frontend/lib/api/transport.ts`, `frontend/lib/api/client.ts`, `frontend/hooks/use-mupid.ts`
+
+### 소스를 고쳤는데 브라우저가 계속 예전 코드를 실행한다 (Vite 개발 서버)
+
+- **원인**: HMR 이 모듈 import 주소에 `?t=<timestamp>` 를 박아 넣고, 브라우저가 **그 주소째로** 캐시한다. 그래서 파일을 고쳐도 옛 판이 계속 돌 수 있다. 증상이 헷갈리는데, 이미 지운 식별자에서 `ReferenceError` 가 나고 스택이 옛 타임스탬프를 가리킨다.
+
+  ```
+  ReferenceError: options is not defined
+      at Module.saveQueue (http://localhost:3000/lib/play-queue.ts?t=1789532266190:67:77)
+  ```
+
+  디스크의 `play-queue.ts` 에는 `options` 가 한 글자도 없는데도 그렇다.
+- **듣지 않는 처방**: 개발 서버 재시작, `node_modules/.vite` 삭제, 새 탭에서 열기, 주소에 쿼리 붙이기, `location.reload(true)`. 전부 같은 모듈 주소를 다시 쓰므로 소용이 없었다.
+- **해결**: **포트를 바꿔 출처를 바꾼다.** 새 출처는 캐시가 비어 있어 모든 모듈을 새로 받는다.
+
+  ```bash
+  npx vite --port 3001 --strictPort
+  ```
+- **주의**: `curl` 로 "서버가 무엇을 주는지" 확인할 때도 캐시버스터를 붙여야 한다. `curl http://localhost:3000/lib/api/client.ts` 는 옛 응답을 보여 주고, `?t=$(date +%s)` 를 붙이면 고친 내용이 나온다. 이것 때문에 "서버가 옛 코드를 준다" 고 잘못 판단하기 쉽다.
+- **근거**: `frontend/vite.config.ts`, 2026-09-16 재생 큐 유실 추적 중 확인
+
+### 손을 뗐는데 재생 목록의 줄이 커서를 계속 따라다닌다 — 해소됨
+
+- **증상**: 손잡이를 잡아 순서를 바꾸다가 목록 **바깥에서** 버튼을 놓으면 끌기가 끝나지 않는다. 그 뒤로는 누르지 않았는데도 커서가 지나가는 곳마다 줄이 이리저리 옮겨 다닌다.
+- **원인**: 끌기 이벤트를 **손잡이 버튼에 직접** 달고 `setPointerCapture` 로 붙잡아 두었다. 그런데 순서가 바뀔 때마다 그 줄이 자리를 옮기며 버튼이 다시 그려지고, 그때 **포인터 캡처가 풀린다.** 캡처가 없으니 목록 밖에서 놓은 `pointerup` 은 그 버튼에 닿지 않아 `dragUid` 가 그대로 남고, 이후의 `pointermove` 는 커서 아래에 있는 **다른 줄의 손잡이** 핸들러를 때린다 — 그 핸들러도 같은 `dragUidRef` 를 보므로 끌기가 이어지는 것처럼 동작한다.
+- **해결**: 끄는 동안의 `pointermove`/`pointerup`/`pointercancel` 과 `blur` 를 **창(window)에서 듣는다.** 어디서 놓든 그 자리에서 순서가 확정된다. 손잡이에는 `pointerdown` 만 남긴다.
+- **주의 1**: 창에 거는 함수는 **늘 이번 렌더의 것**이어야 한다. 한 번 건 함수를 그대로 두면 끄는 사이에 목록이 바뀌었을 때 옛 순서를 기준으로 자리를 확정한다. 최신 함수를 ref 에 담아 두고 `() => ref.current()` 를 건다. ref 대입은 렌더 중이 아니라 effect 안에서 한다 — `react-compiler` 규칙이 렌더 중 ref 접근을 막는다.
+- **주의 2**: `blur` 도 끝으로 친다. 다른 창에서 손을 떼면 이쪽은 뗀 줄을 영영 모른다.
+- **주의 3**: `pointerdown` 직후의 첫 `pointermove` 한 건은 effect 가 붙기 전이라 놓칠 수 있다. 실제 끌기에서는 초당 수십 건이 오므로 보이지 않는다. 다만 **시험에서 `pointerdown` 과 `pointermove` 를 한 프레임에 쏘면 아무 일도 일어나지 않아** 회귀로 오인하기 쉽다.
+- **확인**: 첫 줄을 세 번째 자리까지 끈 뒤 독 **바깥**(60, 80)에서 놓으면 그 자리로 확정되고, 그 뒤 커서를 목록 위에서 움직여도 순서가 변하지 않는다. Redis 값도 화면과 일치한다.
+- **근거**: `frontend/components/mupid/queue-list.tsx`

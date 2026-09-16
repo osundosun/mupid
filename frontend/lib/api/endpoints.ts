@@ -220,6 +220,35 @@ export type PlaylistTrackAdded = {
   created_at: string;
 };
 
+/**
+ * 재생 큐 한 벌. 서버가 기준이다 (decision/0022).
+ *
+ * `tracks` 가 담긴 곡 수보다 짧을 수 있다 — 저장소(Redis)에는 제약조건이 없어
+ * 지워진 곡 번호가 남는데, 서버가 조회할 때 걸러 내기 때문이다. 화면이 다음에
+ * 순서를 저장하면 걸러진 목록이 그대로 올라가 스스로 정리된다.
+ */
+export type PlayQueueState = {
+  /**
+   * 저장할 때마다 오르는 판본. 순서 저장(`replace`)에 이 값을 함께 보낸다.
+   * 서버 값과 다르면 409 다 — 그 사이 다른 기기가 큐를 고쳤다는 뜻이다.
+   */
+  revision: number;
+  /** 지금 재생 중인 곡. 새 곡은 이 곡 바로 아래로 들어간다. */
+  current_music_id: number | null;
+  /** 담을 수 있는 최대 곡 수. 화면이 숫자를 따로 들고 있지 않게 서버가 함께 보낸다. */
+  limit: number;
+  tracks: MusicSummary[];
+};
+
+/** 곡을 담은 결과. */
+export type PlayQueueTrackAdded = {
+  queue: PlayQueueState;
+  /** 이미 담겨 있어 아무것도 하지 않았다. */
+  duplicated: boolean;
+  /** 상한이 차서 밀려난 곡. 없으면 null. 있을 때만 퇴출 안내를 띄운다. */
+  evicted_music_id: number | null;
+};
+
 /** 트리맵 타일 하나. `share` 가 곧 면적이다. */
 export type ReportTrack = {
   music_id: number;
@@ -351,8 +380,66 @@ export type AiRecommendedTrack = {
   reason: string;
 };
 
+/**
+ * 서버가 고른 구간 하나. `next`·`similar`·`daily` 가 같은 모양을 쓴다.
+ *
+ * **곡 번호·시간·구간 종류가 전부 서버에서 온다.** 화면이 카탈로그에서 다시 찾지
+ * 않는다 — 추천된 그 구간을 그대로 틀기 위해서다.
+ */
+export type RecommendedSection = {
+  rank_order: number;
+  music: MusicSummary;
+  music_section_id: number | null;
+  /** INTRO · VERSE · PRE_CHORUS · CHORUS · BRIDGE · BREAK · INST · SOLO · OUTRO */
+  section_label: string | null;
+  start_time_ms: number;
+  end_time_ms: number;
+  reason_code: string;
+  reason: string;
+};
+
+/** 이어 듣기 응답. 조건에 맞는 곡이 없으면 `tracks` 가 비고 `shortfall` 이 찬다. */
+export type NextTrackResult = {
+  /** 재생 이벤트에 되돌려 싣는 상관 키(`rec_id`). 저장되지는 않는다. */
+  recommendation_id: number;
+  tracks: RecommendedSection[];
+  shortfall: number;
+};
+
+/** 닮은 구간 응답. 개인화가 없어 `recommendation_id` 가 없다. */
+export type SimilarSectionResult = {
+  music_section_id: number;
+  tracks: Array<Omit<RecommendedSection, 'reason_code' | 'reason'> & { similarity: number }>;
+  shortfall: number;
+  embedding_version: string;
+};
+
+/** 오늘의 모먼트. 배치가 하루 한 번 만들어 둔 것이라 하루 동안 같다. */
+export type DailyRecommendationResult = {
+  /** 실제로 돌려준 날짜. 요청한 날에 없으면 가장 최근 날로 되돌아간다. */
+  date: string;
+  groups: Array<{
+    recommendation_id: number;
+    title: string;
+    reason: string;
+    mood: string;
+    music_count: number;
+    tracks: Array<{ rank: number; reason: string; music: MusicSummary }>;
+  }>;
+};
+
 /** 추천을 하지 않았으면 `tracks` 는 빈 배열이다 (null 이 아니다). */
-export type AiChatResult = { reply: string; tracks: AiRecommendedTrack[] };
+export type AiChatResult = {
+  reply: string;
+  /**
+   * 이 답변이 만든 추천 묶음의 번호. 추천이 없었으면 `null` 이다.
+   *
+   * 재생 이벤트에 `rec_id` 로 되돌려 싣는다 — 그래야 "이 추천으로 튼 곡을 끝까지
+   * 들었는가" 를 서버가 물어볼 수 있다.
+   */
+  recommendation_id: number | null;
+  tracks: AiRecommendedTrack[];
+};
 
 export function createEndpoints(client: ApiClient) {
   return {
@@ -642,6 +729,23 @@ export function createEndpoints(client: ApiClient) {
           path: `/api/v1/music/${musicId}`,
           signal,
         }),
+      /**
+       * 고른 구간과 소리가 닮은 다른 곡의 구간.
+       *
+       * **개인 취향을 섞지 않는다** — 같은 구간에는 누가 물어도 같은 답이다.
+       * 기준 곡 자신은 결과에서 빠진다.
+       */
+      similarSection: (
+        musicId: number,
+        sectionId: number,
+        limit?: number,
+        signal?: AbortSignal,
+      ) =>
+        client.request<SimilarSectionResult>({
+          path: `/api/v1/music/${musicId}/section/${sectionId}/similar`,
+          query: { limit },
+          signal,
+        }),
       /** 가사. 시간 오름차순. 가사가 없으면 `lines` 가 빈 배열이다. */
       lyrics: (musicId: number, signal?: AbortSignal) =>
         client.request<MusicLyrics>({
@@ -772,6 +876,77 @@ export function createEndpoints(client: ApiClient) {
         }),
     },
 
+    /**
+     * 재생 큐. 사용자당 하나뿐이라 경로에 번호가 없다 (decision/0022).
+     *
+     * 큐는 계정에 붙어 있다 — 새로고침해도, 로그아웃 후 다시 들어와도 그대로다.
+     */
+    queue: {
+      /** 지금 큐. 담은 적이 없으면 빈 큐(`revision: 0`)가 온다 — 404 가 아니다. */
+      get: (signal?: AbortSignal) =>
+        client.request<PlayQueueState>({
+          path: '/api/v1/user/queue',
+          signal,
+        }),
+      /**
+       * 큐를 통째로 바꾼다. 순서 바꾸기와 재생 위치 이동이 모두 이 요청이다.
+       *
+       * 조작할 때마다 부르지 않는다 — 화면이 모아서 보낸다. 끌어서 순서를
+       * 다섯 번 바꿔도 요청은 한 번이다.
+       *
+       * `revision` 이 서버 값과 다르면 409(`MUPID_QUEUE_REVISION_CONFLICT`)다.
+       * 그때는 서버 큐를 다시 읽어 화면을 덮는다 — 큐는 병합할 데이터가 아니다.
+       */
+      replace: (musicIds: number[], currentMusicId: number | null, revision: number) =>
+        client.request<PlayQueueState>({
+          method: 'PUT',
+          path: '/api/v1/user/queue',
+          json: {
+            music_ids: musicIds,
+            current_music_id: currentMusicId,
+            revision,
+          },
+          /*
+           * **언제나 `keepalive` 다.** 큐 저장은 모아서 보내기 때문에, 보내는
+           * 순간과 사용자가 새로고침하는 순간이 자주 겹친다. 평범한 요청은 문서와
+           * 함께 취소되어 **이미 올바른 본문이 나갔는데도 변경이 사라진다** —
+           * 순서를 바꾸자마자 새로고침하면 옛 순서로 돌아가던 원인이 이것이었다.
+           *
+           * 본문은 곡 번호 목록뿐이라 keepalive 의 64KB 상한에 한참 못 미친다.
+           */
+          keepalive: true,
+        }),
+      /**
+       * 한 곡을 담는다. 자리(재생 중인 곡 바로 아래)와 퇴출은 **서버가 정한다.**
+       *
+       * 이미 담긴 곡이어도 200 이다 (`duplicated: true`). 상한이 차 있어도
+       * 거절하지 않고 가장 오래 담긴 곡을 밀어낸다 (`evicted_music_id`).
+       */
+      addTrack: (musicId: number) =>
+        client.request<PlayQueueTrackAdded>({
+          method: 'POST',
+          path: '/api/v1/user/queue/track',
+          json: { music_id: musicId },
+        }),
+      /** 한 곡을 뺀다. 담겨 있지 않으면 404 다. */
+      removeTrack: (musicId: number) =>
+        client.request<PlayQueueState>({
+          method: 'DELETE',
+          path: `/api/v1/user/queue/track/${musicId}`,
+        }),
+      /**
+       * 플레이리스트 전체 재생. 큐가 그 수록곡으로 통째로 바뀐다.
+       *
+       * 판본을 보내지 않는다 — 사람이 방금 누른 동작이라 다른 기기의 상태와
+       * 겨루지 않고 이기는 것이 맞다.
+       */
+      fromPlaylist: (playlistId: number) =>
+        client.request<PlayQueueState>({
+          method: 'POST',
+          path: `/api/v1/user/queue/playlist/${playlistId}`,
+        }),
+    },
+
     stream: {
       /** 곡의 재생 가능한 스트림 목록. DONE 인 것만 내려온다. */
       listByMusic: (musicId: number, signal?: AbortSignal) =>
@@ -805,6 +980,44 @@ export function createEndpoints(client: ApiClient) {
         }),
     },
 
+    recommendation: {
+      /**
+       * 오늘의 모먼트. **배치가 만들어 둔 것을 읽기만 한다.**
+       *
+       * 그날 것이 없으면 서버가 가장 최근 날로 되돌아가고, 응답의 `date` 가 실제로
+       * 무엇을 돌려줬는지 말한다. 아직 한 번도 안 돌았으면 `groups` 가 빈 배열이다.
+       */
+      daily: (date?: string, signal?: AbortSignal) =>
+        client.request<DailyRecommendationResult>({
+          path: '/api/v1/recommendation/daily',
+          query: { date },
+          signal,
+        }),
+      /**
+       * 다음에 들을 곡. 재생 이력을 보고 고른다.
+       *
+       * 홈의 "당신을 위한 추천" 도 이 경로다 — 목록 길이만 다르다.
+       * 지금 듣던 곡은 서버가 알아서 뺀다.
+       *
+       * 이력이 있는 사용자는 응답이 2초를 넘기도 한다(행동 로그를 훑는다).
+       */
+      next: (
+        body: {
+          current_music_id?: number;
+          current_music_section_id?: number;
+          exclude_music_ids?: number[];
+          limit?: number;
+        } = {},
+        signal?: AbortSignal,
+      ) =>
+        client.request<NextTrackResult>({
+          method: 'POST',
+          path: '/api/v1/recommendation/next',
+          json: body,
+          timeoutMs: 20_000,
+          signal,
+        }),
+    },
     ai: {
       /**
        * AI 대화 한 번. 곡 추천이 필요하다고 모델이 판단하면 `tracks` 가 함께 온다.

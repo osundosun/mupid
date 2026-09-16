@@ -2,7 +2,7 @@
 import { MupidMascot } from './mascot';
 import { ArrowUp, LoaderCircle, Sparkles, X } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
-import { chatSuggestions } from '@/lib/mupid-data';
+import { chatSuggestions, formatTime } from '@/lib/mupid-data';
 import { AlbumArt, TrackRow } from './primitives';
 
 export function FloatingChat({ model: m }: { model: MupidModel }) {
@@ -65,7 +65,29 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
               {message.tracks && (
                 <div className="chat-tracks">
                   {message.tracks.map((track) => (
-                    <TrackRow key={track.id} track={track} model={m} queueable />
+                    <div className="chat-track" key={track.id}>
+                      <TrackRow
+                        track={track}
+                        model={m}
+                        queueable
+                        // 곡이 아니라 **이 구간**을 권한 것이다. 0초부터 틀면
+                        // 목록에 적힌 구간과 들리는 것이 달라진다.
+                        onPlay={() => m.play(track, true)}
+                      />
+                      {track.recommended && (
+                        <p className="chat-track-reason">
+                          {/* 채팅 목록은 `.moment-meta` 를 숨긴다. 구간을 권한 것이
+                              보이지 않으면 재생이 곡 중간에서 시작하는 이유를 알 수
+                              없어, 여기에 구간과 시작 시각을 적는다. */}
+                          <strong>
+                            {track.recommended.sectionLabel} ·{' '}
+                            {formatTime(track.recommended.start)}
+                          </strong>
+                          <span>{track.recommended.reason}</span>
+                          {track.match > 0 && <em>{track.match}% 맞음</em>}
+                        </p>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}

@@ -103,9 +103,9 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
 def svc(tmp_path_factory):
     """합성 산출물을 가리키게 하고 모듈을 다시 읽는다.
 
-    상수만 바꿔서는 안 된다. `app/legacy/m10_features.py` 가 **자기 모듈에서** 루트를
-    따로 계산하기 때문에(import 시점) recommender 쪽만 고치면 특징 파일만 딴 곳을 본다 —
-    이 저장소가 `ids.py` 로 겪은 문제와 같은 모양이고, legacy 는 원본 유지라 그대로 둔다.
+    상수만 바꿔서는 안 된다. `app/features.py` 는 import 시점에 루트를 모듈 상수로 굳히므로
+    (`paths.artifact_root()` 를 쓰지만 호출이 한 번뿐이다) recommender 쪽만 고치면 특징
+    파일만 딴 곳을 본다 — 이 저장소가 `ids.py` 로 겪은 문제와 같은 모양이다.
     """
     import importlib
     import os
@@ -118,9 +118,10 @@ def svc(tmp_path_factory):
     os.environ["MUPID_AI_ARTIFACT_DIR"] = str(root)
 
     def _reload():
-        for name in ("m10_features", "m09_labels", "m11_stage1"):
-            if name in sys.modules:
-                importlib.reload(sys.modules[name])
+        for name in ("features", "labeler", "stage1_torch"):
+            full = f"ai_server.app.{name}"
+            if full in sys.modules:
+                importlib.reload(sys.modules[full])
         from ai_server.app import recommender as mod
         return importlib.reload(mod)
 
@@ -227,23 +228,15 @@ def test_short_sections_are_dropped(svc):
         assert r["end_sec"] - r["start_sec"] >= svc.MIN_MOMENT_SEC
 
 
-def test_internal_api_end_to_end(svc, monkeypatch):
-    """어댑터까지 붙여 실제 응답 모양을 본다."""
+def test_internal_api_end_to_end(svc):
+    """어댑터까지 붙여 실제 응답 모양을 본다.
+
+    매핑표를 세워 주지 않는다 — 이 서버는 숫자 ID 를 다루지 않으므로 그럴 것이 없다.
+    """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from ai_server.app import ids, internal_api
-
-    pool = svc.CAT.pool
-    im = ids.IdMap(path=svc.OUT_DIR / "_none.parquet", strict=False)
-    im.track_to_num = {t: 900_000 + i for i, t in enumerate(sorted(pool.track_id.unique()))}
-    im.num_to_track = {v: k for k, v in im.track_to_num.items()}
-    im.sec_to_num = {m: 9_000_000 + i for i, m in enumerate(sorted(pool.moment_id))}
-    im.num_to_sec = {v: k for k, v in im.sec_to_num.items()}
-    # 파일에서 읽은 적이 없으면 `loaded` 가 False 라 ready 가 503 이다. 그것이 옳은 동작이고,
-    # 여기서는 "매핑표를 정상으로 읽은 상태" 를 흉내 내야 하므로 세워 준다.
-    im.loaded = True
-    monkeypatch.setattr(ids, "_MAP", im)
+    from ai_server.app import internal_api
 
     app = FastAPI()
     internal_api.install(app, svc)
@@ -255,14 +248,16 @@ def test_internal_api_end_to_end(svc, monkeypatch):
     body = r.json()
     assert len(body["items"]) == 3
     for it in body["items"]:
-        assert it["end_time_ms"] > it["start_time_ms"]
-        assert it["section_label"] in internal_api._SECTION_ENUM
-        assert it["reason"] and it["reason_code"]
-    assert len({i["music_id"] for i in body["items"]}) == 3
+        assert it["external_id"] and it["reason_code"]
+        assert it["rank_order"] >= 1
+    # 같은 곡이 두 번 나오지 않는다 (`#` 앞이 곡 ID 다)
+    tracks = {i["external_id"].split("#")[0] for i in body["items"]}
+    assert len(tracks) == 3
 
-    # 내부 값이 응답으로 새지 않는다.
+    # 모델 수치·내부 진단은 응답으로 새지 않는다. 문자열 ID 는 이제 계약이라 셈에서 뺀다.
     raw = r.text
-    for leaked in ("T000000", "#", "moment_similarity", "prob"):
+    for leaked in ("moment_similarity", "prob", "matched_dna", "slot_source",
+                   "diagnostics", "start_time_ms", "section_label"):
         assert leaked not in raw, leaked
 
     assert c.get("/internal/ready").status_code == 200

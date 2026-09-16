@@ -41,6 +41,8 @@ const toSections = (sections: MusicSection[]): SongSection[] => {
       label: count > 1 ? `${base} ${count}` : base,
       start: section.start_ms / 1000,
       end: section.end_ms / 1000,
+      // 「닮은 구간」이 이 번호로 물어본다. 화면 이름으로는 되물을 수 없다.
+      sectionId: section.section_id,
     };
   });
 };

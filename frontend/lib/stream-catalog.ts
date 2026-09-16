@@ -18,13 +18,22 @@ import { toImageSource, withCache } from './platform';
  *
  * 저장해 둔 예전 데이터(데모 곡 번호 1~8)와 섞이지 않게 하려는 것이다.
  * 서버로 보낼 때는 언제나 `musicId` 를 쓴다.
+ *
+ * **추천도 같은 규칙을 써야 한다.** 다르게 매기면 같은 곡이 대기열·제외 목록·재생
+ * 중 표시에서 서로 다른 곡으로 읽힌다 → `lib/recommendations.ts`
  */
-const ID_OFFSET = 1000;
+export const ID_OFFSET = 1000;
 
 /** 한 번에 받아 올 곡 수. 카탈로그가 커지면 화면별 페이징으로 바꾼다. */
 const CATALOG_SIZE = 100;
 
-const toTrack = (music: MusicSummary): Track => {
+/**
+ * 서버 곡 → 화면의 곡. **카탈로그와 추천이 같은 변환을 쓴다.**
+ *
+ * 두 벌이 되면 커버를 고르는 규칙이나 `id` 규칙이 한쪽만 고쳐져, 같은 곡이 목록에
+ * 따라 다르게 보인다.
+ */
+export const toTrack = (music: MusicSummary): Track => {
   const duration = (music.duration_ms ?? 0) / 1000;
   const tags = [...music.genres, ...music.moods];
   // 곡마다 표지가 따로 있는 카탈로그(flow_music)가 있고, 앨범 커버만 있는 곡도

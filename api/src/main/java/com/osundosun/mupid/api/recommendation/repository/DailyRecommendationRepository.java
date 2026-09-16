@@ -2,6 +2,7 @@ package com.osundosun.mupid.api.recommendation.repository;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -32,5 +33,14 @@ public interface DailyRecommendationRepository extends JpaRepository<DailyRecomm
         WHERE r.user.userId = :userId
         """)
     LocalDate findLatestDate(@Param("userId") Integer userId);
+
+    /**
+     * 그 사용자의 그날 묶음. 배치가 이미 만들었는지 볼 때 쓴다.
+     *
+     * `uq_daily_recommendation_user_date` 가 하루 한 벌을 보장하므로 목록이 아니라
+     * 하나다.
+     */
+    Optional<DailyRecommendation> findByUser_UserIdAndRecommendationDate(
+        Integer userId, LocalDate recommendationDate);
 
 }

@@ -48,24 +48,48 @@ const toTurns = (messages: ChatMessage[]): AiChatTurn[] =>
  * 눌러도 재생되지 않는 곡이 목록에 남는다. 서버 쪽 추천이 목업인 동안에는
  * 대부분 버려지고 답변만 남는다 — 빈 목록이지 오류가 아니다.
  */
+/** 서버 enum → 화면 이름. 모르는 값은 그대로 보여준다 (코드는 늘 수 있다). */
+const SECTION_LABELS: Record<string, string> = {
+  INTRO: '인트로',
+  VERSE: '벌스',
+  PRE_CHORUS: '프리코러스',
+  CHORUS: '코러스',
+  BRIDGE: '브리지',
+  BREAK: '브레이크',
+  INST: '간주',
+  SOLO: '솔로',
+  OUTRO: '아웃트로',
+};
+
 const resolve = (
   recommended: AiRecommendedTrack[],
   catalog: Track[],
+  recommendationId: number | null,
 ): Track[] =>
   recommended.flatMap((item) => {
     const found = catalog.find((track) => track.musicId === item.music_id);
     if (!found) return [];
     const start = item.start_time_ms / 1000;
+    const end = item.end_time_ms / 1000;
+    const usable = Number.isFinite(start) && start > 0 && start < found.duration;
     return [
       {
         ...found,
         // 곡 자체가 아니라 "이 구간" 을 권한 것이다. 구간 시작을 순간으로 잡는다.
-        moment:
-          Number.isFinite(start) && start > 0 && start < found.duration
-            ? start
-            : found.moment,
+        moment: usable ? start : found.moment,
         match: Math.round(Math.min(Math.max(item.score, 0), 1) * 100),
         reason: item.reason,
+        recommended: {
+          sectionLabel:
+            SECTION_LABELS[item.section_label ?? ''] ?? item.section_label ?? '',
+          start: usable ? start : found.moment,
+          // 끝이 시작보다 앞서면 믿지 않는다. 구간 끝을 모르면 곡 끝까지 튼다.
+          end: Number.isFinite(end) && end > start ? end : found.duration,
+          reasonCode: item.reason_code,
+          reason: item.reason,
+          recommendationId: recommendationId ?? undefined,
+          rank: item.rank_order,
+        },
       },
     ];
   });
@@ -91,7 +115,7 @@ export async function requestChat({
   );
   return {
     text: result?.reply ?? '',
-    tracks: resolve(result?.tracks ?? [], catalog),
+    tracks: resolve(result?.tracks ?? [], catalog, result?.recommendation_id ?? null),
   };
 }
 

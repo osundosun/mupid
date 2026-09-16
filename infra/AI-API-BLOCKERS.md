@@ -3,35 +3,51 @@
 Bruno 컬렉션 `api/docs/AI/` 의 `요구 *` 파일에 계약은 적었지만 **구현하지 않은 것들**과
 그 이유를 적는다. 임의로 만들면 나중에 실제 결정과 어긋난 채 굳는다.
 
-작성일 2026-09-15 · 대상 브랜치 `integ/S15P21A204-344-ai-backend-merge-v2`
+작성일 2026-09-15 · **2026-09-16 갱신** (1번 해소, ERD 실물 재확인)
+대상 브랜치 `back/feature/S15P21A204-344-connect-api-and-ai-servers`
 
 ---
 
-## 1. 구간 분석 결과 적재
+## 1. 구간 분석 결과 적재 — **2026-09-16 해소**
 
-`PUT /api/v1/internal/music/{musicId}/section`
+`PUT /api/v1/music/{musicId}/section` (`@SystemRole`)
 
 | | |
 |---|---|
-| 상태 | **미구현** — Spring 컨트롤러 없음 |
-| 담당 | BE (컨트롤러) · DB (ERD) |
-| 막는 것 | ERD 변경 3건이 선행 |
+| 상태 | **구현됨** |
+| 구현 | `MusicSectionByMusicController` · `MusicSectionServiceImpl` · 테스트 14건 |
+| AI 쪽 호출자 | `ai_server/tools/register_sections.py` |
 
 이 표가 채워져야 숫자 `music_section_id` 가 생기고, 그래야 추천 응답이 구간을
-가리킬 수 있다. **지금은 AI 색인과 DB 를 잇는 고리가 아예 없다.**
+가리킬 수 있다.
 
-### 필요한 ERD 변경
+**경로와 인증이 제안과 달라졌다.** 제안은 `/api/v1/internal/...` + `X-Internal-Token`
+이었지만, 저장소에 그 경로도 토큰을 검사할 필터도 없었다. 반면 `@SystemRole` 은 이미
+있고 가사 통째 교체(`PUT .../lyric`)가 같은 방식이라 있는 것에 맞췄다. AI 쪽은
+`fetch_onboarding` 이 쓰던 리프레시 토큰 흐름을 그대로 쓴다(`tools/_api_auth.py` 로
+공용화).
 
-| 항목 | 현재 | 필요 | 왜 |
-|---|---|---|---|
-| 외부 ID 컬럼 | `embedding_id VARCHAR(50)` | **`external_id VARCHAR(64)` + UNIQUE** | 실측 최댓값 36자인데 flow ID 는 제목 길이만큼 늘어난다. 넘치면 MySQL 이 조용히 잘라 저장하고, **잘린 값끼리는 1:1 검사까지 통과해** 매핑이 어긋난 채 서비스가 올라온다 |
-| 구간 PK | ERD `music_section_id` / JPA `music_section_analysis_id` | 한 벌로 통일 | 두 벌이 공존하면 내보낼 때마다 어느 쪽인지 되묻게 된다 |
-| `mood_id` | `NOT NULL` | NULL 허용 또는 컬럼 제거 | JPA 엔티티에 필드가 없어 **INSERT 가 통째로 실패한다** |
+### ERD 변경 — 세 건 중 둘은 이미 돼 있었다
 
-저장소의 `api/knowledge/domain/erd.sql` 은 **JPA 기준으로 이미 맞춰 두었다.**
-다만 Flyway 가 없고 `ddl-auto` 가 `none` 이라(`decision/0011`) **실제 DB 에는
-사람이 직접 적용해야 한다.** 개발 MySQL(`mupid-dev-mysql`, 13306)은 지금 테이블이
-0개다.
+2026-09-15 에 적은 이 항목은 **개발 DB 실물과 어긋나 있었다.** 실제로 확인한 결과:
+
+| 항목 | 문서 주장 (09-15) | 실제 (09-16 확인) |
+|---|---|---|
+| 개발 MySQL | "테이블이 0개다" | **30개 존재** |
+| 구간 PK | ERD/JPA 불일치 | **`music_section_analysis_id` 로 통일돼 있었다** |
+| `mood_id` | `NOT NULL` 이라 INSERT 실패 | **컬럼 자체가 없었다** |
+| 외부 ID | `VARCHAR(50)`, UNIQUE 없음 | 그대로였다 → **이번에 적용** |
+
+남은 한 건은 이 `ALTER` 하나였다. Flyway 가 없고 `ddl-auto` 가 `none` 이라
+(`decision/0011`) 사람이 직접 넣는다.
+
+```sql
+ALTER TABLE music_section_analysis
+  MODIFY `external_id` VARCHAR(64) NOT NULL,
+  ADD UNIQUE KEY `uk_music_section_analysis_external_id` (`external_id`);
+```
+
+**개발 MySQL(`mupid-dev-mysql`, 13306)에만 적용했다. 운영 DB 에는 아직이다.**
 
 ---
 
@@ -107,16 +123,19 @@ AI 는 `MUPID_AI_INTERNAL_TOKEN`, Spring 은 `MUPID_RECOMMENDER_INTERNAL_TOKEN` 
 
 ## 붙일 수 있는 순서
 
-| 순서 | 항목 | 선행 |
-|---|---|---|
-| 1 | 자동재생 다음 곡 (3) | 없음 |
-| 2 | 닮은 구간 (4) | 없음 |
-| 3 | 구간 적재 (1) | **MySQL DDL 적용** |
-| 4 | 오늘의 추천 적재 (2) | DDL + `mood_code_id` 결정 |
+| 순서 | 항목 | 선행 | 상태 |
+|---|---|---|---|
+| ~~0~~ | ~~구간 적재 (1)~~ | ~~MySQL DDL 적용~~ | **2026-09-16 완료** |
+| 1 | 자동재생 다음 곡 (3) | 없음 | 남음 |
+| 2 | 닮은 구간 (4) | 없음 | 남음 |
+| 3 | 오늘의 추천 적재 (2) | `music_section_id` 컬럼 합의 + `mood_code_id` 결정 | 막힘 |
 
-**1·2 번은 지금 붙일 수 있다.** 다만 추천 결과가 가리키는 `music_section_id` 는
-3 번이 끝나야 실제 값이 되므로, 그전까지는 `/internal/ready` 가 503 이라 호출해도
-503 이 돌아온다. 연결 자체를 먼저 만들어 두는 것은 의미가 있다.
+**구간 적재가 먼저 끝났다** — 나머지 셋이 전부 그 아래 달려 있었기 때문이다.
+`/internal/ready` 가 503 인 동안에는 1·2 를 붙여도 503 이 돌아온다.
+
+다만 적재 API 가 생긴 것과 **표가 실제로 채워진 것은 다르다.** `ready` 가 200 이
+되려면 추천 풀 전량(곡 1,063 · 구간 10,007)이 매핑돼야 하고, 그러려면
+`register_sections` 를 산출물과 함께 한 번 돌려야 한다.
 
 ---
 
