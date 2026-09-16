@@ -1,0 +1,31 @@
+# macOS(Docker Desktop) 호스트용 러너. 파이용 compose.yml 과 하는 일은 같고,
+# macOS 라서 어쩔 수 없이 다른 것만 다르다.
+#
+#   1. 소켓 경로. Docker Desktop 은 기본적으로 /var/run/docker.sock 을 만들지
+#      않는다("Allow the default Docker socket to be used" 가 꺼져 있다).
+#      실제 소켓은 ~/.docker/run/docker.sock 이다. DOCKER_SOCK 으로 넘긴다.
+#   2. 러너 루트가 $HOME 아래다. macOS 는 시스템 볼륨이 봉인되어 있어 /srv 를
+#      만들 수 없다. 그래서 config 를 이 파일 옆의 ./config 로 잡는다 —
+#      compose 는 상대 경로를 이 파일이 있는 디렉터리 기준으로 푼다.
+#
+# 띄우는 법 (러너 루트에서):
+#   DOCKER_SOCK=$HOME/.docker/run/docker.sock docker compose up -d
+#
+# 주의: 노트북이다. 뚜껑을 덮거나 잠자기로 들어가면 러너가 오프라인이 된다.
+# GitLab 은 잡을 다른 러너로 넘기지 않고 큐에 세워 둔다. OPERATIONS 문서 참고.
+name: mupid-runner
+services:
+  runner:
+    image: gitlab/gitlab-runner@sha256:af0325804248aee217e055e753add77ccaaba6c8f5e2143b01108fd401165ef3
+    restart: unless-stopped
+    cpus: 0.5
+    mem_limit: 512m
+    volumes:
+      - ./config:/etc/gitlab-runner
+      # Only the trusted runner manager receives the socket, never CI jobs.
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
