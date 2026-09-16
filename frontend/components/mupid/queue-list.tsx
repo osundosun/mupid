@@ -105,7 +105,20 @@ export function QueueList({
           // 알 수 없다. 지금 듣고 있는 자리만 표시한다.
           aria-current={m.currentQueueUid === track.uid ? 'true' : undefined}
         >
-          {!picking && (
+          {/*
+            줄 맨 앞 칸. 평소에는 끌기 손잡이가, 고르는 중에는 체크 박스가 선다.
+            **같은 칸을 나눠 쓴다** — 체크를 줄 안에 따로 두면 그 폭만큼 커버와
+            제목이 옆으로 밀린다.
+          */}
+          {picking ? (
+            <input
+              type="checkbox"
+              className="queue-check"
+              checked={selection.has(track.id)}
+              aria-label={`${track.title} 선택`}
+              onChange={() => selection.toggle(track.id)}
+            />
+          ) : (
             <button
               className="queue-handle"
               aria-label={`${track.title} 순서 바꾸기. ${index + 1}번째, 위아래 화살표로 이동`}
@@ -126,6 +139,8 @@ export function QueueList({
             model={m}
             selected={selection.has(track.id)}
             onSelect={picking ? () => selection.toggle(track.id) : undefined}
+            // 체크는 위의 손잡이 칸이 들고 있다. 줄 안에도 그리면 두 개가 된다.
+            showCheck={false}
             action={
               <button
                 className="icon-button"

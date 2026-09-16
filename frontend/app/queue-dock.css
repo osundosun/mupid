@@ -460,42 +460,52 @@
 }
 
 
+
 /*
- * 고르기 체크 박스 — 목록 앱들이 흔히 쓰는 줄 맨 앞의 **원형** 체크.
+ * 고르기 체크 박스 — 줄 맨 앞의 **원형** 체크.
  *
- * 바탕 모양은 `collection-polish.css` 가 잡는다(`border-radius: 999px`). 그래서
- * **너비와 높이가 같아야 원이 된다.** 한쪽만 줄이면 타원으로 찌그러진다 —
- * 자리 폭을 맞추려고 너비만 20px 로 줄였다가 그렇게 됐다.
+ * 끌기 손잡이와 **같은 칸을 나눠 쓴다.** 손잡이 칸이 30px 이므로 원 22px 에
+ * 좌우 4px 씩을 둬 정확히 30px 을 채운다. 그래서 고르기로 바꿔도 커버와 제목이
+ * 한 픽셀도 움직이지 않고, 원이 목록 가장자리에 붙지도 않는다 — 손잡이 무늬가
+ * 그 칸 가운데 놓여 있던 것과 같은 자리다.
  *
- * 기본값(26px)보다 조금 줄이는 것은 이 독의 줄이 본문 목록보다 촘촘해서다.
- * 원이 작아진 만큼 안의 체크는 비율을 키워야 한눈에 읽힌다.
+ * 줄 안(`.track-check`)에 체크를 그리지 않는 것은 `showCheck={false}` 로 끈다.
+ * 거기에 두면 그 폭만큼 줄 내용이 통째로 밀린다.
+ *
+ * 모양은 `collection-polish.css` 의 체크 박스와 같은 규칙을 따른다. 원이 조금
+ * 작아진 만큼 안의 체크는 비율을 키워야 한눈에 읽힌다.
  */
-.queue-list.is-picking .track-check {
+.queue-check {
+  appearance: none;
+  flex-shrink: 0;
   width: 22px;
   min-width: 22px;
   height: 22px;
+  margin: 0 4px;
+  padding: 0;
+  border: 1.5px solid #c3d2e8;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.queue-check:checked {
+  border-color: #6f93c9;
+  background-color: #6f93c9;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
   background-size: 70%;
 }
 
-
 /*
- * 체크 박스가 들어갈 자리.
+ * 고르는 중에도 줄 안쪽 여백은 평소와 같다.
  *
- * 평소 줄 앞은 **손잡이 30px + 줄 간격 2px + 줄 안쪽 여백 4px = 36px** 이고 그
- * 다음에 커버가 선다. 고르는 중에도 커버가 같은 자리에 있으려면 체크 박스가
- * 차지하는 폭이 36px 이어야 한다 — 여백 6px + 원 22px + 간격 8px.
- *
- * **왼쪽 여백을 0 으로 두면 안 된다.** `.queue-item` 의 왼쪽 패딩이 0 이라 원이
- * 목록 가장자리에 붙어 부모의 여백선을 넘은 것처럼 보인다. 손잡이는 옅은 무늬가
- * 30px 칸 가운데 놓여 그렇게 보이지 않았을 뿐이다.
- *
- * 간격은 `gap` 으로 줄이면 안 된다. `gap` 은 줄 안의 **모든 사이**에 걸려 커버와
- * 제목 사이까지 좁아진다. 체크 박스 오른쪽에서만 걷어 낸다 (16px - 8px).
+ * `collection-polish.css` 는 고르기로 바뀌면 줄에 왼쪽 여백 8px 을 더한다 —
+ * 체크가 줄 **안**에 들어가던 시절, 원이 가장자리에 붙지 않게 하려는 값이었다.
+ * 지금은 체크가 손잡이 칸으로 옮겨 가 그 여백이 필요 없고, 남겨 두면 줄 내용이
+ * 그 차이(4px)만큼 옆으로 밀린다.
  */
 .queue-list.is-picking .queue-item > .track-row {
-  padding-left: 6px;
-}
-
-.queue-list.is-picking .track-check {
-  margin-right: -8px;
+  padding-left: 4px;
 }
