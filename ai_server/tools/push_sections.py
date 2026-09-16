@@ -46,6 +46,7 @@ import urllib.parse
 import urllib.request
 from base64 import b64encode
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -76,8 +77,29 @@ def query(sql: str, body: bytes | None = None) -> str:
     return _ch.query(sql, body, timeout=TIMEOUT)
 
 
-def build_rows(mom: pd.DataFrame, im, version: str) -> tuple[list[dict], dict]:
-    """구간 표 한 벌을 만든다. 넣지 못한 것은 이유별로 센다."""
+def server_now() -> str:
+    """**ClickHouse 의 시계**로 현재 시각을 얻는다. 로컬 시계를 쓰지 않는다.
+
+    서버 타임존이 `Asia/Seoul` 인데 예전에는 `pd.Timestamp.now("UTC")` 를 타임존 표시
+    없이 넣었다. 그러면 `created_at` 이 **9시간 과거로 저장된다.**
+
+    `created_at` 은 `ReplacingMergeTree` 의 **버전 컬럼**이다. 이 도구가 쓴 행(9시간
+    과거)과 `DEFAULT now()` 로 들어간 행이 섞이면 항상 후자가 이겨, 이 도구로 고친
+    구간이 조용히 옛 값으로 되돌아간다.
+
+        SELECT toString(now())          → '2026-09-16 10:51:12'  (서버 타임존)
+        SELECT toString(now('UTC'))     → '2026-09-16 01:51:12'
+    """
+    return query("SELECT toString(now())").strip()
+
+
+def build_rows(mom: pd.DataFrame, im, version: str,
+               created_at: Optional[str] = None) -> tuple[list[dict], dict]:
+    """구간 표 한 벌을 만든다. 넣지 못한 것은 이유별로 센다.
+
+    `created_at` 은 호출자가 **서버에서 받아** 넘긴다 (`server_now()`). 비우면 아예
+    싣지 않아 ClickHouse 의 `DEFAULT now()` 가 채운다 — 어느 쪽이든 서버 시계다.
+    """
     stat = {"unmapped_track": 0, "unknown_label": 0, "bad_range": 0}
     unmapped: set[str] = set()
     rows = []
@@ -97,7 +119,7 @@ def build_rows(mom: pd.DataFrame, im, version: str) -> tuple[list[dict], dict]:
         if e_ms <= s_ms:
             stat["bad_range"] += 1
             continue
-        rows.append({
+        row = {
             "track_id": int(num),
             "analysis_version": version,
             "section_index": int(r.section_idx),
@@ -108,8 +130,10 @@ def build_rows(mom: pd.DataFrame, im, version: str) -> tuple[list[dict], dict]:
             # 구간 안 최대 에너지 지점을 아직 산출하지 않는다. 0 은 "구간 밖" 과
             # 구분이 안 되므로 시작점을 넣는다 — 추천도 구간 시작부터 튼다.
             "peak_ms": s_ms,
-            "created_at": pd.Timestamp.now("UTC").strftime("%Y-%m-%d %H:%M:%S"),
-        })
+        }
+        if created_at:
+            row["created_at"] = created_at
+        rows.append(row)
     stat["unmapped_sample"] = sorted(unmapped)[:5]
     return rows, stat
 
@@ -192,7 +216,10 @@ def main() -> int:
         print("id_map 이 적재되지 않았다. 숫자 ID 없이는 넣을 수 없다.", file=sys.stderr)
         return 1
 
-    rows, stat = build_rows(mom, im, a.version)
+    # 시각은 ClickHouse 에 물어서 얻는다. 로컬 시계를 쓰면 서버 타임존과 어긋난다.
+    created_at = server_now()
+    log(f"서버 시각 {created_at} (created_at 으로 쓴다)")
+    rows, stat = build_rows(mom, im, a.version, created_at)
     log(f"구간 {len(mom)}개 중 {len(rows)}개 적재 대상")
     for k in ("unmapped_track", "unknown_label", "bad_range"):
         if stat[k]:
