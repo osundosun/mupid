@@ -36,6 +36,9 @@ SIZE_LIMIT = 1073741824  # 1 GiB, matching the Compose endpoint and CI's check.
 COMPONENTS = {
     "api": ("deployment/api", "api", "mupid-api"),
     "web": ("deployment/edge", "nginx", "mupid-web"),
+    # 추천 서버. replicas 가 0 이어도 태그는 바꿔 둔다 — 올릴 때 이미 최신
+    # 이미지를 가리키고 있어야 한다.
+    "ai": ("deployment/ai", "ai", "mupid-ai"),
 }
 
 RELEASE = re.compile(r"^[0-9a-f]{40}$")

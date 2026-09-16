@@ -168,3 +168,30 @@ k8s-deploy-manifests:
     - apk add --no-cache openssh-client tar
   script:
     - sh infra_k8s/ci/deploy-manifests.sh
+
+# 추천 서버 이미지. **파드는 아직 0 이다** — 배포 경로를 먼저 세워 두고 나중에
+# replicas 만 올린다. 목록에서 빼 두면 올릴 때가 되어서야 처음 돌려 보게 되고,
+# 그때 문제가 나면 원인이 배포인지 코드인지 가려내기 어렵다.
+#
+# 이미지는 torch 가 없어 순수 파이썬 휠만 받는다. 크로스 빌드가 파일 복사에
+# 가까워 QEMU 를 타지 않는다.
+k8s-deploy-ai:
+  extends: .k8s-deploy
+  needs:
+    - job: k8s-deploy-manifests
+      artifacts: false
+    - job: ai-server-verify
+      artifacts: false
+      optional: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      changes: &ai_changes
+        - ai_server/**/*
+        - infra_k8s/base/ai.yaml
+        - infra_k8s/ci/package-ai.sh
+        - .gitlab-ci.yml
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      when: manual
+  script:
+    - sh infra_k8s/ci/package-ai.sh
+    - sh infra_k8s/ci/deploy-k8s.sh ai

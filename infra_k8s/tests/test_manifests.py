@@ -1458,6 +1458,77 @@ class ApkDownloadTest(unittest.TestCase):
         )
 
 
+class AiServerDeployTest(unittest.TestCase):
+    """추천 서버는 **무상태**로 띄운다. 인계 문서는 산출물 513MB 를 /artifacts 로
+    마운트하는 전제였는데, 구조를 따져 보니 나눌 수 있었다 — 임베딩은 Pinecone,
+    라벨은 ClickHouse(원천이 거기다), 모델 가중치 352KB 는 이미지에.
+
+    파드는 아직 0 이다. 코드가 아직 파일 산출물에 의존해서 지금 띄우면
+    /internal/ready 가 503 이다. 배포 경로만 먼저 세워 둔다."""
+
+    AI = K8S / "base" / "ai.yaml"
+
+    def _deployment(self):
+        for doc in yaml.safe_load_all(self.AI.read_text(encoding="utf-8")):
+            if doc and doc.get("kind") == "Deployment":
+                return doc
+        raise AssertionError("ai Deployment 를 찾지 못했다")
+
+    def test_the_pod_carries_no_volume(self):
+        """볼륨이 붙으면 레플리카를 늘릴 때 ReadWriteMany 가 필요해지고,
+        산출물을 누가 언제 넣는지가 다시 문제가 된다."""
+        spec = self._deployment()["spec"]["template"]["spec"]
+        self.assertEqual([], spec.get("volumes", []))
+        for container in spec["containers"]:
+            with self.subTest(container=container["name"]):
+                self.assertEqual([], container.get("volumeMounts", []))
+
+    def test_the_probes_are_not_swapped(self):
+        """/health 는 프로세스 생존만, /internal/ready 는 실제로 추천할 수 있는가를
+        본다. /health 를 readiness 로 쓰면 추천이 안 되는 파드로 트래픽이 가고,
+        /internal/ready 를 liveness 로 쓰면 준비되기 전에 계속 재시작한다."""
+        container = self._deployment()["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual("/health", container["livenessProbe"]["httpGet"]["path"])
+        self.assertEqual("/internal/ready", container["readinessProbe"]["httpGet"]["path"])
+
+    def test_the_internal_api_is_not_reachable_from_outside(self):
+        """/internal 에는 인증이 없고 Spring 만 부른다는 전제다. 열리면 누구나
+        추천 API 를 호출할 수 있다."""
+        for doc in yaml.safe_load_all(self.AI.read_text(encoding="utf-8")):
+            if doc and doc.get("kind") == "Service":
+                with self.subTest(service=doc["metadata"]["name"]):
+                    self.assertIn(doc["spec"].get("type", "ClusterIP"), ("ClusterIP",))
+        nginx = (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
+        self.assertNotIn("/internal/", nginx.replace("/internal/chunk-upload-auth", ""))
+
+    def test_the_shared_secret_is_optional_so_the_pod_still_starts(self):
+        """Secret 에 없는 키를 optional 없이 참조하면 파드가
+        CreateContainerConfigError 로 아예 뜨지 않는다."""
+        container = self._deployment()["spec"]["template"]["spec"]["containers"][0]
+        refs = {e["name"]: (e.get("valueFrom") or {}).get("secretKeyRef", {})
+                for e in container["env"] if "valueFrom" in e}
+        self.assertTrue(refs["MUPID_AI_INTERNAL_TOKEN"].get("optional"))
+
+    def test_the_deploy_path_knows_the_component(self):
+        """매니페스트만 있고 배포 경로가 없으면 올릴 때가 되어서야 처음 돌려
+        보게 된다. 컴포넌트는 열거라 세 곳이 맞아야 한다."""
+        entry = (K8S / "deploy" / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        self.assertIn(r"(api|web|ai)", entry)
+        receiver = (K8S / "deploy" / "receive-k8s.py").read_text(encoding="utf-8")
+        self.assertIn('"ai": ("deployment/ai", "ai", "mupid-ai")', receiver)
+        deploy = (K8S / "ci" / "deploy-k8s.sh").read_text(encoding="utf-8")
+        self.assertIn("ai)  archive=.release/ai/image.tar.gz", deploy)
+        # 매니페스트의 이름과 수신기가 부르는 이름이 같아야 한다.
+        self.assertEqual("ai", self._deployment()["metadata"]["name"])
+        self.assertEqual(
+            "ai", self._deployment()["spec"]["template"]["spec"]["containers"][0]["name"])
+
+    def test_the_manifest_is_actually_in_the_overlay(self):
+        """목록에서 빠져 있으면 매니페스트가 클러스터에 들어가지 않는다."""
+        kustomization = (K8S / "base" / "kustomization.yaml").read_text(encoding="utf-8")
+        self.assertRegex(kustomization, re.compile(r"^\s+- ai\.yaml\s*$", re.M))
+
+
 class ManifestApplyTest(unittest.TestCase):
     """매니페스트는 저장소에서 고친다고 클러스터에 반영되지 않는다. 하루에 세 번
     같은 사고가 났다 — Secret 은 갱신됐는데 파드가 그 키를 안 읽고, nginx 수정이

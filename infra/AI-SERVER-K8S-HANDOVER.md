@@ -5,7 +5,47 @@ Kubernetes 로 가기로 했고(Q6), compose 에 두면 두 벌을 맞춰야 한
 
 측정일 2026-09-15 · 이미지 `ai_server/Dockerfile` 로 빌드·기동까지 확인함.
 
+
+> ## 2026-09-16 · 인프라 결론
+>
+> 이 문서의 §4(산출물 마운트)와 §8(아직 못 정한 것)은 **더 이상 맞지 않는다.**
+> 513MB 를 통째로 마운트하는 전제로 쓰여 있는데, 실제로 무엇이 무엇을 쓰는지
+> 코드에서 따져 보니 나눌 수 있었다. 아래가 확정된 방침이고, 매니페스트
+> (`infra_k8s/base/ai.yaml`)가 이 방침대로 되어 있다.
+>
+> | 산출물 | 크기 | 어디로 | 근거 |
+> |---|---:|---|---|
+> | `moments_emb.npy` | 385MB | **Pinecone** | 임베딩 벡터다 |
+> | `stage1_section.npy` | 33MB | **Pinecone** | 구간 벡터. 가중치와 내적한다 |
+> | `features_v1.npz` | 93MB | **제거** | 서빙이 읽지 않는다 — `legacy/m10_features.py` 뿐 |
+> | `labels_service.parquet` | 가변 | **ClickHouse** | 원천이 거기고 ai_server 는 이미 붙어 있다 |
+> | `id_map.parquet` | 작음 | **제거** | 계약이 문자열 ID 다 (`RecommenderDto` 주석). `internal_api` 가 부르지 않는다 |
+> | `stage1_weights.npz` | 352KB | **이미지 동봉** | 모델 버전 = 이미지 태그. 되돌리기가 `rollout undo` 한 번 |
+> | `moments.parquet` | 3.2MB | 이미지 동봉 | 구간 메타. 작다 |
+>
+> 그래서 **파드가 무상태다.** PVC 도 initContainer 도 hostPath 도 없다. §8 의
+> 1·2·4번(산출물 전달·공유 볼륨·레플리카)이 그대로 사라진다. 3번(`/internal`
+> 차단)은 이미 되어 있다 — Service 가 ClusterIP 이고 nginx 는 `/api/` 와
+> `/storage/` 만 프록시한다.
+>
+> §7 이 말한 배치(`build_id_map`·`pull_signals`·`run_labeler`)는 원천이
+> 클러스터 안(MySQL·ClickHouse)에 있으므로 밖에서 가져올 것이 아니다. CronJob 은
+> 코드가 ClickHouse 를 쓰도록 바뀐 뒤에 붙인다.
+>
+> ### 코드 쪽에 남은 일
+>
+> 매니페스트는 이 방침대로 준비됐지만 **코드는 아직 파일을 읽는다.** 그래서
+> `replicas: 0` 이다. 다음 셋이 끝나면 숫자만 올리면 된다.
+>
+> 1. `recommender.py` 의 `np.load(OUT_DIR / "moments_emb.npy")` 를 Pinecone 조회로
+> 2. `labels_service.parquet` 을 ClickHouse 테이블로 (`ReplacingMergeTree` + `run_id`
+>    로 최신 판만 읽는 모양을 권한다). **`build_dna` 의 `OV`(다른 사용자 평균)는
+>    미리 계산해 두면** 요청마다 전수 스캔하던 것이 사라진다
+> 3. 죽은 코드 정리 — `_pref_sections()` 는 아무도 부르지 않고,
+>    `/internal/ready` 의 `id_map` 존재 검사는 쓰지도 않는 파일 때문에 503 을 낸다
+
 ---
+
 
 ## 1. 이미지
 
