@@ -1903,7 +1903,7 @@ class _BackMap:
         return f"T{int(n):06d}"
 
 
-def _ch_row(now: float, age_sec: float) -> dict:
+def _ch_signal_row(now: float, age_sec: float) -> dict:
     """ClickHouse 가 돌려주는 한 줄. `ts` 는 서버(Asia/Seoul), `ts_utc` 는 UTC 다.
 
     **고정 시각으로 만든다.** 로컬 시계를 쓰면 이 시험 자체가 타임존에 의존한다.
@@ -1943,7 +1943,7 @@ def test_pull_signals_event_age_matches_real_elapsed(tmp_path, monkeypatch):
 
     NOW = 1_789_000_000.0                      # 고정. 로컬 시계에 의존하지 않는다
     AGE = 5 * 3600                             # RECENT_EXCLUDE_SEC(4시간)보다 오래됐다
-    row = _ch_row(NOW, AGE)
+    row = _ch_signal_row(NOW, AGE)
 
     ev = pu.to_play_event(row, _BackMap())
     assert ev is not None
@@ -1967,7 +1967,7 @@ def test_pull_signals_seoul_string_with_z_would_be_read_as_future(tmp_path, monk
 
     NOW = 1_789_000_000.0
     AGE = 5 * 3600
-    row = _ch_row(NOW, AGE)
+    row = _ch_signal_row(NOW, AGE)
 
     ev = pu.to_play_event(row, _BackMap())
     broken = dict(ev, occurred_at=str(row["ts"]).replace(" ", "T") + "Z")   # 예전 방식
