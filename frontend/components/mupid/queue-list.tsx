@@ -145,6 +145,12 @@ export function QueueList({
             onSelect={picking ? () => selection.toggle(track.id) : undefined}
             // 체크는 위의 손잡이 칸이 들고 있다. 줄 안에도 그리면 두 개가 된다.
             showCheck={false}
+            /*
+             * **목록 안에서 누른 재생은 자리를 옮기지 않는다.** 자리 번호를 함께
+             * 넘겨 그 줄을 그대로 튼다 — 고른 줄이 누르자마자 맨 위로 튀어 오르면
+             * 방금 어디를 눌렀는지 놓친다. 맨 위로 올리는 것은 목록 밖에서 튼 곡뿐이다.
+             */
+            onPlay={() => m.play(track, false, track.uid)}
             action={
               <button
                 className="icon-button"

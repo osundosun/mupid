@@ -741,7 +741,18 @@ export function useMupid(bootstrap: Bootstrap) {
       }
     }
   };
-  const play = (track: Track | null = activeRef.current, fromMoment = false) => {
+  /**
+   * 곡을 튼다.
+   *
+   * `queueUid` 는 **재생 목록 안에서** 누른 경우다. 그 자리를 그대로 두고 그
+   * 자리를 튼다 — 목록에서 고른 줄이 누르자마자 맨 위로 튀어 오르면 방금 어디를
+   * 눌렀는지 놓친다. 목록 밖(검색·추천·상세)에서 튼 곡만 맨 위로 올린다.
+   */
+  const play = (
+    track: Track | null = activeRef.current,
+    fromMoment = false,
+    queueUid?: string,
+  ) => {
     // 곡이 하나도 없으면 누를 것도 없다.
     if (!track) return;
     previewEnd.current = null;
@@ -756,8 +767,10 @@ export function useMupid(bootstrap: Bootstrap) {
      */
     const sameTrack = activeRef.current?.id === track.id;
 
-    let picked: string | undefined;
-    if (!queue.some((entry) => entry.trackId === track.id)) {
+    let picked: string | undefined = queueUid;
+    if (queueUid) {
+      // 목록 안에서 누른 줄이다. 큐는 그대로 두고 그 자리를 튼다.
+    } else if (!queue.some((entry) => entry.trackId === track.id)) {
       const head = queueEntry(track.id);
       const rest = queue.filter((entry) => entry.trackId !== track.id);
       const room = QUEUE_LIMIT - 1 - rest.length;
