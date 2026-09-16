@@ -4,6 +4,27 @@ export type SongSection = {
   end: number;
 };
 
+/**
+ * 추천으로 온 곡에만 붙는다. 서버가 **어느 구간을 왜 골랐는지**가 여기 들어간다.
+ *
+ * `Track` 본체에 섞지 않는 이유는 카탈로그에서 온 곡과 추천에서 온 곡을 구분해야
+ * 하기 때문이다 — 추천이 아닌 곡에 `reasonCode` 가 있으면 화면이 없는 근거를 그린다.
+ */
+export type TrackRecommendation = {
+  /** 화면에 보여 줄 구간 이름 (`인트로`·`코러스`…). 서버 enum 을 옮긴 값이다. */
+  sectionLabel: string;
+  /** 구간 시작·끝 (초). 재생은 여기서 시작해 여기서 멈춘다. */
+  start: number;
+  end: number;
+  /** 왜 골랐는가. 모르는 값이 올 수 있으므로 화면은 문구를 그대로 쓴다. */
+  reasonCode: string;
+  /** 사람이 읽는 이유. 서버가 만든 문장이다. */
+  reason: string;
+  /** 이 추천 묶음의 번호와 순위. 재생 이벤트에 되돌려 싣는다(`rec_id`·`rec_rank`). */
+  recommendationId?: number;
+  rank: number;
+};
+
 export type Track = {
   id: number;
   /**
@@ -23,6 +44,8 @@ export type Track = {
   image: string;
   tags: string[];
   sections: SongSection[];
+  /** 추천으로 온 곡일 때만 채워진다. 카탈로그에서 온 곡에는 없다. */
+  recommended?: TrackRecommendation;
 };
 
 export type SavedMoment = {

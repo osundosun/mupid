@@ -472,7 +472,19 @@ export function useMupid(bootstrap: Bootstrap) {
    */
   const startPlayback = async (track: Track, start?: number) => {
     if (typeof track.musicId !== 'number') return;
-    analytics.startPlay({ trackId: track.musicId, entryPath: entryPathOf() }, start ?? 0);
+    // 추천으로 시작한 재생이면 그 사실을 함께 남긴다. 이게 없으면 "이 추천으로 튼
+    // 곡을 끝까지 들었는가" 를 물어볼 수 없어 추천 성과를 잴 방법이 없다.
+    const rec = track.recommended?.recommendationId
+      ? {
+          id: String(track.recommended.recommendationId),
+          type: 'SECTION' as const,
+          rank: track.recommended.rank,
+        }
+      : undefined;
+    analytics.startPlay(
+      { trackId: track.musicId, entryPath: entryPathOf(), rec },
+      start ?? 0,
+    );
     const id = ++requestId.current;
     loadTrack(track);
     setLastPlayedId(track.id);
@@ -516,6 +528,13 @@ export function useMupid(bootstrap: Bootstrap) {
     // 것과 구분해 `OTHER_TRACK` 으로 남긴다 — 분류는 ClickHouse 가 쿼리 시점에 한다.
     if (activeRef.current && activeRef.current.id !== track.id) {
       analytics.skip(positionMs(), 'OTHER_TRACK');
+    }
+    if (fromMoment && track.recommended) {
+      // 서버가 고른 구간이다. 시작만 맞추고 끝을 두지 않으면 다음 구간까지 흘러
+      // "이 구간을 권한다" 는 말과 들리는 것이 달라진다.
+      previewEnd.current = track.recommended.end;
+      void startPlayback(track, track.recommended.start);
+      return;
     }
     void startPlayback(track, fromMoment ? track.moment : undefined);
   };

@@ -139,7 +139,7 @@ public class AiRecommendToolImpl implements AiRecommendTool {
     }
 
     @Override
-    public List<AiRecommendedTrack> recommend(Integer userId, Integer currentMusicId, Arguments arguments) {
+    public Result recommend(Integer userId, Integer currentMusicId, Arguments arguments) {
         int limit = DEFAULT_LIMIT;
         String query = null;
         Map<String, Object> filters = Map.of();
@@ -184,9 +184,9 @@ public class AiRecommendToolImpl implements AiRecommendTool {
         }
         if (items.isEmpty()) {
             log.info("조건에 맞는 곡이 없다 user_id={} 조건={}", userId, filters);
-            return List.of();
+            return Result.empty();
         }
-        return withMusicDetails(items);
+        return new Result(recommendationId, withMusicDetails(items));
     }
 
     /**

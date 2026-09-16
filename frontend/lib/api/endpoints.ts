@@ -352,7 +352,17 @@ export type AiRecommendedTrack = {
 };
 
 /** 추천을 하지 않았으면 `tracks` 는 빈 배열이다 (null 이 아니다). */
-export type AiChatResult = { reply: string; tracks: AiRecommendedTrack[] };
+export type AiChatResult = {
+  reply: string;
+  /**
+   * 이 답변이 만든 추천 묶음의 번호. 추천이 없었으면 `null` 이다.
+   *
+   * 재생 이벤트에 `rec_id` 로 되돌려 싣는다 — 그래야 "이 추천으로 튼 곡을 끝까지
+   * 들었는가" 를 서버가 물어볼 수 있다.
+   */
+  recommendation_id: number | null;
+  tracks: AiRecommendedTrack[];
+};
 
 export function createEndpoints(client: ApiClient) {
   return {
