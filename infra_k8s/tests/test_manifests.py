@@ -1974,6 +1974,9 @@ class ApplyTagSubstitutionTest(unittest.TestCase):
         # 최초 설치는 막지 않는다. 그때는 치환 단계가 그렇게 말해 둔다.
         self.assertIn("태그를 찾지 못했다", tail)
 
+# `build()` 가 kubectl 을 쓴다. CI 이미지(python:3.12-slim)에는 없어서, 이 표시가
+# 없으면 통째로 TypeError 로 무너진다 — 실제로 그렇게 파이프라인을 깼다.
+@unittest.skipUnless(KUBECTL, "kubectl not installed")
 class LabelBatchTest(unittest.TestCase):
     """라벨이 없으면 **오류 없이 모든 사용자가 콜드스타트**가 된다. 서버는 정상으로
     보이고 개인화만 없다 — 그래서 이 배치는 반드시 주기적으로 돌아야 한다."""
@@ -1987,11 +1990,6 @@ class LabelBatchTest(unittest.TestCase):
     def _pod(self):
         return self._cronjob()["spec"]["jobTemplate"]["spec"]["template"]["spec"]
 
-    def test_it_is_in_the_overlay(self):
-        """목록에서 빠지면 클러스터에 들어가지 않는다 — 그리고 라벨이 안 생기는
-        것은 오류가 아니라 침묵이라 한참 뒤에야 드러난다."""
-        kustomization = (K8S / "base" / "kustomization.yaml").read_text(encoding="utf-8")
-        self.assertRegex(kustomization, re.compile(r"^\s+- ai-labeler\.yaml\s*$", re.M))
 
     def test_the_batch_runs_the_same_image_as_serving(self):
         """등급 판정은 한 곳에서만 한다. 배치와 서빙이 다른 코드를 쓰면 라벨의
@@ -2044,6 +2042,28 @@ class LabelBatchTest(unittest.TestCase):
         args = " ".join(self._pod()["containers"][0]["args"])
         self.assertIn("set -e", args)
         self.assertLess(args.index("pull_signals"), args.index("run_labeler"))
+
+
+class LabelBatchFileTest(unittest.TestCase):
+    """kubectl 없이도 도는 부분. CI 이미지에는 kubectl 이 없어서, 여기 있는 것만이
+    파이프라인에서 실제로 확인된다."""
+
+    def test_it_is_in_the_overlay(self):
+        """목록에서 빠지면 클러스터에 들어가지 않는다 — 그리고 라벨이 안 생기는
+        것은 오류가 아니라 침묵이라 한참 뒤에야 드러난다."""
+        kustomization = (K8S / "base" / "kustomization.yaml").read_text(encoding="utf-8")
+        self.assertRegex(kustomization, re.compile(r"^\s+- ai-labeler\.yaml\s*$", re.M))
+
+    def test_the_batch_and_serving_agree_on_the_state_path(self):
+        """갈리면 배치는 도는데 화면에는 아무것도 안 나오는, 오류 없는 고장이 된다."""
+        state = []
+        for name in ("ai.yaml", "ai-labeler.yaml"):
+            text = (K8S / "base" / name).read_text(encoding="utf-8")
+            self.assertIn("MUPID_AI_STATE_DIR, value: /state", text)
+            found = re.findall(r"path: (/srv/mupid-k8s/ai-state)", text)
+            self.assertTrue(found, name)
+            state.append(found[0])
+        self.assertEqual(state[0], state[1])
 
 
 if __name__ == "__main__":
