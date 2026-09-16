@@ -115,8 +115,10 @@ spec:
             # 읽기 전용이다. 이 파드는 색인을 만들지 않는다 — 배치가 만들고
             # CI 가 올린다. 쓸 수 있게 두면 파드가 노드 디스크를 고칠 수 있다.
             - {name: artifacts, mountPath: /artifacts, readOnly: true}
-            # 상태는 읽기 전용이 아니다. `learn` 이 선호 구간을 여기 쓴다.
-            - {name: state, mountPath: /state}
+            # 서빙은 상태를 **읽기만** 한다 — 선호 구간·온보딩 씨앗. 쓰는 것은
+            # `learn` 하나이고 그건 배치(`tools/run_labeler`)에서만 불린다.
+            # 읽기 전용으로 두면 서빙이 배치의 결과를 덮어쓸 길이 없다.
+            - {name: state, mountPath: /state, readOnly: true}
           resources:
             # 임베딩은 mmap 으로 읽는다(np.load mmap_mode="r") — 파일이 61MB 라도
             # 만진 페이지만 올라온다. 인계 문서 실측은 산출물 없이 유휴 80MB 였다.

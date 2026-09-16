@@ -2025,6 +2025,28 @@ class LabelBatchTest(unittest.TestCase):
                          {v["name"]: v["hostPath"]["path"]
                           for v in self._pod()["volumes"]}["state"])
 
+    def test_the_state_dir_is_owned_by_the_container_user(self):
+        """hostPath 는 kubelet 이 **root 소유로** 만든다(DirectoryOrCreate). 컨테이너는
+        비root(uid 100)로 돌기 때문에 그대로면 첫 쓰기에서 Permission denied 다 —
+        실제로 겪었다. 배치가 신호를 다 읽고 워터마크를 저장하다 죽었다.
+
+        fsGroup 은 hostPath 에 적용되지 않는다. 그래서 root 로 한 번 맞춰 준다."""
+        init = {c["name"]: c for c in self._pod()["initContainers"]}
+        own = init["own-state"]
+        self.assertEqual(0, own["securityContext"]["runAsUser"])
+        self.assertIn("/state", " ".join(own["command"]))
+        # 색인은 건드리지 않는다. 읽기만 하는 것을 root 로 만지면 실수의 여지가 커진다.
+        self.assertEqual(["state"], [m["name"] for m in own["volumeMounts"]])
+
+    def test_serving_only_reads_the_state(self):
+        """쓰는 것은 `learn` 하나이고 그건 배치에서만 불린다. 읽기 전용으로 두면
+        서빙이 배치의 결과를 덮어쓸 길이 없다."""
+        deployment = [d for d in build("cutover")
+                      if d.get("kind") == "Deployment" and d["metadata"]["name"] == "ai"][0]
+        mounts = {m["name"]: m for m
+                  in deployment["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]}
+        self.assertTrue(mounts["state"].get("readOnly"))
+
     def test_two_runs_do_not_overlap(self):
         """라벨러는 전체 사용자를 훑어 `section_labels` 를 판째로 갈아 끼운다.
         두 판이 동시에 들어가면 어느 쪽이 최신인지 뒤섞인다."""
