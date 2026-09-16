@@ -14,6 +14,7 @@
 | `MUPID_K8S_BASE_URL` | Variable | `https://j15a204.p.ssafy.io` | 배포 뒤 health·`/deployment.txt` 확인 |
 | `MUPID_DEPLOY_K8S_SSH_KEY` | **File** | `mupid-deploy-k8s` 개인키 | `deploy-k8s.sh` 가 엣지 노드로 이미지를 보낼 때 |
 | `MUPID_DEPLOY_K8S_KNOWN_HOSTS` | **File** | 엣지 노드 호스트 키 | 같은 스크립트. TOFU 를 쓰지 않으려고 미리 박아 둔다 |
+| `MUPID_APP_ENV` | **File** | 릴리스 키스토어(base64)·비밀번호·별칭·`MUPID_API_ORIGIN` | `app-verify`·`app-build` (Tauri APK). 서명 키가 들어 있다 — **원본 .jks 는 따로 백업**한다 |
 | `MUPID_DATA_ENV` | **File** | `music_preprocessing/deploy.env.example` 를 채운 것 | `data-deploy`·`data-batch`·`data-check` (JupyterHub). 접속 정보·배치 설정·토큰이 **전부 이 파일 하나** 안에 있다 |
 
 ## 아직 배선하지 않은 것
@@ -24,7 +25,6 @@
 |---|---|---|---|
 | `MUPID_API_ENV` | **File** | 운영 노드의 `/srv/mupid-k8s/.env` (13개) | 지금은 사람이 서버에서 `kubectl create secret --from-env-file` 로 만든다. 배포 job 이 Secret 을 갱신하도록 고쳐야 한다 — 운영 Secret 을 건드리는 변경이라 따로 다룬다 |
 | `MUPID_FRONTEND_ENV` | **File** | `MUPID_DEPLOY_TARGET`·`MUPID_API_ORIGIN` | 지금은 `frontend.yml` 의 `variables:` 에 `ec2` 가 박혀 있다 |
-| `MUPID_APP_ENV` | **File** | `MUPID_API_ORIGIN`·`MUPID_DEPLOY_TARGET` | Tauri 앱 빌드 job 이 아직 없다 |
 
 ## 정리해도 되는 것
 
