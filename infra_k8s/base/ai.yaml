@@ -34,9 +34,18 @@
 # 원자적으로 갈아 끼운다 — upload-apk·upload-env 와 같은 구조다. 손으로 채우는
 # 방식은 매니페스트 수동 적용이 그랬듯 조용히 어긋난다.
 #
-# type: DirectoryOrCreate 다. Directory 로 두면 아직 한 번도 올리지 않은 노드에서
-# **파드가 뜨지도 못해** /health 로 원인을 볼 수 없다. 빈 디렉터리로 뜨면
-# check_integrity 가 실패하고 그 이유가 /health 에 그대로 실린다.
+# **마운트는 판 디렉터리들의 부모다.** `current` 심볼릭 링크를 직접 마운트했다가
+# 실패했다 — hostPath 의 DirectoryOrCreate 가 kubelet 으로 하여금 `current` 를
+# **디렉터리로** 만들게 하고, 그러면 수신기가 링크를 갈아 끼우지 못한다
+# (IsADirectoryError). 파드가 한 번이라도 뜬 노드에서만 나는 고장이라 늦게 드러난다.
+#
+# 부모를 마운트하고 컨테이너가 `/artifacts/current` 를 보게 하면, kubelet 이 만드는
+# 것은 부모뿐이고 링크는 우리 것으로 남는다. 링크와 대상이 같은 마운트 안이라
+# 컨테이너 안에서도 그대로 따라간다.
+#
+# DirectoryOrCreate 를 쓰는 이유는 그대로다. Directory 로 두면 아직 한 번도 올리지
+# 않은 노드에서 **파드가 뜨지도 못해** /health 로 원인을 볼 수 없다. 빈 디렉터리로
+# 뜨면 check_integrity 가 실패하고 그 이유가 /health 에 그대로 실린다.
 #
 # Pinned to the AI node: the image is imported per node (레지스트리가 없다).
 apiVersion: v1
@@ -66,7 +75,7 @@ spec:
           ports: [{containerPort: 8100}]
           env:
             - {name: MUPID_AI_PORT, value: '8100'}
-            - {name: MUPID_AI_ARTIFACT_DIR, value: /artifacts}
+            - {name: MUPID_AI_ARTIFACT_DIR, value: /artifacts/current}
             # 행동 데이터를 요청마다 직접 읽는다 — 배치로 파일에 옮겨 담지
             # 않는다 (app/clickhouse.py 의 설명). 라벨도 여기로 옮긴다.
             - {name: MUPID_CLICKHOUSE_URL, value: 'http://clickhouse:8123'}
@@ -117,4 +126,4 @@ spec:
             failureThreshold: 5
       volumes:
         - name: artifacts
-          hostPath: {path: /srv/mupid-k8s/ai-artifacts/current, type: DirectoryOrCreate}
+          hostPath: {path: /srv/mupid-k8s/ai-artifacts, type: DirectoryOrCreate}

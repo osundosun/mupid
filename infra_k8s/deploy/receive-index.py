@@ -233,11 +233,22 @@ def main():
 
         # 심볼릭 링크를 원자적으로 갈아 끼운다. 한 파일씩 덮으면 그 사이에 기동한
         # 파드가 서로 다른 판의 색인을 섞어 읽는다.
+        #
+        # `current` 가 **진짜 디렉터리**면 os.replace 가 IsADirectoryError 로 죽는다.
+        # 실제로 겪었다 — hostPath 를 `.../current` 로 잡아 두면 kubelet 의
+        # DirectoryOrCreate 가 그 이름으로 디렉터리를 만든다. 매니페스트는 부모를
+        # 마운트하도록 고쳤지만, 옛 판이 돌던 노드에는 그 디렉터리가 남아 있다.
+        # 뜻이 드러나는 메시지로 멈춘다 — 원문 예외는 원인을 짐작하게 하지 않는다.
+        current = ARTIFACTS / "current"
+        if current.exists() and not current.is_symlink():
+            fail(f"{current} 가 심볼릭 링크가 아니라 디렉터리다. "
+                 "파드가 .../current 를 직접 마운트하던 때 kubelet 이 만든 것이다. "
+                 "매니페스트가 부모를 마운트하는지 확인하고 이 디렉터리를 지운다.")
         pending = ARTIFACTS / ".current.new"
         if pending.is_symlink() or pending.exists():
             pending.unlink()
         pending.symlink_to(release)
-        pending.replace(ARTIFACTS / "current")
+        pending.replace(current)
 
         old = sorted((p for p in ARTIFACTS.iterdir()
                       if p.is_dir() and not p.is_symlink() and RELEASE.match(p.name)),
