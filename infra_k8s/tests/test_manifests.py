@@ -1514,6 +1514,19 @@ class AiServerDeployTest(unittest.TestCase):
         mount = {m["name"]: m for m in spec["containers"][0]["volumeMounts"]}
         self.assertTrue(mount["artifacts"]["readOnly"])
 
+    def test_the_pool_excludes_sources_that_cannot_be_played(self):
+        """jamendo 는 실서비스에서 재생되지 않는다. 추천에 섞이면 사용자가 누를 수
+        없는 결과가 나간다 — 오류가 아니라 '재생이 안 되는 추천' 이라 화면만 보고는
+        무엇이 잘못됐는지 알기 어렵다.
+
+        코드 기본값이 `MUPID_POOL_EXTRA=jamendo` 라 **매니페스트가 덮지 않으면 그 값이
+        그대로 나간다.** 실제로 그렇게 나가고 있었다."""
+        container = self._deployment()["spec"]["template"]["spec"]["containers"][0]
+        env = {e["name"]: e.get("value") for e in container["env"] if "value" in e}
+        self.assertEqual("flow", env["MUPID_POOL"])
+        self.assertEqual("", env["MUPID_POOL_EXTRA"],
+                         "기본값(jamendo)이 새어 나간다")
+
     def test_the_probes_are_not_swapped(self):
         """/health 는 프로세스 생존만, /internal/ready 는 실제로 추천할 수 있는가를
         본다. /health 를 readiness 로 쓰면 추천이 안 되는 파드로 트래픽이 가고,
