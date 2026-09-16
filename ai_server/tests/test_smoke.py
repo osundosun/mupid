@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -43,15 +44,31 @@ def client():
 
     tmp = Path(tempfile.mkdtemp(prefix="mupid_test_idmap_")) / "id_map.parquet"
     pd.DataFrame(rows).to_parquet(tmp, index=False)
+    prev = os.environ.get("MUPID_ID_MAP")
     os.environ["MUPID_ID_MAP"] = str(tmp)
 
     from fastapi.testclient import TestClient
 
+    from ai_server.app import ids
     from ai_server.app.main import app
 
-    with TestClient(app) as c:
-        yield c
-    tmp.unlink(missing_ok=True)
+    # `ids.id_map()` 은 **전역 캐시**다. 앞선 시험 모듈이 이미 한 번 불렀으면 환경변수를
+    # 세팅해도 그때의 (매핑표 없는) 상태를 계속 들고 있다. 그래서 여기서 다시 읽힌다 —
+    # 이것이 없으면 모듈 하나만 돌릴 때는 통과하고 **전체를 돌릴 때만 7건이 깨진다.**
+    ids.id_map(reload=True)
+
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        # 다음 모듈이 이 시험용 매핑표를 물고 가지 않도록 되돌린다.
+        if prev is None:
+            os.environ.pop("MUPID_ID_MAP", None)
+        else:
+            os.environ["MUPID_ID_MAP"] = prev
+        tmp.unlink(missing_ok=True)
+        shutil.rmtree(tmp.parent, ignore_errors=True)
+        ids.id_map(reload=True)
 
 
 def test_health(client):

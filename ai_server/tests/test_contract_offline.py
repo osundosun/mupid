@@ -1229,6 +1229,50 @@ def test_push_sections_drops_empty_ranges():
     assert all(r["end_ms"] > r["start_ms"] for r in rows)
 
 
+def test_push_sections_never_writes_a_local_clock_timestamp():
+    """`created_at` 은 `ReplacingMergeTree` 의 **버전 컬럼**이다.
+
+    예전에는 `pd.Timestamp.now("UTC")` 를 타임존 표시 없이 넣었는데, 서버 타임존이
+    `Asia/Seoul` 이라 **9시간 과거로 저장된다.** 그러면 이 도구가 고친 구간이
+    `DEFAULT now()` 로 들어간 행에 밀려 조용히 옛 값으로 되돌아간다.
+
+    비우면 아예 싣지 않아 ClickHouse 가 `DEFAULT now()` 로 채운다 — 어느 쪽이든
+    서버 시계다.
+    """
+    import inspect
+
+    from ai_server.tools import push_sections as ps
+
+    rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1")
+    assert all("created_at" not in r for r in rows), (
+        "시각을 싣지 않기로 했으면 서버 기본값에 맡긴다")
+
+    rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1", "2026-09-16 12:06:49")
+    assert {r["created_at"] for r in rows} == {"2026-09-16 12:06:49"}
+
+    # 로컬 시계로 돌아가지 않았는지 본다. 되돌아가도 시험은 다 통과하기 때문이다.
+    src = inspect.getsource(ps.build_rows)
+    assert "Timestamp.now" not in src and "datetime.now" not in src
+
+
+def test_push_sections_asks_the_server_for_the_time():
+    """시각은 ClickHouse 에 물어서 얻는다. 로컬 시계를 쓰지 않는다."""
+    from ai_server.tools import push_sections as ps
+
+    asked = {}
+
+    def fake_query(sql, body=None):
+        asked["sql"] = sql
+        return "2026-09-16 12:06:49\n"
+
+    orig, ps.query = ps.query, fake_query
+    try:
+        assert ps.server_now() == "2026-09-16 12:06:49"
+    finally:
+        ps.query = orig
+    assert "now()" in asked["sql"] and "UTC" not in asked["sql"]
+
+
 def test_push_sections_uses_the_version_the_dictionary_reads():
     """v_track_sections_current 가 'v1' 만 고른다. 다른 값은 표에는 들어가지만
     구간 판정에 전혀 쓰이지 않는다."""
@@ -1850,3 +1894,90 @@ def test_register_sections_attaches_track_moods_to_every_section():
     rows, _ = rs.build_payload(_moments_frame(), ["잔잔한"])
     assert rows, "구간이 비었다"
     assert all(r["moods"] == ["잔잔한"] for r in rows)
+# ── pull_signals 의 시각 규약 ────────────────────────────────────────────────
+
+class _BackMap:
+    """숫자 → 문자열 되돌리기만 하는 최소 매핑."""
+
+    def source_track_id(self, n):
+        return f"T{int(n):06d}"
+
+
+def _ch_row(now: float, age_sec: float) -> dict:
+    """ClickHouse 가 돌려주는 한 줄. `ts` 는 서버(Asia/Seoul), `ts_utc` 는 UTC 다.
+
+    **고정 시각으로 만든다.** 로컬 시계를 쓰면 이 시험 자체가 타임존에 의존한다.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    utc = datetime.fromtimestamp(now - age_sec, timezone.utc)
+    seoul = utc + timedelta(hours=9)          # 서버 타임존이 Asia/Seoul 이다
+    return {"user_id": 4_200_000_999, "track_id": 1001, "signal": "PLAY_START",
+            "entry_path": "RECOMMEND", "play_id": "p-age",
+            "ts": seoul.strftime("%Y-%m-%d %H:%M:%S"),
+            "ts_utc": utc.strftime("%Y-%m-%d %H:%M:%S")}
+
+
+def _behavior_for(events: list, user: str, now: float, tmp_path, monkeypatch) -> dict:
+    from ai_server.app import recommender as rc
+
+    log = tmp_path / f"events_{abs(hash(json.dumps(events)))}.jsonl"
+    log.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events),
+                   encoding="utf-8")
+    monkeypatch.setattr(rc, "EVENTS", log)
+    rc._BEH_CACHE.clear()
+    return rc.user_behavior(user, now=now)
+
+
+def test_pull_signals_event_age_matches_real_elapsed(tmp_path, monkeypatch):
+    """5시간 전 재생은 **5시간 전**으로 읽혀야 한다.
+
+    예전에는 서버 타임존(`Asia/Seoul`) 문자열 뒤에 `"Z"` 를 붙여 내보냈다. 그러면
+    `user_behavior()` 가 `fromisoformat` 으로 읽어 `time.time()` 과 비교할 때 모든
+    이벤트가 **9시간 미래**가 된다. 오류는 나지 않고 추천만 이상해진다 — 최근 재생
+    제외(4시간)가 풀리지 않고, 스킵 감점의 시간 감쇠가 음수 나이로 계산된다.
+    """
+    from datetime import datetime
+
+    from ai_server.tools import pull_signals as pu
+
+    NOW = 1_789_000_000.0                      # 고정. 로컬 시계에 의존하지 않는다
+    AGE = 5 * 3600                             # RECENT_EXCLUDE_SEC(4시간)보다 오래됐다
+    row = _ch_row(NOW, AGE)
+
+    ev = pu.to_play_event(row, _BackMap())
+    assert ev is not None
+    got = datetime.fromisoformat(ev["occurred_at"].replace("Z", "+00:00")).timestamp()
+    assert abs((NOW - got) - AGE) < 1.0, (
+        f"나이가 {(NOW - got) / 3600:.1f}시간으로 읽힌다 (실제 {AGE / 3600:.0f}시간)")
+
+    beh = _behavior_for([ev], ev["user_ref"], NOW, tmp_path, monkeypatch)
+    assert beh["events"] == 1
+    assert ev["track_id"] not in beh["recent_play"], (
+        "4시간이 넘었는데 최근 재생으로 잡힌다 — 시각이 미래로 읽혔다")
+    assert ev["track_id"] not in beh["recent_pen"]
+
+
+def test_pull_signals_seoul_string_with_z_would_be_read_as_future(tmp_path, monkeypatch):
+    """고치기 전 형태를 그대로 넣어 **증상이 재현되는지** 본다.
+
+    이 시험이 없으면 누가 `ts_utc` 를 지우고 `ts` 로 되돌려도 값 검사만으로는 통과한다.
+    """
+    from ai_server.tools import pull_signals as pu
+
+    NOW = 1_789_000_000.0
+    AGE = 5 * 3600
+    row = _ch_row(NOW, AGE)
+
+    ev = pu.to_play_event(row, _BackMap())
+    broken = dict(ev, occurred_at=str(row["ts"]).replace(" ", "T") + "Z")   # 예전 방식
+    beh = _behavior_for([broken], broken["user_ref"], NOW, tmp_path, monkeypatch)
+
+    # 5시간 전인데 4시간 미래로 읽혀 "방금 들은 곡" 이 된다.
+    assert broken["track_id"] in beh["recent_play"]
+    assert beh["recent_pen"].get(broken["track_id"]) == pytest.approx(
+        __import__("ai_server.app.recommender", fromlist=["x"]).BEH_W_RECENT)
+
+    # 고친 쪽은 같은 사건을 제대로 읽는다.
+    ok = _behavior_for([ev], ev["user_ref"], NOW, tmp_path, monkeypatch)
+    assert ev["track_id"] not in ok["recent_play"]
