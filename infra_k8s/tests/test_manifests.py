@@ -1255,6 +1255,117 @@ class PrebuiltJobImageTest(unittest.TestCase):
         self.assertIsNone(job.get("cache"), "pip 캐시를 다시 나르고 있다")
 
 
+class AiEndpointNamesTest(unittest.TestCase):
+    """LLM 게이트웨이와 추천 서버(ai_server)는 **다른 서버**이고 이름도 다르다.
+
+      MUPID_AI_BASE_URL           대화를 만드는 바깥 LLM
+      MUPID_RECOMMENDER_BASE_URL  곡을 고르는 ai_server
+
+    한쪽 이름에 다른 쪽 주소를 넣으면 대화가 추천 서버로 나간다. 실제로
+    그랬다 — api/.env.example 에 MUPID_AI_BASE_URL 이 두 번 있었고 뒤의 것이
+    http://ai-server:8100 이었으며, 그 값이 운영 ConfigMap 까지 베껴졌다.
+    호출은 성공한 것처럼 보이고 대화만 조용히 망가진다."""
+
+    EXAMPLE = ROOT / "api" / ".env.example"
+
+    def _entries(self, text):
+        found = {}
+        for number, line in enumerate(text.splitlines(), start=1):
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            found.setdefault(line.split("=", 1)[0].strip(), []).append(number)
+        return found
+
+    def test_no_name_is_defined_twice_in_the_example(self):
+        """`.env` 는 뒤가 이긴다. 같은 이름이 두 번이면 앞의 설명과 다른 값이
+        실제로 쓰이고, 읽는 사람은 앞의 것을 믿는다."""
+        for name, lines in self._entries(self.EXAMPLE.read_text(encoding="utf-8")).items():
+            with self.subTest(name=name):
+                self.assertEqual(
+                    1, len(lines),
+                    f"{name} 이 {lines} 번 줄에 여러 번 있다 — 뒤의 값이 이긴다",
+                )
+
+    def test_the_llm_name_never_points_inside_the_cluster(self):
+        """MUPID_AI_BASE_URL 은 바깥 LLM 이다. 클러스터 안 주소가 들어가면
+        대화가 나가지 못한다."""
+        sources = [self.EXAMPLE, K8S / "base" / "config.yaml"]
+        for path in sources:
+            text = path.read_text(encoding="utf-8")
+            for line in text.splitlines():
+                stripped = line.strip().lstrip("-").strip()
+                if not stripped.startswith("MUPID_AI_BASE_URL"):
+                    continue
+                value = stripped.split("=", 1)[-1].split(":", 1)[-1].strip() \
+                    if "=" in stripped else stripped.split(":", 1)[1].strip()
+                if not value:
+                    continue
+                with self.subTest(file=path.name, value=value):
+                    self.assertNotIn("ai-server", value)
+                    self.assertNotRegex(value, r"^http://ai\b")
+
+    def test_the_llm_key_actually_reaches_the_container(self):
+        """Secret 은 envFrom 으로 통째로 주입하지 않고 이름을 하나씩 적는다.
+        그래서 .env 에 키를 넣는 것만으로는 컨테이너에 도달하지 않는다 —
+        api.yaml 에 secretKeyRef 가 있어야 한다.
+
+        빠뜨리면 아무 오류 없이 그 설정만 조용히 비어 있다."""
+        api = yaml.safe_load_all((K8S / "base" / "api.yaml").read_text(encoding="utf-8"))
+        container = next(
+            d["spec"]["template"]["spec"]["containers"][0]
+            for d in api if d and d.get("kind") == "Deployment")
+        named = {e["name"] for e in container.get("env", [])}
+        self.assertIn("MUPID_AI_GMS_KEY", named,
+                      "LLM 키가 컨테이너에 전달되지 않는다")
+        # Secret 을 통째로 주입하면 api 가 쓸 일 없는 비밀(루트 비밀번호 등)까지
+        # 들고 있게 된다. 그래서 통째 주입은 하지 않는다.
+        for source in container.get("envFrom", []):
+            with self.subTest(source=source):
+                self.assertNotIn("secretRef", source)
+
+    def test_the_llm_settings_live_in_one_place(self):
+        """주소·모델·키를 MUPID_API_ENV 한 묶음으로 관리한다 — 개발 환경의
+        api/.env 와 같은 구성이다.
+
+        ConfigMap 에 같은 이름을 다시 넣으면 안 된다. env 로 지정한 값이
+        envFrom 을 이기므로 ConfigMap 쪽이 조용히 무시되고, 두 곳을 보는
+        사람만 헷갈린다."""
+        for doc in yaml.safe_load_all((K8S / "base" / "config.yaml").read_text(encoding="utf-8")):
+            if doc and doc.get("kind") == "ConfigMap" and doc["metadata"]["name"] == "api-config":
+                data = doc["data"]
+                break
+        else:
+            raise AssertionError("api-config 를 찾지 못했다")
+        for name in ("MUPID_AI_BASE_URL", "MUPID_AI_MODEL", "MUPID_AI_GMS_KEY"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, data)
+
+    def test_the_llm_settings_are_optional_so_the_pod_still_starts(self):
+        """Secret 에 없는 키를 optional 없이 참조하면 파드가
+        CreateContainerConfigError 로 아예 뜨지 않는다 — 대화 하나 때문에
+        서비스 전체가 내려간다."""
+        api = yaml.safe_load_all((K8S / "base" / "api.yaml").read_text(encoding="utf-8"))
+        container = next(
+            d["spec"]["template"]["spec"]["containers"][0]
+            for d in api if d and d.get("kind") == "Deployment")
+        refs = {e["name"]: (e.get("valueFrom") or {}).get("secretKeyRef", {})
+                for e in container.get("env", [])}
+        for name in ("MUPID_AI_GMS_KEY", "MUPID_AI_BASE_URL", "MUPID_AI_MODEL"):
+            with self.subTest(name=name):
+                self.assertIn(name, refs, "컨테이너에 전달되지 않는다")
+                self.assertTrue(refs[name].get("optional"),
+                                "optional 이 아니면 Secret 에 없을 때 파드가 안 뜬다")
+
+    def test_the_recommender_pair_is_documented_together(self):
+        """한쪽만 켜면 추천이 통째로 401 이다. 둘이 같이 보여야 한다."""
+        text = self.EXAMPLE.read_text(encoding="utf-8")
+        self.assertIn("MUPID_RECOMMENDER_BASE_URL", text)
+        self.assertIn("MUPID_RECOMMENDER_INTERNAL_TOKEN", text)
+        self.assertIn("MUPID_AI_INTERNAL_TOKEN", text,
+                      "추천 서버 쪽 짝 이름이 적혀 있지 않다")
+
+
 class CiVariableDocTest(unittest.TestCase):
     """CI 변수 이름이 코드 어딘가에만 있고 아무 데도 적혀 있지 않으면, 새 사람이
     '왜 이 job 이 안 뜨지' 로 반나절을 쓴다. 실제로 이 저장소에서 한 번 있었다 —
