@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ListMusic } from 'lucide-react';
+import { Check, ChevronDown, ListMusic, ListEnd } from 'lucide-react';
 import { QueueList } from './queue-list';
 import { SelectionToolbar, useTrackSelection } from './track-selection';
 import { EmptyState } from './primitives';
@@ -85,6 +85,9 @@ function QueueDockPanel({
   const pick = useTrackSelection(m.queueTracks.map((t) => t.id));
   // 곡을 빼는 건 한 곡이든 여러 곡이든 똑같이 한 번 확인받는다.
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
+  /** 담을 위치 고르기가 펼쳐져 있는가. 머리글 버튼 아래로 열린다. */
+  const [positionOpen, setPositionOpen] = useState(false);
+  const positionRef = useRef<HTMLDivElement>(null);
   const removeTargets = m.queueTracks.filter((t) => confirmRemove?.includes(t.id));
 
   // 열릴 때 닫기 버튼으로 초점을 옮긴다. 키보드로 연 사람이 독 안에서 이어가야 한다.
@@ -98,11 +101,27 @@ function QueueDockPanel({
       if (event.key !== 'Escape') return;
       // 확인 대화상자가 떠 있으면 그쪽이 먼저 닫혀야 한다.
       if (confirmRemove !== null) return;
+      // 담을 위치를 펼쳐 둔 상태면 그것부터 접는다. 한 번에 둘을 닫으면
+      // 목록을 계속 보려던 사람의 독까지 사라진다.
+      if (positionOpen) {
+        setPositionOpen(false);
+        return;
+      }
       m.setQueueOpen(false);
     };
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);
-  }, [open, confirmRemove, m]);
+  }, [open, confirmRemove, positionOpen, m]);
+
+  // 바깥을 누르면 접는다. 목록을 누르려다 열어 둔 것을 그냥 두면 가린다.
+  useEffect(() => {
+    if (!positionOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (!positionRef.current?.contains(event.target as Node)) setPositionOpen(false);
+    };
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [positionOpen]);
 
   /*
    * 닫는 움직임이 끝나면 지운다.
@@ -147,51 +166,92 @@ function QueueDockPanel({
           <span className="queue-dock-count" aria-live="polite">
             {count}/{QUEUE_LIMIT}곡
           </span>
-          <button
-            ref={closeRef}
-            className="icon-button"
-            aria-label="재생 목록 접기"
-            onClick={() => m.setQueueOpen(false)}
-          >
-            <ChevronDown />
-          </button>
+
+          {/*
+            버튼은 한 묶음으로 오른쪽에 붙인다. 곡 수는 제목 옆에 두어 "무엇을
+            몇 곡" 이 한눈에 이어지게 하고, 누를 것들은 반대쪽에 모은다.
+
+            고르기도 머리글에서 연다. 목록 위의 도구 줄은 고르는 동안에만 나온다.
+          */}
+          <div className="queue-head-actions">
+            {!pick.active && (
+              <button
+                className="queue-head-action"
+                disabled={!count}
+                onClick={pick.start}
+              >
+                선택
+              </button>
+            )}
+
+          {/*
+            담을 위치는 머리글의 버튼으로 접어 둔다. 라디오 세 개를 목록 위에
+            펼쳐 두었더니 정작 보러 온 목록이 밀려났다 — 자주 바꾸는 값이 아니라
+            평소에는 지금 값만 보이면 된다.
+          */}
+          <div className="queue-insert-position" ref={positionRef}>
+            <button
+              className="queue-insert-toggle"
+              aria-haspopup="menu"
+              aria-expanded={positionOpen}
+              aria-label={`담을 위치: ${INSERT_POSITION_LABEL[m.queueInsertPosition]}. 바꾸기`}
+              onClick={() => setPositionOpen(value => !value)}
+            >
+              <ListEnd aria-hidden="true" />
+              <span>{INSERT_POSITION_LABEL[m.queueInsertPosition]}</span>
+            </button>
+            {positionOpen && (
+              <div className="queue-insert-menu" role="menu">
+                <p className="queue-insert-menu-title">담을 위치</p>
+                {QUEUE_INSERT_CHOICES.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    role="menuitemradio"
+                    aria-checked={m.queueInsertPosition === value}
+                    onClick={() => {
+                      m.setQueueInsertPosition(value);
+                      setPositionOpen(false);
+                    }}
+                  >
+                    <Check aria-hidden="true" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            </div>
+
+            <button
+              ref={closeRef}
+              className="icon-button"
+              aria-label="재생 목록 접기"
+              onClick={() => m.setQueueOpen(false)}
+            >
+              <ChevronDown />
+            </button>
+          </div>
         </header>
 
         <div className="queue-dock-body">
-          <p className="queue-dock-hint">
-            {pick.active
-              ? '뺄 곡을 고르세요. 전체 선택으로 한 번에 비울 수도 있어요.'
-              : `손잡이를 끌어 순서를 바꿀 수 있어요. ${QUEUE_LIMIT}곡이 넘으면 가장 오래 담긴 곡부터 빠져요.`}
-          </p>
-
           {/*
-            담은 곡이 어디로 들어갈지 고른다. 목록 바로 위에 두는 것은,
-            담기 버튼이 흩어져 있어(곡 목록·플레이어·추천) 그 옆마다 붙일 수 없고
-            결과가 보이는 자리에서 고르는 편이 무엇이 달라지는지 읽히기 때문이다.
+            평소에는 안내 문구를 두지 않는다. 독은 목록을 보러 여는 자리라
+            설명이 목록을 밀어내면 정작 볼 것이 안 보인다. 고르는 중일 때만
+            무엇을 해야 하는지 한 줄 남긴다.
           */}
-          {!pick.active && (
-            <fieldset className="queue-insert-position">
-              <legend>담을 위치</legend>
-              {QUEUE_INSERT_CHOICES.map(({ value, label }) => (
-                <label key={value} className={m.queueInsertPosition === value ? 'is-picked' : ''}>
-                  <input
-                    type="radio"
-                    name="queue-insert-position"
-                    value={value}
-                    checked={m.queueInsertPosition === value}
-                    onChange={() => m.setQueueInsertPosition(value)}
-                  />
-                  {label}
-                </label>
-              ))}
-            </fieldset>
+          {pick.active && (
+            <p className="queue-dock-hint">
+              뺄 곡을 고르세요. 전체 선택으로 한 번에 비울 수도 있어요.
+            </p>
           )}
 
-          {!!count && (
+          {/*
+            고르는 중일 때만 띄운다. 평소에도 두면 "N곡 · 최대 100곡 · 선택" 한 줄이
+            늘 목록 위를 차지한다 — 곡 수는 머리글에 있고, 고르기는 머리글 버튼으로 연다.
+          */}
+          {pick.active && (
             <SelectionToolbar
               selection={pick}
               total={count}
-              limit={QUEUE_LIMIT}
               onDelete={() => setConfirmRemove(pick.picked)}
             />
           )}

@@ -124,7 +124,6 @@
 }
 
 .queue-dock-count {
-  margin-left: auto;
   font-size: 0.8125rem;
   color: #6b81a6;
   font-variant-numeric: tabular-nums;
@@ -291,59 +290,146 @@
   }
 }
 
+
 /*
- * 담을 위치 고르기.
+ * 담을 위치 — 머리글의 버튼과 그 아래로 열리는 작은 메뉴.
  *
- * 라디오를 알약 모양 버튼처럼 보이게 한다. 실제 `input` 은 남겨 둔다 —
- * 화살표 키로 고르기·읽어 주기 순서가 공짜로 따라오고, `fieldset`/`legend` 가
- * "이 셋은 한 묶음" 이라는 것을 보조기기에 알린다.
+ * 목록 위에 라디오를 펼쳐 두었더니 정작 보러 온 목록이 밀려났다. 자주 바꾸는
+ * 값이 아니라 평소에는 **지금 값만** 보이면 된다.
  */
 .queue-insert-position {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin: 0 4px 10px;
-  padding: 0;
-  border: 0;
+  position: relative;
+  flex-shrink: 0;
 }
 
-.queue-insert-position legend {
-  float: left;
-  width: 100%;
-  margin-bottom: 6px;
-  padding: 0;
-  font-size: 0.75rem;
-  color: #6b81a6;
-}
-
-.queue-insert-position label {
+.queue-insert-toggle {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 10px;
+  max-width: 150px;
+  padding: 4px 9px;
   border: 1px solid #dfe9f9;
   border-radius: 999px;
-  background: #f7fbff;
-  font-size: 0.8125rem;
+  background: #f4f9ff;
+  font-size: 0.75rem;
   color: #46608c;
   cursor: pointer;
 }
 
-.queue-insert-position label.is-picked {
+.queue-insert-toggle:hover {
   border-color: #9dbdea;
   background: #e8f1ff;
+}
+
+.queue-insert-toggle svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: #5883cf;
+}
+
+/* 이름이 길어도 머리글 한 줄을 무너뜨리지 않는다. */
+.queue-insert-toggle span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-insert-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid #dfe9f9;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px #3059941f;
+}
+
+.queue-insert-menu-title {
+  margin: 2px 8px 6px;
+  font-size: 0.6875rem;
+  color: #8fa3c2;
+}
+
+.queue-insert-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font-size: 0.8125rem;
+  color: #46608c;
+  text-align: left;
+  cursor: pointer;
+}
+
+.queue-insert-menu button:hover {
+  background: #f1f7ff;
+}
+
+/* 고른 것에만 체크를 보인다. 자리는 늘 잡아 두어 글자가 흔들리지 않게 한다. */
+.queue-insert-menu button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: #5883cf;
+  visibility: hidden;
+}
+
+.queue-insert-menu button[aria-checked='true'] {
   color: #27457a;
   font-weight: 600;
 }
 
-/* 초점은 알약 전체에 보인다. 동그란 라디오만 빛나면 어디가 골라졌는지 안 보인다. */
-.queue-insert-position label:focus-within {
-  outline: 2px solid #5883cf;
-  outline-offset: 2px;
+.queue-insert-menu button[aria-checked='true'] svg {
+  visibility: visible;
 }
 
-.queue-insert-position input {
-  margin: 0;
-  accent-color: #5883cf;
+/* 머리글의 글자 버튼(고르기). 담을 위치 버튼과 같은 크기로 맞춘다. */
+.queue-head-action {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid #dfe9f9;
+  border-radius: 999px;
+  background: #f4f9ff;
+  font-size: 0.75rem;
+  color: #46608c;
+  cursor: pointer;
+}
+
+.queue-head-action:hover:not(:disabled) {
+  border-color: #9dbdea;
+  background: #e8f1ff;
+}
+
+.queue-head-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* 머리글이 좁아지면 곡 수부터 접는다. 버튼 둘은 눌러야 하니 남긴다. */
+@media (max-width: 420px) {
+  .queue-dock-count {
+    display: none;
+  }
+}
+
+/*
+ * 머리글의 오른쪽 묶음.
+ *
+ * 곡 수는 제목 옆(왼쪽)에 두고 누를 것들만 이쪽에 모은다. 묶어 두어야
+ * '선택' 이 고르는 동안 사라져도 나머지가 제자리를 지킨다 — 버튼마다
+ * `margin-left: auto` 를 주면 빈 공간을 나눠 가져 자리가 흔들린다.
+ */
+.queue-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
