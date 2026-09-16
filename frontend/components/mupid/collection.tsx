@@ -155,6 +155,14 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
           {selected ? (
             <div className="playlist-detail">
               <div className="playlist-summary">
+                {/*
+                  * 곡이 하나도 없는 목록만 음표로 둔다. "아직 아무것도 담지
+                  * 않았다" 는 것은 커버가 없는 것과 다른 사정이라, 기본 커버로
+                  * 합치면 담은 줄 알고 열어 보게 된다.
+                  *
+                  * 담긴 곡의 커버를 못 구한 경우는 `AlbumArt` 가 기본 커버로
+                  * 받아 낸다. 여기서 따로 볼 것이 없다.
+                  */}
                 {selected.tracks[0] ? <AlbumArt track={selected.tracks[0]} /> : <Music2 size={72} aria-label="비어 있는 플레이리스트" />}
                 <div>
                   <span className="eyebrow">내 플레이리스트</span>
@@ -257,6 +265,8 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                       className="playlist-card"
                       onClick={() => m.setSelectedPlaylist(p.id)}
                     >
+                      {/* 상세 화면과 같은 기준이다 — 빈 목록만 음표, 커버를
+                        * 못 구한 곡은 `AlbumArt` 의 기본 커버. */}
                       {p.tracks[0] ? <AlbumArt track={p.tracks[0]} /> : <Music2 size={72} aria-label="비어 있는 플레이리스트" />}
                       <span>
                         <strong>{p.name}</strong>

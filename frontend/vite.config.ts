@@ -66,8 +66,18 @@ const STATIC_TARGETS = ['ec2', 'app'];
  * 값을 고정해 두면 앱 셸이 같은 값을 헤더로 붙일 수 있다
  * (`app/src/lib.rs` 의 `RSC_COMPATIBILITY_ID`). **두 값은 같아야 한다.**
  *
- * `ec2` 대상에는 걸지 않는다. 거기서는 배포 중에 예전 화면이 새 청크를 받을 수
- * 있고, 그때는 전체 새로고침이 맞는 동작이다.
+ * `ec2` 에는 **빈 값**을 박아 이 검사 자체를 끈다. 전에는 아무 것도 걸지 않아
+ * 빌드마다 새로 생긴 UUID 가 그대로 남았는데, nginx 는 내보낸 파일을 그냥
+ * 돌려줄 뿐이라(`infra/deploy/nginx.conf` 의 `try_files`) 응답에 이 헤더가
+ * 없다. 그러면 라우터는 **화면을 옮길 때마다** "서버가 바뀌었다"고 보고 문서를
+ * 통째로 다시 읽었다 — 듣던 곡이 끊기고 현재 곡·재생 위치·재생 목록이 모두
+ * 초기화된 원인이다. 빈 값이면 라우터가 비교를 건너뛰므로 화면 이동이
+ * 클라이언트 안에서 끝난다 (vinext 의 `isRscCompatibilityIdCompatible`:
+ * 내 쪽 값이 없으면 언제나 호환으로 본다).
+ *
+ * 배포 중 낡은 화면을 걷어 내는 몫은 이걸로 사라진다. 되살리려면 nginx 가
+ * `X-Vinext-RSC-Compatibility-Id` 를 붙이게 하고 여기서도 `app` 처럼 고정 값을
+ * 넣으면 된다 — 헤더 없이 값만 고정하면 지금과 똑같이 매번 새로고침이 된다.
  *
  * vinext 뒤에 두어야 이 `define` 이 나중에 병합되어 이긴다.
  */
@@ -94,9 +104,9 @@ export default defineConfig(async () => {
       },
       plugins: [
         vinext(),
-        ...(target === 'app'
-          ? [pinRscCompatibilityId(RSC_COMPATIBILITY_ID)]
-          : []),
+        // 정적 대상에는 이 헤더를 붙여 줄 서버가 없다. 앱은 셸이 대신 붙이므로
+        // 값을 고정하고, nginx 로 가는 `ec2` 는 빈 값으로 검사를 끈다.
+        pinRscCompatibilityId(target === 'app' ? RSC_COMPATIBILITY_ID : ''),
       ],
     };
   }

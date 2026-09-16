@@ -48,6 +48,41 @@ export type Track = {
   recommended?: TrackRecommendation;
 };
 
+/**
+ * 커버를 구하지 못했을 때 대신 거는 기본 앨범 이미지.
+ *
+ * 사진이 아니라 정사각 SVG 다. 같은 커버가 목록의 44px 부터 데스크톱의 500px
+ * 까지 쓰이는데, 사진을 쓰면 `.album-art img` 의 크롭(`transform: scale(1.8)`)에
+ * 걸려 크기마다 다른 자리가 보인다. 그림으로 그려 두면 어느 크기에서나 같고
+ * 용량도 1KB 대라 목록을 채워도 부담이 없다.
+ */
+export const DEFAULT_ALBUM_COVER = '/album-cover-default.svg';
+
+/**
+ * 커버 한 장을 어떤 주소로 걸지 정한다.
+ *
+ * 컴포넌트에서 떼어 둔 것은 판단을 렌더 없이 시험하기 위해서이기도 하지만,
+ * 무엇보다 **기본 커버를 걸고 나면 다시 갈아 끼우지 않는다**는 규칙을 한곳에
+ * 모아 두기 위해서다. 이 규칙이 없으면 기본 커버까지 못 읽는 상황에서
+ * `onError` → 상태 변경 → 다시 그리기가 끝없이 돈다.
+ *
+ * 비어 있는 값을 런타임에서 받아 내는 이유는 `Track.image` 가 언제나 문자열
+ * 이기 때문이다. 여러 화면이 문자열을 전제하고 있어 타입을 optional 로 돌릴 수
+ * 없고, 대신 서버가 표지도 앨범 커버도 주지 않아 빈 문자열이 실려 오는 경우
+ * (`lib/stream-catalog.ts`)를 여기서 걸러 낸다. 공백만 있는 값도 같이 본다.
+ *
+ * @param failedSrc 이미 한 번 읽기에 실패한 주소. 그 주소면 곧장 기본 커버다.
+ */
+export function resolveAlbumCover(
+  image: string | null | undefined,
+  failedSrc?: string | null,
+): { src: string; isFallback: boolean } {
+  const wanted = image?.trim() ?? '';
+  const isFallback =
+    !wanted || wanted === DEFAULT_ALBUM_COVER || wanted === failedSrc;
+  return { src: isFallback ? DEFAULT_ALBUM_COVER : wanted, isFallback };
+}
+
 export type SavedMoment = {
   id: number;
   track: Track;

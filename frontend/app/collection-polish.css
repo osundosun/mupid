@@ -210,6 +210,12 @@
 }
 /* 재생 중인 곡은 왼쪽에 얇은 표시를 둔다. */
 .queue-item > .track-row.is-playing { box-shadow: inset 3px 0 0 #7fa2d4; padding-left: 12px; border-radius: 0; }
+/*
+ * 같은 곡을 여러 자리에 담을 수 있게 되면서 `is-playing` 은 곡 번호만 보고 붙는다.
+ * 중복이면 두 줄 모두에 막대가 생기므로, 실제로 울리는 자리(`is-current`)만 남긴다 —
+ * 화면과 `aria-current` 가 서로 다른 줄을 가리키면 안 된다.
+ */
+.queue-item:not(.is-current) > .track-row.is-playing { box-shadow: none; }
 .queue-handle {
   display: grid; place-items: center; flex-shrink: 0;
   width: 30px; min-width: 30px; height: 44px; padding: 0;

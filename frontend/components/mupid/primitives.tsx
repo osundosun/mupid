@@ -1,7 +1,7 @@
 'use client';
 import Image from 'next/image';
 import { MascotAccent, MupidMascot } from './mascot';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -16,7 +16,7 @@ import {
   Shuffle,
 } from 'lucide-react';
 import type { MupidModel, RepeatMode } from '@/hooks/use-mupid';
-import { formatTime, getSongSectionAt, type Track } from '@/lib/mupid-data';
+import { formatTime, getSongSectionAt, resolveAlbumCover, type Track } from '@/lib/mupid-data';
 
 export function Brand({ className = '' }: { className?: string }) {
   return (
@@ -38,16 +38,32 @@ export function AlbumArt({
   track: Track | null;
   className?: string;
 }) {
+  // 훅은 분기보다 위에 있어야 한다. 곡이 없는 화면과 있는 화면이 같은 자리를
+  // 번갈아 쓰기 때문에, 조건 뒤로 내리면 훅 개수가 렌더마다 달라진다.
+  //
+  // 여기 담기는 것은 "못 읽은 주소" 다. 곡이 바뀌어 주소가 달라지면 저절로
+  // 어긋나므로, 곡마다 상태를 지우는 별도의 처리가 필요 없다.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+
   if (!track) return <span className={`album-art album-art-empty ${className}`} aria-hidden="true" />;
+
+  const { src, isFallback } = resolveAlbumCover(track.image, failedSrc);
   return (
     <span className={`album-art art-${track.id - 1} ${className}`}>
       <Image
         unoptimized
         width={320}
         height={320}
-        src={track.image}
+        src={src}
+        // 기본 커버여도 어떤 곡의 자리인지는 알려 준다. 커버를 못 받아 온 것은
+        // 화면 사정이지 그 칸이 장식이 됐다는 뜻이 아니다.
         alt={`${track.title} 앨범 커버`}
         loading="lazy"
+        // 기본 커버에는 데모 곡 연출(`.art-*`)과 사진용 크롭이 걸리면 안 된다.
+        className={isFallback ? 'album-art-fallback' : undefined}
+        // 이미 기본 커버라면 핸들러를 달지 않는다 — 그래야 실패가 한 번으로
+        // 끝나고 다시 그리기가 돌지 않는다.
+        onError={isFallback ? undefined : () => setFailedSrc(src)}
       />
     </span>
   );
