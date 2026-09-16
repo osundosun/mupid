@@ -19,6 +19,8 @@ resources:
   # 목록에서 빼 두면 배포 경로를 시험할 수 없고, 올릴 때가 되어서야 처음 돌려
   # 보게 된다. 그때 문제가 나면 원인이 배포인지 코드인지 가려내기 어렵다.
   - ai.yaml
+  # 라벨 야간 배치. 라벨이 없으면 오류 없이 모든 사용자가 콜드스타트다.
+  - ai-labeler.yaml
 # The hash suffix is deliberate: editing nginx.conf produces a new ConfigMap name
 # and therefore a new pod. Without it the file would change on disk while the
 # running nginx kept the old configuration.

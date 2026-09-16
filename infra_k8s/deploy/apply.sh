@@ -101,7 +101,7 @@ kube apply -f "$rendered"
 
 # 적용 뒤에 남아 있으면 안 된다. 최초 설치라면 위에서 이미 그렇게 말했다.
 echo "=== placeholder 로 남은 워크로드 ==="
-stuck=$(kube -n mupid get deploy,statefulset \
+stuck=$(kube -n mupid get deploy,statefulset,cronjob \
   -o jsonpath='{range .items[*]}{.metadata.name} {.spec.template.spec.containers[*].image}{"\n"}{end}' \
   | grep ':placeholder' || true)
 if [ -n "$stuck" ]; then

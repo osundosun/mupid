@@ -428,20 +428,34 @@ class BuildTest(unittest.TestCase):
                     with self.subTest(overlay=overlay, path=path):
                         self.assertFalse(path.startswith(forbidden))
 
+    # 쓰기를 여는 hostPath. **여기 없는 것은 전부 읽기 전용이어야 한다.**
+    #
+    # `/state` 는 배치가 쌓는 자리다 — 워터마크·이벤트 로그·라벨 중간물·선호 구간.
+    # 색인(`/artifacts`)과 **다른 디렉터리**이고, 색인 쪽은 그대로 읽기 전용이다.
+    # 둘을 나눈 이유는 색인이 판마다 갈리기 때문이다: 상태를 거기 두면 판을
+    # 교체할 때마다 워터마크가 사라져 신호를 처음부터 다시 당긴다.
+    WRITABLE_HOST_PATHS = {"/srv/mupid-k8s/ai-state"}
+
     def test_host_mounts_from_the_existing_tree_are_read_only(self):
         """/etc/letsencrypt, /srv/mupid/acme and /srv/mupid/web belong to certbot
         and to the Compose deployment. This option only reads them."""
         for overlay in OVERLAYS:
             for doc in build(overlay):
-                if doc.get("kind") not in ("Deployment", "StatefulSet"):
+                if doc.get("kind") == "CronJob":
+                    spec = doc["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+                elif doc.get("kind") in ("Deployment", "StatefulSet"):
+                    spec = doc["spec"]["template"]["spec"]
+                else:
                     continue
-                spec = doc["spec"]["template"]["spec"]
                 host_volumes = {
-                    v["name"] for v in spec.get("volumes", []) if "hostPath" in v
+                    v["name"]: v["hostPath"]["path"]
+                    for v in spec.get("volumes", []) if "hostPath" in v
                 }
                 for container in spec["containers"]:
                     for mount in container.get("volumeMounts", []):
                         if mount["name"] not in host_volumes:
+                            continue
+                        if host_volumes[mount["name"]] in self.WRITABLE_HOST_PATHS:
                             continue
                         with self.subTest(overlay=overlay, mount=mount["mountPath"]):
                             self.assertTrue(mount.get("readOnly"))
@@ -1959,6 +1973,77 @@ class ApplyTagSubstitutionTest(unittest.TestCase):
         self.assertIn("exit 65", tail)
         # 최초 설치는 막지 않는다. 그때는 치환 단계가 그렇게 말해 둔다.
         self.assertIn("태그를 찾지 못했다", tail)
+
+class LabelBatchTest(unittest.TestCase):
+    """라벨이 없으면 **오류 없이 모든 사용자가 콜드스타트**가 된다. 서버는 정상으로
+    보이고 개인화만 없다 — 그래서 이 배치는 반드시 주기적으로 돌아야 한다."""
+
+    def _cronjob(self):
+        for doc in build("cutover"):
+            if doc.get("kind") == "CronJob" and doc["metadata"]["name"] == "ai-labeler":
+                return doc
+        raise AssertionError("ai-labeler CronJob 을 찾지 못했다")
+
+    def _pod(self):
+        return self._cronjob()["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+
+    def test_it_is_in_the_overlay(self):
+        """목록에서 빠지면 클러스터에 들어가지 않는다 — 그리고 라벨이 안 생기는
+        것은 오류가 아니라 침묵이라 한참 뒤에야 드러난다."""
+        kustomization = (K8S / "base" / "kustomization.yaml").read_text(encoding="utf-8")
+        self.assertRegex(kustomization, re.compile(r"^\s+- ai-labeler\.yaml\s*$", re.M))
+
+    def test_the_batch_runs_the_same_image_as_serving(self):
+        """등급 판정은 한 곳에서만 한다. 배치와 서빙이 다른 코드를 쓰면 라벨의
+        의미가 갈린다."""
+        self.assertEqual("mupid-ai:placeholder", self._pod()["containers"][0]["image"])
+
+    def test_the_batch_writes_outside_the_index(self):
+        """색인 마운트는 읽기 전용이다. 배치가 거기 쓰면 그 순간 실패하고, 열어
+        준다 해도 색인을 교체할 때마다 워터마크가 사라져 신호를 처음부터 다시
+        당긴다."""
+        pod = self._pod()
+        mounts = {m["name"]: m for m in pod["containers"][0]["volumeMounts"]}
+        self.assertTrue(mounts["artifacts"].get("readOnly"))
+        self.assertFalse(mounts["state"].get("readOnly", False))
+
+        volumes = {v["name"]: v["hostPath"]["path"] for v in pod["volumes"]}
+        self.assertNotEqual(volumes["artifacts"], volumes["state"])
+
+        env = {e["name"]: e.get("value") for e in pod["containers"][0]["env"]}
+        self.assertEqual("/state", env["MUPID_AI_STATE_DIR"])
+
+    def test_serving_reads_the_same_state(self):
+        """서빙이 선호 구간·온보딩 씨앗을 그 자리에서 읽는다. 갈리면 배치는 도는데
+        화면에는 아무것도 안 나오는, 오류 없는 고장이 된다."""
+        deployment = [d for d in build("cutover")
+                      if d.get("kind") == "Deployment" and d["metadata"]["name"] == "ai"][0]
+        spec = deployment["spec"]["template"]["spec"]
+        env = {e["name"]: e.get("value") for e in spec["containers"][0]["env"]}
+        self.assertEqual("/state", env["MUPID_AI_STATE_DIR"])
+
+        serving = {v["name"]: v["hostPath"]["path"] for v in spec["volumes"]}
+        self.assertEqual(serving["state"],
+                         {v["name"]: v["hostPath"]["path"]
+                          for v in self._pod()["volumes"]}["state"])
+
+    def test_two_runs_do_not_overlap(self):
+        """라벨러는 전체 사용자를 훑어 `section_labels` 를 판째로 갈아 끼운다.
+        두 판이 동시에 들어가면 어느 쪽이 최신인지 뒤섞인다."""
+        self.assertEqual("Forbid", self._cronjob()["spec"]["concurrencyPolicy"])
+
+    def test_it_does_not_collide_with_the_backup_window(self):
+        """MySQL 백업이 한국시간 03:00~03:05 에 돈다(infra/README.md)."""
+        spec = self._cronjob()["spec"]
+        self.assertEqual("Asia/Seoul", spec["timeZone"])
+        minute, hour = spec["schedule"].split()[:2]
+        self.assertNotEqual("3", hour, "백업 시간과 겹친다")
+
+    def test_the_pull_runs_before_the_labeler(self):
+        """반쯤 당긴 이벤트로 라벨을 만들면 그 판이 최신으로 잡힌다."""
+        args = " ".join(self._pod()["containers"][0]["args"])
+        self.assertIn("set -e", args)
+        self.assertLess(args.index("pull_signals"), args.index("run_labeler"))
 
 
 if __name__ == "__main__":
