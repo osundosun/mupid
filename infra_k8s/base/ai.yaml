@@ -1,9 +1,13 @@
 # ai_server. Not exposed through nginx — /internal has no authentication and
 # only the Spring API is meant to call it.
 #
-# **아직 띄우지 않는다 (replicas: 0).** 배포 경로를 먼저 만들어 두고 파드는
-# 나중에 올린다. 코드가 아직 파일 산출물에 의존하고 있어서 지금 띄우면
-# /internal/ready 가 503 이라 트래픽을 받지 못한다. 준비되면 숫자만 올린다.
+# **떠 있다 (replicas: 1).** 2026-09-16 에 실서비스에서 확인했다 —
+# `/internal/ready` 가 true 이고 `/internal/recommendations/daily` 가 실제 추천을
+# 돌려준다(카탈로그 1063곡·10,007구간, 적재 0.36초, 모델 NumPy 판).
+#
+# 여기까지 오는 데 걸렸던 것은 셋이었고 전부 고쳤다 — 색인이 파드가 뜨는 노드에
+# 있어야 한다는 것, 이미지도 그렇다는 것, 그리고 master 의 추천 서버가 id_map 을
+# 준비 조건으로 요구하고 있었다는 것(develop 병합으로 풀렸다).
 #
 # ## 산출물
 #
@@ -59,8 +63,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata: {name: ai, namespace: mupid}
 spec:
-  # 0 이다. 위 주석 참고 — 준비되면 1 로 올린다.
-  replicas: 0
+  # 1 이다. 실서비스 검증을 마쳤다 — 파드가 16초에 Ready 가 되고
+  # `/internal/recommendations/daily` 가 실제 추천을 돌려준다.
+  #
+  # 늘려도 된다. 색인 마운트가 읽기 전용이고 파드가 nodeSelector 로 같은 노드에
+  # 묶여 있어 여러 파드가 같은 디렉터리를 함께 읽는다. 다만 파드마다 카탈로그를
+  # 통째로 메모리에 올리므로 메모리가 파드 수에 비례한다.
+  replicas: 1
   selector: {matchLabels: {app: ai}}
   strategy:
     rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
