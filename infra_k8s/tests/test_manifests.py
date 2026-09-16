@@ -968,54 +968,75 @@ class LabelRoutingTest(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
-    def test_the_config_is_rendered_from_ci_variables(self):
-        """설정을 CI 변수로 관리한다. 기본값은 저장소의 config.example.json 이고
-        환경마다 다른 것만 변수로 덮는다.
+    def test_the_env_file_is_parsed_the_way_a_dotenv_is(self):
+        """배포에 필요한 모든 것이 File 형식 변수 하나에 들어간다. 그 파서가
+        조용히 틀리면 설정이 반영되지 않은 채로 배포가 성공한다."""
+        module = self._module()
+        values = module.parse_env(
+            "# 주석\n\nexport JUPYTER_USER=j15a204\n"
+            "JUPYTER_PASSWORD = \"sp ace\"\nSEGMENT_TIME=10\nREFRESH_TOKEN='tok'\n")
+        self.assertEqual(values["JUPYTER_USER"], "j15a204")
+        self.assertEqual(values["JUPYTER_PASSWORD"], "sp ace", "따옴표가 남았다")
+        self.assertEqual(values["REFRESH_TOKEN"], "tok")
+        # 같은 이름이 두 번이면 마지막이 조용히 이긴다 — 어느 값이 반영됐는지
+        # 알 수 없으므로 멈춰야 한다.
+        with self.assertRaises(SystemExit):
+            module.parse_env("A=1\nA=2")
 
-        타입이 중요하다 — CI 변수는 전부 문자열인데 서버의 ChunkConfig 는 그냥
+    def test_a_malformed_line_does_not_leak_its_contents(self):
+        """이 파일에는 비밀번호와 토큰이 들어 있다. 잘못된 줄이 하필 그 줄일 수
+        있으므로 오류 메시지는 줄 번호만 말해야 한다."""
+        module = self._module()
+        with self.assertRaises(SystemExit) as caught:
+            module.parse_env("JUPYTER_PASSWORD my-secret-value")
+        self.assertNotIn("my-secret-value", str(caught.exception))
+
+    def test_the_config_is_rendered_from_the_env_file(self):
+        """기본값은 저장소의 config.example.json 이고 env 파일이 덮는다.
+
+        타입이 중요하다 — env 값은 전부 문자열인데 서버의 ChunkConfig 는 그냥
         데이터클래스라 segment_time 에 "6" 이 들어가도 받아 주고, ffmpeg 인자를
         만들 때 가서야 깨진다."""
         module = self._module()
-        keep = dict(os.environ)
-        try:
-            for name in list(os.environ):
-                if name.startswith(module.CONFIG_PREFIX):
-                    del os.environ[name]
-            defaults = module.render_config()
-            self.assertEqual(defaults["segment_time"], 6)
+        self.assertEqual(module.render_config({})["segment_time"], 6)
 
-            os.environ[module.CONFIG_PREFIX + "SEGMENT_TIME"] = "10"
-            os.environ[module.CONFIG_PREFIX + "API_BASE_URL"] = "https://example"
-            config = module.render_config()
-            self.assertEqual(config["segment_time"], 10, "정수로 바뀌지 않았다")
-            self.assertEqual(config["api_base_url"], "https://example")
+        config = module.render_config(
+            {"SEGMENT_TIME": "10", "API_BASE_URL": "https://example"})
+        self.assertEqual(config["segment_time"], 10, "정수로 바뀌지 않았다")
+        self.assertEqual(config["api_base_url"], "https://example")
 
-            os.environ[module.CONFIG_PREFIX + "SEGMENT_TIME"] = "여섯"
-            with self.assertRaises(SystemExit):
-                module.render_config()
-            del os.environ[module.CONFIG_PREFIX + "SEGMENT_TIME"]
+        with self.assertRaises(SystemExit):
+            module.render_config({"SEGMENT_TIME": "여섯"})
+        # 오타를 조용히 넘기면 그 설정은 영영 반영되지 않는다.
+        with self.assertRaises(SystemExit):
+            module.render_config({"API_BASE_URLL": "x"})
+        # 접속·제어 이름은 설정 필드가 아니므로 통과해야 한다.
+        module.render_config({"JUPYTER_USER": "x", "REFRESH_TOKEN": "y",
+                              "RESET_TOKEN": "false"})
 
-            # 오타를 조용히 넘기면 그 설정은 영영 반영되지 않는다.
-            os.environ[module.CONFIG_PREFIX + "API_BASE_URLL"] = "x"
-            with self.assertRaises(SystemExit):
-                module.render_config()
-        finally:
-            os.environ.clear()
-            os.environ.update(keep)
+    def test_the_example_env_only_names_things_the_deploy_accepts(self):
+        """예시에 적힌 이름이 실제로는 거부되면, 그대로 베낀 사람이 배포에서
+        막힌다."""
+        module = self._module()
+        example = (ROOT / "music_preprocessing" / "deploy.env.example").read_text(
+            encoding="utf-8")
+        names = set()
+        for line in example.splitlines():
+            line = line.strip().lstrip("#").strip()
+            if "=" in line and not line.startswith("─"):
+                key = line.split("=", 1)[0].strip()
+                if key.isupper() and key.replace("_", "").isalnum():
+                    names.add(key)
+        self.assertTrue(names, "예시에서 이름을 읽지 못했다")
+        allowed = module.CONNECT | module.CONTROL | {
+            k.upper() for k in module.defaults()}
+        self.assertEqual(names - allowed, set())
 
     def test_every_rendered_key_is_one_the_server_accepts(self):
         """서버의 ChunkConfig 는 cls(**data) 로 읽는다. 모르는 키가 하나라도
         있으면 TypeError 로 배치가 통째로 죽는다."""
         module = self._module()
-        keep = dict(os.environ)
-        try:
-            for name in list(os.environ):
-                if name.startswith(module.CONFIG_PREFIX):
-                    del os.environ[name]
-            rendered = set(module.render_config())
-        finally:
-            os.environ.clear()
-            os.environ.update(keep)
+        rendered = set(module.render_config({}))
         source = (ROOT / "music_preprocessing" / "src" / "music_preprocessing"
                   / "config.py").read_text(encoding="utf-8")
         fields = set(re.findall(r"^    ([a-z_]+): (?:str|int|bool) =", source, re.M))

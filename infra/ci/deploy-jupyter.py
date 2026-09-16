@@ -31,14 +31,23 @@ uv 가 3.14 를 새로 받으려 든다.
     허브(`/hub/`)와 유저 서버(`/user/<id>/`) 양쪽에서 같은 이름으로 내려온다.
     유저 서버 것을 골라 써야 한다 — 허브 것을 보내면 403 이다.
 
-필요한 환경변수:
-  MUPID_JUPYTER_BASE_URL   https://lab.tailf237b8.ts.net
-  MUPID_JUPYTER_USER       j15a204
-  MUPID_JUPYTER_PASSWORD   그 계정의 비밀번호. **File 형식·보호된** CI 변수로
-                           넣는다 — 8자 미만이면 GitLab 이 마스킹을 거부하는데,
-                           File 형식은 환경에 경로만 들어가 그 문제가 없다.
-                           Variable 형식으로 넣어도 읽는다(read_secret 참고).
-  MUPID_JUPYTER_DIR        홈 기준 상대 경로 (기본 music_preprocessing)
+CI 변수는 **하나뿐**이다. MUPID_DATA_ENV 를 **File 형식·보호된** 변수로 넣고
+.env 처럼 KEY=VALUE 를 적는다. File 형식은 환경에 내용이 아니라 경로가 들어가서
+`echo` 해도 값이 새지 않고, 길이·문자 제한도 마스킹도 필요 없다.
+
+  # 배포 대상
+  JUPYTER_BASE_URL=https://lab.tailf237b8.ts.net
+  JUPYTER_USER=j15a204
+  JUPYTER_PASSWORD=...
+  JUPYTER_DIR=music_preprocessing          # 생략하면 이 값
+
+  # 배치 설정 — config.example.json 의 필드 이름을 대문자로
+  API_BASE_URL=https://j15a204.p.ssafy.io
+  INPUT_DIR=/home/j15a204/flow_music_data
+
+  # 비밀
+  REFRESH_TOKEN=...
+  RESET_TOKEN=false                        # true 면 서버의 토큰을 갈아엎는다
 
   --dry-run 을 주면 무엇을 올릴지만 찍고 아무것도 바꾸지 않는다.
 """
@@ -79,17 +88,61 @@ NEVER = {
 MARKER_BEGIN = "# BEGIN music_preprocessing"
 MARKER_END = "# END music_preprocessing"
 
-# 설정을 CI 변수로 관리한다. 기본값은 저장소의 config.example.json 이고 —
-# 그래야 리뷰가 되고 변경 이력이 남는다 — 환경마다 다른 것만 변수로 덮는다.
+# 배포에 필요한 모든 것을 **File 형식 CI 변수 하나**로 받는다. .env 와 같은
+# KEY=VALUE 형식이다. 변수를 여러 개로 흩으면 등록할 것도 많고, 어느 것이
+# 비밀이라 마스킹해야 하는지도 매번 따져야 한다. 파일 하나면 그 문제가 없다 —
+# File 형식은 환경에 경로만 들어가므로 길이·문자 제한도 마스킹도 필요 없다.
 #
-#   MUPID_PREPROCESSING_API_BASE_URL=https://j15a204.p.ssafy.io
-#   MUPID_PREPROCESSING_INPUT_DIR=/home/j15a204/flow_music_data
+#   # 배포 대상
+#   JUPYTER_BASE_URL=https://lab.tailf237b8.ts.net
+#   JUPYTER_USER=j15a204
+#   JUPYTER_PASSWORD=...
 #
-# 비밀은 둘뿐이고 이름이 다르다 (CONTROL 참고). config.json 자체에는 비밀이
-# 없다 — 토큰은 api_refresh_token_file 이 가리키는 별도 파일에 있다.
-CONFIG_PREFIX = "MUPID_PREPROCESSING_"
+#   # 배치 설정 — 이름은 config.example.json 의 필드를 대문자로 쓴 것
+#   API_BASE_URL=https://j15a204.p.ssafy.io
+#   INPUT_DIR=/home/j15a204/flow_music_data
+#
+#   # 비밀
+#   REFRESH_TOKEN=...
+#
+# 설정의 기본값은 저장소의 config.example.json 이다 — 그래야 리뷰가 되고 변경
+# 이력이 남는다. 이 파일에는 환경마다 다른 것만 적는다.
+CONFIG_ENV = "MUPID_DATA_ENV"
+# 배포 대상. 설정 필드가 아니다.
+CONNECT = {"JUPYTER_BASE_URL", "JUPYTER_USER", "JUPYTER_PASSWORD", "JUPYTER_DIR"}
 # 설정 필드가 아니라 배포 동작을 바꾸는 이름들.
 CONTROL = {"REFRESH_TOKEN", "RESET_TOKEN"}
+
+
+def parse_env(text):
+    """.env 형식을 읽는다. 값은 어디에도 찍지 않는다.
+
+    오류 메시지에 줄 내용을 넣지 않는 것이 중요하다 — 이 파일에는 비밀번호와
+    토큰이 들어 있고, 잘못된 줄이 하필 그 줄일 수 있다. 줄 번호만 말한다.
+    """
+    values, seen = {}, {}
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        if "=" not in line:
+            die(f"{CONFIG_ENV} {number}번 줄에 '=' 가 없다 (내용은 찍지 않는다)")
+        key, value = line.split("=", 1)
+        key = key.strip().upper()
+        if not key:
+            die(f"{CONFIG_ENV} {number}번 줄에 이름이 없다")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key in seen:
+            # 마지막 것이 조용히 이기면 어느 값이 반영됐는지 알 수 없다.
+            die(f"{CONFIG_ENV} 에 {key} 가 두 번 있다 "
+                f"({seen[key]}번 줄, {number}번 줄)")
+        seen[key] = number
+        values[key] = value
+    return values
 
 
 def coerce(sample, value, name):
@@ -119,29 +172,41 @@ def _relative(path):
     return cleaned
 
 
-def render_config():
-    """config.example.json 을 기본값으로 두고 CI 변수로 덮어쓴다."""
-    defaults = json.loads((SOURCE / "config.example.json").read_text(encoding="utf-8"))
-    config = dict(defaults)
+def defaults():
+    return json.loads((SOURCE / "config.example.json").read_text(encoding="utf-8"))
+
+
+def render_config(values):
+    """config.example.json 을 기본값으로 두고 env 파일의 값으로 덮어쓴다."""
+    base = defaults()
+    config = dict(base)
     unknown = []
-    for name, value in sorted(os.environ.items()):
-        if not name.startswith(CONFIG_PREFIX):
+    for key, value in values.items():
+        if key in CONNECT or key in CONTROL:
             continue
-        field = name[len(CONFIG_PREFIX):]
-        if field in CONTROL:
+        field = key.lower()
+        if field not in base:
+            unknown.append(key)
             continue
-        key = field.lower()
-        if key not in defaults:
-            unknown.append(name)
-            continue
-        config[key] = coerce(defaults[key], value, name)
+        config[field] = coerce(base[field], value, key)
     if unknown:
         # 오타를 조용히 넘기면 그 설정은 영영 반영되지 않는다. 서버의
         # ChunkConfig 는 cls(**data) 라 모르는 키가 있으면 거기서 터지기도 한다.
-        die("모르는 설정 변수: " + ", ".join(unknown)
+        die(f"{CONFIG_ENV} 에 모르는 이름이 있다: " + ", ".join(sorted(unknown))
             + "\n쓸 수 있는 이름: "
-            + ", ".join(CONFIG_PREFIX + k.upper() for k in sorted(defaults)))
+            + ", ".join(sorted(CONNECT | CONTROL | {k.upper() for k in base})))
     return config
+
+
+def load_env(required):
+    """File 형식 CI 변수를 읽어 KEY=VALUE 로 돌려준다."""
+    raw = os.environ.get(CONFIG_ENV)
+    if not raw:
+        if required:
+            die(f"{CONFIG_ENV} 가 없다. File 형식·보호된 CI 변수로 등록한다 — "
+                "무엇을 적는지는 infra/ci/deploy-jupyter.py 머리말에 있다.")
+        return {}
+    return parse_env(read_secret(raw))
 
 
 def die(message):
@@ -391,31 +456,35 @@ def main():
     args = parser.parse_args()
 
     uploads = files_to_upload()
-    directory = os.environ.get("MUPID_JUPYTER_DIR", "music_preprocessing")
+    # env 파일은 배포에만 필요하다. dry-run 은 없어도 돌아야 한다 — data-verify
+    # 가 MR 에서 이 경로를 돌려 보는데, 그 job 에는 보호 변수가 주어지지 않는다.
+    values = load_env(required=not args.dry_run)
+    config = render_config(values)
+    directory = values.get("JUPYTER_DIR") or "music_preprocessing"
+
     if args.dry_run:
         print(f"{len(uploads)}개 파일을 ~/{directory} 로 올린다:")
         for name, path in uploads:
             print(f"  {name}  ({path.stat().st_size}B)")
-        # 설정은 여기서 만들어진다. 변수 이름을 틀렸으면 배포 전에 걸린다.
-        config = render_config()
-        defaults = json.loads((SOURCE / "config.example.json").read_text(encoding="utf-8"))
-        print("\nconfig.json (CI 변수로 덮인 값은 ←):")
+        base = defaults()
+        print(f"\nconfig.json ({CONFIG_ENV} 로 덮인 값은 ←):")
         for key in sorted(config):
-            mark = "  ←" if config[key] != defaults[key] else ""
+            mark = "  ←" if config[key] != base[key] else ""
             print(f"  {key} = {config[key]!r}{mark}")
-        token = os.environ.get(CONFIG_PREFIX + "REFRESH_TOKEN")
-        print(f"\nrefresh_token: {'주어짐' if token else '없음'} (값은 찍지 않는다)")
+        if not values:
+            print(f"\n({CONFIG_ENV} 가 없어 기본값만 보인다. 배포 때는 필수다.)")
+        print(f"\nrefresh_token: "
+              f"{'주어짐' if values.get('REFRESH_TOKEN') else '없음'} (값은 찍지 않는다)")
         print("건드리지 않는 것:", ", ".join(sorted(NEVER - {"config.json"})))
         return 0
 
-    base = os.environ.get("MUPID_JUPYTER_BASE_URL") or die("MUPID_JUPYTER_BASE_URL 이 없다")
-    user = os.environ.get("MUPID_JUPYTER_USER") or die("MUPID_JUPYTER_USER 가 없다")
-    password = read_secret(
-        os.environ.get("MUPID_JUPYTER_PASSWORD") or die("MUPID_JUPYTER_PASSWORD 가 없다"))
-    if not password:
-        die("MUPID_JUPYTER_PASSWORD 가 비어 있다 (File 형식이면 파일이 비었는지 본다)")
+    missing = sorted(k for k in ("JUPYTER_BASE_URL", "JUPYTER_USER", "JUPYTER_PASSWORD")
+                     if not values.get(k))
+    if missing:
+        die(f"{CONFIG_ENV} 에 {', '.join(missing)} 가 없다")
 
-    hub = Hub(base, user, password)
+    hub = Hub(values["JUPYTER_BASE_URL"], values["JUPYTER_USER"],
+              values["JUPYTER_PASSWORD"])
     print("유저 서버:", hub.start_server())
 
     # 부모부터 만든다. src/music_preprocessing 을 먼저 요청하면 404 다.
@@ -434,27 +503,26 @@ def main():
     # NEVER 가 막는 것은 트리에 있는 같은 이름의 파일이고, 이 경로가 config.json
     # 을 쓰는 의도된 유일한 통로다. 서버에서 손으로 고친 것은 덮인다 — 설정을
     # CI 변수로 관리한다는 것이 그런 뜻이다.
-    config = render_config()
     hub.put_file(f"{directory}/config.json",
                  json.dumps(config, ensure_ascii=False, indent=2).encode() + b"\n")
     print(f"config.json 을 올렸다 (api_base_url={config['api_base_url'] or '(비어 있음)'})")
 
     token_path = f"{directory}/{_relative(config['api_refresh_token_file'])}"
-    token = os.environ.get(CONFIG_PREFIX + "REFRESH_TOKEN")
-    reset = os.environ.get(CONFIG_PREFIX + "RESET_TOKEN", "").lower() == "true"
+    token = values.get("REFRESH_TOKEN")
+    reset = values.get("RESET_TOKEN", "").lower() == "true"
     present = hub.exists(token_path)
     if token and (not present or reset):
-        hub.put_file(token_path, read_secret(token).encode() + b"\n")
+        hub.put_file(token_path, token.encode() + b"\n")
         print("refresh_token.txt 를 " + ("다시 썼다" if present else "새로 썼다"))
     elif token:
-        # **배치가 이 파일을 회전시킨다.** 배포할 때마다 CI 에 저장된 초기
+        # **배치가 이 파일을 회전시킨다.** 배포할 때마다 env 파일에 적힌 초기
         # 토큰으로 되돌리면, 이미 회전해 무효가 된 토큰을 도로 넣는 셈이라
         # 다음 배치가 인증에 실패한다. 그래서 있으면 두는 것이 기본이다.
-        print(f"refresh_token.txt 가 이미 있어 그대로 둔다 "
-              f"(배치가 회전시키는 파일이다. 덮으려면 {CONFIG_PREFIX}RESET_TOKEN=true)")
+        print("refresh_token.txt 가 이미 있어 그대로 둔다 "
+              "(배치가 회전시키는 파일이다. 덮으려면 RESET_TOKEN=true)")
     elif config["api_base_url"] and not present:
-        die(f"api_base_url 이 설정됐는데 {CONFIG_PREFIX}REFRESH_TOKEN 이 없고 "
-            "서버에도 refresh_token.txt 가 없다. 등록 단계가 전부 실패한다.")
+        die("api_base_url 이 설정됐는데 REFRESH_TOKEN 이 없고 서버에도 "
+            "refresh_token.txt 가 없다. 등록 단계가 전부 실패한다.")
 
     print(hub.run(REMOTE.format(
         directory=directory, begin=MARKER_BEGIN, end=MARKER_END,
