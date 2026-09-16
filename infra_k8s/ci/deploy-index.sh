@@ -14,6 +14,15 @@
 #
 # 입력은 `python -m ai_server.tools.slice_index --out <디렉터리>` 의 출력이다.
 #
+# **어느 노드로 보내는지가 중요하다.** 색인은 파드가 뜨는 노드의 디스크에 있어야
+# 한다(hostPath). ai 는 `nodeSelector: mupid.io/role=ai` 로 node-b 에 묶여 있는데,
+# 배포 엔드포인트(j15a204.p.ssafy.io)는 node-a 다. 처음에 그걸 놓쳐서 색인을
+# node-a 에 올려 두고 파드는 node-b 에서 빈 /artifacts 를 봤다 — /health 의
+# data_dir_exists=false 로만 드러났다.
+#
+# MUPID_AI_NODE_SSH 로 그 노드를 지정한다. 기본값을 두지 않는다 — 기본값이 있으면
+# 잘못된 노드로 조용히 올라간다.
+#
 # 강제 명령(ssh-entrypoint-k8s.sh)이 `upload-index <커밋> <sha256>` 을 받아
 # receive-index.py 로 넘긴다. 받는 쪽은 새 판을 옆에 풀고 current 심볼릭 링크를
 # 원자적으로 갈아 끼운다 — 한 파일씩 덮으면 그 사이에 기동한 파드가 서로 다른 판의
@@ -24,6 +33,8 @@ set -eu
 # CI 밖에서도 돈다. 판을 식별할 커밋이 필요하니 없으면 현재 HEAD 를 쓴다 —
 # 색인을 올린 시점의 코드가 무엇이었는지가 되돌릴 때의 유일한 단서다.
 commit=${CI_COMMIT_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}
+: "${MUPID_AI_NODE_SSH:?ai 파드가 뜨는 노드 (예: mupid-deploy-k8s@10.0.0.2). 배포 엔드포인트와 다를 수 있다}"
+node=$MUPID_AI_NODE_SSH
 printf '%s\n' "${commit:?커밋을 알 수 없다 — CI_COMMIT_SHA 를 지정한다}" \
   | grep -Eq '^[0-9a-f]{40}$'
 
@@ -69,7 +80,7 @@ printf '색인 묶음 %s 바이트, sha256 %s\n' "$(wc -c < "$bundle")" "$checks
 
 ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
   -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" \
-  -i "$key" mupid-deploy-k8s@j15a204.p.ssafy.io \
+  -i "$key" "$node" \
   "upload-index $commit $checksum" < "$bundle"
 
 # 파드는 기동 시점의 심볼릭 링크를 따라간다. 갈아 끼우기만 하면 **도는 파드는 계속

@@ -1716,7 +1716,14 @@ class IndexUploadTest(unittest.TestCase):
         """한 파일씩 덮으면 그 사이에 기동한 파드가 판을 섞어 읽는다."""
         receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
         self.assertIn("symlink_to(release)", receiver)
-        self.assertIn('pending.replace(ARTIFACTS / "current")', receiver)
+        self.assertIn("pending.replace(current)", receiver)
+
+    def test_the_receiver_explains_a_directory_where_the_link_belongs(self):
+        """실제로 겪은 고장이다. hostPath 를 `.../current` 로 잡아 두면 kubelet 의
+        DirectoryOrCreate 가 그 이름으로 **디렉터리**를 만들고, 그러면 os.replace 가
+        IsADirectoryError 로 죽는다. 원문 예외는 원인을 짐작하게 하지 않는다."""
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn("current.exists() and not current.is_symlink()", receiver)
 
     def test_the_receiver_checks_the_same_thing_the_pod_will(self):
         """여기서 막지 않으면 증상이 "파드는 떴는데 ready 가 영영 false" 로만
@@ -1733,8 +1740,9 @@ class IndexUploadTest(unittest.TestCase):
             if d and d["kind"] == "Deployment"][0]
         spec = deployment["spec"]["template"]["spec"]
         volume = {v["name"]: v for v in spec["volumes"]}["artifacts"]
-        self.assertEqual("/srv/mupid-k8s/ai-artifacts/current",
-                         volume["hostPath"]["path"])
+        # **부모를 마운트한다.** `.../current` 를 직접 마운트하면 kubelet 이 그
+        # 이름으로 디렉터리를 만들어 수신기가 링크를 갈아 끼우지 못한다(실제로 겪었다).
+        self.assertEqual("/srv/mupid-k8s/ai-artifacts", volume["hostPath"]["path"])
         receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
         self.assertIn('ARTIFACTS = ROOT / "ai-artifacts"', receiver)
         self.assertIn('ROOT = pathlib.Path("/srv/mupid-k8s")', receiver)
@@ -1744,7 +1752,8 @@ class IndexUploadTest(unittest.TestCase):
         self.assertEqual("/artifacts", mount["artifacts"]["mountPath"])
         self.assertTrue(mount["artifacts"]["readOnly"])
         env = {e["name"]: e.get("value") for e in spec["containers"][0]["env"]}
-        self.assertEqual("/artifacts", env["MUPID_AI_ARTIFACT_DIR"])
+        # 마운트는 부모이고, 읽는 곳은 그 안의 심볼릭 링크다.
+        self.assertEqual("/artifacts/current", env["MUPID_AI_ARTIFACT_DIR"])
 
     def test_the_volume_is_created_rather_than_required(self):
         """Directory 로 두면 한 번도 올리지 않은 노드에서 **파드가 뜨지도 못해**
@@ -1773,6 +1782,17 @@ class IndexUploadTest(unittest.TestCase):
             with self.subTest(file=name):
                 self.assertIn(name, script)
         self.assertIn("slice_index", script)
+
+    def test_the_uploader_demands_the_node_the_pod_runs_on(self):
+        """색인은 파드가 뜨는 노드의 디스크에 있어야 한다(hostPath). ai 는 node-b 에
+        묶여 있는데 배포 엔드포인트는 node-a 다. 처음에 그걸 놓쳐 색인을 node-a 에
+        올려 두고, 파드는 node-b 에서 **빈 /artifacts** 를 봤다 — 증상은 /health 의
+        data_dir_exists=false 뿐이었다."""
+        script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
+        self.assertIn("MUPID_AI_NODE_SSH", script)
+        # 기본값을 두지 않는다. 있으면 잘못된 노드로 조용히 올라간다.
+        self.assertNotIn("MUPID_AI_NODE_SSH:-", script)
+        self.assertNotIn("mupid-deploy-k8s@j15a204.p.ssafy.io", script)
 
     def test_the_uploader_never_prints_the_private_key(self):
         """`< "$VAR"` 로 열면 Variable 로 등록돼 있을 때 셸이 열기 실패
