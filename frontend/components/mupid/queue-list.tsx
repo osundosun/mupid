@@ -132,7 +132,6 @@ export function QueueList({
 
   const onPointerDown = (uid: string) => (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
     pointerY.current = event.clientY;
     setDrag(uid);
     setLive(baseUids);
@@ -140,26 +139,55 @@ export function QueueList({
     frame.current = requestAnimationFrame(autoScroll);
   };
 
-  const onPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (dragUidRef.current === null) return;
-    pointerY.current = event.clientY;
-    reorderAt(event.clientY);
-  };
-
-  const onPointerUp = () => {
+  /** 손을 뗀 그 자리에서 순서를 확정한다. */
+  const endDrag = () => {
     stopAutoScroll();
     const dragging = dragUidRef.current;
     const live = liveUidsRef.current;
-    if (dragging !== null && live) {
-      const to = live.indexOf(dragging);
-      setDrag(null);
-      setLive(null);
-      move(dragging, to);
-      return;
-    }
     setDrag(null);
     setLive(null);
+    if (dragging !== null && live) move(dragging, live.indexOf(dragging));
   };
+
+  /*
+   * 끄는 동안의 손짓은 **창 전체에서 듣는다.**
+   *
+   * 예전에는 손잡이 버튼에 직접 달고 포인터 캡처로 붙잡아 두었는데, 줄이 자리를
+   * 옮길 때마다 그 버튼이 다시 그려지며 캡처가 풀렸다. 그러면 목록 밖에서 손을
+   * 떼도 끝나는 신호가 어디에도 닿지 않아 끌기가 살아남고, 커서가 다른 줄의
+   * 손잡이 위를 지날 때마다 그 줄의 핸들러가 대신 반응해서 **떼었는데도 줄이
+   * 커서를 따라다녔다.** 창에 달면 어디서 떼든 그 자리에서 끝난다.
+   *
+   * 창을 떠나는 것(`blur`)도 끝으로 친다 — 다른 창에서 손을 떼면 이쪽은 뗀 줄을
+   * 영영 모른다.
+   */
+  // 창에 걸어 두는 것은 **늘 이번 렌더의 함수**다. 한 번 건 함수를 그대로 두면
+  // 끄는 사이에 목록이 바뀌었을 때 옛 순서를 기준으로 자리를 확정한다.
+  const endDragRef = useRef(endDrag);
+  const reorderAtRef = useRef(reorderAt);
+  useEffect(() => {
+    endDragRef.current = endDrag;
+    reorderAtRef.current = reorderAt;
+  });
+
+  useEffect(() => {
+    if (!dragUid) return;
+    const onMove = (event: PointerEvent) => {
+      pointerY.current = event.clientY;
+      reorderAtRef.current(event.clientY);
+    };
+    const onEnd = () => endDragRef.current();
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+    window.addEventListener('blur', onEnd);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+      window.removeEventListener('blur', onEnd);
+    };
+  }, [dragUid]);
 
   // 고르는 중에는 손잡이를 접어 둔다. 순서 바꾸기와 섞이면 헷갈린다.
   const picking = selection.active;
@@ -205,9 +233,6 @@ export function QueueList({
               className="queue-handle"
               aria-label={`${track.title} 순서 바꾸기. ${index + 1}번째, 위아래 화살표로 이동`}
               onPointerDown={onPointerDown(track.uid)}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
               onKeyDown={(event) => {
                 if (event.key === 'ArrowUp') { event.preventDefault(); move(track.uid, index - 1); }
                 if (event.key === 'ArrowDown') { event.preventDefault(); move(track.uid, index + 1); }
