@@ -13,16 +13,33 @@
 | 병합 대상 | 기본은 `develop`. `master` 는 릴리스 시점에만 (`Merge branch 'develop' into 'master'`) | 병합 커밋 이력 |
 | `master` 직접 push | 하지 않는다. MR 로 병합한다 | `api/AGENTS.md` |
 | `develop` 직접 push | 서버 설정으로도 금지 | `infra/OPERATIONS.md` |
+| **영역 라벨** | **MR 을 만들 때 반드시 붙인다** (`Backend`·`Frontend`·`AI`·`Data`). 없으면 CI 가 실패한다 | `infra/ci/labels.yml` |
 | MR 템플릿 / 승인 규칙 | 저장소에 파일이 없다 | `git ls-files` |
 
 `master` 는 서버가 아니라 합의로만 막혀 있다 — `infra/OPERATIONS.md` 가 "GitLab master 기본 규칙은 Maintainer push를 허용하므로 팀 규칙상 직접 push하지 않는다. develop은 서버 설정에서도 직접 push 금지다"라고 적는다.
 
 흐름 (`infra/OPERATIONS.md`):
 
-1. 작업 브랜치에서 변경 후 `develop` 대상 MR 생성
+1. 작업 브랜치에서 변경 후 `develop` 대상 MR 생성 — **영역 라벨을 함께 붙인다**
 2. CI 통과 및 변경 검토 (문서는 "백엔드는 Gradle build/test"라고 적지만 실제로는 test 를 건너뛴다 — 아래)
 3. MR 병합 후 이미지/정적 파일 패키징과 demo 배포 자동 실행
 4. pipeline 의 deploy job 성공과 서비스 확인. MR 의 수동 package job 은 일반 MR 병합의 필수 단계가 아니다
+
+### 영역 라벨을 붙여야 검증이 돈다
+
+MR 을 만들 때 `Backend`·`Frontend`·`AI`·`Data` 중 해당하는 라벨을 **같은 명령에서** 붙인다. 라벨이 없으면 `require-area-label`(`infra/ci/labels.yml`)만 든 파이프라인이 만들어져 **실패**하고, 영역 verify job 은 **하나도 돌지 않는다** — 아무것도 검증하지 않은 MR 이 된다.
+
+```bash
+glab mr create --label Backend --label Frontend ...
+```
+
+**나중에 라벨을 붙여도 이미 만들어진 파이프라인은 되살아나지 않는다.** GitLab 은 `rules` 를 파이프라인 **생성 시점**에 평가하고, 라벨 변경으로 MR 파이프라인을 다시 돌리지 않는다. 뒤늦게 붙였다면 라벨을 붙인 뒤 파이프라인을 **재실행**한다.
+
+```bash
+glab api --method POST "projects/<프로젝트>/merge_requests/<iid>/pipelines"
+```
+
+재실행 결과에서 `require-area-label` 이 **사라지고** 영역 verify job 이 나타나면 라벨이 인식된 것이다.
 
 병합 커밋 제목은 GitLab 기본 형식 `Merge branch '<source>' into '<target>'` 이다. GitLab 이 서버에서 만들므로 훅을 거치지 않고, 로컬에서 직접 merge 하는 경우에도 훅 3단계(`MERGE_HEAD`)에 걸려 티켓이 붙지 않는다.
 
