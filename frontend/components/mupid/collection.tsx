@@ -4,6 +4,7 @@ import { DailyAlbumTreemap } from './daily-album-treemap';
 import { PlaylistMenu } from './playlist-menu';
 import { SelectionToolbar, useTrackSelection } from './track-selection';
 import { MupidMascot } from './mascot';
+import { toImageSource } from '@/lib/platform/image';
 import { ProfilePhoto } from './profile-photo';
 import { useEffect, useState } from 'react';
 import { DemoAccount } from './demo-login';
@@ -407,6 +408,51 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
 }
 
 /**
+ * 리포트 카드의 MuBTI 캐릭터 — 서버가 준 유형 일러스트.
+ *
+ * 서버는 16유형 각각의 캐릭터를 들고 있다(`image_url` = `/api/v1/storage/image/MUBTI/VTFC.webp`).
+ * 그 한 장이 곧 판정 결과라, 화면은 그 이미지를 그대로 쓴다.
+ *
+ * **이미지가 없으면 마스코트로 내려간다.** 서버가 아직 이미지를 못 올렸거나(부트스트랩이
+ * 도는 중) 응답이 `image_url: null` 이어도 카드가 비지 않게 하려는 것이다. 실패를 감지해
+ * 대체 이미지로 바꾸는 길은 쓰지 않는다 — `<img onError>` 는 이미지가 늦게 와도
+ * 한 번 깨진 뒤에는 되돌아오지 않고, 로딩 중에 빈 자리가 보인다. 대신 **응답에 주소가
+ * 없을 때만** 대체하고, 주소가 있으면 그 주소를 정직하게 내보낸다(서버에서 401·404 를
+ * 받으면 그때는 이미지가 깨져 보이는 편이 낫다 — 서버가 잘못 준 것을 숨기지 않는다).
+ *
+ * 앱(Tauri)에서는 주소를 Rust 가 받아 `mupidimg` 스킴으로 돌려주므로
+ * `toImageSource` 를 거쳐야 한다. 안 거치면 앱에서 캐릭터만 깨진다.
+ */
+function ReportMubtiArt({
+  code,
+  imageUrl,
+  alt,
+}: {
+  code: string;
+  imageUrl: string | null;
+  alt: string;
+}) {
+  const source = toImageSource(imageUrl);
+  if (!source) {
+    return <MupidMascot size={132} className="report-cupid" alt={alt} />;
+  }
+  return (
+    <img
+      className="report-cupid"
+      src={source}
+      alt={alt}
+      width={132}
+      height={132}
+      loading="lazy"
+      decoding="async"
+      // `key` 는 유형이 바뀔 때 브라우저가 앞 이미지를 재사용하지 않게 한다.
+      // 같은 자리에 다른 그림이 들어오는데 캐시가 섞이면 잘못된 유형이 보인다.
+      key={code}
+    />
+  );
+}
+
+/**
  * 내 취향 리포트.
  *
  * 세 블록 모두 서버 집계다 — 곡별 청취량 트리맵 · 음악 키워드 · MuBTI 판정.
@@ -442,10 +488,10 @@ export function ReportView({ model: m }: { model: MupidModel }) {
                   <br />
                   <em>{mubti.title}</em>
                 </h2>
-                <MupidMascot
-                  size={132}
-                  className="report-cupid"
-                  alt="헤드폰을 끼고 구름 위에서 음악에 잠긴 뮤피드"
+                <ReportMubtiArt
+                  code={mubti.code}
+                  imageUrl={mubti.image_url}
+                  alt={`헤드폰을 끼고 구름 위에서 음악에 잠긴 ${mubti.title} 뮤피드`}
                 />
                 <p>{mubti.description}</p>
                 {/* 축 점수 막대는 그리지 않는다. 화면에 없던 것을 리포트 연동하면서

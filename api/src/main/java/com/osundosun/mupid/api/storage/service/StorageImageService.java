@@ -36,6 +36,21 @@ public interface StorageImageService {
     }
 
     /**
+     * 오브젝트 스토리지의 저장 키. `image/{카테고리 소문자}/{키}`.
+     *
+     * <p><b>키 모양을 아는 곳은 여기 하나뿐이어야 한다.</b> 위 {@link #imageUrl} 이 이 모양을
+     * 되짚어 조회 URL 을 만들기 때문이다 — 앞 두 마디를 떼고 카테고리를 붙인다.
+     *
+     * <p>그 약속을 지키지 않은 코드가 있었다. {@code BootstrapRunner} 가 키를
+     * `mubti/VTFC.webp` 로 손수 만들면서 접두사를 빼는 바람에 {@code imageUrl} 이 3마디를
+     * 못 찾아 <b>예외도 로그도 없이 null</b> 을 돌려주었고, `/report` 의 MuBTI 캐릭터가
+     * 뜨지 않았다. 그래서 그쪽도 이 메서드를 쓴다.
+     */
+    static String storageKey(FileCategory category, String key) {
+        return "image/%s/%s".formatted(category.name().toLowerCase(), key);
+    }
+
+    /**
      * 저장된 파일의 조회 URL. 파일이 없거나 삭제됐으면 `null` 이다.
      *
      * 없을 때 기본 이미지를 보여 주고 싶으면 호출 쪽이

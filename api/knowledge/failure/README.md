@@ -12,10 +12,10 @@
 | [database-and-jpa.md](database-and-jpa.md) | 29 | 트랜잭션 경계, 더티체킹, 지연로딩, 스키마 반영 |
 | [auth-and-api.md](auth-and-api.md) | 44 | JWT·쿠키·필터, 이메일 인증, 오류 응답 규약 위반 |
 | [config-and-env.md](config-and-env.md) | 11 | `MUPID_` 접두사, `.env` 주입 경로, 값이 컨테이너에서만 안 잡히는 경우 |
-| [docker-and-nginx.md](docker-and-nginx.md) | 17 | 베이스 이미지 차이, 레이어 캐싱, compose 파일 혼동, envsubst 치환 |
+| [docker-and-nginx.md](docker-and-nginx.md) | 18 | 베이스 이미지 차이, 레이어 캐싱, compose 파일 혼동, envsubst 치환 |
 | [clickhouse-and-kafka.md](clickhouse-and-kafka.md) | 26 | 클러스터·Keeper, 스키마 변경, Kafka 엔진 연동, 로컬 기동 |
 | [integrations.md](integrations.md) | 13 | S3 호환 스토리지, Gmail API 인증, 메일 템플릿 |
-| [windows-gitbash.md](windows-gitbash.md) | 5 | 경로 자동 변환, 포트 점유 등 Windows 개발 환경 |
+| [windows-gitbash.md](windows-gitbash.md) | 7 | 경로 자동 변환, 포트 점유, `NODE_ENV` 때문에 devDependency 가 빠지는 경우 |
 | [cicd-and-ops.md](cicd-and-ops.md) | 21 | GitLab CI, 배포·롤백, 백업, 러너 |
 | [git-and-convention.md](git-and-convention.md) | 9 | husky 훅, 브랜치·커밋 규약 위반 |
 | [frontend.md](frontend.md) | 28 | vinext·RSC 빌드와 자산 파이프라인, 재생기(이어듣기·seek·볼륨), 세션·로그인 상태, 큐 저장 유실, 끌어서 순서 바꾸기, 개발 서버 캐시 |

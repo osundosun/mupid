@@ -175,7 +175,7 @@ docs:
     - `GET /api/v1/mail/verification/**`
     - `GET /api/actuator/**`
     - `GET /api/v1/onboarding/option` (온보딩 선택지 — 무드·장르 이름 목록)
-    - `GET /api/v1/storage/image/ALBUM/*`, `.../ARTIST/*`, `.../TRACK/*` (앨범·아티스트·곡 커버 이미지)
+    - `GET /api/v1/storage/image/ALBUM/*`, `.../ARTIST/*`, `.../TRACK/*`, `.../MUBTI/*` (앨범·아티스트·곡 커버·MuBTI 캐릭터 이미지)
 
     스트리밍(`Stream` 폴더) 엔드포인트는 모두 액세스 토큰이 필요합니다.
 

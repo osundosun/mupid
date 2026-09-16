@@ -1814,6 +1814,8 @@ h1 {
 .report-card.listening-story {
   isolation: isolate;
 }
+/* MuBTI 캐릭터. 서버 일러스트(`<img>`)와 대체 마스코트(배경 이미지를 쓰는 `<span>`)가
+   같은 자리를 쓴다 — 그래서 크기·투명도를 여기 한 곳에서 정한다. */
 .report-cupid {
   position: absolute;
   right: 12px;
@@ -1821,6 +1823,12 @@ h1 {
   z-index: -1;
   opacity: 0.3;
   pointer-events: none;
+}
+img.report-cupid {
+  width: 132px;
+  height: 132px;
+  object-fit: contain;
+  background: transparent;
 }
 .keyword-card {
   margin-top: 18px;

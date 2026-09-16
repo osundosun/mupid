@@ -48,7 +48,7 @@
 
 - **원인**: `docker exec -i ... mysql ... < seed-*.sql` 이 `--default-character-set` 없이 돌면 클라이언트가 파일의 UTF-8 바이트를 **latin1 로 읽어 다시 인코딩**한다. `보컬 소개팅형` 이 `ë³´ì»¬ ì†Œê°œíŒ…í˜•` 로 들어간다. **오류가 나지 않는다** — 행 수도 맞고 SQL 도 성공한다.
 - **증상**: `SELECT CHAR_LENGTH(title)` 이 눈에 보이는 글자 수보다 훨씬 크다(7 글자가 19). `HEX(LEFT(title,1))` 가 `C3AB`(= `Ã«`) 처럼 나오면 그렇게 들어간 것이다. 정상이면 한글 한 글자가 `EBB3B4` 같은 3바이트다.
-- **해결**: `mysql` 에 `--default-character-set=utf8mb4` 를 붙인다. 이미 들어간 행은 고칠 수 없으므로 지우고 다시 넣는다. `seed-codes.sql` · `seed-mubti.sql` 머리말에 이 플래그가 붙은 명령을 적어 두었다.
+- **해결**: `mysql` 에 `--default-character-set=utf8mb4` 를 붙인다. 이미 들어간 행은 고칠 수 없으므로 지우고 다시 넣는다. `seed-codes.sql` 머리말에 이 플래그가 붙은 명령을 적어 두었다. (`seed-mubti.sql` 은 S15P21A204-344 이후 부트스트랩이 그 표를 채우면서 없앴다.)
 - **기동 때 잡는다**: `BootstrapRunner` 가 `codes` 를 읽을 때 이렇게 들어간 행을 찾아
   경고로 남긴다(`recoverDoubleEncoded`). 판정은 되돌려 보는 것이다 — 한 글자씩 바이트
   하나로 되돌릴 수 있고, 그 바이트열이 온전한 UTF-8 이며, 되살린 값에 한글이 있으면
@@ -74,7 +74,7 @@
   -- 3) 참조가 없을 때만
   DELETE FROM codes WHERE code_type = 'MOOD' AND code_name NOT REGEXP '^[가-힣 ]+$';
   ```
-- **근거**: `api/knowledge/domain/seed-mubti.sql`, `api/knowledge/domain/seed-codes.sql`,
+- **근거**: `api/knowledge/domain/seed-codes.sql`,
   `api/src/main/java/com/osundosun/mupid/api/bootstrap/BootstrapRunner.java`
 
 ### `DATETIME` 컬럼에 "그날의 마지막 순간" 을 넣으면 다음 날이 된다
