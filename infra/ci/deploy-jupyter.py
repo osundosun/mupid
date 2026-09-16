@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""music_preprocessing 을 JupyterHub 배치 서버에 배포하고 crontab 을 다시 건다.
+"""music_preprocessing 을 JupyterHub 배치 서버에 배포하고 배치를 돌린다.
 
 그 서버는 SSH 가 닫혀 있고 80/443 만 열려 있다(확인함). 그래서 다른 배포와
 달리 tar 를 밀어 넣지 못하고 JupyterHub HTTP API 로 간다.
@@ -7,7 +7,7 @@
   1. /hub/login                     아이디·비밀번호로 세션 쿠키를 받는다
   2. /hub/spawn/<user>              유저 서버를 띄운다 (브라우저와 같은 경로)
   3. /user/<user>/api/contents/...  코드 파일을 올린다
-  4. /user/<user>/api/kernels + ws  uv sync 와 crontab 설치를 실행한다
+  4. /user/<user>/api/kernels + ws  uv sync 와 배치 실행을 여기서 한다
 
 **공용 서버다.** 팀의 다른 작업이 같은 홈을 쓴다. 그래서 이 스크립트는
 두 가지를 지킨다.
@@ -15,7 +15,13 @@
   - 코드만 올린다. config.json · refresh_token.txt · registered.json ·
     processed.json 은 서버가 들고 있는 상태이고 여기서 절대 건드리지 않는다.
     registered.json 을 날리면 아티스트·앨범·곡이 서버에 전부 다시 만들어진다.
-  - crontab 은 BEGIN/END 마커 사이만 갈아 끼운다. 남의 크론 항목은 그대로 둔다.
+  - 배치를 두 개 겹쳐 돌리지 않는다. 같은 곡을 두 프로세스가 동시에 올리면
+    registered.json 이 서로를 덮는다.
+
+**cron 을 쓰지 않는다.** 그 계정은 cron 스풀에 쓸 권한이 없다 — `crontab -` 가
+`/var/spool/cron/: mkstemp: Permission denied` 로 실패한다. 그래서 "언제" 는
+GitLab 파이프라인 스케줄이 정하고(`data-batch`), "무엇을" 은 저장소의
+music_preprocessing/run_batch.sh 가 정한다.
 
 .python-version 도 올리지 않는다. 3.14 로 적혀 있는데 서버 기본 파이썬은 3.12 라
 uv 가 3.14 를 새로 받으려 든다.
@@ -73,8 +79,7 @@ UPLOAD = (
     "pyproject.toml",
     "uv.lock",
     "README.md",
-    "crontab.sh",
-    "crontab.example.sh",
+    "run_batch.sh",
     "config.example.json",
     "sidecar.example.json",
 )
@@ -85,8 +90,6 @@ NEVER = {
     ".python-version", ".env",
 }
 
-MARKER_BEGIN = "# BEGIN music_preprocessing"
-MARKER_END = "# END music_preprocessing"
 
 # 배포에 필요한 모든 것을 **File 형식 CI 변수 하나**로 받는다. .env 와 같은
 # KEY=VALUE 형식이다. 변수를 여러 개로 흩으면 등록할 것도 많고, 어느 것이
@@ -430,7 +433,61 @@ else:
         print("   ", line)
 '''
 
-# 원격에서 도는 코드. crontab 은 마커 사이만 갈아 끼운다.
+# 배치를 띄운다. **분리해서 띄우는 것이 핵심이다** — 청킹은 곡 수에 따라
+# 몇 시간이 걸리는데, 커널 웹소켓을 그동안 붙들고 있으면 연결이 한 번만
+# 끊겨도 job 이 실패한다. start_new_session 으로 떼어 놓으면 커널이 죽어도
+# 배치는 계속 돈다.
+START_BATCH = r'''
+import pathlib, subprocess, time
+directory = pathlib.Path.home() / {directory!r}
+logs = directory / "logs"
+logs.mkdir(exist_ok=True)
+pidfile = directory / ".batch.pid"
+statusfile = directory / ".batch.status"
+
+# 이미 돌고 있으면 또 띄우지 않는다. 같은 곡을 두 프로세스가 동시에 올리면
+# registered.json 이 서로를 덮는다.
+if pidfile.exists():
+    pid = pidfile.read_text().strip()
+    if pid and pathlib.Path("/proc", pid).exists():
+        print("ALREADY", pid)
+        raise SystemExit(0)
+
+log = logs / ("batch-" + time.strftime("%Y%m%d-%H%M%S") + ".log")
+statusfile.unlink(missing_ok=True)
+# 종료 코드를 파일로 남긴다. 분리해서 띄우므로 wait 로 받을 수 없다.
+command = "bash run_batch.sh; echo $? > .batch.status"
+with open(log, "wb") as sink:
+    child = subprocess.Popen(["bash", "-c", command], cwd=directory,
+                             stdout=sink, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+pidfile.write_text(str(child.pid))
+print("STARTED", child.pid)
+print("LOG", log)
+'''
+
+# 상태와 **새로 늘어난 로그만** 가져온다. 매번 전체를 찍으면 CI 로그가
+# 같은 내용으로 뒤덮인다.
+POLL_BATCH = r'''
+import pathlib
+directory = pathlib.Path.home() / {directory!r}
+pidfile = directory / ".batch.pid"
+statusfile = directory / ".batch.status"
+pid = pidfile.read_text().strip() if pidfile.exists() else ""
+alive = bool(pid) and pathlib.Path("/proc", pid).exists()
+log = pathlib.Path({log!r})
+data = log.read_bytes() if log.exists() else b""
+chunk = data[{offset!r}:]
+print("STATE", "RUNNING" if alive else "STOPPED")
+print("OFFSET", len(data))
+print("STATUS", statusfile.read_text().strip() if statusfile.exists() else "?")
+if chunk:
+    print("---")
+    print(chunk.decode("utf-8", "replace"), end="")
+'''
+
+
+# 원격에서 도는 코드.
 REMOTE = r'''
 import os, shutil, subprocess, pathlib
 directory = pathlib.Path.home() / {directory!r}
@@ -459,33 +516,43 @@ if check.returncode:
     raise SystemExit("CLI 가 뜨지 않는다:\n" + check.stderr[-2000:])
 print("CLI ok")
 
-block = (directory / "crontab.sh").read_text()
-block = block.split({begin!r}, 1)[1].split({end!r}, 1)[0]
-block = {begin!r} + block + {end!r}
-block = block.replace("{{{{UV}}}}", uv).replace("{{{{DIR}}}}", str(directory))
-
-current = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-existing = current.stdout if current.returncode == 0 else ""
-if {begin!r} in existing and {end!r} in existing:
-    head, rest = existing.split({begin!r}, 1)
-    tail = rest.split({end!r}, 1)[1]
-    updated = head + block + tail
-    action = "기존 블록 교체"
-else:
-    updated = (existing.rstrip("\n") + "\n\n" if existing.strip() else "") + block + "\n"
-    action = "블록 추가"
-written = subprocess.run(["crontab", "-"], input=updated,
-                         capture_output=True, text=True)
-if written.returncode:
-    raise SystemExit("crontab 설치 실패:\n" + written.stderr[-2000:])
-print("crontab:", action)
-back = subprocess.run(["crontab", "-l"], capture_output=True, text=True).stdout
-assert {begin!r} in back and {end!r} in back, "설치했는데 되읽으면 없다"
-print("설치된 항목:")
-for line in back.splitlines():
-    if line.strip() and not line.lstrip().startswith("#"):
-        print("   ", line)
 '''
+
+
+def run_batch(hub, directory, poll_seconds):
+    """서버에서 배치를 띄우고 끝날 때까지 로그를 따라간다.
+
+    cron 을 쓰지 않는 이유가 여기 있다 — 그 계정은 cron 스풀에 쓸 권한이 없다
+    (`crontab -` 가 `/var/spool/cron/: mkstemp: Permission denied` 로 실패한다).
+    그래서 "언제" 는 GitLab 파이프라인 스케줄이 정하고, 이 함수가 "한 바퀴" 를
+    돌린다.
+    """
+    started = hub.run(START_BATCH.format(directory=directory))
+    print(started, end="")
+    if started.startswith("ALREADY"):
+        print("\n앞선 배치가 아직 돌고 있다. 이번 회차는 건너뛴다 — 같은 곡을 두 "
+              "프로세스가 동시에 올리면 registered.json 이 서로를 덮는다.")
+        return 0
+    log = next(l.split(" ", 1)[1].strip()
+               for l in started.splitlines() if l.startswith("LOG "))
+
+    offset, status = 0, "?"
+    while True:
+        time.sleep(poll_seconds)
+        text = hub.run(POLL_BATCH.format(directory=directory, log=log, offset=offset))
+        head, _, body = text.partition("---\n")
+        fields = dict(line.split(" ", 1) for line in head.strip().splitlines()
+                      if " " in line)
+        offset = int(fields.get("OFFSET", offset))
+        status = fields.get("STATUS", "?").strip()
+        if body:
+            print(body, end="")
+        if fields.get("STATE", "").strip() != "RUNNING":
+            break
+
+    print(f"\n배치 종료 (종료 코드 {status})")
+    # 서버에서 배치가 실패했는데 job 이 초록이면 아무도 모른다.
+    return 0 if status == "0" else 1
 
 
 def main():
@@ -494,6 +561,10 @@ def main():
                         help="올릴 목록만 찍고 서버에 붙지도 않는다")
     parser.add_argument("--check", action="store_true",
                         help="서버에 붙어 상태만 읽는다. 아무것도 쓰지 않는다")
+    parser.add_argument("--batch", action="store_true",
+                        help="배포하지 않고 배치 한 바퀴만 돌린다 (스케줄 파이프라인)")
+    parser.add_argument("--poll-seconds", type=int, default=60,
+                        help="--batch 가 로그를 가져오는 간격")
     args = parser.parse_args()
 
     uploads = files_to_upload()
@@ -538,6 +609,9 @@ def main():
         print(hub.run(CHECK.format(directory=directory, paths=paths)))
         return 0
 
+    if args.batch:
+        return run_batch(hub, directory, args.poll_seconds)
+
     # 부모부터 만든다. src/music_preprocessing 을 먼저 요청하면 404 다.
     hub.ensure_directory(directory)
     trees = {pathlib.PurePosixPath(n).parent.as_posix() for n, _ in uploads}
@@ -576,7 +650,7 @@ def main():
             "refresh_token.txt 가 없다. 등록 단계가 전부 실패한다.")
 
     print(hub.run(REMOTE.format(
-        directory=directory, begin=MARKER_BEGIN, end=MARKER_END,
+        directory=directory,
         token=_relative(config["api_refresh_token_file"]))))
     print("배포 완료")
     return 0

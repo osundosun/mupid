@@ -1125,18 +1125,34 @@ class LabelRoutingTest(unittest.TestCase):
                 with self.subTest(line=line.strip()[:60]):
                     self.assertNotIn("password", line.lower())
 
-    def test_the_crontab_block_is_marked_off(self):
-        """마커가 없으면 배포가 남의 크론 항목까지 덮어쓴다."""
-        crontab = (ROOT / "music_preprocessing" / "crontab.sh").read_text(encoding="utf-8")
-        self.assertIn("# BEGIN music_preprocessing", crontab)
-        self.assertIn("# END music_preprocessing", crontab)
+    def test_the_batch_is_driven_by_a_schedule_not_cron(self):
+        """그 계정은 cron 스풀에 쓸 권한이 없다 — crontab - 가
+        `/var/spool/cron/: mkstemp: Permission denied` 로 실패한다(실측).
+        그래서 "언제" 는 GitLab 스케줄이, "무엇을" 은 저장소가 정한다."""
         script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
-        self.assertIn('MARKER_BEGIN = "# BEGIN music_preprocessing"', script)
-        self.assertIn('MARKER_END = "# END music_preprocessing"', script)
-        # 크론은 PATH 가 거의 비어 있다. uv 를 절대경로로 부르지 않으면 조용히
-        # 실패한다 — 배포가 {{UV}} 를 실제 경로로 바꾼다.
-        self.assertIn("{{UV}}", crontab)
-        self.assertIn("{{DIR}}", crontab)
+        # 배포가 crontab 을 설치하려 들면 매 배포가 실패한다.
+        self.assertNotIn('subprocess.run(["crontab", "-"]', script)
+        jobs = yaml.safe_load((self.CI / "data.yml").read_text(encoding="utf-8"))
+        rules = [str(r.get("if", "")) for r in jobs["data-batch"]["rules"]]
+        self.assertTrue(any('"schedule"' in r for r in rules),
+                        "스케줄 파이프라인이 data-batch 를 띄우지 않는다")
+        runner = ROOT / "music_preprocessing" / "run_batch.sh"
+        body = runner.read_text(encoding="utf-8")
+        # 순서가 중요하다 — 곡이 있어야 batch 가 스트림을 붙이고, 곡 번호가
+        # 있어야 가사를 붙인다.
+        order = [body.index(f"run {name}") for name in
+                 ("catalog", "covers", "lyrics", "batch")]
+        self.assertEqual(order, sorted(order), "배치 순서가 뒤바뀌었다")
+
+    def test_two_batches_never_overlap(self):
+        """같은 곡을 두 프로세스가 동시에 올리면 registered.json 이 서로를
+        덮는다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        self.assertIn("ALREADY", script)
+        jobs = yaml.safe_load((self.CI / "data.yml").read_text(encoding="utf-8"))
+        for name in ("data-deploy", "data-batch"):
+            with self.subTest(job=name):
+                self.assertEqual(jobs[name].get("resource_group"), "mupid-jupyter")
 
 
 class PrebuiltJobImageTest(unittest.TestCase):
