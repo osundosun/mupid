@@ -103,6 +103,31 @@ export function useMupid(bootstrap: Bootstrap) {
   const [shuffle, setShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
   const [queueIds, setQueueIds] = useState<number[]>(tracks.slice(0, QUEUE_LIMIT).map((t) => t.id));
+  /**
+   * 서버 큐의 판본. 저장할 때 함께 보내 다른 기기의 변경을 덮지 않게 한다.
+   *
+   * 아직 계정 큐를 읽지 못했으면 `null` 이다. **그 동안에는 저장하지 않는다** —
+   * 판본을 모르는 채로 올리면 계정에 있던 큐를 화면의 초기값으로 지운다.
+   */
+  const queueRevision = useRef<number | null>(null);
+  /**
+   * 마지막으로 계정에 올린 큐. 지금 상태가 이것과 같으면 보낼 것이 없다.
+   *
+   * "고쳤다" 는 표시(dirty 플래그) 대신 **마지막으로 보낸 값과 비교**한다.
+   * 표시 방식은 저장 요청이 도는 동안 들어온 변경을 놓치거나 두 번 보내기 쉽다.
+   */
+  const savedQueue = useRef<{ ids: number[]; currentId: number | null } | null>(null);
+  /**
+   * 아직 서버에 올리지 못한 큐. 화면을 떠나기 직전에 이것을 밀어낸다.
+   *
+   * 모아서 보내는 구조라 **보내기 전에 탭이 닫히면 그 변경이 통째로 사라진다.**
+   * 순서를 바꾸자마자 새로고침하면 옛 순서로 돌아가던 것이 이것이었다.
+   */
+  const pendingQueueSave = useRef<
+    { ids: number[]; currentId: number | null; revision: number } | null
+  >(null);
+  /** 재생 목록 독이 펼쳐져 있는가. */
+  const [queueOpen, setQueueOpen] = useState(false);
   const [toast, setToast] = useState('');
   const [ready, setReady] = useState(false);
   // 세션 복원이 끝났는가. 끝나기 전에는 화면 가드를 돌리지 않는다.
@@ -880,9 +905,21 @@ export function useMupid(bootstrap: Bootstrap) {
     if (unchanged) return;
 
     const ids = queueIds;
+    // 타이머가 돌기 전에 화면을 떠날 수 있다. 떠날 때 밀어낼 수 있도록 적어 둔다.
+    pendingQueueSave.current = { ids, currentId, revision };
+
     const timer = setTimeout(() => {
+      /*
+       * **보내기 시작할 때 지우지 않는다.** 요청이 도는 중에 새로고침하면 그
+       * 요청은 문서와 함께 취소되는데, 그때 이미 지워 두었으면 떠날 때 밀어낼
+       * 것이 없다고 판단해 변경이 사라진다. 서버가 받았다고 확인해 준 뒤에 지운다.
+       *
+       * 그래서 떠날 때 같은 내용을 한 번 더 보낼 수 있다. 판본이 함께 가므로
+       * 앞의 것이 이미 성공했다면 뒤의 것은 409 로 거절되고 아무것도 바뀌지 않는다.
+       */
       void queueApi.saveQueue(ids, currentId, revision, tracks).then((saved) => {
         if (!saved || !mountedRef.current) return;
+        pendingQueueSave.current = null;
         queueRevision.current = saved.revision;
         savedQueue.current = { ids: saved.ids, currentId };
         /*
@@ -898,6 +935,38 @@ export function useMupid(bootstrap: Bootstrap) {
 
     return () => clearTimeout(timer);
   }, [queueIds, active?.id, demoSession, tracks]);
+
+  /**
+   * 화면을 떠나기 직전에 남은 저장을 밀어낸다.
+   *
+   * 없으면 **모으는 창(1.2초) 안에 일어난 마지막 변경이 통째로 사라진다.**
+   * 순서를 바꾸자마자 새로고침하면 옛 순서로 돌아가던 것이 이것이었다.
+   *
+   * `beforeunload` 가 아니라 `visibilitychange`·`pagehide` 를 본다. 모바일
+   * 브라우저는 탭을 버릴 때 `beforeunload` 를 부르지 않는 경우가 많고, 이 둘은
+   * 탭 전환·앱 전환에서도 불려 더 일찍 안전해진다.
+   *
+   * 저장 요청 자체가 `keepalive` 라(`endpoints.ts`) 여기서 따로 지정하지 않는다.
+   */
+  useEffect(() => {
+    const flush = () => {
+      const pending = pendingQueueSave.current;
+      if (!pending) return;
+      // 한 번만 보낸다. 숨김 → 복귀 → 다시 숨김에서 같은 판본으로 두 번 보내면
+      // 두 번째는 판본이 어긋나 거절된다.
+      pendingQueueSave.current = null;
+      void queueApi.saveQueue(pending.ids, pending.currentId, pending.revision, tracks);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [tracks]);
 
   /**
    * 대기열에서 다음에 올 스트리밍 곡들의 앞 5초를 미리 받아 둔다.

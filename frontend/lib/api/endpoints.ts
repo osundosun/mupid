@@ -906,6 +906,15 @@ export function createEndpoints(client: ApiClient) {
             current_music_id: currentMusicId,
             revision,
           },
+          /*
+           * **언제나 `keepalive` 다.** 큐 저장은 모아서 보내기 때문에, 보내는
+           * 순간과 사용자가 새로고침하는 순간이 자주 겹친다. 평범한 요청은 문서와
+           * 함께 취소되어 **이미 올바른 본문이 나갔는데도 변경이 사라진다** —
+           * 순서를 바꾸자마자 새로고침하면 옛 순서로 돌아가던 원인이 이것이었다.
+           *
+           * 본문은 곡 번호 목록뿐이라 keepalive 의 64KB 상한에 한참 못 미친다.
+           */
+          keepalive: true,
         }),
       /**
        * 한 곡을 담는다. 자리(재생 중인 곡 바로 아래)와 퇴출은 **서버가 정한다.**
