@@ -1,0 +1,71 @@
+# Data 영역 — music_preprocessing (청킹·카탈로그 배치).
+#
+# 배포 대상이 k8s 가 아니라 JupyterHub 배치 서버다. 그 서버는 SSH 가 닫혀 있고
+# 80/443 만 열려 있어서(확인함) 다른 배포처럼 이미지 tar 를 밀어 넣지 못한다.
+# infra/ci/deploy-jupyter.py 가 JupyterHub HTTP API 로 파일을 올리고 crontab 을
+# 다시 건다.
+
+# MR 에서는 라벨이 고른다 — infra/ci/labels.yml
+data-verify:
+  stage: verify
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  tags: [mupid-ci]
+  interruptible: true
+  timeout: 10m
+  variables:
+    # backend·frontend 와 같은 이유로 GitLab 의 `cache:` 를 쓰지 않는다.
+    # /cache 는 러너가 붙여 주는 도커 볼륨이라 job 사이에 그대로 남는다.
+    UV_CACHE_DIR: /cache/uv
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)\s*Data\s*(,|$)/'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+    # 브랜치 파이프라인에는 CI_MERGE_REQUEST_LABELS 가 없다. 경로로 판단한다.
+    - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
+      changes: &data_paths
+        - music_preprocessing/**/*
+        - infra/ci/data.yml
+        - infra/ci/deploy-jupyter.py
+        - .gitlab-ci.yml
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  script:
+    # --python 3.12 를 명시한다. 저장소의 .python-version 은 3.14 인데 배치
+    # 서버의 기본 파이썬은 3.12 다. CI 가 3.14 로 통과시키면 서버에서 처음
+    # 깨진다 — 검증은 서버가 쓰는 버전으로 한다.
+    - cd music_preprocessing
+    - uv sync --frozen --python 3.12
+    - uv run music-preprocessing --help
+    # 배포가 무엇을 올릴지 여기서 미리 확인한다. 서버를 건드리지 않는다.
+    - cd ..
+    - uv run --python 3.12 --with requests --with websocket-client
+        python infra/ci/deploy-jupyter.py --dry-run
+
+data-deploy:
+  stage: deploy
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  tags: [mupid-ci]
+  needs:
+    - job: data-verify
+      artifacts: false
+      optional: true
+  # 한 번에 하나만. crontab 을 읽고 고쳐 쓰므로 둘이 겹치면 서로를 덮는다.
+  resource_group: mupid-jupyter
+  # 배포가 중간에 끊기면 코드 일부만 올라간 상태가 된다.
+  interruptible: false
+  timeout: 30m
+  environment:
+    name: jupyter-batch
+    url: https://lab.tailf237b8.ts.net
+  variables:
+    UV_CACHE_DIR: /cache/uv
+    MUPID_JUPYTER_DIR: music_preprocessing
+  rules:
+    # MUPID_JUPYTER_TOKEN 이 없으면 아예 돌지 않는다. 토큰을 넣기 전까지는
+    # master 푸시마다 빨간 파이프라인이 뜨는 편보다 이쪽이 낫다.
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true" && $MUPID_JUPYTER_TOKEN'
+      changes: *data_paths
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_JUPYTER_TOKEN'
+      when: manual
+  script:
+    - uv run --python 3.12 --with requests --with websocket-client
+        python infra/ci/deploy-jupyter.py

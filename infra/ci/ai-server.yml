@@ -21,13 +21,16 @@ ai-server-verify:
     paths:
       - .pip-ci/
   rules:
+    # MR 에서는 라벨이 고른다 — infra/ci/labels.yml
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)\s*AI\s*(,|$)/'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-      changes: &ai_paths
+      when: never
+    # 브랜치 파이프라인에는 CI_MERGE_REQUEST_LABELS 가 없다. 경로로 판단한다.
+    - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
+      changes:
         - ai_server/**/*
         - infra/ci/ai-server.yml
         - .gitlab-ci.yml
-    - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
-      changes: *ai_paths
     - if: '$CI_PIPELINE_SOURCE == "web"'
   script:
     - python -m pip install --quiet --upgrade pip

@@ -796,5 +796,189 @@ class DeployEndpointTest(unittest.TestCase):
             self.assertNotIn("*", rule["apiGroups"])
 
 
+class WebImageBuildTest(unittest.TestCase):
+    """The edge image compiles the frontend from source inside the image build,
+    the way the api image compiles the jar. Nothing travels as an artifact.
+
+    The pieces are split across three files that only agree by convention, so
+    each seam gets a check here rather than in a 90-minute deploy job."""
+
+    CI = K8S / "ci"
+    IMAGE = K8S / "image"
+
+    def test_the_rewrite_matches_a_line_the_runtime_dockerfile_actually_has(self):
+        """package-web.sh appends web.Dockerfile and rewrites its COPY to pull
+        from the builder stage. If either side is reworded the sed silently
+        matches nothing, and the build then copies a dist/client that is not in
+        the context. The script's own `grep -q` catches that, but only after
+        npm ci has already run."""
+        script = (self.CI / "package-web.sh").read_text(encoding="utf-8")
+        found = re.search(r"sed 's\|(\^[^|]+)\|([^|]+)\|'", script)
+        self.assertTrue(found, "package-web.sh no longer rewrites with sed s|..|..|")
+        pattern = re.compile(found.group(1).replace("$", r"\Z"), re.M)
+        dockerfile = (self.IMAGE / "web.Dockerfile").read_text(encoding="utf-8")
+        self.assertRegex(
+            dockerfile, re.compile(found.group(1), re.M),
+            "web.Dockerfile has no line for package-web.sh to rewrite",
+        )
+        self.assertTrue(
+            found.group(2).startswith("COPY --from=builder "),
+            "the rewrite no longer points at the builder stage",
+        )
+
+    def test_the_builder_compiles_on_the_runner_architecture(self):
+        """The runner is arm64 and the nodes are x86_64. Without
+        --platform=$BUILDPLATFORM this stage runs npm under QEMU to produce
+        static files that are the same bytes either way."""
+        build = (self.IMAGE / "web.build.Dockerfile").read_text(encoding="utf-8")
+        self.assertRegex(
+            build, re.compile(r"^FROM --platform=\$BUILDPLATFORM .+ AS builder$", re.M))
+
+    def test_the_runtime_stage_has_no_run(self):
+        """That stage is the one built for linux/amd64. A RUN there is the
+        emulated one."""
+        runtime = (self.IMAGE / "web.Dockerfile").read_text(encoding="utf-8")
+        body = [l for l in runtime.splitlines() if not l.lstrip().startswith("#")]
+        self.assertFalse([l for l in body if l.startswith("RUN ")])
+
+    def test_the_builder_asks_for_the_static_export(self):
+        """Without MUPID_DEPLOY_TARGET the build goes SSR: it writes dist/server
+        and never creates dist/client/index.html. The image would then be built
+        from an empty document root. frontend-verify sets the same value."""
+        build = (self.IMAGE / "web.build.Dockerfile").read_text(encoding="utf-8")
+        self.assertRegex(build, r"MUPID_DEPLOY_TARGET=ec2")
+        verify = yaml.safe_load(
+            (ROOT / "infra" / "ci" / "frontend.yml").read_text(encoding="utf-8"))
+        self.assertEqual(
+            verify["frontend-verify"]["variables"]["MUPID_DEPLOY_TARGET"], "ec2",
+            "frontend-verify and the image build must build the same thing",
+        )
+
+    def test_the_frontend_build_is_not_shipped_as_an_artifact(self):
+        """It used to be: frontend-verify uploaded dist/client and the deploy
+        job downloaded it. That sends the deployed bytes on a round trip
+        through the coordinator. The jar never worked that way."""
+        verify = yaml.safe_load(
+            (ROOT / "infra" / "ci" / "frontend.yml").read_text(encoding="utf-8"))
+        for name, body in verify.items():
+            if not isinstance(body, dict):
+                continue
+            with self.subTest(job=name):
+                self.assertIsNone(
+                    body.get("artifacts"),
+                    "the frontend build is an artifact again",
+                )
+        jobs = yaml.safe_load((self.CI / "k8s-release.yml").read_text(encoding="utf-8"))
+        for need in jobs["k8s-deploy-web"]["needs"]:
+            with self.subTest(need=need["job"]):
+                self.assertFalse(
+                    need.get("artifacts", False),
+                    "k8s-deploy-web pulls artifacts again",
+                )
+
+
+class LabelRoutingTest(unittest.TestCase):
+    """MR 파이프라인은 영역 라벨이 고른다. 라벨이 없으면 require-area-label 이
+    실패해 머지를 막는다.
+
+    이 규칙이 조용히 깨지는 방식은 하나다 — verify job 하나에서 라벨 규칙이
+    빠지면 그 job 만 `changes:` 로 되돌아간다. 그러면 라벨 없는 MR 이 그 job
+    하나만 돌고 초록불이 된다. 여기서 네 job 을 한꺼번에 본다."""
+
+    AREAS = ("Frontend", "Backend", "AI", "Data")
+    # job 이름 -> 그 job 을 켜는 라벨
+    ROUTES = {
+        "frontend-verify": "Frontend",
+        "backend-verify": "Backend",
+        "ai-server-verify": "AI",
+        "data-verify": "Data",
+    }
+    CI = ROOT / "infra" / "ci"
+
+    def _jobs(self):
+        found = {}
+        for path in self.CI.glob("*.yml"):
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            for name, body in loaded.items():
+                if isinstance(body, dict) and not name.startswith("."):
+                    found[name] = body
+        return found
+
+    def test_every_area_job_is_gated_on_its_label(self):
+        """라벨 규칙이 먼저 오고, 바로 다음에 '나머지 MR 은 never' 가 와야 한다.
+        순서가 뒤집히면 라벨이 붙어도 job 이 돌지 않는다 — rules 는 처음
+        맞는 것에서 멈춘다."""
+        jobs = self._jobs()
+        for name, label in self.ROUTES.items():
+            with self.subTest(job=name):
+                self.assertIn(name, jobs, f"{name} 이 infra/ci 에 없다")
+                rules = jobs[name]["rules"]
+                first = str(rules[0].get("if", ""))
+                self.assertIn('$CI_PIPELINE_SOURCE == "merge_request_event"', first)
+                self.assertRegex(
+                    first,
+                    re.compile(
+                        r"CI_MERGE_REQUEST_LABELS =~ /\(\^\|,\)\\s\*"
+                        + label + r"\\s\*\(,\|\$\)/"),
+                    f"{name} 의 첫 규칙이 {label} 라벨을 보지 않는다",
+                )
+                self.assertIsNone(rules[0].get("when"))
+                second = rules[1]
+                self.assertEqual(
+                    second.get("if"), '$CI_PIPELINE_SOURCE == "merge_request_event"')
+                self.assertEqual(second.get("when"), "never")
+
+    def test_no_area_job_runs_on_an_unlabelled_merge_request(self):
+        """라벨 규칙 뒤에 merge_request_event 를 다시 받는 규칙이 남아 있으면
+        never 를 지나쳐 돌 수 있다."""
+        jobs = self._jobs()
+        for name in self.ROUTES:
+            for index, rule in enumerate(jobs[name]["rules"][2:], start=2):
+                with self.subTest(job=name, rule=index):
+                    self.assertNotIn(
+                        "merge_request_event", str(rule.get("if", "")),
+                        f"{name} 의 {index}번 규칙이 MR 을 다시 받는다",
+                    )
+
+    def test_the_guard_covers_exactly_the_four_areas(self):
+        """가드가 보는 라벨 목록과 job 이 쓰는 라벨이 어긋나면, 어긋난 라벨은
+        가드를 통과하면서 아무 job 도 켜지 않는다 — 검증 없는 초록불이다."""
+        guard = self._jobs()["require-area-label"]
+        first = str(guard["rules"][0]["if"])
+        self.assertEqual(guard["rules"][0].get("when"), "never")
+        found = re.search(r"\(([A-Za-z|]+)\)\\s\*\(,\|\$\)", first)
+        self.assertTrue(found, "가드가 라벨 목록을 더 이상 열거하지 않는다")
+        self.assertEqual(set(found.group(1).split("|")), set(self.AREAS))
+        self.assertEqual(set(self.ROUTES.values()), set(self.AREAS))
+
+    def test_the_guard_fails_the_job(self):
+        """가드가 돌면서 exit 0 이면 아무것도 막지 못한다."""
+        guard = self._jobs()["require-area-label"]
+        self.assertIn("exit 1", "\n".join(guard["script"]))
+
+    def test_the_data_deploy_never_ships_server_state(self):
+        """공용 서버다. registered.json 을 덮어쓰면 아티스트·앨범·곡이 전부 다시
+        만들어지고, refresh_token.txt 는 배치가 회전시키는 자격증명이다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        block = script.split("NEVER = {", 1)[1].split("}", 1)[0]
+        for name in ("config.json", "refresh_token.txt", "registered.json",
+                     "processed.json", ".python-version"):
+            with self.subTest(name=name):
+                self.assertIn(name, block)
+
+    def test_the_crontab_block_is_marked_off(self):
+        """마커가 없으면 배포가 남의 크론 항목까지 덮어쓴다."""
+        crontab = (ROOT / "music_preprocessing" / "crontab.sh").read_text(encoding="utf-8")
+        self.assertIn("# BEGIN music_preprocessing", crontab)
+        self.assertIn("# END music_preprocessing", crontab)
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        self.assertIn('MARKER_BEGIN = "# BEGIN music_preprocessing"', script)
+        self.assertIn('MARKER_END = "# END music_preprocessing"', script)
+        # 크론은 PATH 가 거의 비어 있다. uv 를 절대경로로 부르지 않으면 조용히
+        # 실패한다 — 배포가 {{UV}} 를 실제 경로로 바꾼다.
+        self.assertIn("{{UV}}", crontab)
+        self.assertIn("{{DIR}}", crontab)
+
+
 if __name__ == "__main__":
     unittest.main()

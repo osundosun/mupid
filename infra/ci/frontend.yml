@@ -12,8 +12,11 @@ frontend-verify:
     # 그대로 남는다.
     npm_config_cache: /cache/npm
   rules:
+    # MR 에서는 라벨이 고른다 — infra/ci/labels.yml
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)\s*Frontend\s*(,|$)/'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-      changes: [frontend/**/*, infra/ci/frontend.yml, infra_k8s/**/*, .gitlab-ci.yml]
+      when: never
+    # 브랜치 파이프라인에는 CI_MERGE_REQUEST_LABELS 가 없다. 경로로 판단한다.
     - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
       changes: [frontend/**/*, infra/ci/frontend.yml, infra_k8s/**/*, .gitlab-ci.yml]
     - if: '$CI_PIPELINE_SOURCE == "web"'
@@ -22,9 +25,11 @@ frontend-verify:
     - npm ci --prefer-offline --no-audit --no-fund
     - npm run build
     - test -f dist/client/index.html
-  artifacts:
-    expire_in: 7 days
-    paths: [frontend/dist/client/]
 
+# 아티팩트를 만들지 않는다. 예전에는 dist/client 를 올려 k8s-deploy-web 이
+# 받아 썼는데, 그러면 배포되는 바이트가 코디네이터를 한 번 왕복한다. 백엔드가
+# jar 를 아티팩트로 만들지 않고 이미지 빌드 안에서 컴파일하듯, 프론트엔드도
+# infra_k8s/ci/package-web.sh 가 소스부터 굽는다. 이 job 은 MR 게이트로 남는다
+# — 빌드가 깨졌는지 여기서 먼저 걸린다.
+#
 # frontend-package·frontend-deploy 는 Compose 배포 전용이라 제거했다.
-# 프론트엔드는 이제 infra_k8s/ci/k8s-release.yml 이 이미지로 구워 배포한다.
