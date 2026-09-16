@@ -40,6 +40,26 @@ data-verify:
     - uv run --python 3.12 --with requests --with websocket-client
         python infra/ci/deploy-jupyter.py --dry-run
 
+# 서버에 붙어 상태만 읽는다. 아무것도 쓰지 않는다.
+#
+# 첫 배포 전에 눌러 본다. 설정이 실재하는 곳을 가리키는지, 서버에 이미 걸린
+# crontab 이 무엇인지 여기서 확인한다 — 경로가 하나 틀리면 배치가 오류 없이
+# 0곡을 처리하고 끝나서, 로그를 봐도 한참 모른다.
+data-check:
+  stage: verify
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  tags: [mupid-ci]
+  timeout: 15m
+  variables:
+    UV_CACHE_DIR: /cache/uv
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DATA_ENV'
+      when: manual
+      allow_failure: true
+  script:
+    - uv run --python 3.12 --with requests --with websocket-client
+        python infra/ci/deploy-jupyter.py --check
+
 data-deploy:
   stage: deploy
   image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim

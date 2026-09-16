@@ -391,6 +391,45 @@ def files_to_upload():
     return found
 
 
+# 아무것도 바꾸지 않고 서버 상태만 읽는다. 첫 배포 전에 설정이 실재하는 곳을
+# 가리키는지 보려고 쓴다 — 경로 하나가 틀리면 배치가 조용히 0곡을 처리한다.
+CHECK = r'''
+import pathlib, subprocess
+home = pathlib.Path.home()
+directory = home / {directory!r}
+print("홈:", home)
+print("배포 디렉터리:", directory, "—", "있음" if directory.is_dir() else "없음")
+for name in ("config.json", "refresh_token.txt", "registered.json", "processed.json"):
+    p = directory / name
+    print(f"   {{name}}: {{'있음' if p.exists() else '없음'}}")
+print()
+print("설정이 가리키는 경로:")
+for label, value in {paths!r}:
+    p = pathlib.Path(value)
+    if not p.is_absolute():
+        p = directory / value
+    kind = "디렉터리" if p.is_dir() else ("파일" if p.is_file() else "없음")
+    count = ""
+    if p.is_dir():
+        try:
+            count = f" ({{sum(1 for _ in p.iterdir())}}개)"
+        except OSError:
+            count = " (읽지 못함)"
+    print(f"   {{label:<14}} {{value}}  ->  {{kind}}{{count}}")
+print()
+uv = subprocess.run(["which", "uv"], capture_output=True, text=True).stdout.strip()
+print("uv:", uv or "찾지 못함")
+got = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+print()
+if got.returncode:
+    print("현재 crontab: 없음 (또는 읽지 못함)")
+else:
+    lines = [l for l in got.stdout.splitlines() if l.strip()]
+    print(f"현재 crontab {{len(lines)}}줄:")
+    for line in lines:
+        print("   ", line)
+'''
+
 # 원격에서 도는 코드. crontab 은 마커 사이만 갈아 끼운다.
 REMOTE = r'''
 import os, shutil, subprocess, pathlib
@@ -452,7 +491,9 @@ for line in back.splitlines():
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dry-run", action="store_true",
-                        help="올릴 목록만 찍고 서버를 건드리지 않는다")
+                        help="올릴 목록만 찍고 서버에 붙지도 않는다")
+    parser.add_argument("--check", action="store_true",
+                        help="서버에 붙어 상태만 읽는다. 아무것도 쓰지 않는다")
     args = parser.parse_args()
 
     uploads = files_to_upload()
@@ -486,6 +527,16 @@ def main():
     hub = Hub(values["JUPYTER_BASE_URL"], values["JUPYTER_USER"],
               values["JUPYTER_PASSWORD"])
     print("유저 서버:", hub.start_server())
+
+    if args.check:
+        # 설정이 실재하는 곳을 가리키는지 본다. 경로 하나가 틀리면 배치가
+        # 오류 없이 0곡을 처리하고 끝나서, 로그를 봐도 한참 모른다.
+        paths = [(key, config[key]) for key in
+                 ("input_dir", "metadata_dir", "covers_dir", "output_dir",
+                  "log_dir", "api_refresh_token_file", "api_registry_log",
+                  "processed_log")]
+        print(hub.run(CHECK.format(directory=directory, paths=paths)))
+        return 0
 
     # 부모부터 만든다. src/music_preprocessing 을 먼저 요청하면 404 다.
     hub.ensure_directory(directory)
