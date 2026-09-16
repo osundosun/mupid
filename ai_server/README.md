@@ -553,18 +553,18 @@ CI 는 `infra/ci/ai-server.yml` 의 `ai-server-verify` 가 오프라인 계약 �
 | `app/recommender.py` | 모델·색인을 불러오고 추천 점수를 계산하는 핵심 코드 |
 | `app/internal_api.py` | daily·next·search 요청을 받아 추천 계산을 호출하고 JSON 반환 |
 | `app/ids.py` | MySQL 숫자 ID와 기존 AI 문자열 ID 연결·검증 |
-| `app/legacy/m09_labels.py` | 재생·스킵·반복 같은 행동 로그를 선호 신호로 변환 |
-| `app/legacy/m10_features.py` | MERT 특징과 BPM·태그 등 부가 특징을 모델 입력 형태로 구성 |
-| `app/legacy/m11_stage1.py` | Dual Encoder 모델을 불러오고 구간별 점수를 계산 |
+| `app/labeler.py` | 재생·스킵·반복 같은 행동 로그를 선호 신호로 변환 |
+| `app/features.py` | MERT 특징과 BPM·태그 등 부가 특징을 모델 입력 형태로 구성 |
+| `app/stage1_torch.py` | Dual Encoder 모델 정의·학습 (torch). 서빙은 `stage1_np.py` 가 대신한다 |
 | `app/main.py` | FastAPI 앱 시작, `/health`, `/internal/ready` 제공 |
 
 | 순서 | 단계 |
 |---|---|
 | 1 | BE가 `internal_api` 호출 |
 | 2 | `ids` 가 숫자 ID 변환 |
-| 3 | `m09_labels` 가 사용자 취향 계산 |
-| 4 | `m10_features` 가 모델 입력 구성 |
-| 5 | `m11_stage1`·`recommender` 가 추천 계산 |
+| 3 | `labeler` 가 사용자 취향 계산 |
+| 4 | `features` 가 모델 입력 구성 |
+| 5 | `stage1_np`·`recommender` 가 추천 계산 |
 | 6 | `internal_api` 가 결과 반환 |
 
 | 구분 | 내용 |

@@ -6,23 +6,23 @@ PCA 는 라벨을 쓰지 않는 비지도 축소지만, 엄격하게 **학습 �
 side 특징은 사용자와 무관해야 한다(Stage 1 의 구간 타워는 카탈로그를 1회 인코딩해
 색인하므로). 사용자×구간 특징은 Stage 2 에서만 쓴다.
 
-  python src/m10_features.py --fit      # PCA 적합 + 특징 캐시 생성
+  python -m ai_server.app.features --fit      # PCA 적합 + 특징 캐시 생성
 """
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-# 산출물 경로는 recommender 와 같은 환경변수를 쓴다. 서로 다른 곳을 보면
-# 색인 일부만 다른 판이 섞여도 서비스가 정상처럼 뜬다.
-import os as _os
-ROOT = Path(_os.environ.get("MUPID_AI_ARTIFACT_DIR",
-                            Path(__file__).resolve().parents[2] / "artifacts"))
+from . import paths
+
+# 산출물 루트는 paths 한 곳에서만 계산한다. 예전에는 이 모듈이 따로 셈해서
+# `MUPID_AI_ARTIFACT_DIR=` (빈 값) 일 때 recommender 와 다른 곳을 봤다 —
+# os.environ.get 의 기본값은 빈 문자열을 덮지 않아 Path('') 가 되기 때문이다.
+ROOT = paths.artifact_root()
 OUT_DIR = ROOT / "data" / "proc" / "mupid"
 FEAT = OUT_DIR / "features_v1.npz"
 

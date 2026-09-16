@@ -103,9 +103,9 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
 def svc(tmp_path_factory):
     """합성 산출물을 가리키게 하고 모듈을 다시 읽는다.
 
-    상수만 바꿔서는 안 된다. `app/legacy/m10_features.py` 가 **자기 모듈에서** 루트를
-    따로 계산하기 때문에(import 시점) recommender 쪽만 고치면 특징 파일만 딴 곳을 본다 —
-    이 저장소가 `ids.py` 로 겪은 문제와 같은 모양이고, legacy 는 원본 유지라 그대로 둔다.
+    상수만 바꿔서는 안 된다. `app/features.py` 는 import 시점에 루트를 모듈 상수로 굳히므로
+    (`paths.artifact_root()` 를 쓰지만 호출이 한 번뿐이다) recommender 쪽만 고치면 특징
+    파일만 딴 곳을 본다 — 이 저장소가 `ids.py` 로 겪은 문제와 같은 모양이다.
     """
     import importlib
     import os
@@ -118,9 +118,10 @@ def svc(tmp_path_factory):
     os.environ["MUPID_AI_ARTIFACT_DIR"] = str(root)
 
     def _reload():
-        for name in ("m10_features", "m09_labels", "m11_stage1"):
-            if name in sys.modules:
-                importlib.reload(sys.modules[name])
+        for name in ("features", "labeler", "stage1_torch"):
+            full = f"ai_server.app.{name}"
+            if full in sys.modules:
+                importlib.reload(sys.modules[full])
         from ai_server.app import recommender as mod
         return importlib.reload(mod)
 

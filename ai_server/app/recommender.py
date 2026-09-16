@@ -5,7 +5,7 @@
 
   1. `import os` 추가
   2. 산출물 경로를 `MUPID_AI_ARTIFACT_DIR` 에서 읽는다
-  3. 지연 import 경로를 `legacy/` 로 돌린다
+  3. 라벨러·특징·Stage 1 모듈을 `app/` 의 정식 모듈로 가져와 상대 import 로 부른다
 """
 from __future__ import annotations
 
@@ -37,9 +37,8 @@ warnings.filterwarnings("ignore")
 # 모델·색인 경로는 MUPID_AI_ARTIFACT_DIR 하나로 통일한다. 계산은 paths 한 곳에서만 한다
 # — 값은 종전과 같다(미설정 시 ai_server/artifacts).
 ROOT = paths.artifact_root()
-# 라벨러는 **코드와 함께** 배포된다(app/legacy). 산출물 디렉터리에는 없다 — 예전 데모의
-# <저장소>/src 배치를 그대로 들고 오면 subprocess 가 조용히 실패한다.
-LEGACY = Path(__file__).resolve().parent / "legacy"
+# 라벨러는 **코드와 함께** 배포된다(app/labeler.py). 산출물 디렉터리에는 없다 — 예전
+# 데모의 <저장소>/src 배치를 그대로 들고 오면 subprocess 가 조용히 실패한다.
 OUT_DIR = ROOT / "data" / "proc" / "mupid"
 SERVE = OUT_DIR / "serve"
 EVENTS = OUT_DIR / "logs" / "events_service.jsonl"
@@ -53,10 +52,6 @@ ONBOARD = SERVE / "onboarding.parquet"
 # 기본값을 두지 않는다 — 기본값이 있으면 "미설정" 이 존재할 수 없어, 해석기가 없는 배포에서
 # 조건을 뽑지 못한 채 일반 추천이 나간다.
 NLP_PARSE_URL = os.environ.get("MUPID_AI_NLP_URL", "").strip()
-
-# m09_labels / m10_features / m11_stage1 은 함수 안에서 맨 이름으로 지연 import 된다.
-# 산출물 디렉터리가 아니라 코드와 함께 둔 legacy 를 경로에 올린다.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "legacy"))
 
 # ---------------------------- 설정 (조정 대상) ----------------------------
 POOL_SOURCE = os.environ.get("MUPID_POOL", "flow")
@@ -145,7 +140,7 @@ def now_iso() -> str:
 
 class Catalog:
     def __init__(self) -> None:
-        import m10_features as feat
+        from . import features as feat
 
         self.mom = pd.read_parquet(OUT_DIR / "moments.parquet")
         if "source" not in self.mom.columns:
@@ -205,7 +200,7 @@ class Catalog:
             try:
                 import torch
 
-                import m11_stage1 as s1
+                from . import stage1_torch as s1
 
                 # 체크포인트는 남이 준 파일이다. weights_only=False 로 열면 파일 하나가
                 # 임의 코드를 실행할 수 있다. 먼저 안전 모드로 열고, 그 파일이 텐서·
@@ -623,9 +618,10 @@ def run_labeler() -> dict:
     # 로 죽는다. 라벨은 제대로 만들어진 뒤에 출력을 읽다가 터지는 것이라, 증상이
     # "라벨 생성 실패" 로만 보여 원인이 인코딩이라는 것이 드러나지 않는다.
     r = subprocess.run(
-        [sys.executable, str(LEGACY / "m09_labels.py"), "--events", str(src_events),
+        [sys.executable, "-m", "ai_server.app.labeler", "--events", str(src_events),
          "--out", str(LABELS), "--pool", "service"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=ROOT)
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=paths.PKG_ROOT.parent)
     return {"ok": r.returncode == 0 and LABELS.exists(),
             "stdout": r.stdout[-1500:], "stderr": r.stderr[-800:]}
 
@@ -978,7 +974,7 @@ def _aggregate_behavior(events, now: float) -> dict:
     출처가 파일이든 ClickHouse 든 여기 하나로 모인다.
     """
     try:
-        from m09_labels import FAST_SKIP_SEC
+        from .labeler import FAST_SKIP_SEC
     except Exception:
         FAST_SKIP_SEC = 5.0
 
@@ -1080,7 +1076,7 @@ def user_behavior(user: str, now: float | None = None,
     `events` 를 주면 그것을 쓴다(ClickHouse 직접 조회 경로). 주지 않으면 종전대로
     `events_service.jsonl` 을 읽는다 — 배치와 오프라인 테스트가 그 경로로 돈다.
 
-    Early Skip 판정은 라벨러(m09_labels)의 기준을 그대로 쓴다:
+    Early Skip 판정은 라벨러(app/labeler.py)의 기준을 그대로 쓴다:
     reason='skip_next' · position_sec <= FAST_SKIP_SEC, 추천 경로에서 발생한 것만.
     """
     now = time.time() if now is None else now

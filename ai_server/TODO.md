@@ -1,8 +1,12 @@
 # ai_server 할 일
 
 `2026-09-14` 작성 · `2026-09-15` 코드와 대조해 갱신. BE 쪽에서 코드를 읽고 정리한 목록이며
-**AI 팀 소유 코드에 대한 제안**이다. `app/legacy/` 와 추천 로직은 "원본 그대로" 가 원칙이므로
+**AI 팀 소유 코드에 대한 제안**이다. 추천 점수·가중치·필터·랭킹은 "원본 그대로" 가 원칙이므로
 손대기 전에 합의가 필요하다.
+
+`2026-09-16` 갱신 — `app/legacy/` 는 없어졌다. 세 모듈이 `app/labeler.py`,
+`app/features.py`, `app/stage1_torch.py` 로 올라왔고 `sys.path` 조작과 맨 이름 import 가
+빠졌다. **계산은 한 줄도 바꾸지 않았다** — 바뀐 것은 배치와 import 경로뿐이다.
 
 우선순위는 **채팅 기능(`POST /api/v1/ai/chat`)이 목업을 걷어내는 데 필요한 순서**로 잡았다.
 **그 목업은 걷혔다** — `api/src/main/java/com/osundosun/mupid/api/ai/tool/AiRecommendToolImpl.java`
@@ -170,11 +174,11 @@ MV 는 이벤트→구간 매핑과 가중치까지 이미 물고 있다.
 겪었다고 적어 둔 사고). 지금 이 파일을 채우는 경로가 없다.
 
 매 요청 조회로 대체할 수 **없다** — 한 사용자의 등급 라벨이 남의 데이터에 의존한다
-(`m09_labels.py:251-256`: baseline = 그 구간을 들은 **모든 사용자**의 평균 + 전역 위치 편향
+(`app/labeler.py:251-256`: baseline = 그 구간을 들은 **모든 사용자**의 평균 + 전역 위치 편향
 prior + shrinkage κ=5). 게다가 등급 우선순위·도달 마스킹·인접 구간 병합 같은 규칙이 15개 상수와
 함께 들어 있고, **모델이 이 정의로 학습됐다.**
 
-→ 야간 배치로 ClickHouse 에서 이벤트를 당겨 `m09_labels` 를 그대로 돌린다. 하루 1회면 충분하다
+→ 야간 배치로 ClickHouse 에서 이벤트를 당겨 `labeler` 를 그대로 돌린다. 하루 1회면 충분하다
 (최근성은 8번이 담당한다).
 
 ### 10. 온보딩 취향 유입
@@ -266,7 +270,7 @@ Spring `GET /api/v1/recommendation/daily` 는 `daily_recommendations` 를 **읽�
 | 값 | |
 |---|---|
 | `in_dim` 285 (PCA 256 + side 29) | `features_info.json` |
-| `DIM` 128 · `HIST_MAX` 32 | `app/legacy/m11_stage1.py:46-47` |
+| `DIM` 128 · `HIST_MAX` 32 | `app/stage1_torch.py:46-47` |
 | 파라미터 ~88,000개 · 체크포인트 357KB | |
 | 요청당 `(1,32,285)` forward ≈ **5 MFLOP** | |
 

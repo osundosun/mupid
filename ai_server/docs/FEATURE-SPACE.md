@@ -12,7 +12,7 @@
 X = [ MERT PCA 256 (동결 기저) | side 29 ]   = 285
 ```
 
-재현식은 `ai_server/app/legacy/m10_features.py` 의 `fit()` 이 정본이다.
+재현식은 `ai_server/app/features.py` 의 `fit()` 이 정본이다.
 
 ```python
 P = (moments_emb[emb_row] - pca_mean) @ pca_comp
