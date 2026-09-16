@@ -26,6 +26,7 @@ administrator"). 매니페스트를 사람이 적용하던 때와 같은 모양�
 건드리게 되고, 그건 매니페스트 수신기의 몫이다.
 """
 import hashlib
+import json
 import os
 import pathlib
 import re
@@ -106,29 +107,76 @@ def safe_extract(archive, target):
         tar.extractall(target, members=members)
 
 
+def npy_rows(path):
+    """`.npy` 첫 축의 길이를 numpy 없이 읽는다.
+
+    노드에는 numpy 도 pandas 도 없다(실측 2026-09-16). 그래서 아래 전체 검사가
+    **건너뛰어진다** — 막으려고 쓴 검사가 정작 운영에서는 돌지 않았다. NPY 는 헤더가
+    ASCII 딕셔너리라 표준 라이브러리만으로 형태를 읽을 수 있으니, 최소한 두 벡터
+    파일의 행 수는 언제나 본다."""
+    with open(path, "rb") as source:
+        if source.read(6) != b"\x93NUMPY":
+            fail(f"NPY 가 아니다: {path.name}")
+        major = source.read(2)[0]
+        width = 2 if major == 1 else 4
+        length = int.from_bytes(source.read(width), "little")
+        header = source.read(length).decode("latin-1")
+    found = re.search(r"'shape':\s*\((\d+)", header)
+    if not found:
+        fail(f"NPY 헤더에서 형태를 읽지 못했다: {path.name}")
+    return int(found.group(1))
+
+
+def check_rows(data):
+    """numpy 없이도 **언제나** 도는 검사. 노드에 numpy 가 없어서 존재한다.
+
+    떼어 둔 이유는 시험 때문이기도 하다 — 아래 전체 검사는 numpy 유무에 따라
+    결과가 갈려서, 붙여 두면 시험이 환경에 휘둘린다.
+    """
+    # 네 색인은 같은 행 번호로 서로를 가리키므로, 서로 다른 판에서 온 파일이
+    # 섞이면 행 수부터 어긋난다. 자르는 쪽이 남긴 보고서와도 맞춰 본다 —
+    # 보고서만 새 판이고 파일이 옛 판인 경우를 잡는다.
+    counts = {name: npy_rows(data / name)
+              for name in ("moments_emb.npy", "stage1_section.npy")}
+    report = data / "slice_report.json"
+    if report.exists():
+        try:
+            expected = json.loads(report.read_text(encoding="utf-8"))["rows"]
+        except Exception as e:
+            fail(f"slice_report.json 을 읽지 못했다: {type(e).__name__}: {e}")
+        counts.update({f"보고서:{k}": v for k, v in expected.items()})
+    if len(set(counts.values())) != 1:
+        fail(f"행 수가 어긋난다: {counts}")
+    rows = next(iter(counts.values()))
+    print(f"색인 {rows}행 (NPY 헤더 기준)")
+    return rows
+
+
 def verify(directory):
     """`check_integrity()` 가 기동 때 보는 것과 같은 조건을 미리 본다.
 
     여기서 막지 않으면 증상이 "파드는 떴는데 ready 가 영영 false" 로만 보인다.
-    그때는 이미 current 가 새 판을 가리키고 있어 되돌릴 대상이 헷갈린다.
-    """
+    그때는 이미 current 가 새 판을 가리키고 있어 되돌릴 대상이 헷갈린다."""
     data = directory / INNER
     missing = sorted(name for name in REQUIRED if not (data / name).exists())
     if missing:
         fail(f"필수 색인이 없다: {', '.join(missing)}")
 
-    # numpy·pandas 가 노드에 없을 수 있다. 없으면 행 수 검사를 건너뛰되 **조용히
-    # 넘기지 않는다** — 검사한 줄 알고 있으면 다음 사고가 더 오래 걸린다.
+    rows = check_rows(data)
+
+    # ② numpy·pandas 가 있으면 parquet 까지 본다. 없으면 ① 로 만족한다 —
+    #    **조용히 넘기지 않는다.** 검사한 줄 알고 있으면 다음 사고가 더 오래 걸린다.
     probe = subprocess.run(
         [sys.executable, "-c", _PROBE, str(data)],
         capture_output=True, text=True, timeout=300)
     if probe.returncode == 3:
-        print("경고: numpy/pandas 가 없어 행 수 검사를 건너뛴다", file=sys.stderr)
-        return {"checked": False}
+        print("알림: numpy/pandas 가 없어 parquet 검사는 건너뛴다 (NPY 검사는 했다)",
+              file=sys.stderr)
+        return {"checked": "npy-only", "rows": rows}
     if probe.returncode:
         fail(f"색인 검사 실패: {probe.stderr.strip()[:500]}")
     print(probe.stdout.strip())
-    return {"checked": True}
+    return {"checked": "full", "rows": rows}
 
 
 _PROBE = """

@@ -1788,6 +1788,101 @@ class IndexUploadTest(unittest.TestCase):
             with self.subTest(flag=flag):
                 self.assertIn(flag, script)
 
+def _load_receiver():
+    """`receive-index.py` 를 모듈로 읽는다. 이름에 하이픈이 있어 import 가 안 된다."""
+    import importlib.util
+
+    path = K8S / "deploy" / "receive-index.py"
+    spec = importlib.util.spec_from_file_location("mupid_receive_index", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _npy(path, rows, cols=4, version=1):
+    """헤더만 진짜인 .npy 를 만든다. numpy 없이 만들어야 한다 — 이 시험은
+    python:3.12-slim 에서 돌고 거기엔 numpy 가 없다(`infra/ci/manifests.yml`).
+
+    노드도 같은 처지라 파서가 존재하는 것이고, 그래서 시험도 같은 방식으로 만든다.
+    """
+    header = ("{'descr': '<f4', 'fortran_order': False, "
+              "'shape': (%d, %d), }" % (rows, cols))
+    if version == 1:
+        prefix = b"\x93NUMPY\x01\x00"
+        width = 2
+    else:
+        prefix = b"\x93NUMPY\x02\x00"
+        width = 4
+    pad = -(len(prefix) + width + len(header) + 1) % 64
+    body = (header + " " * pad + "\n").encode("latin-1")
+    path.write_bytes(prefix + len(body).to_bytes(width, "little") + body
+                     + b"\x00" * (rows * cols * 4))
+
+
+class IndexReceiverCheckTest(unittest.TestCase):
+    """노드에는 numpy 도 pandas 도 없다(2026-09-16 실측). 그래서 처음 쓴 전체 검사가
+    **운영에서는 건너뛰어졌다** — 막으려고 쓴 검사가 정작 돌지 않았다. NPY 헤더는
+    ASCII 라 표준 라이브러리로 읽을 수 있으니 행 수만은 언제나 본다."""
+
+    def setUp(self):
+        self.mod = _load_receiver()
+        self.tmp = tempfile.mkdtemp()
+        self.data = pathlib.Path(self.tmp) / self.mod.INNER
+        self.data.mkdir(parents=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _fill(self, emb_rows, sec_rows, report_rows=None):
+        _npy(self.data / "moments_emb.npy", emb_rows)
+        _npy(self.data / "stage1_section.npy", sec_rows)
+        (self.data / "moments.parquet").write_bytes(b"PAR1")
+        (self.data / "features_v1.npz").write_bytes(b"PK\x03\x04")
+        if report_rows is not None:
+            (self.data / "slice_report.json").write_text(
+                json.dumps({"rows": {"moments": report_rows}}), encoding="utf-8")
+
+    def test_reads_the_row_count_without_numpy(self):
+        _npy(self.data / "a.npy", 10007)
+        self.assertEqual(10007, self.mod.npy_rows(self.data / "a.npy"))
+
+    def test_reads_the_v2_header_too(self):
+        """v2 는 헤더 길이가 2바이트가 아니라 4바이트다. 폭을 틀리면 엉뚱한 곳을 읽는다."""
+        _npy(self.data / "b.npy", 4242, version=2)
+        self.assertEqual(4242, self.mod.npy_rows(self.data / "b.npy"))
+
+    def test_refuses_a_file_that_is_not_npy(self):
+        (self.data / "c.npy").write_bytes(b"not a numpy file at all")
+        with self.assertRaises(SystemExit):
+            self.mod.npy_rows(self.data / "c.npy")
+
+    def test_mismatched_vectors_are_refused(self):
+        """네 색인은 같은 행 번호로 서로를 가리킨다. 서로 다른 판에서 온 파일이
+        섞이면 서비스는 정상처럼 뜨면서 엉뚱한 곡을 추천한다 — 오류는 안 난다."""
+        self._fill(10007, 9999)
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.check_rows(self.data)
+        self.assertEqual(65, caught.exception.code)
+
+    def test_a_stale_report_is_refused(self):
+        """보고서만 새 판이고 파일이 옛 판인 경우. 보고서를 믿으면 놓친다."""
+        self._fill(10007, 10007, report_rows=12345)
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.check_rows(self.data)
+        self.assertEqual(65, caught.exception.code)
+
+    def test_a_consistent_bundle_passes_without_numpy(self):
+        """numpy 가 없어도 통과해야 한다. 여기서 막히면 배포가 아예 안 된다."""
+        self._fill(10007, 10007, report_rows=10007)
+        self.assertEqual(10007, self.mod.check_rows(self.data))
+
+    def test_a_missing_index_is_named(self):
+        self._fill(10007, 10007)
+        (self.data / "features_v1.npz").unlink()
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.verify(pathlib.Path(self.tmp))
+        self.assertEqual(65, caught.exception.code)
+
 
 if __name__ == "__main__":
     unittest.main()
