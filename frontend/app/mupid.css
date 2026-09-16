@@ -411,6 +411,21 @@ h1 {
 .art-7 img {
   filter: saturate(0.6) brightness(0.83);
 }
+/*
+ * 커버를 못 구했을 때 거는 기본 그림.
+ *
+ * 위의 연출은 전부 "사진 한 장을 곡마다 다르게 잘라 쓴다" 는 전제다 —
+ * `.album-art img` 는 1.8배로 키워 오른쪽 아래를 보여 주고, `.art-1`~`.art-7`
+ * 은 거기에 색을 돌린다. 기본 그림은 이미 정사각으로 그려 둔 것이라 그 전제가
+ * 맞지 않는다. 키우면 가운데 하트가 잘리고, 색을 돌리면 하늘색 톤이 어긋난다.
+ * 그래서 이 한 장에서만 크롭과 필터를 걷어 낸다.
+ */
+.album-art img.album-art-fallback {
+  filter: none;
+  transform: none;
+  object-fit: contain;
+  object-position: center;
+}
 .track-list {
   display: grid;
   gap: 10px;

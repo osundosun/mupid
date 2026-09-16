@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320" role="img" aria-label="기본 앨범 커버">
+  <defs>
+    <linearGradient id="mupid-cover-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eaf2fe" />
+      <stop offset="1" stop-color="#c6dcf6" />
+    </linearGradient>
+    <linearGradient id="mupid-cover-disc" x1="0.18" y1="0" x2="0.82" y2="1">
+      <stop offset="0" stop-color="#a3c0e2" />
+      <stop offset="1" stop-color="#6e92c3" />
+    </linearGradient>
+  </defs>
+  <rect width="320" height="320" fill="url(#mupid-cover-sky)" />
+  <ellipse cx="62" cy="256" rx="82" ry="31" fill="#ffffff" opacity="0.5" />
+  <ellipse cx="258" cy="280" rx="70" ry="27" fill="#ffffff" opacity="0.42" />
+  <circle cx="160" cy="150" r="88" fill="url(#mupid-cover-disc)" />
+  <g fill="none" stroke="#ffffff" stroke-width="2">
+    <circle cx="160" cy="150" r="88" stroke-opacity="0.34" />
+    <circle cx="160" cy="150" r="72" stroke-opacity="0.26" />
+    <circle cx="160" cy="150" r="56" stroke-opacity="0.2" />
+  </g>
+  <circle cx="160" cy="150" r="40" fill="#f4f9ff" />
+  <path
+    d="M160 168 C150 158 138 150 138 140 C138 133 144 128 150 128 C155 128 158.5 131 160 134 C161.5 131 165 128 170 128 C176 128 182 133 182 140 C182 150 170 158 160 168 Z"
+    fill="#cb648f"
+  />
+</svg>

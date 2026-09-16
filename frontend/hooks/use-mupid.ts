@@ -6,6 +6,17 @@ import { mupidService } from '@/lib/services';
 import { login, logout, restoreSession } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
+import {
+  queueEntry,
+  queueIndexOf,
+  removeQueueEntries,
+  removeQueueEntry,
+  reorderQueue,
+  stepQueue,
+  toQueueEntries,
+  upcomingQueue,
+  type QueueEntry,
+} from '@/lib/queue';
 import { saveOnboarding } from '@/lib/onboarding';
 import { updateNickname } from '@/lib/profile';
 import { fetchHistory, fetchReactions, pushReaction } from '@/lib/reactions';
@@ -32,6 +43,15 @@ export type RepeatMode = 'off' | 'all' | 'one';
 
 // 재생 목록은 끝없이 쌓이면 훑기도, 순서를 바꾸기도 어렵다. 여기까지만 담는다.
 export const QUEUE_LIMIT = 100;
+
+/**
+ * 화면에 내보내는 재생 목록의 한 줄.
+ *
+ * 곡에 **자리 번호**(`uid`)를 덧붙인 것이다. 같은 곡을 두 번 담을 수 있으므로
+ * 화면의 `key` · 끌어 옮길 대상 · 뺄 대상은 모두 곡 번호가 아니라 이 번호로
+ * 가리킨다 (`lib/queue.ts`).
+ */
+export type QueueTrack = Track & { uid: string };
 
 export function useMupid(bootstrap: Bootstrap) {
   const router = useRouter();
@@ -70,7 +90,22 @@ export function useMupid(bootstrap: Bootstrap) {
   // 셔플은 재생 목록 안에서 중복 없이 섞어 재생한다. 반복과 함께 켤 수 있다.
   const [shuffle, setShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
-  const [queueIds, setQueueIds] = useState<number[]>(tracks.slice(0, QUEUE_LIMIT).map((t) => t.id));
+  // 자리마다 번호를 새로 만드는 일은 처음 한 번뿐이다. 매 렌더마다 만들면
+  // 화면의 key 가 계속 바뀌어 목록이 통째로 다시 그려진다.
+  const [queue, setQueue] = useState<QueueEntry[]>(() =>
+    toQueueEntries(tracks.slice(0, QUEUE_LIMIT).map((t) => t.id)),
+  );
+  /**
+   * 지금 듣고 있는 **자리**.
+   *
+   * 곡 번호로는 알 수 없다 — 같은 곡이 3번째와 7번째에 담겨 있으면 어느 쪽을
+   * 듣는 중인지 구분되지 않아 다음 곡이 늘 4번째로 되감겼다. 재생 목록 밖의
+   * 곡(저장한 순간 등)을 듣는 중이면 null.
+   */
+  const [currentUid, setCurrentUid] = useState<string | null>(null);
+  const currentUidRef = useRef<string | null>(null);
+  /** ✕ 로 짚어 둔 자리. 확인 대화상자를 지나는 동안만 들고 있는다. */
+  const pendingRemoval = useRef<string | null>(null);
   const [toast, setToast] = useState('');
   const [ready, setReady] = useState(false);
   // 세션 복원이 끝났는가. 끝나기 전에는 화면 가드를 돌리지 않는다.
@@ -104,7 +139,9 @@ export function useMupid(bootstrap: Bootstrap) {
   const endedFor = useRef<number | null>(null);
   /** 마지막으로 알린 재생 오류. 같은 사정을 반복해서 띄우지 않는다. */
   const notifiedError = useRef<string | null>(null);
-  const playedInCycle = useRef<Set<number>>(new Set());
+  // 셔플 한 바퀴에서 이미 들은 **자리**. 곡 번호로 세면 같은 곡을 두 번 담아도
+  // 한 바퀴에 한 번만 울린다.
+  const playedInCycle = useRef<Set<string>>(new Set());
   const requestId = useRef(0);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
@@ -470,8 +507,27 @@ export function useMupid(bootstrap: Bootstrap) {
    * 요청마다 번호를 매겨, 빠르게 곡을 바꿨을 때 **뒤늦게 끝난 이전 요청이
    * 지금 곡을 덮어쓰지 않게** 한다. 곡 변경이 간혹 먹지 않던 것이 이것 때문이다.
    */
-  const startPlayback = async (track: Track, start?: number) => {
+  /**
+   * 이번 재생이 재생 목록의 **어느 자리**인가.
+   *
+   * 자리를 아는 쪽(다음곡·재정렬된 목록에서 고른 곡)은 그 번호를 그대로 넘긴다.
+   * 넘기지 않으면 여기서 고른다 — 듣던 곡을 그대로 다시 거는 경우(구간 미리듣기,
+   * 한곡 반복, seek)에는 듣던 자리를 지키고, 그 밖에는 같은 곡이 담긴 첫 자리로
+   * 본다. 목록에 없는 곡이면 자리가 없으므로 null 이다.
+   */
+  const resolveQueueUid = (track: Track, explicit?: string | null) => {
+    if (explicit !== undefined) return explicit;
+    const staying =
+      activeRef.current?.id === track.id &&
+      queue.some((entry) => entry.uid === currentUidRef.current && entry.trackId === track.id);
+    if (staying) return currentUidRef.current;
+    return queue.find((entry) => entry.trackId === track.id)?.uid ?? null;
+  };
+  const startPlayback = async (track: Track, start?: number, uid?: string | null) => {
     if (typeof track.musicId !== 'number') return;
+    const slot = resolveQueueUid(track, uid);
+    currentUidRef.current = slot;
+    setCurrentUid(slot);
     analytics.startPlay({ trackId: track.musicId, entryPath: entryPathOf() }, start ?? 0);
     const id = ++requestId.current;
     loadTrack(track);
@@ -495,9 +551,31 @@ export function useMupid(bootstrap: Bootstrap) {
     // 곡이 하나도 없으면 누를 것도 없다.
     if (!track) return;
     previewEnd.current = null;
-    if (!queueIds.includes(track.id)) {
-      // 목록 밖의 곡을 고르면 그 곡을 맨 앞에 두고 상한까지만 다시 채운다.
-      setQueueIds([track.id, ...tracks.map((t) => t.id).filter((id) => id !== track.id)].slice(0, QUEUE_LIMIT));
+    // 목록 밖의 곡을 고르면 그 곡을 맨 앞에 두고 상한까지만 다시 채운다.
+    // **담겨 있던 자리를 먼저 잇는다.** 예전에는 카탈로그 순서로 큐를 통째로
+    // 새로 만들어서, 애써 끌어 바꿔 둔 재생 목록 순서가 목록 밖 곡을 한 번
+    // 누르는 것만으로 사라졌다.
+    let picked: string | undefined;
+    if (!queue.some((entry) => entry.trackId === track.id)) {
+      const head = queueEntry(track.id);
+      const rest = queue.filter((entry) => entry.trackId !== track.id);
+      const room = QUEUE_LIMIT - 1 - rest.length;
+      const filler =
+        room > 0
+          ? tracks
+              .filter((t) => t.id !== track.id && !rest.some((entry) => entry.trackId === t.id))
+              .slice(0, room)
+              .map((t) => queueEntry(t.id))
+          : [];
+      setQueue([head, ...rest, ...filler].slice(0, QUEUE_LIMIT));
+      // 큐 갱신은 다음 렌더에나 보이므로 이번 재생의 자리는 여기서 직접 넘긴다.
+      picked = head.uid;
+      // 듣던 곡을 그대로 이어 트는 길(아래 일시정지 토글)은 `startPlayback` 을
+      // 지나지 않는다. 그 길에서도 방금 만든 자리가 지금 듣는 자리다.
+      if (activeRef.current?.id === track.id) {
+        currentUidRef.current = head.uid;
+        setCurrentUid(head.uid);
+      }
     }
     const player = getPlayer();
     // 지금 울리는 곡을 다시 누르면 멈춘다. 멈춘 곡을 누르면 이어서 튼다.
@@ -517,28 +595,35 @@ export function useMupid(bootstrap: Bootstrap) {
     if (activeRef.current && activeRef.current.id !== track.id) {
       analytics.skip(positionMs(), 'OTHER_TRACK');
     }
-    void startPlayback(track, fromMoment ? track.moment : undefined);
+    void startPlayback(track, fromMoment ? track.moment : undefined, picked);
   };
   const next = (direction = 1) => {
     previewEnd.current = null;
-    const pool = queueIds
-      .map((id) => tracks.find((t) => t.id === id)!)
-      .filter((t) => t && !ignored.includes(t.id));
+    // 화면에 보이는 목록과 같은 순서로 넘긴다. 끌어 바꾼 순서가 그대로 다음 곡이다.
+    const pool = queueTracks;
     if (!pool.length) return;
-    const index = pool.findIndex((t) => t.id === activeRef.current?.id);
     const candidates = pool.filter((t) => t.id !== activeRef.current?.id);
     const target =
       shuffle && candidates.length
         ? candidates[Math.floor(Math.random() * candidates.length)]
-        : pool[(index + direction + pool.length) % pool.length];
+        : stepQueue(pool, currentUidRef.current, direction);
+    if (!target) return;
     // 넘길 곡이 실제로 정해진 뒤에 남긴다. 이전·다음 어느 쪽이든 지금 곡을 끝까지
     // 듣지 않고 떠난 것이므로 스킵이다.
     analytics.skip(positionMs(), 'NEXT_BUTTON');
-    void startPlayback(target, 0);
+    void startPlayback(target, 0, target.uid);
   };
-  const queueTracks = queueIds
-    .map((id) => tracks.find((t) => t.id === id)!)
-    .filter((t) => t && !ignored.includes(t.id))
+  /**
+   * 화면에 보이는 재생 목록. 큐의 자리 순서 그대로이고, 건너뛴 곡과 카탈로그에서
+   * 사라진 곡만 빠진다. 자리 번호(`uid`)를 곡에 붙여 내보내므로 같은 곡이 여러
+   * 번 담겨 있어도 화면이 줄마다 다른 것으로 다룰 수 있다.
+   */
+  const queueTracks: QueueTrack[] = queue
+    .map(({ uid, trackId }) => {
+      const track = tracks.find((t) => t.id === trackId);
+      return track ? { ...track, uid } : null;
+    })
+    .filter((t): t is QueueTrack => !!t && !ignored.includes(t.id))
     .slice(0, QUEUE_LIMIT);
   /**
    * 사용자가 재생 위치를 옮긴다. 화면의 막대와 잠금화면의 막대가 같은 길이다.
@@ -659,12 +744,15 @@ export function useMupid(bootstrap: Bootstrap) {
       getPlayer()?.setQueue([]);
       return;
     }
-    const upcoming = queueTracks
+    // **듣고 있는 자리 다음부터** 센다. 예전에는 큐 맨 앞에서 세 곡을 집어서
+    // 목록 뒤쪽을 듣는 동안에는 정작 다음에 울릴 곡이 준비되지 않았고, 순서를
+    // 바꿔도 미리 받아 두는 곡이 그대로였다.
+    const upcoming = upcomingQueue(queueTracks, currentUid)
       .filter((track) => isStreamed(track) && track.id !== active?.id)
       .map((track) => track.musicId!)
       .slice(0, 3);
     getPlayer()?.setQueue(upcoming);
-  }, [queueIds, active?.id, ignored, demoSession]);
+  }, [queue, currentUid, active?.id, ignored, demoSession]);
   const playPlaylist = (playlist: Playlist, track?: Track) => {
     const playable = playlist.tracks.filter((t) => !ignored.includes(t.id));
     if (!playable.length) {
@@ -675,10 +763,14 @@ export function useMupid(bootstrap: Bootstrap) {
     const first = track && playable.find(t => t.id === track.id) || (shuffle
       ? playable[Math.floor(Math.random() * playable.length)]
       : playable[0]);
-    playedInCycle.current = new Set([first.id]);
-    setQueueIds(playable.slice(0, QUEUE_LIMIT).map((t) => t.id));
+    // 플레이리스트에 같은 곡이 두 번 들어 있어도 자리는 둘이다.
+    const entries = toQueueEntries(playable.slice(0, QUEUE_LIMIT).map((t) => t.id));
+    const firstIndex = playable.findIndex((t) => t === first);
+    const firstUid = entries[firstIndex]?.uid ?? null;
+    playedInCycle.current = new Set(firstUid ? [firstUid] : []);
+    setQueue(entries);
     previewEnd.current = null;
-    void startPlayback(first, 0);
+    void startPlayback(first, 0, firstUid);
   };
   /**
    * 곡이 끝났다. 반복·셔플 규칙에 따라 다음 곡을 고른다.
@@ -695,19 +787,24 @@ export function useMupid(bootstrap: Bootstrap) {
     const current = activeRef.current;
     if (!current) return;
     if (repeatMode === 'one') { void startPlayback(current, 0); return; }
-    playedInCycle.current.add(current.id);
+    const uid = currentUidRef.current;
+    if (uid) playedInCycle.current.add(uid);
     const pool = queueTracks;
-    const index = pool.findIndex(t => t.id === current.id);
-    let remaining = pool.filter(t => !playedInCycle.current.has(t.id));
+    // **곡이 아니라 자리를 센다.** 곡 번호로 세던 때는 지금 자리를 맨 앞 중복으로
+    // 착각해 목록 뒤쪽을 듣다가도 재생이 앞으로 되감겼고, 같은 곡을 두 번 담아도
+    // 셔플 한 바퀴에 한 번만 울렸다.
+    const index = queueIndexOf(pool, uid);
+    let remaining = pool.filter(t => !playedInCycle.current.has(t.uid));
     const finished = shuffle ? remaining.length === 0 : index >= pool.length - 1;
     // 목록 끝에 닿았을 때, 전체 반복이면 한 바퀴를 다시 돌고 아니면 멈춘다.
     if (!pool.length || (finished && repeatMode === 'off')) {
       getPlayer()?.pause(); setPlaying(false); return;
     }
     if (finished) { playedInCycle.current.clear(); remaining = pool; }
-    const target = shuffle ? remaining[Math.floor(Math.random() * remaining.length)] : pool[(index + 1) % pool.length];
-    playedInCycle.current.add(target.id);
-    void startPlayback(target, 0);
+    const target = shuffle ? remaining[Math.floor(Math.random() * remaining.length)] : stepQueue(pool, uid, 1);
+    if (!target) { getPlayer()?.pause(); setPlaying(false); return; }
+    playedInCycle.current.add(target.uid);
+    void startPlayback(target, 0, target.uid);
   };
   // 구독자는 한 번만 등록되므로 최신 규칙을 참조로 넘긴다.
   onEndedRef.current = onEnded;
@@ -1172,31 +1269,69 @@ export function useMupid(bootstrap: Bootstrap) {
     renamePlaylist,
     setRenamePlaylist,
     queueTracks,
-    // 보이는 순서대로 재정렬한다. 목록에 없던 id는 뒤에 남겨 둔다.
-    setQueueOrder: (orderedIds: number[]) => {
-      setQueueIds(ids => [...orderedIds, ...ids.filter(id => !orderedIds.includes(id))].slice(0, QUEUE_LIMIT));
+    // 지금 듣고 있는 자리. 같은 곡이 여러 번 담겼을 때 어느 줄이 울리는 줄인지
+    // 화면이 이것으로 가린다.
+    currentQueueUid: currentUid,
+    /**
+     * 보이는 줄들을 받은 순서대로 다시 놓는다.
+     *
+     * **자리 번호로 받는다.** 곡 번호로 받던 때는 같은 곡이 두 번 담기면 어느
+     * 줄을 끌었는지 알 수 없었고, 화면에서 감춘 자리(건너뛴 곡)가 순서를 바꿀
+     * 때마다 큐 맨 뒤로 밀려났다.
+     */
+    setQueueOrder: (orderedUids: string[]) => {
+      setQueue(entries => reorderQueue(entries, orderedUids));
     },
-    // 재생 목록에서 뺀다. 재생 중인 곡을 빼도 지금 재생은 그대로 이어진다.
-    removeFromQueue: (track: Track) => {
-      setQueueIds(ids => ids.filter(id => id !== track.id));
-      playedInCycle.current.delete(track.id);
+    /**
+     * 재생 목록에서 뺀다. 재생 중인 곡을 빼도 지금 재생은 그대로 이어진다.
+     *
+     * 재생 목록 화면이 넘겨 주는 값에는 자리 번호가 붙어 있어 **그 줄 하나만**
+     * 빠진다. 자리 번호가 없는 곳에서 부르면 그 곡이 담긴 첫 자리를 뺀다.
+     */
+    removeFromQueue: (track: Track & { uid?: string }) => {
+      const uid = track.uid ?? queue.find(entry => entry.trackId === track.id)?.uid;
+      pendingRemoval.current = null;
+      if (!uid) return;
+      setQueue(entries => removeQueueEntry(entries, uid));
+      playedInCycle.current.delete(uid);
       setToast(`‘${track.title}’ 곡을 재생 목록에서 뺐어요.`);
     },
-    // 고른 곡을 한 번에 뺀다. 전체 선택 후 삭제하는 흐름에 쓴다.
+    /**
+     * 줄의 ✕ 를 누른 **그 자리**를 일러둔다.
+     *
+     * 빼기는 확인 대화상자를 한 번 거치는데, 그 대화상자는 뺄 대상을 곡 번호로만
+     * 들고 있다. 같은 곡이 두 자리에 담겨 있으면 곡 번호만으로는 누른 줄을 되찾을
+     * 수 없어 두 자리가 함께 빠진다. 그래서 누른 줄을 여기 적어 두고 아래에서
+     * 그 자리 하나만 뺀다. 체크 박스로 고르는 길은 곡 단위라 적지 않는다(null).
+     */
+    markQueueRemoval: (uid: string | null) => { pendingRemoval.current = uid; },
+    /**
+     * 고른 곡을 한 번에 뺀다. 전체 선택 후 삭제하는 흐름에 쓴다.
+     *
+     * 곡 번호로 받으므로 같은 곡이 여러 자리에 담겨 있으면 그 자리들이 함께
+     * 빠진다 — 고르기 화면이 곡 단위로 체크하기 때문이고, 확인 문구도 "고른 N곡"
+     * 으로 그 수를 미리 알려 준다. 줄의 ✕ 로 한 자리를 짚어 온 경우만 예외다.
+     */
     removeManyFromQueue: (ids: number[]) => {
       if (!ids.length) return;
-      setQueueIds(list => list.filter(id => !ids.includes(id)));
-      ids.forEach(id => playedInCycle.current.delete(id));
-      setToast(`${ids.length}곡을 재생 목록에서 뺐어요.`);
+      const aimed = pendingRemoval.current;
+      pendingRemoval.current = null;
+      const uids =
+        ids.length === 1 && aimed && queue.some(e => e.uid === aimed && e.trackId === ids[0])
+          ? [aimed]
+          : queue.filter(entry => ids.includes(entry.trackId)).map(entry => entry.uid);
+      setQueue(entries => removeQueueEntries(entries, uids));
+      uids.forEach(uid => playedInCycle.current.delete(uid));
+      setToast(`${uids.length}곡을 재생 목록에서 뺐어요.`);
     },
-    // 재생 목록 맨 뒤에 담는다. 이미 있으면 그대로 둔다.
+    // 재생 목록 맨 뒤에 담는다. **이미 있어도 한 번 더 담긴다** — 같은 곡을 이어서
+    // 두 번 듣고 싶은 것은 흔한 일이고, 자리마다 번호가 달라 둘을 구분할 수 있다.
     addToQueue: (track: Track) => {
-      if (queueIds.includes(track.id)) { setToast('이미 재생 목록에 있어요.'); return; }
-      if (queueIds.length >= QUEUE_LIMIT) {
+      if (queue.length >= QUEUE_LIMIT) {
         setToast(`재생 목록은 ${QUEUE_LIMIT}곡까지 담을 수 있어요. 몇 곡을 먼저 빼주세요.`);
         return;
       }
-      setQueueIds(ids => [...ids, track.id]);
+      setQueue(entries => [...entries, queueEntry(track.id)]);
       setToast(`‘${track.title}’ 곡을 재생 목록에 담았어요.`);
     },
     playPlaylist,
