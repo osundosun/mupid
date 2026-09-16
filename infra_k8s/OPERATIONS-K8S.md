@@ -146,10 +146,23 @@ kubectl -n mupid exec -i statefulset/mysql -- \
   mysql -umupid_app -p"$PASSWORD" mupid < api/knowledge/domain/seed-codes.sql
 ```
 
-**엔티티와 컬럼이 맞는지 적용 뒤에 확인한다.** `ddl-auto` 가 `none` 이라 앱이
-컬럼을 따라 만들지 않으므로, ERD 가 코드보다 뒤처져 있으면 런타임에 터진다.
-실제로 `object_storage_files.category` ENUM 에 `MUBTI` 가 빠져 있어
-`Data truncated for column 'category'` 로 부트스트랩이 실패한 적이 있다.
+**엔티티와 컬럼이 맞는지 적용 뒤에 확인한다.** `deploy/schema-check.py` 가 두 방향을
+한 번에 본다 — erd.sql ↔ DB(타입·ENUM 값 포함), 엔티티 ↔ DB.
+
+```bash
+# 노드에서 스키마를 뜨고
+sudo infra_k8s/deploy/schema-dump.sh > live.tsv
+
+# 저장소가 있는 곳에서 대조한다. 차이가 있으면 종료 코드가 1 이다.
+python3 infra_k8s/deploy/schema-check.py --schema live.tsv
+
+# 머지 전에 "이 브랜치는 ALTER 가 필요한가" 를 보려면
+git show <ref>:api/knowledge/domain/erd.sql > /tmp/erd.sql
+python3 infra_k8s/deploy/schema-check.py --schema live.tsv --erd /tmp/erd.sql
+```
+
+`ddl-auto` 가 `none` 이라 앱이 컬럼을 따라 만들지 않는다. 어긋나면 배포 직후가 아니라
+**그 컬럼을 처음 쓰는 요청에서** 터진다.
 
 ```bash
 kubectl -n mupid exec statefulset/mysql -- \
