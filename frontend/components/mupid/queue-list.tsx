@@ -98,9 +98,13 @@ export function QueueList({
           key={track.uid}
           data-queue-uid={track.uid}
           data-queue-id={track.id}
+          /*
+           * 고른 줄은 **칸 전체**에 표시를 준다. 줄(`.track-row`)에만 주면 체크
+           * 박스가 놓인 앞 칸이 칠해지지 않아 고른 표시가 중간에서 끊긴다.
+           */
           className={`queue-item ${dragUid === track.uid ? 'is-dragging' : ''} ${
             m.currentQueueUid === track.uid ? 'is-current' : ''
-          }`}
+          } ${picking && selection.has(track.id) ? 'is-selected' : ''}`}
           // 같은 곡이 여러 번 담겨 있으면 제목만으로는 어느 줄이 울리는 줄인지
           // 알 수 없다. 지금 듣고 있는 자리만 표시한다.
           aria-current={m.currentQueueUid === track.uid ? 'true' : undefined}

@@ -509,3 +509,24 @@
 .queue-list.is-picking .queue-item > .track-row {
   padding-left: 4px;
 }
+
+/*
+ * 고른 줄 표시는 **칸 전체**에 준다.
+ *
+ * 색은 줄(`.track-row.is-selected`)에 걸려 있었는데, 그 줄은 체크 박스가 놓인
+ * 앞 칸을 포함하지 않는다. 그래서 고른 표시가 체크 박스 옆에서 끊겨 보였다.
+ * 칸(`.queue-item`)을 칠하고 안쪽 줄은 비운다 — 둘 다 칠하면 모서리가 어긋난다
+ * (칸은 14px 둥글고 줄은 각졌다).
+ */
+.queue-item.is-selected {
+  background: #eef4ff;
+}
+
+.queue-item.is-selected > .track-row.is-selected {
+  background: transparent;
+}
+
+/* 고른 줄에 마우스를 올려도 고른 표시가 이긴다. */
+.queue-item.is-selected:hover {
+  background: #e6eeff;
+}
