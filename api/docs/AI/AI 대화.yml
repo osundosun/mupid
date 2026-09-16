@@ -56,12 +56,12 @@ examples:
                   "artist": "무피드 테스트 아티스트",
                   "album": "무피드 테스트 앨범",
                   "image_url": "/api/v1/storage/image/ALBUM/1-...",
-                  "music_section_id": null,
-                  "section_label": null,
-                  "start_time_ms": 0,
-                  "end_time_ms": 0,
+                  "music_section_id": 118,
+                  "section_label": "CHORUS",
+                  "start_time_ms": 90000,
+                  "end_time_ms": 120000,
                   "score": 0.92,
-                  "reason_code": "COLD_START",
+                  "reason_code": "QUERY_FILTER_MATCH",
                   "reason": "지금 곡보다 템포를 조금 낮추고 잔향을 길게 남긴 곡이에요."
                 }
               ]
@@ -192,24 +192,19 @@ docs: |-
   | `music_id` | int | 곡 번호 |
   | `title`, `artist`, `album` | string | 표시용. `music_id` 로 DB 에서 채웁니다 |
   | `image_url` | string | 앨범 표지. 없으면 `null` |
-  | `music_section_id` | int | 추천된 구간. 목업은 채우지 않습니다(`null`) |
+  | `music_section_id` | int | 추천된 구간 |
   | `section_label` | string | `INTRO` `VERSE` `PRE_CHORUS` `CHORUS` `BRIDGE` `BREAK` `INST` `SOLO` `OUTRO` |
   | `start_time_ms`, `end_time_ms` | int | 구간 범위 |
   | `score` | number | 추천 점수 |
-  | `reason_code` | string | `QUERY_SEMANTIC_MATCH` `SIMILAR_PREFERRED_MOMENT` `EXPLORE_NEW` `COLD_START` |
+  | `reason_code` | string | `SIMILAR_PREFERRED_MOMENT` `ONBOARDING_MATCH` `COLD_START` `EXPLORE_NEW` `QUERY_FILTER_MATCH` `QUERY_SEMANTIC_MATCH` |
   | `reason` | string | 사람이 읽는 추천 이유 |
 
-  ## ⚠ 추천은 목업입니다
+  ## 추천 경로
 
-  `recommend_music` 툴은 질의를 보지 않습니다. 카탈로그 앞쪽에서 몇 곡을 집어 정해진
-  사유를 붙일 뿐이라 **점수·사유·구간은 가짜**입니다. 곡 번호만 진짜라서 화면에서
-  재생됩니다. 카탈로그가 비어 있으면 재생되지 않는 고정 예시(`music_id` 9001~)로
-  돌아갑니다.
-
-  구간(`music_section_id`·`section_label`·`start_time_ms`·`end_time_ms`)은 목업이
-  채우지 않습니다 — 임의의 구간을 내보내면 화면이 곡의 엉뚱한 지점을 "추천된 순간"
-  으로 표시합니다. 외부 추천 API 를 붙이는 날 바뀌는 것은
-  `ai/tool/AiRecommendToolImpl.java` 하나입니다.
+  `recommend_music` 툴은 LLM 이 고른 카탈로그 어휘를 `query_plan` 으로 만들어 실제
+  추천 서버에 보냅니다. 조건이 있으면 `/internal/recommendations/search`, 없으면
+  `/internal/recommendations/next` 를 호출합니다. 곡·구간·점수·사유는 추천 서버가
+  만들고, 표시 메타는 Spring 이 DB 에서 채웁니다.
 
   ## 화면은 카탈로그에 있는 곡만 그립니다
 
@@ -234,3 +229,6 @@ docs: |-
   | `MUPID_AI_EMPTY_RESPONSE` | 502 | 응답에 본문이 없음 |
   | `MUPID_AI_TOOL_ROUND_EXCEEDED` | 502 | 툴 호출만 반복하고 답을 끝내지 못함 |
   | `MUPID_AI_NOT_CONFIGURED` | 503 | `MUPID_AI_GMS_KEY` 가 비어 있음 |
+  | `MUPID_RECOMMENDER_NOT_CONFIGURED` | 503 | 추천 서버 주소가 비어 있음 |
+  | `MUPID_RECOMMENDER_UNAVAILABLE` | 503 | 추천 서버 500·503·타임아웃이 재시도 후에도 실패 |
+  | `MUPID_RECOMMENDER_REQUEST_FAILED` | 502 | 추천 요청이 400·401·501 등으로 거부됨 |
