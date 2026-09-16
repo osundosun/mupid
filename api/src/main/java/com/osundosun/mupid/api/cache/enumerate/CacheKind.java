@@ -50,7 +50,7 @@ public enum CacheKind {
     ReportBatch("report:batch"),
 
     /** 오늘의 모먼트 생성 배치 선점. 스케줄러는 인스턴스마다 돈다. */
-    DailyRecommendationBatch("recommendation:daily:batch");
+    DailyRecommendationBatch("recommendation:daily:batch"),
     /**
      * 사용자별 재생 큐. `queue:user:{userId}` 한 자리에 큐 한 벌이 통째로 들어간다.
      *
