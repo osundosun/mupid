@@ -711,6 +711,39 @@ def test_health_is_not_behind_the_token(monkeypatch):
         assert c.get("/health").status_code == 200
 
 
+def test_the_readiness_probe_is_not_behind_the_token(monkeypatch):
+    """**kubelet 은 토큰을 보내지 않는다.**
+
+    `/internal/ready` 를 인증 뒤에 두면 토큰을 켜는 순간 파드가 영영 Ready 가 되지
+    못한다 — 실제로 겪었다. 새 Pod 가 0/1 로 멈추고 maxUnavailable 이 0 이라 배포가
+    그대로 막힌 채, 옛 Pod 가 서빙해서 겉으로는 멀쩡해 보였다.
+
+    준비되지 않았으면 503 이어도 된다. **401 이면 안 된다** — 그건 영원히 낫지
+    않는 상태다.
+    """
+    monkeypatch.setenv("MUPID_AI_INTERNAL_TOKEN", "s3cret")
+    from fastapi.testclient import TestClient
+
+    from ai_server.app.main import app
+
+    with TestClient(app) as c:
+        assert c.get("/internal/ready").status_code != 401
+
+
+def test_only_the_probe_path_is_public(monkeypatch):
+    """면제는 딱 하나여야 한다. 넓히면 추천 API 가 같이 열린다."""
+    monkeypatch.setenv("MUPID_AI_INTERNAL_TOKEN", "s3cret")
+    from fastapi.testclient import TestClient
+
+    from ai_server.app import internal_api
+    from ai_server.app.main import app
+
+    assert internal_api.PUBLIC_PATHS == frozenset({"/internal/ready"})
+    with TestClient(app) as c:
+        for path in ("/internal/metrics", "/internal/facets"):
+            assert c.get(path).status_code == 401, path
+
+
 # ------------------------------------------------------------------ 배포 파일
 def test_dockerfile_does_not_install_torch():
     """서빙에 torch 가 필요 없다. 넣으면 이미지의 대부분을 차지한다."""

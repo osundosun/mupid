@@ -271,3 +271,49 @@ def test_the_table_is_distributed_across_both_shards():
     assert "cityHash64(user_ref)" in sql
     # 두 노드 모두에 만들어야 한다. 한쪽에만 있으면 그 노드로 붙은 요청만 성공한다.
     assert sql.count("ON CLUSTER mupid_all") == 2
+
+
+# ------------------------------------------------------- 배치가 쓰는 자리
+def test_state_dir_defaults_to_the_index_dir(monkeypatch):
+    """나누지 않은 환경에서는 동작이 바뀌지 않아야 한다."""
+    monkeypatch.delenv("MUPID_AI_STATE_DIR", raising=False)
+    from ai_server.app import paths
+
+    assert paths.state_dir() == paths.data_dir()
+
+
+def test_state_dir_can_be_split_from_the_index(monkeypatch, tmp_path):
+    """색인 마운트는 **읽기 전용**이다. 배치가 같은 자리에 쓰면 쿠버네티스에서 아예
+    돌지 못한다 — 워터마크·이벤트 로그·라벨·선호 구간이 전부 거기로 간다.
+
+    색인 디렉터리를 쓰면 안 되는 이유가 하나 더 있다. 색인은 판마다 새 디렉터리로
+    올라오고 `current` 링크가 갈아 끼워진다. 상태를 거기 두면 색인을 교체할 때마다
+    워터마크가 사라져 신호를 처음부터 다시 당긴다.
+    """
+    monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path / "index"))
+    monkeypatch.setenv("MUPID_AI_STATE_DIR", str(tmp_path / "state"))
+    from ai_server.app import paths
+
+    assert paths.state_dir() == tmp_path / "state"
+    assert paths.data_dir() != paths.state_dir()
+    # /health 가 나뉘어 있는지 보여 줘야 한다. 안 보이면 "왜 라벨이 안 생기나" 를
+    # 응답만 보고 판별할 수 없다.
+    assert paths.check()["state_dir_split"] is True
+
+
+def test_everything_the_batch_writes_lives_under_the_state_dir():
+    """하나라도 색인 쪽에 남으면 읽기 전용 마운트에서 그 순간 터진다."""
+    import re
+    from pathlib import Path
+
+    from ai_server.app import recommender
+
+    src = Path(recommender.__file__).read_text(encoding="utf-8")
+    for name in ("SERVE", "EVENTS", "LABELS"):
+        found = re.search(rf"^{name} = (\w+)", src, re.M)
+        assert found, name
+        assert found.group(1) == "STATE_DIR", f"{name} 이 {found.group(1)} 에 붙어 있다"
+
+    watermark = (Path(recommender.__file__).parents[1] / "tools" / "pull_signals.py") \
+        .read_text(encoding="utf-8")
+    assert "paths.state_dir() / \"signals_watermark.json\"" in watermark

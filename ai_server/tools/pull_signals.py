@@ -71,7 +71,9 @@ def utc_iso(r: dict) -> str:
 
 
 def watermark_path() -> Path:
-    return paths.data_dir() / "signals_watermark.json"
+    # 색인이 아니라 **상태**다. 색인 디렉터리에 두면 판을 교체할 때마다
+    # 사라져 신호를 처음부터 다시 당긴다.
+    return paths.state_dir() / "signals_watermark.json"
 
 
 def load_watermark() -> str:
