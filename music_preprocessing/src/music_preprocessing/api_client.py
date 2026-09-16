@@ -326,6 +326,37 @@ class MupidClient:
         )
         return body["data"]
 
+    def replace_sections(
+        self,
+        music_id: int,
+        sections: list[dict],
+        analysis_version: str = "v1",
+    ) -> dict:
+        """한 곡의 구간 분석 결과를 통째로 갈아 끼운다 (요구 1).
+
+        **곡 단위로 바꾼다.** 구간마다 나눠 넣으면 재분석 도중에 옛 구간과 새 구간이
+        섞이고, 그 상태로도 조회는 정상으로 보인다. 서버에서 한 트랜잭션이다.
+
+        돌려받는 `music_section_analysis_id` 가 추천 서버의 `id_map` 을 채운다. 이
+        번호가 없으면 추천 결과가 곡으로 이어지지 않아 통째로 버려진다.
+
+        Args:
+            sections: `section_index` · `external_id` · `section_label` ·
+                `start_time_ms` · `end_time_ms` 를 담은 줄. 라벨은 대문자다
+                (`INTRO` · `VERSE` · `CHORUS` …).
+
+        Returns:
+            `{ "music_id": …, "analysis_version": …, "replaced": 바뀐 구간 수,
+               "sections": [ { "music_section_analysis_id": …,
+                               "section_index": …, "external_id": … } ] }`
+        """
+        body = self._request(
+            "PUT",
+            f"/api/v1/music/{music_id}/section",
+            json_body={"analysis_version": analysis_version, "sections": sections},
+        )
+        return body["data"]
+
     def create_stream(
         self,
         music_id: int,

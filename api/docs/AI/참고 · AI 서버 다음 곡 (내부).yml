@@ -1,7 +1,7 @@
 info:
   name: 참고 · AI 서버 다음 곡 (내부)
   type: http
-  seq: 6
+  seq: 8
 
 http:
   method: POST

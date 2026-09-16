@@ -1,7 +1,7 @@
 info:
   name: 참고 · AI 서버 닮은 구간 (내부)
   type: http
-  seq: 7
+  seq: 9
 
 http:
   method: POST
