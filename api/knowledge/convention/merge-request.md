@@ -33,6 +33,17 @@ MR 을 만들 때 `Backend`·`Frontend`·`AI`·`Data` 중 해당하는 라벨을
 glab mr create --label Backend --label Frontend ...
 ```
 
+**고르는 기준은 바뀐 경로다.** 라벨이 그대로 그 영역의 verify job 을 켜므로, 한 영역이라도 빠뜨리면 그쪽은 아무도 안 본다.
+
+| 라벨 | 이 job 이 돈다 | 이 경로를 건드리면 붙인다 |
+|---|---|---|
+| `Backend` | `backend-verify` | `api/**` |
+| `Frontend` | `frontend-verify` | `frontend/**` |
+| `AI` | `ai-server-verify` | `ai_server/**` |
+| `Data` | `data-verify` | 데이터·배치 경로 |
+
+**여러 영역을 건드리면 라벨도 여러 개 붙인다.** `api/` 코드를 고치면서 `frontend/` 의 화면 코드도 고치는 변경은 흔한데, `Backend` 만 붙이면 `frontend-verify` 가 조용히 빠진다 — 실제로 그렇게 했다(S15P21A204-351). 라벨 개수와 바뀐 영역 수를 맞춰 보고, **파이프라인의 job 목록에 기대한 verify job 이 전부 있는지** 확인한다.
+
 **나중에 라벨을 붙여도 이미 만들어진 파이프라인은 되살아나지 않는다.** GitLab 은 `rules` 를 파이프라인 **생성 시점**에 평가하고, 라벨 변경으로 MR 파이프라인을 다시 돌리지 않는다. 뒤늦게 붙였다면 라벨을 붙인 뒤 파이프라인을 **재실행**한다.
 
 ```bash
