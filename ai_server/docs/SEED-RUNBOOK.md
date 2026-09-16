@@ -107,9 +107,14 @@ MySQL 에서 내보내 만든다. 문자열을 해시하거나 순번을 붙여 
 | `구간 65540개 중 10007개 적재 대상` | 도구 출력 |
 | `track_sections` +10,007 | `SELECT count() FROM track_sections WHERE analysis_version='v1'` |
 
-이 시점에서 `/internal/ready` 가 **503 → 200** 으로 바뀐다. 전량 적재 전에는
-`tracks_unmapped=1063 · sections_unmapped=10007` 로 503 이다. 부분 매핑 상태로 서비스를
-열면 추천기가 매핑에 없는 곡을 골라 404(`MUSIC_ID_MAPPING_NOT_FOUND`)가 난다.
+> **2026-09-16 변경.** 예전에는 이 시점에서 `/internal/ready` 가 503 → 200 으로
+> 바뀌었다. 지금은 **매핑이 `ready` 에 영향을 주지 않는다** — 숫자 ID 번역을 Spring 이
+> 맡으면서 그 검사를 뺐고, 색인만 올라오면 200 이다
+> (`infra/AI-SPRING-CONTRACT.md` 의 "2026-09-16 계약 변경").
+>
+> **`id_map` 자체는 이 절차에 그대로 필요하다.** ClickHouse `track_sections` 가 숫자
+> `track_id` 를 쓰기 때문에 바로 앞 단계(`push_sections`)가 읽는다. 없어진 것은 서빙
+> 경로의 의존과 `/internal/id-map` 엔드포인트다.
 
 ## 5. 행동 신호 수집
 
