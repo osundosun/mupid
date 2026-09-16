@@ -1220,5 +1220,69 @@ class PrebuiltJobImageTest(unittest.TestCase):
         self.assertIsNone(job.get("cache"), "pip 캐시를 다시 나르고 있다")
 
 
+class CiVariableDocTest(unittest.TestCase):
+    """CI 변수 이름이 코드 어딘가에만 있고 아무 데도 적혀 있지 않으면, 새 사람이
+    '왜 이 job 이 안 뜨지' 로 반나절을 쓴다. 실제로 이 저장소에서 한 번 있었다 —
+    MUPID_JUPYTER_* 를 등록해 두었는데 코드는 MUPID_DATA_ENV 를 보고 있었다.
+
+    살아 있는 파이프라인만 본다. include 에서 빠진 파일(Compose 시절의
+    release.yml)은 이름이 남아 있어도 도는 job 이 없다."""
+
+    DOC = ROOT / "infra" / "ci" / "VARIABLES.md"
+    # job 안에서 정의해 쓰는 것들이라 등록 대상이 아니다.
+    LOCAL = {
+        "MUPID_DEPLOY_TARGET",       # frontend.yml 의 variables:
+        "MUPID_IMAGE_NAME", "MUPID_BUILD_DIRECTORY", "MUPID_COMMIT_SHA",
+        "MUPID_JUPYTER_DIR",         # env 파일 안의 항목
+    }
+
+    def _live_files(self):
+        root = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8"))
+        files = [ROOT / ".gitlab-ci.yml"]
+        for entry in root["include"]:
+            files.append(ROOT / entry["local"])
+        # 그 job 들이 부르는 스크립트까지 따라간다. 변수는 대개 거기서 읽힌다.
+        for path in list(files):
+            for name in re.findall(r"(infra[\w/]*/ci/[\w.-]+\.(?:sh|py))",
+                                   path.read_text(encoding="utf-8")):
+                candidate = ROOT / name
+                if candidate.is_file():
+                    files.append(candidate)
+        return files
+
+    def test_every_variable_the_pipeline_reads_is_written_down(self):
+        doc = self.DOC.read_text(encoding="utf-8")
+        found = {}
+        for path in self._live_files():
+            for name in set(re.findall(r"MUPID_[A-Z0-9_]+",
+                                       path.read_text(encoding="utf-8"))):
+                found.setdefault(name, set()).add(path.name)
+        undocumented = sorted(
+            name for name in found
+            if name not in self.LOCAL and name not in doc
+            # env 파일 안의 설정 이름은 deploy.env.example 이 설명한다.
+            and not name.startswith("MUPID_PREPROCESSING_")
+            # 러너 호스트를 설정하는 값이다. GitLab 에 등록하는 것이 아니라
+            # infra/runner/configure.py 에 넘기는 것이라 여기 대상이 아니다.
+            and not name.startswith("MUPID_RUNNER_")
+        )
+        self.assertEqual(
+            [], undocumented,
+            "infra/ci/VARIABLES.md 에 없는 변수: "
+            + ", ".join(f"{n} ({', '.join(sorted(found[n]))})" for n in undocumented),
+        )
+
+    def test_the_data_deploy_gate_matches_the_documented_name(self):
+        """게이트 이름이 문서와 어긋나면 job 이 조용히 안 뜬다 — 빨간 불이
+        아니라 아무 일도 안 일어나는 쪽이라 알아채기 어렵다."""
+        data = yaml.safe_load((ROOT / "infra" / "ci" / "data.yml").read_text(encoding="utf-8"))
+        gates = {
+            name for rule in data["data-deploy"]["rules"]
+            for name in re.findall(r"\$(MUPID_[A-Z0-9_]+)", str(rule.get("if", "")))
+        }
+        self.assertIn("MUPID_DATA_ENV", gates)
+        self.assertIn("| `MUPID_DATA_ENV` |", self.DOC.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
