@@ -8,10 +8,12 @@ is not, so the file-level checks still run anywhere.
 """
 
 import json
+import os
 import re
 import pathlib
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -794,6 +796,492 @@ class DeployEndpointTest(unittest.TestCase):
                 for verb in ("create", "delete", "deletecollection", "*"):
                     self.assertNotIn(verb, rule["verbs"])
             self.assertNotIn("*", rule["apiGroups"])
+
+
+class WebImageBuildTest(unittest.TestCase):
+    """The edge image compiles the frontend from source inside the image build,
+    the way the api image compiles the jar. Nothing travels as an artifact.
+
+    The pieces are split across three files that only agree by convention, so
+    each seam gets a check here rather than in a 90-minute deploy job."""
+
+    CI = K8S / "ci"
+    IMAGE = K8S / "image"
+
+    def test_the_rewrite_matches_a_line_the_runtime_dockerfile_actually_has(self):
+        """package-web.sh appends web.Dockerfile and rewrites its COPY to pull
+        from the builder stage. If either side is reworded the sed silently
+        matches nothing, and the build then copies a dist/client that is not in
+        the context. The script's own `grep -q` catches that, but only after
+        npm ci has already run."""
+        script = (self.CI / "package-web.sh").read_text(encoding="utf-8")
+        found = re.search(r"sed 's\|(\^[^|]+)\|([^|]+)\|'", script)
+        self.assertTrue(found, "package-web.sh no longer rewrites with sed s|..|..|")
+        pattern = re.compile(found.group(1).replace("$", r"\Z"), re.M)
+        dockerfile = (self.IMAGE / "web.Dockerfile").read_text(encoding="utf-8")
+        self.assertRegex(
+            dockerfile, re.compile(found.group(1), re.M),
+            "web.Dockerfile has no line for package-web.sh to rewrite",
+        )
+        self.assertTrue(
+            found.group(2).startswith("COPY --from=builder "),
+            "the rewrite no longer points at the builder stage",
+        )
+
+    def test_the_builder_compiles_on_the_runner_architecture(self):
+        """The runner is arm64 and the nodes are x86_64. Without
+        --platform=$BUILDPLATFORM this stage runs npm under QEMU to produce
+        static files that are the same bytes either way."""
+        build = (self.IMAGE / "web.build.Dockerfile").read_text(encoding="utf-8")
+        self.assertRegex(
+            build, re.compile(r"^FROM --platform=\$BUILDPLATFORM .+ AS builder$", re.M))
+
+    def test_the_runtime_stage_has_no_run(self):
+        """That stage is the one built for linux/amd64. A RUN there is the
+        emulated one."""
+        runtime = (self.IMAGE / "web.Dockerfile").read_text(encoding="utf-8")
+        body = [l for l in runtime.splitlines() if not l.lstrip().startswith("#")]
+        self.assertFalse([l for l in body if l.startswith("RUN ")])
+
+    def test_the_builder_asks_for_the_static_export(self):
+        """Without MUPID_DEPLOY_TARGET the build goes SSR: it writes dist/server
+        and never creates dist/client/index.html. The image would then be built
+        from an empty document root. frontend-verify sets the same value."""
+        build = (self.IMAGE / "web.build.Dockerfile").read_text(encoding="utf-8")
+        self.assertRegex(build, r"MUPID_DEPLOY_TARGET=ec2")
+        verify = yaml.safe_load(
+            (ROOT / "infra" / "ci" / "frontend.yml").read_text(encoding="utf-8"))
+        self.assertEqual(
+            verify["frontend-verify"]["variables"]["MUPID_DEPLOY_TARGET"], "ec2",
+            "frontend-verify and the image build must build the same thing",
+        )
+
+    def test_the_frontend_build_is_not_shipped_as_an_artifact(self):
+        """It used to be: frontend-verify uploaded dist/client and the deploy
+        job downloaded it. That sends the deployed bytes on a round trip
+        through the coordinator. The jar never worked that way."""
+        verify = yaml.safe_load(
+            (ROOT / "infra" / "ci" / "frontend.yml").read_text(encoding="utf-8"))
+        for name, body in verify.items():
+            if not isinstance(body, dict):
+                continue
+            with self.subTest(job=name):
+                self.assertIsNone(
+                    body.get("artifacts"),
+                    "the frontend build is an artifact again",
+                )
+        jobs = yaml.safe_load((self.CI / "k8s-release.yml").read_text(encoding="utf-8"))
+        for need in jobs["k8s-deploy-web"]["needs"]:
+            with self.subTest(need=need["job"]):
+                self.assertFalse(
+                    need.get("artifacts", False),
+                    "k8s-deploy-web pulls artifacts again",
+                )
+
+
+class LabelRoutingTest(unittest.TestCase):
+    """MR 파이프라인은 영역 라벨이 고른다. 라벨이 없으면 require-area-label 이
+    실패해 머지를 막는다.
+
+    이 규칙이 조용히 깨지는 방식은 하나다 — verify job 하나에서 라벨 규칙이
+    빠지면 그 job 만 `changes:` 로 되돌아간다. 그러면 라벨 없는 MR 이 그 job
+    하나만 돌고 초록불이 된다. 여기서 네 job 을 한꺼번에 본다."""
+
+    AREAS = ("Frontend", "Backend", "AI", "Data")
+    # job 이름 -> 그 job 을 켜는 라벨
+    ROUTES = {
+        "frontend-verify": "Frontend",
+        "backend-verify": "Backend",
+        "ai-server-verify": "AI",
+        "data-verify": "Data",
+    }
+    CI = ROOT / "infra" / "ci"
+
+    def _jobs(self):
+        found = {}
+        for path in self.CI.glob("*.yml"):
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            for name, body in loaded.items():
+                if isinstance(body, dict) and not name.startswith("."):
+                    found[name] = body
+        return found
+
+    def test_every_area_job_is_gated_on_its_label(self):
+        """라벨 규칙이 먼저 오고, 바로 다음에 '나머지 MR 은 never' 가 와야 한다.
+        순서가 뒤집히면 라벨이 붙어도 job 이 돌지 않는다 — rules 는 처음
+        맞는 것에서 멈춘다."""
+        jobs = self._jobs()
+        for name, label in self.ROUTES.items():
+            with self.subTest(job=name):
+                self.assertIn(name, jobs, f"{name} 이 infra/ci 에 없다")
+                rules = jobs[name]["rules"]
+                first = str(rules[0].get("if", ""))
+                self.assertIn('$CI_PIPELINE_SOURCE == "merge_request_event"', first)
+                self.assertRegex(
+                    first,
+                    re.compile(
+                        r"CI_MERGE_REQUEST_LABELS =~ /\(\^\|,\)\\s\*"
+                        + label + r"\\s\*\(,\|\$\)/"),
+                    f"{name} 의 첫 규칙이 {label} 라벨을 보지 않는다",
+                )
+                self.assertIsNone(rules[0].get("when"))
+                second = rules[1]
+                self.assertEqual(
+                    second.get("if"), '$CI_PIPELINE_SOURCE == "merge_request_event"')
+                self.assertEqual(second.get("when"), "never")
+
+    def test_no_area_job_runs_on_an_unlabelled_merge_request(self):
+        """라벨 규칙 뒤에 merge_request_event 를 다시 받는 규칙이 남아 있으면
+        never 를 지나쳐 돌 수 있다."""
+        jobs = self._jobs()
+        for name in self.ROUTES:
+            for index, rule in enumerate(jobs[name]["rules"][2:], start=2):
+                with self.subTest(job=name, rule=index):
+                    self.assertNotIn(
+                        "merge_request_event", str(rule.get("if", "")),
+                        f"{name} 의 {index}번 규칙이 MR 을 다시 받는다",
+                    )
+
+    def test_the_guard_covers_exactly_the_four_areas(self):
+        """가드가 보는 라벨 목록과 job 이 쓰는 라벨이 어긋나면, 어긋난 라벨은
+        가드를 통과하면서 아무 job 도 켜지 않는다 — 검증 없는 초록불이다."""
+        guard = self._jobs()["require-area-label"]
+        first = str(guard["rules"][0]["if"])
+        self.assertEqual(guard["rules"][0].get("when"), "never")
+        found = re.search(r"\(([A-Za-z|]+)\)\\s\*\(,\|\$\)", first)
+        self.assertTrue(found, "가드가 라벨 목록을 더 이상 열거하지 않는다")
+        self.assertEqual(set(found.group(1).split("|")), set(self.AREAS))
+        self.assertEqual(set(self.ROUTES.values()), set(self.AREAS))
+
+    def test_the_guard_fails_the_job(self):
+        """가드가 돌면서 exit 0 이면 아무것도 막지 못한다."""
+        guard = self._jobs()["require-area-label"]
+        self.assertIn("exit 1", "\n".join(guard["script"]))
+
+    def _module(self):
+        import importlib.util
+        if not all(importlib.util.find_spec(m) for m in ("requests", "websocket")):
+            self.skipTest("requests/websocket 이 없다")
+        spec = importlib.util.spec_from_file_location(
+            "deploy_jupyter", self.CI / "deploy-jupyter.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_env_file_is_parsed_the_way_a_dotenv_is(self):
+        """배포에 필요한 모든 것이 File 형식 변수 하나에 들어간다. 그 파서가
+        조용히 틀리면 설정이 반영되지 않은 채로 배포가 성공한다."""
+        module = self._module()
+        values = module.parse_env(
+            "# 주석\n\nexport JUPYTER_USER=j15a204\n"
+            "JUPYTER_PASSWORD = \"sp ace\"\nSEGMENT_TIME=10\nREFRESH_TOKEN='tok'\n")
+        self.assertEqual(values["JUPYTER_USER"], "j15a204")
+        self.assertEqual(values["JUPYTER_PASSWORD"], "sp ace", "따옴표가 남았다")
+        self.assertEqual(values["REFRESH_TOKEN"], "tok")
+        # 같은 이름이 두 번이면 마지막이 조용히 이긴다 — 어느 값이 반영됐는지
+        # 알 수 없으므로 멈춰야 한다.
+        with self.assertRaises(SystemExit):
+            module.parse_env("A=1\nA=2")
+
+    def test_a_malformed_line_does_not_leak_its_contents(self):
+        """이 파일에는 비밀번호와 토큰이 들어 있다. 잘못된 줄이 하필 그 줄일 수
+        있으므로 오류 메시지는 줄 번호만 말해야 한다."""
+        module = self._module()
+        with self.assertRaises(SystemExit) as caught:
+            module.parse_env("JUPYTER_PASSWORD my-secret-value")
+        self.assertNotIn("my-secret-value", str(caught.exception))
+
+    def test_the_config_is_rendered_from_the_env_file(self):
+        """기본값은 저장소의 config.example.json 이고 env 파일이 덮는다.
+
+        타입이 중요하다 — env 값은 전부 문자열인데 서버의 ChunkConfig 는 그냥
+        데이터클래스라 segment_time 에 "6" 이 들어가도 받아 주고, ffmpeg 인자를
+        만들 때 가서야 깨진다."""
+        module = self._module()
+        self.assertEqual(module.render_config({})["segment_time"], 6)
+
+        config = module.render_config(
+            {"SEGMENT_TIME": "10", "API_BASE_URL": "https://example"})
+        self.assertEqual(config["segment_time"], 10, "정수로 바뀌지 않았다")
+        self.assertEqual(config["api_base_url"], "https://example")
+
+        with self.assertRaises(SystemExit):
+            module.render_config({"SEGMENT_TIME": "여섯"})
+        # 오타를 조용히 넘기면 그 설정은 영영 반영되지 않는다.
+        with self.assertRaises(SystemExit):
+            module.render_config({"API_BASE_URLL": "x"})
+        # 접속·제어 이름은 설정 필드가 아니므로 통과해야 한다.
+        module.render_config({"JUPYTER_USER": "x", "REFRESH_TOKEN": "y",
+                              "RESET_TOKEN": "false"})
+
+    def test_the_example_env_only_names_things_the_deploy_accepts(self):
+        """예시에 적힌 이름이 실제로는 거부되면, 그대로 베낀 사람이 배포에서
+        막힌다."""
+        module = self._module()
+        example = (ROOT / "music_preprocessing" / "deploy.env.example").read_text(
+            encoding="utf-8")
+        names = set()
+        for line in example.splitlines():
+            line = line.strip().lstrip("#").strip()
+            if "=" in line and not line.startswith("─"):
+                key = line.split("=", 1)[0].strip()
+                if key.isupper() and key.replace("_", "").isalnum():
+                    names.add(key)
+        self.assertTrue(names, "예시에서 이름을 읽지 못했다")
+        allowed = module.CONNECT | module.CONTROL | {
+            k.upper() for k in module.defaults()}
+        self.assertEqual(names - allowed, set())
+
+    def test_every_rendered_key_is_one_the_server_accepts(self):
+        """서버의 ChunkConfig 는 cls(**data) 로 읽는다. 모르는 키가 하나라도
+        있으면 TypeError 로 배치가 통째로 죽는다."""
+        module = self._module()
+        rendered = set(module.render_config({}))
+        source = (ROOT / "music_preprocessing" / "src" / "music_preprocessing"
+                  / "config.py").read_text(encoding="utf-8")
+        fields = set(re.findall(r"^    ([a-z_]+): (?:str|int|bool) =", source, re.M))
+        self.assertTrue(fields, "ChunkConfig 의 필드를 읽지 못했다")
+        self.assertEqual(
+            rendered - fields, set(),
+            "config.example.json 에 ChunkConfig 가 모르는 키가 있다",
+        )
+
+    def test_the_rotated_token_is_not_overwritten_by_default(self):
+        """배치가 refresh_token.txt 를 회전시킨다. 배포마다 CI 의 초기 토큰으로
+        되돌리면 이미 무효가 된 토큰을 도로 넣는 셈이라 다음 배치가 인증에
+        실패한다. 덮어쓰려면 명시적으로 켜야 한다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        self.assertIn("RESET_TOKEN", script)
+        body = script.split("token_path =", 1)[1].split("print(hub.run", 1)[0]
+        self.assertIn("not present or reset", body)
+        # 공용 서버라 토큰 파일이 남에게 읽히면 안 된다. contents API 는 644 로
+        # 떨어뜨리므로 원격에서 고쳐야 한다.
+        self.assertIn("chmod(0o600)", script)
+
+    def test_the_data_deploy_never_ships_server_state(self):
+        """공용 서버다. registered.json 을 덮어쓰면 아티스트·앨범·곡이 전부 다시
+        만들어지고, refresh_token.txt 는 배치가 회전시키는 자격증명이다.
+
+        config.json 도 이 목록에 남는다. 배포가 config.json 을 쓰기는 하지만
+        그것은 CI 변수로 **만들어** 내리는 경로이고, 이 목록이 막는 것은
+        저장소 트리에 있는 같은 이름의 파일이 그대로 딸려 올라가는 경우다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        block = script.split("NEVER = {", 1)[1].split("}", 1)[0]
+        for name in ("config.json", "refresh_token.txt", "registered.json",
+                     "processed.json", ".python-version"):
+            with self.subTest(name=name):
+                self.assertIn(name, block)
+
+    def test_the_login_failure_is_not_read_as_success(self):
+        """JupyterHub 는 틀린 비밀번호에 401 이 아니라 200 + 로그인 폼을 준다.
+        상태 코드만 올려보면 실패한 채로 계속 진행하고, 그 다음 요청들이
+        엉뚱한 곳에서 깨진다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        login = script.split("def _login", 1)[1].split("def ", 1)[0]
+        self.assertIn("allow_redirects=False", login)
+        self.assertIn("(302, 303)", login)
+
+    def test_the_user_server_xsrf_is_picked_by_path(self):
+        """`_xsrf` 쿠키는 허브와 유저 서버 양쪽에서 같은 이름으로 내려온다.
+        허브 것을 보내면 업로드가 403 이다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        self.assertIn('path=f"/user/{self.user}/"', script)
+        # 비-GET 요청에 XSRF 헤더가 붙어야 한다. 토큰 인증이면 필요 없던 것이다.
+        for call in ("put_file", "ensure_directory", "run"):
+            with self.subTest(call=call):
+                body = script.split(f"def {call}", 1)[1].split("\n    def ", 1)[0]
+                self.assertIn("_headers()", body)
+
+    def test_the_password_variable_can_be_a_file(self):
+        """비밀번호가 8자 미만이면 GitLab 이 마스킹을 거부한다. File 형식이면
+        환경에 경로만 들어가 마스킹이 필요 없다 — 그래서 값과 경로를 모두 받아야
+        한다. 배포 SSH 키가 이미 그 형식이다.
+
+        이건 실제로 돌려 본다. 소스만 보면 '경로였는데 값으로 읽어' 로그인에
+        실패하는 경우를 못 잡는다."""
+        import importlib.util
+        if not all(importlib.util.find_spec(m) for m in ("requests", "websocket")):
+            self.skipTest("requests/websocket 이 없다")
+        spec = importlib.util.spec_from_file_location(
+            "deploy_jupyter", self.CI / "deploy-jupyter.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "pw"
+            # File 형식 변수는 내용 끝에 줄바꿈이 붙는 일이 흔하다.
+            path.write_text("s3cret\n", encoding="utf-8")
+            self.assertEqual(module.read_secret(str(path)), "s3cret")
+        # Variable 형식이면 값 그대로다.
+        self.assertEqual(module.read_secret("s3cret"), "s3cret")
+        # 경로로 해석할 수 없는 문자열이어도 죽지 않는다.
+        self.assertEqual(module.read_secret("a\0b/../:*?"), "a\0b/../:*?")
+
+    def test_the_password_never_reaches_the_log(self):
+        """CI 변수를 마스킹해도 스크립트가 직접 찍으면 의미가 없다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        for line in script.splitlines():
+            if "print(" in line or "echo" in line:
+                with self.subTest(line=line.strip()[:60]):
+                    self.assertNotIn("password", line.lower())
+
+    def test_the_crontab_block_is_marked_off(self):
+        """마커가 없으면 배포가 남의 크론 항목까지 덮어쓴다."""
+        crontab = (ROOT / "music_preprocessing" / "crontab.sh").read_text(encoding="utf-8")
+        self.assertIn("# BEGIN music_preprocessing", crontab)
+        self.assertIn("# END music_preprocessing", crontab)
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        self.assertIn('MARKER_BEGIN = "# BEGIN music_preprocessing"', script)
+        self.assertIn('MARKER_END = "# END music_preprocessing"', script)
+        # 크론은 PATH 가 거의 비어 있다. uv 를 절대경로로 부르지 않으면 조용히
+        # 실패한다 — 배포가 {{UV}} 를 실제 경로로 바꾼다.
+        self.assertIn("{{UV}}", crontab)
+        self.assertIn("{{DIR}}", crontab)
+
+
+class PrebuiltJobImageTest(unittest.TestCase):
+    """의존성을 미리 구워 둔 job 이미지는 레지스트리에 없고 러너 호스트의 도커
+    데몬에만 있다. 그래서 두 가지가 맞아야 돈다 — job 이 if-not-present 를
+    요청해야 하고, 러너가 그 정책을 허용해야 한다.
+
+    둘 중 하나가 빠지면 도커 허브에서 mupid-ci-* 를 찾다가 실패한다."""
+
+    CI = ROOT / "infra" / "ci"
+    RUNNER = ROOT / "infra" / "runner"
+
+    def _jobs(self):
+        found = {}
+        for path in self.CI.glob("*.yml"):
+            for name, body in (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).items():
+                if isinstance(body, dict) and not name.startswith("."):
+                    found[name] = body
+        return found
+
+    def test_locally_built_images_are_not_pulled_from_the_hub(self):
+        checked = 0
+        for name, body in self._jobs().items():
+            image = body.get("image")
+            if not isinstance(image, dict) or not str(image.get("name", "")).startswith("mupid-ci-"):
+                continue
+            with self.subTest(job=name):
+                self.assertEqual(
+                    image.get("pull_policy"), "if-not-present",
+                    f"{name} 이 로컬 이미지를 쓰면서 pull_policy 를 지정하지 않는다",
+                )
+            checked += 1
+        self.assertTrue(checked, "mupid-ci-* 를 쓰는 job 이 하나도 없다")
+
+    def test_the_runner_allows_that_pull_policy(self):
+        """configure.py 가 allowed_pull_policies 를 넣지 않으면 러너는
+        pull_policy 하나만 허용하고 job 쪽 지정을 거부한다."""
+        script = (self.RUNNER / "configure.py").read_text(encoding="utf-8")
+        self.assertIn("allowed_pull_policies", script)
+        self.assertIn("if-not-present", script)
+
+    def test_every_local_image_has_something_that_builds_it(self):
+        """이미지 이름만 바꾸고 빌드 스크립트를 안 고치면, 그 이름은 어디서도
+        만들어지지 않아 job 이 영영 못 뜬다."""
+        build = (self.RUNNER / "build-images.sh").read_text(encoding="utf-8")
+        for name, body in self._jobs().items():
+            image = body.get("image")
+            if isinstance(image, dict) and str(image.get("name", "")).startswith("mupid-ci-"):
+                with self.subTest(job=name):
+                    self.assertIn(image["name"], build,
+                                  f"{image['name']} 을 굽는 곳이 없다")
+
+    def test_the_job_refuses_a_stale_image(self):
+        """의존성을 고치고 이미지를 다시 굽지 않으면 낡은 환경으로 통과한다.
+        통과한 코드가 서버에서 처음 깨지는 것이 제일 나쁘다."""
+        job = self._jobs()["ai-server-verify"]
+        guard = "\n".join(job["before_script"])
+        self.assertIn("/opt/mupid/requirements.txt", guard)
+        self.assertIn("ai_server/requirements.txt", guard)
+        self.assertIn("exit 1", guard)
+        # 이미지가 그 사본을 실제로 넣어 두어야 대조가 성립한다.
+        dockerfile = (self.RUNNER / "images" / "ai.Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("/opt/mupid/requirements.txt", dockerfile)
+        # 양쪽 다 줄바꿈을 걷어내야 한다. 윈도우 체크아웃에서 구운 이미지는
+        # CRLF 를, CI 체크아웃은 LF 를 들고 있어 내용이 같아도 어긋난다.
+        self.assertIn(r"tr -d '\r'", dockerfile)
+        self.assertIn(r"tr -d '\r'", guard)
+
+    def test_the_ai_image_carries_git(self):
+        """test_env_files_are_ignored 가 git check-ignore 를 부른다. git 이 없으면
+        FileNotFoundError 로 죽는다 — 그 테스트의 skip 경로는 '체크아웃이 아님'
+        만 받는다. 실제로 job 541874 · 545294 가 그렇게 실패했다."""
+        dockerfile = (self.RUNNER / "images" / "ai.Dockerfile").read_text(encoding="utf-8")
+        self.assertRegex(dockerfile, r"apt-get install[^\n]*\bgit\b")
+
+    def test_the_ai_job_no_longer_installs_at_runtime(self):
+        """이미지에 구워 두고도 설치 단계가 남아 있으면 아낀 것이 없다."""
+        job = self._jobs()["ai-server-verify"]
+        script = "\n".join(job["script"])
+        self.assertNotIn("pip install", script)
+        self.assertIsNone(job.get("cache"), "pip 캐시를 다시 나르고 있다")
+
+
+class CiVariableDocTest(unittest.TestCase):
+    """CI 변수 이름이 코드 어딘가에만 있고 아무 데도 적혀 있지 않으면, 새 사람이
+    '왜 이 job 이 안 뜨지' 로 반나절을 쓴다. 실제로 이 저장소에서 한 번 있었다 —
+    MUPID_JUPYTER_* 를 등록해 두었는데 코드는 MUPID_DATA_ENV 를 보고 있었다.
+
+    살아 있는 파이프라인만 본다. include 에서 빠진 파일(Compose 시절의
+    release.yml)은 이름이 남아 있어도 도는 job 이 없다."""
+
+    DOC = ROOT / "infra" / "ci" / "VARIABLES.md"
+    # job 안에서 정의해 쓰는 것들이라 등록 대상이 아니다.
+    LOCAL = {
+        "MUPID_DEPLOY_TARGET",       # frontend.yml 의 variables:
+        "MUPID_IMAGE_NAME", "MUPID_BUILD_DIRECTORY", "MUPID_COMMIT_SHA",
+        "MUPID_JUPYTER_DIR",         # env 파일 안의 항목
+    }
+
+    def _live_files(self):
+        root = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8"))
+        files = [ROOT / ".gitlab-ci.yml"]
+        for entry in root["include"]:
+            files.append(ROOT / entry["local"])
+        # 그 job 들이 부르는 스크립트까지 따라간다. 변수는 대개 거기서 읽힌다.
+        for path in list(files):
+            for name in re.findall(r"(infra[\w/]*/ci/[\w.-]+\.(?:sh|py))",
+                                   path.read_text(encoding="utf-8")):
+                candidate = ROOT / name
+                if candidate.is_file():
+                    files.append(candidate)
+        return files
+
+    def test_every_variable_the_pipeline_reads_is_written_down(self):
+        doc = self.DOC.read_text(encoding="utf-8")
+        found = {}
+        for path in self._live_files():
+            for name in set(re.findall(r"MUPID_[A-Z0-9_]+",
+                                       path.read_text(encoding="utf-8"))):
+                found.setdefault(name, set()).add(path.name)
+        undocumented = sorted(
+            name for name in found
+            if name not in self.LOCAL and name not in doc
+            # env 파일 안의 설정 이름은 deploy.env.example 이 설명한다.
+            and not name.startswith("MUPID_PREPROCESSING_")
+            # 러너 호스트를 설정하는 값이다. GitLab 에 등록하는 것이 아니라
+            # infra/runner/configure.py 에 넘기는 것이라 여기 대상이 아니다.
+            and not name.startswith("MUPID_RUNNER_")
+        )
+        self.assertEqual(
+            [], undocumented,
+            "infra/ci/VARIABLES.md 에 없는 변수: "
+            + ", ".join(f"{n} ({', '.join(sorted(found[n]))})" for n in undocumented),
+        )
+
+    def test_the_data_deploy_gate_matches_the_documented_name(self):
+        """게이트 이름이 문서와 어긋나면 job 이 조용히 안 뜬다 — 빨간 불이
+        아니라 아무 일도 안 일어나는 쪽이라 알아채기 어렵다."""
+        data = yaml.safe_load((ROOT / "infra" / "ci" / "data.yml").read_text(encoding="utf-8"))
+        gates = {
+            name for rule in data["data-deploy"]["rules"]
+            for name in re.findall(r"\$(MUPID_[A-Z0-9_]+)", str(rule.get("if", "")))
+        }
+        self.assertIn("MUPID_DATA_ENV", gates)
+        self.assertIn("| `MUPID_DATA_ENV` |", self.DOC.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

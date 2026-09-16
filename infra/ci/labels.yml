@@ -1,0 +1,44 @@
+# 영역 라벨로 파이프라인을 고른다. Frontend · Backend · AI · Data.
+#
+# MR 에 붙은 라벨이 그 MR 에서 무엇을 돌릴지 정한다. 라벨을 하나도 안 붙이면
+# 아래 require-area-label 이 실패해서 머지를 막는다 — 라벨 없이 지나가면
+# 아무 검증도 안 도는 초록불 MR 이 되기 때문이다.
+#
+# **라벨은 MR 파이프라인에만 있다.** GitLab 이 CI_MERGE_REQUEST_LABELS 를
+# merge_request_event 에서만 채운다. master · develop 푸시 파이프라인에는 그런
+# 변수가 없으므로 거기서는 예전처럼 `changes:` 경로로 판단한다. 배포 job 은
+# master 푸시에서 도니까 라벨과 무관하게 경로로 걸린다.
+#
+# 라벨 이름은 정확히 일치해야 한다. `(^|,)` 와 `(,|$)` 로 양끝을 묶은 이유는
+# CI_MERGE_REQUEST_LABELS 가 "Backend,Data" 처럼 쉼표로 이어 오기 때문이다.
+# 그냥 /Backend/ 로 쓰면 나중에 "Backend-hotfix" 같은 라벨이 생겼을 때 같이
+# 걸린다. 사람이 쉼표 뒤에 공백을 넣는 경우가 있어 \s* 도 넣었다.
+#
+# 라벨을 새로 추가하려면 여기 목록과 그 영역 job 의 rules, 그리고
+# infra_k8s/tests 의 LabelRoutingTest 세 곳을 같이 고친다. 테스트가 세 곳이
+# 어긋나면 실패한다.
+
+require-area-label:
+  stage: verify
+  image: alpine:3
+  tags: [mupid-ci]
+  interruptible: true
+  timeout: 5m
+  rules:
+    # 영역 라벨이 하나라도 있으면 이 job 은 없는 셈 친다.
+    - if: '$CI_MERGE_REQUEST_LABELS =~ /(^|,)\s*(Frontend|Backend|AI|Data)\s*(,|$)/'
+      when: never
+    # 라벨이 없는 MR 만 여기 남는다.
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - |
+      echo "이 MR 에 영역 라벨이 없습니다."
+      echo
+      echo "  Frontend · Backend · AI · Data 중 해당하는 것을 붙이고"
+      echo "  파이프라인을 다시 돌려 주세요."
+      echo
+      echo "라벨이 없으면 어떤 검증 job 도 돌지 않습니다. 그대로 두면"
+      echo "아무것도 확인하지 않은 MR 이 초록불로 보입니다."
+      echo
+      echo "지금 붙어 있는 라벨: ${CI_MERGE_REQUEST_LABELS:-(없음)}"
+      exit 1

@@ -14,12 +14,12 @@
 #
 # backend-verify and frontend-verify still come from infra/ci/. Only the Compose
 # deployment jobs were retired — the verify jobs are not Compose-specific and the
-# jobs below need them. frontend/dist/client does travel as an artifact, but it
-# is static files and well under the limit.
+# jobs below need them as gates. Neither deliverable travels as an artifact: the
+# jar and the frontend bundle are both compiled inside the image build here.
 #
 # The api and web paths have separate `changes` filters on purpose. Sharing one
-# would run the web job on an api-only commit, and its verify job would have
-# been skipped, leaving no frontend/dist to package.
+# would rebuild and redeploy the edge image on an api-only commit — a pod
+# restart and a 220MB transfer for bytes that did not change.
 
 .api-changes: &api_changes
   - api/**/*
@@ -31,7 +31,7 @@
 
 .web-changes: &web_changes
   - frontend/**/*
-  - infra_k8s/image/web.Dockerfile
+  - infra_k8s/image/**/*
   - infra_k8s/base/edge.yaml
   - infra_k8s/base/nginx/**/*
   - infra_k8s/ci/**/*
@@ -85,7 +85,10 @@ k8s-deploy-web:
   extends: .k8s-deploy
   needs:
     - job: frontend-verify
-      artifacts: true
+      # 게이트일 뿐이다. 이 job 이 프론트엔드를 소스부터 다시 굽는다 —
+      # package-web.sh 참고. api 쪽과 같은 모양이다.
+      artifacts: false
+      optional: true
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
       changes: *web_changes
