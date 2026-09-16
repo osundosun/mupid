@@ -3,19 +3,34 @@
 -- **이 파일은 사람이 실행한다.** 앱은 표를 만들지도 바꾸지도 않는다(decision/0011).
 -- 실행 전에 `ai_server/docs/SEED-RUNBOOK.md` 의 차례를 본다.
 --
---   clickhouse-client --host <host> --user <user> --password < ai_server/sql/section_labels.sql
+--   kubectl -n mupid exec -i clickhouse-0 -- clickhouse-client --multiquery \
+--     < ai_server/sql/section_labels.sql
 --
 -- 왜 ClickHouse 인가
 --   라벨은 `listen_events` 에서 뽑은 집계다. 원본과 같은 곳에 두면 배치가 한 곳만
 --   보면 되고, 조회 모양도 같다 — 사용자 한 명 범위를 훑는다. 파일로 두면 추천 파드가
 --   그 파일을 들고 있어야 해서 파드를 늘릴 수 없다.
 --
+-- 왜 두 장인가 — **클러스터가 2샤드다**
+--   `clickhouse` 서비스는 headless 라 clickhouse-0 과 clickhouse-1 로 나뉘어 붙는다.
+--   평범한 MergeTree 한 장을 만들면 쓴 곳과 읽는 곳이 갈려, **어제 넣은 라벨이 오늘
+--   조회에서 절반만 나온다.** 오류는 나지 않고 개인화만 들쭉날쭉해진다.
+--
+--   그래서 이 저장소의 다른 표들과 같은 모양을 쓴다.
+--
+--     section_labels_local   ReplicatedMergeTree. 실제 데이터가 있는 곳
+--     section_labels         Distributed. 앱이 읽고 쓰는 이름
+--
+--   샤딩 키는 `user_ref` 다. 조회가 언제나 사용자 한 명 범위라 그 사람의 라벨이 한
+--   샤드에 모여야 한다. `system.macros` 의 `shard` 가 노드마다 다르므로(01/02)
+--   ZooKeeper 경로도 자연히 갈린다.
+--
 -- 왜 run_id 인가
 --   `labeler` 는 라벨 집합을 통째로 다시 만든다. 어제 있던 라벨이 오늘 없을 수 있다.
 --   행을 갱신해 맞추려 하면 사라진 라벨이 남아 **조용히 오래된 취향으로 추천한다.**
 --   그래서 판마다 run_id 를 붙여 통째로 넣고, 읽을 때 max(run_id) 만 본다.
 
-CREATE TABLE IF NOT EXISTS section_labels
+CREATE TABLE IF NOT EXISTS section_labels_local ON CLUSTER mupid_all
 (
     -- 판 구분. 배치가 시작 시각으로 정한다. 읽기는 항상 max(run_id) 만 본다.
     run_id                DateTime,
@@ -53,10 +68,14 @@ CREATE TABLE IF NOT EXISTS section_labels
     -- 라벨의 근거가 된 행동의 시각. 감쇠 가중(`decay_weights`)이 읽는다.
     occurred_at           String
 )
-ENGINE = MergeTree
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/section_labels', '{replica}')
 -- 조회는 언제나 (최신 판, 사용자 한 명) 이다. 그 순서로 정렬해야 한 사람 범위가
 -- 한 덩어리로 읽힌다.
 ORDER BY (run_id, user_ref, section_key)
 -- 어제 판을 남긴다. 라벨은 다시 만들 수 있지만 그때의 행동 로그 창은 이미 지나갔다.
 TTL run_id + INTERVAL 7 DAY
 SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS section_labels ON CLUSTER mupid_all
+AS section_labels_local
+ENGINE = Distributed('mupid', 'default', 'section_labels_local', cityHash64(user_ref));

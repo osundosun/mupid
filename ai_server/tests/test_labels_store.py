@@ -168,6 +168,28 @@ def test_recommender_does_not_die_when_the_store_is_down(monkeypatch):
     assert recommender.labels_for("u1").empty
     assert recommender.other_positives("u1").empty
 
+def test_parses_what_clickhouse_actually_returns(store):
+    """**실측 응답이다.** 2026-09-16 에 운영 클러스터(clickhouse 25.3)로 이 모듈이
+    만드는 SQL 을 그대로 돌려 받은 출력을 붙였다.
+
+    직접 붙여 보기 전에는 `UInt8` 이 `false`/`true` 로 올 것이라 짐작하고 있었다.
+    실제로는 **`0`/`1`** 이고 `Float32` 도 `1.0` 이 아니라 `1` 로 온다. 짐작으로
+    만든 시험만 있었다면 여기서 갈렸을 것이다 — 그리고 증상은 오류가 아니라
+    `~lab.is_merged` 가 전부 참이 되어 병합 라벨이 학습에 섞이는 쪽이다."""
+    labels_store, _, replies = store
+    replies.append(
+        "user_ref\ttrack_id\tsection_key\tgrade\tw\tis_merged\tevidence\toccurred_at\n"
+        "u1\tT1\tT1#0\tL1\t1\t0\t{}\t2026-09-16T00:00:00Z\n"
+        "u2\tT2\tT2#1\tL1\t0.4\t1\t{}\t2026-09-16T00:00:00Z\n")
+
+    frame = labels_store.user_labels("u1")
+
+    assert frame.is_merged.dtype == bool
+    assert frame.is_merged.tolist() == [False, True]
+    assert frame.w.tolist() == [1.0, 0.4]
+    # 호출부가 실제로 쓰는 모양. `user_positives` 가 이 두 조건을 함께 건다.
+    assert len(frame[(frame.grade == "L1") & (~frame.is_merged)]) == 1
+
 
 # 아래 열들은 `recommender` 가 라벨 표에서 **이름으로** 꺼내 쓴다. 파일 경로는 라벨러가
 # 내보낸 22개 열을 전부 들고 있어 빠져도 티가 안 나지만, ClickHouse 경로는 여기 적힌
@@ -221,8 +243,31 @@ def test_ddl_declares_exactly_the_columns_we_insert():
 
     sql = (Path(labels_store.__file__).parents[1] / "sql" / "section_labels.sql") \
         .read_text(encoding="utf-8")
-    body = sql.split("(", 1)[1].rsplit(")", 1)[0]
+    # 열 정의는 `section_labels_local` 쪽에만 있다. 분산 표는 `AS ..._local` 로 받는다.
+    body = sql.split("CREATE TABLE IF NOT EXISTS section_labels_local", 1)[1]
+    body = body.split("ENGINE = ReplicatedMergeTree", 1)[0]
     declared = [m.group(1) for line in body.splitlines()
                 if (m := re.match(r"\s{4}(\w+)\s{2,}", line))]
 
     assert declared == ["run_id"] + labels_store.COLUMNS
+
+
+def test_the_table_is_distributed_across_both_shards():
+    """`clickhouse` 서비스는 headless 라 clickhouse-0·1 로 나뉘어 붙는다.
+
+    평범한 MergeTree 한 장이면 쓴 곳과 읽는 곳이 갈려 **어제 넣은 라벨이 오늘
+    조회에서 절반만 나온다.** 오류는 나지 않고 개인화만 들쭉날쭉해진다. 실제
+    클러스터가 2샤드(`system.clusters` 의 `mupid`)라 확인한 사실이다.
+    """
+    from pathlib import Path
+
+    from ai_server.app import labels_store
+
+    sql = (Path(labels_store.__file__).parents[1] / "sql" / "section_labels.sql") \
+        .read_text(encoding="utf-8")
+    assert "ReplicatedMergeTree" in sql
+    assert "Distributed('mupid', 'default', 'section_labels_local'" in sql
+    # 조회가 사용자 한 명 범위라 그 사람의 라벨이 한 샤드에 모여야 한다.
+    assert "cityHash64(user_ref)" in sql
+    # 두 노드 모두에 만들어야 한다. 한쪽에만 있으면 그 노드로 붙은 요청만 성공한다.
+    assert sql.count("ON CLUSTER mupid_all") == 2
