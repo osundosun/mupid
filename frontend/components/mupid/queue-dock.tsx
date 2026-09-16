@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ListMusic, ListEnd } from 'lucide-react';
 import { QueueList } from './queue-list';
-import { SelectionToolbar, useTrackSelection } from './track-selection';
+import { useTrackSelection } from './track-selection';
 import { EmptyState } from './primitives';
 import {
   AlertDialog,
@@ -164,17 +164,40 @@ function QueueDockPanel({
             재생 목록
           </h2>
           <span className="queue-dock-count" aria-live="polite">
-            {count}/{QUEUE_LIMIT}곡
+            {pick.active ? `${pick.picked.length}곡 선택` : `${count}/${QUEUE_LIMIT}곡`}
           </span>
 
           {/*
             버튼은 한 묶음으로 오른쪽에 붙인다. 곡 수는 제목 옆에 두어 "무엇을
             몇 곡" 이 한눈에 이어지게 하고, 누를 것들은 반대쪽에 모은다.
 
-            고르기도 머리글에서 연다. 목록 위의 도구 줄은 고르는 동안에만 나온다.
+            **고르기 도구도 여기서 바뀐다.** 목록 위에 도구 줄을 끼워 넣으면 '선택'
+            을 누르는 순간 목록 전체가 그 높이만큼 아래로 밀린다. 머리글 안에서
+            버튼만 갈아 끼우면 목록의 시작 위치가 그대로다.
           */}
           <div className="queue-head-actions">
-            {!pick.active && (
+            {pick.active ? (
+              <>
+                <label className="queue-head-check">
+                  <input
+                    type="checkbox"
+                    checked={pick.allPicked}
+                    onChange={pick.toggleAll}
+                  />
+                  전체
+                </label>
+                <button
+                  className="queue-head-action is-danger"
+                  disabled={!pick.picked.length}
+                  onClick={() => setConfirmRemove(pick.picked)}
+                >
+                  빼기
+                </button>
+                <button className="queue-head-action" onClick={pick.cancel}>
+                  취소
+                </button>
+              </>
+            ) : (
               <button
                 className="queue-head-action"
                 disabled={!count}
@@ -188,8 +211,15 @@ function QueueDockPanel({
             담을 위치는 머리글의 버튼으로 접어 둔다. 라디오 세 개를 목록 위에
             펼쳐 두었더니 정작 보러 온 목록이 밀려났다 — 자주 바꾸는 값이 아니라
             평소에는 지금 값만 보이면 된다.
+
+            고르는 중에는 감춘다. 곡을 빼려는 참에 "어디에 담을지" 는 쓸 일이 없고,
+            머리글 한 줄에 버튼이 넷이면 좁은 화면에서 넘친다.
           */}
-          <div className="queue-insert-position" ref={positionRef}>
+          <div
+            className="queue-insert-position"
+            ref={positionRef}
+            hidden={pick.active}
+          >
             <button
               className="queue-insert-toggle"
               aria-haspopup="menu"
@@ -232,29 +262,12 @@ function QueueDockPanel({
           </div>
         </header>
 
+        {/*
+          본문에는 목록만 둔다. 안내 문구도 도구 줄도 없다 — 무엇이든 목록 위에
+          끼워 넣으면 그것이 나타나고 사라질 때마다 목록이 위아래로 밀린다.
+          고르기에 필요한 것은 전부 머리글에 있다.
+        */}
         <div className="queue-dock-body">
-          {/*
-            평소에는 안내 문구를 두지 않는다. 독은 목록을 보러 여는 자리라
-            설명이 목록을 밀어내면 정작 볼 것이 안 보인다. 고르는 중일 때만
-            무엇을 해야 하는지 한 줄 남긴다.
-          */}
-          {pick.active && (
-            <p className="queue-dock-hint">
-              뺄 곡을 고르세요. 전체 선택으로 한 번에 비울 수도 있어요.
-            </p>
-          )}
-
-          {/*
-            고르는 중일 때만 띄운다. 평소에도 두면 "N곡 · 최대 100곡 · 선택" 한 줄이
-            늘 목록 위를 차지한다 — 곡 수는 머리글에 있고, 고르기는 머리글 버튼으로 연다.
-          */}
-          {pick.active && (
-            <SelectionToolbar
-              selection={pick}
-              total={count}
-              onDelete={() => setConfirmRemove(pick.picked)}
-            />
-          )}
 
           <QueueList
             model={m}
