@@ -1474,14 +1474,31 @@ class AiServerDeployTest(unittest.TestCase):
                 return doc
         raise AssertionError("ai Deployment 를 찾지 못했다")
 
-    def test_the_pod_carries_no_volume(self):
-        """볼륨이 붙으면 레플리카를 늘릴 때 ReadWriteMany 가 필요해지고,
-        산출물을 누가 언제 넣는지가 다시 문제가 된다."""
+    def test_the_pod_reads_the_index_read_only(self):
+        """색인은 hostPath 로 온다. 앞서 이 시험은 "볼륨이 없다" 를 고정하고
+        있었는데, 그 설계는 두 가지 틀린 근거 위에 있었다 — 특징값을 서빙이
+        읽지 않는다(읽는다)와 임베딩을 Pinecone 으로 옮긴다(풀이 10,007구간이라
+        근거가 없다).
+
+        읽기 전용인 것이 핵심이다. 이 파드는 색인을 만들지 않는다 — 배치가
+        만들고 CI 가 올린다. 쓸 수 있게 두면 파드가 노드 디스크를 고칠 수 있고,
+        레플리카를 늘렸을 때 서로의 색인을 덮어쓴다."""
         spec = self._deployment()["spec"]["template"]["spec"]
-        self.assertEqual([], spec.get("volumes", []))
-        for container in spec["containers"]:
-            with self.subTest(container=container["name"]):
-                self.assertEqual([], container.get("volumeMounts", []))
+        volume = {v["name"]: v for v in spec["volumes"]}["artifacts"]
+        self.assertIn("hostPath", volume)
+        mount = {m["name"]: m for m in spec["containers"][0]["volumeMounts"]}
+        self.assertTrue(mount["artifacts"]["readOnly"])
+
+    def test_replicas_can_still_be_raised(self):
+        """hostPath 를 쓰면서도 레플리카를 늘릴 수 있어야 한다.
+
+        읽기 전용이고 같은 노드에 고정(nodeSelector)이라 여러 파드가 같은
+        디렉터리를 함께 읽는다. ReadWriteMany 가 필요해지는 것은 쓰기를 열 때다.
+        """
+        spec = self._deployment()["spec"]["template"]["spec"]
+        self.assertEqual("ai", spec["nodeSelector"]["mupid.io/role"])
+        mount = {m["name"]: m for m in spec["containers"][0]["volumeMounts"]}
+        self.assertTrue(mount["artifacts"]["readOnly"])
 
     def test_the_probes_are_not_swapped(self):
         """/health 는 프로세스 생존만, /internal/ready 는 실제로 추천할 수 있는가를
@@ -1650,6 +1667,126 @@ class CiVariableDocTest(unittest.TestCase):
         }
         self.assertIn("MUPID_DATA_ENV", gates)
         self.assertIn("| `MUPID_DATA_ENV` |", self.DOC.read_text(encoding="utf-8"))
+
+class IndexUploadTest(unittest.TestCase):
+    """추천 색인은 지금까지 사람이 노드에 놓았다("placed there by an
+    administrator"). 매니페스트를 손으로 적용하던 때와 같은 모양이고, 그때
+    "고쳤는데 클러스터에 닿지 않은" 사고가 하루 세 번 났다.
+
+    네 색인은 **같은 행 번호로 서로를 가리킨다.** 한 파일씩 덮으면 그 사이에
+    기동한 파드가 서로 다른 판을 섞어 읽고, 그때 서비스는 정상처럼 뜨면서
+    엉뚱한 곡을 추천한다."""
+
+    CI = K8S / "ci"
+    DEPLOY = K8S / "deploy"
+
+    def test_the_forced_command_takes_nothing_but_a_versioned_bundle(self):
+        script = (self.DEPLOY / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        found = re.search(r"\$command =~ (\^upload-index.+?) \]\]", script)
+        self.assertTrue(found, "upload-index 를 받는 규칙이 없다")
+        pattern = re.compile(found.group(1))
+        good = "upload-index " + "a" * 40 + " " + "b" * 64
+        self.assertTrue(pattern.match(good))
+        for bad in (good + "; rm -rf /", good + " extra", "upload-index",
+                    good.replace("a" * 40, "A" * 40),
+                    good.replace("b" * 64, "b" * 63)):
+            with self.subTest(command=bad):
+                self.assertIsNone(pattern.match(bad))
+
+    def test_the_receiver_refuses_a_bundle_that_reaches_outside(self):
+        """tar 는 `../` 와 절대경로로 밖에 쓸 수 있다. 이건 root 로 돈다."""
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn('name.startswith("/")', receiver)
+        self.assertIn('".." in pathlib.PurePosixPath(name).parts', receiver)
+        self.assertIn("member.isfile()", receiver)
+
+    def test_the_receiver_only_accepts_known_index_files(self):
+        """이 엔드포인트로 노드에 임의의 파일을 놓을 수 있으면 안 된다."""
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn("ALLOWED = {", receiver)
+        for name in ("moments.parquet", "moments_emb.npy",
+                     "features_v1.npz", "stage1_section.npy"):
+            with self.subTest(file=name):
+                self.assertIn(f'"{name}"', receiver)
+        # 경로도 한 겹으로 묶는다. data/proc/mupid 바로 아래만 받는다.
+        self.assertIn('INNER = "data/proc/mupid"', receiver)
+        self.assertIn("parent != INNER", receiver)
+
+    def test_the_swap_is_atomic(self):
+        """한 파일씩 덮으면 그 사이에 기동한 파드가 판을 섞어 읽는다."""
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn("symlink_to(release)", receiver)
+        self.assertIn('pending.replace(ARTIFACTS / "current")', receiver)
+
+    def test_the_receiver_checks_the_same_thing_the_pod_will(self):
+        """여기서 막지 않으면 증상이 "파드는 떴는데 ready 가 영영 false" 로만
+        보인다. 그때는 이미 current 가 새 판을 가리켜 되돌릴 대상이 헷갈린다."""
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn("emb_row", receiver)
+        self.assertIn("duplicated", receiver)
+        self.assertIn("REQUIRED = {", receiver)
+
+    def test_the_mount_matches_where_the_receiver_writes(self):
+        """둘이 어긋나면 올리기는 성공하고 파드만 빈 디렉터리를 본다."""
+        deployment = [d for d in yaml.safe_load_all(
+            (K8S / "base" / "ai.yaml").read_text(encoding="utf-8"))
+            if d and d["kind"] == "Deployment"][0]
+        spec = deployment["spec"]["template"]["spec"]
+        volume = {v["name"]: v for v in spec["volumes"]}["artifacts"]
+        self.assertEqual("/srv/mupid-k8s/ai-artifacts/current",
+                         volume["hostPath"]["path"])
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn('ARTIFACTS = ROOT / "ai-artifacts"', receiver)
+        self.assertIn('ROOT = pathlib.Path("/srv/mupid-k8s")', receiver)
+
+        # 마운트 지점과 컨테이너가 읽는 경로도 같아야 한다.
+        mount = {m["name"]: m for m in spec["containers"][0]["volumeMounts"]}
+        self.assertEqual("/artifacts", mount["artifacts"]["mountPath"])
+        self.assertTrue(mount["artifacts"]["readOnly"])
+        env = {e["name"]: e.get("value") for e in spec["containers"][0]["env"]}
+        self.assertEqual("/artifacts", env["MUPID_AI_ARTIFACT_DIR"])
+
+    def test_the_volume_is_created_rather_than_required(self):
+        """Directory 로 두면 한 번도 올리지 않은 노드에서 **파드가 뜨지도 못해**
+        /health 로 원인을 볼 수 없다. 빈 디렉터리로 뜨면 무결성 검사가 실패하고
+        그 이유가 /health 에 그대로 실린다."""
+        deployment = [d for d in yaml.safe_load_all(
+            (K8S / "base" / "ai.yaml").read_text(encoding="utf-8"))
+            if d and d["kind"] == "Deployment"][0]
+        volume = {v["name"]: v for v in
+                  deployment["spec"]["template"]["spec"]["volumes"]}["artifacts"]
+        self.assertEqual("DirectoryOrCreate", volume["hostPath"]["type"])
+
+    def test_the_manifest_no_longer_claims_the_pod_is_stateless(self):
+        """그 주장은 두 가지 틀린 근거 위에 있었다 — 특징값을 서빙이 읽지
+        않는다(읽는다: Catalog.__init__ 이 features.load() 를 부른다)와 임베딩을
+        Pinecone 으로 옮긴다(풀이 10,007구간이라 근거가 없다)."""
+        text = (K8S / "base" / "ai.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("PVC 도 initContainer 도 hostPath 도 없다", text)
+        self.assertNotIn("서빙 경로가 읽지 않는다", text)
+
+    def test_the_uploader_refuses_to_send_an_incomplete_index(self):
+        """네 개가 다 있어야 한다. 하나라도 빠지면 ready 가 영영 false 다."""
+        script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
+        for name in ("moments.parquet", "moments_emb.npy",
+                     "features_v1.npz", "stage1_section.npy"):
+            with self.subTest(file=name):
+                self.assertIn(name, script)
+        self.assertIn("slice_index", script)
+
+    def test_the_uploader_never_prints_the_private_key(self):
+        """`< "$VAR"` 로 열면 Variable 로 등록돼 있을 때 셸이 열기 실패
+        메시지에 개인키 전문을 실어 출력한다 — 실제로 겪었다."""
+        script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
+        self.assertIn("read_secret()", script)
+        self.assertNotIn('< "$MUPID_DEPLOY_K8S_SSH_KEY"', script)
+
+    def test_the_bundle_is_reproducible(self):
+        """같은 색인이면 같은 체크섬이어야 로그를 비교할 수 있다."""
+        script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
+        for flag in ("--sort=name", "--mtime=@0", "--owner=0", "--group=0"):
+            with self.subTest(flag=flag):
+                self.assertIn(flag, script)
 
 
 if __name__ == "__main__":

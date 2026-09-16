@@ -6,43 +6,86 @@ Kubernetes 로 가기로 했고(Q6), compose 에 두면 두 벌을 맞춰야 한
 측정일 2026-09-15 · 이미지 `ai_server/Dockerfile` 로 빌드·기동까지 확인함.
 
 
-> ## 2026-09-16 · 인프라 결론
+> ## 2026-09-16 · 인프라 결론 (2회 갱신)
 >
 > 이 문서의 §4(산출물 마운트)와 §8(아직 못 정한 것)은 **더 이상 맞지 않는다.**
-> 513MB 를 통째로 마운트하는 전제로 쓰여 있는데, 실제로 무엇이 무엇을 쓰는지
-> 코드에서 따져 보니 나눌 수 있었다. 아래가 확정된 방침이고, 매니페스트
+> 537MB 를 통째로 마운트하는 전제로 쓰여 있다. 아래가 확정된 방침이고 매니페스트
 > (`infra_k8s/base/ai.yaml`)가 이 방침대로 되어 있다.
 >
-> | 산출물 | 크기 | 어디로 | 근거 |
-> |---|---:|---|---|
-> | `moments_emb.npy` | 385MB | **Pinecone** | 임베딩 벡터다 |
-> | `stage1_section.npy` | 33MB | **Pinecone** | 구간 벡터. 가중치와 내적한다 |
-> | `features_v1.npz` | 93MB | **제거** | 서빙이 읽지 않는다 — `legacy/m10_features.py` 뿐 |
-> | `labels_service.parquet` | 가변 | **ClickHouse** | 원천이 거기고 ai_server 는 이미 붙어 있다 |
-> | `id_map.parquet` | 작음 | **제거** | 계약이 문자열 ID 다 (`RecommenderDto` 주석). `internal_api` 가 부르지 않는다 |
-> | `stage1_weights.npz` | 352KB | **이미지 동봉** | 모델 버전 = 이미지 태그. 되돌리기가 `rollout undo` 한 번 |
-> | `moments.parquet` | 3.2MB | 이미지 동봉 | 구간 메타. 작다 |
+> **이 자리에 처음 적었던 결론 중 두 가지는 틀렸다.** 지운 것이 아니라 여기 남긴다 —
+> 그 근거를 그대로 믿고 다음 사람이 같은 판단을 반복하지 않게.
 >
-> 그래서 **파드가 무상태다.** PVC 도 initContainer 도 hostPath 도 없다. §8 의
-> 1·2·4번(산출물 전달·공유 볼륨·레플리카)이 그대로 사라진다. 3번(`/internal`
-> 차단)은 이미 되어 있다 — Service 가 ClusterIP 이고 nginx 는 `/api/` 와
-> `/storage/` 만 프록시한다.
+> | 처음 적은 것 | 무엇이 틀렸나 |
+> |---|---|
+> | `features_v1.npz` 93MB → **제거**("서빙이 읽지 않는다") | 읽는다. `app/main.py` 가 기동 때 `Catalog()` 를 만들고 그 생성자가 `features.load()` 를 부른다. 지연 import 라 grep 에 걸리지 않았다 |
+> | 임베딩·구간 벡터 → **Pinecone** | 규모가 근거를 못 준다. 추천 풀은 10,007구간뿐이라 `Z[pool_rows] @ q` 가 약 15 MFLOP·1ms 미만이다. 외부 저장소를 넣으면 요청마다 네트워크 왕복이 생긴다 |
 >
-> §7 이 말한 배치(`build_id_map`·`pull_signals`·`run_labeler`)는 원천이
-> 클러스터 안(MySQL·ClickHouse)에 있으므로 밖에서 가져올 것이 아니다. CronJob 은
-> 코드가 ClickHouse 를 쓰도록 바뀐 뒤에 붙인다.
+> ### 확정
+>
+> | 산출물 | 전체 | 풀만 | 어디로 |
+> |---|---:|---:|---|
+> | `moments_emb.npy` | 403MB | **61MB** | 노드 hostPath |
+> | `features_v1.npz` | 75MB | **11MB** | 노드 hostPath |
+> | `stage1_section.npy` | 34MB | **5MB** | 노드 hostPath |
+> | `moments.parquet` | 3.2MB | 작음 | 노드 hostPath |
+> | `content.parquet` 등 | 작음 | 작음 | 노드 hostPath |
+> | `labels_service.parquet` | 가변 | — | **ClickHouse `section_labels`** |
+> | `id_map.parquet` | 작음 | — | **제거** (계약이 문자열 ID 다) |
+> | `stage1_weights.npz` | 352KB | — | **이미지 동봉** (모델 버전 = 이미지 태그) |
+>
+> **537MB 가 약 80MB 가 된다.** 줄어든 이유는 압축이 아니라 범위다 —
+> `moments.parquet` 65,540행 중 서빙이 쓰는 것은 추천 풀 10,007행뿐이고, 나머지는
+> PCA·Stage 1 을 학습시킨 FMA 곡이다. 자르기는 행 선택이라 값이 바뀌지 않는다
+> (`ai_server/tools/slice_index.py`, 근거는 그 모듈의 설명과 시험).
+>
+> ### 그 80MB 가 노드에 오는 길
+>
+> 이미지에 굽지 않는다. 색인 교체가 코드 배포보다 잦아서, 구우면 색인을 바꿀 때마다
+> 이미지를 다시 굽고 롤아웃해야 한다(`ai_server/Dockerfile` 의 설명).
+>
+> **사람이 scp 하지도 않는다.** `upload-index` 동사를 강제 명령에 추가했다 —
+> `upload-apk`·`upload-env` 와 같은 구조다.
+>
+>     python -m ai_server.tools.slice_index --out .release/ai-index
+>     sh infra_k8s/ci/deploy-index.sh
+>
+> 받는 쪽(`infra_k8s/deploy/receive-index.py`)이 체크섬을 맞추고, 파드와 **같은**
+> 무결성 검사(행 수 일치·`emb_row` 연속·중복 없음)를 미리 돌리고, 새 판을 옆에 풀어
+> `current` 심볼릭 링크를 원자적으로 갈아 끼운다. 한 파일씩 덮으면 그 사이에 기동한
+> 파드가 **서로 다른 판의 색인을 섞어 읽고**, 그때 서비스는 정상처럼 뜨면서 엉뚱한
+> 곡을 추천한다.
+>
+> 이건 CI job 이 아니다. 전체 색인은 저장소에도 러너에도 없고 GPU 배치 장비에 있다.
+> 그래서 산출물을 들고 있는 쪽에서 사람이 돌린다 — 손으로 scp 하던 것과 달리
+> 검증·원자성·되돌리기가 붙어 있다.
+>
+> §8 의 2·4번(공유 볼륨·레플리카)은 해소됐다. 마운트가 읽기 전용이고 파드가
+> `nodeSelector` 로 같은 노드에 묶이므로 여러 파드가 같은 디렉터리를 함께 읽는다 —
+> ReadWriteMany 가 필요해지는 것은 쓰기를 열 때다. 3번(`/internal` 차단)은 이미
+> 되어 있다(Service 가 ClusterIP, nginx 는 `/api/`·`/storage/` 만 프록시).
+>
+> §7 이 말한 배치(`pull_signals`·`run_labeler`)는 원천이 클러스터 안
+> (MySQL·ClickHouse)에 있으므로 밖에서 가져올 것이 아니다.
 >
 > ### 코드 쪽에 남은 일
 >
-> 매니페스트는 이 방침대로 준비됐지만 **코드는 아직 파일을 읽는다.** 그래서
-> `replicas: 0` 이다. 다음 셋이 끝나면 숫자만 올리면 된다.
+> `replicas: 0` 인 이유는 하나만 남았다 — **색인을 아직 한 번도 올리지 않았다.**
 >
-> 1. `recommender.py` 의 `np.load(OUT_DIR / "moments_emb.npy")` 를 Pinecone 조회로
-> 2. `labels_service.parquet` 을 ClickHouse 테이블로 (`ReplacingMergeTree` + `run_id`
->    로 최신 판만 읽는 모양을 권한다). **`build_dna` 의 `OV`(다른 사용자 평균)는
->    미리 계산해 두면** 요청마다 전수 스캔하던 것이 사라진다
-> 3. 죽은 코드 정리 — `_pref_sections()` 는 아무도 부르지 않고,
->    `/internal/ready` 의 `id_map` 존재 검사는 쓰지도 않는 파일 때문에 503 을 낸다
+> 끝난 것
+>
+> - 라벨 → ClickHouse `section_labels` (`app/labels_store.py`, DDL 은
+>   `ai_server/sql/section_labels.sql`, 표는 사람이 만든다 — decision/0011)
+> - `id_map` 이 준비 판정에서 빠졌다
+> - `app/legacy/` 승격 — `sys.path` 조작과 맨 이름 import 가 사라졌다
+> - 색인 자르기 도구와 업로드 경로
+>
+> 남은 것
+>
+> 1. 색인을 한 번 올리고 `replicas` 를 1 로
+> 2. `build_dna` 의 `OV`(다른 사용자 평균)를 미리 계산 — 지금은 요청마다 계산한다.
+>    다만 p50 2.22초의 주된 원인은 행동 로그 전수 스캔이다(`S15P21A204-217`)
+> 3. 죽은 코드 정리. **`_pref_sections()` 가 안 불린다는 앞선 판단은 확인이 필요하다**
+>    — `legacy` 건과 같은 실수를 반복하지 않으려면 지연 import 까지 보고 판단한다
 
 ---
 

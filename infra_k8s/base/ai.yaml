@@ -5,20 +5,38 @@
 # 나중에 올린다. 코드가 아직 파일 산출물에 의존하고 있어서 지금 띄우면
 # /internal/ready 가 503 이라 트래픽을 받지 못한다. 준비되면 숫자만 올린다.
 #
-# ## 볼륨이 없다
+# ## 산출물
 #
-# 인계 문서(infra/AI-SERVER-K8S-HANDOVER.md)는 산출물 513MB 를 /artifacts 로
-# 마운트하는 전제였다. 구조를 따져 보니 나눌 수 있었다.
+# 인계 문서(infra/AI-SERVER-K8S-HANDOVER.md)는 537MB 를 /artifacts 로 마운트하는
+# 전제였다. 줄이되, 앞서 이 자리에 적혀 있던 계획 중 **두 가지는 틀렸다.**
 #
-#   임베딩 385MB   -> Pinecone (외부 벡터DB)
-#   구간 벡터 33MB -> Pinecone
-#   특징값 93MB    -> 서빙 경로가 읽지 않는다 (legacy/m10_features.py 뿐)
-#   라벨           -> ClickHouse. 원천이 거기이고 ai_server 는 이미 붙어 있다
-#   id_map         -> 필요 없다. 계약이 문자열 ID 다 (RecommenderDto 주석)
-#   모델 가중치    -> 352KB. 이미지에 구워 보낸다
+#   · "특징값 93MB 는 서빙이 읽지 않는다" — 틀렸다. app/main.py 가 기동 때
+#     Catalog() 를 만들고 그 생성자가 features.load() 로 features_v1.npz 를
+#     읽는다. 지연 import 라 grep 에 걸리지 않았을 뿐이다.
+#   · "임베딩·구간 벡터를 Pinecone 으로" — 규모가 근거를 못 준다. 추천 풀은
+#     10,007구간뿐이라 Z[pool_rows] @ q 가 약 15 MFLOP, 1ms 미만이다.
+#     외부 저장소를 넣으면 요청마다 네트워크 왕복이 생긴다 (ai_server/TODO.md).
 #
-# 그래서 파드가 **무상태**다. PVC 도 initContainer 도 hostPath 도 없다.
-# 레플리카를 늘리는 것도 숫자만 올리면 된다.
+# 실제로 줄어든 것은 다음 둘이다.
+#
+#   라벨    -> ClickHouse section_labels. 원천이 거기이고 이미 붙어 있다
+#   id_map  -> 필요 없다. 계약이 문자열 ID 다 (내부 준비 판정도 보지 않는다)
+#
+# 남은 색인은 **풀만 잘라** 올린다 — 65,540행 중 서빙이 쓰는 10,007행만.
+# 537MB 가 약 80MB 가 된다 (ai_server/tools/slice_index.py).
+#
+# ## 그 80MB 는 어떻게 오나
+#
+# hostPath 다. 이미지에 구우면 색인을 바꿀 때마다 이미지를 다시 굽고 롤아웃해야
+# 하는데, 색인 교체가 코드 배포보다 잦다 (ai_server/Dockerfile 의 설명).
+#
+# **사람이 채우지 않는다.** CI 가 `upload-index` 로 올리고 노드의 root 가 받아
+# 원자적으로 갈아 끼운다 — upload-apk·upload-env 와 같은 구조다. 손으로 채우는
+# 방식은 매니페스트 수동 적용이 그랬듯 조용히 어긋난다.
+#
+# type: DirectoryOrCreate 다. Directory 로 두면 아직 한 번도 올리지 않은 노드에서
+# **파드가 뜨지도 못해** /health 로 원인을 볼 수 없다. 빈 디렉터리로 뜨면
+# check_integrity 가 실패하고 그 이유가 /health 에 그대로 실린다.
 #
 # Pinned to the AI node: the image is imported per node (레지스트리가 없다).
 apiVersion: v1
@@ -48,6 +66,7 @@ spec:
           ports: [{containerPort: 8100}]
           env:
             - {name: MUPID_AI_PORT, value: '8100'}
+            - {name: MUPID_AI_ARTIFACT_DIR, value: /artifacts}
             # 행동 데이터를 요청마다 직접 읽는다 — 배치로 파일에 옮겨 담지
             # 않는다 (app/clickhouse.py 의 설명). 라벨도 여기로 옮긴다.
             - {name: MUPID_CLICKHOUSE_URL, value: 'http://clickhouse:8123'}
@@ -70,9 +89,14 @@ spec:
             - {name: OMP_NUM_THREADS, value: '3'}
             - {name: OPENBLAS_NUM_THREADS, value: '3'}
             - {name: MKL_NUM_THREADS, value: '3'}
+          volumeMounts:
+            # 읽기 전용이다. 이 파드는 색인을 만들지 않는다 — 배치가 만들고
+            # CI 가 올린다. 쓸 수 있게 두면 파드가 노드 디스크를 고칠 수 있다.
+            - {name: artifacts, mountPath: /artifacts, readOnly: true}
           resources:
-            # 임베딩이 Pinecone 으로 가면 385MB 를 파드가 들고 있지 않다.
-            # 인계 문서 실측은 산출물 없이 유휴 80MB 였다. 띄운 뒤 다시 본다.
+            # 임베딩은 mmap 으로 읽는다(np.load mmap_mode="r") — 파일이 61MB 라도
+            # 만진 페이지만 올라온다. 인계 문서 실측은 산출물 없이 유휴 80MB 였다.
+            # 띄운 뒤 실제 RSS 를 보고 다시 잡는다.
             requests: {cpu: 500m, memory: 512Mi}
             limits: {cpu: 3000m, memory: 2Gi}
           # /health is process liveness. /internal/ready additionally checks that
@@ -91,3 +115,6 @@ spec:
             httpGet: {path: /health, port: 8100}
             periodSeconds: 30
             failureThreshold: 5
+      volumes:
+        - name: artifacts
+          hostPath: {path: /srv/mupid-k8s/ai-artifacts/current, type: DirectoryOrCreate}
