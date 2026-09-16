@@ -48,6 +48,24 @@ spec:
           restartPolicy: Never
           # 색인이 이 노드의 디스크에 있다. 추천 서버와 같은 자리에 묶는다.
           nodeSelector: {mupid.io/role: ai}
+          # hostPath 는 kubelet 이 **root 소유로** 만든다(DirectoryOrCreate).
+          # 컨테이너는 비root(uid 100)로 돌기 때문에 그대로면 첫 쓰기에서
+          # Permission denied 다 — 실제로 겪었다. 배치가 신호를 다 읽고 워터마크를
+          # 저장하다 죽었다.
+          #
+          # fsGroup 은 hostPath 에 적용되지 않는다. 그래서 root 로 한 번 맞춰 준다.
+          # 색인(`/artifacts`)은 읽기만 하므로 건드리지 않는다.
+          initContainers:
+            - name: own-state
+              image: mupid-ai:placeholder
+              imagePullPolicy: IfNotPresent
+              command: ["sh", "-c", "chown -R 100:101 /state"]
+              securityContext: {runAsUser: 0}
+              volumeMounts:
+                - {name: state, mountPath: /state}
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {cpu: 200m, memory: 128Mi}
           containers:
             - name: labeler
               # 추천 서버와 같은 태그를 쓴다. mupid-apply 가 치환한다 —
