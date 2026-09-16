@@ -84,6 +84,18 @@ spec:
           ports: [{containerPort: 8100}]
           env:
             - {name: MUPID_AI_PORT, value: '8100'}
+            # **추천 풀은 flow 뿐이다.** jamendo 는 실서비스에서 재생되지 않는다 —
+            # 스트리밍 대상이 아닌 곡이라 추천에 섞이면 사용자가 누를 수 없는 결과가
+            # 나간다. 오류가 아니라 '재생이 안 되는 추천' 이라 화면만 보고는
+            # 무엇이 잘못됐는지 알기 어렵다.
+            #
+            # 코드 기본값이 `MUPID_POOL_EXTRA=jamendo` 다(recommender.py). 매니페스트가
+            # 덮지 않으면 그 값이 그대로 적용되고, 실제로 그렇게 나가고 있었다 —
+            # 배포 직후 받은 추천 3건이 전부 JAMENDO_* 였다.
+            #
+            # 빈 값은 '없음' 이다. recommender 가 쉼표로 쪼갠 뒤 빈 항목을 버린다.
+            - {name: MUPID_POOL, value: flow}
+            - {name: MUPID_POOL_EXTRA, value: ''}
             - {name: MUPID_AI_ARTIFACT_DIR, value: /artifacts/current}
             # 배치가 쓰는 자리. 서빙도 여기서 선호 구간·온보딩 씨앗을 읽으므로
             # **배치와 같은 곳**을 봐야 한다 — 갈리면 배치는 도는데 화면에는
