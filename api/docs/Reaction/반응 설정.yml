@@ -6,6 +6,11 @@ info:
 http:
   method: PUT
   url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/reaction"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
   body: json
   auth: inherit
 

@@ -6,6 +6,9 @@ info:
 http:
   method: GET
   url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/comment?page=0&size=50"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
   auth: inherit
 
 runtime:
