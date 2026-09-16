@@ -35,16 +35,24 @@ _OPTIONAL_ARTIFACTS = {
 
 
 def artifact_status() -> dict:
-    """선택 산출물과 매핑표의 적재 상태. `/health` 가 그대로 내보낸다."""
+    """선택 산출물과 매핑표의 적재 상태. `/health` 가 그대로 내보낸다.
+
+    매핑표는 **서빙 산출물이 아니다.** 숫자↔문자열 번역은 Spring 이 하고
+    `/internal/ready` 도 더는 보지 않는다(`internal_api.ready`). 그래도 상태는
+    싣는다 — 적재 도구(`push_sections`·`register_sections`)가 이 파일을 쓰므로
+    운영 중에 "왜 적재가 안 되나" 를 여기서 먼저 본다. 대신 `missing` 에는 넣지
+    않는다. 넣으면 기동 로그가 매번 "선택 산출물 없음" 을 찍어, 정작 개인화가
+    빠진 배포와 구분이 되지 않는다.
+    """
     d = recommender.OUT_DIR
     files = {name: {"exists": (d / name).exists(), "why": why}
              for name, why in _OPTIONAL_ARTIFACTS.items()}
+    missing = sorted(k for k, v in files.items() if not v["exists"])
     idm = paths.id_map_path()
     files["id_map.parquet"] = {
         "exists": idm.exists(), "path": str(idm),
-        "why": "숫자 ID 매핑. 없으면 /internal/ready 가 503 이다"}
-    return {"files": files,
-            "missing": sorted(k for k, v in files.items() if not v["exists"])}
+        "why": "숫자 ID 매핑. 적재 도구 전용 — 서빙도 준비 판정도 보지 않는다"}
+    return {"files": files, "missing": missing}
 
 
 def check_integrity() -> dict:

@@ -408,9 +408,24 @@ def test_artifact_status_names_what_is_missing(clean_env, tmp_path):
     clean_env.setattr(recommender, "OUT_DIR", tmp_path / "data/proc/mupid")
     st = main.artifact_status()
     assert "labels_service.parquet" in st["missing"]
-    assert "id_map.parquet" in st["missing"]
     # 왜 필요한지도 함께 — 없다는 사실만으로는 무엇이 꺼졌는지 알 수 없다.
     assert st["files"]["labels_service.parquet"]["why"]
+
+
+def test_id_map_is_reported_but_is_not_a_serving_gap(clean_env, tmp_path):
+    """매핑표는 적재 도구 전용이다.
+
+    `/internal/ready` 는 더 이상 매핑표를 보지 않는다 — 번역은 Spring 이 한다. 그런데도
+    `missing` 에 남겨 두면 기동 로그가 배포마다 "선택 산출물 없음" 을 찍어, **정작
+    개인화가 빠진 배포와 구분이 안 된다.** 상태는 싣되 결핍으로 세지 않는다.
+    """
+    clean_env.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
+    from ai_server.app import main, recommender
+
+    clean_env.setattr(recommender, "OUT_DIR", tmp_path / "data/proc/mupid")
+    st = main.artifact_status()
+    assert st["files"]["id_map.parquet"]["exists"] is False
+    assert "id_map.parquet" not in st["missing"]
 
 
 def test_startup_uses_lifespan_not_deprecated_hook():
