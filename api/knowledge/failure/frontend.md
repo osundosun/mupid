@@ -171,3 +171,38 @@
 - **확인**: 위치 → 이득 `0→0, .25→.062, .5→.25, .75→.562, 1→1`. 100칸 끌기가 **32.07ms/칸 → 4.47ms/칸**(약 7배).
 - **건드리지 말 것**: 값을 이득에 바로 꽂지 않고 `setTargetAtTime(…, 0.02)` 로 20ms에 걸쳐 옮기는 것은 '지직' 소리를 막는 장치다. 데스크톱 홈의 `<label>` 감싸개도 `.desktop-audio-options label` 에 배치가 걸려 있어 그대로 두어야 한다.
 - **근거**: `frontend/lib/player/engine.ts`, `frontend/lib/player/index.ts`, `frontend/components/mupid/volume-slider.tsx`
+
+### 재생 목록 순서를 바꾸자마자 새로고침하면 옛 순서로 돌아간다 — 해소됨
+
+- **원인**: 큐 저장은 조작마다 보내지 않고 **1.2초 모았다가** 보낸다(`QUEUE_SAVE_DELAY`). 그래서 보내는 순간과 사용자가 새로고침하는 순간이 자주 겹치는데, **요청이 안 나간 것이 아니라 나간 요청이 취소된다.** 평범한 `fetch` 는 문서가 사라지면 함께 버려진다. 계측에서 본문까지 올바른 요청이 그대로 죽는 것을 확인했다.
+
+  ```
+  PUT /api/v1/user/queue  keepalive=false
+  body={"music_ids":[310,67,68,309],"current_music_id":314,"revision":2}
+  ```
+
+  서버 판본은 오르지 않았고, 다시 열면 직전에 저장된 순서가 내려왔다. 화면만 새 순서였으므로 "저장이 안 된다" 가 아니라 "저장했는데 사라진다" 로 보인다.
+- **해결**: 큐 저장을 `keepalive` 로 보낸다(`endpoints.ts` 의 `queue.replace`). 브라우저가 문서와 무관하게 전송을 마친다. 곡 번호 목록뿐이라 keepalive 의 64KB 상한과는 거리가 멀다. 아직 타이머가 돌지 않은 변경은 떠날 때 한 번 더 밀어낸다(`use-mupid.ts` 의 flush).
+- **주의 1**: 떠나는 것을 `beforeunload` 로 잡으면 안 된다. 모바일 브라우저는 탭을 버릴 때 그걸 부르지 않는 경우가 많다. `visibilitychange`(hidden)와 `pagehide` 를 본다.
+- **주의 2**: 대기 중인 저장을 **보내기 시작할 때 지우면 안 된다.** 요청이 도는 중에 떠나면 "밀어낼 것이 없다" 고 판단해 그대로 유실된다. 서버가 받았다고 확인해 준 뒤에 지운다. 그래서 같은 내용이 두 번 나갈 수 있는데, 판본이 함께 가므로 뒤의 것은 409 로 거절되고 아무것도 바뀌지 않는다.
+- **확인**: 언로드 시점에 같은 주소로 두 요청을 띄워 보면 `keepalive: true` 만 도착하고 평범한 `fetch` 는 도착하지 않는다. 고친 뒤 "순서 변경 직후 즉시 새로고침" 을 두 번 돌려 순서가 유지되는 것과 Redis 값이 일치하는 것을 확인했다.
+- **근거**: `frontend/lib/api/endpoints.ts` 의 `queue.replace`, `frontend/lib/api/transport.ts`, `frontend/lib/api/client.ts`, `frontend/hooks/use-mupid.ts`
+
+### 소스를 고쳤는데 브라우저가 계속 예전 코드를 실행한다 (Vite 개발 서버)
+
+- **원인**: HMR 이 모듈 import 주소에 `?t=<timestamp>` 를 박아 넣고, 브라우저가 **그 주소째로** 캐시한다. 그래서 파일을 고쳐도 옛 판이 계속 돌 수 있다. 증상이 헷갈리는데, 이미 지운 식별자에서 `ReferenceError` 가 나고 스택이 옛 타임스탬프를 가리킨다.
+
+  ```
+  ReferenceError: options is not defined
+      at Module.saveQueue (http://localhost:3000/lib/play-queue.ts?t=1789532266190:67:77)
+  ```
+
+  디스크의 `play-queue.ts` 에는 `options` 가 한 글자도 없는데도 그렇다.
+- **듣지 않는 처방**: 개발 서버 재시작, `node_modules/.vite` 삭제, 새 탭에서 열기, 주소에 쿼리 붙이기, `location.reload(true)`. 전부 같은 모듈 주소를 다시 쓰므로 소용이 없었다.
+- **해결**: **포트를 바꿔 출처를 바꾼다.** 새 출처는 캐시가 비어 있어 모든 모듈을 새로 받는다.
+
+  ```bash
+  npx vite --port 3001 --strictPort
+  ```
+- **주의**: `curl` 로 "서버가 무엇을 주는지" 확인할 때도 캐시버스터를 붙여야 한다. `curl http://localhost:3000/lib/api/client.ts` 는 옛 응답을 보여 주고, `?t=$(date +%s)` 를 붙이면 고친 내용이 나온다. 이것 때문에 "서버가 옛 코드를 준다" 고 잘못 판단하기 쉽다.
+- **근거**: `frontend/vite.config.ts`, 2026-09-16 재생 큐 유실 추적 중 확인
