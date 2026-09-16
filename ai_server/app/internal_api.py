@@ -33,6 +33,18 @@ MODEL_VERSION = "mupid-stage1-v1"       # /feedback 이 이미 내보내는 값�
 EMBEDDING_VERSION = "mert-v1-95m"       # 구간 임베딩. 교체하면 닮은 구간 결과가 바뀐다
 AUTH_HEADER = "X-Internal-Token"
 
+# **kubelet 은 토큰을 보내지 않는다.** readinessProbe 가 부르는 경로를 인증 뒤에
+# 두면 토큰을 켜는 순간 파드가 영영 Ready 가 되지 못한다 — 실제로 겪었다. 새 Pod 가
+# 0/1 로 멈추고 maxUnavailable 이 0 이라 배포가 그대로 막힌다.
+#
+# 이 경로만 연다. 돌려주는 것은 색인 행 수·곡 수·저장소 접속 여부뿐이고 추천
+# 결과나 사용자 데이터가 없다. 나머지 `/internal` 은 그대로 토큰을 요구한다.
+#
+# 프로브 경로를 `/internal` 밖으로 옮기는 방법도 있지만, 그러면 Spring 이 쓰는
+# 준비 판정과 오케스트레이터가 보는 것이 갈린다 — 한쪽만 고쳐지는 자리가 생긴다.
+PUBLIC_PATHS = frozenset({PREFIX + "/ready"})
+
+
 # `/internal` 은 Spring 만 부르는 전제이고 지금은 네트워크 격리가 유일한 방어선이다.
 # 설정 실수 한 번이면 그대로 열린다. 공유 비밀을 넣어 두면 두 겹이 된다.
 #
@@ -581,7 +593,7 @@ def install(app: FastAPI, service_module=None) -> None:
         if not request.url.path.startswith(PREFIX):
             return await call_next(request)
         expected = _expected_token()
-        if expected:
+        if expected and request.url.path not in PUBLIC_PATHS:
             got = request.headers.get(AUTH_HEADER, "")
             # 상수 시간 비교. 길이·내용이 응답 시간으로 새지 않게 한다.
             if not hmac.compare_digest(got, expected):

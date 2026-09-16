@@ -33,6 +33,23 @@ def data_dir() -> Path:
     return artifact_root() / "data" / "proc" / "mupid"
 
 
+def state_dir() -> Path:
+    """배치가 **쓰는** 자리. 색인과 나눈다.
+
+    색인은 여러 파드가 함께 읽는 것이라 마운트가 읽기 전용이다. 그런데 배치는
+    같은 디렉터리에 워터마크·이벤트 로그·라벨·선호 구간을 쓴다 — 그대로 두면
+    쿠버네티스에서 배치가 아예 돌지 못한다.
+
+    기본값은 종전과 같은 자리다(`data_dir()`). 나누지 않은 환경에서는 동작이
+    바뀌지 않는다.
+
+    나눌 때 **색인 디렉터리를 쓰면 안 되는 이유**가 하나 더 있다. 색인은 판마다
+    새 디렉터리로 올라오고 `current` 링크가 갈아 끼워진다. 상태를 거기 두면
+    색인을 교체할 때마다 워터마크가 사라져 신호를 처음부터 다시 당긴다.
+    """
+    return Path(os.environ.get("MUPID_AI_STATE_DIR") or data_dir())
+
+
 def moments_path() -> Path:
     return data_dir() / "moments.parquet"
 
@@ -59,6 +76,8 @@ def check() -> dict:
         "artifact_dir": str(root),
         "artifact_dir_from_env": bool(os.environ.get("MUPID_AI_ARTIFACT_DIR")),
         "data_dir": str(data),
+        "state_dir": str(state_dir()),
+        "state_dir_split": bool(os.environ.get("MUPID_AI_STATE_DIR")),
         "data_dir_exists": data.is_dir(),
         "moments": {"path": str(mom), "exists": mom.exists()},
         "id_map": {"path": str(idm), "exists": idm.exists(),

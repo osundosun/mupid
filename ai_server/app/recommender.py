@@ -40,11 +40,14 @@ ROOT = paths.artifact_root()
 # 라벨러는 **코드와 함께** 배포된다(app/labeler.py). 산출물 디렉터리에는 없다 — 예전
 # 데모의 <저장소>/src 배치를 그대로 들고 오면 subprocess 가 조용히 실패한다.
 OUT_DIR = ROOT / "data" / "proc" / "mupid"
-SERVE = OUT_DIR / "serve"
-EVENTS = OUT_DIR / "logs" / "events_service.jsonl"
+# 배치가 **쓰는** 자리. 색인 마운트가 읽기 전용이라 나눠 두었다 — 나누지
+# 않으면 기본값이 OUT_DIR 이라 종전과 같다(`paths.state_dir`).
+STATE_DIR = paths.state_dir()
+SERVE = STATE_DIR / "serve"
+EVENTS = STATE_DIR / "logs" / "events_service.jsonl"
 # 라벨의 정본은 ClickHouse 다(`app/labels_store.py`). 이 파일은 ClickHouse 가
 # 없는 개발·오프라인에서만 쓰이고, 배치가 만든 중간 산출물이기도 하다.
-LABELS = OUT_DIR / "labels_service.parquet"
+LABELS = STATE_DIR / "labels_service.parquet"
 PREFS = SERVE / "prefs.parquet"
 ONBOARD = SERVE / "onboarding.parquet"
 # 음원·표지 경로는 두지 않는다. 이 서비스는 스트리밍을 하지 않고(main.py), 그 값을 읽는
