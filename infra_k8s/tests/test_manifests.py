@@ -1903,6 +1903,63 @@ class IndexReceiverCheckTest(unittest.TestCase):
             self.mod.verify(pathlib.Path(self.tmp))
         self.assertEqual(65, caught.exception.code)
 
+class ApplyTagSubstitutionTest(unittest.TestCase):
+    """`mupid-apply` 는 placeholder 가 클러스터에 올라가는 것을 막으려고 존재한다.
+
+    그런데 **그 함정을 세 가지 방식으로 밟았다.** 셋 다 배포 job 은 성공으로 끝나고,
+    maxUnavailable 이 0 이라 옛 Pod 가 계속 서빙해 겉으로는 멀쩡해 보였다.
+    """
+
+    SCRIPT = K8S / "deploy" / "apply.sh"
+
+    def setUp(self):
+        self.text = self.SCRIPT.read_text(encoding="utf-8")
+
+    def test_every_component_in_the_overlay_is_substituted(self):
+        """ai 가 목록에서 빠져 있었다. ai.yaml 이 오버레이에 들어온 뒤로
+        `mupid-ai:placeholder` 가 그대로 클러스터에 올라갔다."""
+        self.assertIn('for component in ("api", "web", "ai"):', self.text)
+
+        # 오버레이가 참조하는 base 파일에 placeholder 가 있으면 목록에도 있어야 한다.
+        listed = re.search(r'for component in \(([^)]*)\)', self.text).group(1)
+        listed = set(re.findall(r'"(\w+)"', listed))
+        for path in sorted((K8S / "base").glob("*.yaml")):
+            for name in re.findall(r"mupid-(\w+):placeholder", path.read_text(encoding="utf-8")):
+                with self.subTest(component=name, file=path.name):
+                    self.assertIn(name, listed)
+
+    def test_the_workload_name_is_mapped_not_assumed(self):
+        """컴포넌트 이름과 Deployment 이름이 같지 않다 — web 은 클러스터에서 `edge` 다.
+        이 한 글자 차이로 클러스터 조회가 조용히 빗나가고 파일로 되돌아간다."""
+        self.assertIn('WORKLOAD = {"api": "api", "web": "edge", "ai": "ai"}', self.text)
+
+        # 매니페스트가 실제로 그 이름을 쓰는지 확인한다.
+        names = set()
+        for path in sorted((K8S / "base").glob("*.yaml")):
+            for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
+                if doc and doc.get("kind") == "Deployment":
+                    names.add(doc["metadata"]["name"])
+        for expected in ("api", "edge", "ai"):
+            with self.subTest(deployment=expected):
+                self.assertIn(expected, names)
+
+    def test_the_cluster_lookup_actually_reaches_the_program(self):
+        """`cmd | python3 - <<'PY'` 는 **heredoc 이 stdin 을 차지한다.** 파이프로 준
+        데이터가 프로그램에 닿지 않고 조용히 빈 값이 된다 — 클러스터를 본다고 적어
+        놓고 실제로는 파일만 보고 있었다. 그 파일이 한 판 뒤처져 있어서, 노드에 없는
+        이미지를 요구하는 배포가 나갔다."""
+        self.assertNotRegex(self.text, r'\|\s*python3 -\s+"')
+        self.assertIn('python3 - "$rendered" "$root" "$live"', self.text)
+        self.assertIn("live_path.exists()", self.text)
+
+    def test_a_leftover_placeholder_fails_the_job(self):
+        """예전에는 경고만 찍고 성공으로 끝났다. 그래서 placeholder 배포가 초록으로
+        지나갔다 — 이 검사가 말을 하고도 아무 일이 없었던 셈이다."""
+        tail = self.text.split("placeholder 로 남은 워크로드", 1)[1]
+        self.assertIn("exit 65", tail)
+        # 최초 설치는 막지 않는다. 그때는 치환 단계가 그렇게 말해 둔다.
+        self.assertIn("태그를 찾지 못했다", tail)
+
 
 if __name__ == "__main__":
     unittest.main()
