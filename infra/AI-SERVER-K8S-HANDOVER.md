@@ -155,23 +155,40 @@ readinessProbe:
 | 마운트 경로 | **`/artifacts`** (`MUPID_AI_ARTIFACT_DIR` 기본값) |
 | 실제 읽는 위치 | `/artifacts/data/proc/mupid/` |
 | 접근 | **읽기 전용이면 충분하다** |
-| 총 크기 | **513 MB** (`stage1_weights.npz` 포함, `stage1.pt` 제외) |
+| 총 크기 | **517 MB** (`stage1_weights.npz` 포함, `stage1.pt` 제외) |
 
 | 파일 | 크기 | 없으면 |
 |---|---:|---|
-| `moments_emb.npy` | 385 MB | **기동 실패** — 카탈로그를 못 만든다 |
-| `features_v1.npz` | 93 MB | 학습 점수가 빠진다 |
-| `stage1_section.npy` | 33 MB | 학습 점수가 빠진다 |
+| `moments_emb.npy` | 384 MB | **기동 실패** — 카탈로그를 못 만든다 |
+| `features_v1.npz` | 93 MB | 학습 점수가 빠진다 (PCA 기저와 285차가 여기 있다) |
+| `stage1_section.npy` | 32 MB | 학습 점수가 빠진다 |
+| `clap_moments.npz` | 4.2 MB | CLAP 재정렬만 빠진다. 자연어 해석기가 미설정이면 지금은 영향 없다 |
 | `moments.parquet` | 3.2 MB | **기동 실패** |
-| `stage1_weights.npz` | **352 KB** | **묶음에 반드시 넣는다.** 없으면 `stage1.pt` 를 찾는데 이미지에 torch 가 없어 학습 점수가 통째로 빠진다. 오류는 안 나고 규칙 점수로 조용히 내려간다 |
+| **`content.parquet`** | **1.8 MB** | **기동 실패.** `recommender.py:155` 가 `exists()` 검사 **없이** 읽는다. `trk_*` 다섯 열의 출처이기도 하다 |
+| **`flow_meta.parquet`** | **65 KB** | 오류는 안 난다. 곡이 추천 풀에는 들어가고 **조건 검색(장르·무드·보컬·언어)에서만 조용히 빠진다** |
+| `stage1_weights.npz` | **349 KB** | **묶음에 반드시 넣는다.** 없으면 `stage1.pt` 를 찾는데 이미지에 torch 가 없어 학습 점수가 통째로 빠진다. 오류는 안 나고 규칙 점수로 조용히 내려간다 |
 | `stage1.pt` | 349 KB | torch 판. 개발 환경용이고 **배포 묶음에는 필요 없다** |
+| `labels_service.parquet` | 156 KB | 모든 사용자가 콜드스타트가 된다 (오류는 안 난다) |
 | `id_map.parquet` | 작음 | **`/internal/ready` 가 503** — 숫자 ID 를 못 잇는다 |
-| `labels_service.parquet` | 가변 | 모든 사용자가 콜드스타트가 된다 (오류는 안 난다) |
+| **`moment_zstats.npz`** | **12 KB** | 서버는 안 쓴다. **분석 배치가 멈춘다** — 새로 계산하지 않는다(신곡만 다른 공간에 놓인다) |
+| `feature_stats_v1.npz` | **5 KB** | 서버는 안 쓴다. **분석 배치가 멈춘다** — 같은 이유다 |
+| **`logistic_flow_stage1.json`** | **1.2 KB** | 점수 결합기가 없어 **규칙 점수로 내려앉는다.** 오류는 안 난다. 이름은 `MUPID_COMBINER` 로 바꿀 수 있고, 없으면 `logistic_combiner.json` 을 찾는다 |
+| `features_info.json` | 877 B | 특징 판·`features_v1.npz` sha256 을 담는다. 분석 배치가 이걸로 판이 어긋났는지 가린다 |
+
+> 2026-09-16 에 **실제 로딩 경로와 대조**해 채웠다. 앞 판에는 `content.parquet`·
+> `flow_meta.parquet`·`moment_zstats.npz`·`logistic_flow_stage1.json` 넷이 빠져 있었다.
+> 그중 `content.parquet` 은 **없으면 기동 자체가 안 되는데도** 표에 없었다.
 
 > **네 파일이 행 번호로 서로를 가리킨다**(`moments`·`emb`·`features`·`stage1`). 버전이
 > 섞이면 엉뚱한 곡을 추천하고 **그 상태로도 정상 기동한다.** 2026-09-09~10 에 두 번
 > 겪었다. 그래서 기동 시 무결성 검사가 붙어 있고, 어긋나면 `/internal/ready` 가 실패한다.
 > **묶음 단위로 교체하고, 한 파일만 바꾸지 않는다.**
+
+`feature_stats_v1.npz` 는 `features_v1.npz` 에서 뽑은 z-score 통계다. 신곡을 섞어
+다시 적합하면 **기존 구간의 특징이 전부 바뀌고** 체크포인트의 `in_dim 285` 와 어긋나
+학습 점수가 조용히 빠진다. 그래서 통계를 굳혀 두고 신곡은 읽어 쓰기만 한다 —
+만드는 쪽은 `python -m ai_server.tools.freeze_feature_stats` 다.
+**색인을 다시 만들면 이것도 다시 만든다** (sha256 이 어긋나면 배치가 멈춘다).
 
 배치 CLI 는 같은 경로에 **쓴다**(`id_map.parquet`, `labels_service.parquet`,
 `onboarding.parquet`, `signals_watermark.json`). 서버용 마운트는 읽기 전용, 배치용은
@@ -235,6 +252,12 @@ GPU 는 필요 없다. 서빙 경로에 torch 가 없다.
 
 ## 7. Job · CronJob
 
+> **2026-09-16 변경.** `fetch_onboarding` 은 없앴다 — 온보딩이 요청에 실려 온다.
+> 그리고 **서버 파드에도 `MUPID_CLICKHOUSE_*` 가 필요해졌다.** 행동 데이터를 요청마다
+> 직접 조회하기 때문이다(§6 의 "배치에만 준다" 는 더 이상 맞지 않는다). 읽기 전용
+> 계정이면 충분하다.
+
+
 배치는 전부 CLI 진입점이 있다. 이미지 안에서 도는 것까지 확인했다.
 
 ```
@@ -249,7 +272,6 @@ python -m ai_server.tools.<이름>
 | `push_sections --audit` | 하루 1회 | 대사. 차이가 있으면 **종료 코드 3** |
 | `pull_signals` | 짧은 주기 | ClickHouse 신호 → 행동 로그 (워터마크 증분) |
 | `run_labeler` | 신호 수집 뒤 | 라벨·선호 구간 갱신 |
-| `fetch_onboarding --users-file -` | 신규 가입 뒤 | 온보딩 답변 수신 |
 | `export_stage1_npz` | 모델 교체 시 | `stage1.pt` → `stage1_weights.npz` |
 
 **재생할 때마다 도는 것은 하나도 없다.** `push_sections` 는 곡이 늘거나 경계가 바뀔 때만
@@ -261,13 +283,39 @@ python -m ai_server.tools.<이름>
 CronJob 은 `concurrencyPolicy: Forbid` 를 권한다. 같은 워터마크를 두 파드가 동시에
 전진시키면 건너뛰는 구간이 생긴다.
 
+### 구간 분석 배치는 여기 없다 — 지금은 GitLab 스케줄이 돌린다
+
+신곡을 색인에 얹는 배치(`python -m music_preprocessing.analysis.batch`)는 **위 표에
+없다.** 이미지도 다르고(GPU·파이썬 3.10 이 섞인다) 도는 곳도 다르다.
+
+**"언제" 를 정하는 것은 지금 GitLab 파이프라인 스케줄이다.** K8s CronJob 이 아니다 —
+JupyterHub 배치 계정은 cron 스풀에 쓸 권한이 없어(`crontab -` 가 실제로
+`mkstemp: Permission denied` 로 실패했다) cron 을 쓸 수 없고, 그래서 `run_batch.sh`
+가 "무엇을" 만 정하고 "언제" 는 파이프라인 스케줄이 정하는 구조다. 구간 분석도 같은
+자리에 붙는다.
+
+K8s 로 옮길 때의 규격은 `ai_server/docs/ANALYSIS-BATCH.md` §8 에 적어 두었다
+(`concurrencyPolicy: Forbid` · `backoffLimit: 0` · 교체는 `MUPID_AI_ARTIFACT_DIR`
+전환 + rollout restart). **지금 상태에서 그대로 옮겨 붙일 수 있는 매니페스트는 아니다** —
+GPU 노드가 없고, ① 분할이 파이썬 3.10 환경을 요구한다.
+
+| | 지금 | K8s 로 갈 때 |
+|---|---|---|
+| 언제 | GitLab 파이프라인 스케줄 | CronJob `schedule` |
+| 겹침 방지 | 파일 잠금(`analysis_batch.lock`) + 스케줄 | + `concurrencyPolicy: Forbid` |
+| ①② (GPU) | GPU 박스 `mupid-ai`(3.10) | GPU 노드가 생기면 같은 Job 으로 |
+| ③④⑤⑥ | 색인을 마운트한 3.14 프로세스 | 같은 Job 의 다음 단계 |
+| 교체 | 디렉터리 rename | `MUPID_AI_ARTIFACT_DIR` 전환 + rollout restart |
+
+공유 CI·K8s 구현 파일은 이 문서에서 건드리지 않았다. 규격만 적어 둔 것이다.
+
 ---
 
 ## 8. 아직 못 정한 것 — 인프라 판단 필요
 
 | # | 항목 |
 |---|---|
-| 1 | **산출물 전달 방법.** PVC / 오브젝트 스토리지 → initContainer 내려받기 / 이미지 동봉 중 무엇으로 갈지. 513 MB 이고 곡이 늘면 커진다 |
+| 1 | **산출물 전달 방법.** PVC / 오브젝트 스토리지 → initContainer 내려받기 / 이미지 동봉 중 무엇으로 갈지. 517 MB 이고 곡이 늘면 커진다 |
 | 2 | 서버와 배치가 같은 PVC 를 쓸지. 서버는 읽기만, 배치는 쓴다 |
 | 3 | `/internal` 을 Ingress 에서 막는 방식 (NetworkPolicy / 경로 차단) |
 | 4 | 레플리카 수. 파드마다 385 MB 를 각자 올린다 |

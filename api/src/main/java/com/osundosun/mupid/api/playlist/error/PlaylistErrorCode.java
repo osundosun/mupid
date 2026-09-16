@@ -3,6 +3,7 @@ package com.osundosun.mupid.api.playlist.error;
 import org.springframework.http.HttpStatus;
 
 import com.osundosun.mupid.api.common.error.ErrorCode;
+import com.osundosun.mupid.api.queue.dto.PlayQueueDocument;
 
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,19 @@ public enum PlaylistErrorCode implements ErrorCode {
      * (중복 응답을 준다), 경쟁에서 진 요청은 트랜잭션이 깨져 되돌릴 수 없다.
      */
     PLAYLIST_TRACK_CONFLICT(HttpStatus.CONFLICT, "곡 추가가 동시에 처리되었습니다. 다시 시도해 주세요."),
+
+    /**
+     * 플레이리스트가 수록곡 상한에 닿았다.
+     *
+     * 상한 값은 재생 큐의 것을 그대로 쓴다(`PlayQueueService.QUEUE_LIMIT`).
+     * 플레이리스트 전체 재생이 큐를 통째로 갈아끼우는데 두 상한이 다르면
+     * 뒷부분이 조용히 잘린다 — decision/0022 규칙 7.
+     *
+     * 큐와 달리 **거절한다.** 큐는 흘러가는 목록이라 오래된 것을 밀어내도 되지만
+     * 플레이리스트는 사람이 모아 둔 것이라 말없이 빼면 안 된다.
+     */
+    PLAYLIST_TRACK_LIMIT_EXCEEDED(HttpStatus.CONFLICT,
+        "플레이리스트에는 " + PlayQueueDocument.LIMIT + "곡까지 담을 수 있습니다."),
 
     /**
      * 플레이리스트에 담겨 있지 않은 곡입니다.

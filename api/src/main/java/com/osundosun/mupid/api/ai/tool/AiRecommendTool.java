@@ -28,7 +28,25 @@ public interface AiRecommendTool {
      * @param currentMusicId  지금 듣고 있는 곡. 없으면 null. 결과에서 제외한다
      * @param arguments       모델이 만든 인자. 깨져 있을 수 있어 구현이 기본값을 채운다
      */
-    List<AiRecommendedTrack> recommend(Integer userId, Integer currentMusicId, Arguments arguments);
+    Result recommend(Integer userId, Integer currentMusicId, Arguments arguments);
+
+    /**
+     * 추천 한 묶음.
+     *
+     * <p>{@code recommendationId} 는 화면이 재생 이벤트에 그대로 되돌려 싣는 상관
+     * 키다(`rec_id`). 그래야 "이 추천으로 튼 곡을 끝까지 들었는가" 를 물어볼 수 있다.
+     * 곡 목록만 돌려주면 재생과 추천이 이어지지 않아 추천 성과를 잴 수 없다.
+     */
+    record Result(long recommendationId, List<AiRecommendedTrack> tracks) {
+
+        public static Result empty() {
+            return new Result(0L, List.of());
+        }
+
+        public boolean isEmpty() {
+            return tracks.isEmpty();
+        }
+    }
 
     /**
      * 툴 인자. 모델이 JSON 문자열로 만들어 보내므로 **모든 칸이 비어 있을 수 있다.**

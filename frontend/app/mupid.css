@@ -2173,7 +2173,37 @@ h1 {
   font-size: 14px;
 }
 .chat-tracks .moment-meta {
+  /* 구간은 아래 `.chat-track-reason` 이 이유와 함께 한 줄로 보여준다. */
   display: none;
+}
+.chat-track {
+  display: grid;
+  gap: 3px;
+}
+/* 추천으로 온 곡에만 붙는다. 어느 구간을 왜 골랐는지 한 줄로 적는다. */
+.chat-track-reason {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 2px 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #8a7c95;
+}
+.chat-track-reason strong {
+  font-weight: 600;
+  color: #6f5f7d;
+}
+.chat-track-reason span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.chat-track-reason em {
+  flex: 0 0 auto;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  color: #9b84a6;
 }
 .chat-tracks .play-small {
   width: 32px;

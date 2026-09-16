@@ -16,6 +16,21 @@ dependencies = [
     "rich>=13.9",
 ]
 
+[project.optional-dependencies]
+# 구간 분석(analysis/) 전용. 청킹·등록만 쓰는 쪽에 numpy·scipy 를 지우지 않는다.
+# 분할기(All-In-One)와 MERT 는 여기 없다 — 무겁고 파이썬 판이 갈려(py3.10) 따로 돈다.
+analysis = [
+    "numpy>=1.26",
+    # GELU 의 erf 판에 쓴다. tanh 근사로 바꾸면 4번째 자리부터 갈라져 순위가 바뀐다.
+    "scipy>=1.11",
+    # 색인 6개 중 parquet 3개를 읽고 쓴다 (moments · content · flow_meta · id_map).
+    "pandas>=2.2",
+    "pyarrow>=16",
+    # 24kHz 적재와 트랙 5값 측정. **MERT·All-In-One 은 여기 없다** — 파이썬 3.10 환경에서
+    # 따로 돈다(ai_server/docs/ANALYSIS-BATCH.md §7.1).
+    "librosa>=0.10",
+]
+
 [project.scripts]
 music-preprocessing = "music_preprocessing.__main__:main"
 

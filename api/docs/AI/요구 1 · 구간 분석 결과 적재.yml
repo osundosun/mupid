@@ -5,13 +5,13 @@ info:
 
 http:
   method: PUT
-  url: "{{BASE_URL}}/api/v1/internal/music/{{MUSIC_ID}}/section"
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/section"
   headers:
     - name: Content-Type
       value: application/json
-    - name: X-Internal-Token
-      value: "{{AI_INTERNAL_TOKEN}}"
-  auth: none
+    - name: Authorization
+      value: "Bearer {{ACCESS_TOKEN}}"
+  auth: inherit
   body:
     type: json
     data: |-
@@ -87,16 +87,16 @@ examples:
             "errorDetails": null
           }
 
-  - name: 401 내부 토큰 불일치
+  - name: 403 ROLE_SYSTEM 이 아님
     response:
-      status: 401
-      statusText: Unauthorized
+      status: 403
+      statusText: Forbidden
       body:
         type: json
         data: |-
           {
-            "message": "내부 호출 토큰이 올바르지 않습니다.",
-            "errorCode": "MUPID_UNAUTHORIZED",
+            "message": "접근 권한이 없습니다.",
+            "errorCode": "MUPID_FORBIDDEN",
             "errorDetails": null
           }
 
@@ -129,11 +129,20 @@ examples:
 docs:
   type: text/markdown
   content: |-
-    # 구간 분석 결과 적재 — **미구현**
+    # 구간 분석 결과 적재
 
-    > **이 API 는 아직 없습니다.** 계약 제안만 적어 둔 것이고, Spring 컨트롤러와
-    > ERD 변경이 함께 필요합니다. 필요한 변경점·담당·차단 사유는
-    > `infra/AI-API-BLOCKERS.md` 에 있습니다. **임의로 구현하지 않았습니다.**
+    > **2026-09-16 구현됨.** 계약 제안에서 두 가지가 바뀌었습니다.
+    >
+    > | | 제안 | 구현 |
+    > |---|---|---|
+    > | 경로 | `/api/v1/internal/music/{musicId}/section` | `/api/v1/music/{musicId}/section` |
+    > | 인증 | `X-Internal-Token` 공유 비밀 | `@SystemRole` (`ROLE_SYSTEM`·`ROLE_ADMIN`) |
+    >
+    > 저장소에 `/api/v1/internal/**` 경로도 그 토큰을 검사할 필터도 없었습니다. 반면
+    > `@SystemRole` 은 이미 있고 가사 통째 교체(`PUT .../lyric`)가 같은 방식이라,
+    > 없는 것을 새로 만들기보다 있는 것에 맞췄습니다. AI 쪽 호출자
+    > (`ai_server/tools/register_sections.py`)는 `fetch_onboarding` 이 쓰던 리프레시
+    > 토큰 흐름을 그대로 씁니다.
 
     AI 가 곡을 분석해 만든 구간을 Spring 의 `music_section_analysis` 에 넣습니다.
     이 표가 채워져야 숫자 `music_section_id` 가 생기고, 그래야 추천 응답이 구간을
@@ -166,13 +175,21 @@ docs:
     발급된 `music_section_analysis_id` 를 `external_id` 와 짝지어 돌려줍니다.
     AI 는 이 짝으로 `id_map` 을 만듭니다. **숫자 ID 를 AI 가 만들지 않습니다.**
 
-    ## 필요한 ERD 변경
+    ## ERD 변경 — 2026-09-16 적용 완료
 
-    | 항목 | 현재 | 필요 |
+    | 항목 | 제안 시점 | 지금 |
     | --- | --- | --- |
-    | 외부 ID 컬럼 | `embedding_id VARCHAR(50)` | `external_id VARCHAR(64)` + UNIQUE |
-    | 구간 PK | ERD `music_section_id` / JPA `music_section_analysis_id` | 한 벌로 통일 |
-    | `mood_id` | `NOT NULL` | 엔티티에 필드가 없어 INSERT 가 실패 |
+    | 구간 PK | ERD/JPA 불일치 | `music_section_analysis_id` 로 통일됨 |
+    | `mood_id` | `NOT NULL` 이라 INSERT 실패 | **컬럼 자체가 없음** |
+    | 외부 ID | `VARCHAR(50)`, UNIQUE 없음 | `VARCHAR(64)` + UNIQUE **(이번에 적용)** |
 
-    저장소의 `api/knowledge/domain/erd.sql` 은 JPA 기준으로 맞춰 두었지만
-    **실제 DB 에는 적용되지 않았습니다.**
+    적용한 DDL (Flyway 가 없고 `ddl-auto` 가 `none` 이라 사람이 직접 넣습니다 —
+    `decision/0011`):
+
+    ```sql
+    ALTER TABLE music_section_analysis
+      MODIFY `external_id` VARCHAR(64) NOT NULL,
+      ADD UNIQUE KEY `uk_music_section_analysis_external_id` (`external_id`);
+    ```
+
+    **운영 DB 에는 아직 넣지 않았습니다.** 개발 MySQL(`mupid-dev-mysql`)에만 적용했습니다.

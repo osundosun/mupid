@@ -6,6 +6,9 @@ info:
 http:
   method: DELETE
   url: "{{BASE_URL}}/api/v1/user/history/search/all"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
   auth: inherit
 
 settings:

@@ -93,7 +93,7 @@ class RecommenderClientTest {
 
     private RecommenderDto.SearchRequest request() {
         return new RecommenderDto.SearchRequest(1L, 15, 3, List.of(), null,
-            Map.of("filters", Map.of("genre", List.of("pop"))));
+            Map.of("filters", Map.of("genre", List.of("pop"))), null);
     }
 
     @Test
@@ -102,16 +102,14 @@ class RecommenderClientTest {
         AtomicInteger calls = new AtomicInteger();
         RecommenderClient client = start(calls, List.of(Map.entry(200, """
             { "recommendation_id": 1, "shortfall": 0, "model_version": "v",
-              "items": [ { "music_id": 900108, "music_section_id": 9001318,
-                "start_time_ms": 100, "end_time_ms": 200, "section_label": "CHORUS",
-                "rank_order": 1, "score": 1.0, "reason_code": "COLD_START",
-                "reason": "많이 듣는 후렴 구간부터 들려드려요." } ] }
+              "items": [ { "external_id": "T000901#2", "rank_order": 1, "score": 1.0,
+                "reason_code": "COLD_START" } ] }
             """)));
 
         List<RecommenderDto.Item> items = client.search(request());
 
         assertThat(items).hasSize(1);
-        assertThat(items.getFirst().musicId()).isEqualTo(900108);
+        assertThat(items.getFirst().externalId()).isEqualTo("T000901#2");
         assertThat(calls).hasValue(1);
     }
 

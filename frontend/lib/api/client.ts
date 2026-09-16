@@ -62,6 +62,13 @@ export type ApiRequestOptions = {
   anonymous?: boolean;
   /** 쿠키를 함께 보낸다 (재발급·로그아웃). */
   withCredentials?: boolean;
+  /**
+   * 화면이 사라져도 요청을 끝까지 보낸다 (`fetch` 의 keepalive).
+   *
+   * 떠나기 직전에 저장을 밀어내는 경로에만 쓴다. 응답을 받아 볼 수 없고
+   * 본문이 64KB 로 제한된다.
+   */
+  keepalive?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 };
@@ -211,6 +218,7 @@ export class ApiClient {
       body,
       responseType: options.responseType ?? 'json',
       withCredentials: options.withCredentials,
+      keepalive: options.keepalive,
       signal: options.signal,
       timeoutMs: options.timeoutMs ?? this.timeoutMs,
     });

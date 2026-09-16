@@ -6,6 +6,9 @@ info:
 http:
   method: DELETE
   url: "{{BASE_URL}}/api/v1/comment/{{COMMENT_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
   auth: inherit
 
 settings:

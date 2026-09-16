@@ -6,6 +6,9 @@ info:
 http:
   method: GET
   url: "{{BASE_URL}}/api/v1/user/history?page=0&size=20"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
   auth: inherit
 
 settings:

@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 
-from . import internal_api, paths, recommender
+from . import internal_api, labels_store, paths, recommender
 from .log import log
 
 _STARTED = time.time()
@@ -26,7 +26,6 @@ _STATE: dict = {"loaded": False, "error": None, "integrity": None, "load_seconds
 # 존재 여부만 본다. 예컨대 labels_service.parquet 이 없으면 오류 없이 모든 사용자가
 # 콜드스타트로 처리된다 — 서버는 정상으로 보이고 개인화만 없다.
 _OPTIONAL_ARTIFACTS = {
-    "labels_service.parquet": "개인화. 없으면 모든 사용자가 콜드스타트다",
     "logistic_flow_stage1.json": "점수 결합기. 없으면 규칙 점수로 내려간다",
     # 둘 중 **하나**는 있어야 학습 점수가 산다. npz 가 있으면 torch 가 필요 없다.
     "stage1_weights.npz": "랭킹 모델(NumPy 판). 권장 — 이미지에 torch 가 필요 없다",
@@ -35,16 +34,31 @@ _OPTIONAL_ARTIFACTS = {
 
 
 def artifact_status() -> dict:
-    """선택 산출물과 매핑표의 적재 상태. `/health` 가 그대로 내보낸다."""
+    """선택 산출물과 매핑표의 적재 상태. `/health` 가 그대로 내보낸다.
+
+    매핑표는 **서빙 산출물이 아니다.** 숫자↔문자열 번역은 Spring 이 하고
+    `/internal/ready` 도 더는 보지 않는다(`internal_api.ready`). 그래도 상태는
+    싣는다 — 적재 도구(`push_sections`·`register_sections`)가 이 파일을 쓰므로
+    운영 중에 "왜 적재가 안 되나" 를 여기서 먼저 본다. 대신 `missing` 에는 넣지
+    않는다. 넣으면 기동 로그가 매번 "선택 산출물 없음" 을 찍어, 정작 개인화가
+    빠진 배포와 구분이 되지 않는다.
+    """
     d = recommender.OUT_DIR
     files = {name: {"exists": (d / name).exists(), "why": why}
              for name, why in _OPTIONAL_ARTIFACTS.items()}
+    # 라벨은 파일이 아닐 수 있다. ClickHouse 를 쓰면 그쪽에 있는지로 판단해야
+    # 하고, 파일만 보면 **개인화가 멀쩡한 배포를 콜드스타트로 잘못 보고한다.**
+    labels_ok = recommender.labels_available()
+    files["labels_service.parquet"] = {
+        "exists": labels_ok,
+        "store": "clickhouse" if labels_store.configured() else "file",
+        "why": "개인화. 없으면 모든 사용자가 콜드스타트다"}
+    missing = sorted(k for k, v in files.items() if not v["exists"])
     idm = paths.id_map_path()
     files["id_map.parquet"] = {
         "exists": idm.exists(), "path": str(idm),
-        "why": "숫자 ID 매핑. 없으면 /internal/ready 가 503 이다"}
-    return {"files": files,
-            "missing": sorted(k for k, v in files.items() if not v["exists"])}
+        "why": "숫자 ID 매핑. 적재 도구 전용 — 서빙도 준비 판정도 보지 않는다"}
+    return {"files": files, "missing": missing}
 
 
 def check_integrity() -> dict:

@@ -50,6 +50,26 @@ SURFACE = {"RECOMMEND": "recommendation", "AUTO": "autoplay", "AUTOPLAY": "autop
 EPOCH = "1970-01-01 00:00:00.000"
 
 
+def utc_iso(r: dict) -> str:
+    """행동 로그의 `occurred_at` 은 **UTC 에 `Z`** 다 (`recommender.now_iso` 와 같은 규약).
+
+    예전에는 `toString(occurred_at)` 을 그대로 쓰고 뒤에 `"Z"` 를 붙였다. ClickHouse
+    서버 타임존이 `Asia/Seoul` 이라 **서울 시각에 UTC 표시를 붙인 값**이 됐고,
+    `user_behavior()` 는 그것을 `fromisoformat` 으로 읽어 `time.time()` 과 비교하므로
+    모든 이벤트가 **9시간 미래**가 됐다. 오류는 나지 않고 추천만 이상해진다.
+
+      · 최근 재생 제외(4시간)가 영원히 걸린다 — 방금 들은 곡 취급이 풀리지 않는다
+      · 스킵 감점의 시간 감쇠가 음수 나이로 계산된다
+      · 라벨러 최근성도 같은 값을 본다
+
+    그래서 조회에서 **UTC 로 변환해 받는다**(`ts_utc`). 내보내는 값은 이 한 가지뿐이다.
+    `ts`(서버 타임존)는 워터마크와 `event_id` 에만 쓴다 — 워터마크는 저장과 비교가 양쪽
+    다 서버 기준이라 지금 정상이고, `event_id` 는 내용에서 만들므로 근거 문자열을 바꾸면
+    **이미 쌓인 이벤트가 전부 새 ID 로 다시 들어온다.**
+    """
+    return str(r.get("ts_utc") or r["ts"]).replace(" ", "T") + "Z"
+
+
 def watermark_path() -> Path:
     return paths.data_dir() / "signals_watermark.json"
 
@@ -83,7 +103,9 @@ def fetch(since: str, limit: int) -> list[dict]:
     중복은 이벤트 ID 로 걸러지므로 빠뜨리는 것보다 낫다."""
     sql = (
         "SELECT user_id, section_uid, track_id, signal, entry_path, "
-        "toString(occurred_at) AS ts, toString(play_id) AS play_id, weight "
+        "toString(occurred_at) AS ts, "
+        "toString(toTimeZone(occurred_at, 'UTC')) AS ts_utc, "
+        "toString(play_id) AS play_id, weight "
         "FROM user_section_signals "
         f"WHERE occurred_at >= parseDateTime64BestEffort('{since}', 3) "
         "ORDER BY occurred_at "
@@ -99,7 +121,8 @@ def fetch_plays(since: str, limit: int) -> list[dict]:
     sql = (
         "SELECT user_id, track_id, event_type AS signal, entry_path, reason, "
         "position_ms, from_ms, toString(play_id) AS play_id, "
-        "toString(occurred_at) AS ts "
+        "toString(occurred_at) AS ts, "
+        "toString(toTimeZone(occurred_at, 'UTC')) AS ts_utc "
         "FROM listen_events "
         f"WHERE event_type IN ({types}) AND track_id > 0 "
         f"AND occurred_at >= parseDateTime64BestEffort('{since}', 3) "
@@ -123,7 +146,7 @@ def to_play_event(r: dict, im) -> dict | None:
           "user_ref": f"internal:{int(r['user_id'])}",
           "track_id": track,
           "event_type": sig,
-          "occurred_at": str(r["ts"]).replace(" ", "T") + "Z",
+          "occurred_at": utc_iso(r),
           "entry_path": r.get("entry_path") or "",
           # `user_behavior()` 가 context.surface 로 추천 경로를 가린다
           "context": {"surface": SURFACE.get(ep, ep.lower())},
@@ -155,7 +178,11 @@ def to_play_event(r: dict, im) -> dict | None:
 
 
 def event_id(r: dict) -> str:
-    """내용에서 만든다. 같은 신호를 두 번 받아도 한 번만 쌓인다."""
+    """내용에서 만든다. 같은 신호를 두 번 받아도 한 번만 쌓인다.
+
+    시각은 **서버 타임존 문자열(`ts`)** 을 쓴다. UTC 로 바꾸면 같은 신호가 다른 ID 가
+    되어 이미 쌓인 이벤트를 전부 다시 적재한다.
+    """
     key = (f"{r['user_id']}|{r.get('section_uid') or r.get('track_id')}"
            f"|{r['signal']}|{r['ts']}|{r.get('play_id', '')}")
     return "ch_" + hashlib.sha1(key.encode()).hexdigest()[:22]
@@ -196,7 +223,7 @@ def to_event(r: dict, bounds: dict, im) -> dict | None:
             "event_type": sig,
             "start_sec": float(b[0]),
             "end_sec": float(b[1]),
-            "occurred_at": str(r["ts"]).replace(" ", "T") + "Z",
+            "occurred_at": utc_iso(r),
             "entry_path": r.get("entry_path") or "",
             "source": "clickhouse"}
 
@@ -239,6 +266,9 @@ def run(limit: int, dry_run: bool) -> dict:
             known.add(ev["event_id"])
             fresh.append(ev["event_id"])
             appended += 1
+        # 워터마크는 **서버 타임존** 문자열이다. 저장한 값을 그대로
+        # `parseDateTime64BestEffort` 에 되돌려 넣고 서버가 같은 기준으로 읽으므로
+        # 일관적이다. UTC 로 바꾸면 그 시점부터 9시간이 건너뛰어진다.
         last = max(last, str(r["ts"]))
 
     log(f"적재 {appended} · 중복 {dup} · 제외 {dropped}")

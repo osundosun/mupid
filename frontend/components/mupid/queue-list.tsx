@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { GripVertical, X } from 'lucide-react';
 import type { MupidModel, QueueTrack } from '@/hooks/use-mupid';
 import type { TrackSelection } from './track-selection';
+import { autoScrollDelta } from '@/lib/queue';
 import { TrackRow } from './primitives';
 
 // 재생 목록은 순서가 곧 다음에 들을 곡이라 끌어서 바꿀 수 있어야 한다.
@@ -48,40 +49,145 @@ export function QueueList({
     });
   };
 
-  const onPointerDown = (uid: string) => (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setDragUid(uid);
-    setLiveUids(baseUids);
-  };
+  /*
+   * 끄는 동안의 값은 **참조로도 들고 있는다.** 자동 스크롤은 프레임마다 도는데,
+   * 그 함수가 붙잡은 state 는 끌기 시작한 순간의 값에 머문다.
+   */
+  const dragUidRef = useRef<string | null>(null);
+  const liveUidsRef = useRef<string[] | null>(null);
+  const pointerY = useRef(0);
+  const frame = useRef<number | null>(null);
 
-  const onPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (dragUid === null || !liveUids) return;
+  const setDrag = (uid: string | null) => { dragUidRef.current = uid; setDragUid(uid); };
+  const setLive = (next: string[] | null) => { liveUidsRef.current = next; setLiveUids(next); };
+
+  /** 포인터가 놓인 자리에 맞춰 줄 순서를 다시 잡는다. */
+  const reorderAt = (clientY: number) => {
+    const dragging = dragUidRef.current;
+    const live = liveUidsRef.current;
+    if (!dragging || !live) return;
     const rows = [...(listRef.current?.querySelectorAll('[data-queue-uid]') ?? [])];
-    const from = liveUids.indexOf(dragUid);
+    const from = live.indexOf(dragging);
     let to = from;
     rows.forEach((row, index) => {
       const box = row.getBoundingClientRect();
-      if (event.clientY >= box.top && event.clientY <= box.bottom) to = index;
+      if (clientY >= box.top && clientY <= box.bottom) to = index;
     });
     if (to === from) return;
-    const next = liveUids.slice();
+    const next = live.slice();
     next.splice(from, 1);
-    next.splice(to, 0, dragUid);
-    setLiveUids(next);
+    next.splice(to, 0, dragging);
+    setLive(next);
   };
 
-  const onPointerUp = () => {
-    if (dragUid !== null && liveUids) {
-      const to = liveUids.indexOf(dragUid);
-      setDragUid(null);
-      setLiveUids(null);
-      move(dragUid, to);
-      return;
+  /**
+   * 목록을 감싼 스크롤 상자(독의 본문). 여기서 찾아 두고 자동 스크롤에 쓴다.
+   *
+   * 클래스 이름으로 집지 않는다 — 목록이 다른 곳에 놓여도 그 자리의 스크롤
+   * 상자를 그대로 따라간다.
+   */
+  const scrollerOf = () => {
+    let node: HTMLElement | null = listRef.current?.parentElement ?? null;
+    while (node) {
+      if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
+      node = node.parentElement;
     }
-    setDragUid(null);
-    setLiveUids(null);
+    return null;
   };
+
+  /**
+   * 목록의 위아래 끝으로 끌고 가면 목록이 따라 움직인다.
+   *
+   * 100곡을 담아 두면 화면에 서너 줄만 보인다. 자동으로 밀어 주지 않으면 첫 줄을
+   * 맨 끝으로 보내려고 **끌었다 놓기를 수십 번** 되풀이해야 한다.
+   *
+   * 프레임마다 돈다 — 포인터가 가장자리에 **멈춰 있어도** 계속 밀려야 하는데,
+   * 움직임이 없으면 `pointermove` 가 오지 않기 때문이다. 민 뒤에는 줄 위치가
+   * 달라졌으므로 놓일 자리를 다시 계산한다.
+   */
+  const stopAutoScroll = () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+  };
+
+  const autoScroll = () => {
+    const scroller = scrollerOf();
+    if (!scroller || !dragUidRef.current) { frame.current = null; return; }
+
+    const box = scroller.getBoundingClientRect();
+    const y = pointerY.current;
+    const delta = autoScrollDelta(y, box.top, box.bottom);
+
+    if (delta !== 0) {
+      const before = scroller.scrollTop;
+      scroller.scrollTop = before + delta;
+      // 끝에 닿아 더 밀리지 않으면 자리도 그대로다.
+      if (scroller.scrollTop !== before) reorderAt(y);
+    }
+    frame.current = requestAnimationFrame(autoScroll);
+  };
+
+  // 끌던 중에 화면을 떠나면 프레임이 남는다.
+  useEffect(() => stopAutoScroll, []);
+
+  const onPointerDown = (uid: string) => (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    pointerY.current = event.clientY;
+    setDrag(uid);
+    setLive(baseUids);
+    stopAutoScroll();
+    frame.current = requestAnimationFrame(autoScroll);
+  };
+
+  /** 손을 뗀 그 자리에서 순서를 확정한다. */
+  const endDrag = () => {
+    stopAutoScroll();
+    const dragging = dragUidRef.current;
+    const live = liveUidsRef.current;
+    setDrag(null);
+    setLive(null);
+    if (dragging !== null && live) move(dragging, live.indexOf(dragging));
+  };
+
+  /*
+   * 끄는 동안의 손짓은 **창 전체에서 듣는다.**
+   *
+   * 예전에는 손잡이 버튼에 직접 달고 포인터 캡처로 붙잡아 두었는데, 줄이 자리를
+   * 옮길 때마다 그 버튼이 다시 그려지며 캡처가 풀렸다. 그러면 목록 밖에서 손을
+   * 떼도 끝나는 신호가 어디에도 닿지 않아 끌기가 살아남고, 커서가 다른 줄의
+   * 손잡이 위를 지날 때마다 그 줄의 핸들러가 대신 반응해서 **떼었는데도 줄이
+   * 커서를 따라다녔다.** 창에 달면 어디서 떼든 그 자리에서 끝난다.
+   *
+   * 창을 떠나는 것(`blur`)도 끝으로 친다 — 다른 창에서 손을 떼면 이쪽은 뗀 줄을
+   * 영영 모른다.
+   */
+  // 창에 걸어 두는 것은 **늘 이번 렌더의 함수**다. 한 번 건 함수를 그대로 두면
+  // 끄는 사이에 목록이 바뀌었을 때 옛 순서를 기준으로 자리를 확정한다.
+  const endDragRef = useRef(endDrag);
+  const reorderAtRef = useRef(reorderAt);
+  useEffect(() => {
+    endDragRef.current = endDrag;
+    reorderAtRef.current = reorderAt;
+  });
+
+  useEffect(() => {
+    if (!dragUid) return;
+    const onMove = (event: PointerEvent) => {
+      pointerY.current = event.clientY;
+      reorderAtRef.current(event.clientY);
+    };
+    const onEnd = () => endDragRef.current();
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+    window.addEventListener('blur', onEnd);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+      window.removeEventListener('blur', onEnd);
+    };
+  }, [dragUid]);
 
   // 고르는 중에는 손잡이를 접어 둔다. 순서 바꾸기와 섞이면 헷갈린다.
   const picking = selection.active;
@@ -98,21 +204,35 @@ export function QueueList({
           key={track.uid}
           data-queue-uid={track.uid}
           data-queue-id={track.id}
+          /*
+           * 고른 줄은 **칸 전체**에 표시를 준다. 줄(`.track-row`)에만 주면 체크
+           * 박스가 놓인 앞 칸이 칠해지지 않아 고른 표시가 중간에서 끊긴다.
+           */
           className={`queue-item ${dragUid === track.uid ? 'is-dragging' : ''} ${
             m.currentQueueUid === track.uid ? 'is-current' : ''
-          }`}
+          } ${picking && selection.has(track.id) ? 'is-selected' : ''}`}
           // 같은 곡이 여러 번 담겨 있으면 제목만으로는 어느 줄이 울리는 줄인지
           // 알 수 없다. 지금 듣고 있는 자리만 표시한다.
           aria-current={m.currentQueueUid === track.uid ? 'true' : undefined}
         >
-          {!picking && (
+          {/*
+            줄 맨 앞 칸. 평소에는 끌기 손잡이가, 고르는 중에는 체크 박스가 선다.
+            **같은 칸을 나눠 쓴다** — 체크를 줄 안에 따로 두면 그 폭만큼 커버와
+            제목이 옆으로 밀린다.
+          */}
+          {picking ? (
+            <input
+              type="checkbox"
+              className="queue-check"
+              checked={selection.has(track.id)}
+              aria-label={`${track.title} 선택`}
+              onChange={() => selection.toggle(track.id)}
+            />
+          ) : (
             <button
               className="queue-handle"
               aria-label={`${track.title} 순서 바꾸기. ${index + 1}번째, 위아래 화살표로 이동`}
               onPointerDown={onPointerDown(track.uid)}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
               onKeyDown={(event) => {
                 if (event.key === 'ArrowUp') { event.preventDefault(); move(track.uid, index - 1); }
                 if (event.key === 'ArrowDown') { event.preventDefault(); move(track.uid, index + 1); }
@@ -126,6 +246,14 @@ export function QueueList({
             model={m}
             selected={selection.has(track.id)}
             onSelect={picking ? () => selection.toggle(track.id) : undefined}
+            // 체크는 위의 손잡이 칸이 들고 있다. 줄 안에도 그리면 두 개가 된다.
+            showCheck={false}
+            /*
+             * **목록 안에서 누른 재생은 자리를 옮기지 않는다.** 자리 번호를 함께
+             * 넘겨 그 줄을 그대로 튼다 — 고른 줄이 누르자마자 맨 위로 튀어 오르면
+             * 방금 어디를 눌렀는지 놓친다. 맨 위로 올리는 것은 목록 밖에서 튼 곡뿐이다.
+             */
+            onPlay={() => m.play(track, false, track.uid)}
             action={
               <button
                 className="icon-button"

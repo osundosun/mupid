@@ -1,0 +1,532 @@
+/*
+ * 재생 목록 독.
+ *
+ * 마크업은 하나고(`components/mupid/queue-dock.tsx`) 성격만 너비에 따라 갈린다.
+ *
+ *   넓은 화면  미니 플레이어 바로 위에 붙어 올라오는 패널. 화면을 가리지 않아
+ *              목록을 열어 둔 채 다른 곳을 계속 쓸 수 있다.
+ *   좁은 화면  아래에서 올라오는 시트. 화면이 좁아 반쯤 걸친 패널은 목록도
+ *              본문도 못 쓰게 만든다. 막을 깔아 바깥을 눌러 닫는다.
+ *
+ * 미니 플레이어(`.mini-player`)와 같은 좌우 여백·색을 쓴다. 둘이 한 덩어리로
+ * 보여야 "재생 중인 것의 목록" 이라는 관계가 읽힌다.
+ */
+
+.queue-dock {
+  position: fixed;
+  /* 미니 플레이어 위. 그 높이(72px)와 아래 여백(18px), 사이 간격 10px. */
+  bottom: calc(var(--player-height) + 28px);
+  /*
+   * 오른쪽에 붙인다. 여는 버튼이 미니 플레이어 오른쪽 끝에 있어 목록이 그 위로
+   * 올라오는 것이 눈으로 이어진다. 본문 너비 전체를 덮을 이유도 없다 —
+   * 곡 한 줄이 길어야 400px 남짓이고, 넓히면 제목과 빼기 버튼 사이가 휑해진다.
+   */
+  left: auto;
+  /*
+   * 오른쪽 끝을 미니 플레이어의 오른쪽 끝에 맞춘다.
+   *
+   * 미니 플레이어는 PC 에서 가운데 정렬이다 — `sky-shell.css` 가
+   * `left: 50%; width: calc(100% - 96px); max-width: 1360px` 로 덮어쓴다
+   * (`.mupid-shell .mini-player` 라 `mupid.css` 의 `right: 30px` 보다 세다).
+   * 그래서 여백이 화면 끝에서 48px 이고, 1456px 을 넘으면 1360px 에 걸려
+   * 남는 공간의 절반이 된다. 그 값을 그대로 쓴다.
+   *
+   * `100vw` 가 아니라 `%` 다. 세로 스크롤바가 있으면 `100vw` 는 그 폭까지
+   * 세지만 미니 플레이어의 `100%` 는 세지 않아, 둘이 스크롤바 폭만큼 어긋난다.
+   * 고정 위치 요소라 `%` 의 기준이 미니 플레이어와 같다.
+   */
+  right: max(48px, calc((100% - 1360px) / 2));
+  /*
+   * 오른쪽 끝이 고정이므로 너비를 키우면 **왼쪽으로만** 자란다.
+   *
+   * 뒤의 `min()` 은 좁은 PC 화면에서 독이 사이드바(210px)를 덮지 않게 막는 상한이다.
+   * 넓은 화면에서는 언제나 앞의 값이 이긴다.
+   */
+  width: min(520px, calc(100vw - 300px));
+  /*
+   * AI 런처(`.chat-launcher`, z-index 40)보다 위다. 그 버튼이 독이 올라오는
+   * 자리(오른쪽 아래)에 그대로 겹쳐 있어, 낮으면 목록 위에 동그란 버튼이 떠 있는다.
+   * 열린 대화 패널(`.chat-panel`, 70)보다는 아래로 둔다 — 그건 독을 덮어야 맞다.
+   */
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  max-height: min(60vh, 560px);
+  background: #fbfdfff2;
+  border: 1px solid #dfe9f9;
+  box-shadow: 0 3px 28px #3059941a;
+  border-radius: 16px;
+  backdrop-filter: blur(18px);
+  overflow: hidden;
+}
+
+/*
+ * 접고 펴는 움직임.
+ *
+ * 접힌 뒤에는 DOM 에서 지운다 — 화면 밖으로 밀어 두기만 하면 보이지 않는 버튼이
+ * 탭 순서에 남아 초점이 사라진 것처럼 보인다. 다만 **지우기 전에 닫는 움직임을
+ * 먼저 보여 준다.** 펴질 때만 움직이고 접힐 때 즉시 사라지면 같은 동작인데
+ * 한쪽만 뚝 끊긴다. 컴포넌트가 `animationend` 를 보고 그때 지운다.
+ */
+.queue-dock.is-open {
+  animation: queue-dock-rise 180ms ease-out;
+}
+
+.queue-dock.is-closing {
+  animation: queue-dock-sink 160ms ease-in forwards;
+}
+
+@keyframes queue-dock-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 나갈 때는 조금 빠르게. 기다리는 동작이 아니라 치우는 동작이다. */
+@keyframes queue-dock-sink {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.queue-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid #e9f0fb;
+}
+
+.queue-dock-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #21375c;
+}
+
+.queue-dock-head h2 svg {
+  width: 18px;
+  height: 18px;
+  color: #5883cf;
+}
+
+.queue-dock-count {
+  font-size: 0.8125rem;
+  color: #6b81a6;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-dock-body {
+  /* 목록만 스크롤한다. 머리글은 늘 보여야 몇 곡인지·어떻게 닫는지 알 수 있다. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px 14px;
+}
+
+/* 넓은 화면에서는 독이 본문을 가리지 않으므로 막을 두지 않는다. */
+.queue-dock-scrim {
+  display: none;
+}
+
+/*
+ * 좁은 PC 화면에서는 미니 플레이어가 `calc(100% - 48px)` 로 더 넓게 퍼진다
+ * (`sky-shell.css` 의 768~1023px 구간). 여백도 그만큼 줄어든다.
+ */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .queue-dock {
+    right: 24px;
+  }
+}
+
+/*
+ * 좁은 화면 — 아래에서 올라오는 시트.
+ *
+ * 미니 플레이어와 하단 내비게이션을 **가린다.** 목록을 보는 동안 그 둘을 함께
+ * 띄우면 한 화면에 세 겹이 쌓여 목록이 손바닥만 해진다.
+ */
+@media (max-width: 767px) {
+  .queue-dock {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    /* 좁은 화면에서도 AI 런처 위다. 막(46)과 짝을 이룬다. */
+    z-index: 47;
+    width: auto;
+    max-height: min(78vh, 680px);
+    border-radius: 18px 18px 0 0;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .queue-dock.is-open {
+    animation: queue-dock-slide 220ms ease-out;
+  }
+
+  .queue-dock.is-closing {
+    animation: queue-dock-slide-out 200ms ease-in forwards;
+  }
+
+  @keyframes queue-dock-slide {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes queue-dock-slide-out {
+    from {
+      transform: translateY(0);
+    }
+    to {
+      transform: translateY(100%);
+    }
+  }
+
+  /* 시트를 끌어 내릴 수 있을 것 같은 손잡이. 실제 동작은 닫기 버튼이 맡는다. */
+  .queue-dock-head::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    translate: -50% 0;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: #d8e3f4;
+  }
+
+  .queue-dock-head {
+    position: relative;
+    padding-top: 18px;
+  }
+
+  .queue-dock-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 46;
+    border: 0;
+    padding: 0;
+    background: #1b2c4a3d;
+    backdrop-filter: blur(2px);
+    animation: queue-dock-fade 180ms ease-out;
+  }
+
+  .queue-dock-scrim.is-closing {
+    animation: queue-dock-fade-out 200ms ease-in forwards;
+  }
+
+  @keyframes queue-dock-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes queue-dock-fade-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  .queue-dock-body {
+    padding: 8px 10px 16px;
+  }
+}
+
+/*
+ * 낮은 화면(가로로 든 휴대폰 등)에서는 시트가 화면을 거의 다 먹는다.
+ * 목록이 서너 줄만 보이더라도 머리글과 닫기 버튼은 남아야 한다.
+ */
+@media (max-height: 520px) {
+  .queue-dock {
+    max-height: 86vh;
+  }
+}
+
+/*
+ * 움직임을 줄여 달라고 한 사람에게는 애니메이션을 주지 않는다.
+ *
+ * 닫는 쪽은 `animation: none` 으로 끝내면 안 된다. 컴포넌트가 `animationend` 를
+ * 기다렸다가 지우는데, 그 사건이 아예 오지 않으면 독이 닫히지 않은 채로 남는다.
+ * 그래서 길이만 0 에 가깝게 줄여 사건은 그대로 나게 둔다.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .queue-dock.is-open,
+  .queue-dock-scrim {
+    animation: none;
+  }
+
+  .queue-dock.is-closing,
+  .queue-dock-scrim.is-closing {
+    animation-duration: 1ms;
+  }
+}
+
+
+/*
+ * 담을 위치 — 머리글의 버튼과 그 아래로 열리는 작은 메뉴.
+ *
+ * 목록 위에 라디오를 펼쳐 두었더니 정작 보러 온 목록이 밀려났다. 자주 바꾸는
+ * 값이 아니라 평소에는 **지금 값만** 보이면 된다.
+ */
+.queue-insert-position {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.queue-insert-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 150px;
+  padding: 4px 9px;
+  border: 1px solid #dfe9f9;
+  border-radius: 999px;
+  background: #f4f9ff;
+  font-size: 0.75rem;
+  color: #46608c;
+  cursor: pointer;
+}
+
+.queue-insert-toggle:hover {
+  border-color: #9dbdea;
+  background: #e8f1ff;
+}
+
+.queue-insert-toggle svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: #5883cf;
+}
+
+/* 이름이 길어도 머리글 한 줄을 무너뜨리지 않는다. */
+.queue-insert-toggle span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-insert-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid #dfe9f9;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px #3059941f;
+}
+
+.queue-insert-menu-title {
+  margin: 2px 8px 6px;
+  font-size: 0.6875rem;
+  color: #8fa3c2;
+}
+
+.queue-insert-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font-size: 0.8125rem;
+  color: #46608c;
+  text-align: left;
+  cursor: pointer;
+}
+
+.queue-insert-menu button:hover {
+  background: #f1f7ff;
+}
+
+/* 고른 것에만 체크를 보인다. 자리는 늘 잡아 두어 글자가 흔들리지 않게 한다. */
+.queue-insert-menu button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: #5883cf;
+  visibility: hidden;
+}
+
+.queue-insert-menu button[aria-checked='true'] {
+  color: #27457a;
+  font-weight: 600;
+}
+
+.queue-insert-menu button[aria-checked='true'] svg {
+  visibility: visible;
+}
+
+/* 머리글의 글자 버튼(고르기). 담을 위치 버튼과 같은 크기로 맞춘다. */
+.queue-head-action {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid #dfe9f9;
+  border-radius: 999px;
+  background: #f4f9ff;
+  font-size: 0.75rem;
+  color: #46608c;
+  cursor: pointer;
+}
+
+.queue-head-action:hover:not(:disabled) {
+  border-color: #9dbdea;
+  background: #e8f1ff;
+}
+
+.queue-head-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* 머리글이 좁아지면 곡 수부터 접는다. 버튼 둘은 눌러야 하니 남긴다. */
+@media (max-width: 420px) {
+  .queue-dock-count {
+    display: none;
+  }
+}
+
+/*
+ * 머리글의 오른쪽 묶음.
+ *
+ * 곡 수는 제목 옆(왼쪽)에 두고 누를 것들만 이쪽에 모은다. 묶어 두어야
+ * '선택' 이 고르는 동안 사라져도 나머지가 제자리를 지킨다 — 버튼마다
+ * `margin-left: auto` 를 주면 빈 공간을 나눠 가져 자리가 흔들린다.
+ */
+.queue-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* 머리글의 '전체' 체크. 버튼들과 같은 높이로 맞춰 줄이 흔들리지 않게 한다. */
+.queue-head-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid #dfe9f9;
+  border-radius: 999px;
+  background: #f4f9ff;
+  font-size: 0.75rem;
+  color: #46608c;
+  cursor: pointer;
+}
+
+.queue-head-check input {
+  margin: 0;
+  accent-color: #5883cf;
+}
+
+/* 빼기는 되돌릴 수 없으니 색으로 구분한다. */
+.queue-head-action.is-danger {
+  border-color: #f0cdd6;
+  background: #fdf2f5;
+  color: #b2566f;
+}
+
+.queue-head-action.is-danger:hover:not(:disabled) {
+  border-color: #e3aebc;
+  background: #fbe7ed;
+}
+
+
+
+/*
+ * 고르기 체크 박스 — 줄 맨 앞의 **원형** 체크.
+ *
+ * 끌기 손잡이와 **같은 칸을 나눠 쓴다.** 손잡이 칸이 30px 이므로 원 22px 에
+ * 좌우 4px 씩을 둬 정확히 30px 을 채운다. 그래서 고르기로 바꿔도 커버와 제목이
+ * 한 픽셀도 움직이지 않고, 원이 목록 가장자리에 붙지도 않는다 — 손잡이 무늬가
+ * 그 칸 가운데 놓여 있던 것과 같은 자리다.
+ *
+ * 줄 안(`.track-check`)에 체크를 그리지 않는 것은 `showCheck={false}` 로 끈다.
+ * 거기에 두면 그 폭만큼 줄 내용이 통째로 밀린다.
+ *
+ * 모양은 `collection-polish.css` 의 체크 박스와 같은 규칙을 따른다. 원이 조금
+ * 작아진 만큼 안의 체크는 비율을 키워야 한눈에 읽힌다.
+ */
+.queue-check {
+  appearance: none;
+  flex-shrink: 0;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  margin: 0 4px;
+  padding: 0;
+  border: 1.5px solid #c3d2e8;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.queue-check:checked {
+  border-color: #6f93c9;
+  background-color: #6f93c9;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 70%;
+}
+
+/*
+ * 고르는 중에도 줄 안쪽 여백은 평소와 같다.
+ *
+ * `collection-polish.css` 는 고르기로 바뀌면 줄에 왼쪽 여백 8px 을 더한다 —
+ * 체크가 줄 **안**에 들어가던 시절, 원이 가장자리에 붙지 않게 하려는 값이었다.
+ * 지금은 체크가 손잡이 칸으로 옮겨 가 그 여백이 필요 없고, 남겨 두면 줄 내용이
+ * 그 차이(4px)만큼 옆으로 밀린다.
+ */
+.queue-list.is-picking .queue-item > .track-row {
+  padding-left: 4px;
+}
+
+/*
+ * 고른 줄 표시는 **칸 전체**에 준다.
+ *
+ * 색은 줄(`.track-row.is-selected`)에 걸려 있었는데, 그 줄은 체크 박스가 놓인
+ * 앞 칸을 포함하지 않는다. 그래서 고른 표시가 체크 박스 옆에서 끊겨 보였다.
+ * 칸(`.queue-item`)을 칠하고 안쪽 줄은 비운다 — 둘 다 칠하면 모서리가 어긋난다
+ * (칸은 14px 둥글고 줄은 각졌다).
+ */
+.queue-item.is-selected {
+  background: #eef4ff;
+}
+
+.queue-item.is-selected > .track-row.is-selected {
+  background: transparent;
+}
+
+/* 고른 줄에 마우스를 올려도 고른 표시가 이긴다. */
+.queue-item.is-selected:hover {
+  background: #e6eeff;
+}

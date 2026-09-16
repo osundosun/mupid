@@ -25,6 +25,7 @@ _errors: Counter = Counter()          # error_code -> 건수
 _reasons: Counter = Counter()         # reason_code -> 건수
 _query_source: Counter = Counter()    # labels | onboarding | none
 _behavior: deque = deque(maxlen=_KEEP)
+_behavior_source: Counter = Counter()   # clickhouse | file | unavailable
 
 
 def observe_request(path: str, seconds: float, error_code: str | None = None) -> None:
@@ -44,6 +45,16 @@ def observe_query_source(source: str) -> None:
     """추천 한 건이 무엇을 근거로 질의를 만들었나. 콜드스타트 비율의 원천이다."""
     with _LOCK:
         _query_source[source or "none"] += 1
+
+
+def observe_behavior_source(source: str) -> None:
+    """행동을 어디서 읽었나 — `clickhouse` / `file` / `unavailable`.
+
+    `unavailable` 이 쌓이면 ClickHouse 조회가 실패하고 있다는 뜻이다. 추천은 계속
+    나가지만 **개인화가 빠진 채**라 실패율만 봐서는 드러나지 않는다.
+    """
+    with _LOCK:
+        _behavior_source[source or "unknown"] += 1
 
 
 def observe_behavior(seconds: float) -> None:
@@ -82,6 +93,7 @@ def snapshot() -> dict:
                        "rate": round(sum(errors.values()) / total, 4) if total else None},
             "latency_seconds": {p: _lat_block(list(d)) for p, d in _lat.items()},
             "behavior_lookup_seconds": _lat_block(list(_behavior)),
+            "behavior_source": dict(_behavior_source),
             "reason_codes": dict(_reasons),
             "query_source": qs,
             # 콜드스타트 비율: 이력도 온보딩도 없어 근거 없이 나간 추천의 몫.
@@ -99,3 +111,4 @@ def reset() -> None:
         _reasons.clear()
         _query_source.clear()
         _behavior.clear()
+        _behavior_source.clear()

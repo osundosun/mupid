@@ -11,7 +11,7 @@
 | 🏗 **[architecture/](architecture/README.md)** | 무엇이 어디에 있는가 | 코드를 찾아 들어가기 전 |
 | 🧭 **[decision/](decision/README.md)** | 왜 그렇게 정했는가 | 구조를 바꾸려 할 때, "이건 왜 이렇지?" 싶을 때 |
 | 📐 **[convention/](convention/README.md)** | 어떤 규칙을 지키는가 | 커밋·브랜치·MR·문서를 남기기 전 |
-| 🔥 **[failure/](failure/README.md)** | 어디서 넘어졌는가 | **막혔을 때 가장 먼저** (159건) |
+| 🔥 **[failure/](failure/README.md)** | 어디서 넘어졌는가 | **막혔을 때 가장 먼저** (228건) |
 | 🌱 **[lesson/](lesson/README.md)** | 해 보니 어떻더라 | 회고를 쓰거나 일하는 방식을 점검할 때 |
 
 빌드·실행 명령과 백엔드 작업 규칙 자체는 [api/AGENTS.md](../AGENTS.md) 에 있다. 이 저장소는 그 배경과 근거를 다룬다.

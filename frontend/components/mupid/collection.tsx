@@ -1,6 +1,6 @@
 'use client';
 import { DailyAlbumTreemap } from './daily-album-treemap';
-import { QueueList } from './queue-list';
+
 import { PlaylistMenu } from './playlist-menu';
 import { SelectionToolbar, useTrackSelection } from './track-selection';
 import { MupidMascot } from './mascot';
@@ -29,7 +29,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { QUEUE_LIMIT, type MupidModel } from '@/hooks/use-mupid';
+import { type MupidModel } from '@/hooks/use-mupid';
 import { NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH, normalizeNickname } from '@/lib/profile';
 import { useDailyReport } from '@/lib/report';
 import { formatTime, genreOptions, moodOptions } from '@/lib/mupid-data';
@@ -51,7 +51,7 @@ import {
 
 // 탭 이름을 그대로 화면 제목으로 쓴다. 어느 탭에 있는지 제목만 봐도 알 수 있게.
 const LIBRARY_TAB_TITLES: Record<string, string> = {
-  queue: '재생목록',
+
   playlists: '플레이리스트',
   moments: '저장한 순간',
   liked: '좋아한 곡',
@@ -62,16 +62,12 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
   // 저장한 순간은 되돌릴 수 없어서 삭제 전에 한 번 확인받는다.
   const [removeMoment, setRemoveMoment] = useState<number | null>(null);
   const momentToRemove = m.moments.find((v) => v.id === removeMoment);
-  // 재생목록·플레이리스트에서 여러 곡을 골라 한 번에 뺄 수 있게 한다.
-  const queuePick = useTrackSelection(m.queueTracks.map((t) => t.id));
+  // 플레이리스트에서 여러 곡을 골라 한 번에 뺄 수 있게 한다.
+  // 재생 목록 쪽 같은 흐름은 독이 들고 있다 (`components/mupid/queue-dock.tsx`).
   const playlistPick = useTrackSelection((selected?.tracks ?? []).map((t) => t.id));
   // 곡을 목록에서 빼는 건 한 곡이든 여러 곡이든 똑같이 한 번 확인받는다.
-  const [confirmRemove, setConfirmRemove] = useState<{
-    scope: 'queue' | 'playlist';
-    ids: number[];
-  } | null>(null);
-  const removeTargets = (confirmRemove?.scope === 'playlist' ? (selected?.tracks ?? []) : m.queueTracks)
-    .filter((t) => confirmRemove?.ids.includes(t.id));
+  const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
+  const removeTargets = (selected?.tracks ?? []).filter((t) => confirmRemove?.includes(t.id));
   return (
     <div className="content-page collection-page">
       <PageHeader
@@ -113,44 +109,15 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
         }}
         className="sky-tabs"
       >
+        {/*
+          '재생목록' 탭은 없앴다. 목록을 보려고 듣던 화면을 떠나야 했던 것이 문제였고,
+          지금은 미니 플레이어의 목록 버튼이 독을 연다 (`components/mupid/queue-dock.tsx`).
+        */}
         <TabsList>
-          <TabsTrigger value="queue">재생목록</TabsTrigger>
           <TabsTrigger value="playlists">플레이리스트</TabsTrigger>
           <TabsTrigger value="moments">저장한 순간</TabsTrigger>
           <TabsTrigger value="liked">좋아한 곡</TabsTrigger>
         </TabsList>
-        <TabsContent value="queue">
-          <div className="intro-copy">
-            <p>
-              {queuePick.active
-                ? '뺄 곡을 고르세요. 전체 선택으로 한 번에 비울 수도 있어요.'
-                : `지금 재생 목록에 담긴 순서예요. 손잡이를 끌어 순서를 바꿀 수 있고, ${QUEUE_LIMIT}곡까지 담겨요.`}
-            </p>
-          </div>
-          {!!m.queueTracks.length && (
-            <SelectionToolbar
-              selection={queuePick}
-              total={m.queueTracks.length}
-              limit={QUEUE_LIMIT}
-              onDelete={() => setConfirmRemove({ scope: 'queue', ids: queuePick.picked })}
-            />
-          )}
-          <QueueList
-            model={m}
-            selection={queuePick}
-            onRemove={(track) => setConfirmRemove({ scope: 'queue', ids: [track.id] })}
-          />
-          {!m.queueTracks.length && (
-            <EmptyState
-              title="재생 목록이 비어 있어요"
-              description="음악을 재생하면 이어 들을 곡이 여기에 쌓여요."
-            >
-              <button className="secondary-button" onClick={() => m.go('player')}>
-                음악 들으러 가기
-              </button>
-            </EmptyState>
-          )}
-        </TabsContent>
         <TabsContent value="playlists">
           {selected ? (
             <div className="playlist-detail">
@@ -195,7 +162,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                 <SelectionToolbar
                   selection={playlistPick}
                   total={selected.tracks.length}
-                  onDelete={() => setConfirmRemove({ scope: 'playlist', ids: playlistPick.picked })}
+                  onDelete={() => setConfirmRemove(playlistPick.picked)}
                 />
               )}
               <div className="track-list">
@@ -211,7 +178,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                       <button
                         className="icon-button"
                         aria-label={`${t.title} 플레이리스트에서 빼기`}
-                        onClick={() => setConfirmRemove({ scope: 'playlist', ids: [t.id] })}
+                        onClick={() => setConfirmRemove([t.id])}
                       >
                         <X />
                       </button>
@@ -410,17 +377,15 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                 : `고른 ${removeTargets.length}곡을 뺄까요?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmRemove?.scope === 'playlist'
-                ? '플레이리스트에서만 빠지고, 곡 자체는 그대로 남아 있어요.'
-                : '재생 목록에서만 빠져요. 지금 듣고 있는 곡은 계속 재생돼요.'}
+              플레이리스트에서만 빠지고, 곡 자체는 그대로 남아 있어요.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                const gone = confirmRemove?.ids ?? [];
-                if (confirmRemove?.scope === 'playlist' && selected) {
+                const gone = confirmRemove ?? [];
+                if (selected) {
                   void m.removeFromPlaylist(selected.id, gone);
                   m.setToast(
                     removeTargets.length === 1
@@ -428,12 +393,6 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                       : `${gone.length}곡을 플레이리스트에서 뺐어요.`,
                   );
                   playlistPick.cancel();
-                } else if (removeTargets.length === 1) {
-                  m.removeFromQueue(removeTargets[0]);
-                  queuePick.cancel();
-                } else {
-                  m.removeManyFromQueue(gone);
-                  queuePick.cancel();
                 }
                 setConfirmRemove(null);
               }}

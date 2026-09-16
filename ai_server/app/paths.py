@@ -11,8 +11,9 @@
 굳히면 import 순서에 따라 환경변수 설정 전의 값이 박힌다(테스트가 실제로 그 순서에
 의존하고 있었다).
 
-`app/legacy/` 세 모듈은 원본 유지 원칙에 따라 각자의 계산을 그대로 두었다. 기본값과
-환경변수가 같아 결과는 동일하다 — 확인은 `check()` 가 한다.
+`labeler`·`features`·`stage1_torch` 도 여기를 쓴다. 예전에는 셋이 각자 셈했고 그게
+`MUPID_AI_ARTIFACT_DIR=` (빈 값) 에서 갈렸다 — `os.environ.get(k, default)` 는 빈
+문자열을 덮지 않아 `Path('')`, 곧 현재 디렉터리가 된다. 확인은 `check()` 가 한다.
 """
 from __future__ import annotations
 

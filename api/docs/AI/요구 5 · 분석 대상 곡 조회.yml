@@ -1,0 +1,169 @@
+info:
+  name: 요구 5 · 분석 대상 곡 조회
+  type: http
+  seq: 6
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/internal/music/pending-analysis"
+  params:
+    - name: limit
+      value: "200"
+      type: query
+      description: 기본 200, 최대 500
+    - name: cursor
+      value: ""
+      type: query
+      description: 응답의 next_cursor. 첫 요청은 생략
+  headers:
+    - name: X-Internal-Token
+      value: "{{AI_INTERNAL_TOKEN}}"
+  auth: none
+  body:
+    type: none
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
+
+examples:
+  - name: 200 대상 있음
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "analysis_version": "v1",
+              "tracks": [
+                {
+                  "music_id": 1001,
+                  "audio_object_key": "music/2026/09/1001.mp3",
+                  "audio_download_url": "https://storage.internal/...",
+                  "audio_sha256": "9f2c…",
+                  "bpm_requested": 128,
+                  "centroid": 1832.86,
+                  "rolloff": 3746.21,
+                  "rms_mean": 0.1566,
+                  "flatness": 0.0137,
+                  "genre_top1": "Rock",
+                  "category": "male_english_rock",
+                  "mood_tags": ["energetic", "melodic"],
+                  "instrument_tags": ["electricguitar", "drums"],
+                  "vocal_type": "male",
+                  "language": "english",
+                  "analysis_status": "PENDING"
+                }
+              ],
+              "next_cursor": null
+            }
+          }
+
+  - name: 200 대상 없음
+    response:
+      status: 200
+      statusText: OK
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": { "analysis_version": "v1", "tracks": [], "next_cursor": null }
+          }
+
+  - name: 401 내부 토큰 불일치
+    response:
+      status: 401
+      statusText: Unauthorized
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_UNAUTHORIZED",
+            "message": "내부 호출 토큰이 올바르지 않습니다.",
+            "error_details": null
+          }
+
+docs:
+  type: text/markdown
+  content: |-
+    # 분석 대상 곡 조회 — **미구현 · BE 대기**
+
+    > 이 API 는 아직 없습니다. 계약 제안만 적어 둔 것이고 **임의로 구현하지
+    > 않았습니다.** 담당은 BE 입니다.
+
+    하루 1회 도는 분석 배치(`music_preprocessing`)가 **무엇을 분석할지** 묻는 창구입니다.
+    지금은 배치가 음원 폴더를 직접 훑는데, 운영에서는 곡이 SeaweedFS 에 올라오고 DB 가
+    상태를 들고 있으므로 서버에 물어야 합니다.
+
+    ## 왜 필요한가
+
+    배치는 **자기 기록(`analysis_processed.json`)만으로는 새 곡을 알 수 없습니다.**
+    파일이 어디 있는지, 어떤 곡이 아직 분석되지 않았는지는 DB 만 압니다.
+
+    `audio_sha256` 을 함께 주는 것이 핵심입니다. 배치는 이 값으로 **이미 처리한 곡을
+    건너뜁니다.** 음원을 내려받아야 해시를 알 수 있다면 건너뛰기의 의미가 없어집니다
+    (곡당 수 MB 를 매일 다시 받게 됩니다).
+
+    ## 요청
+
+    | 파라미터 | 타입 | 필수 | 설명 |
+    | --- | --- | --- | --- |
+    | `limit` | int | | 한 번에 받을 곡 수. 기본 200 |
+    | `cursor` | string | | 이어받기. 응답의 `next_cursor` 를 그대로 |
+
+    ## 응답
+
+    | 필드 | 설명 |
+    | --- | --- |
+    | `analysis_version` | 현재 분석 판. 배치가 요구 1 에 그대로 되싣습니다 |
+    | `tracks[].music_id` | 숫자 ID. 구간 적재(요구 1)에 쓰는 키입니다 |
+    | `tracks[].audio_object_key` | SeaweedFS 키. 곡의 저장 위치 식별자입니다 |
+    | `tracks[].audio_download_url` | 내부망에서 내려받을 수 있는 단기 URL. 배치에 SeaweedFS 자격증명을 주지 않습니다 |
+    | `tracks[].audio_sha256` | **중복 처리 방지의 근거**. 이 값이 같으면 건너뜁니다 |
+    | `tracks[].bpm_requested` | 생성 메타의 요청 BPM. 측정값보다 우선합니다 |
+    | `tracks[].centroid` · `rolloff` · `rms_mean` · `flatness` | `content.parquet` 과 같은 정의의 트랙 특징. 285차 생성에 필요합니다 |
+    | `tracks[].genre_top1` | 장르 대표값 |
+    | `tracks[].category` | 스타일 분류 원문. `vocal_type_language_style` 형식 |
+    | `tracks[].mood_tags` · `instrument_tags` | 조건 검색용 태그 배열 |
+    | `tracks[].vocal_type` · `language` | 조건 검색용 보컬·언어 |
+    | `tracks[].analysis_status` | `PENDING` 또는 재시도 가능한 `FAILED`. `DONE` 은 조회하지 않습니다 |
+
+    `bpm_requested` 를 싣는 이유는 측정 BPM 에 옥타브 오류가 잦기 때문입니다. 추천기가
+    이미 요청값을 우선 쓰는 규칙이고, 특징 벡터의 `trk_bpm` 도 같은 규칙을 따릅니다
+    (`ai_server/docs/FEATURE-SPACE.md`). 두 곳이 다른 값을 쓰면 같은 곡이 필터와 점수에서
+    다르게 취급됩니다.
+
+    배치는 `music_id` 를 문자열로 바꿔 분석 `track_id` 로 씁니다. 구간
+    `external_id` 는 `<music_id>#<section_index>` 로 만듭니다. 별도 문자열 곡 ID 는
+    응답하지 않습니다. 이 경로로 들어온 곡의 `source` 는 `flow` 입니다.
+
+    `bpm_requested` 가 있으면 배치는 `flow_meta` 의 `bpm_lo`·`bpm_hi` 에 같은 값을
+    넣습니다. 없을 때만 측정 BPM 을 씁니다.
+
+    트랙 특징 4개를 0으로 대신 채우면 요청은 성공해도 285차 특징이 기존 공간과
+    달라집니다. 태그 5종이 없으면 신곡은 일반 추천에는 들어가지만 조건 검색에서만
+    빠집니다. 둘 다 필수 응답입니다.
+
+    `audio_download_url` 은 `X-Internal-Token` 으로 받은 내부 요청에만 발급하고 짧게
+    만료시킵니다. 오브젝트 키만 주고 배치가 스토리지 주소·인증 방식을 추측하게 두지
+    않습니다.
+
+    ## 필요한 ERD 변경
+
+    | 항목 | 현재 | 필요 |
+    | --- | --- | --- |
+    | 분석 상태 | 없음 | `music.analysis_status` (PENDING·PROCESSING·DONE·FAILED) 또는 별도 표 |
+    | 음원 해시 | 없음 | `audio_sha256` — 배치의 중복 판정 근거 |
+
+    **DDL 은 DB·BE팀 소관이라 AI 쪽에서 고치지 않았습니다.** 차단 사유는
+    `infra/AI-API-BLOCKERS.md` 를 함께 봅니다.
