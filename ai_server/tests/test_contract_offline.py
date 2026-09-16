@@ -513,8 +513,17 @@ def test_env_files_are_ignored():
     patterns = root / ".gitignore"
     text = patterns.read_text(encoding="utf-8")
     assert ".env" in text and "!*.env.example" in text
-    r = subprocess.run(["git", "check-ignore", "-q", "infra/deploy/.env"],
-                       cwd=root, capture_output=True)
+    try:
+        r = subprocess.run(["git", "check-ignore", "-q", "infra/deploy/.env"],
+                           cwd=root, capture_output=True)
+    except FileNotFoundError:
+        # git 바이너리가 없는 경우. 이 테스트는 원래 "git 으로 확인할 수 없으면
+        # 건너뛴다" 가 의도인데 아래 128(체크아웃이 아님)만 받고 있어서, git 이
+        # 아예 없는 이미지에서는 건너뛰지 못하고 죽었다. CI 의 job 이미지에
+        # git 이 없어 MR 이 연달아 실패했다.
+        #
+        # 검사를 없애는 것이 아니다 — git 이 있는 환경에서는 그대로 확인한다.
+        pytest.skip("git 이 없다")
     if r.returncode == 128:
         pytest.skip("git 체크아웃이 아니다")
     assert r.returncode == 0, "infra/deploy/.env 가 무시되지 않는다"
