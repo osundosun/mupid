@@ -14,9 +14,9 @@
   ① 사용자 히스토리에서 대상 곡 구간 제거   ② 곡 분리 분할
   ③ 히스토리는 train 곡에서만               ④ PCA 는 train(FMA) 구간으로만 적합
 
-  python src/m11_stage1.py --selftest            # 누출 테스트만
-  python src/m11_stage1.py --train --steps 1500
-  python src/m11_stage1.py --export              # 카탈로그 z_s / 사용자 z_u 저장
+  python -m ai_server.app.stage1_torch --selftest         # 누출 테스트만
+  python -m ai_server.app.stage1_torch --train --steps 1500
+  python -m ai_server.app.stage1_torch --export           # 카탈로그 z_s / 사용자 z_u 저장
 """
 from __future__ import annotations
 
@@ -24,19 +24,17 @@ import argparse
 import json
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import m10_features as feat  # noqa: E402
+from . import features as feat
+from . import paths
 
-# 산출물 경로는 recommender 와 같은 환경변수를 쓴다. 서로 다른 곳을 보면
-# 색인 일부만 다른 판이 섞여도 서비스가 정상처럼 뜬다.
-import os as _os
-ROOT = Path(_os.environ.get("MUPID_AI_ARTIFACT_DIR",
-                            Path(__file__).resolve().parents[2] / "artifacts"))
+# 산출물 루트는 paths 한 곳에서만 계산한다. 예전에는 이 모듈이 따로 셈해서
+# `MUPID_AI_ARTIFACT_DIR=` (빈 값) 일 때 recommender 와 다른 곳을 봤다 —
+# os.environ.get 의 기본값은 빈 문자열을 덮지 않아 Path('') 가 되기 때문이다.
+ROOT = paths.artifact_root()
 OUT_DIR = ROOT / "data" / "proc" / "mupid"
 CKPT = OUT_DIR / "stage1.pt"
 SEC_VEC = OUT_DIR / "stage1_section.npy"

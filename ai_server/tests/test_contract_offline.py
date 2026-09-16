@@ -408,9 +408,24 @@ def test_artifact_status_names_what_is_missing(clean_env, tmp_path):
     clean_env.setattr(recommender, "OUT_DIR", tmp_path / "data/proc/mupid")
     st = main.artifact_status()
     assert "labels_service.parquet" in st["missing"]
-    assert "id_map.parquet" in st["missing"]
     # 왜 필요한지도 함께 — 없다는 사실만으로는 무엇이 꺼졌는지 알 수 없다.
     assert st["files"]["labels_service.parquet"]["why"]
+
+
+def test_id_map_is_reported_but_is_not_a_serving_gap(clean_env, tmp_path):
+    """매핑표는 적재 도구 전용이다.
+
+    `/internal/ready` 는 더 이상 매핑표를 보지 않는다 — 번역은 Spring 이 한다. 그런데도
+    `missing` 에 남겨 두면 기동 로그가 배포마다 "선택 산출물 없음" 을 찍어, **정작
+    개인화가 빠진 배포와 구분이 안 된다.** 상태는 싣되 결핍으로 세지 않는다.
+    """
+    clean_env.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
+    from ai_server.app import main, recommender
+
+    clean_env.setattr(recommender, "OUT_DIR", tmp_path / "data/proc/mupid")
+    st = main.artifact_status()
+    assert st["files"]["id_map.parquet"]["exists"] is False
+    assert "id_map.parquet" not in st["missing"]
 
 
 def test_startup_uses_lifespan_not_deprecated_hook():
@@ -473,7 +488,8 @@ def _unresolved_globals(module) -> list[str]:
     return bad
 
 
-@pytest.mark.parametrize("name", ["recommender", "internal_api", "ids", "main", "paths"])
+@pytest.mark.parametrize("name", ["recommender", "internal_api", "ids", "main", "paths",
+                                 "labeler", "features", "stage1_torch"])
 def test_every_referenced_global_exists(name):
     import importlib
 
@@ -481,11 +497,19 @@ def test_every_referenced_global_exists(name):
     assert _unresolved_globals(mod) == []
 
 
-def test_labeler_script_ships_with_the_code(clean_env):
-    """라벨러는 산출물이 아니라 코드와 함께 온다. 경로가 틀리면 subprocess 가 조용히 실패한다."""
-    from ai_server.app import recommender
+def test_labeler_module_ships_with_the_code(clean_env):
+    """라벨러는 산출물이 아니라 코드와 함께 온다.
 
-    assert (recommender.LEGACY / "m09_labels.py").exists()
+    `run_labeler` 가 `python -m ai_server.app.labeler` 로 부르므로, 이 모듈을 import 할 수
+    없으면 subprocess 가 조용히 실패한다 — 호출부가 반환값만 보고 "라벨 생성 실패" 로
+    뭉뚱그리기 때문에 원인이 드러나지 않는다.
+    """
+    import importlib
+
+    labeler = importlib.import_module("ai_server.app.labeler")
+
+    assert hasattr(labeler, "main")
+    assert isinstance(labeler.FAST_SKIP_SEC, float)
 
 
 def test_learn_is_callable():
@@ -719,12 +743,8 @@ def _make_pair(in_dim=37, hist_max=8, seed=0):
     **산출물이 필요 없다.** 동치는 가중치 값과 무관한 성질이므로 무작위로 확인할 수 있다.
     """
     torch = _torch_or_skip()
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app" / "legacy"))
-    import m11_stage1 as s1
-
-    from ai_server.app import stage1_np
+    from ai_server.app import stage1_np, stage1_torch as s1
 
     torch.manual_seed(seed)
     m = s1.make_model(in_dim)
@@ -964,17 +984,43 @@ def test_startup_survives_narrow_stdout(monkeypatch):
     appmain._startup()
 
 
+# 맨 print 가 허용되는 함수. **파일 단위로 빼지 않는다** — `features.py` 를 통째로
+# 면제하면 기동 경로인 `load()` 에 나중에 들어오는 print 까지 놓친다. 여기 적힌 것은
+# 전부 오프라인 진입점(학습·적합·배치)이라 uvicorn 안에서 돌지 않는다.
+CLI_ONLY_PRINTS: dict[str, set[str] | None] = {
+    "ids.py": None,                 # 파일 전체가 CLI 다
+    "log.py": None,                 # print 를 감싸는 쪽
+    "features.py": {"fit", "main"},
+    "labeler.py": {"main"},
+    "stage1_torch.py": {"build", "selftest", "train", "export", "main", "chk"},
+}
+
+
 def test_no_bare_print_in_startup_path():
-    """진단은 log() 로만 남긴다. 맨 print 는 인코딩에 따라 예외를 낸다."""
+    """진단은 log() 로만 남긴다. 맨 print 는 인코딩에 따라 예외를 낸다.
+
+    한국어 한 줄이면 충분하다 — 로케일이 C 면 UnicodeEncodeError 가 나고, 그 호출이
+    기동 경로에 있으면 서비스가 아예 뜨지 못한다.
+    """
     import ast
 
     app_dir = Path(__file__).resolve().parents[1] / "app"
-    for f in app_dir.glob("*.py"):
-        if f.name in ("log.py", "ids.py"):      # ids.py 의 print 는 CLI 전용이다
+    for f in sorted(app_dir.glob("*.py")):
+        allowed = CLI_ONLY_PRINTS.get(f.name, set())
+        if allowed is None:
             continue
-        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+        tree = ast.parse(f.read_text(encoding="utf-8"))
+        # print 를 품은 함수 이름을 먼저 붙인다. 함수 밖(= import 시점)의 print 는
+        # 이름이 없으므로 어떤 목록으로도 면제되지 않는다.
+        owner: dict[int, str] = {}
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for node in ast.walk(fn):
+                    owner.setdefault(id(node), fn.name)
+        for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
-                    and node.func.id == "print":
+                    and node.func.id == "print" \
+                    and owner.get(id(node)) not in allowed:
                 raise AssertionError(f"{f.name}:{node.lineno} 맨 print")
 
 
