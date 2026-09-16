@@ -751,6 +751,20 @@ export function useMupid(bootstrap: Bootstrap) {
     }
   };
   /**
+   * 목록 밖에서 튼 곡을 큐 **맨 위**에 놓는다. 이미 담겨 있으면 그 자리를 걷어
+   * 올린다(중복 없음).
+   *
+   * 재생 버튼은 여기저기 흩어져 있다 — 곡 목록·검색 결과·오늘의 Moment·저장한
+   * 순간. **어디서 눌렀든 들은 곡은 목록에 남아야 한다.** 한 곳에 모아 두지
+   * 않으면 이번처럼 한 경로가 조용히 빠진다.
+   */
+  const liftToQueueTop = (track: Track) => {
+    const placed = placeInQueue(queue, track.id, 'top', currentUidRef.current, QUEUE_LIMIT);
+    setQueue(placed.entries);
+    return placed;
+  };
+
+  /**
    * 곡을 튼다.
    *
    * `queueUid` 는 **재생 목록 안에서** 누른 경우다. 그 자리를 그대로 두고 그
@@ -803,9 +817,8 @@ export function useMupid(bootstrap: Bootstrap) {
 
     let picked: string | undefined = queueUid;
     if (!queueUid && (!willToggle || !inQueue)) {
-      const placed = placeInQueue(queue, track.id, 'top', currentUidRef.current, QUEUE_LIMIT);
-      setQueue(placed.entries);
       // 큐 갱신은 다음 렌더에나 보이므로 이번 재생의 자리는 여기서 직접 넘긴다.
+      const placed = liftToQueueTop(track);
       picked = placed.uid;
       /*
        * 듣던 곡을 그대로 이어 트는 길은 `startPlayback` 을 지나지 않는다.
@@ -1206,7 +1219,12 @@ export function useMupid(bootstrap: Bootstrap) {
       return;
     }
     previewEnd.current = moment.end;
-    void startPlayback(moment.track, moment.start);
+    /*
+     * 순간 재생도 **곡을 트는 것**이다. 오늘의 Moment·저장한 순간에서 누른 곡이
+     * 재생 목록에 남지 않아 방금 들은 곡을 목록에서 찾을 수 없었다. 목록 밖에서
+     * 튼 것과 같게 맨 위에 놓는다.
+     */
+    void startPlayback(moment.track, moment.start, liftToQueueTop(moment.track).uid);
   };
   const saveMoment = () => {
     const current = activeRef.current;
