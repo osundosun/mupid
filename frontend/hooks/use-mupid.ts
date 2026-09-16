@@ -502,7 +502,16 @@ export function useMupid(bootstrap: Bootstrap) {
     if (!saved || signal?.aborted || !mountedRef.current) return;
     queueAdopted.current = true;
     queueRevision.current = saved.revision;
-    if (!saved.ids.length) return;
+    /*
+     * 계정 큐가 비어 있을 때 화면의 기본값(카탈로그 앞 100곡)을 그대로 둘지는
+     * **판본으로 가른다.**
+     *
+     * 판본 0 은 한 번도 저장한 적이 없다는 뜻이다 — 처음 쓰는 사람에게 빈 목록을
+     * 안기는 대신 기본값을 둔다. 판본이 1 이상이면 사용자가 만든 상태이므로 **빈
+     * 것도 그대로 존중한다.** 예전에는 둘을 구분하지 않아, 목록을 통째로 비우고
+     * 새로고침하면 담은 적 없는 곡이 우르르 되살아났다.
+     */
+    if (!saved.ids.length && saved.revision === 0) return;
     // 서버는 곡 번호만 들고 있다. 자리 번호는 이 기기에서 새로 붙인다.
     setQueue(toQueueEntries(saved.ids));
     // 방금 받아 온 것을 곧바로 되돌려 보내지 않는다. 재생 중인 곡은 화면 쪽이
@@ -767,43 +776,45 @@ export function useMupid(bootstrap: Bootstrap) {
      */
     const sameTrack = activeRef.current?.id === track.id;
 
+    /*
+     * 목록 밖에서 튼 곡은 **담겨 있든 아니든 맨 위로** 올린다. 담겨 있지 않았으면
+     * 새로 놓고, 담겨 있었으면 그 자리를 걷어 맨 위로 옮긴다(중복 없음).
+     *
+     * 예전에는 담겨 있지 않은 곡을 틀면 카탈로그에서 상한까지 **나머지를 채웠다.**
+     * 큐가 "다음에 들을 것" 을 담아 두는 임시 못이던 시절의 동작인데, 큐가 계정에
+     * 남는 목록이 된 지금은 **재생 목록을 비우고 한 곡을 틀면 누르지도 않은 곡이
+     * 우르르 담긴다.** 채우지 않는다.
+     */
+    const inQueue = queue.some((entry) => entry.trackId === track.id);
+
+    /*
+     * 아래에서 일시정지·재개로 갈릴 길인가. **같은 곡인지만으로는 가를 수 없다.**
+     * 앱을 열면 마지막에 듣던 곡이 이미 `active` 인데 아직 울리지는 않는다. 그
+     * 곡을 목록 밖에서 처음 누르면 "같은 곡" 이라는 이유로 큐를 건드리지 않아,
+     * 맨 위로 올라오지도 담기지도 않았다.
+     *
+     * 실제로 재생기가 그 곡을 들고 있을 때만 토글이다.
+     */
+    const status = getPlayer()?.store.get().status;
+    const willToggle =
+      !fromMoment &&
+      sameTrack &&
+      (status === 'playing' || status === 'buffering' || status === 'paused');
+
     let picked: string | undefined = queueUid;
-    if (queueUid) {
-      // 목록 안에서 누른 줄이다. 큐는 그대로 두고 그 자리를 튼다.
-    } else if (!queue.some((entry) => entry.trackId === track.id)) {
-      const head = queueEntry(track.id);
-      const rest = queue.filter((entry) => entry.trackId !== track.id);
-      const room = QUEUE_LIMIT - 1 - rest.length;
-      const filler =
-        room > 0
-          ? tracks
-              .filter((t) => t.id !== track.id && !rest.some((entry) => entry.trackId === t.id))
-              .slice(0, room)
-              .map((t) => queueEntry(t.id))
-          : [];
-      setQueue([head, ...rest, ...filler].slice(0, QUEUE_LIMIT));
-      // 큐 갱신은 다음 렌더에나 보이므로 이번 재생의 자리는 여기서 직접 넘긴다.
-      picked = head.uid;
-      // 듣던 곡을 그대로 이어 트는 길(아래 일시정지 토글)은 `startPlayback` 을
-      // 지나지 않는다. 그 길에서도 방금 만든 자리가 지금 듣는 자리다.
-      if (activeRef.current?.id === track.id) {
-        currentUidRef.current = head.uid;
-        setCurrentUid(head.uid);
-      }
-    } else if (!sameTrack) {
-      /*
-       * 이미 담겨 있는 곡을 골라 틀었다. **맨 위로 올린다** — 방금 튼 곡이
-       * 목록 한참 아래에 그대로 있으면 지금 무엇을 듣는지 목록에서 찾기 어렵다.
-       * 중복으로 한 줄 더 만들지는 않는다(decision/0023 규칙 3).
-       *
-       * 자동으로 다음 곡이 넘어가는 길은 여기를 지나지 않는다(`startPlayback`
-       * 직접 호출). 넘어갈 때마다 맨 위로 끌어올리면 애써 잡은 순서가 매 곡마다
-       * 뒤집힌다.
-       */
+    if (!queueUid && (!willToggle || !inQueue)) {
       const placed = placeInQueue(queue, track.id, 'top', currentUidRef.current, QUEUE_LIMIT);
       setQueue(placed.entries);
       // 큐 갱신은 다음 렌더에나 보이므로 이번 재생의 자리는 여기서 직접 넘긴다.
       picked = placed.uid;
+      /*
+       * 듣던 곡을 그대로 이어 트는 길은 `startPlayback` 을 지나지 않는다.
+       * 그 길에서도 방금 만든 자리가 지금 듣는 자리다.
+       */
+      if (willToggle) {
+        currentUidRef.current = placed.uid;
+        setCurrentUid(placed.uid);
+      }
     }
     const player = getPlayer();
     // 지금 울리는 곡을 다시 누르면 멈춘다. 멈춘 곡을 누르면 이어서 튼다.
