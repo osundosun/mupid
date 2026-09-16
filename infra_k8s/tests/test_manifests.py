@@ -980,5 +980,82 @@ class LabelRoutingTest(unittest.TestCase):
         self.assertIn("{{DIR}}", crontab)
 
 
+class PrebuiltJobImageTest(unittest.TestCase):
+    """의존성을 미리 구워 둔 job 이미지는 레지스트리에 없고 러너 호스트의 도커
+    데몬에만 있다. 그래서 두 가지가 맞아야 돈다 — job 이 if-not-present 를
+    요청해야 하고, 러너가 그 정책을 허용해야 한다.
+
+    둘 중 하나가 빠지면 도커 허브에서 mupid-ci-* 를 찾다가 실패한다."""
+
+    CI = ROOT / "infra" / "ci"
+    RUNNER = ROOT / "infra" / "runner"
+
+    def _jobs(self):
+        found = {}
+        for path in self.CI.glob("*.yml"):
+            for name, body in (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).items():
+                if isinstance(body, dict) and not name.startswith("."):
+                    found[name] = body
+        return found
+
+    def test_locally_built_images_are_not_pulled_from_the_hub(self):
+        checked = 0
+        for name, body in self._jobs().items():
+            image = body.get("image")
+            if not isinstance(image, dict) or not str(image.get("name", "")).startswith("mupid-ci-"):
+                continue
+            with self.subTest(job=name):
+                self.assertEqual(
+                    image.get("pull_policy"), "if-not-present",
+                    f"{name} 이 로컬 이미지를 쓰면서 pull_policy 를 지정하지 않는다",
+                )
+            checked += 1
+        self.assertTrue(checked, "mupid-ci-* 를 쓰는 job 이 하나도 없다")
+
+    def test_the_runner_allows_that_pull_policy(self):
+        """configure.py 가 allowed_pull_policies 를 넣지 않으면 러너는
+        pull_policy 하나만 허용하고 job 쪽 지정을 거부한다."""
+        script = (self.RUNNER / "configure.py").read_text(encoding="utf-8")
+        self.assertIn("allowed_pull_policies", script)
+        self.assertIn("if-not-present", script)
+
+    def test_every_local_image_has_something_that_builds_it(self):
+        """이미지 이름만 바꾸고 빌드 스크립트를 안 고치면, 그 이름은 어디서도
+        만들어지지 않아 job 이 영영 못 뜬다."""
+        build = (self.RUNNER / "build-images.sh").read_text(encoding="utf-8")
+        for name, body in self._jobs().items():
+            image = body.get("image")
+            if isinstance(image, dict) and str(image.get("name", "")).startswith("mupid-ci-"):
+                with self.subTest(job=name):
+                    self.assertIn(image["name"], build,
+                                  f"{image['name']} 을 굽는 곳이 없다")
+
+    def test_the_job_refuses_a_stale_image(self):
+        """의존성을 고치고 이미지를 다시 굽지 않으면 낡은 환경으로 통과한다.
+        통과한 코드가 서버에서 처음 깨지는 것이 제일 나쁘다."""
+        job = self._jobs()["ai-server-verify"]
+        guard = "\n".join(job["before_script"])
+        self.assertIn("/opt/mupid/requirements.txt", guard)
+        self.assertIn("ai_server/requirements.txt", guard)
+        self.assertIn("exit 1", guard)
+        # 이미지가 그 사본을 실제로 넣어 두어야 대조가 성립한다.
+        dockerfile = (self.RUNNER / "images" / "ai.Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("COPY requirements.txt /opt/mupid/requirements.txt", dockerfile)
+
+    def test_the_ai_image_carries_git(self):
+        """test_env_files_are_ignored 가 git check-ignore 를 부른다. git 이 없으면
+        FileNotFoundError 로 죽는다 — 그 테스트의 skip 경로는 '체크아웃이 아님'
+        만 받는다. 실제로 job 541874 · 545294 가 그렇게 실패했다."""
+        dockerfile = (self.RUNNER / "images" / "ai.Dockerfile").read_text(encoding="utf-8")
+        self.assertRegex(dockerfile, r"apt-get install[^\n]*\bgit\b")
+
+    def test_the_ai_job_no_longer_installs_at_runtime(self):
+        """이미지에 구워 두고도 설치 단계가 남아 있으면 아낀 것이 없다."""
+        job = self._jobs()["ai-server-verify"]
+        script = "\n".join(job["script"])
+        self.assertNotIn("pip install", script)
+        self.assertIsNone(job.get("cache"), "pip 캐시를 다시 나르고 있다")
+
+
 if __name__ == "__main__":
     unittest.main()

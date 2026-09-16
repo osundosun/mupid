@@ -42,6 +42,16 @@ if not re.search(r'^\s*request_concurrency\s*=', source, flags=re.M):
 # 주는 것은 무시될 뿐 오류가 아니다 (alpine 으로 확인했다).
 if not re.search(r'^\s*security_opt\s*=', source, flags=re.M):
     source = source.replace('[runners.docker]', '[runners.docker]\n    security_opt = ["seccomp=unconfined", "apparmor=unconfined"]', 1)
+# 미리 구워 둔 job 이미지(infra/runner/images/)는 레지스트리에 없고 이 호스트의
+# 도커 데몬에만 있다. 기본 pull_policy 는 always 라 도커 허브에서 찾다가
+# 실패한다. 기본값은 always 로 두고 — 위 이미지들은 계속 최신을 받아야 한다 —
+# job 이 if-not-present 를 **요청할 수 있게만** 열어 준다. allowed_pull_policies
+# 를 적지 않으면 pull_policy 값 하나만 허용되어 job 쪽 지정이 거부된다.
+if not re.search(r'^\s*allowed_pull_policies\s*=', source, flags=re.M):
+    source = source.replace(
+        '[runners.docker]',
+        '[runners.docker]\n    pull_policy = ["always"]'
+        '\n    allowed_pull_policies = ["always", "if-not-present"]', 1)
 
 # job 한 개에 주는 몫. 기본값은 파이 기준이다 — 그 호스트가 3.8GB 라 4g 를 줄 수
 # 없었고, 그래서 기대값이 호스트를 따라간다. 여기 적힌 2g 는 파이에서 backend·
