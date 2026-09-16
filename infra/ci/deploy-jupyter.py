@@ -79,6 +79,70 @@ NEVER = {
 MARKER_BEGIN = "# BEGIN music_preprocessing"
 MARKER_END = "# END music_preprocessing"
 
+# 설정을 CI 변수로 관리한다. 기본값은 저장소의 config.example.json 이고 —
+# 그래야 리뷰가 되고 변경 이력이 남는다 — 환경마다 다른 것만 변수로 덮는다.
+#
+#   MUPID_PREPROCESSING_API_BASE_URL=https://j15a204.p.ssafy.io
+#   MUPID_PREPROCESSING_INPUT_DIR=/home/j15a204/flow_music_data
+#
+# 비밀은 둘뿐이고 이름이 다르다 (CONTROL 참고). config.json 자체에는 비밀이
+# 없다 — 토큰은 api_refresh_token_file 이 가리키는 별도 파일에 있다.
+CONFIG_PREFIX = "MUPID_PREPROCESSING_"
+# 설정 필드가 아니라 배포 동작을 바꾸는 이름들.
+CONTROL = {"REFRESH_TOKEN", "RESET_TOKEN"}
+
+
+def coerce(sample, value, name):
+    """타입을 config.example.json 의 값에서 가져온다.
+
+    CI 변수는 전부 문자열이다. 서버의 ChunkConfig 는 그냥 데이터클래스라
+    segment_time 에 "6" 이 들어가도 받아 주고, 나중에 ffmpeg 인자를 만들 때
+    가서야 깨진다. 배포 시점에 맞춰 둔다.
+    """
+    if isinstance(sample, bool):
+        if value.lower() not in ("true", "false"):
+            die(f"{name} 은 true/false 여야 한다 (받은 값: {value!r})")
+        return value.lower() == "true"
+    if isinstance(sample, int):
+        try:
+            return int(value)
+        except ValueError:
+            die(f"{name} 은 정수여야 한다 (받은 값: {value!r})")
+    return value
+
+
+def _relative(path):
+    """설정의 경로 값을 작업 디렉터리 기준 상대 경로로 만든다."""
+    cleaned = path[2:] if path.startswith("./") else path
+    if cleaned.startswith("/") or ".." in cleaned.split("/"):
+        die(f"작업 디렉터리 밖을 가리킨다: {path}")
+    return cleaned
+
+
+def render_config():
+    """config.example.json 을 기본값으로 두고 CI 변수로 덮어쓴다."""
+    defaults = json.loads((SOURCE / "config.example.json").read_text(encoding="utf-8"))
+    config = dict(defaults)
+    unknown = []
+    for name, value in sorted(os.environ.items()):
+        if not name.startswith(CONFIG_PREFIX):
+            continue
+        field = name[len(CONFIG_PREFIX):]
+        if field in CONTROL:
+            continue
+        key = field.lower()
+        if key not in defaults:
+            unknown.append(name)
+            continue
+        config[key] = coerce(defaults[key], value, name)
+    if unknown:
+        # 오타를 조용히 넘기면 그 설정은 영영 반영되지 않는다. 서버의
+        # ChunkConfig 는 cls(**data) 라 모르는 키가 있으면 거기서 터지기도 한다.
+        die("모르는 설정 변수: " + ", ".join(unknown)
+            + "\n쓸 수 있는 이름: "
+            + ", ".join(CONFIG_PREFIX + k.upper() for k in sorted(defaults)))
+    return config
+
 
 def die(message):
     raise SystemExit(f"배포 실패: {message}")
@@ -166,6 +230,10 @@ class Hub:
     def _headers(self):
         # 토큰 인증이면 필요 없다. 쿠키 인증이라 비-GET 마다 붙여야 한다.
         return {"X-XSRFToken": self._xsrf()}
+
+    def exists(self, path):
+        return self.session.get(
+            self._url(f"contents/{path}?content=0"), timeout=30).status_code == 200
 
     def ensure_directory(self, path):
         got = self.session.get(self._url(f"contents/{path}"), timeout=30)
@@ -267,6 +335,13 @@ if not pathlib.Path(uv).exists():
     raise SystemExit("uv 를 찾지 못했다. 서버에 uv 가 설치되어 있어야 한다.")
 print("uv:", uv)
 
+# contents API 로 올린 파일은 644 로 떨어진다. 토큰 파일은 공용 서버에서
+# 남이 읽을 수 있으면 안 된다.
+tokenfile = directory / {token!r}
+if tokenfile.exists():
+    tokenfile.chmod(0o600)
+    print("refresh_token.txt 권한 600")
+
 done = subprocess.run([uv, "sync", "--frozen", "--python", "3.12"],
                       cwd=directory, capture_output=True, text=True)
 print("uv sync:", done.returncode)
@@ -321,7 +396,16 @@ def main():
         print(f"{len(uploads)}개 파일을 ~/{directory} 로 올린다:")
         for name, path in uploads:
             print(f"  {name}  ({path.stat().st_size}B)")
-        print("\n건드리지 않는 것:", ", ".join(sorted(NEVER)))
+        # 설정은 여기서 만들어진다. 변수 이름을 틀렸으면 배포 전에 걸린다.
+        config = render_config()
+        defaults = json.loads((SOURCE / "config.example.json").read_text(encoding="utf-8"))
+        print("\nconfig.json (CI 변수로 덮인 값은 ←):")
+        for key in sorted(config):
+            mark = "  ←" if config[key] != defaults[key] else ""
+            print(f"  {key} = {config[key]!r}{mark}")
+        token = os.environ.get(CONFIG_PREFIX + "REFRESH_TOKEN")
+        print(f"\nrefresh_token: {'주어짐' if token else '없음'} (값은 찍지 않는다)")
+        print("건드리지 않는 것:", ", ".join(sorted(NEVER - {"config.json"})))
         return 0
 
     base = os.environ.get("MUPID_JUPYTER_BASE_URL") or die("MUPID_JUPYTER_BASE_URL 이 없다")
@@ -346,8 +430,35 @@ def main():
         hub.put_file(f"{directory}/{name}", path.read_bytes())
     print(f"올린 파일 {len(uploads)}개")
 
+    # config.json 은 저장소에서 딸려 올라가는 것이 아니라 여기서 만들어 내린다.
+    # NEVER 가 막는 것은 트리에 있는 같은 이름의 파일이고, 이 경로가 config.json
+    # 을 쓰는 의도된 유일한 통로다. 서버에서 손으로 고친 것은 덮인다 — 설정을
+    # CI 변수로 관리한다는 것이 그런 뜻이다.
+    config = render_config()
+    hub.put_file(f"{directory}/config.json",
+                 json.dumps(config, ensure_ascii=False, indent=2).encode() + b"\n")
+    print(f"config.json 을 올렸다 (api_base_url={config['api_base_url'] or '(비어 있음)'})")
+
+    token_path = f"{directory}/{_relative(config['api_refresh_token_file'])}"
+    token = os.environ.get(CONFIG_PREFIX + "REFRESH_TOKEN")
+    reset = os.environ.get(CONFIG_PREFIX + "RESET_TOKEN", "").lower() == "true"
+    present = hub.exists(token_path)
+    if token and (not present or reset):
+        hub.put_file(token_path, read_secret(token).encode() + b"\n")
+        print("refresh_token.txt 를 " + ("다시 썼다" if present else "새로 썼다"))
+    elif token:
+        # **배치가 이 파일을 회전시킨다.** 배포할 때마다 CI 에 저장된 초기
+        # 토큰으로 되돌리면, 이미 회전해 무효가 된 토큰을 도로 넣는 셈이라
+        # 다음 배치가 인증에 실패한다. 그래서 있으면 두는 것이 기본이다.
+        print(f"refresh_token.txt 가 이미 있어 그대로 둔다 "
+              f"(배치가 회전시키는 파일이다. 덮으려면 {CONFIG_PREFIX}RESET_TOKEN=true)")
+    elif config["api_base_url"] and not present:
+        die(f"api_base_url 이 설정됐는데 {CONFIG_PREFIX}REFRESH_TOKEN 이 없고 "
+            "서버에도 refresh_token.txt 가 없다. 등록 단계가 전부 실패한다.")
+
     print(hub.run(REMOTE.format(
-        directory=directory, begin=MARKER_BEGIN, end=MARKER_END)))
+        directory=directory, begin=MARKER_BEGIN, end=MARKER_END,
+        token=_relative(config["api_refresh_token_file"]))))
     print("배포 완료")
     return 0
 

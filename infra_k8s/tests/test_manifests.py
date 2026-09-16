@@ -8,6 +8,7 @@ is not, so the file-level checks still run anywhere.
 """
 
 import json
+import os
 import re
 import pathlib
 import shutil
@@ -957,9 +958,92 @@ class LabelRoutingTest(unittest.TestCase):
         guard = self._jobs()["require-area-label"]
         self.assertIn("exit 1", "\n".join(guard["script"]))
 
+    def _module(self):
+        import importlib.util
+        if not all(importlib.util.find_spec(m) for m in ("requests", "websocket")):
+            self.skipTest("requests/websocket 이 없다")
+        spec = importlib.util.spec_from_file_location(
+            "deploy_jupyter", self.CI / "deploy-jupyter.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_config_is_rendered_from_ci_variables(self):
+        """설정을 CI 변수로 관리한다. 기본값은 저장소의 config.example.json 이고
+        환경마다 다른 것만 변수로 덮는다.
+
+        타입이 중요하다 — CI 변수는 전부 문자열인데 서버의 ChunkConfig 는 그냥
+        데이터클래스라 segment_time 에 "6" 이 들어가도 받아 주고, ffmpeg 인자를
+        만들 때 가서야 깨진다."""
+        module = self._module()
+        keep = dict(os.environ)
+        try:
+            for name in list(os.environ):
+                if name.startswith(module.CONFIG_PREFIX):
+                    del os.environ[name]
+            defaults = module.render_config()
+            self.assertEqual(defaults["segment_time"], 6)
+
+            os.environ[module.CONFIG_PREFIX + "SEGMENT_TIME"] = "10"
+            os.environ[module.CONFIG_PREFIX + "API_BASE_URL"] = "https://example"
+            config = module.render_config()
+            self.assertEqual(config["segment_time"], 10, "정수로 바뀌지 않았다")
+            self.assertEqual(config["api_base_url"], "https://example")
+
+            os.environ[module.CONFIG_PREFIX + "SEGMENT_TIME"] = "여섯"
+            with self.assertRaises(SystemExit):
+                module.render_config()
+            del os.environ[module.CONFIG_PREFIX + "SEGMENT_TIME"]
+
+            # 오타를 조용히 넘기면 그 설정은 영영 반영되지 않는다.
+            os.environ[module.CONFIG_PREFIX + "API_BASE_URLL"] = "x"
+            with self.assertRaises(SystemExit):
+                module.render_config()
+        finally:
+            os.environ.clear()
+            os.environ.update(keep)
+
+    def test_every_rendered_key_is_one_the_server_accepts(self):
+        """서버의 ChunkConfig 는 cls(**data) 로 읽는다. 모르는 키가 하나라도
+        있으면 TypeError 로 배치가 통째로 죽는다."""
+        module = self._module()
+        keep = dict(os.environ)
+        try:
+            for name in list(os.environ):
+                if name.startswith(module.CONFIG_PREFIX):
+                    del os.environ[name]
+            rendered = set(module.render_config())
+        finally:
+            os.environ.clear()
+            os.environ.update(keep)
+        source = (ROOT / "music_preprocessing" / "src" / "music_preprocessing"
+                  / "config.py").read_text(encoding="utf-8")
+        fields = set(re.findall(r"^    ([a-z_]+): (?:str|int|bool) =", source, re.M))
+        self.assertTrue(fields, "ChunkConfig 의 필드를 읽지 못했다")
+        self.assertEqual(
+            rendered - fields, set(),
+            "config.example.json 에 ChunkConfig 가 모르는 키가 있다",
+        )
+
+    def test_the_rotated_token_is_not_overwritten_by_default(self):
+        """배치가 refresh_token.txt 를 회전시킨다. 배포마다 CI 의 초기 토큰으로
+        되돌리면 이미 무효가 된 토큰을 도로 넣는 셈이라 다음 배치가 인증에
+        실패한다. 덮어쓰려면 명시적으로 켜야 한다."""
+        script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
+        self.assertIn("RESET_TOKEN", script)
+        body = script.split("token_path =", 1)[1].split("print(hub.run", 1)[0]
+        self.assertIn("not present or reset", body)
+        # 공용 서버라 토큰 파일이 남에게 읽히면 안 된다. contents API 는 644 로
+        # 떨어뜨리므로 원격에서 고쳐야 한다.
+        self.assertIn("chmod(0o600)", script)
+
     def test_the_data_deploy_never_ships_server_state(self):
         """공용 서버다. registered.json 을 덮어쓰면 아티스트·앨범·곡이 전부 다시
-        만들어지고, refresh_token.txt 는 배치가 회전시키는 자격증명이다."""
+        만들어지고, refresh_token.txt 는 배치가 회전시키는 자격증명이다.
+
+        config.json 도 이 목록에 남는다. 배포가 config.json 을 쓰기는 하지만
+        그것은 CI 변수로 **만들어** 내리는 경로이고, 이 목록이 막는 것은
+        저장소 트리에 있는 같은 이름의 파일이 그대로 딸려 올라가는 경우다."""
         script = (self.CI / "deploy-jupyter.py").read_text(encoding="utf-8")
         block = script.split("NEVER = {", 1)[1].split("}", 1)[0]
         for name in ("config.json", "refresh_token.txt", "registered.json",
