@@ -47,7 +47,10 @@ public enum CacheKind {
     /**
      * 자정 배치 선점. API 를 여러 벌 띄워도 하루치 확정 저장은 한 번만 돈다.
      */
-    ReportBatch("report:batch");
+    ReportBatch("report:batch"),
+
+    /** 오늘의 모먼트 생성 배치 선점. 스케줄러는 인스턴스마다 돈다. */
+    DailyRecommendationBatch("recommendation:daily:batch");
 
     private final String redisKey;
     

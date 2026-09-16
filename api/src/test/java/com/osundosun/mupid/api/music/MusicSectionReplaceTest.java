@@ -17,6 +17,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.code.enumerate.CodeType;
+import com.osundosun.mupid.api.code.repository.CodeRepository;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.music.entity.Album;
 import com.osundosun.mupid.api.music.entity.Artist;
@@ -25,6 +27,8 @@ import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.enumerate.SectionLabel;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
 import com.osundosun.mupid.api.music.error.MusicSectionErrorCode;
+import com.osundosun.mupid.api.music.mapping.entity.MusicSectionAnalysisMood;
+import com.osundosun.mupid.api.music.mapping.repository.MusicSectionAnalysisMoodRepository;
 import com.osundosun.mupid.api.music.repository.MusicSectionAnalysisRepository;
 import com.osundosun.mupid.api.music.request.MusicSectionBulkLine;
 import com.osundosun.mupid.api.music.request.MusicSectionBulkRequest;
@@ -61,6 +65,12 @@ class MusicSectionReplaceTest {
 
     @Autowired
     private MusicSectionAnalysisRepository sectionRepository;
+
+    @Autowired
+    private MusicSectionAnalysisMoodRepository moodRepository;
+
+    @Autowired
+    private CodeRepository codeRepository;
 
     @PersistenceContext
     private EntityManager em;
@@ -149,7 +159,7 @@ class MusicSectionReplaceTest {
     @DisplayName("다른 곡의 구간은 건드리지 않는다")
     void leavesOtherMusicAlone() {
         sectionService.replaceSections(otherMusic.getMusicId(), request(
-            new MusicSectionBulkLine(0, uid + "-other#0", SectionLabel.VERSE, 0, 9_000)));
+            new MusicSectionBulkLine(0, uid + "-other#0", SectionLabel.VERSE, 0, 9_000, null)));
         em.flush();
 
         replace(music, section(0, SectionLabel.INTRO, 0, 15_500));
@@ -185,8 +195,8 @@ class MusicSectionReplaceTest {
     void rejectsDuplicateExternalIdWithinRequest() {
         BusinessException e = assertThrows(BusinessException.class,
             () -> replace(music,
-                new MusicSectionBulkLine(0, uid + "#0", SectionLabel.INTRO, 0, 10_000),
-                new MusicSectionBulkLine(1, uid + "#0", SectionLabel.CHORUS, 10_000, 20_000)));
+                new MusicSectionBulkLine(0, uid + "#0", SectionLabel.INTRO, 0, 10_000, null),
+                new MusicSectionBulkLine(1, uid + "#0", SectionLabel.CHORUS, 10_000, 20_000, null)));
 
         assertEquals(MusicSectionErrorCode.SECTION_EXTERNAL_ID_DUPLICATED, e.getErrorCode());
     }
@@ -225,7 +235,7 @@ class MusicSectionReplaceTest {
         List<MusicSectionBulkLine> tooMany = new ArrayList<>();
         for (int i = 0; i <= MusicSectionBulkRequest.MAX_SECTIONS; i++) {
             tooMany.add(new MusicSectionBulkLine(
-                i, uid + "-many#" + i, SectionLabel.VERSE, i * 1_000, i * 1_000 + 500));
+                i, uid + "-many#" + i, SectionLabel.VERSE, i * 1_000, i * 1_000 + 500, null));
         }
 
         BusinessException e = assertThrows(BusinessException.class,
@@ -262,7 +272,7 @@ class MusicSectionReplaceTest {
     @DisplayName("external_id 앞뒤 공백은 잘라서 저장한다")
     void trimsExternalId() {
         replace(music, new MusicSectionBulkLine(
-            0, "  " + uid + "#0  ", SectionLabel.INTRO, 0, 15_500));
+            0, "  " + uid + "#0  ", SectionLabel.INTRO, 0, 15_500, null));
 
         MusicSectionAnalysis row =
             sectionRepository.findByMusic_MusicIdOrderByIndexAsc(music.getMusicId()).get(0);
@@ -287,6 +297,55 @@ class MusicSectionReplaceTest {
         assertFalse(result.sections().isEmpty());
     }
 
+    @Test
+    @DisplayName("분위기를 이름으로 받아 코드 번호로 잇는다")
+    void linksMoodsByName() {
+        String mood = codeRepository.findAllByCodeTypeOrderByCodeIdAsc(CodeType.MOOD)
+            .getFirst().getCodeName();
+
+        MusicSectionBulkResponse result = replace(music, new MusicSectionBulkLine(
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, List.of(mood)));
+        em.flush();
+
+        List<MusicSectionAnalysisMood> links = moodRepository
+            .findByMusicSectionAnalysisMoodId_MusicSectionAnalysisIdIn(
+                List.of(result.sections().getFirst().musicSectionAnalysisId()));
+        assertEquals(1, links.size());
+        assertEquals(mood, links.getFirst().getMoodCodeId().getCodeName());
+    }
+
+    @Test
+    @DisplayName("코드표에 없는 분위기는 버리고 구간은 살린다")
+    void dropsUnknownMoodButKeepsTheSection() {
+        MusicSectionBulkResponse result = replace(music, new MusicSectionBulkLine(
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, List.of("없는분위기")));
+        em.flush();
+
+        assertEquals(1, result.sections().size(), "분위기 때문에 구간까지 잃으면 안 된다");
+        assertTrue(moodRepository
+            .findByMusicSectionAnalysisMoodId_MusicSectionAnalysisIdIn(
+                List.of(result.sections().getFirst().musicSectionAnalysisId()))
+            .isEmpty());
+    }
+
+    @Test
+    @DisplayName("구간을 갈아 끼우면 옛 분위기 연결도 함께 사라진다")
+    void replacingSectionsClearsOldMoodLinks() {
+        String mood = codeRepository.findAllByCodeTypeOrderByCodeIdAsc(CodeType.MOOD)
+            .getFirst().getCodeName();
+        MusicSectionBulkResponse first = replace(music, new MusicSectionBulkLine(
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, List.of(mood)));
+        em.flush();
+        int oldSectionId = first.sections().getFirst().musicSectionAnalysisId();
+
+        replace(music, section(0, SectionLabel.CHORUS, 0, 15_500));
+        em.flush();
+
+        assertTrue(moodRepository
+            .findByMusicSectionAnalysisMoodId_MusicSectionAnalysisIdIn(List.of(oldSectionId))
+            .isEmpty(), "지워진 구간의 분위기 연결이 남았다");
+    }
+
     // ─────────────────────────────────────────────────────────────
 
     private MusicSectionBulkResponse replace(Music target, MusicSectionBulkLine... sections) {
@@ -302,7 +361,7 @@ class MusicSectionReplaceTest {
     }
 
     private MusicSectionBulkLine section(int index, SectionLabel label, int startMs, int endMs) {
-        return new MusicSectionBulkLine(index, uid + "#" + index, label, startMs, endMs);
+        return new MusicSectionBulkLine(index, uid + "#" + index, label, startMs, endMs, null);
     }
 
     /** 조회 순서(`index`) 그대로의 구간 종류. */

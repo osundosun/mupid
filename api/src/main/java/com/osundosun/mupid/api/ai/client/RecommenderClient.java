@@ -47,6 +47,8 @@ public class RecommenderClient {
 
     private static final String SEARCH = "/internal/recommendations/search";
     private static final String NEXT = "/internal/recommendations/next";
+    private static final String DAILY = "/internal/recommendations/daily";
+    private static final String SIMILAR = "/internal/similar";
     private static final String FACETS = "/internal/facets";
 
     /** 추천 서버가 `/internal` 을 지킬 때 쓰는 공유 비밀 헤더. `/health` 는 검사 밖이다. */
@@ -75,6 +77,38 @@ public class RecommenderClient {
     /** 지금 듣는 곡을 기준으로 이어 듣기. 조건이 없을 때 쓴다. */
     public List<RecommenderDto.Item> next(RecommenderDto.NextRequest request) {
         return items(NEXT, request);
+    }
+
+    /** 오늘의 모먼트. 배치가 사용자마다 한 번씩 부른다. */
+    public List<RecommenderDto.Item> daily(RecommenderDto.DailyRequest request) {
+        return items(DAILY, request);
+    }
+
+    /**
+     * 기준 구간과 닮은 다른 곡의 구간. **개인화가 없다.**
+     *
+     * <p>응답 모양이 추천과 달라(`similarity`·`embedding_version`) 공용 경로를 쓰지
+     * 않는다. 대신 실패 분류는 같은 규칙을 탄다.
+     */
+    public List<RecommenderDto.SimilarItem> similar(RecommenderDto.SimilarRequest request) {
+        if (!isConfigured()) {
+            log.warn("추천 서버 주소가 없다 (MUPID_RECOMMENDER_BASE_URL)");
+            throw new BusinessException(AiErrorCode.RECOMMENDER_NOT_CONFIGURED);
+        }
+        Attempt first = callSimilar(request);
+        if (first.retryable() && props.retryOnce()) {
+            log.warn("추천 서버 재시도 path={} 사유={}", SIMILAR, first.reason());
+            first = callSimilar(request);
+        }
+        if (first.similar() != null) {
+            return first.similar().safeItems();
+        }
+        if (first.empty()) {
+            return List.of();
+        }
+        throw new BusinessException(first.retryable()
+            ? AiErrorCode.RECOMMENDER_UNAVAILABLE
+            : AiErrorCode.RECOMMENDER_REQUEST_FAILED);
     }
 
     /**
@@ -149,13 +183,13 @@ public class RecommenderClient {
                 return failed;
             }
             if (body == null || body.length == 0) {
-                return new Attempt(null, false, true, "빈 응답");
+                return Attempt.none("빈 응답");
             }
-            return new Attempt(AiJson.read(body, RecommenderDto.Response.class), false, false, null);
+            return Attempt.ok(AiJson.read(body, RecommenderDto.Response.class));
         } catch (RestClientException e) {
             // 연결 실패·읽기 타임아웃. 규약상 재시도 대상이다.
             log.warn("추천 서버 호출 실패 path={}", path, e);
-            return new Attempt(null, true, false, e.getClass().getSimpleName());
+            return Attempt.failed(true, e.getClass().getSimpleName());
         }
     }
 
@@ -172,18 +206,18 @@ public class RecommenderClient {
         if (NO_CANDIDATES.equals(errorCode)) {
             // 장애가 아니다. 화면에는 "맞는 곡이 없다" 로 나가야 한다.
             log.info("추천 결과 없음 path={}", path);
-            return new Attempt(null, false, true, NO_CANDIDATES);
+            return Attempt.none(NO_CANDIDATES);
         }
         if (status.value() == 401) {
             // 한쪽만 켠 상태다. 다시 불러도 같으므로 재시도하지 않는다.
             log.error("추천 서버가 인증을 거부했다 — MUPID_RECOMMENDER_INTERNAL_TOKEN 과 "
                 + "추천 서버의 MUPID_AI_INTERNAL_TOKEN 이 같은지 본다 (설정 여부={})",
                 props.hasInternalToken());
-            return new Attempt(null, false, false, "UNAUTHORIZED");
+            return Attempt.failed(false, "UNAUTHORIZED");
         }
         boolean retryable = status.is5xxServerError() && status.value() != 501;
         log.warn("추천 서버 오류 path={} status={} error_code={}", path, status, errorCode);
-        return new Attempt(null, retryable, false, errorCode);
+        return Attempt.failed(retryable, errorCode);
     }
 
     /** 오류 본문에서 `error_code` 만 꺼낸다. 없으면 null — 그 자체가 정보다. */
@@ -205,12 +239,66 @@ public class RecommenderClient {
      * @param retryable 한 번 더 불러 볼 만한가 (500·503·타임아웃)
      * @param empty     실패는 아니지만 결과가 없다 ({@code NO_CANDIDATES})
      */
+    /**
+     * 한 번의 호출 결과.
+     *
+     * <p>{@code response} 와 {@code similar} 중 하나만 찬다 — 두 경로의 응답 모양이
+     * 다르기 때문이다. 둘 다 비어 있으면 {@code empty}(결과 없음) 또는 실패다.
+     */
     private record Attempt(
         RecommenderDto.Response response,
+        RecommenderDto.SimilarResponse similar,
         boolean retryable,
         boolean empty,
         String reason
     ) {
+
+        static Attempt ok(RecommenderDto.Response response) {
+            return new Attempt(response, null, false, false, null);
+        }
+
+        static Attempt ok(RecommenderDto.SimilarResponse similar) {
+            return new Attempt(null, similar, false, false, null);
+        }
+
+        static Attempt none(String reason) {
+            return new Attempt(null, null, false, true, reason);
+        }
+
+        static Attempt failed(boolean retryable, String reason) {
+            return new Attempt(null, null, retryable, false, reason);
+        }
+    }
+
+    /**
+     * 닮은 구간은 응답 모양이 달라 따로 부른다. 실패 분류(`classify`)는 공유한다.
+     */
+    private Attempt callSimilar(RecommenderDto.SimilarRequest request) {
+        try {
+            AtomicReference<Attempt> failure = new AtomicReference<>();
+            byte[] body = recommenderRestClient.post()
+                .uri(SIMILAR)
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
+                .headers(this::authorize)
+                .body(AiJson.writeBytes(request))
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, (req, res) -> {
+                    failure.set(classify(SIMILAR, res.getStatusCode(), readError(res)));
+                })
+                .body(byte[].class);
+            Attempt failed = failure.get();
+            if (failed != null) {
+                return failed;
+            }
+            if (body == null || body.length == 0) {
+                return Attempt.none("빈 응답");
+            }
+            return Attempt.ok(AiJson.read(body, RecommenderDto.SimilarResponse.class));
+        } catch (RestClientException e) {
+            log.warn("추천 서버 호출 실패 path={}", SIMILAR, e);
+            return Attempt.failed(true, e.getClass().getSimpleName());
+        }
     }
 
 }

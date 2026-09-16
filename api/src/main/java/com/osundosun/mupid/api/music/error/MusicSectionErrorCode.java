@@ -32,7 +32,14 @@ public enum MusicSectionErrorCode implements ErrorCode {
      * 이 값은 AI 색인과 DB 를 잇는 유일한 근거라 곡 전체에서 고유해야 합니다.
      * 겹친 채로 넣으면 추천이 엉뚱한 곡을 가리키면서도 조회는 정상으로 보입니다.
      */
-    SECTION_EXTERNAL_ID_DUPLICATED(HttpStatus.CONFLICT, "이미 다른 곡에 쓰인 external_id 입니다.");
+    SECTION_EXTERNAL_ID_DUPLICATED(HttpStatus.CONFLICT, "이미 다른 곡에 쓰인 external_id 입니다."),
+
+    /**
+     * 그 곡의 구간이 아닙니다.
+     *
+     * 남의 곡 구간 번호를 통과시키면 URL 의 곡과 결과가 어긋난 채 화면이 그려진다.
+     */
+    SECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 구간을 찾을 수 없습니다.");
 
     private final HttpStatus status;
     private final String message;

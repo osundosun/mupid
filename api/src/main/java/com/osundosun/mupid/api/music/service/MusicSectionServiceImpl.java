@@ -1,5 +1,6 @@
 package com.osundosun.mupid.api.music.service;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -12,11 +13,16 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.code.entity.Code;
+import com.osundosun.mupid.api.code.enumerate.CodeType;
+import com.osundosun.mupid.api.code.repository.CodeRepository;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
 import com.osundosun.mupid.api.music.error.MusicSectionErrorCode;
+import com.osundosun.mupid.api.music.mapping.entity.MusicSectionAnalysisMood;
+import com.osundosun.mupid.api.music.mapping.repository.MusicSectionAnalysisMoodRepository;
 import com.osundosun.mupid.api.music.repository.MusicSectionAnalysisRepository;
 import com.osundosun.mupid.api.music.request.MusicSectionBulkLine;
 import com.osundosun.mupid.api.music.request.MusicSectionBulkRequest;
@@ -24,7 +30,9 @@ import com.osundosun.mupid.api.music.response.MusicSectionBulkResponse;
 import com.osundosun.mupid.api.music.response.MusicSectionRef;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -32,6 +40,8 @@ public class MusicSectionServiceImpl implements MusicSectionService {
 
     private final MusicService musicService;
     private final MusicSectionAnalysisRepository repository;
+    private final MusicSectionAnalysisMoodRepository moodRepository;
+    private final CodeRepository codeRepository;
 
     @Override
     public MusicSectionBulkResponse replaceSections(int musicId, MusicSectionBulkRequest request) {
@@ -46,6 +56,16 @@ public class MusicSectionServiceImpl implements MusicSectionService {
 
         validate(request.sections());
         rejectForeignExternalIds(musicId, request.sections());
+
+        // 분위기 연결을 먼저 끊는다. 구간을 지우면 FK 가 걸리고, 영속성 컨텍스트에는
+        // 지워진 구간을 가리키는 연결이 남는다.
+        List<Integer> oldIds = repository.findByMusic_MusicIdOrderByIndexAsc(musicId).stream()
+            .map(MusicSectionAnalysis::getMusicSectionAnalysisId)
+            .toList();
+        if (!oldIds.isEmpty()) {
+            moodRepository.deleteByMusicSectionAnalysisMoodId_MusicSectionAnalysisIdIn(oldIds);
+            moodRepository.flush();
+        }
 
         // 지운 뒤 넣으므로 먼저 내보낸다. 안 그러면 같은 트랜잭션 안에서 INSERT 가
         // DELETE 보다 앞서 나가 유니크 제약에 걸린다 — 같은 곡을 다시 적재할 때
@@ -69,6 +89,8 @@ public class MusicSectionServiceImpl implements MusicSectionService {
         // 번호를 응답에 실어야 하므로 여기서 채번을 강제한다. IDENTITY 전략이라
         // flush 전에는 `musicSectionAnalysisId` 가 null 이다.
         repository.flush();
+
+        replaceMoods(request.sections(), rows);
 
         return new MusicSectionBulkResponse(
             musicId,
@@ -99,6 +121,73 @@ public class MusicSectionServiceImpl implements MusicSectionService {
         return repository.findByMusic_MusicIdOrderByIndexAsc(musicId).stream()
             .findFirst()
             .map(row -> row.getExternalId().split("#", 2)[0]);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<String> externalIdOfSection(int musicSectionAnalysisId) {
+        return repository.findById(musicSectionAnalysisId)
+            .map(MusicSectionAnalysis::getExternalId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<MusicSectionAnalysis> findSectionOfMusic(int musicId,
+                                                            int musicSectionAnalysisId) {
+        return repository.findById(musicSectionAnalysisId)
+            .filter(row -> row.getMusic().getMusicId().equals(musicId));
+    }
+
+    /**
+     * 구간마다 딸린 분위기를 갈아 끼운다.
+     *
+     * 구간을 통째로 지웠다 다시 만들었으므로 옛 연결은 함께 사라진다(복합키의 한쪽이
+     * 구간 번호라 남을 수가 없다). 여기서는 새로 넣기만 한다.
+     *
+     * **코드표에 없는 이름은 버리고 센다.** 지어내서 넣으면 화면이 틀린 분위기를
+     * 말하게 된다. 분위기를 못 고른 곡이 실제로 있으므로(카탈로그의 14%) 비어 있는
+     * 것 자체는 오류가 아니다.
+     */
+    private void replaceMoods(List<MusicSectionBulkLine> lines,
+                              List<MusicSectionAnalysis> rows) {
+        boolean any = lines.stream()
+            .anyMatch(line -> line.moods() != null && !line.moods().isEmpty());
+        if (!any) {
+            return;
+        }
+        Map<String, Code> byName = codeRepository
+            .findAllByCodeTypeOrderByCodeIdAsc(CodeType.MOOD).stream()
+            .collect(Collectors.toMap(Code::getCodeName, code -> code, (a, b) -> a));
+
+        List<MusicSectionAnalysisMood> links = new ArrayList<>();
+        Set<String> unknown = new HashSet<>();
+        for (int i = 0; i < lines.size(); i++) {
+            List<String> moods = lines.get(i).moods();
+            if (moods == null) {
+                continue;
+            }
+            MusicSectionAnalysis row = rows.get(i);
+            Set<Integer> seen = new HashSet<>();
+            for (String name : moods) {
+                Code code = byName.get(name == null ? "" : name.strip());
+                if (code == null) {
+                    unknown.add(String.valueOf(name));
+                    continue;
+                }
+                if (!seen.add(code.getCodeId())) {
+                    continue;                       // 같은 구간에 같은 분위기를 두 번
+                }
+                // `@MapsId` 가 복합키를 관계에서 채운다. 빈 키를 주고 관계만 세운다.
+                links.add(new MusicSectionAnalysisMood(
+                    new MusicSectionAnalysisMood.MusicSectionAnalysisMoodId(),
+                    row, code));
+            }
+        }
+        if (!unknown.isEmpty()) {
+            // 조용히 넘기면 "분위기가 왜 비지" 로만 보인다. 이름을 남긴다.
+            log.warn("코드표에 없는 분위기 {}건 제외 — {}", unknown.size(), unknown);
+        }
+        moodRepository.saveAll(links);
     }
 
     /** 요청 안에서 닫히는 검사. DB 를 보지 않는다. */

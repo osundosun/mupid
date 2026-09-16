@@ -1507,7 +1507,7 @@ def test_register_sections_converts_seconds_to_int_ms():
     rows, _ = rs.build_payload(_moments_frame())
     assert rows[0] == {"section_index": 0, "external_id": "T000001#0",
                        "section_label": "INTRO", "start_time_ms": 0,
-                       "end_time_ms": 15500}
+                       "end_time_ms": 15500, "moods": []}
     assert all(isinstance(r["start_time_ms"], int) for r in rows)
 
 
@@ -1819,3 +1819,25 @@ def test_serve_is_listed_as_a_tool():
 
     m = importlib.import_module("ai_server.tools.serve")
     assert callable(m.main) and callable(m.preflight)
+
+
+def test_register_sections_maps_ai_mood_tags_to_code_names():
+    """번호는 보내지 않는다 — 코드 번호는 MySQL 이 발급한다. 이름으로 보내면 Spring 이 붙인다.
+
+    옮기지 못한 태그는 버린다. 지어내서 보내면 화면이 틀린 분위기를 말한다.
+    """
+    from ai_server.tools import register_sections as rs
+
+    assert rs.moods_of("relaxing, meditative") == ["잔잔한"]
+    assert rs.moods_of(["energetic", "sad"]) == ["신나는", "감성적인"]
+    assert rs.moods_of("없는태그") == []
+    assert rs.moods_of(None) == []
+
+
+def test_register_sections_attaches_track_moods_to_every_section():
+    """AI 카탈로그는 구간별 무드를 갖고 있지 않다. 곡의 것을 그 곡의 모든 구간에 붙인다."""
+    from ai_server.tools import register_sections as rs
+
+    rows, _ = rs.build_payload(_moments_frame(), ["잔잔한"])
+    assert rows, "구간이 비었다"
+    assert all(r["moods"] == ["잔잔한"] for r in rows)

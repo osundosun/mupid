@@ -32,4 +32,17 @@ public interface MusicSectionService {
      */
     Optional<String> trackExternalIdOf(int musicId);
 
+    /**
+     * 구간 번호 → 그 구간의 AI 문자열 ID. 추천 요청에 기준 구간을 실을 때 쓴다.
+     */
+    Optional<String> externalIdOfSection(int musicSectionAnalysisId);
+
+    /**
+     * 그 구간이 그 곡의 것인가. 아니면 비어 있다.
+     *
+     * 남의 곡 구간 번호로 물어보면 404 여야 한다 — 통과시키면 URL 의 곡과 결과가
+     * 어긋난 채 화면이 그려진다.
+     */
+    Optional<MusicSectionAnalysis> findSectionOfMusic(int musicId, int musicSectionAnalysisId);
+
 }

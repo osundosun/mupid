@@ -44,7 +44,37 @@ public final class RecommendReason {
         "COLD_START", "많이 듣는 %s 구간부터 들려드려요."
     );
 
-    private static final String FALLBACK = "취향에 맞을 것 같은 구간이에요.";
+    private static final String FALLBACK = "취향에 맞을 것 같아요.";
+
+    /** 구간을 말하지 않는 문구. 「오늘의 모먼트」처럼 곡 목록으로 보여줄 때 쓴다. */
+    private static final Map<String, String> TRACK_TEXT = Map.of(
+        "QUERY_SEMANTIC_MATCH", "요청하신 분위기에 가까운 곡이에요.",
+        "QUERY_FILTER_MATCH", "요청하신 조건에 맞는 곡이에요.",
+        "SIMILAR_PREFERRED_MOMENT", "최근 좋아한 구간과 비슷한 곡이에요.",
+        "ONBOARDING_MATCH", "처음 고른 취향에 맞는 곡이에요.",
+        "EXPLORE_NEW", "새로 들어볼 만한 곡이에요.",
+        "COLD_START", "많이 듣는 곡이에요."
+    );
+
+    /** 묶음 하나를 설명하는 한 줄. `daily_recommendations.reason` 에 들어간다. */
+    private static final Map<String, String> GROUP_TEXT = Map.of(
+        "QUERY_SEMANTIC_MATCH", "요청하신 분위기에 가까운 곡들이에요.",
+        "QUERY_FILTER_MATCH", "요청하신 조건에 맞는 곡들이에요.",
+        "SIMILAR_PREFERRED_MOMENT", "최근 좋아한 구간과 비슷한 곡들이에요.",
+        "ONBOARDING_MATCH", "처음 고른 취향에 맞는 곡들이에요.",
+        "EXPLORE_NEW", "새로 들어볼 만한 곡들이에요.",
+        "COLD_START", "많이 듣는 곡부터 골랐어요."
+    );
+
+    /** 구간을 말하지 않는 곡 단위 문구. */
+    public static String ofTrack(String reasonCode) {
+        return TRACK_TEXT.getOrDefault(reasonCode, FALLBACK);
+    }
+
+    /** 묶음 단위 문구. 모르는 코드에서도 빈 문자열을 내보내지 않는다. */
+    public static String ofGroup(String reasonCode) {
+        return GROUP_TEXT.getOrDefault(reasonCode, FALLBACK);
+    }
 
     public static String of(String reasonCode, SectionLabel label) {
         String template = reasonCode == null ? null : TEXT.get(reasonCode);

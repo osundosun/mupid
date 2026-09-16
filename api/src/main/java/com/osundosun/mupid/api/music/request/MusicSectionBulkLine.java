@@ -2,6 +2,8 @@ package com.osundosun.mupid.api.music.request;
 
 import com.osundosun.mupid.api.music.enumerate.SectionLabel;
 
+import java.util.List;
+
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -36,7 +38,15 @@ public record MusicSectionBulkLine(
 
     @NotNull(message = "구간 종료 시간이 입력되지 않았습니다.")
     @PositiveOrZero(message = "구간 종료 시간은 0 이상이어야 합니다.")
-    Integer endTimeMs
+    Integer endTimeMs,
+
+    /**
+     * 이 구간의 분위기. **코드 이름**으로 받는다 (`잔잔한`·`신나는`…).
+     *
+     * 번호는 우리가 붙인다 — AI 는 MySQL 이 발급한 숫자를 모른다. 코드표에 없는
+     * 이름은 버리고 센다. 비워 둬도 된다(분위기를 못 고른 곡이 실제로 14% 있다).
+     */
+    List<@Size(max = 50) String> moods
 
 ) {
 

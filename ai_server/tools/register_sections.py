@@ -40,13 +40,42 @@ from pathlib import Path
 
 import pandas as pd
 
-from ai_server.app import ids, paths, recommender
+from ai_server.app import ids, onboarding, paths, recommender
 from ai_server.app.log import log
 from ai_server.tools import _api_auth, build_id_map
 from ai_server.tools.push_sections import SECTION_ENUM
 
 ANALYSIS_VERSION = "v1"
 TIMEOUT = 30
+
+# AI 태그 → Spring 코드표 이름. `MOOD_MAP` 을 뒤집은 것이다.
+#
+# **번호는 보내지 않는다.** 코드 번호는 MySQL 이 발급하고 이 서버는 모른다 — 이름으로
+# 보내면 Spring 이 붙인다. 카탈로그 1,063곡 중 918곡(86%)이 이 표로 옮겨진다. 나머지는
+# 분위기 없이 들어가고, 그 자체는 오류가 아니다.
+MOOD_BY_TAG: dict[str, str] = {}
+for _ko, _tags in onboarding.MOOD_MAP.items():
+    for _tag in _tags:
+        MOOD_BY_TAG.setdefault(_tag, _ko)
+
+
+def _tag_list(value) -> list[str]:
+    """`flow_meta.mood_tags` 는 쉼표로 이은 문자열이거나 목록이다."""
+    if isinstance(value, str):
+        return [x.strip() for x in value.split(",") if x.strip()]
+    if value is None:
+        return []
+    return [str(x).strip() for x in value if str(x).strip()]
+
+
+def moods_of(tags) -> list[str]:
+    """곡의 AI 무드 태그 → Spring 코드 이름. 순서를 지키고 중복은 뺀다."""
+    out: list[str] = []
+    for tag in _tag_list(tags):
+        name = MOOD_BY_TAG.get(tag)
+        if name and name not in out:
+            out.append(name)
+    return out
 
 
 def read_track_map(path: Path) -> dict[str, int]:
@@ -74,8 +103,13 @@ def read_track_map(path: Path) -> dict[str, int]:
     return out
 
 
-def build_payload(group: pd.DataFrame) -> tuple[list[dict], dict]:
-    """한 곡의 구간 목록. 보낼 수 없는 것은 이유별로 센다."""
+def build_payload(group: pd.DataFrame,
+                  moods: list[str] | None = None) -> tuple[list[dict], dict]:
+    """한 곡의 구간 목록. 보낼 수 없는 것은 이유별로 센다.
+
+    `moods` 는 곡 단위다. AI 카탈로그가 구간별 무드를 갖고 있지 않아 곡의 것을 그 곡의
+    모든 구간에 같이 붙인다 — 구간별로 갈리면 그때 좁히면 된다.
+    """
     stat = {"unknown_label": 0, "bad_range": 0, "long_uid": 0}
     rows = []
     for r in group.itertuples():
@@ -101,6 +135,7 @@ def build_payload(group: pd.DataFrame) -> tuple[list[dict], dict]:
             "section_label": label,
             "start_time_ms": s_ms,
             "end_time_ms": e_ms,
+            "moods": list(moods or []),
         })
     rows.sort(key=lambda x: x["section_index"])
     return rows, stat
@@ -152,6 +187,17 @@ def main() -> int:
         return 1
 
     tmap = read_track_map(Path(a.track_map))
+    # 곡 분위기. 없으면 분위기 없이 넣는다 — 그 자체는 오류가 아니다.
+    meta_path = paths.data_dir() / "flow_meta.parquet"
+    mood_of: dict[str, list[str]] = {}
+    if meta_path.exists():
+        meta = pd.read_parquet(meta_path)
+        if "mood_tags" in meta.columns:
+            mood_of = {str(r.track_id): moods_of(r.mood_tags)
+                       for r in meta.itertuples()}
+    else:
+        log(f"{meta_path.name} 이 없다 — 분위기 없이 적재한다")
+
     groups = list(mom.groupby("track_id", sort=True))
     if a.limit:
         groups = groups[:a.limit]
@@ -172,7 +218,7 @@ def main() -> int:
         if music_id is None:
             unmapped.append(tid)
             continue
-        sections, s = build_payload(group)
+        sections, s = build_payload(group, mood_of.get(tid))
         for k in stat:
             stat[k] += s[k]
         if not sections:
@@ -197,7 +243,9 @@ def main() -> int:
                 "music_section_id": int(row["music_section_analysis_id"]),
             })
 
-    log(f"곡 {len(groups)}개 중 {sent}개 적재 · 구간 {len(pairs)}개")
+    with_mood = sum(1 for t, _ in groups if mood_of.get(str(t)))
+    log(f"곡 {len(groups)}개 중 {sent}개 적재 · 구간 {len(pairs)}개 "
+        f"· 분위기 있는 곡 {with_mood}개")
     for k in ("unknown_label", "bad_range", "long_uid"):
         if stat[k]:
             log(f"  제외 구간 {k}={stat[k]}")

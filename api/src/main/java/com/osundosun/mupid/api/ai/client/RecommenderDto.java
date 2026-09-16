@@ -81,6 +81,54 @@ public final class RecommenderDto {
     ) {
     }
 
+    /**
+     * 오늘의 모먼트 요청. 배치가 사용자마다 한 번씩 부른다.
+     *
+     * <p>이어 듣기와 달리 기준 곡이 없다 — 그날 무엇을 들려줄지는 행동 이력과 온보딩만
+     * 보고 정한다.
+     */
+    public record DailyRequest(
+        long recommendationId,
+        int userId,
+        int limit,
+        List<String> excludeTracks,
+        Onboarding onboarding
+    ) {
+    }
+
+    /**
+     * 닮은 구간 요청. **개인화가 없다** — `userId` 를 보내지 않는다.
+     *
+     * <p>같은 구간에는 누가 물어도 같은 답이 나온다. 그래서 캐시할 수 있고
+     * {@code recommendationId} 도 필요 없다.
+     */
+    public record SimilarRequest(
+        String externalId,
+        int limit,
+        List<String> excludeTracks
+    ) {
+    }
+
+    /** 닮은 구간 응답. 취향이 섞이지 않은 코사인 값만 온다. */
+    public record SimilarResponse(
+        String externalId,
+        List<SimilarItem> items,
+        int shortfall,
+        String embeddingVersion
+    ) {
+        public List<SimilarItem> safeItems() {
+            return items == null ? List.of() : items;
+        }
+    }
+
+    public record SimilarItem(
+        String externalId,
+        int rankOrder,
+        /** 코사인. 순위 근거일 뿐 확률이 아니다. */
+        double similarity
+    ) {
+    }
+
     public record Response(
         long recommendationId,
         List<Item> items,
