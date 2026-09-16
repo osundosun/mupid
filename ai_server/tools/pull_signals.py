@@ -98,7 +98,7 @@ def fetch_plays(since: str, limit: int) -> list[dict]:
     types = ",".join(f"'{t}'" for t in PLAY_EVENTS)
     sql = (
         "SELECT user_id, track_id, event_type AS signal, entry_path, reason, "
-        "position_ms, toString(play_id) AS play_id, "
+        "position_ms, from_ms, toString(play_id) AS play_id, "
         "toString(occurred_at) AS ts "
         "FROM listen_events "
         f"WHERE event_type IN ({types}) AND track_id > 0 "
@@ -133,6 +133,24 @@ def to_play_event(r: dict, im) -> dict | None:
         ev["reason"] = str(r.get("reason") or "")
         # 초기 스킵 판정은 초 단위로 본다 (FAST_SKIP_SEC)
         ev["position_sec"] = round(int(r.get("position_ms") or 0) / 1000.0, 3)
+
+        # 어디부터 어디까지 들었는지를 함께 싣는다.
+        #
+        # 라벨러는 `intervals` 로 구간별 커버리지를 재고, 그 결과가 임계에 닿아야
+        # `reached` 가 선다. 도달하지 않은 구간에는 부정 라벨을 붙이지 않으므로,
+        # 이 칸이 비면 **모든 명시 신호(좋아요·되감기)가 "미도달" 로 마스킹되어**
+        # 라벨이 한 건도 나오지 않는다. 오류는 나지 않고 결과만 비어서, 증상이
+        # "개인화가 안 된다" 로만 보인다.
+        #
+        # `listen_events` 는 한 번의 재생을 play_id 로 묶고 from_ms·position_ms 로
+        # 그 범위를 알려 준다. 이어 붙인 구간이 아니라 **연속 재생 한 칸**이므로
+        # 지어내는 값이 아니다. 세션도 play_id 를 그대로 쓴다 — 라벨러는 세션을
+        # 몇 번째 청취인지 세는 데만 쓰고, 한 번의 재생이 곧 한 세션이다.
+        start_sec = round(int(r.get("from_ms") or 0) / 1000.0, 3)
+        end_sec = ev["position_sec"]
+        if end_sec > start_sec:
+            ev["intervals"] = [{"start_sec": start_sec, "end_sec": end_sec}]
+        ev["session_id"] = ev["play_id"]
     return ev
 
 
