@@ -652,6 +652,9 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // 장르가 45개를 넘는다. 전부 펼치면 '다음' 버튼이 화면 밖으로 밀려
+  // 고르다 말고 스크롤을 한참 내려야 한다 — 검색으로 좁힌다.
+  const [genreQuery, setGenreQuery] = useState('');
   // 고를 수 있는 항목은 서버가 정한다. 못 받아 오면 화면 기본 목록으로 돌아간다.
   const [options, setOptions] = useState<{ moods: string[]; genres: string[] }>({
     moods: moodOptions,
@@ -665,13 +668,19 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
     });
     return () => { abort.abort(); };
   }, []);
+  // 고른 것은 검색과 무관하게 남긴다 — 검색어를 바꿨다고 고른 것이 사라지면
+  // 무엇을 골랐는지 확인할 방법이 없다.
+  const query = genreQuery.trim().toLowerCase();
+  const visibleGenres = query
+    ? options.genres.filter((genre) => genre.toLowerCase().includes(query))
+    : options.genres;
   return (
     <div className="welcome-page">
       {(step > 0 || m.onboardingSubmitted) && <button
         className="icon-button welcome-back"
         aria-label={step > 0 ? '이전 단계로 돌아가기' : '홈으로 돌아가기'}
         disabled={busy}
-        onClick={() => { setError(''); if (step > 0) setStep(step - 1); else m.go('home'); }}
+        onClick={() => { setError(''); setGenreQuery(''); if (step > 0) setStep(step - 1); else m.go('home'); }}
       >
         <ChevronLeft />
       </button>}
@@ -719,7 +728,55 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
           <h1>{['어떤 장르를 좋아하세요?', '어떤 분위기를 좋아하세요?'][step]}</h1>
           {step === 0 && <fieldset key="genres" className="onboarding-choice-group">
             <legend>좋아하는 장르 <small>하나 이상 · 여러 개 선택 가능</small></legend>
-            <div className="filter-chips wrap">{options.genres.map(genre => <button type="button" key={genre} disabled={busy} aria-pressed={selectedGenres.includes(genre)} className={selectedGenres.includes(genre) ? 'selected' : ''} onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}>{genre}</button>)}</div>
+            {/* 고른 것을 위에 고정한다. 목록을 스크롤해도 무엇을 골랐는지 보이고,
+                되돌리려고 다시 찾아 내려갈 필요가 없다. */}
+            {selectedGenres.length > 0 && (
+              <div className="onboarding-picked">
+                <span className="onboarding-picked-count">{selectedGenres.length}개 선택</span>
+                {selectedGenres.map((genre) => (
+                  <button
+                    type="button"
+                    key={genre}
+                    className="onboarding-picked-chip"
+                    disabled={busy}
+                    aria-label={`${genre} 선택 해제`}
+                    onClick={() => setSelectedGenres((list) => list.filter((item) => item !== genre))}
+                  >
+                    {genre} <span aria-hidden="true">×</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* 목록이 길 때만 검색을 낸다. 8개뿐이던 때와 화면이 달라지지 않게. */}
+            {options.genres.length > 12 && (
+              <input
+                type="search"
+                className="onboarding-search"
+                value={genreQuery}
+                disabled={busy}
+                placeholder="장르 검색"
+                aria-label="장르 검색"
+                onChange={(e) => setGenreQuery(e.target.value)}
+              />
+            )}
+            <div className="filter-chips wrap onboarding-scroll">
+              {visibleGenres.map((genre) => (
+                <button
+                  type="button"
+                  key={genre}
+                  disabled={busy}
+                  aria-pressed={selectedGenres.includes(genre)}
+                  className={selectedGenres.includes(genre) ? 'selected' : ''}
+                  onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}
+                >
+                  {genre}
+                </button>
+              ))}
+            </div>
+            {/* 검색 결과가 없을 때 빈 화면만 남으면 고장으로 보인다. */}
+            {visibleGenres.length === 0 && (
+              <p className="onboarding-empty">‘{genreQuery}’와 맞는 장르가 없어요.</p>
+            )}
           </fieldset>}
           {step === 1 && <fieldset key="moods" className="onboarding-choice-group">
           <legend>좋아하는 분위기 <small>하나 이상 · 여러 개 선택 가능</small></legend>
