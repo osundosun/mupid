@@ -141,12 +141,27 @@ def main():
 
     # 파드는 Secret 이 바뀌어도 스스로 다시 읽지 않는다. env 로 주입된 값은
     # 프로세스 시작 때 한 번 읽히고 끝이다.
-    restarted = kubectl("rollout", "restart", "deployment/api")
-    if restarted.returncode:
-        fail(f"RESTART_FAILED: {restarted.stderr.strip()[:400]}")
-    waited = kubectl("rollout", "status", "deployment/api", "--timeout=300s", timeout=330)
-    if waited.returncode:
-        fail(f"ROLLOUT_FAILED: {waited.stderr.strip()[:400]}")
+    #
+    # **순서가 중요하다 — api 를 먼저, ai 를 나중에.** 둘은 `/internal` 공유 비밀을
+    # 같은 Secret 에서 읽는다(Spring 은 MUPID_RECOMMENDER_INTERNAL_TOKEN, 추천
+    # 서버는 MUPID_AI_INTERNAL_TOKEN). 추천 서버를 먼저 올리면 새 토큰을 요구하는데
+    # Spring 은 아직 옛 토큰을 보내 **그 사이 추천이 전부 401** 이다.
+    #
+    # 반대 순서에는 그 구간이 없다. 토큰이 비어 있으면 추천 서버가 인증을 아예
+    # 건너뛰므로, 먼저 올라온 Spring 이 새 토큰을 보내도 옛 추천 서버는 그냥 받는다.
+    for workload in ("deployment/api", "deployment/ai"):
+        present = kubectl("get", workload, "-o", "name")
+        if present.returncode:
+            # 아직 없는 워크로드는 건너뛴다. 다만 조용히 넘기지 않는다 —
+            # 재시작한 줄 알고 있으면 옛 값으로 도는 파드를 못 찾는다.
+            print(f"건너뜀: {workload} 가 없다", file=sys.stderr)
+            continue
+        restarted = kubectl("rollout", "restart", workload)
+        if restarted.returncode:
+            fail(f"RESTART_FAILED({workload}): {restarted.stderr.strip()[:400]}")
+        waited = kubectl("rollout", "status", workload, "--timeout=300s", timeout=330)
+        if waited.returncode:
+            fail(f"ROLLOUT_FAILED({workload}): {waited.stderr.strip()[:400]}")
 
     print(f"APPLIED {release}")
     print(f"  추가 {len(added)}개: {', '.join(added) or '-'}")

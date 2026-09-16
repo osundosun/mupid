@@ -88,6 +88,17 @@ spec:
             - name: MUPID_AI_MODEL
               valueFrom:
                 secretKeyRef: {name: mupid-secrets, key: MUPID_AI_MODEL, optional: true}
+            # 추천 서버(ai_server)와 나누는 /internal 공유 비밀. **양쪽을 동시에**
+            # 켠다 — 여기만 켜고 ai.yaml 의 MUPID_AI_INTERNAL_TOKEN 을 비우면 추천
+            # 서버가 인증을 건너뛰어 그냥 동작하고(구멍이 열린 채로), 반대로
+            # 저쪽만 켜면 추천 호출이 전부 401 이다. 둘 다 같은 Secret 키에서 오므로
+            # 값이 어긋날 일은 없고, 재시작 순서는 receive-env.py 가 맞춘다.
+            #
+            # optional: true 다. 키가 없으면 스프링이 빈 값으로 가고 추천만 503 이다 —
+            # 없다고 파드가 못 뜨면 안 된다.
+            - name: MUPID_RECOMMENDER_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: mupid-secrets, key: MUPID_RECOMMENDER_INTERNAL_TOKEN, optional: true}
           resources:
             requests: {cpu: 500m, memory: 700Mi}
             limits: {memory: 2Gi}
