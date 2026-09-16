@@ -164,3 +164,27 @@ export function placeInQueue(
 
   return { entries: next, moved, fellBack, evictedTrackId, uid: placed.uid };
 }
+
+/** 자동 스크롤이 반응하는 위아래 가장자리 폭(px). */
+export const AUTO_SCROLL_EDGE = 56;
+/** 한 프레임에 밀 수 있는 최대 거리(px). */
+export const AUTO_SCROLL_MAX_STEP = 16;
+
+/**
+ * 끄는 손이 목록의 위아래 가장자리에 닿았을 때 한 프레임에 밀 거리.
+ *
+ * 가운데에서는 0 이고, 가장자리로 깊이 들어갈수록 빨라진다 — 끝을 살짝 넘긴
+ * 정도면 천천히 기어가야 놓을 자리를 겨눌 수 있고, 완전히 벗어나면 100곡짜리
+ * 목록도 한 번에 가로지를 만큼 빨라야 한다. 위로 밀 때는 음수다.
+ */
+export function autoScrollDelta(pointerY: number, top: number, bottom: number): number {
+  if (pointerY < top + AUTO_SCROLL_EDGE) {
+    const depth = Math.min(top + AUTO_SCROLL_EDGE - pointerY, AUTO_SCROLL_EDGE);
+    return -Math.ceil((depth / AUTO_SCROLL_EDGE) * AUTO_SCROLL_MAX_STEP);
+  }
+  if (pointerY > bottom - AUTO_SCROLL_EDGE) {
+    const depth = Math.min(pointerY - (bottom - AUTO_SCROLL_EDGE), AUTO_SCROLL_EDGE);
+    return Math.ceil((depth / AUTO_SCROLL_EDGE) * AUTO_SCROLL_MAX_STEP);
+  }
+  return 0;
+}

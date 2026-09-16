@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { GripVertical, X } from 'lucide-react';
 import type { MupidModel, QueueTrack } from '@/hooks/use-mupid';
 import type { TrackSelection } from './track-selection';
+import { autoScrollDelta } from '@/lib/queue';
 import { TrackRow } from './primitives';
 
 // 재생 목록은 순서가 곧 다음에 들을 곡이라 끌어서 바꿀 수 있어야 한다.
@@ -48,39 +49,116 @@ export function QueueList({
     });
   };
 
-  const onPointerDown = (uid: string) => (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setDragUid(uid);
-    setLiveUids(baseUids);
-  };
+  /*
+   * 끄는 동안의 값은 **참조로도 들고 있는다.** 자동 스크롤은 프레임마다 도는데,
+   * 그 함수가 붙잡은 state 는 끌기 시작한 순간의 값에 머문다.
+   */
+  const dragUidRef = useRef<string | null>(null);
+  const liveUidsRef = useRef<string[] | null>(null);
+  const pointerY = useRef(0);
+  const frame = useRef<number | null>(null);
 
-  const onPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (dragUid === null || !liveUids) return;
+  const setDrag = (uid: string | null) => { dragUidRef.current = uid; setDragUid(uid); };
+  const setLive = (next: string[] | null) => { liveUidsRef.current = next; setLiveUids(next); };
+
+  /** 포인터가 놓인 자리에 맞춰 줄 순서를 다시 잡는다. */
+  const reorderAt = (clientY: number) => {
+    const dragging = dragUidRef.current;
+    const live = liveUidsRef.current;
+    if (!dragging || !live) return;
     const rows = [...(listRef.current?.querySelectorAll('[data-queue-uid]') ?? [])];
-    const from = liveUids.indexOf(dragUid);
+    const from = live.indexOf(dragging);
     let to = from;
     rows.forEach((row, index) => {
       const box = row.getBoundingClientRect();
-      if (event.clientY >= box.top && event.clientY <= box.bottom) to = index;
+      if (clientY >= box.top && clientY <= box.bottom) to = index;
     });
     if (to === from) return;
-    const next = liveUids.slice();
+    const next = live.slice();
     next.splice(from, 1);
-    next.splice(to, 0, dragUid);
-    setLiveUids(next);
+    next.splice(to, 0, dragging);
+    setLive(next);
+  };
+
+  /**
+   * 목록을 감싼 스크롤 상자(독의 본문). 여기서 찾아 두고 자동 스크롤에 쓴다.
+   *
+   * 클래스 이름으로 집지 않는다 — 목록이 다른 곳에 놓여도 그 자리의 스크롤
+   * 상자를 그대로 따라간다.
+   */
+  const scrollerOf = () => {
+    let node: HTMLElement | null = listRef.current?.parentElement ?? null;
+    while (node) {
+      if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  /**
+   * 목록의 위아래 끝으로 끌고 가면 목록이 따라 움직인다.
+   *
+   * 100곡을 담아 두면 화면에 서너 줄만 보인다. 자동으로 밀어 주지 않으면 첫 줄을
+   * 맨 끝으로 보내려고 **끌었다 놓기를 수십 번** 되풀이해야 한다.
+   *
+   * 프레임마다 돈다 — 포인터가 가장자리에 **멈춰 있어도** 계속 밀려야 하는데,
+   * 움직임이 없으면 `pointermove` 가 오지 않기 때문이다. 민 뒤에는 줄 위치가
+   * 달라졌으므로 놓일 자리를 다시 계산한다.
+   */
+  const stopAutoScroll = () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+  };
+
+  const autoScroll = () => {
+    const scroller = scrollerOf();
+    if (!scroller || !dragUidRef.current) { frame.current = null; return; }
+
+    const box = scroller.getBoundingClientRect();
+    const y = pointerY.current;
+    const delta = autoScrollDelta(y, box.top, box.bottom);
+
+    if (delta !== 0) {
+      const before = scroller.scrollTop;
+      scroller.scrollTop = before + delta;
+      // 끝에 닿아 더 밀리지 않으면 자리도 그대로다.
+      if (scroller.scrollTop !== before) reorderAt(y);
+    }
+    frame.current = requestAnimationFrame(autoScroll);
+  };
+
+  // 끌던 중에 화면을 떠나면 프레임이 남는다.
+  useEffect(() => stopAutoScroll, []);
+
+  const onPointerDown = (uid: string) => (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointerY.current = event.clientY;
+    setDrag(uid);
+    setLive(baseUids);
+    stopAutoScroll();
+    frame.current = requestAnimationFrame(autoScroll);
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (dragUidRef.current === null) return;
+    pointerY.current = event.clientY;
+    reorderAt(event.clientY);
   };
 
   const onPointerUp = () => {
-    if (dragUid !== null && liveUids) {
-      const to = liveUids.indexOf(dragUid);
-      setDragUid(null);
-      setLiveUids(null);
-      move(dragUid, to);
+    stopAutoScroll();
+    const dragging = dragUidRef.current;
+    const live = liveUidsRef.current;
+    if (dragging !== null && live) {
+      const to = live.indexOf(dragging);
+      setDrag(null);
+      setLive(null);
+      move(dragging, to);
       return;
     }
-    setDragUid(null);
-    setLiveUids(null);
+    setDrag(null);
+    setLive(null);
   };
 
   // 고르는 중에는 손잡이를 접어 둔다. 순서 바꾸기와 섞이면 헷갈린다.
