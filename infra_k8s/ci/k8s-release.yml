@@ -75,7 +75,7 @@ k8s-deploy-api:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
       changes: *api_changes
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
       when: manual
   script:
     - sh infra/ci/package-image.sh
@@ -92,7 +92,7 @@ k8s-deploy-web:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
       changes: *web_changes
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
       when: manual
   script:
     - sh infra_k8s/ci/package-web.sh

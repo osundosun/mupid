@@ -28,7 +28,7 @@ data-verify:
         - infra/ci/data.yml
         - infra/ci/deploy-jupyter.py
         - .gitlab-ci.yml
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/'
   script:
     # --python 3.12 를 명시한다. 저장소의 .python-version 은 3.14 인데 배치
     # 서버의 기본 파이썬은 3.12 다. CI 가 3.14 로 통과시키면 서버에서 처음
@@ -40,6 +40,17 @@ data-verify:
     - cd ..
     - uv run --python 3.12 --with requests --with websocket-client
         python infra/ci/deploy-jupyter.py --dry-run
+
+# 수동 job 은 web 과 api 두 소스에서 뜬다.
+#
+#   web   GitLab UI 의 Run pipeline
+#   api   POST /projects/:id/pipeline
+#
+# 둘은 권한이 같다. 어느 쪽이든 그 ref 에 파이프라인을 만들 수 있는 사람이어야
+# 하고, 보호 브랜치라면 보호 브랜치 권한이 필요하다. 그래서 api 를 받아도
+# 넓어지는 것이 없다 — 대신 자동화(스크립트·에이전트)가 UI 를 거치지 않고
+# 수동 job 을 띄울 수 있다. 민감한 job 은 그 위에 CI_COMMIT_REF_PROTECTED 와
+# 변수 존재 조건을 따로 걸어 둔다.
 
 # 서버에 붙어 상태만 읽는다. 아무것도 쓰지 않는다.
 #
@@ -54,7 +65,7 @@ data-check:
   variables:
     UV_CACHE_DIR: /cache/uv
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DATA_ENV'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DATA_ENV'
       when: manual
       allow_failure: true
   script:
@@ -94,7 +105,7 @@ data-deploy:
     #          아래 두 규칙이 CI_COMMIT_REF_PROTECTED 를 요구하는 것과 같은 방향.
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true" && $MUPID_DATA_ENV'
       changes: *data_paths
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DATA_ENV'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DATA_ENV'
       when: manual
   script:
     - uv run --python 3.12 --with requests --with websocket-client
@@ -126,7 +137,7 @@ data-batch:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $MUPID_DATA_ENV'
     # 손으로 한 바퀴 돌리고 싶을 때.
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DATA_ENV'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DATA_ENV'
       when: manual
   script:
     - uv run --python 3.12 --with requests --with websocket-client
