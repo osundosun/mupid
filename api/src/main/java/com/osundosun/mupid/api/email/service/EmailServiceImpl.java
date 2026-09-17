@@ -34,6 +34,9 @@ public class EmailServiceImpl implements EmailService {
         'U', 'V', 'W', 'X', 'Y', 'Z'
     };
 
+    /* frontend/public 의 메일용 로고 축소본. frontend/scripts/build-logo.mjs 가 만듭니다. */
+    private static final String MAIL_LOGO_PATH = "/mupid-logo-email.png";
+
     public static final long EMAIL_VERIFICATION_EXPIRED_MINUTES = 15;
     public static final long EMAIL_VERIFICATION_VALID_EXPIRATION_HOURS = 1;
 
@@ -63,14 +66,12 @@ public class EmailServiceImpl implements EmailService {
         if (user != null) {
             variables.put("userName", user.getNickname());
         }
-        if (!mupidClientWebsite.isBlank() && purpose.getMailUrl() != null) {
-            String verifyUrl = UriComponentsBuilder.fromUriString(mupidClientWebsite)
-                .path(purpose.getMailUrl())
-                .queryParam("action", purpose.name())
-                .queryParam("code", token)
+        if (!mupidClientWebsite.isBlank()) {
+            /* 메일 헤더 로고. 웹사이트 주소가 없으면 템플릿이 글자 워드마크로 대체합니다. */
+            variables.put("logoUrl", UriComponentsBuilder.fromUriString(mupidClientWebsite)
+                .path(MAIL_LOGO_PATH)
                 .encode()
-                .toUriString();
-            variables.put("verifyUrl", verifyUrl);
+                .toUriString());
         }
         String mailBody = templateService.buildHtml(purpose.getMailTemplate(), variables);
         String subject = "[뮤피드] %s".formatted(purpose.getMailTitle());
