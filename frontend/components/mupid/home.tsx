@@ -24,9 +24,9 @@ export function HomeView({ model: m }: { model: MupidModel }) {
         <div className="home-feed">
           <div className="greeting">
             <div className="greeting-copy">
-              <h1>안녕하세요, {m.displayName}님!</h1>
+              <h1>안녕하세요, {m.displayName}님! <Cloud className="greeting-cloud" aria-hidden="true" /></h1>
               <p>
-                오늘도 좋은 음악과 함께해요 <Cloud />
+                오늘의 음악을 만나보세요 :D
               </p>
             </div>
           </div>
@@ -55,6 +55,9 @@ export function HomeView({ model: m }: { model: MupidModel }) {
             onAction={() => m.go('profile')}
           />
           <div className="recent-grid">
+            {!m.history.some(id => tracks.some(track => track.id === id)) && (
+              <p className="listening-history-empty">아직 감상 기록이 없어요.<br />음악을 들으면 여기에 차곡차곡 모아둘게요.</p>
+            )}
             {m.history
               .slice(0, 4)
               .map((id) => tracks.find((t) => t.id === id)!)
@@ -93,7 +96,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
               height="240"
             />
             <h2>{m.active.title}</h2>
-            <p>{m.active.artist}</p>
+            <button className="track-artist-link" onClick={() => m.setSelectedArtist(m.active!.artist)}>{m.active.artist}</button>
             <Waveform
               duration={m.active.duration}
               start={m.active.moment}

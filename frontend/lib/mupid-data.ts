@@ -54,6 +54,7 @@ export type Track = {
   sections: SongSection[];
   /** 추천으로 온 곡일 때만 채워진다. 카탈로그에서 온 곡에는 없다. */
   recommended?: TrackRecommendation;
+  recommendationReason?: string;
 };
 
 /**

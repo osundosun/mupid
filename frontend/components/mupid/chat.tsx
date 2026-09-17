@@ -1,6 +1,6 @@
 'use client';
 import { MupidMascot } from './mascot';
-import { ArrowUp, LoaderCircle, Sparkles, X } from 'lucide-react';
+import { ArrowUp, LoaderCircle, Sparkle, Sparkles, X } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { chatSuggestions, formatTime } from '@/lib/mupid-data';
 import { AlbumArt, TrackRow } from './primitives';
@@ -15,7 +15,7 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
         ref={chatButtonRef}
         onClick={m.openChat}
       >
-        <span className="chat-launcher-label">AI</span>
+        <Sparkle aria-hidden="true" />
       </button>
     );
   return (
@@ -64,7 +64,7 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
               <p className="chat-handwriting">{message.text}</p>
               {message.tracks && (
                 <div className="chat-tracks">
-                  {message.tracks.map((track) => (
+                  {message.tracks.filter(track => !m.ignored.includes(track.id)).map((track) => (
                     <div className="chat-track" key={track.id}>
                       <TrackRow
                         track={track}

@@ -4,7 +4,7 @@ import {
   ArrowUpRight,
   AudioWaveform,
   ChevronRight,
-  Heart,
+  Bookmark,
   ListMusic,
   Pause,
   Play,
@@ -66,7 +66,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             <p className="desktop-song-artist">음악이 등록되면 여기에서 바로 들을 수 있어요.</p>
           </> : <>
           <h1>{m.active.title}</h1>
-          <p className="desktop-song-artist">{m.active.artist}</p>
+          <button className="desktop-song-artist track-artist-link" onClick={() => m.setSelectedArtist(m.active!.artist)}>{m.active.artist}</button>
           <p className="desktop-song-meta">
             {m.active.album} <span>·</span> {m.active.genre}
           </p>
@@ -144,7 +144,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             {!todayMoments.length && <p className="desktop-section-empty">지금 추천할 수 있는 곡이 없어요. 탐색에서 다른 음악을 만나보세요.</p>}
           </div>
           <button className="desktop-saved-link" onClick={() => {m.setLibraryTab('moments'); m.go('library');}}>
-            <Heart /><span>저장한 순간 <strong>{m.moments.length}</strong></span><ChevronRight />
+            <Bookmark /><span>저장한 순간 <strong>{m.moments.length}</strong></span><ChevronRight />
           </button>
         </aside>
       </div>
@@ -190,7 +190,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
           </header>
           <div className="desktop-recent-list">
             {recent.map((track) => (
-              <TrackRow key={track.id} track={track} model={m} queueable />
+              <TrackRow key={track.id} track={track} model={m} queueable showDetail={false} />
             ))}
           </div>
           {!recent.length && (

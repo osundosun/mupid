@@ -152,6 +152,7 @@ export function useMupid(bootstrap: Bootstrap) {
   const [selectedPlaylist, setSelectedPlaylist] = useState<number | null>(null);
   const [libraryTab, setLibraryTab] = useState('playlists');
   const [query, setQuery] = useState('');
+  const [selectedArtist, setSelectedArtist] = useState<string | null>(null);
   const [moodFilter, setMoodFilter] = useState('전체');
   // 셔플은 재생 목록 안에서 중복 없이 섞어 재생한다. 반복과 함께 켤 수 있다.
   const [shuffle, setShuffle] = useState(false);
@@ -1733,6 +1734,8 @@ export function useMupid(bootstrap: Bootstrap) {
 
     },
     playPlaylist,
+    selectedArtist,
+    setSelectedArtist,
     showAllSimilar,
     setShowAllSimilar,
     messageEndRef,

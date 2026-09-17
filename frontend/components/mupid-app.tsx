@@ -1,4 +1,5 @@
 'use client';
+import { ArtistInfo } from '@/components/mupid/artist-info';
 import { useEffect, useRef, useState } from 'react';
 import { mupidService } from '@/lib/services';
 import { clearBootstrap, readBootstrap, writeBootstrap } from '@/lib/services/bootstrap-cache';
@@ -276,13 +277,13 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
               >
                 <AlbumArt track={m.active!} />
               </button>
-              <button className="track-info" onClick={() => m.go('player')}>
-                <span className="mini-title">
+              <div className="track-info">
+                <button className="mini-title" onClick={() => m.go('player')}>
                   <strong>{m.active!.title}</strong>
                   <PlaybackStatus playing={m.playing} />
-                </span>
-                <span>{m.active!.artist}</span>
-              </button>
+                </button>
+                <button className="track-artist-link" onClick={() => m.setSelectedArtist(m.active!.artist)}>{m.active!.artist}</button>
+              </div>
               <MiniTimeline model={m} />
               <PlayerControls model={m} compact />
               <LikeButton model={m} />
@@ -326,6 +327,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
         </>
       )}
       <AppDialogs model={m} />
+      <ArtistInfo model={m} />
       <DemoLoginDialog model={m} />
       {m.toast && <output className="app-toast">{m.toast}</output>}
     </div>

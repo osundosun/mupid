@@ -31,6 +31,7 @@ export function ExploreCategories({ selected, onChange: setSelected, onSearch }:
     <div className="explore-category-switch" aria-label="큰 분류">
       {categories.map(({title, icon: Icon}, index) => <button key={title} aria-pressed={index === active} onClick={() => setActive(index)}><Icon size={20} /><span>{title}</span></button>)}
     </div>
+    <div className="category-options-scroll" tabIndex={0} role="region" aria-label="검색 조건">
     <p className="category-description">여러 개 선택할 수 있어요</p>
     <div className="category-groups">
       {categories[active].groups.map(group => <fieldset key={`${active}-${group.title}`}><legend>{group.title}</legend><div>
@@ -38,6 +39,7 @@ export function ExploreCategories({ selected, onChange: setSelected, onSearch }:
       </div></fieldset>)}
     </div>
     {selected.length > 0 && <div className="category-selected" aria-label="선택한 조건"><span>{selected.length}개 선택</span>{selected.map(key => <button key={key} aria-label={`${key.split('/').at(-1)} 선택 해제`} onClick={() => toggle(key)}>{key.split('/').at(-1)}<X size={13} /></button>)}</div>}
+    </div>
     <div className="category-search-action"><button type="button" className="primary-button" onClick={onSearch}>검색하기</button></div>
   </section>;
 }
