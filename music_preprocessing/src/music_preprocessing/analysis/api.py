@@ -363,8 +363,8 @@ class HttpRegistrar:
         for name in wanted:
             row = self.client.add_code("INSTRUMENT", name)
             if row.get("created"):
-                self.codes_added.append({"code_id": row.get("codeId"),
-                                         "name": row.get("codeName")})
+                self.codes_added.append({"code_id": row.get("code_id"),
+                                         "name": row.get("code_name")})
 
 
 def sections_payload(new_track) -> list[dict]:

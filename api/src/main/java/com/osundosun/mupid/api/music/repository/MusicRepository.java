@@ -14,12 +14,7 @@ import com.osundosun.mupid.api.music.entity.Music;
 
 public interface MusicRepository extends JpaRepository<Music, Integer> {
 
-    /**
-     * 제목·아티스트명·앨범명으로 검색한다. 검색어가 비면 전체 목록이다.
-     *
-     * 아티스트·앨범·곡 커버를 함께 가져온다. 지연 로딩에 맡기면 한 페이지(20곡)에
-     * 수십 번의 추가 질의가 나간다. 곡 커버는 없을 수 있어 LEFT 로 붙인다.
-     */
+    /** 전체 목록. 검색어가 있을 때는 아래 인덱스 검색으로 ID를 먼저 찾는다. */
     @Query("""
         SELECT m FROM Music m
         JOIN FETCH m.artist a
@@ -28,12 +23,98 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         JOIN FETCH al.imageFile
         LEFT JOIN FETCH m.imageFile
         WHERE m.isDeleted = false
-          AND (:keyword IS NULL
-               OR LOWER(m.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
-               OR LOWER(a.name) LIKE LOWER(CONCAT('%', :keyword, '%'))
-               OR LOWER(al.title) LIKE LOWER(CONCAT('%', :keyword, '%')))
         """)
-    Page<Music> search(@Param("keyword") String keyword, Pageable pageable);
+    Page<Music> findPage(Pageable pageable);
+
+    /**
+     * 곡 제목·아티스트명·앨범명을 각 ngram FULLTEXT 인덱스에서 찾고 관련도순으로
+     * 합친다. 테이블별 UNION 은 서로 다른 전문 인덱스를 확실히 타게 하기 위함이다.
+     */
+    @Query(value = """
+        SELECT ranked.music_id
+        FROM (
+            SELECT m.music_id, MATCH(m.title) AGAINST (:query IN BOOLEAN MODE) * 3 AS score
+            FROM music m
+            WHERE m.is_deleted = false
+              AND MATCH(m.title) AGAINST (:query IN BOOLEAN MODE)
+            UNION ALL
+            SELECT m.music_id, MATCH(a.name) AGAINST (:query IN BOOLEAN MODE) * 2 AS score
+            FROM artists a
+            JOIN music m ON m.artist_id = a.artist_id AND m.is_deleted = false
+            WHERE a.is_deleted = false
+              AND MATCH(a.name) AGAINST (:query IN BOOLEAN MODE)
+            UNION ALL
+            SELECT m.music_id, MATCH(al.title) AGAINST (:query IN BOOLEAN MODE) AS score
+            FROM albums al
+            JOIN music m ON m.album_id = al.album_id AND m.is_deleted = false
+            WHERE al.is_deleted = false
+              AND MATCH(al.title) AGAINST (:query IN BOOLEAN MODE)
+        ) ranked
+        GROUP BY ranked.music_id
+        ORDER BY MAX(ranked.score) DESC, ranked.music_id DESC
+        """,
+        countQuery = """
+        SELECT COUNT(DISTINCT ranked.music_id)
+        FROM (
+            SELECT m.music_id FROM music m
+            WHERE m.is_deleted = false
+              AND MATCH(m.title) AGAINST (:query IN BOOLEAN MODE)
+            UNION ALL
+            SELECT m.music_id FROM artists a
+            JOIN music m ON m.artist_id = a.artist_id AND m.is_deleted = false
+            WHERE a.is_deleted = false
+              AND MATCH(a.name) AGAINST (:query IN BOOLEAN MODE)
+            UNION ALL
+            SELECT m.music_id FROM albums al
+            JOIN music m ON m.album_id = al.album_id AND m.is_deleted = false
+            WHERE al.is_deleted = false
+              AND MATCH(al.title) AGAINST (:query IN BOOLEAN MODE)
+        ) ranked
+        """,
+        nativeQuery = true)
+    Page<Integer> searchIdsFullText(@Param("query") String query, Pageable pageable);
+
+    /** ngram 최소 토큰보다 짧은 한 글자는 B-Tree prefix 검색으로 처리한다. */
+    @Query(value = """
+        SELECT ranked.music_id
+        FROM (
+            SELECT m.music_id, 3 AS weight FROM music m
+            WHERE m.is_deleted = false
+              AND m.title LIKE CONCAT(:prefix, '%')
+            UNION ALL
+            SELECT m.music_id, 2 AS weight FROM artists a
+            JOIN music m ON m.artist_id = a.artist_id AND m.is_deleted = false
+            WHERE a.is_deleted = false
+              AND a.name LIKE CONCAT(:prefix, '%')
+            UNION ALL
+            SELECT m.music_id, 1 AS weight FROM albums al
+            JOIN music m ON m.album_id = al.album_id AND m.is_deleted = false
+            WHERE al.is_deleted = false
+              AND al.title LIKE CONCAT(:prefix, '%')
+        ) ranked
+        GROUP BY ranked.music_id
+        ORDER BY MAX(ranked.weight) DESC, ranked.music_id DESC
+        """,
+        countQuery = """
+        SELECT COUNT(DISTINCT ranked.music_id)
+        FROM (
+            SELECT m.music_id FROM music m
+            WHERE m.is_deleted = false
+              AND m.title LIKE CONCAT(:prefix, '%')
+            UNION ALL
+            SELECT m.music_id FROM artists a
+            JOIN music m ON m.artist_id = a.artist_id AND m.is_deleted = false
+            WHERE a.is_deleted = false
+              AND a.name LIKE CONCAT(:prefix, '%')
+            UNION ALL
+            SELECT m.music_id FROM albums al
+            JOIN music m ON m.album_id = al.album_id AND m.is_deleted = false
+            WHERE al.is_deleted = false
+              AND al.title LIKE CONCAT(:prefix, '%')
+        ) ranked
+        """,
+        nativeQuery = true)
+    Page<Integer> searchIdsByPrefix(@Param("prefix") String prefix, Pageable pageable);
 
     @Query("""
         SELECT m FROM Music m

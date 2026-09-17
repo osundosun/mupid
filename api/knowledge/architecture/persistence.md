@@ -221,6 +221,14 @@ public class Something { … }
 
 DDL 원문은 ERD 산출물인 `api/knowledge/domain/erd.sql` 에 있다. 앱이 이 파일을 읽지 않으므로 테이블 생성·변경은 사람이 직접 실행한다.
 
+**로컬 DB 가 이 파일과 같다고 가정하지 않는다.** 2026-09-17 까지 로컬
+`mupid-dev-mysql` 은 과거 `ddl-auto: update` 가 만든 표를 그대로 쓰고 있었다 —
+표 이름은 30개가 전부 맞는데 컬럼 타입·UNIQUE·복합 PK 순서가 달랐고, 그래서 곡
+커버와 MuBTI 이미지가 저장되지 않았다. 같은 날 `erd.sql` 기준으로 맞췄다.
+경위와 재현 절차는 [failure/database-and-jpa.md](../failure/database-and-jpa.md)
+의 "로컬 MySQL 이 `erd.sql` 과 전혀 다르다" 를 본다. 스키마를 의심할 일이 생기면
+`mysqldump --no-data` 로 뽑아 `erd.sql` 과 직접 비교한다.
+
 | 확인 | 결과 |
 |---|---|
 | Flyway / Liquibase 의존성 | 없음 — **의도된 것** |

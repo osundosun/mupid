@@ -731,7 +731,7 @@ export function createEndpoints(client: ApiClient) {
       /**
        * 곡 목록·검색. 로그인 없이도 부를 수 있다.
        *
-       * @param q 제목·아티스트명·앨범명 부분 일치
+       * @param q 제목·아티스트명·앨범명 통합 검색
        */
       search: (
         options: { q?: string; page?: number; size?: number } = {},

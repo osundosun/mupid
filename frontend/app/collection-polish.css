@@ -131,6 +131,17 @@
 .song-lyrics { margin: 24px auto 0; max-width: 420px; text-align: center; line-height: 2.2; color: #657fa8; }
 .song-lyrics h3 { font-weight: 700; color: #385d98; line-height: 1.5; margin-bottom: 14px; }
 .song-lyrics p { margin: 0; overflow-wrap: anywhere; word-break: keep-all; }
+.song-lyrics > p { color: #a8b8cd; }
+.song-lyrics > p.lyric-current { color: #2f5486; font-weight: 600; }
+.song-lyrics .lyric-seek {
+  display: block; width: 100%; padding: 2px 4px; border: 0; border-radius: 8px;
+  background: none; color: inherit; font: inherit; text-align: inherit; cursor: pointer;
+}
+.song-lyrics .lyric-seek:hover { background: #eaf1fb; color: #2f5486; }
+.song-lyrics .lyric-seek:focus-visible { outline: 2px solid #aac8ec; outline-offset: 1px; }
+@media (prefers-reduced-motion: no-preference) {
+  .song-lyrics > p { transition: color 180ms ease; }
+}
 .song-lyrics .song-lyrics-empty { color: #8997ac; }
 .song-lyrics .lyrics-disclaimer { font-size: 13px; line-height: 1.6; color: #8997ac; margin-top: 18px; }
 /* 서버 가사는 줄마다 시점이 있다. 숫자 폭을 고정해 줄이 흔들리지 않게 한다. */

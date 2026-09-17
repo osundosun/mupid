@@ -12,7 +12,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
-import { AlbumArt, Heading, Waveform, PlayerControls } from './primitives';
+import { Heading, TrackRow, Waveform, PlayerControls } from './primitives';
 import { forYouHeading, pickForYou } from '@/lib/recommendations';
 export function HomeView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
@@ -33,16 +33,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
           <MobileListening model={m} />
           {/* 상단 헤더에 검색창이 이미 있어 홈에서는 중복이라 뺐다. */}
           <TodayMoment model={m} />
-          <Heading
-            eyebrow={forYou.eyebrow}
-            title={forYou.title}
-            action="모두 보기"
-            onAction={() => {
-              m.setLibraryTab('playlists');
-              m.setSelectedPlaylist(1);
-              m.go('library');
-            }}
-          />
+          <Heading eyebrow={forYou.eyebrow} title={forYou.title} />
           <AlbumDeck
             model={m}
             label="취향에 이어지는 음악"
@@ -63,17 +54,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
               .map((id) => tracks.find((t) => t.id === id)!)
               .filter(Boolean)
               .map((t) => (
-                <button
-                  className="recent-track"
-                  key={t.id}
-                  onClick={() => m.openTrack(t)}
-                >
-                  <AlbumArt track={t} />
-                  <span>
-                    <strong>{t.title}</strong>
-                    <small>{t.artist}</small>
-                  </span>
-                </button>
+                <TrackRow key={t.id} track={t} model={m} showDetail={false} />
               ))}
           </div>
         </div>

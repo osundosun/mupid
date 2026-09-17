@@ -8,7 +8,6 @@ import {
   ListMusic,
   Pause,
   Play,
-  Sparkles,
   Volume2,
 } from 'lucide-react';
 import { pickTodayMoments, todayMomentNote } from './today-moment';
@@ -17,7 +16,6 @@ import type { MupidModel } from '@/hooks/use-mupid';
 import { VolumeSlider } from './volume-slider';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
 import { AlbumArt, LikeButton, PlayerControls, TrackRow } from './primitives';
-import { MupidMascot } from './mascot';
 import { AlbumDeck } from './album-deck';
 
 export function DesktopHome({ model: m }: { model: MupidModel }) {
@@ -55,7 +53,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
               }
               aria-hidden="true"
             />
-            {m.playing ? '지금 재생 중' : '재생 준비'} <ArrowUpRight />
+            {m.playing ? '지금 재생 중' : '재생 준비'} <ChevronRight />
           </button>
         </div>
         <section className="desktop-song" aria-label="현재 곡">
@@ -74,7 +72,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             className="text-link desktop-song-detail"
             onClick={() => m.go('player')}
           >
-            이 곡 자세히 <ArrowUpRight />
+            이 곡 자세히 <ChevronRight />
           </button>
           <div className="desktop-song-playback">
             <PlayerControls model={m} />
@@ -148,17 +146,6 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
           </button>
         </aside>
       </div>
-      <div className="desktop-home-bottom">
-        <button className="desktop-ai-entry" onClick={m.openChat}>
-          <MupidMascot size={64} />
-          <span>
-            <small>이 곡, 조금 다른 느낌으로</small>
-            <strong>
-              Mupid AI와 이어듣기 <ArrowUpRight />
-            </strong>
-          </span>
-        </button>
-      </div>
       <div className="desktop-home-shelves">
         <section className="desktop-recommendations">
           <header>
@@ -167,7 +154,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
               <h2>{forYou.title}</h2>
             </div>
             <button className="text-link" onClick={() => m.go('search')}>
-              더 둘러보기 <ArrowUpRight />
+              더 둘러보기 <ChevronRight />
             </button>
           </header>
           <div className="desktop-recommendation-list">
@@ -185,7 +172,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
               <h2>최근 들은 음악</h2>
             </div>
             <button className="text-link" onClick={() => m.go('profile')}>
-              감상 기록 <ArrowUpRight />
+              감상 기록 <ChevronRight />
             </button>
           </header>
           <div className="desktop-recent-list">
@@ -202,9 +189,6 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
       </div>
       <footer className="desktop-home-footer">
         <span>Music for your sky.</span>
-        <button className="text-link" onClick={m.openChat}>
-          <Sparkles /> Mupid AI
-        </button>
       </footer>
     </div>
   );
