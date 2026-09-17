@@ -69,7 +69,9 @@ glab api --method POST "projects/<프로젝트>/merge_requests/<iid>/pipelines"
 
 새 파이프라인 결과에서 `area-preflight`·`area-gate` 가 통과하고 영역 verify job 이 나타나면
 라벨이 인식된 것이다. `area-gate`(`infra/ci/area-gate.yml`)는 영역 job 이 남긴 marker 를 대조하므로
-"job 목록에는 있는데 실제로는 안 돌았다" 도 여기서 잡힌다.
+"job 목록에는 있는데 실제로는 안 돌았다" 도 여기서 잡힌다. 게이트는 별도 stage 에 있고
+`when: always` 라서 앞 stage 의 영역 검증이 실패해도 **반드시 돌아** 어느 영역이 검증되지
+않았는지, 그리고 그것이 job 실패 때문인지 job 부재 때문인지 갈라 말한다.
 
 병합 커밋 제목은 GitLab 기본 형식 `Merge branch '<source>' into '<target>'` 이다. GitLab 이 서버에서 만들므로 훅을 거치지 않고, 로컬에서 직접 merge 하는 경우에도 훅 3단계(`MERGE_HEAD`)에 걸려 티켓이 붙지 않는다.
 

@@ -263,12 +263,20 @@ def verified_areas(areas_dir: pathlib.Path = AREAS_DIR) -> list[str]:
 
 
 def gate(areas_dir: pathlib.Path = AREAS_DIR) -> int:
-    """기대 영역이 전부 검증됐는지. 누락을 여기서 잡는다."""
+    """기대 영역이 전부 검증됐는지. 누락을 여기서 잡는다.
+
+    이 job 은 stage 를 나누고 needs 를 쓰지 않는다. 그래서 영역 job 이 실패해도
+    돌고, 앞 stage 의 아티팩트(preflight 의 기대 목록, 영역 job 의 marker)를
+    기본으로 받는다 — infra/ci/area-gate.yml 머리말 참고.
+    """
     expected_file = areas_dir / EXPECTED.name
     if not expected_file.exists():
         print("area-preflight 의 결과(.areas/expected.txt)가 없습니다.")
-        print("preflight 가 아티팩트를 올리지 못했거나, needs/artifacts 설정이 "
-              "어긋났습니다 — infra/ci/area-gate.yml 을 본다.")
+        print()
+        print("이 게이트는 needs 없이 앞 stage 의 아티팩트를 받는다. 그래서 이건")
+        print("설정 문제가 아니라 preflight 가 **아티팩트를 올리지 못했다**는 뜻이다.")
+        print("그 job 의 로그에서 업로드 단계를 보고, infra/ci/labels.yml 의")
+        print("artifacts.paths 가 .areas/expected.txt 를 가리키는지 확인한다.")
         return 1
 
     expected = [line.strip() for line in
@@ -281,12 +289,26 @@ def gate(areas_dir: pathlib.Path = AREAS_DIR) -> int:
 
     if lack:
         print()
-        print(f"{'·'.join(lack)} 영역이 기대에 있는데 검증 marker 가 없습니다.")
+        for area in lack:
+            print(f"  ✗ {area} — 기대에 있는데 검증되지 않았습니다.")
         print()
-        print("job 이 돌았는데 marker 가 없다면 그 job 의 artifacts 규약이 빠진 것이고,")
-        print("job 자체가 없다면 이 파이프라인이 그 라벨 없이 만들어졌다는 뜻입니다.")
-        print("후자면 라벨을 붙이고 새 파이프라인을 만들어야 합니다 — 재시도로는")
-        print("job 목록이 바뀌지 않습니다(infra/ci/labels.yml 머리말 참고).")
+        print("원인은 둘 중 하나이고, 이 게이트는 **둘을 구분해서 말한다.**")
+        print()
+        print("  1) 그 영역 job 이 실패했다")
+        print("     → marker 를 남기지 않는다(artifacts: on_success). 위 stage 의")
+        print("       실패한 job 로그가 진짜 원인이고, 여기서는 그 결과만 본다.")
+        print()
+        print("  2) 그 영역 job 이 이 파이프라인에 아예 없다")
+        print("     → 라벨 없이 파이프라인이 만들어졌다는 뜻이다. 라벨을 붙이고")
+        print("       **새 파이프라인**을 만들어야 한다 — job 재시도로는 job 목록이")
+        print("       바뀌지 않는다(infra/ci/labels.yml 머리말 참고).")
+        print()
+        print("구분 방법: 이 파이프라인의 job 목록에서 그 이름을 찾아본다.")
+        print("  있으면 → 1) 이고 그 job 의 로그를 본다")
+        print("  없으면 → 2) 이고 아래 두 줄을 실행한다")
+        print()
+        print("     glab mr update <iid> --label <영역>")
+        print("     glab api --method POST \"projects/<project_id>/merge_requests/<iid>/pipelines\"")
         return 1
 
     if not expected:

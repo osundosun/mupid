@@ -1,5 +1,9 @@
 stages:
   - verify
+  # 영역 검증이 전부 끝난 뒤에만 도는 게이트 stage. verify 안에 두고 needs 로
+  # 걸면 영역 job 이 실패했을 때 게이트가 skipped 로 가서 누락 원인을 말해 줄
+  # 사람이 사라진다 — infra/ci/area-gate.yml 머리말에 자세히 있다.
+  - area-gate
   - ai-review
   - package
   - deploy
