@@ -18,6 +18,11 @@ ai-server-verify:
   tags: [mupid-ci]
   interruptible: true
   timeout: 10m
+  needs:
+    # 모자란 라벨은 area-preflight 가 먼저 막는다. 순서일 뿐 게이트가 아니다.
+    - job: area-preflight
+      artifacts: false
+      optional: true
   # GitLab 의 `cache:` 로 pip 캐시를 나르던 것을 걷어냈다. backend·frontend 에서
   # 걷어낸 것과 같은 이유이고(압축·해제가 일보다 오래 걸린다), 이제는 캐시가
   # 아니라 이미지에 들어 있어 나를 것 자체가 없다.
@@ -65,8 +70,12 @@ ai-server-verify:
       print(f"실행 {ran}건 / 건너뜀 {skipped}건")
       assert ran >= 90, f"산출물 없이 도는 테스트가 {ran}건만 돌았다 — 수집이 깨졌는지 본다"
       PY
+    # 이 영역을 실제로 검증했다는 증거. area-gate 가 이것을 읽는다.
+    - mkdir -p .areas && printf '%s\n' AI > .areas/AI
   artifacts:
     when: always
     expire_in: 1 week
+    paths:
+      - .areas/AI
     reports:
       junit: ai-server-junit.xml

@@ -7,6 +7,7 @@ Run from the repository root:
 is not, so the file-level checks still run anywhere.
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -859,16 +860,21 @@ class WebImageBuildTest(unittest.TestCase):
     def test_the_frontend_build_is_not_shipped_as_an_artifact(self):
         """It used to be: frontend-verify uploaded dist/client and the deploy
         job downloaded it. That sends the deployed bytes on a round trip
-        through the coordinator. The jar never worked that way."""
+        through the coordinator. The jar never worked that way.
+
+        A marker is not a build output — area-gate reads .areas/Frontend to know
+        the verification ran, and that is the only thing this job may carry."""
         verify = yaml.safe_load(
             (ROOT / "infra" / "ci" / "frontend.yml").read_text(encoding="utf-8"))
         for name, body in verify.items():
             if not isinstance(body, dict):
                 continue
             with self.subTest(job=name):
-                self.assertIsNone(
-                    body.get("artifacts"),
-                    "the frontend build is an artifact again",
+                carried = (body.get("artifacts") or {}).get("paths") or []
+                self.assertEqual(
+                    carried, [".areas/Frontend"],
+                    "the frontend build output is an artifact again — only the "
+                    "area marker may travel",
                 )
         jobs = yaml.safe_load((self.CI / "k8s-release.yml").read_text(encoding="utf-8"))
         for need in jobs["k8s-deploy-web"]["needs"]:
@@ -879,23 +885,27 @@ class WebImageBuildTest(unittest.TestCase):
                 )
 
 
-class LabelRoutingTest(unittest.TestCase):
-    """MR 파이프라인은 영역 라벨이 고른다. 라벨이 없으면 require-area-label 이
-    실패해 머지를 막는다.
+class AreaRoutingTest(unittest.TestCase):
+    """MR 파이프라인은 영역 라벨이 고른다. 판정과 게이트는 그 위에 얹힌다.
 
-    이 규칙이 조용히 깨지는 방식은 하나다 — verify job 하나에서 라벨 규칙이
-    빠지면 그 job 만 `changes:` 로 되돌아간다. 그러면 라벨 없는 MR 이 그 job
-    하나만 돌고 초록불이 된다. 여기서 네 job 을 한꺼번에 본다."""
+    이 규약이 조용히 깨지는 방식은 여럿이고 전부 초록불로 끝난다.
 
-    AREAS = ("Frontend", "Backend", "AI", "Data")
-    # job 이름 -> 그 job 을 켜는 라벨
-    ROUTES = {
-        "frontend-verify": "Frontend",
-        "backend-verify": "Backend",
-        "ai-server-verify": "AI",
-        "data-verify": "Data",
-    }
+      1. verify job 하나에서 라벨 규칙이 빠지면 그 job 만 `changes:` 로 돌아간다.
+      2. 라벨 목록과 job 목록이 어긋나면 어긋난 라벨은 아무 job 도 켜지 않는다.
+      3. 영역 job 이 marker 를 안 남기면 area-gate 가 그 영역을 영영 못 본다.
+      4. needs 에서 영역 job 하나가 빠지면 그 marker 가 게이트에 닿지 않는다.
+
+    그래서 **손으로 적은 목록을 쓰지 않는다.** infra/ci/area_diff.py 의 표에서
+    유도하고, 규약이 세 곳(표·job·게이트)에서 같은 말을 하는지 본다."""
+
     CI = ROOT / "infra" / "ci"
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "area_diff", cls.CI / "area_diff.py")
+        cls.area_diff = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.area_diff)
 
     def _jobs(self):
         found = {}
@@ -906,24 +916,40 @@ class LabelRoutingTest(unittest.TestCase):
                     found[name] = body
         return found
 
+    def _routes(self):
+        """{영역: job 이름} 을 job 의 rules 에서 **읽어낸다**. 손으로 적지 않는다."""
+        pattern = re.compile(
+            r"CI_MERGE_REQUEST_LABELS =~ /\(\^\|,\)\\s\*([A-Za-z|]+)\\s\*\(,\|\$\)/")
+        routes = {}
+        for name, body in self._jobs().items():
+            for rule in body.get("rules") or []:
+                found = pattern.search(str(rule.get("if", "")))
+                if found:
+                    routes[found.group(1)] = name
+        return routes
+
+    def test_the_area_table_and_the_labelled_jobs_agree(self):
+        """표와 job 이 어긋나면 그 영역은 라벨만 있고 job 이 없거나, job 만 있고
+        라벨이 없다 — 어느 쪽이든 초록 파이프라인이 나온다."""
+        self.assertEqual(self._routes(), {
+            "Frontend": "frontend-verify",
+            "Backend": "backend-verify",
+            "AI": "ai-server-verify",
+            "Data": "data-verify",
+            "Infra": "infra-verify",
+        })
+        self.assertEqual(set(self._routes()), set(self.area_diff.AREAS))
+
     def test_every_area_job_is_gated_on_its_label(self):
         """라벨 규칙이 먼저 오고, 바로 다음에 '나머지 MR 은 never' 가 와야 한다.
         순서가 뒤집히면 라벨이 붙어도 job 이 돌지 않는다 — rules 는 처음
         맞는 것에서 멈춘다."""
         jobs = self._jobs()
-        for name, label in self.ROUTES.items():
+        for area, name in self._routes().items():
             with self.subTest(job=name):
-                self.assertIn(name, jobs, f"{name} 이 infra/ci 에 없다")
                 rules = jobs[name]["rules"]
                 first = str(rules[0].get("if", ""))
                 self.assertIn('$CI_PIPELINE_SOURCE == "merge_request_event"', first)
-                self.assertRegex(
-                    first,
-                    re.compile(
-                        r"CI_MERGE_REQUEST_LABELS =~ /\(\^\|,\)\\s\*"
-                        + label + r"\\s\*\(,\|\$\)/"),
-                    f"{name} 의 첫 규칙이 {label} 라벨을 보지 않는다",
-                )
                 self.assertIsNone(rules[0].get("when"))
                 second = rules[1]
                 self.assertEqual(
@@ -934,7 +960,7 @@ class LabelRoutingTest(unittest.TestCase):
         """라벨 규칙 뒤에 merge_request_event 를 다시 받는 규칙이 남아 있으면
         never 를 지나쳐 돌 수 있다."""
         jobs = self._jobs()
-        for name in self.ROUTES:
+        for name in self._routes().values():
             for index, rule in enumerate(jobs[name]["rules"][2:], start=2):
                 with self.subTest(job=name, rule=index):
                     self.assertNotIn(
@@ -942,21 +968,69 @@ class LabelRoutingTest(unittest.TestCase):
                         f"{name} 의 {index}번 규칙이 MR 을 다시 받는다",
                     )
 
-    def test_the_guard_covers_exactly_the_four_areas(self):
-        """가드가 보는 라벨 목록과 job 이 쓰는 라벨이 어긋나면, 어긋난 라벨은
-        가드를 통과하면서 아무 job 도 켜지 않는다 — 검증 없는 초록불이다."""
-        guard = self._jobs()["require-area-label"]
-        first = str(guard["rules"][0]["if"])
-        self.assertEqual(guard["rules"][0].get("when"), "never")
-        found = re.search(r"\(([A-Za-z|]+)\)\\s\*\(,\|\$\)", first)
-        self.assertTrue(found, "가드가 라벨 목록을 더 이상 열거하지 않는다")
-        self.assertEqual(set(found.group(1).split("|")), set(self.AREAS))
-        self.assertEqual(set(self.ROUTES.values()), set(self.AREAS))
+    def test_the_preflight_fails_a_lacking_label(self):
+        """판정은 exit 코드로 끝난다 — area_diff.py 가 1 을 돌려주고 그것이 job 을
+        실패시킨다. 구성(문자열)이 아니라 **동작**을 본다."""
+        guard = self._jobs()["area-preflight"]
+        rules = guard["rules"]
+        self.assertEqual(len(rules), 1, "가드가 MR 외의 파이프라인에도 걸린다")
+        self.assertEqual(rules[0].get("if"),
+                         '$CI_PIPELINE_SOURCE == "merge_request_event"')
+        self.assertIn("area_diff.py preflight", "\n".join(str(s) for s in guard["script"]),
+                      "가드가 판정을 부르지 않는다 — 실패할 방법이 없다")
+        with tempfile.TemporaryDirectory() as tmp:
+            code = self.area_diff.main(
+                ["preflight", "--paths", "api/x", "--labels", "Data",
+                 "--areas-dir", tmp],
+                env={"CI_MERGE_REQUEST_IID": "1", "CI_PROJECT_ID": "1"})
+        self.assertEqual(code, 1, "모자란 라벨인데 판정이 통과했다")
 
-    def test_the_guard_fails_the_job(self):
-        """가드가 돌면서 exit 0 이면 아무것도 막지 못한다."""
-        guard = self._jobs()["require-area-label"]
-        self.assertIn("exit 1", "\n".join(guard["script"]))
+    def test_every_area_job_records_its_marker(self):
+        """marker 가 없으면 area-gate 는 그 영역을 영영 못 본다 — 게이트가
+        초록이면서 아무것도 지키지 않게 된다."""
+        jobs = self._jobs()
+        for area, name in self._routes().items():
+            with self.subTest(job=name):
+                body = jobs[name]
+                script = "\n".join(
+                    str(step) for step in body["script"])
+                self.assertIn(f".areas/{area}", script,
+                              f"{name} 이 {area} marker 를 남기지 않는다")
+                paths = (body.get("artifacts") or {}).get("paths") or []
+                self.assertIn(f".areas/{area}", paths,
+                              f"{name} 의 artifacts 에 {area} marker 가 없다")
+
+    def test_the_gate_needs_every_area_job_with_artifacts(self):
+        """게이트가 영역 job 하나를 needs 에서 빠뜨리면 그 marker 가 닿지 않아
+        게이트가 영역을 못 본다. 빠뜨린 쪽이 조용하다는 점이 제일 나쁘다."""
+        gate = self._jobs()["area-gate"]
+        needs = {need["job"]: need for need in gate["needs"]}
+        self.assertIn("area-preflight", needs)
+        self.assertTrue(needs["area-preflight"].get("artifacts"),
+                        "게이트가 기대 영역 목록을 받지 않는다")
+        for name in self._routes().values():
+            with self.subTest(job=name):
+                self.assertIn(name, needs, f"게이트의 needs 에 {name} 이 없다")
+                self.assertTrue(needs[name].get("artifacts"),
+                                f"게이트가 {name} 의 marker 를 받지 않는다")
+                self.assertTrue(needs[name].get("optional"),
+                                f"{name} 이 needs 에서 optional 이 아니다 — "
+                                "라벨이 그 영역을 켜지 않으면 파이프라인 생성이 깨진다")
+
+    def test_the_old_gate_is_gone(self):
+        """rules 로 라벨을 보던 게이트는 재시도로 복구되지 않는다 — 실측으로
+        확인하고 없앴다. 이름만 남아도 사람이 그걸 보고 다시 기대한다."""
+        self.assertNotIn("require-area-label", self._jobs())
+
+    def test_the_preflight_and_the_gate_are_wired_into_the_pipeline(self):
+        """job 이 파일에 있어도 include 되지 않으면 돌지 않는다."""
+        root = yaml.safe_load(
+            (ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8"))
+        included = {entry["local"] for entry in root["include"]}
+        for path in ("infra/ci/labels.yml", "infra/ci/area-gate.yml",
+                     "infra/ci/infra.yml"):
+            with self.subTest(path=path):
+                self.assertIn(path, included)
 
     def _module(self):
         import importlib.util

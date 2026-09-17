@@ -3,6 +3,12 @@
 /.gradle-ci/
 /.release/
 
+# 계획·작업 노트. 사람마다 다른 도구를 쓰므로 저장소 내용이 아니다.
+/.hermes/
+# 영역 판정의 작업 파일. CI 에서만 쓰고(area-preflight → area-gate),
+# 로컬에서 area_diff.py 를 손으로 돌리면 여기에 남는다.
+/.areas/
+
 # python
 __pycache__/
 *.py[cod]
