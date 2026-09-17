@@ -10,6 +10,14 @@
 일치했다. 공개 URL에서 읽은 이미지 87개 모두 해당 아티스트 대표곡 커버와
 SHA-256이 같았고, 새 프로필과 일치하는 것은 없었다.
 
+> **조회 URL 은 파일 번호 주소다.** 서버가 이미지 조회를
+> `/api/v1/storage/image/{fileId}` 로 내려주기 시작했다(쓰기는 그대로
+> `/ARTIST/{artist_key}`). 저장 키로 조회하던 때는 키 모양이 곧 조회 계약이었고,
+> 키를 손으로 만든 코드 하나가 주소를 조용히 null 로 만들었다 — 번호로 바뀌면서
+> 그 종류의 사고가 사라졌다. 여기서 대응하는 코드는
+> `artist_profiles.artist_image_read_url` 이고, 조회 API 가 준 주소와 대조하는
+> 자리는 `check_artists` 다. **서버 계약이 또 바뀌면 이 두 곳을 같이 고친다.**
+
 GPU 원본은 `/home/j-j15a204/flow_music_data/artists.json`의 `profile_image`와
 `artists/artists_images/*.png`다. 87개 모두 PNG 1254×1254이며 크기·SHA-256이
 룩업과 일치했다. 최대 2,901,065바이트로 업로드 제한 5MiB 이내다.
@@ -30,11 +38,16 @@ GPU 원본은 `/home/j-j15a204/flow_music_data/artists.json`의 `profile_image`�
 아래는 적용 도구의 쓰기 범위다.
 
 - 쓰기 요청은 `POST /api/v1/storage/image/ARTIST/{artist_key}`만 보낸다.
+  조회는 `GET /api/v1/storage/image/{file_id}` 다 — 파일 번호는 등록 기록의
+  `image_file_id` 를 쓰고, 그 값이 서버와 맞는지는 `check_artists` 가 먼저 대조한다.
 - `artists.image_file_id`, 아티스트 ID·이름·URL, 곡/앨범/스트림 관계는 유지한다.
 - 파일 저장소의 이미지와 해당 `object_storage_files` 행의 파일명·MIME·크기 등은
   기존 API 동작에 따라 갱신된다. 이 범위는 사전 설명 후 승인된 범위다.
 - 각 업로드 응답의 `file_id`가 기존 등록 ID와 같은지 확인한다.
 - 기존 ROLE_SYSTEM 리프레시 토큰을 사용할 수 있다. ROLE_ADMIN은 필요하지 않다.
+  **로그인만 하면 누구나 카탈로그 이미지를 덮어쓸 수 있던 것이 막혀 이제
+  업로드·삭제에 `ROLE_SYSTEM` 이상이 필요해졌는데, 이 배치는 그 조건을 이미
+  만족한다** (`FileCategory.accessPolicy` → `ImageAccessPolicy.CATALOG`).
 - 토큰은 재발급 때 회전하므로 기존 배치와 동시에 같은 토큰 파일을 사용하지 않는다.
 
 ## 1. GPU 원본 수집
@@ -65,7 +78,7 @@ uv run python -m music_preprocessing.artist_profiles replace \
   --refresh-token-file /path/to/existing-refresh-token.txt
 ```
 
-이 단계에서는 업로드하지 않는다. 운영 87명의 ID·이름·ARTIST URL을 대조하고,
+이 단계에서는 업로드하지 않는다. 운영 87명의 ID·이름·조회 URL을 대조하고,
 기존 이미지 바이트와 MIME·파일명을 `backups/` 및 `backup-manifest.json`에 저장한다.
 운영 이미지가 등록 당시 커버나 교체할 새 프로필과 다르면 중단한다.
 정확한 원본 백업을 완료한 뒤에만 다음 단계로 진행한다.
@@ -137,4 +150,5 @@ PYTHONPATH=src uv run python -m unittest discover -s tests -v
 
 백업 무결성, 전체 사전 검증, 기존 매핑/URL 보존, 87개 교체, 재실행 무업로드,
 응답 손실 후 재개, 원본 복구, 다른 작업 감지, ARTIST 전용 쓰기와 file_id 유지,
-`+` 포함 키 URL 인코딩 및 Windows 보고서 파일 잠금 재시도를 검증한다.
+조회 URL 에서 파일 번호를 읽고 어긋나면 멈추는 경계, `+` 포함 키 URL 인코딩 및
+Windows 보고서 파일 잠금 재시도를 검증한다.

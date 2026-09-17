@@ -48,7 +48,30 @@ def write_json(path, data):
 
 
 def image_url(key):
+    """업로드 경로.
+
+    쓰기는 **자리를 지정**하는 일이라 카테고리와 저장 키가 필요하다. 그래서
+    `image_url(artist_key)` 는 업로드 주소이고, 조회 주소는 아니다 —
+    아래 `artist_image_read_url` 을 쓴다.
+    """
     return "/api/v1/storage/image/ARTIST/" + quote(key, safe="")
+
+
+def artist_image_read_url(file_id):
+    """조회 경로 — 서버가 `artists.image_file_id` 로 만드는 주소와 같은 모양이어야 한다.
+
+    <p>서버는 조회 주소를 **파일 번호**로 만든다(`StorageImageService.imageUrl`).
+    저장 키를 되짚던 때는 키 모양이 곧 조회 계약이었고, 키를 손으로 만든 코드 하나가
+    주소를 조용히 null 로 만들었다. 번호로 바뀌면서 그 종류의 사고가 사라졌지만,
+    대신 **주소를 만드는 자리가 여기 하나 더 생겼다** — 서버 계약이 바뀌면 이 함수도
+    같이 고쳐야 한다.
+
+    그 사실이 드러나는 자리는 `check_artists` 다. 조회 API 가 준 `image_url` 을 이
+    값과 대조하므로, 둘이 어긋나면 사전 검증에서 곧바로 멈춘다. 조용히 넘어가지
+    않는다는 점에서는 이 편이 낫다 — 잘못된 주소로 GET 을 던져 404 를 받는 것보다
+    "아티스트 이름/이미지 URL 불일치" 로 멈추는 편이 원인을 빨리 찾는다.
+    """
+    return "/api/v1/storage/image/%d" % file_id
 
 
 def validate_png(data, meta):
@@ -177,16 +200,42 @@ class ArtistClient(MupidClient):
         data = self._request("GET", "/api/v1/artist?size=100&page=0")["data"]
         if data["total_elements"] != 87 or len(data["items"]) != 87:
             raise ValueError("운영 아티스트 수가 87명이 아님")
+        # 조회 URL 이 파일 번호 주소라, 그 번호를 다시 `artist_key` 로 되돌릴 대응표가
+        # 필요하다. 여기서 한 번 채우고 `download` 가 쓴다.
+        #
+        # 파일 번호를 응답에 실어 달라고 서버에 요구하지 않는 것은, 그 필드를 더하면
+        # `artist` 응답 계약이 바뀌어 이 배치 말고도 손댈 곳이 늘기 때문이다. 조회
+        # 주소의 마지막 마디는 이미 공개된 값이라 그것을 읽으면 계약을 건드리지 않는다.
+        #
+        # 읽지 못하는 주소 모양이면 여기서 멈춘다 — 조용히 빈 표를 만들면 GET 이
+        # 엉뚱한 번호로 나간다.
+        self.image_file_ids = {}
+        for item in data["items"]:
+            tail = item["image_url"].rpartition("/")[2]
+            if not tail.isdigit():
+                raise ValueError(f"조회 URL 에서 파일 번호를 읽지 못함: {item['image_url']}")
+            self.image_file_ids[tail] = item["artist_key"]
         return sorted(data["items"], key=lambda r: r["artist_id"])
 
-    def download(self, key):
-        request = Request(self.base_url + image_url(key), headers={"Cache-Control": "no-cache"})
+    def download(self, file_id):
+        """파일 번호로 이미지 바이트를 받는다.
+
+        조회는 **파일 번호** 주소다(`artist_image_read_url`). 저장 키로 조회하던
+        때는 키 모양이 곧 조회 계약이었고, 키를 손으로 만든 코드 하나가 주소를
+        조용히 null 로 만들었다. 이제 번호로 읽으므로 키 모양이 어긋나도 조회
+        자체는 된다.
+
+        부르는 쪽이 등록 기록의 `image_file_id` 를 그대로 넘긴다. 그 번호가 실제
+        서버 상태와 맞는지는 먼저 지나가는 `check_artists` 가 대조한다.
+        """
+        request = Request(self.base_url + artist_image_read_url(file_id),
+                          headers={"Cache-Control": "no-cache"})
         with urlopen(request, timeout=60) as response:
             data = response.read(MAX_IMAGE + 1)
             if len(data) > MAX_IMAGE:
                 raise ValueError("기존 이미지 크기 제한 초과")
             mime = response.headers.get_content_type()
-            filename = unquote(response.headers.get_filename() or (key + ".png"))
+            filename = unquote(response.headers.get_filename() or (file_id + ".png"))
         if not data or mime not in ("image/png", "image/jpeg", "image/webp"):
             raise ValueError("지원하지 않는 기존 이미지 형식")
         # 복구 시 Content-Disposition에 원격 입력을 그대로 보간하지 않는다.
@@ -208,7 +257,12 @@ def check_artists(rows, current):
         raise ValueError("아티스트 ID 집합 불일치")
     for row in rows:
         actual = by_id[row["artist_id"]]
-        if actual["name"] != row["name"] or actual["image_url"] != image_url(row["artist_key"]):
+        # 조회 URL 이 파일 번호 주소라 대조할 문자열을 여기서 만든다. 이 대조가
+        # 중요한 것은 아래 `client.download` 가 등록 기록의 `image_file_id` 를 그대로
+        # 믿고 그 번호로 GET 을 던지기 때문이다 — 두 값이 어긋나면 남의 아티스트
+        # 사진을 백업해 두고 덮어쓰는 사고가 난다. 다른 조회를 시작하기 전에 멈춘다.
+        if (actual["name"] != row["name"]
+                or actual["image_url"] != artist_image_read_url(row["image_file_id"])):
             raise ValueError(f"아티스트 이름/이미지 URL 불일치: {row['artist_key']}")
 
 
@@ -220,7 +274,7 @@ def prepare(client, manifest, run_dir):
     backup_dir = run_dir / "backups"
     backup_dir.mkdir(exist_ok=True)
     for i, row in enumerate(manifest["artists"], 1):
-        data, mime, filename = client.download(row["artist_key"])
+        data, mime, filename = client.download(row["image_file_id"])
         before = digest(data)
         if before not in (row["registered_cover_sha256"], row["profile_image"]["sha256"]):
             raise ValueError(f"등록 커버/새 프로필과 다른 운영 이미지: {row['artist_key']}")
@@ -256,7 +310,7 @@ def process(client, state, bundle, run_dir, apply=False, rollback=False):
         raise ValueError("백업 이후 아티스트 ID/이름/URL 변경 감지")
     pending = []
     for row in state["artists"]:
-        data, _, _ = client.download(row["artist_key"])
+        data, _, _ = client.download(row["image_file_id"])
         sha = digest(data)
         new = row["profile_image"]["sha256"]
         if sha not in (new, row["before_sha256"]):
@@ -275,7 +329,7 @@ def process(client, state, bundle, run_dir, apply=False, rollback=False):
         for row in pending:
             key = row["artist_key"]
             # 사전 검증과 쓰기 사이의 다른 작업을 덮어쓰지 않도록 바로 다시 확인한다.
-            now, _, _ = client.download(key)
+            now, _, _ = client.download(row["image_file_id"])
             desired = row["before_sha256"] if rollback else row["profile_image"]["sha256"]
             allowed = row["profile_image"]["sha256"] if rollback else row["before_sha256"]
             if digest(now) == desired:
@@ -295,7 +349,7 @@ def process(client, state, bundle, run_dir, apply=False, rollback=False):
             report["in_flight"] = key
             write_json(report_path, report)
             client.upload(row, data, mime, filename)
-            served, _, _ = client.download(key)
+            served, _, _ = client.download(row["image_file_id"])
             if digest(served) != desired:
                 raise ValueError(f"업로드 후 제공 이미지 불일치: {key}")
             report["completed"].append(key)
@@ -305,7 +359,7 @@ def process(client, state, bundle, run_dir, apply=False, rollback=False):
         if client.artists() != state["artists_before"]:
             raise ValueError("작업 후 아티스트 ID/이름/URL 변경 감지")
         for row in state["artists"]:
-            data, _, _ = client.download(row["artist_key"])
+            data, _, _ = client.download(row["image_file_id"])
             desired = row["before_sha256"] if rollback else row["profile_image"]["sha256"]
             if digest(data) != desired:
                 raise ValueError("최종 전체 이미지 검증 실패")
