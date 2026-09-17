@@ -153,6 +153,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const [selectedPlaylist, setSelectedPlaylist] = useState<number | null>(null);
   const [libraryTab, setLibraryTab] = useState('playlists');
   const [query, setQuery] = useState('');
+  // 같은 검색어를 다시 제출해도 서버 검색을 새로 실행하기 위한 판본.
+  const [searchRevision, setSearchRevision] = useState(0);
   const [selectedArtist, setSelectedArtist] = useState<string | null>(null);
   const [moodFilter, setMoodFilter] = useState('전체');
   // 셔플은 재생 목록 안에서 중복 없이 섞어 재생한다. 반복과 함께 켤 수 있다.
@@ -392,6 +394,7 @@ export function useMupid(bootstrap: Bootstrap) {
   const submitSearch = (keyword: string) => {
     const value = keyword.trim();
     setQuery(value);
+    setSearchRevision(revision => revision + 1);
     // 빈 검색은 검색어를 지우는 동작이다. 기록에 남길 것이 없다.
     if (!value || demoSession?.kind !== 'authenticated') return;
     analytics.search(value);
@@ -1617,6 +1620,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setLibraryTab,
     query,
     setQuery,
+    searchRevision,
     submitSearch,
     moodFilter,
     setMoodFilter,

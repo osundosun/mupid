@@ -92,6 +92,11 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 | FK | `ALTER TABLE ... ADD CONSTRAINT fk_<테이블>_<대상>` 으로 뒤에 몰아서 건다. `ON DELETE` 는 `ai_chat_messages`·`ai_chat_sessions` 두 개만 `CASCADE`, 나머지는 기본(`RESTRICT`) | |
 | 인덱스 | `uq_*` 유니크 / `ix_*`·`ux_*` 일반 | **이름이 `uq_` 라고 유니크인 것은 아니다.** `uq_song_genre`·`uq_song_mood`·`uq_user_email` 은 `CREATE INDEX` 다. 반대로 `ix_song_reactions_`·`ux_mubti_*`·`ux_play_histories_*` 는 유니크다. 이름은 ERD 도구가 붙인 것이라 믿지 말고 `CREATE (UNIQUE )?INDEX` 를 직접 읽는다 |
 
+카탈로그 검색은 예외적으로 `music.title`·`artists.name`·`albums.title` 에 일반
+prefix 인덱스와 ngram FULLTEXT 인덱스를 함께 둔다. 설계 이유와 전용 검색엔진 전환
+기준은 [decision/0024](../decision/0024-mysql-ngram-fulltext-for-catalog-search.md),
+기존 DB 적용문은 [apply-search-indexes.sql](apply-search-indexes.sql)에 있다.
+
 재산출된 DDL 에는 **도구가 남긴 흔적**이 몇 군데 있다. 고치기 전에 팀에 묻되,
 읽을 때 당황하지 않도록 적어 둔다.
 
