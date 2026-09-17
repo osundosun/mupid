@@ -9,7 +9,7 @@
 | `api/src/main/java/com/osundosun/mupid/api/common/response/BaseResponse.java` | 성공 응답 래퍼 |
 | `api/src/main/java/com/osundosun/mupid/api/common/response/ErrorResponse.java` | 실패 응답 래퍼 |
 | `api/src/main/java/com/osundosun/mupid/api/common/error/ErrorCode.java` | 에러 코드 인터페이스 (계약 전부) |
-| `api/src/main/java/com/osundosun/mupid/api/common/error/GlobalErrorCode.java` | 공통 에러 코드 4종 |
+| `api/src/main/java/com/osundosun/mupid/api/common/error/GlobalErrorCode.java` | 공통 에러 코드 5종 |
 | `api/src/main/java/com/osundosun/mupid/api/common/exception/BusinessException.java` | 오류를 던지는 유일한 예외 |
 | `api/src/main/java/com/osundosun/mupid/api/common/exception/GlobalExceptionHandler.java` | 프로젝트에서 유일한 `@RestControllerAdvice` |
 | `api/src/main/java/com/osundosun/mupid/api/auth/exception/AuthUnauthorizedHandler.java` | 401 (시큐리티 필터 단계) |
@@ -93,6 +93,7 @@ public interface ErrorCode {
 | `GlobalErrorCode` | `NOT_READABLE_MESSAGE` | `MUPID_NOT_READABLE_MESSAGE` | **`NOT_FOUND` (404)** |
 | `GlobalErrorCode` | `INVALID_REQUEST_BODY` | `MUPID_INVALID_REQUEST_BODY` | `BAD_REQUEST` (400) |
 | `GlobalErrorCode` | `INTERNAL_SERVER_ERROR` | `MUPID_INTERNAL_SERVER_ERROR` | `INTERNAL_SERVER_ERROR` (500) |
+| `GlobalErrorCode` | `METHOD_NOT_ALLOWED` | `MUPID_METHOD_NOT_ALLOWED` | `METHOD_NOT_ALLOWED` (405) |
 | `AuthErrorCode` | `FORBIDDEN` | `MUPID_FORBIDDEN` | `FORBIDDEN` (403) |
 | `AuthErrorCode` | `UNAUTHORIZED` | `MUPID_UNAUTHORIZED` | `UNAUTHORIZED` (401) |
 | `AuthErrorCode` | `WRONG_EMAIL_OR_PASSWORD` | `MUPID_WRONG_EMAIL_OR_PASSWORD` | `UNAUTHORIZED` (401) |

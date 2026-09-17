@@ -202,6 +202,15 @@
 - **해결**: `@ExceptionHandler(MethodArgumentTypeMismatchException.class)` 를 추가해 400(`MUPID_INVALID_REQUEST_BODY`)으로 돌린다. enum 이면 고를 수 있는 값을 `error_details` 에 적어 준다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/common/exception/GlobalExceptionHandler.java`
 
+### 요청 방식이 틀리면 405 가 아니라 500 이 난다 — 해소됨
+
+- **원인**: 경로는 있는데 메서드가 다른 요청(`HttpRequestMethodNotSupportedException`)은 `GlobalExceptionHandler` 에 핸들러가 없어 `Exception` 핸들러가 먹고 500 으로 나갔다. 위 "쿼리 파라미터 타입이 안 맞으면 500 이 난다" 와 같은 뿌리다 — **클라이언트 잘못을 5xx 로 내보내면 서버 장애로 읽힌다.**
+- **드러나는 조건**: **인증이 필요 없는 경로에서만 보인다.** 인증이 필요한 경로는 필터가 먼저 401 을 내보내 핸들러까지 오지 않는다. 그래서 이 결함은 `SecurityConfig` 가 열어 둔 곳에서만 눈에 띈다 — 실측도 `GET /api/v1/storage/image/ALBUM/1`(GET permitAll, POST/DELETE 만 매핑)에서 나왔다.
+- **왜 값이 있나**: 5xx 는 보낸 쪽이 **재시도 대상**으로 잡는다. 405 는 다시 보내도 같은 답이라 재시도할 이유가 없다. 배치(`music_preprocessing/api_client.py`)가 정확히 5xx 만 재시도하므로 헛된 재시도가 실제 비용이 된다. 로그도 ERROR + 스택트레이스로 오염됐다.
+- **해결**: `@ExceptionHandler(HttpRequestMethodNotSupportedException.class)` 를 추가해 405(`MUPID_METHOD_NOT_ALLOWED`)로 돌린다. 404(`NoResourceFoundException`)와 짝이다 — 그쪽은 "그런 주소가 없다", 이쪽은 "그 주소가 이 방식은 안 받는다".
+- **회귀 방지**: `GlobalExceptionHandlerTest` 가 405 · 404 · 401 세 갈래를 함께 못박는다. 핸들러를 빼면 첫 번째만 실패하는 것을 확인했다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/common/exception/GlobalExceptionHandler.java`, `common/error/GlobalErrorCode.java`, `src/test/java/com/osundosun/mupid/api/common/GlobalExceptionHandlerTest.java`
+
 ### `UserGetInfoResponse.imageUrl` 이 부를 수 없는 주소다 — 해소됨
 
 - **원인**: `getProfileImageUrl` 이 `/api/v1/storage/image/profile/{저장 키 전체}` 를 만들었다. 저장 키는 이미 `image/profile/15` 라 결과가 `/api/v1/storage/image/profile/image/profile/15` 였다. 경로 마디 수가 달라 컨트롤러에 잡히지도 않고 401 이 됐다. 앨범·아티스트 쪽은 `MusicServiceImpl` 이 따로 만들고 있어 규약이 두 벌로 갈려 있었다.
