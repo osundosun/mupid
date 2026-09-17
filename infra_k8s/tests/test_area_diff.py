@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("area_diff", ROOT / "infra/ci/area_diff.py")
 area_diff = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(area_diff)
+
+# 저장소 이력을 읽는 검사가 둘 있다. git 이 없는 이미지(예: python:3.12-slim)에서
+# FileNotFoundError 로 죽는 것과, 조용히 건너뛰는 것 사이에서 후자를 고른다 —
+# 죽으면 원인이 메시지에 안 드러나고, 건너뛰면 로그에 이유가 남는다. CI job 은
+# git 을 설치하므로 실제로는 돌아간다(infra/ci/infra.yml).
+GIT = shutil.which("git")
 
 
 class PathMappingTest(unittest.TestCase):
@@ -99,7 +106,9 @@ class EveryTopLevelPathIsClassifiedTest(unittest.TestCase):
     """
 
     def test_every_tracked_top_level_entry_is_known(self):
-        out = subprocess.run(["git", "ls-tree", "--name-only", "HEAD"],
+        if not GIT:
+            self.skipTest("git 이 없다 — 최상위 경로를 읽을 수 없다")
+        out = subprocess.run([GIT, "ls-tree", "--name-only", "HEAD"],
                              cwd=ROOT, capture_output=True, text=True,
                              encoding="utf-8")
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -161,7 +170,9 @@ class PreflightCliTest(unittest.TestCase):
     def test_a_real_merge_commit_is_judged_without_network(self):
         """18b464c9 는 develop 에 병합된 실제 커밋이다. 그 부모 대비 변경은
         frontend/ 뿐이므로 Infra 라벨 없이도 통과해야 한다."""
-        head = subprocess.run(["git", "rev-parse", "18b464c9"], cwd=ROOT,
+        if not GIT:
+            self.skipTest("git 이 없다 — 저장소 이력을 읽을 수 없다")
+        head = subprocess.run([GIT, "rev-parse", "18b464c9"], cwd=ROOT,
                               capture_output=True, text=True).stdout.strip()
         if not head:
             self.skipTest("18b464c9 가 없다")

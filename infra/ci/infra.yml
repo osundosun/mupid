@@ -24,6 +24,10 @@ infra-verify:
       artifacts: false
       optional: true
   before_script:
+    # 이 이미지에는 git 이 없다. 테스트가 저장소 이력을 읽는다 —
+    # 어떤 최상위 경로가 있는지(새 영역이 표에 들어왔는지)와 실제 병합 커밋의
+    # 변경 범위. 그 검사가 app/ 을 잡아낸 검사라 CI 에서 건너뛰게 두면 안 된다.
+    - apt-get update && apt-get install -y --no-install-recommends git
     - python -m pip install --quiet PyYAML
   rules:
     # MR 에서는 라벨이 고른다 — infra/ci/labels.yml
