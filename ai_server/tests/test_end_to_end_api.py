@@ -195,7 +195,9 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path != "/api/v1/code":
             self._json(404, {"code": "NOT_FOUND", "message": "없다"})
             return
-        key = (str(b.get("codeType")), str(b.get("codeName")))
+        # 스프링은 `SNAKE_CASE` 매핑이라 camelCase 키를 모르는 필드로 버리고
+        # 필수값이 null 이 되어 400 을 낸다. 대역도 그렇게 해야 계약이 검증된다.
+        key = (str(b.get("code_type")), str(b.get("code_name")))
         s.calls.append(("POST", "code", key[1], key[0]))
         created = key not in s.codes
         if created:
@@ -204,7 +206,7 @@ class _Handler(BaseHTTPRequestHandler):
         # **멱등이다.** 두 번째부터 409 를 주면 배치가 "이미 있음" 과 "진짜 실패" 를
         # 가려야 하고, 그 분기를 빠뜨리면 배치가 통째로 멈춘다.
         self._json(200, {"message": None, "data": {
-            "codeId": s.codes[key], "codeType": key[0], "codeName": key[1],
+            "code_id": s.codes[key], "code_type": key[0], "code_name": key[1],
             "created": created}})
 
     # ---- 요구 1
