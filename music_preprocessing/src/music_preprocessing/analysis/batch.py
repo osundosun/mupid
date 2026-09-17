@@ -25,7 +25,7 @@
 
 > **등록이 끝나고, 신곡 전량이 매핑된 것을 확인한 뒤에만 교체한다.**
 
-등록이 불가능하면(구간 등록 API 미구현·미설정) 새 판을 만들어 두고 **교체를 보류한 채**
+등록이 불가능하면(요구 1 미설정 — 주소·토큰이 없다) 새 판을 만들어 두고 **교체를 보류한 채**
 그 사실을 보고한다. 새 판은 지우지 않는다 — 등록이 붙으면 그대로 이어서 쓴다.
 
 ## 종료 코드
@@ -138,14 +138,15 @@ class Registrar(Protocol):
 class UnavailableRegistrar:
     """기본값 — **등록할 곳이 없다.**
 
-    `요구 1` 은 아직 구현되지 않았다(`api/docs/AI/`). 숫자 ID 를 지어내면 그럴듯하게
-    돌다가 실제 DB 와 어긋난 순간 엉뚱한 곡을 추천한다. 그래서 등록을 흉내내지 않고
-    **보류로 끝낸다.**
+    요구 1 자체는 있다(`PUT /api/v1/music/{id}/section`). 이 자리에 오는 것은 배치가
+    그걸 부를 설정을 못 받았을 때다 — manifest 로 돌리거나 `api_base_url`·토큰이
+    비어 있는 경우. 숫자 ID 를 지어내면 그럴듯하게 돌다가 실제 DB 와 어긋난 순간
+    엉뚱한 곡을 추천한다. 그래서 등록을 흉내내지 않고 **보류로 끝낸다.**
     """
 
     def __init__(self, reason: str = ""):
         self.reason = reason or (
-            "구간 등록 API(요구 1)가 구현되지 않았다 — 숫자 ID 를 받을 곳이 없다")
+            "구간 등록(요구 1)을 부를 설정이 없다 — 숫자 ID 를 받을 곳이 없다")
 
     def available(self) -> tuple[bool, str]:
         return False, self.reason
@@ -198,6 +199,7 @@ class BatchTrack:
     meta_row: dict
     source: str = "flow"
     temp_audio: bool = False             # 내려받은 사본이면 처리 뒤 지운다
+    demix_root: Optional[Path] = None    # 분할기가 남긴 demucs 스템. 구간별 악기를 여기서 읽는다
 
     def load(self) -> tuple[seg.SectionsFile, pl.TrackStats]:
         f = seg.load_sections(Path(self.sections_json), track_id=self.track_id)
@@ -370,8 +372,12 @@ def _analyze_all(items: Sequence[BatchTrack], data: Path, state_path: Path,
             if engine is None:
                 engine = emb.Embedder(data, device=device)   # 모델은 배치당 한 번
             r = pl.analyze_track(tid, Path(t.audio_path), sections.segments, meta,
-                                 engine=engine, space=space)
+                                 engine=engine, space=space,
+                                 demix_root=getattr(t, "demix_root", None))
         r.audio_sha256 = sha
+        if r.instrument_error:
+            # 곡은 살린다. 악기가 왜 비었는지는 남는다.
+            log(f"  {tid} 악기 측정 실패 — {r.instrument_error}")
 
         if r.status != "ok":
             s.failed += 1
@@ -468,8 +474,17 @@ def read_manifest(path: Path) -> list[BatchTrack]:
                 t["sections_json"]).is_absolute() else Path(t["sections_json"]),
             content_row=dict(t.get("content") or {}),
             meta_row=dict(t.get("meta") or {}),
-            source=str(t.get("source", "flow"))))
+            source=str(t.get("source", "flow")),
+            demix_root=_rel(base, t.get("demix_root"))))
     return out
+
+
+def _rel(base: Path, value) -> Optional[Path]:
+    """manifest 의 상대 경로는 manifest 가 있는 곳 기준이다."""
+    if not value:
+        return None
+    p = Path(value)
+    return p if p.is_absolute() else (base / p).resolve()
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
