@@ -215,17 +215,21 @@ class BatchClient(MupidClient):
         return self._request("GET", "/api/v1/onboarding/option")["data"]
 
     def music_rows(self):
-        """곡 전체를 훑는다. 곡명과 **현재 분류**가 같이 오므로 한 번에 끝난다."""
+        """곡 전체를 훑는다. 곡명과 **현재 분류**가 같이 오므로 한 번에 끝난다.
+
+        응답 키는 snake_case 다 (`total_elements`·`total_pages`). 서버의
+        `spring.jackson.property-naming-strategy: SNAKE_CASE` 가 여기에도 걸린다.
+        """
         rows, page, total = [], 0, None
         while True:
             params = urlencode({"page": page, "size": PAGE_SIZE})
             data = self._request("GET", f"/api/v1/music?{params}")["data"]
-            if total is not None and total != data["totalElements"]:
+            if total is not None and total != data["total_elements"]:
                 raise ValueError("조회 중 곡 수가 바뀜; 재실행 필요")
-            total = data["totalElements"]
+            total = data["total_elements"]
             rows.extend(data["items"])
             page += 1
-            if page >= data["totalPages"]:
+            if page >= data["total_pages"]:
                 break
             if not data["items"]:
                 raise ValueError("빈 페이지")
@@ -237,10 +241,14 @@ class BatchClient(MupidClient):
     # 같은 것을 부르므로, 두 벌을 두면 한쪽만 고쳐졌을 때 조용히 갈린다.
 
     def replace_classification(self, music_id, genre_code_ids, mood_code_ids):
-        """그 곡의 장르·분위기를 **통째로** 갈아 끼운다. 저장된 결과가 돌아온다."""
+        """그 곡의 장르·분위기를 **통째로** 갈아 끼운다. 저장된 결과가 돌아온다.
+
+        요청·응답 키는 모두 snake_case 다 (`genre_code_ids`·`mood_code_ids`). 자바
+        record 의 필드명(`genreCodeIds`)이 아니다 — 스프링이 `SNAKE_CASE` 로 바꾼다.
+        """
         return self._request(
             "PUT", f"/api/v1/music/{positive_id(music_id)}/classification",
-            json_body={"genreCodeIds": genre_code_ids, "moodCodeIds": mood_code_ids},
+            json_body={"genre_code_ids": genre_code_ids, "mood_code_ids": mood_code_ids},
         )["data"]
 
 
@@ -370,7 +378,11 @@ def wanted(track, folded):
 
 
 def inspect(client, tracks):
-    """쓰기 전에 서버 상태를 읽어 계획을 세운다. 아무것도 쓰지 않는다."""
+    """쓰기 전에 서버 상태를 읽어 계획을 세운다. 아무것도 쓰지 않는다.
+
+    **읽는 키는 전부 snake_case 다.** 서버가 `SNAKE_CASE` 로 응답을 바꾼다 —
+    온보딩 선택지도(`code_id`), 곡 목록도(`music_id`·`total_elements`).
+    """
     options = client.options()
     codes = {}
     for kind, key in (("GENRE", "genres"), ("MOOD", "moods")):
@@ -378,12 +390,12 @@ def inspect(client, tracks):
             entry = (kind, row["name"])
             if entry in codes:
                 raise ValueError(f"서버에 중복 코드 존재: {entry}")
-            codes[entry] = positive_id(row["codeId"])
+            codes[entry] = positive_id(row["code_id"])
     folded = fold(codes)
 
     server = {}
     for row in client.music_rows():
-        music_id = positive_id(row["musicId"])
+        music_id = positive_id(row["music_id"])
         if music_id in server:
             raise ValueError(f"곡 목록에 같은 번호가 두 번: {music_id}")
         server[music_id] = row
@@ -428,13 +440,13 @@ def apply_plan(client, tracks, state, report, save, replace_existing=False):
         else:
             korean = GENRE_DISPLAY_NAMES.get(name.casefold(), name)
             row = client.add_code(kind, name, korean)
-        code_id = positive_id(row["codeId"])
+        code_id = positive_id(row["code_id"])
         # 서버가 돌려준 철자를 쓴다. 대소문자만 다른 코드가 이미 있었다면 그 이름이다.
-        codes[(kind, row["codeName"])] = code_id
-        folded[(kind, row["codeName"].casefold())] = row["codeName"]
+        codes[(kind, row["code_name"])] = code_id
+        folded[(kind, row["code_name"].casefold())] = row["code_name"]
         report["created"].append({"resource": "code", "id": code_id, "type": kind,
-                                  "name": row["codeName"],
-                                  "display_name": row.get("displayName"),
+                                  "name": row["code_name"],
+                                  "display_name": row.get("display_name"),
                                   "new": bool(row.get("created"))})
         save()
 
@@ -445,7 +457,7 @@ def apply_plan(client, tracks, state, report, save, replace_existing=False):
         mood_ids = [codes[("MOOD", name)] for name in mood_names]
         stored = client.replace_classification(music_id, genre_ids, mood_ids)
         # 보낸 것이 아니라 저장된 것이 돌아온다. 다르면 여기서 멈춘다.
-        if sorted(stored["genreCodeIds"]) != sorted(genre_ids) or sorted(stored["moodCodeIds"]) != sorted(mood_ids):
+        if sorted(stored["genre_code_ids"]) != sorted(genre_ids) or sorted(stored["mood_code_ids"]) != sorted(mood_ids):
             raise ValueError(f"저장 결과가 요청과 다름: music_id={music_id}")
         written = {"resource": "classification", "music_id": music_id,
                    "genre_code_ids": genre_ids, "mood_code_ids": mood_ids}
