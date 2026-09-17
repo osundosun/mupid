@@ -76,7 +76,8 @@
 
 ### 앨범 아트가 전부 깨졌다
 
-서버는 이미지 주소를 `/api/v1/storage/image/ALBUM/...` 처럼 **경로로** 준다. 웹에서는
+서버는 이미지 주소를 `/api/v1/storage/image/{fileId}` 처럼 **경로로** 준다(사진 없는
+계정의 기본 프로필만 `/PROFILE/default` 다). 웹에서는
 같은 출처라 그대로 열리지만, 앱의 출처는 `http://tauri.localhost` 라 그 경로에는
 아무것도 없다. `toImageSource()` 가 `http(s)://` 뿐 아니라 `/api/` 로 시작하는 주소도
 `mupidimg` 스킴으로 넘긴다. 앱이 들고 있는 파일(`/sky-vinyl.webp`)은 건드리지 않는다.

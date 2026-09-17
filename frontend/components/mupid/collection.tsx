@@ -410,7 +410,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
 /**
  * 리포트 카드의 MuBTI 캐릭터 — 서버가 준 유형 일러스트.
  *
- * 서버는 16유형 각각의 캐릭터를 들고 있다(`image_url` = `/api/v1/storage/image/MUBTI/VTFC.webp`).
+ * 서버는 16유형 각각의 캐릭터를 들고 있다(`image_url` = `/api/v1/storage/image/{fileId}`).
  * 그 한 장이 곧 판정 결과라, 화면은 그 이미지를 그대로 쓴다.
  *
  * **이미지가 없으면 마스코트로 내려간다.** 서버가 아직 이미지를 못 올렸거나(부트스트랩이

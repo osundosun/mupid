@@ -32,9 +32,10 @@ const encode = (value: string): string =>
 /**
  * 서버가 주는 이미지인가.
  *
- * 서버는 `/api/v1/storage/image/ALBUM/...` 처럼 **경로로** 준다. 웹에서는 같은
- * 출처라 그대로 열리지만, 앱의 출처는 `http://tauri.localhost` 라 그 경로에는
- * 아무것도 없다 — 앨범 커버가 전부 깨지던 것이 이 때문이다.
+ * 서버는 `/api/v1/storage/image/{fileId}` 처럼 **경로로** 준다(사진 없는 계정의
+ * 기본 프로필만 `/PROFILE/default` 다). 웹에서는 같은 출처라 그대로 열리지만,
+ * 앱의 출처는 `http://tauri.localhost` 라 그 경로에는 아무것도 없다 — 앨범
+ * 커버가 전부 깨지던 것이 이 때문이다.
  *
  * 앱이 들고 있는 파일(`/sky-background.webp`)과 data URL 은 건드리지 않는다.
  */

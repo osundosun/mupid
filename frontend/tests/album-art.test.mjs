@@ -30,7 +30,7 @@ test('커버 주소가 비어 있으면 기본 커버로 내려간다', () => {
 });
 
 test('쓸 수 있는 주소는 그대로 건다', () => {
-  const url = '/api/v1/storage/image/ALBUM/blue-static.jpg';
+  const url = '/api/v1/storage/image/12';
   assert.deepEqual(resolveAlbumCover(url), { src: url, isFallback: false });
   // 앱에서는 `toImageSource` 가 감싼 `mupidimg` 주소가 들어온다.
   const wrapped = 'http://mupidimg.localhost/L2FwaS92MS9zdG9yYWdl';
@@ -41,7 +41,7 @@ test('쓸 수 있는 주소는 그대로 건다', () => {
 });
 
 test('한 번 실패한 주소는 기본 커버로 바뀌고 거기서 멈춘다', () => {
-  const url = '/api/v1/storage/image/ALBUM/사라진커버.jpg';
+  const url = '/api/v1/storage/image/99';
   const first = resolveAlbumCover(url, null);
   assert.equal(first.src, url);
 
@@ -57,7 +57,7 @@ test('한 번 실패한 주소는 기본 커버로 바뀌고 거기서 멈춘다
   assert.equal(stop.isFallback, true);
 
   // 다른 곡으로 넘어가면 그 곡의 주소는 다시 시도한다.
-  const other = resolveAlbumCover('/api/v1/storage/image/ALBUM/다른앨범.jpg', url);
+  const other = resolveAlbumCover('/api/v1/storage/image/13', url);
   assert.equal(other.isFallback, false);
 });
 
