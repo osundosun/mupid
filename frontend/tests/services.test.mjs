@@ -78,7 +78,18 @@ test('corrupt storage recovers and invalid track references are removed', async 
   const service = createDemoService(storage);
   assert.equal((await service.bootstrap(demoTracks)).tracks.length, demoTracks.length);
   storage.setItem('mupid.sky.preferences.v1', JSON.stringify({ liked: [1, 999], playlists: [{id: 3, name: '목록', tracks: [null, {id: 999}]}] }));
-  const data = await service.bootstrap(demoTracks); assert.deepEqual(data.preferences.liked, [1]); assert.deepEqual(data.preferences.playlists[0].tracks, []);
+  const data = await service.bootstrap(demoTracks); assert.deepEqual(data.preferences.liked, [1]); assert.deepEqual(data.preferences.playlists, []);
+});
+// 기기에 남은 플레이리스트는 되살리지도, 다시 적지도 않는다. 이 저장소는 계정별로
+// 나뉘어 있지 않아 — 신규 가입자가 앞사람의(그리고 예전 빌드의 데모) 목록을 넘겨받았다.
+test('device-stored playlists are never restored and get purged on save', async () => {
+  const storage = memory();
+  storage.setItem('mupid.sky.preferences.v1', JSON.stringify({ nickname: '새 사람', playlists: [{ id: 1, name: '규원의 Mupid Mix', tracks: [] }] }));
+  const service = createDemoService(storage);
+  const data = await service.bootstrap(demoTracks);
+  assert.deepEqual(data.preferences.playlists, []);
+  await service.savePreferences({ ...data.preferences, playlists: [{ id: 1, name: '규원의 Mupid Mix', tracks: [] }] });
+  assert.deepEqual(JSON.parse(storage.getItem('mupid.sky.preferences.v1')).playlists, []);
 });
 test('browser-only service never authenticates or stores credentials', async () => {
   const storage = memory(); const service = createDemoService(storage);
