@@ -77,6 +77,20 @@ public class BootstrapRunner implements ApplicationRunner {
         new CodeSeed(CodeType.MOOD, "감성적인"),
         new CodeSeed(CodeType.MOOD, "강렬한"),
         new CodeSeed(CodeType.MOOD, "설레는"),
+        // taxonomy 무드 9종 (2026-09-17 추가). **반드시 위 8종 뒤에 붙인다.**
+        // 화면 차례가 곧 `code_id` 차례라(`findAllByCodeTypeOrderByCodeIdAsc`),
+        // 사이에 끼워 넣으면 기존 사용자의 `onboarding_survey` 답이 다른 분위기로
+        // 읽힌다. 이름은 한국어(화면용), `displayName` 이 색인 원문이다 —
+        // 장르 45종과 **방향이 반대**라 여기서 헷갈리기 쉽다.
+        new CodeSeed(CodeType.MOOD, "애상적인", "melancholic"),
+        new CodeSeed(CodeType.MOOD, "따뜻한", "warm"),
+        new CodeSeed(CodeType.MOOD, "몽글한", "dreamy"),
+        new CodeSeed(CodeType.MOOD, "화사한", "bright"),
+        new CodeSeed(CodeType.MOOD, "희망찬", "hopeful"),
+        new CodeSeed(CodeType.MOOD, "웅장한", "powerful"),
+        new CodeSeed(CodeType.MOOD, "어두운", "dark"),
+        new CodeSeed(CodeType.MOOD, "고요한", "calm"),
+        new CodeSeed(CodeType.MOOD, "짜릿한", "exciting"),
         new CodeSeed(CodeType.GENRE, "Electronic"),
         new CodeSeed(CodeType.GENRE, "Indie"),
         new CodeSeed(CodeType.GENRE, "R&B"),
@@ -306,10 +320,12 @@ public class BootstrapRunner implements ApplicationRunner {
 
         List<Code> missing = new ArrayList<>();
         for (CodeSeed seed : CODE_SEEDS) {
-            if (!existing.contains(seed)) {
+            // `key()` 로 비교한다 — 표시명이 달라도 같은 코드다.
+            if (!existing.contains(seed.key())) {
                 missing.add(Code.builder()
                     .codeType(seed.type())
                     .codeName(seed.name())
+                    .displayName(seed.displayName())
                     .build());
             }
         }
@@ -584,8 +600,29 @@ public class BootstrapRunner implements ApplicationRunner {
         return MUBTI_SEEDS.stream().anyMatch(seed -> seed.code().equals(code)) ? code : null;
     }
 
-    /** 넣어야 할 코드 한 건. 있는지 없는지를 이 값으로 비교한다. */
-    record CodeSeed(CodeType type, String name) {
+    /**
+     * 넣어야 할 공통 코드 한 종.
+     *
+     * <p>{@code displayName} 은 화면에 보여줄 이름이다. 두 인자짜리 생성자는
+     * {@code codeName} 과 같게 채운다 — 기존 16종은 코드 이름이 곧 표시명이다.
+     */
+    record CodeSeed(CodeType type, String name, String displayName) {
+
+        CodeSeed(CodeType type, String name) {
+            this(type, name, name);
+        }
+
+        /**
+         * "이미 있는가" 를 비교하는 키. **표시명은 뺀다.**
+         *
+         * <p>{@code equals} 는 모든 항목을 보므로, 표시명을 나중에 채우거나 고친
+         * 행은 이 시드와 다른 값이 되어 <b>없는 것으로 판정되고 다시 INSERT 된다.</b>
+         * 그러면 `(code_type, code_name)` UNIQUE 에 걸려 기동이 실패한다 —
+         * 표시명을 바꾸는 것만으로 서버가 못 뜨는 상황을 여기서 막는다.
+         */
+        CodeSeed key() {
+            return new CodeSeed(type, name, name);
+        }
     }
 
     /**

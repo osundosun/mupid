@@ -458,6 +458,9 @@ class MusicSectionReplaceTest {
         Code code = Code.builder()
             .codeType(CodeType.INSTRUMENT)
             .codeName(name + "-" + uid)
+            /* `codes.display_name` 은 NOT NULL 이다. 표시명을 비우면 INSERT 가
+               터진다 — `CodeOption.of` 가 대신 채워 주지만 그건 읽을 때다. */
+            .displayName(name + "-" + uid)
             .build();
         em.persist(code);
         em.flush();
