@@ -9,6 +9,7 @@ import { fetchCatalog } from '@/lib/stream-catalog';
 import { restoreSession, sessionStore } from '@/lib/api/session';
 import { watchSafeArea } from '@/lib/platform';
 import { watchDevToolsErrors } from '@/lib/devtools-error-filter';
+import { DEFAULT_PROFILE_PHOTO } from '@/components/mupid/profile-image';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
 import {
@@ -21,7 +22,6 @@ import {
   LogIn,
   MessageCircle,
   Search,
-  UserRound,
   Volume2,
 } from 'lucide-react';
 import { useMupid } from '@/hooks/use-mupid';
@@ -209,9 +209,11 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
             <div className="nav-account" ref={accountRef}>
               <button ref={accountButton} className="nav-avatar" aria-label={m.demoSession ? '내 계정 메뉴' : '로그인'} aria-expanded={accountOpen} aria-controls="nav-account-panel" disabled={!m.authReady} onClick={() => m.demoSession ? setAccountOpen(value => !value) : m.openLogin()}>
                 {/* 사진을 올리지 않았으면 `photo` 에 기본 이미지가 담겨 온다.
-                    사람 아이콘은 그것마저 없을 때 — 토큰이 없는 체험 세션이나
-                    조회 실패 — 의 마지막 대비책이다. */}
-                {m.demoSession ? photo ? <img src={photo} alt={ownPhoto ? '내 프로필' : '기본 프로필'} /> : <UserRound size={22} aria-hidden="true" /> : <LogIn size={22} />}
+                    그마저 비어 있을 때 — 로컬 데모처럼 계정에 `image_url` 이
+                    없거나 조회가 실패했을 때 — 는 번들의 기본 그림을 쓴다.
+                    여기만 사람 아이콘을 그리면 마이페이지의 마스코트와 어긋나
+                    같은 사람이 두 얼굴로 보인다. */}
+                {m.demoSession ? <img src={photo || DEFAULT_PROFILE_PHOTO} alt={ownPhoto ? '내 프로필' : '기본 프로필'} /> : <LogIn size={22} />}
               </button>
               {accountOpen && <div id="nav-account-panel" className="nav-account-panel">
                 <button onClick={() => { setAccountOpen(false); m.go('profile'); }}>마이페이지</button>

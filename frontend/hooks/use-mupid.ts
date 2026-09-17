@@ -468,6 +468,14 @@ export function useMupid(bootstrap: Bootstrap) {
    * 계정으로 올렸는데, 그 저장소가 계정별로 나뉘어 있지 않아 신규 가입자가
    * 앞사람의 목록(과 예전 빌드의 데모 목록)을 넘겨받았다. 그 길은 없앴다.
    */
+  /*
+   * 플레이리스트는 계정에 남는 기능이라 로컬 데모에 구현이 없다.
+   *
+   * 그 상태에서 "다시 시도해 주세요" 를 띄우면 몇 번이고 다시 누르게 된다.
+   * 데모에서는 되지 않는 이유를 그대로 알린다.
+   */
+  const playlistFailure = (retryable: string) =>
+    localDemoEnabled() ? '로컬 데모에서는 플레이리스트를 쓸 수 없어요. 서버 연결이 필요해요.' : retryable;
   const adoptServerPlaylists = async (signal?: AbortSignal) => {
     if (localDemoEnabled()) return;
     const saved = await playlistApi.fetchPlaylists(tracks, signal);
@@ -1336,7 +1344,7 @@ export function useMupid(bootstrap: Bootstrap) {
           p.id === playlistId ? { ...p, tracks: p.tracks.filter((t) => t.id !== track.id) } : p,
         ),
       );
-      setToast('플레이리스트에 담지 못했어요. 다시 시도해 주세요.');
+      setToast(playlistFailure('플레이리스트에 담지 못했어요. 다시 시도해 주세요.'));
     }
   };
 
@@ -1363,7 +1371,7 @@ export function useMupid(bootstrap: Bootstrap) {
       if (!mountedRef.current) return;
       // 순서까지 원래대로 되돌린다. 남은 것만 다시 넣으면 뺀 곡이 뒤로 밀린다.
       setPlaylists((list) => list.map((p) => (p.id === playlistId ? { ...p, tracks: before } : p)));
-      setToast('플레이리스트에서 빼지 못했어요. 다시 시도해 주세요.');
+      setToast(playlistFailure('플레이리스트에서 빼지 못했어요. 다시 시도해 주세요.'));
     }
   };
 
@@ -1381,7 +1389,7 @@ export function useMupid(bootstrap: Bootstrap) {
       setPlaylists((list) =>
         list.map((p) => (p.id === playlistId ? { ...p, name: before.name } : p)),
       );
-      setToast('이름을 바꾸지 못했어요. 다시 시도해 주세요.');
+      setToast(playlistFailure('이름을 바꾸지 못했어요. 다시 시도해 주세요.'));
     }
   };
 
@@ -1403,7 +1411,7 @@ export function useMupid(bootstrap: Bootstrap) {
     } catch {
       if (!mountedRef.current) return;
       setPlaylists(before);
-      setToast('플레이리스트를 삭제하지 못했어요. 다시 시도해 주세요.');
+      setToast(playlistFailure('플레이리스트를 삭제하지 못했어요. 다시 시도해 주세요.'));
     }
   };
   /**
@@ -1550,7 +1558,7 @@ export function useMupid(bootstrap: Bootstrap) {
       if (track) await addToPlaylist(id, track);
       if (mountedRef.current) setToast('새 플레이리스트를 만들었어요.');
     } catch {
-      if (mountedRef.current) setToast('플레이리스트를 만들지 못했어요. 다시 시도해 주세요.');
+      if (mountedRef.current) setToast(playlistFailure('플레이리스트를 만들지 못했어요. 다시 시도해 주세요.'));
     }
   };
   return {
