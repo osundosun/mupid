@@ -11,6 +11,7 @@
     "build": "vinext build",
     "build:static": "node scripts/static-target.mjs build app",
     "build:ec2": "node scripts/static-target.mjs build ec2",
+    "build:archive": "node scripts/web-archive.mjs",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
     "format": "oxfmt"

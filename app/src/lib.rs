@@ -15,6 +15,9 @@ mod http;
 mod image;
 mod media;
 mod store;
+mod update;
+mod update_native;
+mod update_net;
 
 use tauri::{Manager, WebviewWindowBuilder};
 
@@ -169,6 +172,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(media::init())
+        .plugin(update_native::init())
         .register_asynchronous_uri_scheme_protocol(config::IMAGE_SCHEME, |ctx, request, responder| {
             serve_image(ctx.app_handle().clone(), request, responder);
         })
@@ -216,6 +220,11 @@ pub fn run() {
             media::media_session_update,
             media::media_session_clear,
             commands::assets_status,
+            // 자동 업데이트 (update.rs · update_net.rs)
+            commands::update_status,
+            commands::update_web,
+            commands::update_check_now,
+            commands::update_native,
         ])
         .run(context)
         .expect("앱을 시작하지 못했습니다");
