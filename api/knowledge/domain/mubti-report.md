@@ -230,20 +230,37 @@ NOT NULL 이라 애초에 못 쓴다.
 
 ### 16유형 마스터 데이터
 
-`mubti` 표 16행은 **사람이 넣는다** (`ddl-auto: none`,
-[decision/0011](../decision/0011-jpa-manages-schema.md)). `seed-codes.sql` 과 같은
-자리에 `seed-mubti.sql` 을 둔다. 컬럼 대응은 이렇다.
+`mubti` 표 16행은 **기동 때 `bootstrap/BootstrapRunner` 가 채운다.** 예전에는 사람이
+`seed-mubti.sql` 로 넣어야 했지만, `image_file_id` 가 NOT NULL 이라 행만 넣을 수 없고
+(캐릭터 이미지를 스토리지에 올린 뒤 그 `file_id` 를 물려야 한다) S15P21A204-344 에서
+자동으로 바뀌었다. 컬럼 대응은 이렇다.
 
 | 컬럼 | 값 | 예 |
 |---|---|---|
 | `title` VARCHAR(20) | 유형명 | `보컬 인싸형` |
 | `subtitle` VARCHAR(50) | 수식 문구 | `모두의 보컬은 곧 나의 최애` |
-| `description` VARCHAR(100) | 한 문단 설명 | (새로 쓴다) |
-| `classa`~`classd` | `V/I` `T/M` `F/S` `C/E` | |
-| `image_file_id` | 유형 일러스트 | 지금은 NULL |
+| `description` VARCHAR(100) | 한 문단 설명 | 축 정의를 이어 붙여 만든다 |
+| `class_a`~`class_d` | `V/I` `T/M` `F/S` `C/E` | |
+| `image_file_id` | 유형 일러스트 | `mubti-characters.zip` 의 `{CODE}.webp` |
 
-**표가 비어 있으면 리포트가 503 이다.** 온보딩이 `codes` 표에 걸리는 것과 같은
-구조라 같은 식으로 다룬다.
+**표가 비어 있으면 리포트가 503 이다.** 러너가 못 채우는 환경(권한 없음, 스토리지 죽음)에서
+그렇게 되므로 기동 로그의 `취향 유형` 항목을 본다.
+
+#### 캐릭터 이미지의 저장 키는 `image/mubti/{CODE}.webp` 다
+
+카테고리 접두사를 **손으로 적으면 안 된다.** 저장 키의 모양을 정하는 곳은
+`StorageImageService.storageKey` 하나이고, `imageUrl(ObjectStorageFile)` 이 그 모양을
+되짚어 조회 URL 을 만든다(3마디로 쪼개 앞 두 마디를 떼고 카테고리를 붙인다).
+
+부트스트랩이 이 규약을 어기고 `mubti/{CODE}.webp` 로 올려 둔 동안, `imageUrl` 이 3마디를
+못 찾아 **예외도 로그도 없이 null** 을 돌려줬다. 화면은 그 null 을 "이미지 없음" 으로
+받아들여 조용히 마스코트를 그렸고, 그래서 `/report` 의 MuBTI 캐릭터가 뜨지 않았다.
+같은 이유로 `SecurityConfig` 의 공개 경로에 `MUBTI` 가 없어 `<img src>` 가 401 이었다.
+
+기동할 때 `BootstrapRunner.repairMubtiImageKeys` 가 옛 키(`mubti/{CODE}.webp`)로 올라간
+이미지를 찾아 `image/mubti/` 로 옮긴다. 바이트를 **스토리지에서 읽어** 옮기므로 zip 판본으로
+덮어쓰지 않고, **행 → 오브젝트 → 옛 객체 삭제** 순서다(뒤집으면 행이 중복 생긴다 —
+`BootstrapRunner` 의 javadoc 참고).
 
 ---
 
@@ -266,7 +283,7 @@ GET /api/v1/report?date=2026-09-15      인증 필요
     "unmatched_ms": 0,
     "tracks": [
       { "music_id": 12, "title": "...", "artist_name": "...",
-        "album_title": "...", "image_url": "/api/v1/storage/image/ALBUM/...",
+        "album_title": "...", "image_url": "/api/v1/storage/image/12",
         "listening_ms": 420000, "share": 0.118 }
     ],
     "keywords": [ { "name": "몽환적", "kind": "MOOD", "weight": 0.31 } ],
@@ -274,8 +291,8 @@ GET /api/v1/report?date=2026-09-15      인증 필요
       "code": "VTFC",
       "title": "보컬 인싸형",
       "subtitle": "모두의 보컬은 곧 나의 최애",
-      "description": "...",
-      "image_url": null,
+      "description": "지금 사랑받는 목소리를 끝까지 듣고, 마음에 든 곡은 오래 곁에 둬요.",
+      "image_url": "/api/v1/storage/image/12",
       "axes": [
         { "axis": "A", "code": "V", "name": "보컬파",
           "opposite_code": "I", "opposite_name": "멜로디파",
@@ -469,8 +486,12 @@ api/music/repository/                       ← 기준선용 조회 2개
 ### 데이터
 
 ```
-api/knowledge/domain/seed-mubti.sql         16유형. 사람이 직접 넣는다
+api/src/main/resources/bootstrap/mubti-characters.zip   16유형 캐릭터 (파일 이름이 코드)
+api/src/.../bootstrap/BootstrapRunner.java              기동 때 16행을 이미지와 함께 채운다
 ```
+
+`seed-mubti.sql` 은 없다. `image_file_id` 가 NOT NULL 이라 SQL 만으로는 행을 만들 수 없어서,
+S15P21A204-344 에서 부트스트랩이 이미지를 올리고 행을 만드는 방식으로 바뀌었다.
 
 ### 프론트
 

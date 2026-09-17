@@ -10,6 +10,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.validation.BindException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.security.access.AccessDeniedException;
@@ -51,6 +52,28 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse<Void>> notFound(NoResourceFoundException e) {
         // Endpoint가 존재하지 않습니다.
         return businessError(new BusinessException(GlobalErrorCode.NOT_FOUND));
+    }
+
+    /**
+     * 경로는 맞는데 요청 방식이 다를 때. <b>405</b> 다.
+     *
+     * <h2>왜 필요한가</h2>
+     *
+     * 이 핸들러가 없으면 {@code HttpRequestMethodNotSupportedException} 이 맨 아래
+     * {@code Exception} 핸들러에 먹혀 <b>500</b> 으로 나간다. 보낸 쪽은 "서버가 고장 났다"로
+     * 읽고 5xx 를 재시도 대상으로 잡아 쓸데없이 다시 보낸다 — 다시 보내도 같은 답인데도.
+     * 로그도 ERROR 와 스택트레이스로 오염된다.
+     *
+     * <p>같은 이유로 {@code AccessDeniedException}(403)·{@code JwtException}(401)·
+     * {@code MethodArgumentTypeMismatchException}(400) 에도 핸들러를 붙여 왔다.
+     * <b>클라이언트 잘못을 5xx 로 내보내면 서버 장애로 읽힌다</b>는 같은 문제다.
+     *
+     * <p>{@code NoResourceFoundException}(404) 과 짝이다. 그쪽은 "그런 주소가 없다",
+     * 이쪽은 "그 주소가 이 방식은 안 받는다" 다.
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse<Void>> methodNotAllowed(HttpRequestMethodNotSupportedException e) {
+        return businessError(new BusinessException(GlobalErrorCode.METHOD_NOT_ALLOWED));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

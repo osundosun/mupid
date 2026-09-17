@@ -1814,6 +1814,8 @@ h1 {
 .report-card.listening-story {
   isolation: isolate;
 }
+/* MuBTI 캐릭터. 서버 일러스트(`<img>`)와 대체 마스코트(배경 이미지를 쓰는 `<span>`)가
+   같은 자리를 쓴다 — 그래서 크기·투명도를 여기 한 곳에서 정한다. */
 .report-cupid {
   position: absolute;
   right: 12px;
@@ -1821,6 +1823,12 @@ h1 {
   z-index: -1;
   opacity: 0.3;
   pointer-events: none;
+}
+img.report-cupid {
+  width: 132px;
+  height: 132px;
+  object-fit: contain;
+  background: transparent;
 }
 .keyword-card {
   margin-top: 18px;
@@ -1994,6 +2002,72 @@ h1 {
 }
 .welcome-form .filter-chips {
   margin-bottom: 20px;
+}
+
+/* 장르가 45개를 넘는다. 전부 펼치면 '다음' 버튼이 화면 밖으로 밀려 고르다 말고
+   스크롤을 한참 내려야 한다. 목록만 스크롤되게 높이를 묶는다. */
+.onboarding-scroll {
+  max-height: 42vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding-right: 4px;
+}
+/* 아래가 잘렸다는 것이 보여야 더 있는 줄 안다. */
+.onboarding-scroll {
+  mask-image: linear-gradient(#000 calc(100% - 20px), transparent);
+}
+
+/* 고른 것을 위에 고정한다. 목록을 스크롤해도 무엇을 골랐는지 보이고,
+   되돌리려고 다시 찾아 내려갈 필요가 없다. */
+.onboarding-picked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 2px;
+}
+.onboarding-picked-count {
+  color: #6c85b0;
+  font-size: 13px;
+  margin-right: 2px;
+}
+.onboarding-picked-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid #5e88ce;
+  border-radius: 10px;
+  background: #5e88ce;
+  color: #fff;
+  font-size: 13px;
+  /* 지우기 칩은 44px 을 쓰지 않는다. 고른 것을 되돌리는 보조 동작이고,
+     같은 크기로 두면 선택지와 구분이 안 된다. */
+  min-height: 32px;
+}
+.onboarding-picked-chip:disabled {
+  opacity: .6;
+}
+
+.onboarding-search {
+  width: 100%;
+  margin: 10px 0 2px;
+  padding: 10px 12px;
+  border: 1px solid #dde7f7;
+  border-radius: 12px;
+  background: #ffffffb0;
+  color: #34507e;
+  font-size: 15px;
+  min-height: 44px;
+}
+.onboarding-search::placeholder {
+  color: #9ab0d2;
+}
+.onboarding-empty {
+  color: #6c85b0;
+  font-size: 14px;
+  padding: 12px 2px;
 }
 .chat-launcher {
   position: fixed;

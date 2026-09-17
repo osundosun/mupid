@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { ChevronLeft, ChevronRight, Clock3, X } from 'lucide-react';
+import { Clock3, Heart, X } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,36 +12,50 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
-import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
-import { EmptyState, Waveform, PlayerControls } from './primitives';
+import { formatTime } from '@/lib/mupid-data';
+import { EmptyState, PlayerControls } from './primitives';
 import { commentable, validateComment } from '@/lib/comment-rules';
 import { trackComments, commentUserId, ownsComment, type TrackComment } from '@/lib/track-comments';
+import { profilePhotoStore } from '@/lib/profile-photo';
+import { DEFAULT_PROFILE_PHOTO } from './profile-image';
+import { useStore } from '@/lib/store';
 
 // 로그인 화면을 다녀오는 동안만 새 댓글 초안을 보관한다. 새로고침하면 폐기된다.
 const pendingDrafts = new Map<number, { at: number; body: string; owner: number | null }>();
-// 댓글이 쌓여도 목록이 끝없이 길어지지 않게 한 페이지씩 보여 준다.
-const COMMENTS_PER_PAGE = 5;
+function CommentAvatar({ comment }: { comment: TrackComment }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  const myPhoto = useStore(profilePhotoStore, state => state.url);
+  const photo = comment.mine ? myPhoto : undefined;
+  const src = photo && photo !== failed ? photo : DEFAULT_PROFILE_PHOTO;
+  return <img className="comment-avatar-image" src={src} alt="" onError={() => { if (src !== DEFAULT_PROFILE_PHOTO) setFailed(src); }} />;
+}
 
 export function TrackComments({ model: m }: { model: MupidModel }) {
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
   if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
   const userId = commentUserId(m.demoSession);
-  // 데모 곡은 서버에 없어 댓글을 붙일 데가 없다.
+  const service = trackComments;
   const available = commentable(active) && m.demoSession?.kind === 'authenticated';
   const [items, setItems] = useState<TrackComment[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
-  const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<{ at: number; id?: string } | null>(null);
   const [body, setBody] = useState('');
-  const [order, setOrder] = useState('latest');
   const [remove, setRemove] = useState<string | null>(null);
-  const [selectedBucket, setSelectedBucket] = useState<number | null>(null);
+  const [selectedTime, setSelectedTime] = useState<number | null>(null);
   const [point, setPoint] = useState<number | null>(null);
-  const part = getSongSectionAt(active, m.time);
+  const markerRail = useRef<HTMLDivElement>(null);
+  const [railWidth, setRailWidth] = useState(300);
+  useEffect(() => {
+    const rail = markerRail.current;
+    if (!rail) return;
+    const observer = new ResizeObserver(([entry]) => setRailWidth(entry.contentRect.width));
+    observer.observe(rail);
+    return () => observer.disconnect();
+  }, []);
   const input = useRef<HTMLTextAreaElement>(null);
   const bubble = useRef<HTMLFormElement>(null);
   const waveInput = useRef<HTMLInputElement>(null);
@@ -70,7 +84,7 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
     if (!available) { setItems([]); setReady(true); return; }
     const abort = new AbortController();
     setReady(false); setError('');
-    void trackComments.list(active, abort.signal)
+    void service.list(active, abort.signal)
       .then(value => { if (!abort.signal.aborted) { setItems(value); setReady(true); } })
       .catch(() => { if (!abort.signal.aborted) setError('댓글을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'); });
     return () => abort.abort();
@@ -87,7 +101,7 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
     if (comment && !ownsComment(comment, userId)) return;
     // 작성 버튼을 누른 순간을 고정한다. 입력 중 음악이 진행돼도 댓글 시점은 바뀌지 않는다.
     const saved = pendingDrafts.get(active.id);
-    const at = comment?.at ?? selectedAt ?? saved?.at ?? point ?? Math.min(active.duration, Math.max(0, Math.floor(m.time)));
+    const at = comment?.at ?? selectedAt ?? saved?.at ?? point ?? Math.min(active.duration, Math.max(0, Math.round(m.time * 1000) / 1000));
     const text = comment?.body ?? saved?.body ?? '';
     setDraft(comment ? {at, id: comment.id} : {at});
     if (!comment) pendingDrafts.set(active.id, {at, body: text, owner: userId});
@@ -98,46 +112,54 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
       input.current?.focus({ preventScroll: true });
     });
   };
-  const visible = items.filter(c => c.trackId === active.id).sort((a,b) => order === 'time' ? a.at - b.at || b.createdAt - a.createdAt : b.createdAt - a.createdAt);
-  // 댓글을 지워 마지막 장이 비면 자동으로 앞 장으로 당긴다.
-  const pageCount = Math.max(1, Math.ceil(visible.length / COMMENTS_PER_PAGE));
-  const currentPage = Math.min(page, pageCount - 1);
-  const paged = visible.slice(currentPage * COMMENTS_PER_PAGE, (currentPage + 1) * COMMENTS_PER_PAGE);
-  // 좁은 화면에서도 겹치지 않게 가까운 댓글을 8개 시간 구간으로 묶는다.
-  const bucketFor = (at: number) => Math.min(7, Math.floor(Math.max(0, at) / Math.max(1, active.duration) * 8));
-  const buckets = Array.from({length: 8}, (_, index) => visible.filter(c => bucketFor(c.at) === index).sort((a,b) => a.at - b.at));
+  const visible = items.filter(c => c.trackId === active.id && Number.isFinite(c.at) && c.at >= 0 && c.at <= active.duration);
+  // 같은 시점만 묶는다. 가까운 다른 시점은 가로 위치를 유지하고 다음 줄에 둔다.
+  const moments = new Map<number, TrackComment[]>();
+  for (const comment of visible) {
+    const comments = moments.get(comment.at) ?? [];
+    comments.push(comment);
+    moments.set(comment.at, comments);
+  }
+  const laneEnds: number[] = [];
+  const markers = [...moments.entries()].sort(([a], [b]) => a - b).map(([at, comments]) => {
+    const left = at / Math.max(1, active.duration) * 100;
+    const x = left / 100 * railWidth;
+    let lane = laneEnds.findIndex(end => x - end >= 44);
+    if (lane === -1) lane = laneEnds.length;
+    laneEnds[lane] = x;
+    return { at, comments, left, lane };
+  });
+  const selectedComments = selectedTime === null ? [] : moments.get(selectedTime) ?? [];
   // 수정·삭제 권한은 서버가 판정한 `mine` 을 따른다. 화면이 user_id 를 비교하지 않는다.
   return <section className="track-comments" style={{'--comment-anchor': `${Math.min(100, Math.max(0, (draft?.at ?? m.time) / Math.max(1, active.duration) * 100))}%`} as CSSProperties} aria-labelledby="track-comments-heading">
-    <h2 id="track-comments-heading" className="sr-only">이 순간의 이야기</h2>
+    <h2 id="track-comments-heading" className="sr-only">순간 댓글</h2>
     <div className="comment-wave-surface">
-      <div className="player-waveform">
-        <Waveform duration={active.duration} start={part.start} end={part.end} progress={m.time} />
-        <input ref={waveInput} className="playback-range" type="range" aria-label="재생 위치 선택, Enter로 이 시점에 댓글 작성" aria-valuetext={formatTime(m.time)} min={0} max={active.duration} step={1} value={m.time} onChange={e => { const at = Number(e.target.value); m.seek(at); if (!draft) setPoint(at); }} onPointerUp={e => start(undefined, Number(e.currentTarget.value))} onKeyDown={e => {if (e.key === 'Enter') {e.preventDefault(); start(undefined, Number(e.currentTarget.value));}}} />
+      <div className="player-waveform player-line-timeline">
+        <span className="player-progress-line" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.max(0, m.time / Math.max(1, active.duration) * 100))}%` }} /></span>
+        <span className="wave-playhead" aria-hidden="true" style={{ left: `${Math.min(100, Math.max(0, m.time / Math.max(1, active.duration) * 100))}%` }} />
+        <input ref={waveInput} className="playback-range" type="range" aria-label="재생 위치 선택, Enter로 이 시점에 댓글 작성" aria-valuetext={formatTime(m.time)} min={0} max={active.duration} step={1} value={m.time} onChange={e => { const at = Number(e.target.value); m.seek(at); if (!draft) setPoint(at); }} onPointerUp={e => { const at = Number(e.currentTarget.value); setSelectedTime(at); setPoint(at); }} onKeyDown={e => {if (e.key === 'Enter') {e.preventDefault(); start(undefined, Number(e.currentTarget.value));}}} />
       </div>
-      <div className="wave-comment-markers" aria-label="시간별 댓글">
-        {buckets.map((comments, index) => <div key={index}>{!!comments.length && <button className="wave-comment-avatar" aria-expanded={selectedBucket === index} aria-label={`${formatTime(comments[0].at)} ${comments[0].author}님의 댓글${comments.length > 1 ? ` 외 ${comments.length - 1}개` : ''}`} onClick={() => {setSelectedBucket(index); m.seek(Math.min(comments[0].at, active.duration));}}><span aria-hidden="true">{Array.from(comments[0].author)[0] || '♪'}</span>{comments.length > 1 && <small>{comments.length}</small>}</button>}</div>)}
+      <div className="moment-heart-scroll" aria-label="시간별 댓글">
+        <div ref={markerRail} className="moment-heart-rail" style={{ height: markers.length ? laneEnds.length * 44 : 0 }}>
+          {markers.map(({ at, comments, left, lane }) => <button key={at} className="moment-heart-marker" style={{ left: left + '%', top: lane * 44 }} aria-expanded={selectedTime === at} aria-label={formatTime(at) + ' 댓글 ' + comments.length + '개'} onClick={() => { setSelectedTime(at); setPoint(at); m.seek(at); }}>
+            <Heart size={19} fill="currentColor" />
+            {comments.length > 1 && <small>{comments.length}</small>}
+          </button>)}
+        </div>
       </div>
       {/* 팝오버가 파형을 덮으면 숫자만 남아 무슨 시간인지 알 수 없다. 이름표를 붙인다. */}
-      <div className="time-labels"><span><em>지금</em> {formatTime(m.time)}</span><span><em>전체</em> {formatTime(active.duration)}</span></div>
-      {ready && !visible.length && <p className="wave-comment-hint">파형에서 순간을 골라 첫 이야기를 남겨보세요.</p>}
-      {selectedBucket !== null && !!buckets[selectedBucket].length && <div className="wave-comment-popover">
-        <header className="wave-comment-popover-head">
-          <span>이 순간의 댓글 · {buckets[selectedBucket].length}개</span>
-          <button className="icon-button" aria-label="댓글 닫기" onClick={() => setSelectedBucket(null)}><X size={18} /></button>
-        </header>
-        {buckets[selectedBucket].map(c => <article key={c.id}>
-          <div className="wave-comment-line">
-            <button className="comment-time" onClick={() => m.seek(Math.min(c.at, active.duration))}>{formatTime(c.at)}</button>
-            <strong>{c.author}</strong>
-          </div>
-          <p>{c.body}</p>
-          {/* 목록까지 내려가지 않아도 여기서 바로 고치고 지울 수 있게 둔다. */}
-          {ownsComment(c, userId) && <div className="comment-tools">
-            <button className="text-link" disabled={busy} onClick={() => { setSelectedBucket(null); start(c); }}>수정</button>
-            <button className="text-link" disabled={busy} onClick={() => setRemove(c.id)}>삭제</button>
-          </div>}
-        </article>)}
+      <div className="time-labels"><span aria-label={`현재 재생 시간 ${formatTime(m.time)}`}>{formatTime(m.time)}</span><span aria-label={`전체 재생 시간 ${formatTime(active.duration)}`}>{formatTime(active.duration)}</span></div>
+      {selectedTime !== null && <div className="wave-comment-popover selected-moment-popover" key={selectedTime} role="region" aria-label="선택한 시점의 댓글">
+        <header className="wave-comment-popover-head"><span>{formatTime(selectedTime)} · 댓글 {selectedComments.length}개</span><button className="icon-button" aria-label="댓글 닫기" onClick={() => setSelectedTime(null)}><X size={18} /></button></header>
+        <div className="selected-moment-messages">
+          {selectedComments.length ? selectedComments.map(c => <article key={c.id}>
+            <div className="wave-comment-line"><span className="moment-author-avatar" aria-hidden="true"><CommentAvatar comment={c} /></span><strong>{c.author}</strong><span className="moment-comment-timestamp">{formatTime(c.at)}</span>{ownsComment(c, userId) && <button className="text-link moment-edit" onClick={() => start(c)}>수정</button>}</div>
+            <p>{c.body}</p>
+          </article>) : <p className="moment-popup-empty">이 순간에 첫 글을 남겨보세요.</p>}
+        </div>
+        <button className="moment-popup-write" onClick={() => start(undefined, selectedTime)}><Clock3 size={16} />이 순간에 글 남기기</button>
       </div>}
+
     </div>
     <PlayerControls model={m} />
     {!ready && !error && <output>댓글을 불러오고 있어요…</output>}
@@ -148,32 +170,16 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
       if (draft.id && !items.some(c => c.id === draft.id && ownsComment(c, userId))) return;
       const done = await run(async () => {
         const saved = draft.id
-          ? await trackComments.update(active, draft.id, body)
-          : await trackComments.add(active, draft.at, body);
+          ? await service.update(active, draft.id, body)
+          : await service.add(active, draft.at, body);
         setItems(current => draft.id ? current.map(c => c.id === saved.id ? saved : c) : [...current, saved]);
       });
-      if (done) { pendingDrafts.delete(active.id); setSelectedBucket(bucketFor(draft.at)); setPoint(null); setDraft(null); setBody(''); }
+      if (done) { pendingDrafts.delete(active.id); setSelectedTime(draft.at); setPoint(draft.at); setDraft(null); setBody(''); }
     }}>
       <label htmlFor="moment-comment"><Clock3 size={16} /> {formatTime(draft.at)} · {draft.id ? '댓글 수정' : '이 시점에 남기기'}</label>
-      <textarea ref={input} id="moment-comment" value={body} onChange={e => {setBody(e.target.value); if (!draft.id) pendingDrafts.set(active.id, {at: draft.at, body: e.target.value, owner: userId});}} maxLength={500} rows={2} disabled={busy} placeholder="이 순간, 어떤 느낌이 들었나요?" required />
-      <footer><span>{body.length}/500</span><button type="button" className="text-link" disabled={busy} onClick={() => {pendingDrafts.delete(active.id); setDraft(null); setBody('');}}>취소</button><button className="primary-button" disabled={!ready || busy || !body.trim() || (userId !== null && !available)}>{busy ? '저장 중…' : userId === null ? '로그인하고 등록' : draft.id ? '수정 저장' : '댓글 등록'}</button></footer>
+      <textarea ref={input} id="moment-comment" value={body} onChange={e => {setBody(e.target.value); if (!draft.id) pendingDrafts.set(active.id, {at: draft.at, body: e.target.value, owner: userId});}} maxLength={100} rows={2} disabled={busy} placeholder="이 순간, 어떤 느낌이 들었나요?" required />
+      <footer><span>{body.length}/100</span><button type="button" className="text-link" disabled={busy} onClick={() => {pendingDrafts.delete(active.id); setDraft(null); setBody('');}}>취소</button><button className="primary-button" disabled={!ready || busy || !body.trim() || (userId !== null && !available)}>{busy ? '저장 중…' : userId === null ? '로그인하고 등록' : draft.id ? '수정 저장' : '댓글 등록'}</button></footer>
     </form>}
-    <details className="moment-comment-list"><summary>이 순간의 이야기 · {visible.length}개</summary>
-    {!m.demoSession && <p className="comment-local-note">로그인하면 이 순간에 이야기를 남길 수 있어요.</p>}
-    {m.demoSession && !commentable(active) && <p className="comment-local-note">체험용 곡이라 댓글을 남길 수 없어요.</p>}
-    {ready && !visible.length && <p className="comments-empty">아직 이야기가 없어요. 좋아하는 순간에 첫 댓글을 남겨보세요.</p>}
-    {!!visible.length && <label className="comment-sort">정렬 <select value={order} onChange={e => {setOrder(e.target.value); setPage(0);}}><option value="latest">최신순</option><option value="time">시간순</option></select></label>}
-    <ul>{paged.map(c => <li key={c.id}>
-      <div className="comment-meta"><strong>{c.author}</strong><button className="comment-time" onClick={() => m.seek(Math.min(c.at, active.duration))} aria-label={`${formatTime(c.at)} 지점 재생`}><Clock3 size={14} /> {formatTime(c.at)}</button></div>
-      <p className="comment-body">{c.body}</p>
-      <div className="comment-tools"><time dateTime={new Date(c.createdAt).toISOString()}>{new Date(c.createdAt).toLocaleDateString('ko-KR')}</time>{ownsComment(c, userId) && <><button className="text-link" disabled={busy} onClick={() => start(c)}>수정</button><button className="text-link" disabled={busy} onClick={() => setRemove(c.id)}>삭제</button></>}</div>
-    </li>)}</ul>
-    {pageCount > 1 && <nav className="comment-pagination" aria-label="댓글 목록 페이지">
-      <button className="icon-button" disabled={currentPage === 0} aria-label="이전 댓글 보기" onClick={() => setPage(currentPage - 1)}><ChevronLeft /></button>
-      <span aria-live="polite">{currentPage + 1} / {pageCount}</span>
-      <button className="icon-button" disabled={currentPage >= pageCount - 1} aria-label="다음 댓글 보기" onClick={() => setPage(currentPage + 1)}><ChevronRight /></button>
-    </nav>}
-    </details>
     <AlertDialog open={remove !== null} onOpenChange={open => { if (!open) setRemove(null); }}>
       <AlertDialogContent className="sky-dialog">
         <AlertDialogHeader>
@@ -186,9 +192,9 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
             // 저장이 끝난 뒤 닫아야 실패했을 때 되돌릴 수 있다.
             event.preventDefault();
             const target = items.find(v => v.id === remove);
-            if (!target || !ownsComment(target, commentUserId(m.demoSession))) { setRemove(null); return; }
+            if (!target || !ownsComment(target, userId)) { setRemove(null); return; }
             const done = await run(async () => {
-              await trackComments.remove(target.id);
+              await service.remove(target.id);
               setItems(current => current.filter(v => v.id !== target.id));
             });
             if (done) {

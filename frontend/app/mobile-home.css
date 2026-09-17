@@ -334,10 +334,6 @@
 .today-moment-row:last-child {
   border-bottom: 0;
 }
-.today-moment-row.is-current {
-  box-shadow: inset 3px 0 0 #7fa2d4;
-  padding-left: 10px;
-}
 .today-moment-open {
   display: flex;
   align-items: center;

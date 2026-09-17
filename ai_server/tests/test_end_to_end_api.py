@@ -68,6 +68,8 @@ class FakeSpring(ThreadingHTTPServer):
         self.audio: dict = {}            # music_id -> bytes
         self.next_section_id = 7_000_001
         self.section_status = 200        # 요구 1 이 돌려줄 상태. 500 이면 실패
+        self.codes: dict = {}            # (type, name) -> code_id. `POST /api/v1/code`
+        self.next_code_id = 900
         self.page_size = 1               # 페이지네이션을 실제로 돌려 본다
 
     @property
@@ -184,6 +186,26 @@ class _Handler(BaseHTTPRequestHandler):
         self._json(200, {"message": None, "data": {
             "music_id": int(mid), "analysis_version": b.get("analysis_version"),
             "analysis_status": b.get("status")}})
+
+    # ---- 공통 코드 (`POST /api/v1/code`)
+    def do_POST(self):
+        if not self._bearer():
+            return
+        s, b = self.server, self._body()
+        if self.path != "/api/v1/code":
+            self._json(404, {"code": "NOT_FOUND", "message": "없다"})
+            return
+        key = (str(b.get("codeType")), str(b.get("codeName")))
+        s.calls.append(("POST", "code", key[1], key[0]))
+        created = key not in s.codes
+        if created:
+            s.next_code_id += 1
+            s.codes[key] = s.next_code_id
+        # **멱등이다.** 두 번째부터 409 를 주면 배치가 "이미 있음" 과 "진짜 실패" 를
+        # 가려야 하고, 그 분기를 빠뜨리면 배치가 통째로 멈춘다.
+        self._json(200, {"message": None, "data": {
+            "codeId": s.codes[key], "codeType": key[0], "codeName": key[1],
+            "created": created}})
 
     # ---- 요구 1
     def do_PUT(self):

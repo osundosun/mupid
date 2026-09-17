@@ -1,8 +1,57 @@
 # ai_server. Not exposed through nginx — /internal has no authentication and
 # only the Spring API is meant to call it.
 #
-# Pinned to the AI node: the model and index files are a host directory placed
-# there by an administrator, and the image is imported per node.
+# **떠 있다 (replicas: 1).** 2026-09-16 에 실서비스에서 확인했다 —
+# `/internal/ready` 가 true 이고 `/internal/recommendations/daily` 가 실제 추천을
+# 돌려준다(카탈로그 1063곡·10,007구간, 적재 0.36초, 모델 NumPy 판).
+#
+# 여기까지 오는 데 걸렸던 것은 셋이었고 전부 고쳤다 — 색인이 파드가 뜨는 노드에
+# 있어야 한다는 것, 이미지도 그렇다는 것, 그리고 master 의 추천 서버가 id_map 을
+# 준비 조건으로 요구하고 있었다는 것(develop 병합으로 풀렸다).
+#
+# ## 산출물
+#
+# 인계 문서(infra/AI-SERVER-K8S-HANDOVER.md)는 537MB 를 /artifacts 로 마운트하는
+# 전제였다. 줄이되, 앞서 이 자리에 적혀 있던 계획 중 **두 가지는 틀렸다.**
+#
+#   · "특징값 93MB 는 서빙이 읽지 않는다" — 틀렸다. app/main.py 가 기동 때
+#     Catalog() 를 만들고 그 생성자가 features.load() 로 features_v1.npz 를
+#     읽는다. 지연 import 라 grep 에 걸리지 않았을 뿐이다.
+#   · "임베딩·구간 벡터를 Pinecone 으로" — 규모가 근거를 못 준다. 추천 풀은
+#     10,007구간뿐이라 Z[pool_rows] @ q 가 약 15 MFLOP, 1ms 미만이다.
+#     외부 저장소를 넣으면 요청마다 네트워크 왕복이 생긴다 (ai_server/TODO.md).
+#
+# 실제로 줄어든 것은 다음 둘이다.
+#
+#   라벨    -> ClickHouse section_labels. 원천이 거기이고 이미 붙어 있다
+#   id_map  -> 필요 없다. 계약이 문자열 ID 다 (내부 준비 판정도 보지 않는다)
+#
+# 남은 색인은 **풀만 잘라** 올린다 — 65,540행 중 서빙이 쓰는 10,007행만.
+# 537MB 가 약 80MB 가 된다 (ai_server/tools/slice_index.py).
+#
+# ## 그 80MB 는 어떻게 오나
+#
+# hostPath 다. 이미지에 구우면 색인을 바꿀 때마다 이미지를 다시 굽고 롤아웃해야
+# 하는데, 색인 교체가 코드 배포보다 잦다 (ai_server/Dockerfile 의 설명).
+#
+# **사람이 채우지 않는다.** CI 가 `upload-index` 로 올리고 노드의 root 가 받아
+# 원자적으로 갈아 끼운다 — upload-apk·upload-env 와 같은 구조다. 손으로 채우는
+# 방식은 매니페스트 수동 적용이 그랬듯 조용히 어긋난다.
+#
+# **마운트는 판 디렉터리들의 부모다.** `current` 심볼릭 링크를 직접 마운트했다가
+# 실패했다 — hostPath 의 DirectoryOrCreate 가 kubelet 으로 하여금 `current` 를
+# **디렉터리로** 만들게 하고, 그러면 수신기가 링크를 갈아 끼우지 못한다
+# (IsADirectoryError). 파드가 한 번이라도 뜬 노드에서만 나는 고장이라 늦게 드러난다.
+#
+# 부모를 마운트하고 컨테이너가 `/artifacts/current` 를 보게 하면, kubelet 이 만드는
+# 것은 부모뿐이고 링크는 우리 것으로 남는다. 링크와 대상이 같은 마운트 안이라
+# 컨테이너 안에서도 그대로 따라간다.
+#
+# DirectoryOrCreate 를 쓰는 이유는 그대로다. Directory 로 두면 아직 한 번도 올리지
+# 않은 노드에서 **파드가 뜨지도 못해** /health 로 원인을 볼 수 없다. 빈 디렉터리로
+# 뜨면 check_integrity 가 실패하고 그 이유가 /health 에 그대로 실린다.
+#
+# Pinned to the AI node: the image is imported per node (레지스트리가 없다).
 apiVersion: v1
 kind: Service
 metadata: {name: ai, namespace: mupid}
@@ -14,6 +63,12 @@ apiVersion: apps/v1
 kind: Deployment
 metadata: {name: ai, namespace: mupid}
 spec:
+  # 1 이다. 실서비스 검증을 마쳤다 — 파드가 16초에 Ready 가 되고
+  # `/internal/recommendations/daily` 가 실제 추천을 돌려준다.
+  #
+  # 늘려도 된다. 색인 마운트가 읽기 전용이고 파드가 nodeSelector 로 같은 노드에
+  # 묶여 있어 여러 파드가 같은 디렉터리를 함께 읽는다. 다만 파드마다 카탈로그를
+  # 통째로 메모리에 올리므로 메모리가 파드 수에 비례한다.
   replicas: 1
   selector: {matchLabels: {app: ai}}
   strategy:
@@ -28,8 +83,37 @@ spec:
           imagePullPolicy: IfNotPresent
           ports: [{containerPort: 8100}]
           env:
-            - {name: MUPID_AI_ARTIFACT_DIR, value: /artifacts}
             - {name: MUPID_AI_PORT, value: '8100'}
+            # **추천 풀은 flow 뿐이다.** jamendo 는 실서비스에서 재생되지 않는다 —
+            # 스트리밍 대상이 아닌 곡이라 추천에 섞이면 사용자가 누를 수 없는 결과가
+            # 나간다. 오류가 아니라 '재생이 안 되는 추천' 이라 화면만 보고는
+            # 무엇이 잘못됐는지 알기 어렵다.
+            #
+            # 코드 기본값이 `MUPID_POOL_EXTRA=jamendo` 다(recommender.py). 매니페스트가
+            # 덮지 않으면 그 값이 그대로 적용되고, 실제로 그렇게 나가고 있었다 —
+            # 배포 직후 받은 추천 3건이 전부 JAMENDO_* 였다.
+            #
+            # 빈 값은 '없음' 이다. recommender 가 쉼표로 쪼갠 뒤 빈 항목을 버린다.
+            - {name: MUPID_POOL, value: flow}
+            - {name: MUPID_POOL_EXTRA, value: ''}
+            - {name: MUPID_AI_ARTIFACT_DIR, value: /artifacts/current}
+            # 배치가 쓰는 자리. 서빙도 여기서 선호 구간·온보딩 씨앗을 읽으므로
+            # **배치와 같은 곳**을 봐야 한다 — 갈리면 배치는 도는데 화면에는
+            # 아무것도 안 나오는, 오류 없는 고장이 된다.
+            - {name: MUPID_AI_STATE_DIR, value: /state}
+            # 행동 데이터를 요청마다 직접 읽는다 — 배치로 파일에 옮겨 담지
+            # 않는다 (app/clickhouse.py 의 설명). 라벨도 여기로 옮긴다.
+            - {name: MUPID_CLICKHOUSE_URL, value: 'http://clickhouse:8123'}
+            - {name: MUPID_CLICKHOUSE_USER, value: mupid}
+            - name: MUPID_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: mupid-secrets, key: MUPID_CLICKHOUSE_PASSWORD}
+            # Spring 과 나누는 /internal 공유 비밀. **양쪽을 동시에 켠다** —
+            # 여기만 켜고 Spring 의 MUPID_RECOMMENDER_INTERNAL_TOKEN 을 비우면
+            # 추천 호출이 전부 401 이다. 배포 설정만으로 조용히 죽는 형태다.
+            - name: MUPID_AI_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: mupid-secrets, key: MUPID_AI_INTERNAL_TOKEN, optional: true}
             # Empty leaves /internal/recommendations/search answering 501, which
             # is the defined behaviour until the resolver exists (S15P21A204-219).
             - {name: MUPID_AI_NLP_URL, value: ''}
@@ -39,11 +123,20 @@ spec:
             - {name: OMP_NUM_THREADS, value: '3'}
             - {name: OPENBLAS_NUM_THREADS, value: '3'}
             - {name: MKL_NUM_THREADS, value: '3'}
-          resources:
-            requests: {cpu: 1500m, memory: 2Gi}
-            limits: {cpu: 3000m, memory: 8Gi}
           volumeMounts:
+            # 읽기 전용이다. 이 파드는 색인을 만들지 않는다 — 배치가 만들고
+            # CI 가 올린다. 쓸 수 있게 두면 파드가 노드 디스크를 고칠 수 있다.
             - {name: artifacts, mountPath: /artifacts, readOnly: true}
+            # 서빙은 상태를 **읽기만** 한다 — 선호 구간·온보딩 씨앗. 쓰는 것은
+            # `learn` 하나이고 그건 배치(`tools/run_labeler`)에서만 불린다.
+            # 읽기 전용으로 두면 서빙이 배치의 결과를 덮어쓸 길이 없다.
+            - {name: state, mountPath: /state, readOnly: true}
+          resources:
+            # 임베딩은 mmap 으로 읽는다(np.load mmap_mode="r") — 파일이 61MB 라도
+            # 만진 페이지만 올라온다. 인계 문서 실측은 산출물 없이 유휴 80MB 였다.
+            # 띄운 뒤 실제 RSS 를 보고 다시 잡는다.
+            requests: {cpu: 500m, memory: 512Mi}
+            limits: {cpu: 3000m, memory: 2Gi}
           # /health is process liveness. /internal/ready additionally checks that
           # the four indexes agree row-for-row and that every candidate maps to a
           # numeric ID. It answers 503 until the MySQL mapping is loaded — that is
@@ -62,4 +155,9 @@ spec:
             failureThreshold: 5
       volumes:
         - name: artifacts
-          hostPath: {path: /srv/mupid-k8s/ai-artifacts, type: Directory}
+          hostPath: {path: /srv/mupid-k8s/ai-artifacts, type: DirectoryOrCreate}
+        # 색인과 **다른 자리**다. 색인은 판마다 새 디렉터리로 올라오고 current
+        # 링크가 갈아 끼워지는데, 상태를 거기 두면 판을 교체할 때마다 워터마크가
+        # 사라져 신호를 처음부터 다시 당긴다.
+        - name: state
+          hostPath: {path: /srv/mupid-k8s/ai-state, type: DirectoryOrCreate}

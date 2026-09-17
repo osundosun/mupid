@@ -34,6 +34,7 @@ import numpy as np
 
 from . import content
 from . import embedder as emb
+from . import instruments as ins
 from . import segmenter as seg
 from .feature_space import ArtifactMissing, FeatureSpace, Section, TrackStats
 
@@ -53,6 +54,7 @@ class TrackResult:
     n_sections: int = 0
     audio_sha256: str = ""
     error: str = ""
+    instrument_error: str = ""        # 악기를 재지 못한 이유. 곡의 실패는 아니다
     elapsed_sec: float = 0.0
     rows: list = field(default_factory=list)     # moments.parquet 행 (곡 열은 갱신기가 채운다)
     embeddings: Optional[np.ndarray] = None      # (n, 1536)
@@ -61,9 +63,12 @@ class TrackResult:
 
     def summary(self) -> dict:
         """배열을 뺀 기록용 요약. 상태 파일과 보고에 쓴다."""
-        return {"track_id": self.track_id, "status": self.status, "stage": self.stage,
-                "n_sections": self.n_sections, "audio_sha256": self.audio_sha256,
-                "error": self.error, "elapsed_sec": round(self.elapsed_sec, 2)}
+        out = {"track_id": self.track_id, "status": self.status, "stage": self.stage,
+               "n_sections": self.n_sections, "audio_sha256": self.audio_sha256,
+               "error": self.error, "elapsed_sec": round(self.elapsed_sec, 2)}
+        if self.instrument_error:
+            out["instrument_error"] = self.instrument_error
+        return out
 
 
 @dataclass
@@ -87,11 +92,17 @@ class BatchReport:
 
 def analyze_track(track_id: str, audio_path: Path, sections: Sequence[emb.Segment],
                   meta: TrackStats, *, engine: emb.Embedder,
-                  space: FeatureSpace) -> TrackResult:
+                  space: FeatureSpace,
+                  demix_root: Optional[Path] = None) -> TrackResult:
     """곡 하나를 세 벌의 배열로 바꾼다.
 
     `sections` 는 분할기 출력이다 — 이 함수는 분할을 하지 않는다. 3초 미만·양끝
     표시를 거르는 규칙은 `embedder.keep_segments` 한 곳에서만 적용한다.
+
+    `demix_root` 를 주면 분할기가 남긴 demucs 스템에서 **구간별 악기**도 읽는다.
+    구간 행을 만드는 곳이 여기 한 곳이라 여기서 붙여야 순번이 어긋나지 않는다.
+    악기를 재지 못한 것은 곡의 실패가 아니다 — 색인은 그대로 만들고 `instruments`
+    만 비운 채 `instrument_error` 에 이유를 남긴다.
     """
     t0 = time.time()
     r = TrackResult(track_id=track_id, status="failed")
@@ -110,6 +121,9 @@ def analyze_track(track_id: str, audio_path: Path, sections: Sequence[emb.Segmen
         r.embeddings = engine.embed(y, segs)
 
         r.stage = "features"
+        got = _instruments(audio_path, segs, y, demix_root)
+        if isinstance(got, str):
+            r.instrument_error, got = got, [[] for _ in segs]
         rms = _section_rms(y, segs)
         secs = [Section(rel_start=s.start / dur, rel_end=s.end / dur,
                         dur_sec=s.end - s.start, rms=float(v),
@@ -124,8 +138,11 @@ def analyze_track(track_id: str, audio_path: Path, sections: Sequence[emb.Segmen
                    "rel_start": c.rel_start, "rel_end": c.rel_end,
                    "section_label": str(s.label),
                    "label_source": seg.LABEL_SOURCE, "time_source": seg.TIME_SOURCE,
-                   "rms": c.rms}
-                  for i, (s, c) in enumerate(zip(segs, secs))]
+                   "rms": c.rms,
+                   # 색인에는 들어가지 않는다 — `indexer._write_moments` 가 기존 열만
+                   # 남긴다. 요구 1 적재(`api.sections_payload`)가 이 값을 쓴다.
+                   "instruments": list(names)}
+                  for i, (s, c, names) in enumerate(zip(segs, secs, got))]
 
         r.stage = "section_vecs"
         r.section_vecs = space.enc_sec(r.features)
@@ -141,6 +158,21 @@ def analyze_track(track_id: str, audio_path: Path, sections: Sequence[emb.Segmen
     finally:
         r.elapsed_sec = time.time() - t0
     return r
+
+
+def _instruments(audio_path: Path, segs: Sequence[emb.Segment], y, demix_root):
+    """구간별 악기 목록, 또는 재지 못한 이유(문자열).
+
+    **스템이 없다고 곡을 실패시키지 않는다.** 악기는 곁들이는 값이고, 색인과 구간
+    적재는 그것 없이도 온전하다. 다만 조용히 빈 목록으로 넘기지도 않는다 — 이유를
+    돌려줘 배치 기록에 남긴다.
+    """
+    if not demix_root:
+        return [[] for _ in segs]
+    try:
+        return ins.for_track(Path(audio_path), segs, demix_root=Path(demix_root), y_mix=y)
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"[:300]
 
 
 def _section_rms(y: np.ndarray, segs: Sequence[emb.Segment]) -> list[float]:

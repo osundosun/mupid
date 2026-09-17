@@ -19,4 +19,13 @@ public interface MusicAnalysisInstrumentRepository extends JpaRepository<
     List<MusicAnalysisInstrument> findByMusicAnalysisInstrumentId_MusicSectionAnalysisIdIn(
         List<Integer> sectionAnalysisIds);
 
+    /**
+     * 구간을 지우기 전에 그 구간에 달린 악기를 먼저 끊는다.
+     *
+     * 외래키가 `music_section_analysis_id` 라 순서를 지키지 않으면 구간 DELETE 가
+     * 제약에 걸린다 — 분위기(`MusicSectionAnalysisMoodRepository`)와 같은 이유다.
+     */
+    void deleteByMusicAnalysisInstrumentId_MusicSectionAnalysisIdIn(
+        List<Integer> sectionAnalysisIds);
+
 }

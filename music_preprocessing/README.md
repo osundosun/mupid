@@ -1,6 +1,6 @@
 # music_preprocessing
 
-기존 곡에 GPU 원본 장르·무드를 연결하는 별도 작업은 [장르·무드 등록 가이드](GENRE_MOOD.md)를 참고하세요.
+곡별 장르·분위기 등록(`classify`)은 [장르·무드 등록 가이드](GENRE_MOOD.md)를 참고하세요.
 아티스트 대표곡 커버를 실제 프로필 이미지로 교체하는 별도 작업은 [프로필 이미지 교체 가이드](ARTIST_PROFILES.md)를 참고하세요.
 
 음악 스트리밍 전처리 프로그램. 하는 일이 둘이다.
@@ -245,6 +245,14 @@ flow_music_data/
 곡마다        POST /api/v1/storage/image/TRACK/{track_id}     → file_id
               POST /api/v1/music                              → music_id
 ```
+
+위 주소는 전부 **쓰기**(자리를 지정한다)다. **조회는 다르다** —
+`GET /api/v1/storage/image/{fileId}` 로 파일 번호를 쓴다. 배치에서 이미지를 읽는
+곳은 `artist_profiles` 의 프로필 교체뿐이고, 그쪽은 등록 기록의 `image_file_id` 로
+읽는다(`ARTIST_PROFILES.md` 참고). 등록 흐름은 업로드만 하므로 영향이 없다.
+
+쓰기 권한은 카테고리 정책이 정한다 — 카탈로그 이미지(`ARTIST`·`ALBUM`·`TRACK`)는
+`ROLE_SYSTEM` 이상만 올리고 지울 수 있다. 배치 계정이 이미 그 조건을 만족한다.
 
 곡 1060개가 아티스트 87명 · 앨범 204개로 묶이면 호출은 이미지 1351번 +
 생성 1351번입니다. 병렬로 돌리지 않습니다 — 아티스트 → 앨범 → 곡 순서를 지켜야

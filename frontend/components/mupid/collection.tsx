@@ -4,7 +4,10 @@ import { DailyAlbumTreemap } from './daily-album-treemap';
 import { PlaylistMenu } from './playlist-menu';
 import { SelectionToolbar, useTrackSelection } from './track-selection';
 import { MupidMascot } from './mascot';
+import { toImageSource } from '@/lib/platform/image';
 import { ProfilePhoto } from './profile-photo';
+import { DEFAULT_PROFILE_PHOTO } from './profile-image';
+import { PasswordForm } from './password-form';
 import { useEffect, useState } from 'react';
 import { DemoAccount } from './demo-login';
 import {
@@ -40,7 +43,7 @@ import {
   refreshOnboardingOptions,
 } from '@/lib/onboarding';
 import {
-  AlbumArt,
+  PlaylistArt,
   Brand,
   EmptyState,
   Heading,
@@ -69,7 +72,10 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
   const removeTargets = (selected?.tracks ?? []).filter((t) => confirmRemove?.includes(t.id));
   return (
-    <div className="content-page collection-page">
+    <div className="content-page collection-page" data-playlist-detail={Boolean(selected && m.libraryTab === 'playlists')}>
+      {!(selected && m.libraryTab === 'playlists') && <div className="desktop-library-page-heading">
+        <PageHeader title="보관함" onBack={() => m.go('home')} />
+      </div>}
       <PageHeader
         title={
           selected && m.libraryTab === 'playlists'
@@ -122,15 +128,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
           {selected ? (
             <div className="playlist-detail">
               <div className="playlist-summary">
-                {/*
-                  * 곡이 하나도 없는 목록만 음표로 둔다. "아직 아무것도 담지
-                  * 않았다" 는 것은 커버가 없는 것과 다른 사정이라, 기본 커버로
-                  * 합치면 담은 줄 알고 열어 보게 된다.
-                  *
-                  * 담긴 곡의 커버를 못 구한 경우는 `AlbumArt` 가 기본 커버로
-                  * 받아 낸다. 여기서 따로 볼 것이 없다.
-                  */}
-                {selected.tracks[0] ? <AlbumArt track={selected.tracks[0]} /> : <Music2 size={72} aria-label="비어 있는 플레이리스트" />}
+                <PlaylistArt track={selected.tracks[0]} name={selected.name} />
                 <div>
                   <span className="eyebrow">내 플레이리스트</span>
                   <h2>{selected.name}</h2>
@@ -232,9 +230,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                       className="playlist-card"
                       onClick={() => m.setSelectedPlaylist(p.id)}
                     >
-                      {/* 상세 화면과 같은 기준이다 — 빈 목록만 음표, 커버를
-                        * 못 구한 곡은 `AlbumArt` 의 기본 커버. */}
-                      {p.tracks[0] ? <AlbumArt track={p.tracks[0]} /> : <Music2 size={72} aria-label="비어 있는 플레이리스트" />}
+                      <PlaylistArt track={p.tracks[0]} name={p.name} />
                       <span>
                         <strong>{p.name}</strong>
                         <small>
@@ -295,7 +291,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
           {!m.moments.length && (
             <EmptyState
               title="아직 남긴 순간이 없어요"
-              description="재생 중 하트를 눌러 저장한 순간을 남겨보세요."
+              description="플레이어에서 ‘이 순간 저장’을 눌러 남겨보세요."
             >
               <button
                 className="secondary-button"
@@ -308,7 +304,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
         </TabsContent>
         <TabsContent value="liked">
           <Heading title={`좋아하는 음악 ${m.liked.length}곡`} />
-          <div className="search-results">
+          <div className="search-results liked-track-list">
             {m.liked
               .map((id) => tracks.find((t) => t.id === id)!)
               .filter(Boolean)
@@ -317,6 +313,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                   key={t.id}
                   track={t}
                   model={m}
+                  showDetail={false}
                   action={
                     <button
                       aria-label={`${t.title} 좋아요 취소`}
@@ -407,6 +404,51 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
 }
 
 /**
+ * 리포트 카드의 MuBTI 캐릭터 — 서버가 준 유형 일러스트.
+ *
+ * 서버는 16유형 각각의 캐릭터를 들고 있다(`image_url` = `/api/v1/storage/image/{fileId}`).
+ * 그 한 장이 곧 판정 결과라, 화면은 그 이미지를 그대로 쓴다.
+ *
+ * **이미지가 없으면 마스코트로 내려간다.** 서버가 아직 이미지를 못 올렸거나(부트스트랩이
+ * 도는 중) 응답이 `image_url: null` 이어도 카드가 비지 않게 하려는 것이다. 실패를 감지해
+ * 대체 이미지로 바꾸는 길은 쓰지 않는다 — `<img onError>` 는 이미지가 늦게 와도
+ * 한 번 깨진 뒤에는 되돌아오지 않고, 로딩 중에 빈 자리가 보인다. 대신 **응답에 주소가
+ * 없을 때만** 대체하고, 주소가 있으면 그 주소를 정직하게 내보낸다(서버에서 401·404 를
+ * 받으면 그때는 이미지가 깨져 보이는 편이 낫다 — 서버가 잘못 준 것을 숨기지 않는다).
+ *
+ * 앱(Tauri)에서는 주소를 Rust 가 받아 `mupidimg` 스킴으로 돌려주므로
+ * `toImageSource` 를 거쳐야 한다. 안 거치면 앱에서 캐릭터만 깨진다.
+ */
+function ReportMubtiArt({
+  code,
+  imageUrl,
+  alt,
+}: {
+  code: string;
+  imageUrl: string | null;
+  alt: string;
+}) {
+  const source = toImageSource(imageUrl);
+  if (!source) {
+    return <MupidMascot size={132} className="report-cupid" alt={alt} />;
+  }
+  return (
+    <img
+      className="report-cupid"
+      src={source}
+      alt={alt}
+      width={132}
+      height={132}
+      loading="lazy"
+      decoding="async"
+      // `key` 는 유형이 바뀔 때 브라우저가 앞 이미지를 재사용하지 않게 한다.
+      // 같은 자리에 다른 그림이 들어오는데 캐시가 섞이면 잘못된 유형이 보인다.
+      key={code}
+    />
+  );
+}
+
+/**
  * 내 취향 리포트.
  *
  * 세 블록 모두 서버 집계다 — 곡별 청취량 트리맵 · 음악 키워드 · MuBTI 판정.
@@ -434,7 +476,7 @@ export function ReportView({ model: m }: { model: MupidModel }) {
         <div className="report-details">
           <section className="report-card listening-story">
             {/* 유형 이름을 먼저 읽히게 두고, 그 아래 캐릭터로 분위기를 전한 뒤 설명을 잇는다. */}
-            <span className="eyebrow">MuBTI{mubti ? ` · ${mubti.code}` : ''}</span>
+            <h2 className="mubti-heading">MUBTI{mubti ? ` · ${mubti.code}` : ''}</h2>
             {mubti ? (
               <>
                 <h2 className="report-story">
@@ -442,10 +484,10 @@ export function ReportView({ model: m }: { model: MupidModel }) {
                   <br />
                   <em>{mubti.title}</em>
                 </h2>
-                <MupidMascot
-                  size={132}
-                  className="report-cupid"
-                  alt="헤드폰을 끼고 구름 위에서 음악에 잠긴 뮤피드"
+                <ReportMubtiArt
+                  code={mubti.code}
+                  imageUrl={mubti.image_url}
+                  alt={`헤드폰을 끼고 구름 위에서 음악에 잠긴 ${mubti.title} 뮤피드`}
                 />
                 <p>{mubti.description}</p>
                 {/* 축 점수 막대는 그리지 않는다. 화면에 없던 것을 리포트 연동하면서
@@ -454,9 +496,9 @@ export function ReportView({ model: m }: { model: MupidModel }) {
               </>
             ) : (
               <>
-                <h2 className="report-story">
+                <p className="report-story report-story-pending">
                   {tooEarly ? '아직 판정하기 일러요' : '오늘의 유형을 기다리는 중'}
-                </h2>
+                </p>
                 <MupidMascot
                   size={132}
                   className="report-cupid"
@@ -464,14 +506,11 @@ export function ReportView({ model: m }: { model: MupidModel }) {
                 />
                 <p>
                   {loading
-                    ? '오늘의 청취 기록을 모으고 있어요.'
-                    : '오늘 5분 넘게, 세 곡 이상 들으면 취향 유형을 알려드릴게요.'}
+                    ? '청취 기록을 모으는 중…'
+                    : '오늘 3곡 이상, 5분 넘게 들으면 열려요.'}
                 </p>
               </>
             )}
-            <p className="demo-note">
-              음악 감상 취향을 표현한 유형이에요. 성격 진단 결과는 아니에요.
-            </p>
           </section>
           <section className="report-card keyword-card">
             <h2>당신의 음악 키워드</h2>
@@ -493,9 +532,6 @@ export function ReportView({ model: m }: { model: MupidModel }) {
           </section>
         </div>
       </div>
-      <p className="demo-note">
-        오늘 들은 기록을 바탕으로 집계해요. 방금 들은 곡은 20초쯤 뒤에 반영돼요.
-      </p>
     </div>
   );
 }
@@ -558,12 +594,13 @@ function NicknameForm({ model: m }: { model: MupidModel }) {
 
 export function ProfileView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
+  const ignoredTracks = tracks.filter(track => m.ignored.includes(track.id));
   return (
     <div className="content-page">
       <PageHeader title="마이페이지" onBack={() => m.go('home')} />
       <DemoAccount model={m} />
       <section className="profile-card">
-        {m.demoSession ? <ProfilePhoto /> : <MupidMascot size={116} alt="기본 프로필" />}
+        {m.demoSession ? <ProfilePhoto /> : <img src={DEFAULT_PROFILE_PHOTO} width={116} height={116} style={{ borderRadius: '50%' }} alt="기본 프로필" />}
         <div>
           <p className="eyebrow" lang="en">MY LITTLE MUSIC WORLD</p>
           <h2>{m.displayName}님의 음악 이야기</h2>
@@ -576,18 +613,19 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
         * 온보딩과 무관하게 `PATCH /api/v1/user` 로 고친다.
         */}
       {m.demoSession && (
-        <section className="report-card taste-card">
+        <section className="profile-settings-card" aria-label="계정 설정">
+          <h2>계정 설정</h2>
           <NicknameForm key={m.nickname} model={m} />
+          <PasswordForm />
         </section>
       )}
-      <Heading title="최근 감상 기록" />
-      <section className="track-list profile-history" aria-label="최근 감상 기록 목록" tabIndex={0}>
-        {m.history
-          .map((id) => tracks.find((t) => t.id === id)!)
-          .filter(Boolean)
-          .map((t) => (
-            <TrackRow key={t.id} model={m} track={t} queueable />
-          ))}
+      <section className="profile-settings-card profile-ignored-card" aria-label="관심 없는 곡">
+      <h2>관심 없는 곡 <span className="profile-section-count">{ignoredTracks.length}곡</span></h2>
+      {!!ignoredTracks.length && <button className="text-link" onClick={m.clearIgnored}>관심 없음 전체 해제</button>}
+      <section className="track-list profile-history" aria-label="관심 없는 곡 목록">
+        {ignoredTracks.map(track => <TrackRow key={track.id} track={track} model={m} showDetail={false} />)}
+        {!ignoredTracks.length && <p className="listening-history-empty">관심 없는 곡이 없어요.<span>등록한 곡은 추천에서 제외돼요.</span></p>}
+      </section>
       </section>
     </div>
   );
@@ -606,6 +644,9 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // 장르가 45개를 넘는다. 전부 펼치면 '다음' 버튼이 화면 밖으로 밀려
+  // 고르다 말고 스크롤을 한참 내려야 한다 — 검색으로 좁힌다.
+  const [genreQuery, setGenreQuery] = useState('');
   // 고를 수 있는 항목은 서버가 정한다. 못 받아 오면 화면 기본 목록으로 돌아간다.
   const [options, setOptions] = useState<{ moods: string[]; genres: string[] }>({
     moods: moodOptions,
@@ -619,13 +660,19 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
     });
     return () => { abort.abort(); };
   }, []);
+  // 고른 것은 검색과 무관하게 남긴다 — 검색어를 바꿨다고 고른 것이 사라지면
+  // 무엇을 골랐는지 확인할 방법이 없다.
+  const query = genreQuery.trim().toLowerCase();
+  const visibleGenres = query
+    ? options.genres.filter((genre) => genre.toLowerCase().includes(query))
+    : options.genres;
   return (
     <div className="welcome-page">
       {(step > 0 || m.onboardingSubmitted) && <button
         className="icon-button welcome-back"
         aria-label={step > 0 ? '이전 단계로 돌아가기' : '홈으로 돌아가기'}
         disabled={busy}
-        onClick={() => { setError(''); if (step > 0) setStep(step - 1); else m.go('home'); }}
+        onClick={() => { setError(''); setGenreQuery(''); if (step > 0) setStep(step - 1); else m.go('home'); }}
       >
         <ChevronLeft />
       </button>}
@@ -639,9 +686,21 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             <br />
             다음 음악이 되는 곳
           </h1>
+          <div className="welcome-entry-actions">
           <button className="primary-button" onClick={() => m.demoSession ? m.go('home') : m.openLogin()}>
             뮤피드 시작하기 <ChevronRight />
           </button>
+          <figure className="welcome-qr">
+            <div className="welcome-qr-emblem">
+              {[false, true].map(right => <svg key={String(right)} className={`welcome-qr-wing${right ? ' is-right' : ''}`} viewBox="0 0 80 96" fill="none" aria-hidden="true">
+                <path d="M75 78C57 87 39 82 27 72C21 67 24 61 32 62C20 56 10 46 10 40C10 33 17 33 24 37C14 26 7 13 12 8C18 2 26 13 34 23C42 34 50 37 59 42C72 50 79 65 75 78Z" fill="#fdfdff" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                <path d="M25 38C34 49 46 58 61 63M32 62C40 68 50 72 61 73" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>)}
+              <div className="welcome-qr-image"><img src="/mupid-qr.png" width={132} height={132} alt="뮤피드 접속 QR 코드" /></div>
+            </div>
+            <figcaption>음악을 모바일로 이어가세요<span>카메라로 QR 스캔</span></figcaption>
+          </figure>
+          </div>
           </div>
           <div className="welcome-illustration" role="img" aria-label="긴 하트선을 들고 구름 위에 앉은 뮤피드 캐릭터" />
         </div>
@@ -673,7 +732,55 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
           <h1>{['어떤 장르를 좋아하세요?', '어떤 분위기를 좋아하세요?'][step]}</h1>
           {step === 0 && <fieldset key="genres" className="onboarding-choice-group">
             <legend>좋아하는 장르 <small>하나 이상 · 여러 개 선택 가능</small></legend>
-            <div className="filter-chips wrap">{options.genres.map(genre => <button type="button" key={genre} disabled={busy} aria-pressed={selectedGenres.includes(genre)} className={selectedGenres.includes(genre) ? 'selected' : ''} onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}>{genre}</button>)}</div>
+            {/* 고른 것을 위에 고정한다. 목록을 스크롤해도 무엇을 골랐는지 보이고,
+                되돌리려고 다시 찾아 내려갈 필요가 없다. */}
+            {selectedGenres.length > 0 && (
+              <div className="onboarding-picked">
+                <span className="onboarding-picked-count">{selectedGenres.length}개 선택</span>
+                {selectedGenres.map((genre) => (
+                  <button
+                    type="button"
+                    key={genre}
+                    className="onboarding-picked-chip"
+                    disabled={busy}
+                    aria-label={`${genre} 선택 해제`}
+                    onClick={() => setSelectedGenres((list) => list.filter((item) => item !== genre))}
+                  >
+                    {genre} <span aria-hidden="true">×</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* 목록이 길 때만 검색을 낸다. 8개뿐이던 때와 화면이 달라지지 않게. */}
+            {options.genres.length > 12 && (
+              <input
+                type="search"
+                className="onboarding-search"
+                value={genreQuery}
+                disabled={busy}
+                placeholder="장르 검색"
+                aria-label="장르 검색"
+                onChange={(e) => setGenreQuery(e.target.value)}
+              />
+            )}
+            <div className="filter-chips wrap onboarding-scroll">
+              {visibleGenres.map((genre) => (
+                <button
+                  type="button"
+                  key={genre}
+                  disabled={busy}
+                  aria-pressed={selectedGenres.includes(genre)}
+                  className={selectedGenres.includes(genre) ? 'selected' : ''}
+                  onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}
+                >
+                  {genre}
+                </button>
+              ))}
+            </div>
+            {/* 검색 결과가 없을 때 빈 화면만 남으면 고장으로 보인다. */}
+            {visibleGenres.length === 0 && (
+              <p className="onboarding-empty">‘{genreQuery}’와 맞는 장르가 없어요.</p>
+            )}
           </fieldset>}
           {step === 1 && <fieldset key="moods" className="onboarding-choice-group">
           <legend>좋아하는 분위기 <small>하나 이상 · 여러 개 선택 가능</small></legend>

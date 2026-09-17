@@ -43,7 +43,7 @@ examples:
                   "title": "첫 번째 곡",
                   "artist_name": "무피드 테스트 아티스트",
                   "album_title": "무피드 테스트 앨범",
-                  "image_url": "/api/v1/storage/image/ALBUM/...",
+                  "image_url": "/api/v1/storage/image/12",
                   "listening_ms": 420000,
                   "share": 0.1186
                 }
@@ -57,7 +57,7 @@ examples:
                 "title": "보컬 인싸형",
                 "subtitle": "모두의 보컬은 곧 나의 최애",
                 "description": "지금 사랑받는 목소리를 끝까지 듣고, 마음에 든 곡은 오래 곁에 둬요.",
-                "image_url": null,
+                "image_url": "/api/v1/storage/image/12",
                 "axes": [
                   {
                     "axis": "A",
@@ -130,7 +130,7 @@ examples:
                   "title": "첫 번째 곡",
                   "artist_name": "무피드 테스트 아티스트",
                   "album_title": "무피드 테스트 앨범",
-                  "image_url": "/api/v1/storage/image/ALBUM/...",
+                  "image_url": "/api/v1/storage/image/12",
                   "listening_ms": 94000,
                   "share": 1.0
                 }
@@ -204,7 +204,7 @@ docs: |-
   | `unmatched_ms` | 이벤트에는 있었지만 곡을 못 찾아 버린 청취량. **0 이 아니면 곡 번호가 어긋나는 중입니다** |
   | `tracks` | 청취 시간 내림차순, 최대 40곡. `share` 가 곧 트리맵 타일 면적 |
   | `keywords` | 분위기·장르를 청취 시간으로 가중한 상위 6개 |
-  | `mubti` | 표본이 모자라면 `null` |
+  | `mubti` | 표본이 모자라면 `null`. `image_url` 은 그 유형의 캐릭터 |
   | `sample.sufficient` | 판정할 만큼 들었는가 (5분 이상 · 3곡 이상) |
   | `sample.play_count` | 그날 재생 횟수. `source` 가 `STORED` 면 저장하지 않아 `null` |
 

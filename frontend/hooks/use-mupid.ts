@@ -152,6 +152,7 @@ export function useMupid(bootstrap: Bootstrap) {
   const [selectedPlaylist, setSelectedPlaylist] = useState<number | null>(null);
   const [libraryTab, setLibraryTab] = useState('playlists');
   const [query, setQuery] = useState('');
+  const [selectedArtist, setSelectedArtist] = useState<string | null>(null);
   const [moodFilter, setMoodFilter] = useState('전체');
   // 셔플은 재생 목록 안에서 중복 없이 섞어 재생한다. 반복과 함께 켤 수 있다.
   const [shuffle, setShuffle] = useState(false);
@@ -458,26 +459,15 @@ export function useMupid(bootstrap: Bootstrap) {
     );
   };
   /**
-   * 계정에 저장된 플레이리스트를 가져온다. **서버가 기준이다.**
+   * 계정에 저장된 플레이리스트를 가져온다. **서버가 유일한 출처다.**
    *
-   * 계정이 비어 있는데 브라우저에만 남은 목록이 있으면 그것부터 올린다. 서버 연동
-   * 전에 만든 플레이리스트가 계정에 없다는 이유로 조용히 사라지면 안 된다.
+   * 계정이 비어 있으면 화면도 빈다. 예전에는 그때 이 기기에 남아 있던 목록을
+   * 계정으로 올렸는데, 그 저장소가 계정별로 나뉘어 있지 않아 신규 가입자가
+   * 앞사람의 목록(과 예전 빌드의 데모 목록)을 넘겨받았다. 그 길은 없앴다.
    */
   const adoptServerPlaylists = async (signal?: AbortSignal) => {
     const saved = await playlistApi.fetchPlaylists(tracks, signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
-    if (!saved.length && playlists.length) {
-      try {
-        const migrated = await playlistApi.migrateLocalPlaylists(playlists);
-        if (signal?.aborted || !mountedRef.current) return;
-        setPlaylists(migrated);
-        return;
-      } catch {
-        // 올리지 못했으면 화면에 있는 것을 그대로 둔다. 다음 기회에 다시 시도된다.
-        if (mountedRef.current) setToast('플레이리스트를 계정에 저장하지 못했어요.');
-        return;
-      }
-    }
     setPlaylists(saved);
   };
   /**
@@ -679,16 +669,16 @@ export function useMupid(bootstrap: Bootstrap) {
   /** 화면이 쓰는 곡 번호(`id`)를 서버 음악 번호로 옮긴다. 이벤트는 서버 번호로 나간다. */
   const musicIdOf = (id: number) => tracks.find((t) => t.id === id)?.musicId;
   /**
-   * 이벤트에 실을 플레이리스트 번호. 서버 번호가 아니면 0("모름")을 보낸다.
+   * 이벤트에 실을 플레이리스트 번호. 범위를 벗어나면 0("모름")을 보낸다.
    *
-   * **플레이리스트는 아직 서버에 저장되지 않는다.** `createPlaylist` 가 `Date.now()`
-   * 로 화면 안에서만 쓰는 번호를 만드는데, 그 값은 1.7조쯤이라 `listen_events` 의
-   * `playlist_id`(UInt32)에 들어가지 않는다. 그대로 보내면 **그 이벤트가 실린 배치
-   * 전체가 400 으로 거부되고**, 같이 실려 가던 재생 기록까지 사라진다.
+   * 이제 `Playlist.id` 는 서버의 `playlist_id` 라 이 검사는 늘 통과한다. 그래도
+   * 남겨 둔 것은 여기서 걸러 내지 못한 값이 **그 이벤트가 실린 배치 전체를 400 으로
+   * 떨어뜨리고**, 같이 실려 가던 재생 기록까지 날리기 때문이다. 화면 전용 번호를
+   * 쓰던 시절(`Date.now()`, ≈1.7조)에 `listen_events.playlist_id`(UInt32)를 넘겨
+   * 실제로 그렇게 됐다.
    *
    * 0 으로 보내도 손해가 적다. `PLAYLIST_ADD` 의 구간 신호(+0.8)는 `track_id` 와
    * `position_ms` 로 만들어지므로 그대로 남는다 — 어느 목록에 담았는지만 모른다.
-   * 서버 플레이리스트 API 를 붙이면 그때 진짜 번호가 이 검사를 통과한다.
    */
   const playlistIdOf = (id: number) =>
     Number.isInteger(id) && id > 0 && id <= 4294967295 ? id : 0;
@@ -1744,6 +1734,8 @@ export function useMupid(bootstrap: Bootstrap) {
 
     },
     playPlaylist,
+    selectedArtist,
+    setSelectedArtist,
     showAllSimilar,
     setShowAllSimilar,
     messageEndRef,

@@ -1,12 +1,47 @@
 # Windows · Git Bash 환경
 
-4건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+7건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
 ---
 
 ## Windows · Git Bash 환경
+
+### `NODE_ENV=production` 이 켜져 있으면 `npm ci` 가 devDependency 를 통째로 건너뛴다
+
+- **원인**: npm 은 `NODE_ENV=production` 일 때 `--omit=dev` 를 기본으로 건다. 그래서 `npm ci` 가
+  **`devDependencies` 를 하나도 설치하지 않는다.** 경고도 없고 exit code 도 0 이라 성공한 것처럼 보인다.
+- **증상**: 개발 도구가 없는데 "설치했다" 고 믿게 된다. `frontend/` 에서 실제로 겪은 것 —
+  `npx tsc` 가 `TS2688: Cannot find type definition file for '@cloudflare/workers-types'` 로 죽었고
+  (`tsconfig.json` 의 `types` 에 그 이름이 있는데 패키지가 없으니까), `node --test` 는
+  `sharp`·`typescript` 가 없어 일부 테스트 파일을 통째로 못 돌렸다. **테스트 개수 자체가 달라진다** —
+  실측으로 `194 tests / 31 fail` 이 `206 tests / 33 fail` 이 됐다. 앞의 숫자로 "회귀 없다" 고
+  판단하면 안 되는 이유다.
+- **해결**: 설치할 때 명시적으로 끈다.
+  ```bash
+  NODE_ENV=development npm ci --include=dev
+  ```
+  `npm ls <패키지>` 가 `(empty)` 인데 `package-lock.json` 에는 항목이 있으면 이 경우다.
+- **주의**: `npm warn install-scripts` 로 `sharp`·`esbuild`·`workerd` 의 postinstall 이 차단될 수 있다.
+  `sharp` 는 그래도 동작하는 것을 확인했다(프리빌트 바이너리를 require 시점에 찾는다). 다른 패키지가
+  조용히 깨질 수 있으니 실패가 이상하면 `node -e "require('<패키지>')"` 로 먼저 확인한다.
+- **근거**: `frontend/tsconfig.json:12`, `frontend/package.json` devDependencies
+
+### 회귀 판정은 실패 「개수」가 아니라 「이름 집합」으로 한다
+
+- **원인**: 위처럼 환경이 달라지면 테스트 개수가 변한다. 개수만 비교하면 회귀를 놓치거나 없는 회귀를 만든다.
+- **해결**: 같은 환경에서 기준선을 뜨고 **이름 집합의 차집합**을 본다. 테스트 이름 끝의 `(N.Nms)` 는
+  실행마다 달라지므로 반드시 떼고 비교한다.
+  ```bash
+  node --experimental-strip-types --test 2>&1 | grep '^✖' | sed -E 's/ \([0-9.]+ms\)$//' | sort -u > after.txt
+  git stash push -- <바꾼 경로>     # 기준선뜨기 (내가 새로 만든 테스트 파일은 남겨 둔다)
+  node --experimental-strip-types --test 2>&1 | grep '^✖' | sed -E 's/ \([0-9.]+ms\)$//' | sort -u > before.txt
+  git stash pop
+  comm -13 before.txt after.txt     # 내가 깨뜨린 것 (비어야 한다)
+  comm -23 before.txt after.txt     # 내가 고친 것
+  ```
+- **근거**: 이 판정으로 MuBTI 변경의 회귀 0 을 확인했다
 
 ### `docker exec` 에 컨테이너 절대경로를 넘기면 `no such file or directory` 가 난다
 

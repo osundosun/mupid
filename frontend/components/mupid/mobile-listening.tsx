@@ -45,7 +45,7 @@ export function MobileListening({ model: m }: { model: MupidModel }) {
           <div key={active.id} className="mobile-song-copy">
             <p className="mobile-album-name">{active.album}</p>
             <h2>{active.title}</h2>
-            <p>{active.artist}</p>
+            <button className="track-artist-link" onClick={() => m.setSelectedArtist(active.artist)}>{active.artist}</button>
           </div>
           <LikeButton model={m} />
         </div>

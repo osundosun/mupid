@@ -55,7 +55,7 @@ examples:
                     "title": "열두 번째 곡",
                     "duration_ms": 198400,
                     "playable": true,
-                    "image_url": "/api/v1/storage/image/TRACK/...",
+                    "image_url": "/api/v1/storage/image/14",
                     "artist": { "artist_id": 3, "name": "다른 아티스트" },
                     "album": { "album_id": 4, "title": "다른 앨범" }
                   }

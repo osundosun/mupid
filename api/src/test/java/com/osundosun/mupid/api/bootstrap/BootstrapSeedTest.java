@@ -11,6 +11,13 @@ import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import com.osundosun.mupid.api.report.entity.Mubti;
+import com.osundosun.mupid.api.report.enumerate.MubtiClass;
+import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
+import com.osundosun.mupid.api.storage.enumerate.FileCategory;
+import com.osundosun.mupid.api.storage.enumerate.FileType;
+import com.osundosun.mupid.api.storage.service.StorageImageService;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
@@ -134,6 +141,84 @@ class BootstrapSeedTest {
             assertThat(BootstrapRunner.recoverDoubleEncoded(seed.title())).as(seed.title()).isNull();
             assertThat(BootstrapRunner.recoverDoubleEncoded(seed.subtitle())).as(seed.subtitle()).isNull();
         });
+    }
+
+    @Test
+    @DisplayName("MuBTI 캐릭터 행은 파일 번호로 조회 URL 이 된다")
+    void mubtiImageKeyYieldsNumberedUrl() {
+        // 한때 조회 URL 이 저장 키를 되짚어 만들어졌다(`image/mubti/VTFC.webp` → 마디를
+        // 떼어 URL 조립). 그때는 키 모양이 곧 조회 계약이라, 키를 손으로 만든 코드 하나가
+        // `imageUrl` 을 예외도 로그도 없이 null 로 만들었고 `/report` 캐릭터가 조용히
+        // 사라졌다. 지금은 파일 번호로 URL 을 만들므로 키 모양이 URL 에 관여하지 않는다 —
+        // 그래서 옛 키든 새 키든 같은 주소가 나오고, 저장 키를 만드는 자리는
+        // `StorageImageService.storageKey` 하나로 남는다.
+        for (BootstrapRunner.MubtiSeed seed : BootstrapRunner.MUBTI_SEEDS) {
+            String lookup = BootstrapRunner.mubtiImageKey(seed.code());
+
+            String storageKey = StorageImageService.storageKey(FileCategory.MUBTI, lookup);
+            assertThat(storageKey).as("%s 저장 키", seed.code())
+                .isEqualTo("image/mubti/" + lookup);
+        }
+
+        assertThat(StorageImageService.imageUrl(fileAtKey("image/mubti/VTFC.webp", 7)))
+            .as("저장 키가 아니라 파일 번호로 만든다")
+            .isEqualTo("/api/v1/storage/image/7");
+    }
+
+    @Test
+    @DisplayName("이미지가 아닌 파일과 지워진 행은 주소를 만들지 않는다")
+    void deletedOrNonImageFilesHaveNoUrl() {
+        ObjectStorageFile deleted = fileAtKey("image/mubti/VTFC.webp", 3);
+        deleted.setIsDeleted(true);
+        assertThat(StorageImageService.imageUrl(deleted)).isNull();
+
+        // 음원 청크(`FileType.MUSIC`)는 이미지가 아니다. 주소를 주면 화면이 그 주소를
+        // <img> 에 걸고, 조회 API 가 `INVALID_FILE_TYPE` 으로 거절해 깨진 그림이 된다.
+        ObjectStorageFile chunk = fileAtKey("image/streaming/chunk_0001.rtp", 4);
+        chunk.setFileType(FileType.MUSIC);
+        chunk.setCategory(FileCategory.STREAMING);
+        assertThat(StorageImageService.imageUrl(chunk)).isNull();
+
+        assertThat(StorageImageService.imageUrl(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("기본 프로필 주소는 카테고리 대문자 규약을 따른다")
+    void defaultProfileUrlKeepsCategoryUppercase() {
+        // `SecurityConfig` 의 공개 경로와 프런트의 `DEFAULT_KEY` 가 이 모양에 맞물려 있다.
+        assertThat(StorageImageService.defaultProfileImageUrl())
+            .isEqualTo("/api/v1/storage/image/PROFILE/default");
+    }
+
+    private static ObjectStorageFile fileAtKey(String storageKey, int fileId) {
+        return ObjectStorageFile.builder()
+            .fileId(fileId)
+            .fileType(FileType.IMG)
+            .category(FileCategory.MUBTI)
+            .originalFileName(storageKey)
+            .storageObjectKey(storageKey)
+            .fileSizeBytes(1)
+            .mime("image/webp")
+            .build();
+    }
+
+    /**
+     * 네 축이 16종 밖인 행은 코드를 만들지 않는다.
+     *
+     * <p>수리는 축 조합을 코드로 봐서 하는데, 그 판정이 너그러우면 시드가 만든 적 없는 행을
+     * 건드리게 된다.
+     */
+    @Test
+    @DisplayName("16종 밖의 조합은 시드 코드로 보지 않는다")
+    void unknownCombinationsHaveNoSeedCode() {
+        assertThat(BootstrapRunner.mubtiSeedCode(Mubti.builder()
+            .classA(null).classB(MubtiClass.B.T).classC(MubtiClass.C.F).classD(MubtiClass.D.C)
+            .title("t").subtitle("s").description("d").build())).isNull();
+
+        assertThat(BootstrapRunner.mubtiSeedCode(Mubti.builder()
+            .classA(MubtiClass.A.V).classB(MubtiClass.B.T)
+            .classC(MubtiClass.C.F).classD(MubtiClass.D.C)
+            .title("t").subtitle("s").description("d").build())).isEqualTo("VTFC");
     }
 
     /**

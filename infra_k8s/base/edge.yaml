@@ -48,6 +48,7 @@ spec:
             # certbot stays on the host and owns renewal. Read-only here.
             - {name: letsencrypt, mountPath: /etc/letsencrypt, readOnly: true}
             - {name: acme, mountPath: /var/www/acme, readOnly: true}
+            - {name: downloads, mountPath: /srv/web/downloads, readOnly: true}
           readinessProbe:
             httpGet: {path: /healthz, port: 80}
             periodSeconds: 10
@@ -73,3 +74,11 @@ spec:
           hostPath: {path: /etc/letsencrypt, type: Directory}
         - name: acme
           hostPath: {path: /srv/mupid-k8s/acme, type: Directory}
+        # 안드로이드 APK 를 두는 곳. receive-apk.py 가 쓰고 nginx 가 읽는다.
+        # 웹 이미지에 굽지 않는 이유는 프론트 배포마다 수십 MB 를 다시 실어
+        # 보내게 되기 때문이다 — nginx/default.conf 의 /download/ 참고.
+        #
+        # DirectoryOrCreate 다. Directory 로 두면 APK 를 한 번도 올리지 않은
+        # 클러스터에서 엣지 파드가 아예 뜨지 않는다.
+        - name: downloads
+          hostPath: {path: /srv/mupid-k8s/downloads, type: DirectoryOrCreate}

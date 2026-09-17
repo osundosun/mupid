@@ -43,6 +43,9 @@ run catalog --yes --no-progress || failed=1
 run covers --yes --no-progress || failed=1
 # 가사는 곡 번호가 있어야 붙일 수 있다 — catalog 다음.
 run lyrics --yes --no-progress || failed=1
+# 장르·분위기. catalog 가 남긴 music_id 에 붙이므로 catalog 다음이다.
+# 이미 맞는 곡은 아무것도 쓰지 않는다 — 매일 돌아도 첫날 이후로는 읽기만 한다.
+run classify --yes || failed=1
 # 청킹. 해시 기반이라 이미 처리한 곡은 건너뛴다.
 run batch || failed=1
 
@@ -50,7 +53,8 @@ run batch || failed=1
 # 청킹까지 멈출 이유가 없고, 무엇이 실패했는지는 종료 코드로 알린다.
 echo
 echo "=== 로그 정리 (30일 지난 것) ==="
-find "$log_dir" -name '*.log' -mtime +30 -delete 2>/dev/null || true
+# classify 는 같은 자리에 실행 보고서(.json)도 남긴다. 같이 치운다.
+find "$log_dir" \( -name '*.log' -o -name 'classify-*.json' \) -mtime +30 -delete 2>/dev/null || true
 
 echo
 if [ "$failed" -ne 0 ]; then

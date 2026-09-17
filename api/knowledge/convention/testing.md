@@ -21,6 +21,7 @@
 | `playlist/PlaylistTrackRemoveAndRenameTest` | `@SpringBootTest` | 곡 빼기·이름 변경 8건 |
 | `event/EventCollectBatchTest` | 순수 JUnit | 수집기의 배치 멱등·거부 격리 4건 |
 | `report/MubtiScorerTest` | 순수 JUnit | MuBTI 네 축 판정·표본 하한·이력 현상 11건 |
+| `bootstrap/BootstrapSeedTest` | 순수 JUnit | 시드가 DB에 들어갈 모양인지 · 저장 키와 조회 URL 이 이어지는지 |
 
 `@SpringBootTest` 는 전부 `@Transactional` 로 매번 롤백한다.
 

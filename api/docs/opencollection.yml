@@ -175,7 +175,24 @@ docs:
     - `GET /api/v1/mail/verification/**`
     - `GET /api/actuator/**`
     - `GET /api/v1/onboarding/option` (온보딩 선택지 — 무드·장르 이름 목록)
-    - `GET /api/v1/storage/image/ALBUM/*`, `.../ARTIST/*`, `.../TRACK/*` (앨범·아티스트·곡 커버 이미지)
+    - `GET /api/v1/storage/image/**` (이미지 조회 — 아래 참고)
+
+    **이미지 조회는 경로 전체가 열려 있지만, 실제 공개 여부는 서버가 판단합니다.**
+    조회는 파일 번호(`GET /api/v1/storage/image/{fileId}`)로 하는데, 주소에 카테고리가
+    없어 `SecurityConfig` 가 경로로 가릴 수 없기 때문입니다. 카테고리별 공개 여부는
+    `FileCategory` 의 정책이 정하고 서비스가 그것을 봅니다.
+
+    | 카테고리 | 읽기 | 이유 |
+    | --- | --- | --- |
+    | `ALBUM` `ARTIST` `TRACK` `MUBTI` | **공개** | `<img src>` 에는 Authorization 헤더를 붙일 수 없어 닫으면 목록의 표지가 전부 깨진다. 키가 앨범·아티스트 이름이나 유형 코드라 개인 정보도 아니다 |
+    | `PROFILE` | 비공개 (401) | 개인 정보. 토큰을 붙여 바이트를 받아 object URL 로 쓴다 |
+    | `STREAMING` | 비공개 (401) | 음원 청크. 원래 nginx 가 스프링을 거치지 않고 스토리지로 흘려보낸다 |
+
+    쓰기(업로드·삭제)도 경로로 가리지 않고 카테고리 정책이 판단합니다 — 프로필은
+    본인 번호만, 카탈로그 이미지는 `ROLE_SYSTEM` 이상만.
+
+    `GET /api/v1/storage/image/PROFILE/default` 는 기본 프로필 이미지라 열려 있습니다.
+    그 그림은 특정 사람의 사진이 아니라 사진 없는 계정의 자리를 채우는 기본값입니다.
 
     스트리밍(`Stream` 폴더) 엔드포인트는 모두 액세스 토큰이 필요합니다.
 

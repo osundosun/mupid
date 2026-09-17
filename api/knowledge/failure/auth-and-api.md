@@ -202,11 +202,34 @@
 - **해결**: `@ExceptionHandler(MethodArgumentTypeMismatchException.class)` 를 추가해 400(`MUPID_INVALID_REQUEST_BODY`)으로 돌린다. enum 이면 고를 수 있는 값을 `error_details` 에 적어 준다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/common/exception/GlobalExceptionHandler.java`
 
+### 요청 방식이 틀리면 405 가 아니라 500 이 난다 — 해소됨
+
+- **원인**: 경로는 있는데 메서드가 다른 요청(`HttpRequestMethodNotSupportedException`)은 `GlobalExceptionHandler` 에 핸들러가 없어 `Exception` 핸들러가 먹고 500 으로 나갔다. 위 "쿼리 파라미터 타입이 안 맞으면 500 이 난다" 와 같은 뿌리다 — **클라이언트 잘못을 5xx 로 내보내면 서버 장애로 읽힌다.**
+- **드러나는 조건**: **인증이 필요 없는 경로에서만 보인다.** 인증이 필요한 경로는 필터가 먼저 401 을 내보내 핸들러까지 오지 않는다. 그래서 이 결함은 `SecurityConfig` 가 열어 둔 곳에서만 눈에 띈다 — 실측도 `GET /api/v1/storage/image/ALBUM/1`(GET permitAll, POST/DELETE 만 매핑)에서 나왔다.
+- **왜 값이 있나**: 5xx 는 보낸 쪽이 **재시도 대상**으로 잡는다. 405 는 다시 보내도 같은 답이라 재시도할 이유가 없다. 배치(`music_preprocessing/api_client.py`)가 정확히 5xx 만 재시도하므로 헛된 재시도가 실제 비용이 된다. 로그도 ERROR + 스택트레이스로 오염됐다.
+- **해결**: `@ExceptionHandler(HttpRequestMethodNotSupportedException.class)` 를 추가해 405(`MUPID_METHOD_NOT_ALLOWED`)로 돌린다. 404(`NoResourceFoundException`)와 짝이다 — 그쪽은 "그런 주소가 없다", 이쪽은 "그 주소가 이 방식은 안 받는다".
+- **회귀 방지**: `GlobalExceptionHandlerTest` 가 405 · 404 · 401 세 갈래를 함께 못박는다. 핸들러를 빼면 첫 번째만 실패하는 것을 확인했다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/common/exception/GlobalExceptionHandler.java`, `common/error/GlobalErrorCode.java`, `src/test/java/com/osundosun/mupid/api/common/GlobalExceptionHandlerTest.java`
+
 ### `UserGetInfoResponse.imageUrl` 이 부를 수 없는 주소다 — 해소됨
 
 - **원인**: `getProfileImageUrl` 이 `/api/v1/storage/image/profile/{저장 키 전체}` 를 만들었다. 저장 키는 이미 `image/profile/15` 라 결과가 `/api/v1/storage/image/profile/image/profile/15` 였다. 경로 마디 수가 달라 컨트롤러에 잡히지도 않고 401 이 됐다. 앨범·아티스트 쪽은 `MusicServiceImpl` 이 따로 만들고 있어 규약이 두 벌로 갈려 있었다.
-- **해결**: `StorageImageService.imageUrl(...)` 정적 메서드 하나로 모으고 둘 다 그것을 쓴다. 접두사를 떼고 URL 인코딩하며, 카테고리는 **대문자**다 — `SecurityConfig` 의 공개 경로가 대문자로 적혀 있어 소문자로 내보내면 비로그인 화면에서 401 이 된다.
+- **해결**: `StorageImageService.imageUrl(...)` 정적 메서드 하나로 모으고 둘 다 그것을 쓴다.
+- **이후**: 조회가 **파일 번호**(`/api/v1/storage/image/{fileId}`)로 바뀌면서 저장 키 모양이 주소에 관여하지 않게 됐다. 카테고리 **대문자** 규약은 저장 키(`image/{소문자}/{키}`)와 기본 프로필 주소(`/PROFILE/default`)에 남아 있다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/service/StorageImageService.java`
+
+### 카탈로그 이미지는 로그인만 하면 누구나 덮어쓰고 지울 수 있었다 — 해소됨
+
+- **원인**: 소유권 검사가 `PROFILE` 에만 있었다(`UserImageServiceImpl.requireOwnKey`). `ALBUM`·`ARTIST`·`TRACK`·`MUBTI` 는 콜백 구현체가 없어 업로드 후 할 일이 없다는 이유로 검사 자체가 없었고, 그 결과 **로그인한 아무 사용자나** `/api/v1/storage/image/ALBUM/1` 같은 키로 남의 표지를 덮어쓰거나 지울 수 있었다. 삭제는 `deleteFile` 이 스토리지 오브젝트까지 지우므로 피해가 더 컸다.
+- **해결**: 검사를 카테고리가 들고 있는 정책 하나로 모은다 — `FileCategory.accessPolicy` → `ImageAccessPolicy`(`OWNER`/`CATALOG`/`MACHINE`). `check(actor, storageKey)` 를 **업로드와 삭제 양쪽에서** 부른다. 한쪽만 잠그면 잠그지 않은 쪽으로 우회되기 때문이다.
+- **업로드 검사를 먼저 두는 것도 중요하다.** 뒤에 두면 권한 없는 요청이 스토리지에 바이트를 남기고 끝난다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/enumerate/ImageAccessPolicy.java`, `StorageImageServiceImpl.java`, `StorageImageAccessTest.java`
+
+### 익명 요청에서 `SecurityUtils.getAuthUser()` 가 500 을 냈다 — 해소됨
+
+- **원인**: 스프링 시큐리티는 인증이 없을 때 컨텍스트를 비워 두지 않고 **익명 인증**을 넣는다(principal 이 `"anonymousUser"` 문자열). `getAuthUser` 는 `isAuthenticated()` 만 보고 `(User)` 로 캐스팅해서 익명 요청마다 `ClassCastException` 이 났고, 그것이 최종 폴백 핸들러에 먹혀 **401 이어야 할 응답이 500** 으로 나갔다. 인증이 필수인 경로에서만 쓰이던 동안은 잠복해 있었다.
+- **해결**: `auth.getPrincipal() instanceof User user ? user : null` — "인증이 있는가" 가 아니라 **principal 이 우리 `User` 인가**를 본다. 공개 이미지 조회가 생기면서 비로그인 요청이 이 자리를 지나게 되어 드러났다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/utils/SecurityUtils.java`
 
 ### 프로필 사진 삭제가 404 로 실패한다 — 해소됨
 
@@ -217,8 +240,8 @@
 ### 남의 번호를 키로 프로필 사진을 올릴 수 있었다 — 해소됨
 
 - **원인**: 저장 키가 경로 변수(`/api/v1/storage/image/PROFILE/{storageKey}`)라 아무 값이나 넣을 수 있었다. `image/profile/{남의 번호}` 로 올리면 그 사람 프로필 파일을 덮어쓰고, 업로드한 사람에게 연결됐다.
-- **해결**: `handleUploadImageAfter` 가 키의 마지막 마디를 본인 유저 번호와 대조한다. 어긋나면 `MUPID_PROFILE_KEY_MISMATCH`(403) 다.
-- **근거**: `api/src/main/java/com/osundosun/mupid/api/user/service/UserImageServiceImpl.java`
+- **해결**: `ImageAccessPolicy.OWNER` 가 저장 키의 마지막 마디를 본인 유저 번호와 대조한다. 어긋나면 `MUPID_STORAGE_KEY_MISMATCH`(403) 다. 이 검사는 업로드 입구(`StorageImageServiceImpl.uploadImage`)에서 한다 — 콜백(`handleUploadImageAfter`)에서 하던 것을 정책으로 옮긴 것은 검사 규칙이 업로드·삭제 두 자리에서 필요해졌기 때문이다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/storage/enumerate/ImageAccessPolicy.java`
 
 ### 로그인한 적 없는 첫 방문자에게 `GET /api/v1/auth` 가 500 을 준다 — 해소됨
 
