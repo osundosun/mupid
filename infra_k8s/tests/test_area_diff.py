@@ -108,9 +108,9 @@ class EveryTopLevelPathIsClassifiedTest(unittest.TestCase):
     def test_every_tracked_top_level_entry_is_known(self):
         if not GIT:
             self.skipTest("git 이 없다 — 최상위 경로를 읽을 수 없다")
-        out = subprocess.run([GIT, "ls-tree", "--name-only", "HEAD"],
-                             cwd=ROOT, capture_output=True, text=True,
-                             encoding="utf-8")
+        out = subprocess.run(
+            [GIT, "-c", "core.quotePath=false", "ls-tree", "--name-only", "HEAD"],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(out.returncode, 0, out.stderr)
         unknown = area_diff.unclassified(
             [name + "/" for name in out.stdout.splitlines()])
@@ -118,6 +118,22 @@ class EveryTopLevelPathIsClassifiedTest(unittest.TestCase):
             unknown, [],
             "infra/ci/area_diff.py 의 PREFIXES 에 추가하거나 IGNORED 에 넣는다: "
             + ", ".join(unknown))
+
+    def test_non_ascii_paths_are_not_escaped(self):
+        """git 은 기본값(core.quotePath=true)에서 한글 경로를
+        `"\\354\\247\\204..."` 로 이스케이프해 내보낸다 — 그러면 `진행사항/` 같은
+        무시 목록이 매칭되지 않아 그 경로가 '표에 없는 경로' 로 판정되고 MR 이
+        이유 없이 막힌다. 사람 머신에는 이 설정이 false 로 들어가 있는 경우가 많아
+        **로컬에서는 통과하고 CI 에서만** 깨졌다(실측: infra-verify 파이프라인 201240).
+        area_diff.git 이 설정에 기대지 않는지 여기서 고정한다."""
+        if not GIT:
+            self.skipTest("git 이 없다 — 저장소 이력을 읽을 수 없다")
+        out = area_diff.git("ls-tree", "--name-only", "HEAD")
+        self.assertIn("진행사항", out,
+                      "한글 경로가 이스케이프됐다 — area_diff.git 이 core.quotePath 를 "
+                      "고정하지 않는다")
+        self.assertNotIn("\\354", out, "이스케이프된 경로가 그대로 올라왔다")
+        self.assertEqual(area_diff.unclassified(["진행사항/2026-09-17.md"]), [])
 
 
 class PreflightCliTest(unittest.TestCase):

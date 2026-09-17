@@ -139,9 +139,19 @@ def unclassified(paths) -> list[str]:
 
 def git(*args: str) -> str:
     """실패하면 SystemExit. 얕은 체크아웃이면 여기서 멈춘다 — 조용히 빈 diff 를
-    돌려주면 '검증 대상 없음' 이 되어 게이트가 통째로 무력해진다."""
-    result = subprocess.run(("git", *args), capture_output=True,
-                            text=True, encoding="utf-8")
+    돌려주면 '검증 대상 없음' 이 되어 게이트가 통째로 무력해진다.
+
+    `-c core.quotePath=false` 를 항상 준다. git 은 기본값(true)에서 비ASCII
+    경로를 `"\\354\\247\\204\\355\\226\\211\\354\\202\\254\\355\\225\\255/"` 처럼
+    이스케이프해 내보내는데, 그러면 `진행사항/` 같은 무시 목록이 매칭되지 않고
+    그 경로가 "표에 없는 경로" 로 판정돼 MR 이 이유 없이 막힌다. 사람 머신에는
+    이 설정이 false 로 들어가 있는 경우가 많아 **로컬에서는 통과하고 CI 에서만**
+    깨졌다(실측: infra-verify 파이프라인 201240). 사용자·러너 설정에 기대지 않도록
+    여기서 고정한다.
+    """
+    result = subprocess.run(
+        ("git", "-c", "core.quotePath=false", *args),
+        capture_output=True, text=True, encoding="utf-8")
     if result.returncode != 0:
         sys.exit(f"git {' '.join(args)} 실패:\n{result.stderr.strip()}\n"
                  "GIT_DEPTH 0 으로 체크아웃했는지 확인한다.")
