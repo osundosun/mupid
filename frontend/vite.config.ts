@@ -1,8 +1,9 @@
 import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import hostingConfig from './.openai/hosting.json';
+import { localDemoAssets } from './scripts/local-demo-assets';
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   '00000000-0000-4000-8000-000000000000';
@@ -90,7 +91,8 @@ const pinRscCompatibilityId = (id: string) => ({
 
 export const RSC_COMPATIBILITY_ID = 'mupid-static-1';
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
+  const demoAssets = localDemoAssets(loadEnv(mode, process.cwd(), 'VITE_MUPID_').VITE_MUPID_LOCAL_DEMO === 'true');
   const target = process.env.MUPID_DEPLOY_TARGET ?? '';
   if (STATIC_TARGETS.includes(target)) {
     return {
@@ -103,6 +105,7 @@ export default defineConfig(async () => {
         host: process.env.TAURI_DEV_HOST || undefined,
       },
       plugins: [
+        demoAssets,
         vinext(),
         // 정적 대상에는 이 헤더를 붙여 줄 서버가 없다. 앱은 셸이 대신 붙이므로
         // 값을 고정하고, nginx 로 가는 `ec2` 는 빈 값으로 검사를 끈다.
@@ -128,6 +131,7 @@ export default defineConfig(async () => {
         : {}),
     },
     plugins: [
+      demoAssets,
       vinext(),
       sites(),
       cloudflare({

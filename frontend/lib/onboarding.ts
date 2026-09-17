@@ -16,6 +16,7 @@
 
 import { ApiError } from './api/client';
 import { api } from './api/session';
+import { localDemoEnabled } from './api/local-demo';
 import type { CodeOption, OnboardingOptions } from './api/endpoints';
 import { genreOptions, moodOptions } from './mupid-data';
 
@@ -32,9 +33,11 @@ let cached: Promise<OnboardingOptions> | null = null;
 /** 마지막으로 돌려준 것이 서버 목록이 아니라 대체 목록이었는가. */
 let servedFallback = false;
 
-export function loadOnboardingOptions(signal?: AbortSignal): Promise<OnboardingOptions> {
+export function loadOnboardingOptions(): Promise<OnboardingOptions> {
+  if (localDemoEnabled()) { servedFallback = true; return Promise.resolve(fallbackOptions); }
+  // 여러 화면이 공유하는 요청은 한 화면의 unmount로 취소하지 않는다.
   cached ??= api.onboarding
-    .options(signal)
+    .options()
     .then((value) => {
       servedFallback = false;
       return value;
@@ -55,9 +58,9 @@ export function loadOnboardingOptions(signal?: AbortSignal): Promise<OnboardingO
  * 저장이 `OnboardingOptionsStale` 로 막힌 뒤 화면이 부른다. 그때의 목록은
  * 이미 서버와 어긋나 있으므로 그대로 두고 다시 고르게 해 봐야 또 막힌다.
  */
-export function refreshOnboardingOptions(signal?: AbortSignal): Promise<OnboardingOptions> {
+export function refreshOnboardingOptions(): Promise<OnboardingOptions> {
   cached = null;
-  return loadOnboardingOptions(signal);
+  return loadOnboardingOptions();
 }
 
 /**
