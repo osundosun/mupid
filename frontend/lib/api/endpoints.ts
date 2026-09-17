@@ -124,7 +124,20 @@ export type ReactionType = 'LIKE' | 'DISLIKE';
 /** 내가 반응한 곡 번호. 하트 상태를 그리려면 전부 필요해서 페이징이 없다. */
 export type Reactions = { like: number[]; dislike: number[] };
 
-export type CodeOption = { code_id: number; name: string };
+/**
+ * 온보딩 선택지 한 개. 서버는 snake_case 로 내려 준다(`spring.jackson.property-naming-strategy`).
+ *
+ * `name` 과 `display_name` 은 **역할이 다르다.**
+ * - `name` — 서버가 AI 추천 서버로 넘기는 값(`code_name`). **바꾸면 안 된다.**
+ *   한국어가 색인으로 가면 씨앗이 0 이 되는데, 오류는 안 나고 개인화만 사라진다.
+ * - `display_name` — 화면에 그릴 값. 무드 taxonomy 9종은 여기가 영문 원문
+ *   (`melancholic`)이고, 장르 45종은 나중에 여기가 한국어(`팝 록`)가 된다.
+ *
+ * 지금 화면은 `name` 을 그리고 있다(`namesOf`). taxonomy 9종은 `name` 도
+ * 한국어(`애상적인`)라 **당장은 맞게 보인다** — 표시명을 화면에 쓰기 시작할 때
+ * `display_name` 으로 옮긴다. 둘을 섞으면 어느 쪽이 색인 값인지 알 수 없게 된다.
+ */
+export type CodeOption = { code_id: number; name: string; display_name?: string };
 
 export type OnboardingOptions = {
   moods: CodeOption[];

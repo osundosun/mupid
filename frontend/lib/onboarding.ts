@@ -85,7 +85,17 @@ const isAlreadySubmitted = (error: unknown): boolean =>
   error instanceof ApiError &&
   (error.status === 409 || error.code === 'MUPID_ONBOARDING_ALREADY_SUBMITTED');
 
-/** 서버에서 받은(또는 기본) 선택지를 이름만 뽑아 준다. 화면 칩이 쓰는 모양이다. */
+/**
+ * 화면에 그릴 이름 목록.
+ *
+ * **`name` 을 쓴다 — `display_name` 이 아니다.** `name` 은 AI 추천 서버로
+ * 넘어가는 값(`code_name`)이고, 온보딩 제출도 이 이름으로 코드 번호를 찾는다
+ * (`idsOf`). 표시명으로 바꾸면 저장된 응답과 서버 코드표가 어긋난다.
+ *
+ * taxonomy 무드 9종은 `name` 자체가 한국어라(`애상적인`) 지금 그대로 맞게
+ * 보인다. 장르 세분류 45종이 코드표에 들어오면 `name` 이 `poprock` 같은 원문이
+ * 되므로, 그때는 화면용 `display_name` 을 쓰도록 이 함수를 갈라야 한다.
+ */
 export const namesOf = (options: CodeOption[]): string[] => options.map((o) => o.name);
 
 /**
