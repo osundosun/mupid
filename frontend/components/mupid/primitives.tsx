@@ -1,7 +1,8 @@
 'use client';
 import Image from 'next/image';
 import { MascotAccent, MupidMascot } from './mascot';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { loadAudioWaveform } from '@/lib/audio-waveform';
 import {
   ChevronLeft,
   ChevronRight,
@@ -68,6 +69,20 @@ export function AlbumArt({
     </span>
   );
 }
+export function PlaylistArt({ track, name }: { track?: Track; name: string }) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const cover = resolveAlbumCover(track?.image, failedSrc);
+  const src = cover.isFallback ? '/playlist-cover-default.png' : cover.src;
+  return (
+    <span className="album-art">
+      <Image unoptimized width={320} height={320} src={src}
+        alt={`${name} 플레이리스트 커버`} loading="lazy"
+        className={cover.isFallback ? 'album-art-fallback' : undefined}
+        onError={cover.isFallback ? undefined : () => setFailedSrc(src)} />
+    </span>
+  );
+}
+
 export function Heading({
   title,
   // 데스크톱 섹션처럼 무엇을 모아 둔 자리인지 작은 윗줄로 먼저 알려 준다.
@@ -133,6 +148,7 @@ export function TrackRow({
   track,
   model: m,
   detail,
+  showDetail = true,
   action,
   onPlay,
   // 추천·검색처럼 둘러보는 목록에서만 켠다. 자리가 빠듯한 목록에서는 생략한다.
@@ -144,6 +160,7 @@ export function TrackRow({
   track: Track;
   model: MupidModel;
   detail?: string;
+  showDetail?: boolean;
   action?: ReactNode;
   onPlay?: () => void;
   queueable?: boolean;
@@ -166,13 +183,13 @@ export function TrackRow({
         />
       )}
       <AlbumArt track={track} />
-      <button className="track-info" onClick={picking ? onSelect : () => m.openTrack(track)}>
-        <strong>{track.title}</strong>
-        <span>{track.artist}</span>
-        <span className="moment-meta">
+      <div className="track-info">
+        <button className="track-title-link" onClick={picking ? onSelect : () => m.openTrack(track)}><strong>{track.title}</strong></button>
+        <button className="track-artist-link" onClick={picking ? onSelect : () => m.setSelectedArtist(track.artist)}>{track.artist}</button>
+        {showDetail && <span className="moment-meta">
           {detail || `${sectionNameOf(track)} · ${formatTime(track.moment)}`}
-        </span>
-      </button>
+        </span>}
+      </div>
       {!picking && action}
       {!picking && queueable && (
         <button
@@ -196,6 +213,7 @@ export function TrackRow({
   );
 }
 export function Waveform({
+  audioUrl,
   duration,
   start = 0,
   end = 0,
@@ -203,6 +221,7 @@ export function Waveform({
   progress = 0,
   ranges = [],
 }: {
+  audioUrl?: string;
   duration: number;
   start?: number;
   end?: number;
@@ -210,23 +229,44 @@ export function Waveform({
   progress?: number;
   ranges?: { start: number; end: number }[];
 }) {
-  const count = compact ? 48 : 86;
+  const count = compact ? 64 : 160;
+  const [analysis, setAnalysis] = useState<{ url: string; values: number[] } | null>(null);
+  useEffect(() => {
+    if (!audioUrl) return;
+    let alive = true;
+    void loadAudioWaveform(audioUrl, count).then(values => {
+      if (alive) setAnalysis({ url: audioUrl, values });
+    }).catch(() => { if (alive) setAnalysis(null); });
+    return () => { alive = false; };
+  }, [audioUrl, count]);
+  const amplitudes = analysis?.url === audioUrl && analysis?.values.length === count ? analysis.values : null;
   return (
     <div className={`waveform ${compact ? 'compact' : ''}`} aria-hidden="true">
       {Array.from({ length: count }, (_, i) => {
         const second = (i / count) * duration;
-        const height =
-          18 + Math.abs(Math.sin(i * 1.74) * Math.cos(i * 0.18)) * 72;
+        // Smooth neighboring bars into an irregular envelope instead of repeating spikes.
+        const noise = (index: number) => {
+          const value = Math.sin(index * 127.1 + duration * 0.13) * 43758.5453;
+          return value - Math.floor(value);
+        };
+        const position = i / (count - 1);
+        const anchor = position * 19;
+        const blend = anchor - Math.floor(anchor);
+        const smooth = blend * blend * (3 - 2 * blend);
+        const envelope = noise(Math.floor(anchor)) * (1 - smooth) + noise(Math.floor(anchor) + 1) * smooth;
+        const detail = 0.45 + noise(i + 41) * 0.55;
+        const taper = Math.pow(Math.sin(position * Math.PI), 0.65);
+        const height = 4 + (12 + envelope * 74) * detail * taper;
         return (
           <i
             className={
-              (second >= start && second <= end) || ranges.some(range => second >= range.start && second < range.end)
+              (end > start && second >= start && second <= end) || ranges.some(range => second >= range.start && second < range.end)
                 ? 'wave-selected'
                 : second < progress
                   ? 'wave-played'
                   : ''
             }
-            style={{ height: `${height}%` }}
+            style={{ height: `${audioUrl ? (amplitudes?.[i] ?? 4) : height}%` }}
             key={i}
           />
         );

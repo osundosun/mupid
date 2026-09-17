@@ -4,6 +4,7 @@ import { api } from '@/lib/api/session';
 import { isStreamed } from '@/lib/stream-catalog';
 import { formatTime, type Track } from '@/lib/mupid-data';
 import type { LyricLine } from '@/lib/api/endpoints';
+import { localDemoEnabled } from '@/lib/api/local-demo';
 
 /**
  * 곡 가사.
@@ -11,13 +12,19 @@ import type { LyricLine } from '@/lib/api/endpoints';
  * 서버에서 받는다. 가사가 없는 곡이 많고, 그건 오류가 아니라 "아직 없음" 이다.
  * 데모 곡(서버에 없는 곡)은 부를 데가 없어 안내만 띄운다.
  *
- * 접지 않고 항상 보여 준다. LP 바로 아래에 놓이는 블록이다.
+ * 기본은 현재 가사 두 줄, 가사 대화상자는 전체 가사를 보여 준다.
  */
-export function Lyrics({ track }: { track: Track }) {
+export function Lyrics({ track, time = 0, expanded = false }: { track: Track; time?: number; expanded?: boolean }) {
   const [lines, setLines] = useState<LyricLine[] | null>(null);
   const [error, setError] = useState(false);
   const streamed = isStreamed(track);
+  const local = localDemoEnabled() && Boolean(track.localAudio);
   useEffect(() => {
+    setError(false);
+    if (local) {
+      setLines(track.localLyrics ?? []);
+      return;
+    }
     if (!streamed) {
       setLines([]);
       return;
@@ -34,22 +41,24 @@ export function Lyrics({ track }: { track: Track }) {
         if (!abort.signal.aborted) setError(true);
       });
     return () => abort.abort();
-  }, [track.id, track.musicId, streamed]);
-  const note = !streamed
+  }, [track.id, track.musicId, track.localLyrics, streamed, local]);
+  const displayedLines = local ? (track.localLyrics ?? []) : lines;
+  const currentIndex = Math.max(0, (displayedLines ?? []).findLastIndex(line => line.time_ms <= time * 1000));
+  const previewLines = expanded ? displayedLines : displayedLines?.slice(currentIndex, currentIndex + 2);
+  const note = !streamed && !local
     ? '체험용 곡이라 가사가 없어요.'
     : error
       ? '가사를 불러오지 못했어요.'
-      : lines === null
+      : displayedLines === null
         ? '가사를 불러오고 있어요…'
-        : lines.length === 0
-          ? '가사가 아직 준비되지 않았어요.'
+        : displayedLines.length === 0
+          ? '등록된 가사가 없습니다.'
           : '';
   return <section className="song-lyrics" key={track.id} aria-label={`${track.title} 가사`}>
     <h3>{track.title}</h3>
     {note && <p className="song-lyrics-empty" role={error ? 'alert' : 'status'}>{note}</p>}
-    {lines?.map((line) => (
+    {previewLines?.map((line) => (
       <p key={line.lyric_id}>
-        <small className="lyrics-time">{formatTime(line.time_ms / 1000)}</small>
         {line.text}
       </p>
     ))}

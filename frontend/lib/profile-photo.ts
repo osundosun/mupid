@@ -35,6 +35,7 @@ import { createStore } from './store';
 
 /** 사진을 올린 적이 없는 사람의 `image_url` 이 가리키는 키. */
 const DEFAULT_KEY = '/default';
+export const DEFAULT_PROFILE_PHOTO = '/profile-default.png';
 
 const signedIn = () => {
   const session = sessionStore.get();
@@ -56,7 +57,7 @@ export type ProfilePhotoState = {
 };
 
 export const profilePhotoStore = createStore<ProfilePhotoState>({
-  url: '',
+  url: DEFAULT_PROFILE_PHOTO,
   isDefault: true,
   loaded: false,
 });
@@ -65,6 +66,7 @@ export const profilePhotoStore = createStore<ProfilePhotoState>({
 let readToken = 0;
 
 const put = (url: string, isDefault: boolean) => {
+  if (isDefault) url = DEFAULT_PROFILE_PHOTO;
   const previous = profilePhotoStore.get().url;
   if (previous !== url) releasePhoto(previous);
   profilePhotoStore.set({ url, isDefault, loaded: true });
@@ -79,12 +81,12 @@ const fetchPhoto = async (signal?: AbortSignal): Promise<Photo> => {
   // 브라우저에 저장한 사진만 본다. 그것도 없으면 화면이 대체 그림을 그린다.
   if (!user) {
     const stored = await mupidService.readPhoto();
-    return { url: stored, isDefault: !stored };
+    return { url: stored || DEFAULT_PROFILE_PHOTO, isDefault: !stored };
   }
 
   const info = await api.user.me(signal);
   const url = info?.image_url ?? '';
-  if (!url) return { url: '', isDefault: true };
+  if (!url || url.endsWith(DEFAULT_KEY)) return { url: DEFAULT_PROFILE_PHOTO, isDefault: true };
 
   // `/default` 키에도 받아올 것이 있다 — 백엔드가 기본 이미지를 돌려준다.
   // 그래서 여기서 끊지 않고 똑같이 받아 오되, 올린 사진과 구분만 해 둔다.
@@ -150,7 +152,7 @@ export const profilePhoto = {
     readToken += 1;
     const previous = profilePhotoStore.get().url;
     releasePhoto(previous);
-    profilePhotoStore.set({ url: '', isDefault: true, loaded: false });
+    profilePhotoStore.set({ url: DEFAULT_PROFILE_PHOTO, isDefault: true, loaded: false });
   },
 
   /** 지금 어디에 저장되는가. 화면이 안내 문구에 쓴다. */

@@ -20,6 +20,7 @@
 
 import { createStore, type Store } from '../store';
 import { api } from '../api/session';
+import { localDemoEnabled } from '../api/local-demo';
 import type { ChunkInfo, StreamInfo } from '../api/endpoints';
 import { parseChunk } from './rtp';
 import { decodeOpusFrames, isOpusDecodingSupported, OPUS_SAMPLE_RATE } from './decoder';
@@ -160,6 +161,55 @@ export class PlayerEngine {
   readonly store: Store<PlayerState>;
 
   private context: AudioContext | null = null;
+  private localAudio: HTMLAudioElement | null = null;
+  private localSource: MediaElementAudioSourceNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  getAnalyser(): AnalyserNode | null { return this.analyser; }
+
+  async loadLocal(id: number, url: string, duration: number) {
+    if (!localDemoEnabled() || !url.startsWith('/local-demo/audio/')) {
+      throw new Error('로컬 재생은 로컬 데모에서만 사용할 수 있어요.');
+    }
+    this.stop();
+    const audio = new Audio(url);
+    this.localAudio = audio;
+    audio.volume = gainFor(this.store.get().volume);
+    this.store.set({ musicId: -id, status: 'loading', durationSec: duration, supported: true });
+    const update = () => {
+      if (this.localAudio !== audio) return;
+      this.store.set({
+        positionSec: audio.currentTime,
+        durationSec: Number.isFinite(audio.duration) ? audio.duration : duration,
+        bufferedSec: audio.buffered.length ? audio.buffered.end(audio.buffered.length - 1) : 0,
+      });
+    };
+    for (const event of ['timeupdate', 'durationchange', 'progress', 'seeked']) {
+      audio.addEventListener(event, update);
+    }
+    for (const [event, status] of [
+      ['playing', 'playing'], ['pause', 'paused'], ['waiting', 'buffering'], ['ended', 'ended'],
+    ] as const) {
+      audio.addEventListener(event, () => {
+        if (this.localAudio === audio) { update(); this.store.set({ status }); }
+      });
+    }
+    audio.addEventListener('error', () => {
+      if (this.localAudio === audio) this.store.set({ status: 'error', error: '로컬 음원을 불러오지 못했어요.' });
+    });
+    try {
+      const context = await this.resumeContext();
+      if (this.localAudio !== audio) return;
+      this.localSource = context.createMediaElementSource(audio);
+      this.localSource.connect(this.analyser!);
+      await audio.play();
+    }
+    catch (error) {
+      if (this.localAudio === audio) {
+        this.store.set({ status: 'error', error: '재생 버튼을 다시 눌러 주세요.' });
+        throw error;
+      }
+    }
+  }
   private fadeGain: GainNode | null = null;
   private volumeGain: GainNode | null = null;
 
@@ -243,7 +293,11 @@ export class PlayerEngine {
     const volume = context.createGain();
     fade.gain.value = 1;
     volume.gain.value = gainFor(this.store.get().volume);
-    fade.connect(volume).connect(context.destination);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = .8;
+    fade.connect(volume).connect(analyser).connect(context.destination);
+    this.analyser = analyser;
     this.context = context;
     this.fadeGain = fade;
     this.volumeGain = volume;
@@ -271,6 +325,7 @@ export class PlayerEngine {
   setVolume(value: number) {
     const volume = Math.min(1, Math.max(0, value));
     this.store.set({ volume });
+    if (this.localAudio) this.localAudio.volume = gainFor(volume);
     if (this.volumeGain && this.context) {
       this.volumeGain.gain.setTargetAtTime(
         gainFor(volume),
@@ -294,6 +349,7 @@ export class PlayerEngine {
    * 스트림이 없으면(아직 인코딩 전) 오류 상태가 된다.
    */
   async load(musicId: number, options: { autoplay?: boolean } = {}) {
+    if (this.localAudio) this.stop();
     if (this.source?.musicId === musicId) {
       // 이미 들고 있는 곡이면 다시 받지 않는다. 다만 **끝까지 들은 곡이면
       // 처음으로 되돌린다** — 그러지 않으면 재생 위치가 끝에 붙어 있어
@@ -345,6 +401,7 @@ export class PlayerEngine {
   }
 
   async play() {
+    if (this.localAudio) { await this.resumeContext(); await this.localAudio.play(); return; }
     const source = this.source;
     if (!source) return;
     const state = this.store.get();
@@ -362,6 +419,7 @@ export class PlayerEngine {
   }
 
   pause() {
+    if (this.localAudio) { this.localAudio.pause(); return; }
     if (this.store.get().status !== 'playing') return;
     this.anchorPosition = this.currentPosition();
     this.stopSources();
@@ -382,6 +440,12 @@ export class PlayerEngine {
    * 여러 번이 한꺼번에 돌면 페이드와 예약이 엇갈린다.
    */
   async seek(positionSec: number) {
+    if (this.localAudio) {
+      const target = Math.max(0, Math.min(positionSec, this.store.get().durationSec));
+      this.localAudio.currentTime = target;
+      this.store.set({ positionSec: target });
+      return;
+    }
     const source = this.source;
     if (!source) return;
     const target = Math.min(
@@ -430,6 +494,11 @@ export class PlayerEngine {
 
   /** 곡을 닫고 그래프를 비운다. 컨텍스트는 살려 둔다(다음 재생이 빨라진다). */
   stop() {
+    this.localSource?.disconnect();
+    this.localSource = null;
+    const audio = this.localAudio;
+    this.localAudio = null;
+    if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
     this.loadToken += 1;
     this.abort?.abort();
     this.stopSources();

@@ -1,8 +1,9 @@
 import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import hostingConfig from './.openai/hosting.json';
+import { localDemoAssets } from './scripts/local-demo-assets';
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   '00000000-0000-4000-8000-000000000000';
@@ -39,17 +40,17 @@ const localBindingConfig = {
 // 서버에 CORS 설정이 없고 리프레시 토큰 쿠키가 SameSite=Strict + Secure 라,
 // 브라우저에게 같은 출처로 보이게 하는 것이 가장 단순하다. 청크 바이너리도
 // 이 경로로 흐르므로 버퍼링을 끄고 그대로 흘려보낸다.
-const apiProxy = {
+const createApiProxy = (origin: string) => ({
   '/api': {
-    target: process.env.MUPID_API_ORIGIN ?? 'http://localhost:9900',
+    target: origin,
     changeOrigin: true,
   },
   // 청크 업로드 경로. 배치 전용이지만 프록시를 맞춰 두면 디버깅이 쉽다.
   '/upload': {
-    target: process.env.MUPID_API_ORIGIN ?? 'http://localhost:9900',
+    target: origin,
     changeOrigin: true,
   },
-};
+});
 
 // 서버 없이 정적 파일만 내보내는 대상. `next.config.ts` 와 같은 목록이다.
 //   ec2 — nginx 가 서빙, app — Tauri 앱 번들.
@@ -90,7 +91,12 @@ const pinRscCompatibilityId = (id: string) => ({
 
 export const RSC_COMPATIBILITY_ID = 'mupid-static-1';
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), 'MUPID_');
+  const demoAssets = localDemoAssets(loadEnv(mode, process.cwd(), 'VITE_MUPID_').VITE_MUPID_LOCAL_DEMO === 'true');
+  const apiProxy = createApiProxy(
+    process.env.MUPID_API_ORIGIN ?? env.MUPID_API_ORIGIN ?? 'http://localhost:9900',
+  );
   const target = process.env.MUPID_DEPLOY_TARGET ?? '';
   if (STATIC_TARGETS.includes(target)) {
     return {
@@ -103,6 +109,7 @@ export default defineConfig(async () => {
         host: process.env.TAURI_DEV_HOST || undefined,
       },
       plugins: [
+        demoAssets,
         vinext(),
         // 정적 대상에는 이 헤더를 붙여 줄 서버가 없다. 앱은 셸이 대신 붙이므로
         // 값을 고정하고, nginx 로 가는 `ec2` 는 빈 값으로 검사를 끈다.
@@ -128,6 +135,7 @@ export default defineConfig(async () => {
         : {}),
     },
     plugins: [
+      demoAssets,
       vinext(),
       sites(),
       cloudflare({

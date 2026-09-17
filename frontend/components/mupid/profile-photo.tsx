@@ -1,8 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Camera, Trash2 } from 'lucide-react';
-import { MupidMascot } from './mascot';
-import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
+import { DEFAULT_PROFILE_PHOTO, profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
 import { sessionStore } from '@/lib/api/session';
 import { useStore } from '@/lib/store';
 
@@ -37,7 +36,7 @@ export function ProfilePhoto() {
     <button type="button" className="profile-photo-pick" aria-label={mine ? '프로필 사진 바꾸기' : '프로필 사진 등록하기'} onClick={() => input.current?.click()} disabled={busy}>
       <span className="profile-photo-frame">
         {/* 기본 이미지도 받아와 그린다. 못 받아왔을 때만 마스코트로 떨어진다. */}
-        {photo ? <img src={photo} alt={mine ? '내 프로필 사진' : '기본 프로필'} width={116} height={116} /> : <MupidMascot size={104} alt="기본 프로필" />}
+        <img src={photo || DEFAULT_PROFILE_PHOTO} alt={mine ? '내 프로필 사진' : '기본 프로필'} width={116} height={116} />
       </span>
       <span className="profile-photo-badge" aria-hidden="true"><Camera /></span>
     </button>

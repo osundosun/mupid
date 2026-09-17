@@ -16,6 +16,7 @@
 
 import { ApiError } from './api/client';
 import { api } from './api/session';
+import { localDemoEnabled } from './api/local-demo';
 import type { CodeOption, OnboardingOptions } from './api/endpoints';
 import { genreOptions, moodOptions } from './mupid-data';
 
@@ -33,6 +34,7 @@ let cached: Promise<OnboardingOptions> | null = null;
 let servedFallback = false;
 
 export function loadOnboardingOptions(signal?: AbortSignal): Promise<OnboardingOptions> {
+  if (localDemoEnabled()) { servedFallback = true; return Promise.resolve(fallbackOptions); }
   cached ??= api.onboarding
     .options(signal)
     .then((value) => {

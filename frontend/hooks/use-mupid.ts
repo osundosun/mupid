@@ -6,6 +6,8 @@ import { mupidService } from '@/lib/services';
 import { login, logout, restoreSession } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
+import { localDemoEnabled } from '@/lib/api/local-demo';
+import { bootstrapCache } from '@/lib/services/bootstrap-cache';
 import {
   fetchNextTracks,
   fetchSimilarSections,
@@ -101,10 +103,25 @@ export function useMupid(bootstrap: Bootstrap) {
   const [selectedPlaylist, setSelectedPlaylist] = useState<number | null>(null);
   const [libraryTab, setLibraryTab] = useState('playlists');
   const [query, setQuery] = useState('');
+  const [selectedArtist, setSelectedArtist] = useState<string | null>(null);
   const [moodFilter, setMoodFilter] = useState('전체');
   // 셔플은 재생 목록 안에서 중복 없이 섞어 재생한다. 반복과 함께 켤 수 있다.
   const [shuffle, setShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
+  const [playbackSettingsReady, setPlaybackSettingsReady] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('mupid.playback-settings') ?? '{}');
+      if (typeof saved.shuffle === 'boolean') setShuffle(saved.shuffle);
+      if (['off', 'all', 'one'].includes(saved.repeatMode)) setRepeatMode(saved.repeatMode);
+    } catch { /* 저장 데이터가 손상되면 기본값을 사용한다. */ }
+    setPlaybackSettingsReady(true);
+  }, []);
+  useEffect(() => {
+    if (!playbackSettingsReady) return;
+    try { localStorage.setItem('mupid.playback-settings', JSON.stringify({ shuffle, repeatMode })); }
+    catch { /* 저장소 제한이 있어도 현재 재생은 유지한다. */ }
+  }, [shuffle, repeatMode, playbackSettingsReady]);
   // 자리마다 번호를 새로 만드는 일은 처음 한 번뿐이다. 매 렌더마다 만들면
   // 화면의 key 가 계속 바뀌어 목록이 통째로 다시 그려진다.
   const [queue, setQueue] = useState<QueueEntry[]>(() =>
@@ -198,8 +215,13 @@ export function useMupid(bootstrap: Bootstrap) {
   }, [initial.onboardingSubmitted]);
   useEffect(() => {
     if (!ready || !sessionRef.current) return;
+    const preferences = { onboardingSubmitted, nickname, moods, genres, liked, ignored, history, moments, playlists, lastPlayedId };
+    const cached = bootstrapCache.get();
+    if (cached.value && cached.accountId === sessionRef.current.userId) {
+      bootstrapCache.set({ value: { ...cached.value, preferences } });
+    }
     saveQueue.current = saveQueue.current.catch(() => {}).then(() =>
-      mupidService.savePreferences({ onboardingSubmitted, nickname, moods, genres, liked, ignored, history, moments, playlists, lastPlayedId })
+      mupidService.savePreferences(preferences)
     ).catch(() => { if (mountedRef.current) setToast('변경 내용을 저장하지 못했어요. 다시 시도해 주세요.'); });
   }, [ready, onboardingSubmitted, nickname, moods, genres, liked, ignored, history, moments, playlists, lastPlayedId]);
   /**
@@ -210,7 +232,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * `recommendationsReady` 가 말한다.
    */
   useEffect(() => {
-    if (!ready || !sessionRef.current) return;
+    if (!ready || !sessionRef.current || localDemoEnabled()) return;
     const ac = new AbortController();
     void (async () => {
       const [today, next] = await Promise.all([
@@ -359,6 +381,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * 것이 이 API 의 목적이다. 지금 카탈로그에 없는 곡은 버려진다.
    */
   const adoptServerReactions = async (signal?: AbortSignal) => {
+    if (localDemoEnabled()) return;
     const saved = await fetchReactions(tracks, signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
     setLiked(saved.liked);
@@ -372,6 +395,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * 것처럼 보이기 때문이다.
    */
   const adoptServerHistory = async (signal?: AbortSignal) => {
+    if (localDemoEnabled()) return;
     const saved = await fetchHistory(tracks, signal);
     if (!saved?.length || signal?.aborted || !mountedRef.current) return;
     setHistory((current) =>
@@ -385,6 +409,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * 전에 만든 플레이리스트가 계정에 없다는 이유로 조용히 사라지면 안 된다.
    */
   const adoptServerPlaylists = async (signal?: AbortSignal) => {
+    if (localDemoEnabled()) return;
     const saved = await playlistApi.fetchPlaylists(tracks, signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
     if (!saved.length && playlists.length) {
@@ -483,7 +508,14 @@ export function useMupid(bootstrap: Bootstrap) {
   };
 
   const loadTrack = (track: Track) => {
-    if (activeRef.current?.id === track.id) return;
+    if (activeRef.current?.id === track.id) {
+      const current = activeRef.current;
+      if (current.recommended === track.recommended && current.recommendationReason === track.recommendationReason) return;
+      const updated = { ...current, recommended: track.recommended, recommendationReason: track.recommendationReason };
+      activeRef.current = updated;
+      setActive(updated);
+      return;
+    }
     activeRef.current = track;
     setActive(track);
     setTime(0);
@@ -583,7 +615,7 @@ export function useMupid(bootstrap: Bootstrap) {
     return queue.find((entry) => entry.trackId === track.id)?.uid ?? null;
   };
   const startPlayback = async (track: Track, start?: number, uid?: string | null) => {
-    if (typeof track.musicId !== 'number') return;
+    if (typeof track.musicId !== 'number' && !track.localAudio) return;
     // 추천으로 시작한 재생이면 그 사실을 함께 남긴다. 이게 없으면 "이 추천으로 튼
     // 곡을 끝까지 들었는가" 를 물어볼 수 없어 추천 성과를 잴 방법이 없다.
     const rec = track.recommended?.recommendationId
@@ -596,7 +628,7 @@ export function useMupid(bootstrap: Bootstrap) {
     const slot = resolveQueueUid(track, uid);
     currentUidRef.current = slot;
     setCurrentUid(slot);
-    analytics.startPlay(
+    if (typeof track.musicId === 'number') analytics.startPlay(
       { trackId: track.musicId, entryPath: entryPathOf(), rec },
       start ?? 0,
     );
@@ -609,7 +641,8 @@ export function useMupid(bootstrap: Bootstrap) {
     const player = getPlayer();
     if (!player) return;
     try {
-      await player.load(track.musicId, { autoplay: true });
+      if (track.localAudio) await player.loadLocal(track.id, track.localAudio, track.duration);
+      else await player.load(track.musicId!, { autoplay: true });
       if (id !== requestId.current) return;
       if (start !== undefined && start > 0) await player.seek(start);
     } catch {
@@ -719,7 +752,7 @@ export function useMupid(bootstrap: Bootstrap) {
     const target = Math.max(0, Math.min(value, track.duration));
     const player = getPlayer();
     // 아직 이 곡을 들고 있지 않으면 그 자리에서 새로 튼다.
-    if (!player || player.store.get().musicId !== track.musicId) {
+    if (!player || player.store.get().musicId !== (track.localAudio ? -track.id : track.musicId)) {
       void startPlayback(track, target);
       return;
     }
@@ -1163,7 +1196,7 @@ export function useMupid(bootstrap: Bootstrap) {
       if (wasLiked) analytics.unlike(at, 'TRACK', musicId);
       analytics.dislike(at, 'TRACK', musicId);
     }
-    setIgnored((ids) => [...ids, id]);
+    setIgnored((ids) => ids.includes(id) ? ids : [...ids, id]);
     if (wasLiked) setLiked((ids) => ids.filter((i) => i !== id));
     if (demoSession?.kind !== 'authenticated') return;
     pushReaction(tracks, id, 'DISLIKE').catch(() => {
@@ -1175,6 +1208,24 @@ export function useMupid(bootstrap: Bootstrap) {
   };
 
   /** 숨긴 곡을 모두 되돌린다. */
+  const toggleIgnored = (id: number) => {
+    if (!ignored.includes(id)) {
+      ignoreTrack(id);
+      setToast('관심 없는 곡으로 설정했어요. 추천에서 제외할게요.');
+      return;
+    }
+    setIgnored(ids => ids.filter(value => value !== id));
+    const musicId = musicIdOf(id);
+    if (musicId !== undefined) analytics.undislike('TRACK', musicId);
+    setToast('관심 없음을 해제했어요.');
+    if (demoSession?.kind !== 'authenticated') return;
+    pushReaction(tracks, id, null).catch(() => {
+      if (!mountedRef.current) return;
+      setIgnored(ids => ids.includes(id) ? ids : [...ids, id]);
+      setToast('관심 없음 해제를 저장하지 못했어요. 다시 시도해 주세요.');
+    });
+  };
+
   const clearIgnored = () => {
     const before = ignored;
     for (const id of before) {
@@ -1301,6 +1352,7 @@ export function useMupid(bootstrap: Bootstrap) {
     liked,
     ignored,
     ignoreTrack,
+    toggleIgnored,
     clearIgnored,
     history,
     // 한 곡이라도 재생한 적이 있으면 정지 상태여도 미니 플레이어를 유지한다.
@@ -1418,6 +1470,8 @@ export function useMupid(bootstrap: Bootstrap) {
       setToast(`‘${track.title}’ 곡을 재생 목록에 담았어요.`);
     },
     playPlaylist,
+    selectedArtist,
+    setSelectedArtist,
     showAllSimilar,
     setShowAllSimilar,
     messageEndRef,

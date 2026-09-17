@@ -34,6 +34,10 @@ export type TrackRecommendation = {
 };
 
 export type Track = {
+  /** 로컬 개발용 MP3. 서버 음악 번호와 분리한다. */
+  localAudio?: string;
+  /** 로컬 메타데이터에서 가져온 시간별 가사. */
+  localLyrics?: { lyric_id: number; time_ms: number; text: string }[];
   id: number;
   /**
    * 서버의 음악 번호. 재생은 이 번호로 청크 스트리밍을 받는다.
@@ -54,6 +58,7 @@ export type Track = {
   sections: SongSection[];
   /** 추천으로 온 곡일 때만 채워진다. 카탈로그에서 온 곡에는 없다. */
   recommended?: TrackRecommendation;
+  recommendationReason?: string;
 };
 
 /**

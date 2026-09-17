@@ -9,6 +9,7 @@
 import { ApiClient, ApiError } from './client';
 import { createEndpoints, type UserInfo } from './endpoints';
 import { createStore } from '../store';
+import { localDemoEnabled, withLocalDemo, loginLocalDemo, logoutLocalDemo, restoreLocalDemo } from './local-demo';
 import {
   clearCache,
   clearNativeCookies,
@@ -49,9 +50,10 @@ const baseUrl =
   (import.meta as { env?: Record<string, string> }).env?.VITE_MUPID_API_BASE ??
   '';
 
+
 export const apiClient = new ApiClient({
   baseUrl,
-  transport: createPlatformTransport(),
+  transport: withLocalDemo(createPlatformTransport()),
   onSessionExpired: () => {
     sessionStore.set({ status: 'anonymous', user: null });
   },
@@ -63,6 +65,11 @@ export const api = createEndpoints(apiClient);
 let restoring: Promise<SessionState> | null = null;
 
 export function restoreSession(): Promise<SessionState> {
+  if (localDemoEnabled()) {
+    const user = restoreLocalDemo();
+    sessionStore.set({ status: user ? 'authenticated' : 'anonymous', user });
+    return Promise.resolve(sessionStore.get());
+  }
   if (restoring) return restoring;
   if (sessionStore.get().status === 'authenticated') {
     return Promise.resolve(sessionStore.get());
@@ -106,6 +113,11 @@ async function openAccount(user: UserInfo) {
 }
 
 export async function login(email: string, password: string) {
+  if (localDemoEnabled()) {
+    const user = loginLocalDemo(email, password);
+    sessionStore.set({ status: 'authenticated', user });
+    return user;
+  }
   const result = await api.auth.login(email, password);
   apiClient.setAccessToken(result.access_token);
   const user = await api.user.me();
@@ -115,6 +127,12 @@ export async function login(email: string, password: string) {
 }
 
 export async function logout() {
+  if (localDemoEnabled()) {
+    logoutLocalDemo();
+    apiClient.clearSession();
+    sessionStore.set({ status: 'anonymous', user: null });
+    return;
+  }
   try {
     await api.auth.logout();
   } catch (error) {

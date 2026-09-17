@@ -1,5 +1,5 @@
 'use client';
-import { ArrowUpRight, ChevronRight, Heart, Pause, Play } from 'lucide-react';
+import { ArrowUpRight, Bookmark, ChevronRight, Pause, Play } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { formatTime, getSongSectionAt, type Track } from '@/lib/mupid-data';
 import { AlbumArt } from './primitives';
@@ -27,7 +27,15 @@ export function pickTodayMoments(m: MupidModel): Track[] {
       score: Number(moods.includes(track.mood)) + Number(genres.includes(track.genre)),
     }))
     .sort((a, b) => b.score - a.score)
-    .map(({ track }) => track)
+    .map(({ track }) => {
+      const matched = [moods.includes(track.mood) ? track.mood : '', genres.includes(track.genre) ? track.genre : ''].filter(Boolean);
+      return {
+        ...track,
+        recommendationReason: matched.length
+          ? `선택한 취향 ${matched.map(value => `‘${value}’`).join(' · ')}와 곡의 정보가 일치해 골랐어요.`
+          : '오늘의 추천을 준비 중이에요.\n먼저 음악 목록의 곡을 소개해요.',
+      };
+    })
     .slice(0, 4);
 }
 
@@ -94,7 +102,7 @@ export function TodayMoment({ model: m }: { model: MupidModel }) {
         className="today-moment-saved"
         onClick={() => { m.setLibraryTab('moments'); m.go('library'); }}
       >
-        <Heart /><span>저장한 순간 <strong>{m.moments.length}</strong></span><ChevronRight />
+        <Bookmark /><span>저장한 순간 <strong>{m.moments.length}</strong></span><ChevronRight />
       </button>
     </section>
   );

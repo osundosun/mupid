@@ -5,6 +5,8 @@ import { PlaylistMenu } from './playlist-menu';
 import { SelectionToolbar, useTrackSelection } from './track-selection';
 import { MupidMascot } from './mascot';
 import { ProfilePhoto } from './profile-photo';
+import { DEFAULT_PROFILE_PHOTO } from '@/lib/profile-photo';
+import { PasswordForm } from './password-form';
 import { useEffect, useState } from 'react';
 import { DemoAccount } from './demo-login';
 import {
@@ -40,7 +42,7 @@ import {
   refreshOnboardingOptions,
 } from '@/lib/onboarding';
 import {
-  AlbumArt,
+  PlaylistArt,
   Brand,
   EmptyState,
   Heading,
@@ -73,7 +75,10 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
   const removeTargets = (confirmRemove?.scope === 'playlist' ? (selected?.tracks ?? []) : m.queueTracks)
     .filter((t) => confirmRemove?.ids.includes(t.id));
   return (
-    <div className="content-page collection-page">
+    <div className="content-page collection-page" data-playlist-detail={Boolean(selected && m.libraryTab === 'playlists')}>
+      {!(selected && m.libraryTab === 'playlists') && <div className="desktop-library-page-heading">
+        <PageHeader title="보관함" onBack={() => m.go('home')} />
+      </div>}
       <PageHeader
         title={
           selected && m.libraryTab === 'playlists'
@@ -155,15 +160,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
           {selected ? (
             <div className="playlist-detail">
               <div className="playlist-summary">
-                {/*
-                  * 곡이 하나도 없는 목록만 음표로 둔다. "아직 아무것도 담지
-                  * 않았다" 는 것은 커버가 없는 것과 다른 사정이라, 기본 커버로
-                  * 합치면 담은 줄 알고 열어 보게 된다.
-                  *
-                  * 담긴 곡의 커버를 못 구한 경우는 `AlbumArt` 가 기본 커버로
-                  * 받아 낸다. 여기서 따로 볼 것이 없다.
-                  */}
-                {selected.tracks[0] ? <AlbumArt track={selected.tracks[0]} /> : <Music2 size={72} aria-label="비어 있는 플레이리스트" />}
+                <PlaylistArt track={selected.tracks[0]} name={selected.name} />
                 <div>
                   <span className="eyebrow">내 플레이리스트</span>
                   <h2>{selected.name}</h2>
@@ -265,9 +262,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                       className="playlist-card"
                       onClick={() => m.setSelectedPlaylist(p.id)}
                     >
-                      {/* 상세 화면과 같은 기준이다 — 빈 목록만 음표, 커버를
-                        * 못 구한 곡은 `AlbumArt` 의 기본 커버. */}
-                      {p.tracks[0] ? <AlbumArt track={p.tracks[0]} /> : <Music2 size={72} aria-label="비어 있는 플레이리스트" />}
+                      <PlaylistArt track={p.tracks[0]} name={p.name} />
                       <span>
                         <strong>{p.name}</strong>
                         <small>
@@ -328,7 +323,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
           {!m.moments.length && (
             <EmptyState
               title="아직 남긴 순간이 없어요"
-              description="재생 중 하트를 눌러 저장한 순간을 남겨보세요."
+              description="플레이어에서 ‘이 순간 저장’을 눌러 남겨보세요."
             >
               <button
                 className="secondary-button"
@@ -341,7 +336,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
         </TabsContent>
         <TabsContent value="liked">
           <Heading title={`좋아하는 음악 ${m.liked.length}곡`} />
-          <div className="search-results">
+          <div className="search-results liked-track-list">
             {m.liked
               .map((id) => tracks.find((t) => t.id === id)!)
               .filter(Boolean)
@@ -350,6 +345,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                   key={t.id}
                   track={t}
                   model={m}
+                  showDetail={false}
                   action={
                     <button
                       aria-label={`${t.title} 좋아요 취소`}
@@ -475,7 +471,7 @@ export function ReportView({ model: m }: { model: MupidModel }) {
         <div className="report-details">
           <section className="report-card listening-story">
             {/* 유형 이름을 먼저 읽히게 두고, 그 아래 캐릭터로 분위기를 전한 뒤 설명을 잇는다. */}
-            <span className="eyebrow">MuBTI{mubti ? ` · ${mubti.code}` : ''}</span>
+            <h2 className="mubti-heading">MUBTI{mubti ? ` · ${mubti.code}` : ''}</h2>
             {mubti ? (
               <>
                 <h2 className="report-story">
@@ -495,9 +491,9 @@ export function ReportView({ model: m }: { model: MupidModel }) {
               </>
             ) : (
               <>
-                <h2 className="report-story">
+                <p className="report-story report-story-pending">
                   {tooEarly ? '아직 판정하기 일러요' : '오늘의 유형을 기다리는 중'}
-                </h2>
+                </p>
                 <MupidMascot
                   size={132}
                   className="report-cupid"
@@ -505,14 +501,11 @@ export function ReportView({ model: m }: { model: MupidModel }) {
                 />
                 <p>
                   {loading
-                    ? '오늘의 청취 기록을 모으고 있어요.'
-                    : '오늘 5분 넘게, 세 곡 이상 들으면 취향 유형을 알려드릴게요.'}
+                    ? '청취 기록을 모으는 중…'
+                    : '오늘 3곡 이상, 5분 넘게 들으면 열려요.'}
                 </p>
               </>
             )}
-            <p className="demo-note">
-              음악 감상 취향을 표현한 유형이에요. 성격 진단 결과는 아니에요.
-            </p>
           </section>
           <section className="report-card keyword-card">
             <h2>당신의 음악 키워드</h2>
@@ -534,9 +527,6 @@ export function ReportView({ model: m }: { model: MupidModel }) {
           </section>
         </div>
       </div>
-      <p className="demo-note">
-        오늘 들은 기록을 바탕으로 집계해요. 방금 들은 곡은 20초쯤 뒤에 반영돼요.
-      </p>
     </div>
   );
 }
@@ -599,12 +589,14 @@ function NicknameForm({ model: m }: { model: MupidModel }) {
 
 export function ProfileView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
+  const ignoredTracks = tracks.filter(track => m.ignored.includes(track.id));
+  const ignoredSelection = useTrackSelection(ignoredTracks.map(track => track.id));
   return (
     <div className="content-page">
       <PageHeader title="마이페이지" onBack={() => m.go('home')} />
       <DemoAccount model={m} />
       <section className="profile-card">
-        {m.demoSession ? <ProfilePhoto /> : <MupidMascot size={116} alt="기본 프로필" />}
+        {m.demoSession ? <ProfilePhoto /> : <img src={DEFAULT_PROFILE_PHOTO} width={116} height={116} style={{ borderRadius: '50%' }} alt="기본 프로필" />}
         <div>
           <p className="eyebrow" lang="en">MY LITTLE MUSIC WORLD</p>
           <h2>{m.displayName}님의 음악 이야기</h2>
@@ -617,18 +609,34 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
         * 온보딩과 무관하게 `PATCH /api/v1/user` 로 고친다.
         */}
       {m.demoSession && (
-        <section className="report-card taste-card">
+        <section className="profile-settings-card" aria-label="계정 설정">
+          <h2>계정 설정</h2>
           <NicknameForm key={m.nickname} model={m} />
+          <PasswordForm />
         </section>
       )}
-      <Heading title="최근 감상 기록" />
-      <section className="track-list profile-history" aria-label="최근 감상 기록 목록" tabIndex={0}>
-        {m.history
-          .map((id) => tracks.find((t) => t.id === id)!)
-          .filter(Boolean)
-          .map((t) => (
-            <TrackRow key={t.id} model={m} track={t} queueable />
-          ))}
+      <section className="profile-settings-card profile-ignored-card" aria-label="관심 없는 곡">
+      <h2>관심 없는 곡 <span className="profile-section-count">{ignoredTracks.length}곡</span></h2>
+      {!!ignoredTracks.length && <div className="ignored-edit-toolbar">
+        {ignoredSelection.active ? <>
+          <label><input type="checkbox" checked={ignoredSelection.allPicked} onChange={ignoredSelection.toggleAll} />전체 선택</label>
+          <span aria-live="polite">{ignoredSelection.picked.length}곡 선택</span>
+          <button className="text-link" onClick={ignoredSelection.cancel}>취소</button>
+          <button className="secondary-button" disabled={!ignoredSelection.picked.length} onClick={() => {
+            ignoredSelection.picked.forEach(id => m.toggleIgnored(id));
+            ignoredSelection.cancel();
+          }}>선택 해제하기</button>
+        </> : <button className="text-link" onClick={ignoredSelection.start}><Pencil size={16} />목록 편집</button>}
+      </div>}
+      <section className="track-list profile-history" aria-label="관심 없는 곡 목록">
+        {ignoredTracks.map(track => <TrackRow
+          key={track.id} track={track} model={m} showDetail={false}
+          selected={ignoredSelection.has(track.id)}
+          onSelect={ignoredSelection.active ? () => ignoredSelection.toggle(track.id) : undefined}
+          action={ignoredSelection.active ? undefined : <button className="text-link" style={{ minHeight: 44, paddingInline: 12, whiteSpace: 'nowrap' }} aria-label={`${track.title} 관심 없음 해제`} onClick={() => m.toggleIgnored(track.id)}>해제</button>}
+        />)}
+        {!ignoredTracks.length && <p className="listening-history-empty">관심 없는 곡이 없어요.<span>등록한 곡은 추천에서 제외돼요.</span></p>}
+      </section>
       </section>
     </div>
   );
@@ -680,9 +688,21 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             <br />
             다음 음악이 되는 곳
           </h1>
+          <div className="welcome-entry-actions">
           <button className="primary-button" onClick={() => m.demoSession ? m.go('home') : m.openLogin()}>
             뮤피드 시작하기 <ChevronRight />
           </button>
+          <figure className="welcome-qr">
+            <div className="welcome-qr-emblem">
+              {[false, true].map(right => <svg key={String(right)} className={`welcome-qr-wing${right ? ' is-right' : ''}`} viewBox="0 0 80 96" fill="none" aria-hidden="true">
+                <path d="M75 78C57 87 39 82 27 72C21 67 24 61 32 62C20 56 10 46 10 40C10 33 17 33 24 37C14 26 7 13 12 8C18 2 26 13 34 23C42 34 50 37 59 42C72 50 79 65 75 78Z" fill="#fdfdff" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                <path d="M25 38C34 49 46 58 61 63M32 62C40 68 50 72 61 73" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>)}
+              <div className="welcome-qr-image"><img src="/mupid-qr.png" width={132} height={132} alt="뮤피드 접속 QR 코드" /></div>
+            </div>
+            <figcaption>음악을 모바일로 이어가세요<span>카메라로 QR 스캔</span></figcaption>
+          </figure>
+          </div>
           </div>
           <div className="welcome-illustration" role="img" aria-label="긴 하트선을 들고 구름 위에 앉은 뮤피드 캐릭터" />
         </div>

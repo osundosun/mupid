@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
-import { Bookmark, EllipsisVertical, Heart, ListEnd, ListPlus, Plus } from 'lucide-react';
+import { EllipsisVertical, ListEnd, ListPlus, Plus, Search, ThumbsDown, UserRound, Disc3 } from 'lucide-react';
+import { TrackInfoDialog } from './track-info-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
 import type { Track } from '@/lib/mupid-data';
@@ -8,6 +9,7 @@ import type { Track } from '@/lib/mupid-data';
 export function TrackMenu({ model: m }: { model: MupidModel }) {
   const [track, setTrack] = useState<Track | null>(null);
   const [picker, setPicker] = useState(false);
+  const [infoTrack, setInfoTrack] = useState<Track | null>(null);
   const [name, setName] = useState('');
   const close = () => { setTrack(null); setPicker(false); setName(''); };
   const add = (id: number) => {
@@ -36,10 +38,14 @@ export function TrackMenu({ model: m }: { model: MupidModel }) {
         </> : <div className="track-menu-options">
           <button onClick={() => { m.addToQueue(track); close(); }}><ListEnd />재생 목록에 담기</button>
           <button onClick={() => setPicker(true)}><ListPlus />플레이리스트에 추가</button>
-          <button aria-pressed={m.liked.includes(track.id)} onClick={() => { m.toggleLike(track.id); close(); }}><Heart fill={m.liked.includes(track.id) ? 'currentColor' : 'none'} />좋아한 곡</button>
-          <button onClick={() => { close(); m.openMoment(track); }}><Bookmark />저장한 순간</button>
+          <button onClick={() => { m.openTrack(track); close(); m.go('similar'); }}><Search />파생곡 찾기</button>
+          <button aria-pressed={m.ignored.includes(track.id)} onClick={() => { m.toggleIgnored(track.id); close(); }}><ThumbsDown fill={m.ignored.includes(track.id) ? 'currentColor' : 'none'} />{m.ignored.includes(track.id) ? '관심 없음 해제' : '관심 없음'}</button>
+          <hr className="track-menu-divider" />
+          <button onClick={() => { m.setSelectedArtist(track.artist); close(); }}><UserRound />아티스트 정보</button>
+          <button onClick={() => { setInfoTrack(track); close(); }}><Disc3 />곡 정보</button>
         </div>)}
       </DialogContent>
     </Dialog>
+    <TrackInfoDialog track={infoTrack} open={!!infoTrack} onOpenChange={open => { if (!open) setInfoTrack(null); }} onArtist={m.setSelectedArtist} />
   </>;
 }
