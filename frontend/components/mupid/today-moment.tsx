@@ -1,5 +1,5 @@
 'use client';
-import { ArrowUpRight, Bookmark, ChevronRight, Pause, Play } from 'lucide-react';
+import { Bookmark, ChevronRight, Pause, Play } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { formatTime, getSongSectionAt, type Track } from '@/lib/mupid-data';
 import { AlbumArt } from './primitives';
@@ -61,7 +61,7 @@ export function TodayMoment({ model: m }: { model: MupidModel }) {
           <h2>오늘의 Moment</h2>
         </div>
         <button className="text-link" onClick={() => m.go('search')}>
-          더 둘러보기 <ArrowUpRight />
+          더 둘러보기 <ChevronRight />
         </button>
       </div>
       <p className="today-moment-note">{todayMomentNote(m)}</p>

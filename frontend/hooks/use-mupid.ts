@@ -1485,6 +1485,20 @@ export function useMupid(bootstrap: Bootstrap) {
       setToast('숨긴 곡을 되돌리지 못했어요. 다시 시도해 주세요.');
     });
   };
+
+  /** 숨긴 곡 하나를 되돌린다. */
+  const restoreIgnored = (id: number) => {
+    if (!ignored.includes(id)) return;
+    const musicId = musicIdOf(id);
+    if (musicId !== undefined) analytics.undislike('TRACK', musicId);
+    setIgnored((ids) => ids.filter((i) => i !== id));
+    if (demoSession?.kind !== 'authenticated') return;
+    pushReaction(tracks, id, null).catch(() => {
+      if (!mountedRef.current) return;
+      setIgnored((ids) => (ids.includes(id) ? ids : [...ids, id]));
+      setToast('숨긴 곡을 되돌리지 못했어요. 다시 시도해 주세요.');
+    });
+  };
   const openChat = () => setChatOpen(true);
   const closeChat = () => {
     setChatOpen(false);
@@ -1598,6 +1612,7 @@ export function useMupid(bootstrap: Bootstrap) {
     ignored,
     ignoreTrack,
     clearIgnored,
+    restoreIgnored,
     history,
     // 한 곡이라도 재생한 적이 있으면 정지 상태여도 미니 플레이어를 유지한다.
     hasPlayed: lastPlayedId !== null,
