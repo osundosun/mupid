@@ -221,7 +221,7 @@
 ### 배포된 앱에서만 리포트 트리맵의 앨범 아트가 깨진다 — 해소됨
 
 - **증상**: '내 취향' 리포트의 '오늘 들은 음악' 트리맵에서 타일의 앨범 아트가 뜨지 않는다. 데스크톱 앱에서는 엉뚱한 그림이, 모바일 앱에서는 깨진 이미지 아이콘이 자리를 채운다. **로컬 개발 서버에서는 멀쩡하다.**
-- **원인**: 서버는 커버 주소를 `/api/v1/storage/image/ALBUM/…` 처럼 **경로로만** 준다(`StorageImageService.imageUrl`). 트리맵만 그 값을 `<img src>` 에 그대로 걸고 있었다. 개발 서버에서는 Vite 프록시가 `/api` 를 백엔드로 넘겨(`vite.config.ts` 의 `apiProxy`) 같은 출처처럼 보이지만, 앱의 출처는 `http://tauri.localhost` 라 그 경로에는 아무것도 없다 — 웹뷰는 인터넷에 직접 나가지 않고 원격 이미지는 Rust 가 받아 `mupidimg` 스킴으로 돌려준다(`app/src/image.rs`).
+- **원인**: 서버는 커버 주소를 `/api/v1/storage/image/{fileId}` 처럼 **경로로만** 준다(`StorageImageService.imageUrl` — 파일 번호 주소다). 트리맵만 그 값을 `<img src>` 에 그대로 걸고 있었다. 개발 서버에서는 Vite 프록시가 `/api` 를 백엔드로 넘겨(`vite.config.ts` 의 `apiProxy`) 같은 출처처럼 보이지만, 앱의 출처는 `http://tauri.localhost` 라 그 경로에는 아무것도 없다 — 웹뷰는 인터넷에 직접 나가지 않고 원격 이미지는 Rust 가 받아 `mupidimg` 스킴으로 돌려준다(`app/src/image.rs`).
 - **해결**: 타일 아트를 `TileArt` 로 떼어 내고 `toImageSource()` 를 거치게 한다. 주소가 없거나 못 읽으면 목록 커버와 같은 규칙으로 `resolveAlbumCover()` 가 기본 커버로 내린다. 웹에서도 화면과 API 의 출처가 갈리는 배포를 위해 `toImageSource()` 가 `/api/` 경로에 `VITE_MUPID_API_BASE` 를 붙인다 — `fetch` 는 `ApiClient` 가 붙여 주지만 `<img src>` 는 아무도 붙여 주지 않는다. 주소를 읽는 자리는 `lib/api/base-url.ts` 하나로 모았다(`session.ts` 에 두면 `platform → api/session → platform` 순환이 된다).
 - **되풀이를 막는 규칙**: **서버가 준 이미지 주소는 `<img src>` 에 걸기 전에 반드시 `toImageSource()` 를 지난다.** 한 자리만 빠뜨려도 그 자리만 앱에서 조용히 깨진다. 같은 사고가 MuBTI 캐릭터에서 한 번 있었고(`ReportMubtiArt`), 이번이 두 번째다. `frontend/tests/report-treemap-art.test.mjs` 가 트리맵이 다시 날것 경로로 돌아가지 못하게 막는다.
 - **근거**: `frontend/components/mupid/daily-album-treemap.tsx`, `frontend/lib/platform/image.ts`, `frontend/lib/api/base-url.ts`, `frontend/docs/app-shell.md`

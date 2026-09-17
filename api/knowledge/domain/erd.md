@@ -179,8 +179,9 @@ ERD 반입 시점(2026-09-11)에 기존 엔티티 3개가 ERD 와 여러 곳에�
 
 따라온 코드 변경: `FileCategory.TRACK`, `Music.imageFile`,
 `MusicAddRequest.imageFileId`(선택), `MusicUpdateRequest.imageFileId`,
-`MusicSummary.imageUrl`, `SecurityConfig` 의 `/api/v1/storage/image/TRACK/*` 공개,
-`MusicRepository` 의 `LEFT JOIN FETCH m.imageFile`.
+`MusicSummary.imageUrl`, 조회 URL 규약(`StorageImageService.imageUrl` — 파일 번호
+주소라 `SecurityConfig` 의 경로 규칙과 무관하다), `MusicRepository` 의
+`LEFT JOIN FETCH m.imageFile`.
 
 > ⚠ **DDL 은 아직 적용 대상이다.** `ddl-auto: none` 이라 앱이 스키마를 바꾸지
 > 않는다. 개발 DB 에 아래를 직접 실행해야 곡 커버 등록이 통과한다.

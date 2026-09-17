@@ -170,12 +170,33 @@ permitAll 목록 (코드에 적힌 순서·주석 그대로):
 | `/api/v1/mail/verification` (메서드 무관) | 이메일 인증 |
 | `GET /api/v1/mail/verification/**` | 이메일 인증 확인 |
 | `GET /api/actuator/**` | Health Check |
-| `GET /api/v1/storage/image/ALBUM/*` | 앨범 표지 (`<img src>` 에는 Authorization 을 붙일 수 없다) |
-| `GET /api/v1/storage/image/ARTIST/*` | 아티스트 이미지 (같은 이유) |
+| `GET /api/v1/storage/image/**` | 이미지 조회. **경로로 가릴 수 없어 통째로 열고, 공개 여부는 서비스가 카테고리 정책으로 판단한다** (아래) |
 | `GET /api/v1/onboarding/option` | 온보딩 선택지 (무드·장르 이름. 마스터 데이터) |
 | `GET /api/admin`, `GET /api/admin/login` | 관리자 화면의 **HTML 골격만** |
 
 나머지는 `anyRequest().authenticated()`.
+
+### 이미지 조회 권한은 경로가 아니라 서비스가 판단한다
+
+조회 주소가 `/api/v1/storage/image/{fileId}` 라 **번호만 보이고 카테고리가 없다.**
+그래서 `SecurityConfig` 가 경로로 가릴 수 없다 — 한때는
+`/api/v1/storage/image/ALBUM/*` 처럼 카테고리별로 열어 둘 수 있었지만, 조회를 저장
+키에서 파일 번호로 바꾸면서 그 방법이 사라졌다.
+
+대신 판단 자리가 **서비스로 내려왔다**(`StorageImageServiceImpl.getImageData`).
+기준은 카테고리가 들고 있는 정책 하나(`FileCategory.accessPolicy`)다.
+
+| 카테고리 | 읽기 | 이유 |
+|---|---|---|
+| `ALBUM` `ARTIST` `TRACK` `MUBTI` | **공개** | `<img src>` 에는 Authorization 을 붙일 수 없어 닫으면 목록의 표지가 깨진다. 키가 앨범·아티스트 이름이나 유형 코드라 개인 정보도 아니다 |
+| `PROFILE` | 비공개 (401) | 개인 정보. 토큰을 붙여 바이트를 받아 object URL 로 쓴다 |
+| `STREAMING` | 비공개 (401) | 음원 청크. 원래 nginx 가 스프링을 거치지 않고 스토리지로 흘려보낸다 |
+
+`GET /api/v1/storage/image/PROFILE/default` 는 열려 있다 — 그 그림은 특정 사람의
+사진이 아니라 사진 없는 계정의 자리를 채우는 기본값이기 때문이다.
+
+쓰기(업로드·삭제)도 같은 정책이 판단한다. 프로필은 본인 번호만, 카탈로그 이미지는
+`ROLE_SYSTEM` 이상만 — **업로드와 삭제가 같은 검사**를 지난다.
 
 곡 카탈로그(목록·상세·아티스트·앨범·가사·분석)는 **열지 않는다.** 한때 열려 있었으나
 비로그인이 곡을 보는 화면 자체가 없어져서 닫았다 — 근거는 `SecurityConfig` 의 주석 블록.
