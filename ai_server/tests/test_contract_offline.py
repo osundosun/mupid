@@ -1216,42 +1216,222 @@ def _onb_body(user_id=42, submitted=True):
 
 
 # ------------------------------------------------------------------ 어휘 변환
-_AI_GENRE = ["K-pop", "Ballad", "Alternative Rock", "Contemporary R&B", "Downtempo",
-             "House", "Pop Rock", "Indie Rock", "Synthwave", "J-pop", "Cloud Rap",
-             "Synth-pop", "Contemporary Jazz", "Jazzy Hip-Hop", "Neo-Classical",
-             "Hard Rock", "Trap", "Folk", "Indie Pop"]
-_SPRING_MOOD = ["잔잔한", "벅찬", "몽환적인", "신나는", "집중되는", "감성적인", "강렬한", "설레는"]
+# 2026-09-17 운영 색인 실측. **수를 손으로 적지 않고 목록으로 고정한다** — 예전에는
+# 8종만 있어서 코드표가 늘어도 이 테스트가 조용히 통과했다. 이제 Spring 코드표
+# 전량을 넣는다.
+#
+# `genre` 축 57종 · `style` 축 37종은 `GET /internal/facets` 가 준 값 그대로다
+# (`style` 은 `category` 에서 보컬·언어 접두어를 뗀 것). taxonomy 45종은 그
+# `style` 축의 상위집합이고, genre 축과는 **한 건도 겹치지 않는다**(실측 0/45).
+_AI_GENRE = [
+    "K-pop", "Ballad", "Soundtrack", "Contemporary R&B", "Alternative Rock",
+    "Ambient", "Synthwave", "Instrumental", "Neo Soul", "Downtempo", "Pop Rock",
+    "J-pop", "House", "Tropical House", "Heavy Metal", "Cloud Rap", "Dubstep",
+    "Synth-pop", "Drum n Bass", "New Age", "Symphonic Rock", "Dance-pop",
+    "Disco Polo", "Soul", "Pop Punk", "Post-Metal", "Trap", "Reggaeton", "Folk",
+    "Jazzy Hip-Hop", "Nu-Disco", "Hard Rock", "Disco", "Power Metal",
+    "Contemporary", "Smooth Jazz", "Modern", "Chillwave", "Italo-Disco",
+    "Horrorcore", "Gangsta", "UK Garage", "Progressive Breaks", "Flamenco",
+    "Hands Up", "City Pop", "Funk", "Vocal", "Indie Rock", "Indie Pop", "Punk",
+    "Boom Bap", "RnB/Swing", "Tech Trance", "Electro House", "Trance",
+    "Neo-Classical",
+]
+
+# **`.split()` 로 쓰지 않는다.** 이 축에는 공백이 든 값(`Contemporary R&B`·
+# `Alternative Rock`·`Drum n Bass`·`Jazzy Hip-Hop`)이 있어서 공백 분해가 값을
+# 조각낸다 — `'Jazzy'` 만 남아 `Jazz` 질의가 엉뚱한 곳에 걸린다. 아래 두 축은
+# snake_case 라 안전하지만, 새 축을 추가할 때 같은 함정을 밟지 않도록 여기 적어 둔다.
+_AI_GENRE_HAS_SPACES = [g for g in _AI_GENRE if " " in g]
+
+_AI_STYLE = """
+contemporary_pop synthpop lofi_hiphop dance_pop poprock rnb indie_pop city_pop
+pop_ballad alternative_rock game_battle_bgm indie_rock hard_rock
+atmospheric_post_rock alternative_rnb neo_soul boom_bap_hiphop
+modern_trap_hiphop singing_rap_melodic_hiphop synthwave drum_and_bass chillhop
+adventure_fantasy emotional_drama mystery_suspense casual_light_game_bgm
+punk_power_pop cinematic_orchestral future_bass breakbeat_uk_garage
+ambient_electronic downtempo unknown solo_piano pop hiphop_rnb
+melodic_electronic
+""".split()
+
+# `_genre_catalog` 가 넘기는 어휘. 장르 이름 포함 매칭이 `style` 축에도 걸리게
+# 하려면 두 축이 다 있어야 한다 (internal_api.py `_genre_catalog`).
+_CATALOG = _AI_GENRE + _AI_STYLE
+_CATALOG_SET = set(_CATALOG)
+
+_TAXONOMY_GENRE = """
+contemporary_pop dance_pop synthpop lofi_hiphop indie_pop alternative_rock
+poprock city_pop pop_ballad rnb solo_piano singing_rap_melodic_hiphop
+modern_trap_hiphop synthwave game_battle_bgm indie_rock hard_rock
+punk_power_pop atmospheric_post_rock alternative_rnb neo_soul boom_bap_hiphop
+house future_bass drum_and_bass chillhop downtempo
+chillwave_dreamy_electronica modern_jazz funk cinematic_orchestral
+adventure_fantasy emotional_drama mystery_suspense casual_light_game_bgm
+neo_classical acoustic_guitar_folk ambient breakbeat_uk_garage
+ambient_electronic acoustic_chill jazzhop jazz_fusion bossa_smooth_jazz
+chamber_classical
+""".split()
+
+# taxonomy 9종. 색인 `mood` 축에 이름이 하나도 없어서 **뜻으로** 이어야 한다.
+_TAXONOMY_MOOD = ["melancholic", "warm", "dreamy", "bright", "hopeful",
+                  "powerful", "dark", "calm", "exciting"]
+
+_SPRING_MOOD = ["잔잔한", "벅찬", "몽환적인", "신나는", "집중되는", "감성적인", "강렬한", "설레는",
+                "애상적인", "따뜻한", "몽글한", "화사한", "희망찬", "웅장한", "어두운", "고요한", "짜릿한"]
 _SPRING_GENRE = ["Electronic", "Indie", "R&B", "Rock", "Pop", "Hip-hop", "Jazz", "Classical"]
+
+# `flow_meta.mood_tags` 의 실제 태그 어휘 **38종**(2026-09-17 실측). `MOOD_MAP` 이
+# 내놓는 값은 전부 여기 안에 있어야 한다.
+#
+# `GET /internal/facets` 의 `mood` 필드는 **27종**뿐이다 — `catalog_facets` 의
+# `cnt_multi` 가 곡 2개 미만인 태그를 선택지에서 빼기 때문이다. `slow`·`party`·
+# `sad`·`dark` 4종이 그래서 필드 목록에는 없지만 태그로는 살아 있다. **둘을
+# 섞으면 안 된다** — 이 4종은 역방향 표에서 감성적인·강렬한 라벨을 지탱하는
+# 유일한 근거라, 필드 목록을 기준으로 "죽은 값" 이라며 지우면 곡이 라벨을 잃는다.
+_AI_MOOD_TAGS = """
+energetic love happy melodic relaxing epic film deep background action christmas
+ballad motivational emotional space summer inspiring corporate romantic uplifting
+meditative advertising positive drama heavy adventure sad trailer dark slow party
+dream dramatic funny soundscape documentary melancholic sport
+""".split()
+
+# 선택지로 노출되는 27종 (위 38종에서 곡 2개 미만을 뺀 것). 문서·대조용이다.
+_AI_MOOD_FIELD = """
+energetic love melodic epic relaxing film happy action christmas background deep
+space motivational emotional ballad inspiring summer corporate romantic positive
+heavy drama meditative trailer adventure uplifting advertising
+""".split()
+
+# taxonomy 45종 중 **색인에 곡이 없어 변환되지 않는 9종.** 버그가 아니다 —
+# 색인이 763곡이라 그 style 의 곡이 아직 안 들어왔다. 곡이 들어오면 정확히
+# 일치로 풀린다. 수가 늘면 그때는 원인을 봐야 한다.
+_TAXONOMY_GENRE_NOT_IN_INDEX = [
+    "chillwave_dreamy_electronica", "modern_jazz", "neo_classical",
+    "acoustic_guitar_folk", "acoustic_chill", "jazzhop", "jazz_fusion",
+    "bossa_smooth_jazz", "chamber_classical",
+]
 
 
 def test_every_spring_code_reaches_the_catalog():
     """Spring 코드표와 AI 어휘는 **한 건도 그대로 겹치지 않는다**(2026-09-15 실측).
-    변환이 하나라도 비면 그 답변은 추천에 전혀 반영되지 않는다."""
+    변환이 하나라도 비면 그 답변은 추천에 전혀 반영되지 않는다.
+
+    Spring 코드표 **전량**을 본다 — 무드 17종(대분류 8 + taxonomy 9)과 장르 8종이다.
+    taxonomy 9종이 들어오면서 무드 쪽이 8에서 17로 늘었고, 장르 쪽은 45종
+    세분류가 아직 코드표에 없지만 **변환은 전부 이어져야 한다** — 화면이
+    `displayName` 으로 세분류를 보여 주게 되면 그때 바로 쓰인다.
+    """
     from ai_server.app import onboarding as f
 
     dead_mood = [m for m in _SPRING_MOOD if not f.map_mood([m])]
-    dead_genre = [g for g in _SPRING_GENRE if not f.map_genre([g], _AI_GENRE)]
+    dead_genre = [g for g in _SPRING_GENRE if not f.map_genre([g], _CATALOG)]
     assert not dead_mood, f"변환되지 않는 mood: {dead_mood}"
     assert not dead_genre, f"변환되지 않는 genre: {dead_genre}"
+
+    # taxonomy 45종은 **전부 변환되지는 않는다.** 색인에 그 style 의 곡이 없으면
+    # 변환할 대상 자체가 없다 — 실패가 아니라 아직 곡이 없다는 뜻이다.
+    # 그래서 "전부 변환" 이 아니라 **어느 것이 안 되는지 정확히 아는 것**을 고정한다.
+    dead_taxonomy = {g for g in _TAXONOMY_GENRE if not f.map_genre([g], _CATALOG)}
+    known = set(_TAXONOMY_GENRE_NOT_IN_INDEX)
+    assert dead_taxonomy == known, (
+        f"변환 안 되는 taxonomy 장르가 바뀌었다: "
+        f"새로 생김={sorted(dead_taxonomy - known)}, 해소됨={sorted(known - dead_taxonomy)}")
 
 
 def test_mapped_values_exist_in_the_catalog():
     """지어낸 값을 넣으면 필터가 아무것도 고르지 못한다."""
     from ai_server.app import onboarding as f
 
-    for g in _SPRING_GENRE:
-        for v in f.map_genre([g], _AI_GENRE):
-            assert v in _AI_GENRE, v
+    for g in _SPRING_GENRE + _TAXONOMY_GENRE:
+        for v in f.map_genre([g], _CATALOG):
+            assert v in _CATALOG_SET, v
+    for m in _SPRING_MOOD:
+        for v in f.map_mood([m]):
+            assert v in set(_AI_MOOD_TAGS), f"{m} → {v} 는 색인 태그가 아니다"
+
+
+def test_taxonomy_moods_do_not_invent_new_index_tags():
+    """taxonomy 9종을 뜻으로 이어도 **새 색인 태그를 만들지 않는다.**
+
+    이 성질이 깨지면 `tools/register_sections.py` 의 `MOOD_BY_TAG` 가 27종에서
+    늘어나고, `setdefault` 로 기존 8종이 우선하던 곡들의 무드 라벨이 바뀐다.
+    9종은 색인에 곡이 거의 없어서(추천풀 763곡 기준 `dark` 조차 0곡) 새 태그를
+    만들어도 얻는 것이 없고 잃는 것만 있다.
+    """
+    from ai_server.app import onboarding as f
+
+    index = set(_AI_MOOD_FIELD)
+    first8 = dict(list(f.MOOD_MAP.items())[:8])
+    base = {t for tags in first8.values() for t in tags}
+    added = {v for m in _TAXONOMY_MOOD for v in f.map_mood([m])} - base
+    assert not added, f"9종이 새 태그를 만들었다: {sorted(added)}"
+    # 대분류 8종이 쓰는 태그가 곧 색인 태그의 전부다 (27개). 여기가 늘면
+    # 역방향 표가 커진 것이고 기존 곡의 라벨이 바뀔 수 있다.
+    assert len(base) == 27, f"대분류 8종의 태그 수가 바뀌었다: {len(base)}"
+    # 9종이 쓰는 태그는 27종 안이면서 38종 태그 어휘 안이다.
+    assert base <= set(_AI_MOOD_TAGS)
+    assert index <= set(_AI_MOOD_TAGS), "선택지 27종은 태그 38종의 부분집합이어야 한다"
+    assert set(_AI_MOOD_TAGS) - index == {"slow", "party", "sad", "dark",
+                                          "dream", "dramatic", "funny",
+                                          "soundscape", "documentary",
+                                          "melancholic", "sport"}, (
+        "선택지에서 빠지는 태그 11종이 바뀌었다 — `cnt_multi` 기준을 확인한다")
+
+
+def test_taxonomy_mood_names_are_the_last_nine_entries():
+    """`TAXONOMY_MOOD_NAMES` 와 `MOOD_MAP` 뒷 9줄이 같은 말을 해야 한다.
+
+    둘이 갈라지면 `music_preprocessing` 이 심는 `display_name` 이 엉뚱한 이름이
+    되고, 화면에는 taxonomy 원문이 뜬다 — 오류 없이 조용히.
+    """
+    from ai_server.app import onboarding as f
+
+    assert list(f.MOOD_MAP)[-9:] == list(f.TAXONOMY_MOOD_NAMES.values()), (
+        f"MOOD_MAP 뒷 9줄과 TAXONOMY_MOOD_NAMES 가 다르다: "
+        f"{list(f.MOOD_MAP)[-9:]} vs {list(f.TAXONOMY_MOOD_NAMES.values())}")
+    # 원문이 그대로 **선택지**가 되면 안 된다 — 그 이름들은 `mood` 필드 27종에
+    # 없다(`melancholic`·`dark` 는 태그 어휘 38종에는 있지만 추천풀에 곡이 0이라
+    # 선택지에서 빠진다). 그래서 화면에는 한국어 이름을 쓴다.
+    assert not set(f.TAXONOMY_MOOD_NAMES) & set(_AI_MOOD_FIELD)
+
+
+def test_existing_mood_tags_still_map_to_the_same_korean_name():
+    """이미 라벨이 붙은 곡의 무드가 바뀌지 않는다 — 역방향 표가 불변이어야 한다.
+
+    `MOOD_BY_TAG` 는 `MOOD_MAP` 을 뒤집어 `setdefault` 로 만든다. 앞선 항목이
+    이기므로 **9종을 뒤에 붙인 한** 기존 27개 태그의 대응이 그대로다.
+    """
+    from ai_server.app import onboarding as f
+
+    reverse: dict[str, str] = {}
+    for ko, tags in f.MOOD_MAP.items():
+        for tag in tags:
+            reverse.setdefault(tag, ko)
+    # 9종이 추가한 태그는 0개다 — 역방향 표가 27개 그대로다.
+    assert len(reverse) == 27, f"역방향 표가 {len(reverse)}개로 바뀌었다"
+    assert set(reverse) <= set(_AI_MOOD_TAGS)
+    # 대표값 몇 개를 못 박는다. 여기가 흔들리면 기존 사용자 화면이 바뀐다.
+    assert reverse["relaxing"] == "잔잔한"
+    assert reverse["sad"] == "감성적인"
+    assert reverse["dark"] == "강렬한"
+    assert reverse["party"] == "신나는"
 
 
 def test_raw_answer_is_kept_for_tracing():
     """변환이 어긋났을 때 되짚을 근거가 없으면 원인을 못 찾는다."""
     from ai_server.app import onboarding as f
 
-    ans = f.from_request({"moods": ["잔잔한", "몽환적인"], "genres": ["Jazz"]}, _AI_GENRE)
+    # `_CATALOG` 를 넘긴다 — `_AI_GENRE` 는 genre 축 57종뿐이라 `Jazz` 가
+    # `Jazzy Hip-Hop` 의 앞부분에만 걸려 결과가 달라진다. 실제 서빙 경로
+    # (`_genre_catalog`)는 genre·style 두 축을 함께 넘긴다.
+    ans = f.from_request({"moods": ["잔잔한", "몽환적인"], "genres": ["Jazz"]}, _CATALOG)
     assert ans["mood_raw"] == ["잔잔한", "몽환적인"]
     assert ans["genre_raw"] == ["Jazz"]
-    assert ans["genre"] == ["Contemporary Jazz", "Jazzy Hip-Hop"]
+    # 기대값을 **실제 운영 어휘**로 맞춘다. 예전 기대값은 `Contemporary Jazz` 였는데
+    # 그 이름은 현재 genre 축 57종에 없다 — 낡은 어휘(91종) 기준이었다.
+    # 운영 색인으로 `Jazz` 를 돌리면 `Jazzy Hip-Hop`·`Smooth Jazz` 두 개가 나오고,
+    # 이는 계획 문서의 "Jazz → 씨앗 2개" 실측과 같다.
+    assert ans["genre"] == ["Jazzy Hip-Hop", "Smooth Jazz"]
     assert "relaxing" in ans["mood"]
 
 

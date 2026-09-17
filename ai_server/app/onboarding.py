@@ -16,10 +16,32 @@ import json
 
 import numpy as np
 
-# Spring 온보딩 코드표(8종) → AI 카탈로그 태그. **여기가 유일한 자리다.**
+# taxonomy 무드 원문 → 화면용 한국어. **아래 `MOOD_MAP` 뒷 9줄이 여기서 나온다.**
+#
+# 이 대응이 코드에 **데이터로** 있어야 하는 이유: `music_preprocessing` 의
+# `genre_mood.py` 가 코드표에 심을 때 `code_name`(화면용 한국어)과
+# `display_name`(taxonomy 원문)을 갈라야 하는데, 그 패키지는 이 모듈의 의존성
+# (numpy·pandas)을 끌고 올 수 없어 표를 한 벌 더 갖는다. 두 벌이 어긋나면
+# **화면 언어와 색인 언어가 뒤바뀐 채 조용히 적재된다** — 그래서 양쪽 테스트가
+# 이 표를 서로 대조한다 (`test_genre_mood.py` 의
+# `test_mood_display_names_match_the_ai_table`).
+TAXONOMY_MOOD_NAMES = {
+    "melancholic": "애상적인",
+    "warm": "따뜻한",
+    "dreamy": "몽글한",
+    "bright": "화사한",
+    "hopeful": "희망찬",
+    "powerful": "웅장한",
+    "dark": "어두운",
+    "calm": "고요한",
+    "exciting": "짜릿한",
+}
+
+# Spring 온보딩 코드표(17종) → AI 카탈로그 태그. **여기가 유일한 자리다.**
 #
 # mood 는 뜻으로 이어야 해서 표로 적는다. genre 는 대분류 → 세분류라 이름 포함으로
 # 자동 확장한다(`Rock` → `Alternative Rock`·`Pop Rock`·`Indie Rock` …).
+# 앞 8종은 온보딩 첫 화면의 대분류, 뒤 9종은 taxonomy 세분류다 (2026-09-17 추가).
 MOOD_MAP = {
     "잔잔한": ["relaxing", "meditative", "slow", "background"],
     "벅찬": ["epic", "uplifting", "inspiring", "motivational"],
@@ -29,13 +51,38 @@ MOOD_MAP = {
     "감성적인": ["emotional", "melodic", "sad", "ballad"],
     "강렬한": ["heavy", "action", "trailer", "dark"],
     "설레는": ["love", "romantic", "summer"],
+    # 아래 9종은 taxonomy 무드를 뜻으로 이은 것이다 (2026-09-17). **이름은 위의
+    # `TAXONOMY_MOOD_NAMES` 에서 온다** — 여기서 새로 적지 않는다.
+    # 색인 축(`mood_tags` 27종)에 그 이름이 하나도 없다 — taxonomy 쪽 어휘가 완전히
+    # 달라서 축을 더 넘기는 것으로는 풀리지 않는다. 실측으로 세어 보면 taxonomy
+    # 9종은 색인에 1~5곡뿐이고(추천풀 763곡 기준으로는 `dark` 조차 0곡), 위 8종은
+    # 뜻으로 이으면 **전부 기존 태그 안으로 떨어진다.** 그래서 이 줄들이 벌어 주는
+    # 것은 새 태그가 아니라 **온보딩 선택지의 세분화**다.
+    #
+    # **새 태그를 하나도 만들지 않는다.** 9종이 추가로 쓰는 태그는 0개라
+    # `tools/register_sections.py` 의 역방향 표(`MOOD_BY_TAG`)가 27종 그대로 남고,
+    # 거기서 `setdefault` 로 기존 8종이 우선하므로 **이미 라벨이 붙은 곡의 무드는
+    # 바뀌지 않는다.** 아래 태그를 고칠 때는 그 성질이 깨지는지 먼저 확인한다.
+    #
+    # **`dark` 를 `강렬한` 과 같이 쓴다.** 게이트가 OR 이라 중복 반영이 아니라
+    # 단순 커버다. `trailer` 를 빼고 `heavy`·`drama` 만 쓰면 5곡이 라벨을 잃는다.
+    "애상적인": ["emotional", "ballad", "drama"],          # melancholic
+    "따뜻한": ["relaxing", "love", "meditative", "background"],  # warm
+    "몽글한": ["space", "deep", "relaxing"],              # dreamy
+    "화사한": ["happy", "positive", "uplifting", "summer"],  # bright
+    "희망찬": ["inspiring", "motivational", "uplifting"],   # hopeful
+    "웅장한": ["epic", "action", "trailer", "heavy"],      # powerful
+    "어두운": ["heavy", "drama", "trailer"],               # dark
+    "고요한": ["relaxing", "meditative", "background"],     # calm
+    "짜릿한": ["energetic", "action", "happy"],             # exciting
 }
 
 # 이름 포함으로는 못 잇는 것만 적는다.
 GENRE_EXTRA = {
     "Electronic": ["House", "Downtempo", "Synthwave", "Tropical House", "Dubstep",
                    "Drum n Bass", "Electro House", "Chillwave", "Nu-Disco", "Synth-pop"],
-    "Hip-hop": ["Cloud Rap", "Trap"],
+    "Hip-hop": ["Cloud Rap", "Trap", "lofi_hiphop", "boom_bap_hiphop", "modern_trap_hiphop", 
+                "singing_rap_melodic_hiphop", "chillhop", "jazzhop"],
     "Indie": ["Folk"],
 }
 

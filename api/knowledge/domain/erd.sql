@@ -159,7 +159,6 @@ CREATE TABLE IF NOT EXISTS `music_analysis` (
   PRIMARY KEY (`music_id`)
 );
 CREATE TABLE IF NOT EXISTS `music_analysis_instruments` (
-  -- 구간 PK 를 가리키는 자리다. AUTO_INCREMENT 는 값을 발급하겠다는 뜻이라 맞지 않는다.
   `music_section_analysis_id` INT NOT NULL,
   `instrument_code_id` INT NOT NULL,
   PRIMARY KEY (`music_section_analysis_id`, `instrument_code_id`)
@@ -203,13 +202,10 @@ CREATE TABLE IF NOT EXISTS `music_section_analysis` (
   `index` INT NOT NULL,
   `start_time_ms` INT NOT NULL,
   `end_time_ms` INT NOT NULL,
-  -- 문자열 구간 UID(`JAMENDO_1048629#0`). 실측 최댓값 36자인데 flow ID 는 제목 길이만큼
-  -- 늘어나 50 으로는 모자라다. 넘치면 MySQL 이 조용히 잘라 저장하고, 잘린 값끼리는
-  -- 매핑 1:1 검사까지 통과해 어긋난 채 서비스가 올라온다.
   `external_id` VARCHAR(64) NOT NULL,
-  PRIMARY KEY (`music_section_analysis_id`),
-  UNIQUE KEY `uk_music_section_analysis_external_id` (`external_id`)
+  PRIMARY KEY (`music_section_analysis_id`)
 );
+CREATE UNIQUE INDEX `ux_music_section_analysis_external_id` ON `music_section_analysis` (`external_id`);
 CREATE TABLE IF NOT EXISTS `music_section_analysis_mood` (
   `music_section_analysis_id` INT NOT NULL,
   `mood_code_id` INT NOT NULL,
