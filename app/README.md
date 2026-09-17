@@ -256,6 +256,52 @@ WindowInsets ─▸ SafeArea.kt ─▸ window.__mupidSafeArea (기기 픽셀)
 **상태바 몫은 카드 바깥에서 비운다** (`responsive-polish.css` 의 셸 여백). 카드
 안쪽 헤더에서 비우면 둥근 윗모서리를 시각·배터리가 가로지른다.
 
+## 자동 업데이트
+
+두 갈래가 있고, 둘 다 **빌드 타임스탬프가 버전을 대신한다** (semver 를 쓰지 않는다).
+
+| 갈래 | 무엇을 바꾸나 | 판단 | 사용자가 하는 일 |
+| --- | --- | --- | --- |
+| 웹 | 번들 파일만 | `builtAt` 이 **다르면** 교체 | 없음 |
+| 네이티브 | APK 자체 | `versionCode` 가 **클 때만** 안내 | 설치 |
+
+- **웹**: 기동 뒤 조용히 내려받아 **디스크에만** 활성화한다. 실제 교체는 다음
+  콜드 스타트다 — 화면을 다시 읽으면 듣던 곡이 끊긴다. `src/assets.rs` 의
+  자산 프로바이더가 디스크 우선·임베드 폴백으로 서빙한다.
+- **네이티브**: `versionCode` 를 `MUPID_NATIVE_BUILD`(epoch ms)에서 유도하고
+  1000 으로 나눈다. 밀리초를 그대로 쓰면 안드로이드 상한(2,100,000,000)을
+  넘어 **빌드는 되고 설치는 실패한다.**
+
+**페이로드가 코드뿐인 이유가 중요하다.** 번들 39MB 중 이미지 82%·폰트 14%는
+이미 APK 안에 있고, 임베드 레이어가 그 자리를 채운다. 그래서 코드만 보내면
+318KB 로 줄어든다(`frontend/scripts/web-archive.mjs`). 이게 성립하는 근거는
+**파일 이름이 고정**이라는 것이다(내용 해시가 붙은 파일이 없다).
+
+**스탬프가 셋에서 같아야 한다.** 번들 안 `app/build.json`, `web.json`, 아카이브
+이름이 어긋나면 앱이 자기 번들을 계속 다시 받는다. CI 가 프론트 빌드와 APK
+빌드에 **같은** `MUPID_WEB_BUILD`/`MUPID_NATIVE_BUILD` 를 넣는다.
+
+### Tauri 를 올릴 때 확인할 것
+
+`src/assets.rs` 는 `Context.assets` 를 `generate_context!()` 결과에서 꺼내
+`LayeredAssets` 로 감싼다. **`Context` 는 안정 API 가 아니다** — Tauri 문서가
+"직접 만들지 말라"고 명시한다. `assets` 가 `pub` 필드라는 사실에 기대고 있어
+포인트 릴리스에서 깨질 수 있다.
+
+Tauri 를 올린 뒤에는 **디스크 번들이 실제로 서빙되는지**를 실기기에서 확인한다:
+
+```sh
+# 일반 debug 빌드로는 검증되지 않는다 (dev 서버로 프록시해 프로바이더를 안 탄다)
+cargo tauri android build --debug --features custom-protocol --target aarch64 --apk
+adb logcat -d | grep mupid-assets     # "디스크에서 서빙" 이 보여야 한다
+```
+
+`Context.assets` 가 더 이상 열려 있지 않으면 설계 7.1.2 의 대안
+(`on_web_resource_request` 훅에서 본문 교체)으로 내려온다. 그때는 HTML 폴백·
+MIME·CSP 해시를 직접 다시 구현해야 한다.
+
+---
+
 ## 아직 안 한 것
 
 - **iOS**: `cargo tauri ios init` 은 macOS 에서만 돈다. Rust 코드는 그대로 쓴다.

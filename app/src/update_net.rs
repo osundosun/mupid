@@ -51,6 +51,12 @@ const PROMPT_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
 pub struct UpdateState {
     /// 지금 쓰이는 웹 번들의 나이 (epoch ms).
     pub local_web_build: u64,
+    /// APK 에 **임베드된** 번들의 나이 (epoch ms).
+    ///
+    /// 화면이 "왜 지금 이 번들이 쓰이나" 를 판단할 수 있게 함께 보낸다 —
+    /// 디스크 번들이 없으면 이 값이 곧 `localWebBuild` 다. 진단 화면에서
+    /// 둘을 나란히 보면 "업데이트가 적용됐는지" 가 한눈에 보인다.
+    pub embedded_web_build: u64,
     /// 이 APK 의 빌드 시각 (epoch ms).
     pub local_native_build: u64,
     /// 이 APK 의 `versionCode` (초).
@@ -161,6 +167,7 @@ pub async fn check(db: &Db, state: &HttpState) -> UpdateState {
 
     UpdateState {
         local_web_build,
+        embedded_web_build: update::embedded_web_build(),
         local_native_build,
         local_version_code,
         server_web_build: web.as_ref().map(|manifest| manifest.built_at),
