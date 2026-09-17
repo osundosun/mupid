@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { guardPath, pageForPath, pagePaths } from '@/lib/routes';
 import { mupidService } from '@/lib/services';
+import { localDemoEnabled } from '@/lib/api/local-demo';
 import { login, logout, restoreSession } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
@@ -290,7 +291,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * `recommendationsReady` 가 말한다.
    */
   useEffect(() => {
-    if (!ready || !sessionRef.current) return;
+    if (!ready || !sessionRef.current || localDemoEnabled()) return;
     const ac = new AbortController();
     void (async () => {
       const [today, next] = await Promise.all([
@@ -439,6 +440,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * 것이 이 API 의 목적이다. 지금 카탈로그에 없는 곡은 버려진다.
    */
   const adoptServerReactions = async (signal?: AbortSignal) => {
+    if (localDemoEnabled()) return;
     const saved = await fetchReactions(tracks, signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
     setLiked(saved.liked);
@@ -452,6 +454,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * 것처럼 보이기 때문이다.
    */
   const adoptServerHistory = async (signal?: AbortSignal) => {
+    if (localDemoEnabled()) return;
     const saved = await fetchHistory(tracks, signal);
     if (!saved?.length || signal?.aborted || !mountedRef.current) return;
     setHistory((current) =>
@@ -466,6 +469,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * 앞사람의 목록(과 예전 빌드의 데모 목록)을 넘겨받았다. 그 길은 없앴다.
    */
   const adoptServerPlaylists = async (signal?: AbortSignal) => {
+    if (localDemoEnabled()) return;
     const saved = await playlistApi.fetchPlaylists(tracks, signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
     setPlaylists(saved);
@@ -480,6 +484,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * 여기서 받은 판본이 들어와야 저장이 열린다.
    */
   const adoptServerQueue = async (signal?: AbortSignal) => {
+    if (localDemoEnabled()) return;
     /*
      * **곡 목록이 없으면 아직 받지 않는다.** 서버 큐는 곡 번호라 카탈로그가
      * 있어야 화면 번호로 옮길 수 있는데, 로그인 직후에는 카탈로그를 아직
@@ -705,7 +710,7 @@ export function useMupid(bootstrap: Bootstrap) {
     return queue.find((entry) => entry.trackId === track.id)?.uid ?? null;
   };
   const startPlayback = async (track: Track, start?: number, uid?: string | null) => {
-    if (typeof track.musicId !== 'number') return;
+    if (typeof track.musicId !== 'number' && !track.localAudio) return;
     // 추천으로 시작한 재생이면 그 사실을 함께 남긴다. 이게 없으면 "이 추천으로 튼
     // 곡을 끝까지 들었는가" 를 물어볼 수 없어 추천 성과를 잴 방법이 없다.
     const rec = track.recommended?.recommendationId
@@ -718,7 +723,7 @@ export function useMupid(bootstrap: Bootstrap) {
     const slot = resolveQueueUid(track, uid);
     currentUidRef.current = slot;
     setCurrentUid(slot);
-    analytics.startPlay(
+    if (typeof track.musicId === 'number') analytics.startPlay(
       { trackId: track.musicId, entryPath: entryPathOf(), rec },
       start ?? 0,
     );
@@ -731,7 +736,8 @@ export function useMupid(bootstrap: Bootstrap) {
     const player = getPlayer();
     if (!player) return;
     try {
-      await player.load(track.musicId, { autoplay: true });
+      if (track.localAudio) await player.loadLocal(track.id, track.localAudio, track.duration);
+      else await player.load(track.musicId!, { autoplay: true });
       if (id !== requestId.current) return;
       if (start !== undefined && start > 0) await player.seek(start);
     } catch {

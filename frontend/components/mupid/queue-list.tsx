@@ -209,7 +209,7 @@ export function QueueList({
            * 박스가 놓인 앞 칸이 칠해지지 않아 고른 표시가 중간에서 끊긴다.
            */
           className={`queue-item ${dragUid === track.uid ? 'is-dragging' : ''} ${
-            m.currentQueueUid === track.uid ? 'is-current' : ''
+            m.currentQueueUid === track.uid ? `is-current${m.playing ? ' is-playing' : ''}` : ''
           } ${picking && selection.has(track.id) ? 'is-selected' : ''}`}
           // 같은 곡이 여러 번 담겨 있으면 제목만으로는 어느 줄이 울리는 줄인지
           // 알 수 없다. 지금 듣고 있는 자리만 표시한다.
@@ -248,6 +248,7 @@ export function QueueList({
             onSelect={picking ? () => selection.toggle(track.id) : undefined}
             // 체크는 위의 손잡이 칸이 들고 있다. 줄 안에도 그리면 두 개가 된다.
             showCheck={false}
+            showDetail={false}
             /*
              * **목록 안에서 누른 재생은 자리를 옮기지 않는다.** 자리 번호를 함께
              * 넘겨 그 줄을 그대로 튼다 — 고른 줄이 누르자마자 맨 위로 튀어 오르면
