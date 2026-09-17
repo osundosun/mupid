@@ -37,7 +37,7 @@ public enum GlobalErrorCode implements ErrorCode {
      * {@code AccessDeniedException}·{@code JwtException}·{@code MethodArgumentTypeMismatchException}
      * 에도 핸들러를 붙였다.
      */
-    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "그 주소가 받지 않는 요청 방식입니다.");
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "지원하지 않는 요청 방식입니다.");
 
     private final HttpStatus status;
     private final String message;
