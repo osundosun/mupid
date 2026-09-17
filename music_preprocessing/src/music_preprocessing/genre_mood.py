@@ -233,10 +233,8 @@ class BatchClient(MupidClient):
             raise ValueError("조회 개수 불일치")
         return rows
 
-    def add_code(self, code_type, name):
-        """코드를 더한다. 이미 있으면 그 행이 그대로 온다(`created: false`)."""
-        return self._request("POST", "/api/v1/code",
-                             json_body={"codeType": code_type, "codeName": name})["data"]
+    # `add_code` 는 `MupidClient` 에 있다. 구간 분석 배치도 악기 코드를 넣느라
+    # 같은 것을 부르므로, 두 벌을 두면 한쪽만 고쳐졌을 때 조용히 갈린다.
 
     def replace_classification(self, music_id, genre_code_ids, mood_code_ids):
         """그 곡의 장르·분위기를 **통째로** 갈아 끼운다. 저장된 결과가 돌아온다."""
