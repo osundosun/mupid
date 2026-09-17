@@ -162,7 +162,8 @@ class LocalRegistry:
                 out.append(BatchTrack(
                     track_id=tid, audio_path=ap, sections_json=Path(sections_of(tid)),
                     content_row=row, meta_row=meta_row(track, tid), source=self.source,
-                    demix_root=Path(demix_root) if demix_root else None))
+                    demix_root=Path(demix_root) if demix_root else None,
+                    music_id=tmap.get(tid)))
             except Exception as e:
                 failed[tid] = f"{type(e).__name__}: {e}"[:400]
         return out, {"failed": failed, "skipped": skipped, "warn": self.warn,

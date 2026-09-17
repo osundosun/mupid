@@ -395,5 +395,70 @@ class LocalCollectGuardsTests(unittest.TestCase):
         self.assertEqual(seen.get("limit"), 0, "config 의 analysis_limit 이 샜다")
 
 
+class MusicIdMappingTests(unittest.TestCase):
+    """요구 1 은 **숫자 music_id** 를 요구한다 — 로컬 파일명을 보내면 안 된다.
+
+    실측: `--local` 로 299곡을 다 돌린 뒤 ⑥ 등록에서 죽었다.
+
+        ValueError: invalid literal for int() with base 10: 'T000501'
+
+    `HttpRegistrar` 가 `int(track_id)` 를 불렀기 때문이다. `T000501` 같은 파일명을
+    숫자로 바꾸는 것은 **지어내는 것**이다 — `JAMENDO_1083659` 같은 ID 는 맞지 않는다.
+    `music_id` 는 `registered.json`(catalog 산출물)에서만 온다.
+    """
+
+    def test_track_carries_music_id_separately(self):
+        t = ab.BatchTrack(track_id="T000501", audio_path=Path("a.mp3"),
+                          sections_json=Path("a.json"), content_row={}, meta_row={},
+                          music_id=501)
+        self.assertEqual(t.music_id, 501)
+        self.assertEqual(t.track_id, "T000501")
+
+    def test_manifest_without_music_id_stops(self):
+        """manifest 로 돌릴 때도 숫자 ID 가 없으면 멈춘다."""
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "m.json"
+            p.write_text(json.dumps({"tracks": [
+                {"track_id": "T000501", "audio_path": "a.mp3",
+                 "sections_json": "a.json"}]}), encoding="utf-8")
+            with self.assertRaises(SystemExit) as got:
+                ab.read_manifest(p)
+            self.assertIn("music_id", str(got.exception))
+
+    def test_manifest_with_music_id_loads(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "m.json"
+            p.write_text(json.dumps({"tracks": [
+                {"track_id": "T000501", "music_id": 501, "audio_path": "a.mp3",
+                 "sections_json": "a.json"}]}), encoding="utf-8")
+            got = ab.read_manifest(p)
+            self.assertEqual(len(got), 1)
+            self.assertEqual(got[0].music_id, 501)
+
+    def test_registrar_refuses_track_without_music_id(self):
+        """숫자 ID 를 모르는 곡이 있으면 **등록을 시작하지 않는다.**
+
+        등록기가 받는 것은 `NewTrack`(색인에 붙일 곡)이다 — 거기에 `music_id` 가
+        실려 온다(`_analyze_all` 이 `BatchTrack.music_id` 를 옮긴다).
+        """
+        import numpy as np
+
+        from music_preprocessing.analysis import api as ai
+        from music_preprocessing.analysis.indexer import NewTrack
+
+        reg = ai.HttpRegistrar(client=object())
+        bad = NewTrack(
+            track_id="JAMENDO_1083659", source="flow", track_dur_sec=100.0,
+            sections=[{"section_idx": 0, "section_label": "verse", "start_sec": 0.0,
+                       "end_sec": 10.0, "dur_sec": 10.0}],
+            embeddings=np.zeros((1, 1536), np.float32),
+            features=np.zeros((1, 285), np.float32),
+            section_vecs=np.zeros((1, 128), np.float32),
+            content_row={}, meta_row={}, music_id=None)
+        with self.assertRaises(ValueError) as got:
+            reg.register([bad], Path("."))
+        self.assertIn("music_id", str(got.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

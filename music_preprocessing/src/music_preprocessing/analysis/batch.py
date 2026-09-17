@@ -200,6 +200,11 @@ class BatchTrack:
     source: str = "flow"
     temp_audio: bool = False             # 내려받은 사본이면 처리 뒤 지운다
     demix_root: Optional[Path] = None    # 분할기가 남긴 demucs 스템. 구간별 악기를 여기서 읽는다
+    # `track_id` 는 **로컬 파일명**(`T000501`)일 수 있다. 요구 1 은 Spring 이 발급한
+    # 숫자 `music_id` 를 요구하므로, 그 값을 `registered.json`(catalog 산출물)에서
+    # 받아 여기 담는다. **지어내지 않는다** — 파일명에서 숫자를 뽑으면 등록된 값과
+    # 어긋날 수 있고, 그 상태로 교체하면 엉뚱한 곡에 구간이 붙는다.
+    music_id: Optional[int] = None
 
     def load(self) -> tuple[seg.SectionsFile, pl.TrackStats]:
         f = seg.load_sections(Path(self.sections_json), track_id=self.track_id)
@@ -415,7 +420,9 @@ def _analyze_all(items: Sequence[BatchTrack], data: Path, state_path: Path,
             features=np.asarray(r.features, dtype=np.float32),
             section_vecs=np.asarray(r.section_vecs, dtype=np.float32),
             content_row={**t.content_row, "track_id": tid},
-            meta_row={**t.meta_row, "track_id": tid}))
+            meta_row={**t.meta_row, "track_id": tid},
+            # 등록은 Spring 발급 숫자 ID 로 한다 — `tid` 는 로컬 파일명일 수 있다.
+            music_id=getattr(t, "music_id", None)))
 
     pl.save_state(state_path, state)
     log(f"분석 — 성공 {s.ok} · 실패 {s.failed} · 건너뜀 {s.skipped} · 변경 {s.changed}")
@@ -482,6 +489,14 @@ def read_manifest(path: Path) -> list[BatchTrack]:
     base = Path(path).parent
     out = []
     for t in d.get("tracks", []):
+        # 요구 1 은 숫자 `music_id` 를 요구한다. manifest 에 없으면 **여기서 멈춘다** —
+        # 파일명에서 숫자를 뽑는 것은 지어내는 것이다(`T000501` 은 우연히 맞지만
+        # `JAMENDO_1083659` 같은 ID 는 맞지 않는다).
+        mid = t.get("music_id")
+        if mid in (None, ""):
+            raise SystemExit(
+                f"manifest 의 {t.get('track_id')!r} 에 music_id 가 없다. 요구 1 은 "
+                "Spring 이 발급한 숫자 ID 를 요구한다 — 파일명에서 뽑지 않는다.")
         out.append(BatchTrack(
             track_id=str(t["track_id"]),
             audio_path=(base / t["audio_path"]).resolve() if not Path(
@@ -491,7 +506,8 @@ def read_manifest(path: Path) -> list[BatchTrack]:
             content_row=dict(t.get("content") or {}),
             meta_row=dict(t.get("meta") or {}),
             source=str(t.get("source", "flow")),
-            demix_root=_rel(base, t.get("demix_root"))))
+            demix_root=_rel(base, t.get("demix_root")),
+            music_id=int(mid)))
     return out
 
 
