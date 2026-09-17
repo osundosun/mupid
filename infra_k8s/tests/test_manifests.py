@@ -653,7 +653,7 @@ class SchemaCheckTest(unittest.TestCase):
         spec.loader.exec_module(self.module)
 
     def test_it_reads_the_repository_erd(self):
-        tables = self.module.parse_erd(self.module.ERD)
+        tables, indexes = self.module.parse_erd(self.module.ERD)
         self.assertGreater(len(tables), 20, "erd.sql 에서 테이블을 거의 못 찾았다")
         for name, columns in tables.items():
             with self.subTest(table=name):
