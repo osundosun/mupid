@@ -345,14 +345,19 @@ class MupidClient:
                 이때 `code_name` 이 화면용 한국어, `display_name` 이 색인 원문이 된다.
 
         Returns:
-            `{ "codeId": …, "codeType": …, "codeName": …, "displayName": …, "created": bool }`.
-            `codeName` 은 서버에 저장된 철자다 — 보낸 것과 다를 수 있다.
+            `{ "code_id": …, "code_type": …, "code_name": …, "display_name": …, "created": bool }`.
+            `code_name` 은 서버에 저장된 철자다 — 보낸 것과 다를 수 있다.
+
+        **와이어 이름은 snake_case 다.** 서버는 `spring.jackson.property-naming-strategy:
+        SNAKE_CASE` 로 요청·응답을 전부 바꾼다. 자바 필드명(`codeName`)을 그대로 보내면
+        스프링이 모르는 필드로 버리고(`FAIL_ON_UNKNOWN_PROPERTIES` 가 기본 활성), 필수값이
+        `null` 이 되어 400 이 난다 — 배치가 응답의 `codeId` 를 읽기도 전에 죽는다.
         """
-        payload = {"codeType": code_type, "codeName": code_name}
+        payload = {"code_type": code_type, "code_name": code_name}
         # 빈 문자열을 실어 보내지 않는다. 서버는 `null`·빈 값을 같은 뜻으로 보지만,
-        # 옛 서버(이 필드를 모르는 판)에 `displayName` 을 실어 보내면 검증에 걸릴 수 있다.
+        # 옛 서버(이 필드를 모르는 판)에 `display_name` 을 실어 보내면 검증에 걸릴 수 있다.
         if display_name:
-            payload["displayName"] = display_name
+            payload["display_name"] = display_name
         body = self._request("POST", "/api/v1/code", json_body=payload)
         return body["data"]
 

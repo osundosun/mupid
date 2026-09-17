@@ -47,7 +47,8 @@ class Fake(BaseHTTPRequestHandler):
             return
         if url.path == "/api/v1/onboarding/option":
             return self.json({kind.lower() + "s": [
-                {"codeId": c["codeId"], "name": c["codeName"]}
+                {"code_id": c["codeId"], "name": c["codeName"],
+                 "display_name": c.get("displayName") or c["codeName"]}
                 for c in state["codes"] if c["codeType"] == kind]
                 for kind in ("GENRE", "MOOD")})
         if url.path == "/api/v1/music":
@@ -56,9 +57,12 @@ class Fake(BaseHTTPRequestHandler):
             page = int(query["page"][0])
             rows = state["music"]
             window = rows[page * size:(page + 1) * size]
-            return self.json({"items": window, "page": page, "size": size,
-                              "totalElements": len(rows),
-                              "totalPages": max(1, -(-len(rows) // size))})
+            # 엔티티는 camelCase(`musicId`)지만 응답은 snake_case 다.
+            items = [{"music_id": m["musicId"], "title": m["title"],
+                      "genres": m["genres"], "moods": m["moods"]} for m in window]
+            return self.json({"items": items, "page": page, "size": size,
+                              "total_elements": len(rows),
+                              "total_pages": max(1, -(-len(rows) // size))})
         self.send_error(404)
 
     def do_POST(self):
@@ -67,14 +71,22 @@ class Fake(BaseHTTPRequestHandler):
         state["seen"].append(("POST", self.path, self.headers.get("Authorization")))
         if self.path != "/api/v1/code":
             return self.send_error(404)
+        # 스프링은 `SNAKE_CASE` 매핑이라 camelCase 키를 **모르는 필드로 버리고**
+        # 필수값이 null 이 되어 400 을 낸다. 대역도 그렇게 해야 계약이 검증된다.
+        unknown = sorted(set(body) - {"code_type", "code_name", "display_name"})
+        if unknown or not body.get("code_type") or not body.get("code_name"):
+            return self.json({"code": "MUPID_INVALID_REQUEST",
+                              "message": f"알 수 없는 필드 또는 필수값 누락: {unknown}"},
+                             status=400)
         folded = {(c["codeType"], c["codeName"].casefold()): c for c in state["codes"]}
-        found = folded.get((body["codeType"], body["codeName"].casefold()))
+        found = folded.get((body["code_type"], body["code_name"].casefold()))
         if found:
-            return self.json({**found, "created": False})
+            return self.json(self._wire(found, created=False))
         row = {"codeId": max(c["codeId"] for c in state["codes"]) + 1,
-               "codeType": body["codeType"], "codeName": body["codeName"]}
+               "codeType": body["code_type"], "codeName": body["code_name"],
+               "displayName": body.get("display_name") or body["code_name"]}
         state["codes"].append(row)
-        self.json({**row, "created": True})
+        self.json(self._wire(row, created=True))
 
     def do_PUT(self):
         state = self.server.state
@@ -83,23 +95,35 @@ class Fake(BaseHTTPRequestHandler):
         parts = self.path.strip("/").split("/")
         if len(parts) != 5 or parts[:3] != ["api", "v1", "music"] or parts[4] != "classification":
             return self.send_error(404)
+        unknown = sorted(set(body) - {"genre_code_ids", "mood_code_ids"})
+        if unknown:
+            return self.json({"code": "MUPID_INVALID_REQUEST",
+                              "message": f"알 수 없는 필드: {unknown}"}, status=400)
         music_id = int(parts[3])
         names = {c["codeId"]: c["codeName"] for c in state["codes"]}
         row = next(m for m in state["music"] if m["musicId"] == music_id)
-        genres = sorted(dict.fromkeys(body["genreCodeIds"]))
-        moods = sorted(dict.fromkeys(body["moodCodeIds"]))
+        genres = sorted(dict.fromkeys(body["genre_code_ids"]))
+        moods = sorted(dict.fromkeys(body["mood_code_ids"]))
         row["genres"] = [names[i] for i in genres]
         row["moods"] = [names[i] for i in moods]
-        self.json({"musicId": music_id, "genreCodeIds": genres, "moodCodeIds": moods})
+        self.json({"music_id": music_id, "genre_code_ids": genres,
+                   "mood_code_ids": moods})
+
+    @staticmethod
+    def _wire(row, created):
+        """엔티티 → `CodeResponse` 와이어 모양 (snake_case)."""
+        return {"code_id": row["codeId"], "code_type": row["codeType"],
+                "code_name": row["codeName"],
+                "display_name": row.get("displayName"), "created": created}
 
     # ── 도우미 ──────────────────────────────────────────────────────────
     def read_body(self):
         length = int(self.headers.get("Content-Length") or 0)
         return json.loads(self.rfile.read(length)) if length else {}
 
-    def json(self, data):
+    def json(self, data, status=200):
         body = json.dumps({"message": "ok", "data": data}, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

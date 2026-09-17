@@ -267,15 +267,24 @@ class FakeClient:
         self.next_section_id = 5_000
 
     def add_code(self, code_type, code_name):
+        """**응답 키는 snake_case 다.**
+
+        서버가 `spring.jackson.property-naming-strategy: SNAKE_CASE` 로 바꾼다.
+        이 대역이 `codeId` 를 돌려주면 `ensure_instrument_codes` 가
+        `row.get("code_id")` 로 읽어 **조용히 None 을 기록한다** — 오류가 안 나서
+        더 나쁘다. 실제 배치 로그에 `code_id: null` 로 남던 자리다.
+        """
         self.calls.append(("code", code_name))
         key = (code_type, code_name)
         if key in self.codes:
-            return {"codeId": self.codes[key], "codeType": code_type,
-                    "codeName": code_name, "created": False}
+            return self._wire(key[0], key[1], self.codes[key], created=False)
         self.next_code_id += 1
         self.codes[key] = self.next_code_id
-        return {"codeId": self.next_code_id, "codeType": code_type,
-                "codeName": code_name, "created": True}
+        return self._wire(key[0], key[1], self.next_code_id, created=True)
+
+    def _wire(self, code_type, code_name, code_id, created):
+        return {"code_id": code_id, "code_type": code_type,
+                "code_name": code_name, "created": created}
 
     def replace_sections(self, music_id, sections, analysis_version="v1"):
         self.calls.append(("section", str(music_id)))
@@ -324,6 +333,21 @@ def test_already_existing_codes_are_not_counted_as_added():
     reg.ensure_instrument_codes(tracks)
 
     assert len(reg.codes_added) == 1
+
+
+def test_added_code_records_the_real_id_not_none():
+    """응답 키가 어긋나면 **오류 없이 `code_id: null` 이 기록된다.**
+
+    `codes_added` 는 `row.get("code_id")` 로 읽는다. 대역이 `codeId` 를 돌려주면
+    `get` 이 None 을 주고 배치 보고서에는 `code_id: null` 만 남는다 — 실패가 아니라
+    조용한 손실이라 눈에 띄지 않는다. 실제로 그 상태로 배치가 돌았다.
+    """
+    client = FakeClient()
+    reg = ap.HttpRegistrar(client=client)
+
+    reg.ensure_instrument_codes([Track([section_row(0, ["보컬"])])])
+
+    assert reg.codes_added == [{"code_id": 901, "name": "보컬"}]
 
 
 def test_nothing_is_registered_when_no_track_has_instruments():
@@ -399,14 +423,16 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path != "/api/v1/code":
             self._json(404, {"code": "NOT_FOUND", "message": "없다"})
             return
-        key = (str(b.get("codeType")), str(b.get("codeName")))
+        # 스프링은 `SNAKE_CASE` 매핑이라 camelCase 키를 모르는 필드로 버리고
+        # 필수값이 null 이 되어 400 을 낸다. 대역도 그렇게 해야 계약이 검증된다.
+        key = (str(b.get("code_type")), str(b.get("code_name")))
         s.calls.append(("code", key[1]))
         created = key not in s.codes
         if created:
             s.next_code_id += 1
             s.codes[key] = s.next_code_id
         self._json(200, {"message": None, "data": {
-            "codeId": s.codes[key], "codeType": key[0], "codeName": key[1],
+            "code_id": s.codes[key], "code_type": key[0], "code_name": key[1],
             "created": created}})
 
     def do_PUT(self):

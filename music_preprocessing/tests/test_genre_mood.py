@@ -36,6 +36,12 @@ class Server:
     """`BatchClient` 가 부르는 네 가지만 흉내 낸다.
 
     관리자 API 는 없다 — 그걸 부르면 테스트 대역에 메서드가 없어 터진다.
+
+    **내부 행(`self.codes`·`self.music`)은 자바 엔티티처럼 camelCase 로 두고,
+    밖으로 나가는 것만 snake_case 로 바꾼다.** 실제 스프링 서버가 그렇다 —
+    DB·엔티티는 camelCase 이고 `spring.jackson.property-naming-strategy: SNAKE_CASE`
+    가 와이어에서만 갈아 끼운다. 대역이 내부 이름을 그대로 돌려주면 그 계약이
+    사라져, 배치가 camelCase 를 읽어도 테스트가 통과한다 (실제로 그렇게 놓쳤다).
     """
 
     def __init__(self):
@@ -49,12 +55,18 @@ class Server:
 
     # ── 읽기 ────────────────────────────────────────────────────────────
     def options(self):
-        return {kind.lower() + "s": [{"codeId": c["codeId"], "name": c["codeName"]}
+        """온보딩 선택지. `CodeOption.codeId` → `code_id` 로 나간다."""
+        return {kind.lower() + "s": [{"code_id": c["codeId"], "name": c["codeName"],
+                                      "display_name": c.get("displayName") or c["codeName"]}
                                      for c in self.codes if c["codeType"] == kind]
                 for kind in ("GENRE", "MOOD")}
 
     def music_rows(self):
-        return copy.deepcopy(self.music)
+        """곡 목록. `MusicSummary.musicId` → `music_id` 로 나간다."""
+        rows = copy.deepcopy(self.music)
+        for row in rows:
+            row["music_id"] = row.pop("musicId")
+        return rows
 
     # ── 쓰기 ────────────────────────────────────────────────────────────
     def add_code(self, code_type, name, display_name=None):
@@ -63,7 +75,7 @@ class Server:
         folded = {(c["codeType"], c["codeName"].casefold()): c for c in self.codes}
         existing = folded.get((code_type, name.casefold()))
         if existing:
-            return {**existing, "created": False}
+            return self._wire_code(existing, created=False)
         # 표시명을 안 보내면 코드 이름이 곧 표시명이 된다 (서버와 같은 규칙).
         shown = display_name if display_name else name
         row = {"codeId": max(c["codeId"] for c in self.codes) + 1,
@@ -71,7 +83,7 @@ class Server:
         self.codes.append(row)
         self.writes.append(("code", row))
         self._maybe_lose_response()
-        return {**row, "created": True}
+        return self._wire_code(row, created=True)
 
     def replace_classification(self, music_id, genre_code_ids, mood_code_ids):
         names = {c["codeId"]: c["codeName"] for c in self.codes}
@@ -82,9 +94,16 @@ class Server:
         row["moods"] = [names[i] for i in dict.fromkeys(mood_code_ids)]
         self.writes.append(("classification", music_id))
         self._maybe_lose_response()
-        return {"musicId": music_id,
-                "genreCodeIds": sorted(dict.fromkeys(genre_code_ids)),
-                "moodCodeIds": sorted(dict.fromkeys(mood_code_ids))}
+        return {"music_id": music_id,
+                "genre_code_ids": sorted(dict.fromkeys(genre_code_ids)),
+                "mood_code_ids": sorted(dict.fromkeys(mood_code_ids))}
+
+    @staticmethod
+    def _wire_code(row, created):
+        """엔티티 → `CodeResponse` 와이어 모양 (snake_case)."""
+        return {"code_id": row["codeId"], "code_type": row["codeType"],
+                "code_name": row["codeName"],
+                "display_name": row.get("displayName"), "created": created}
 
     def _maybe_lose_response(self):
         if self.fail_after_commit:
@@ -401,10 +420,11 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(path.read_text(), original)
 
     def test_pagination_reads_all_pages(self):
+        """곡 목록의 페이징 키도 snake_case 다 (`total_pages`·`total_elements`)."""
         client = object.__new__(BatchClient)
         with patch.object(client, "_request", side_effect=[
-            {"data": {"items": [{"musicId": 1}], "totalPages": 2, "totalElements": 2}},
-            {"data": {"items": [{"musicId": 2}], "totalPages": 2, "totalElements": 2}},
+            {"data": {"items": [{"music_id": 1}], "total_pages": 2, "total_elements": 2}},
+            {"data": {"items": [{"music_id": 2}], "total_pages": 2, "total_elements": 2}},
         ]) as request:
             self.assertEqual(len(client.music_rows()), 2)
             self.assertIn("page=1", request.call_args.args[1])
@@ -421,17 +441,25 @@ class ClientTests(unittest.TestCase):
         self.assertFalse(any("/admin/" in path for path in paths))
 
     def test_post_and_put_contracts(self):
+        """와이어 이름은 snake_case 다.
+
+        서버는 `spring.jackson.property-naming-strategy: SNAKE_CASE` 로 요청·응답을
+        전부 바꾼다. 자바 필드명(`codeType`·`genreCodeIds`)을 그대로 보내면 스프링이
+        모르는 필드로 버리고(`FAIL_ON_UNKNOWN_PROPERTIES` 기본 활성), 필수값이 `null`
+        이 되어 400 이 난다 — 배치가 응답의 `code_id` 를 읽기도 전에 죽는다.
+        이 단언이 그 계약을 잡는다.
+        """
         client = object.__new__(BatchClient)
         with patch.object(client, "_request", return_value={"data": {}}) as request:
             client.add_code("GENRE", "synthpop")
             request.assert_called_once_with(
                 "POST", "/api/v1/code",
-                json_body={"codeType": "GENRE", "codeName": "synthpop"})
+                json_body={"code_type": "GENRE", "code_name": "synthpop"})
         with patch.object(client, "_request", return_value={"data": {}}) as request:
             client.replace_classification(91, [31], [30, 33])
             request.assert_called_once_with(
                 "PUT", "/api/v1/music/91/classification",
-                json_body={"genreCodeIds": [31], "moodCodeIds": [30, 33]})
+                json_body={"genre_code_ids": [31], "mood_code_ids": [30, 33]})
 
     def test_post_code_carries_display_name_only_when_given(self):
         """표시명은 **줄 게 있을 때만** 싣는다.
@@ -443,12 +471,12 @@ class ClientTests(unittest.TestCase):
             client.add_code("MOOD", "melancholic", "애상적인")
             request.assert_called_once_with(
                 "POST", "/api/v1/code",
-                json_body={"codeType": "MOOD", "codeName": "melancholic",
-                           "displayName": "애상적인"})
+                json_body={"code_type": "MOOD", "code_name": "melancholic",
+                           "display_name": "애상적인"})
         with patch.object(client, "_request", return_value={"data": {}}) as request:
             client.add_code("MOOD", "bright")
             body = request.call_args.kwargs["json_body"]
-            self.assertNotIn("displayName", body)
+            self.assertNotIn("display_name", body)
 
     def test_mood_display_names_match_the_ai_table(self):
         """뜻 표가 AI 쪽과 어긋나면 안 된다.

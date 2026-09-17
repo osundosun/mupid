@@ -164,3 +164,32 @@ PYTHONPATH=src uv run python -m unittest discover -s tests -v
 페이지 조회, 응답 손실 후 재실행을 본다. `tests/test_genre_mood_http.py` 는
 **진짜 HTTP 서버를 띄워** 경로·쿼리·인증 헤더를 그대로 확인한다 — 목 객체만으로는
 "부르긴 불렀는데 서버가 못 알아듣는" 오류가 잡히지 않는다.
+
+## 함정: 서버 JSON 은 snake_case 다
+
+**배치가 서버와 주고받는 모든 키는 snake_case 다.** 자바 record·엔티티의 필드명
+(`codeId`·`genreCodeIds`)이 아니다 — `api/src/main/resources/application.yaml` 의
+`spring.jackson.property-naming-strategy: SNAKE_CASE` 가 요청·응답 전부를 바꾼다.
+
+| 하는 일 | snake_case (서버) | 자바 필드명 |
+| --- | --- | --- |
+| 코드 추가 | `code_type` · `code_name` · `display_name` | `codeType` … |
+| 코드 응답 | `code_id` · `code_name` · `display_name` | `codeId` … |
+| 분류 교체 | `genre_code_ids` · `mood_code_ids` | `genreCodeIds` … |
+| 온보딩 선택지 | `code_id` · `name` · `display_name` | `codeId` … |
+| 곡 목록 | `music_id` · `total_elements` · `total_pages` | `musicId` … |
+
+camelCase 로 보내면 스프링이 **모르는 필드로 버리고**(`FAIL_ON_UNKNOWN_PROPERTIES`
+기본 활성), 필수값이 `null` 이 되어 **400** 이 난다. 읽을 때는 `KeyError` 다 —
+2026-09-17 `data-batch` 가 `genre_mood.py` 의 `row["codeId"]` 에서
+`KeyError: 'codeId'` 로 죽었다. `classify` 가 그날 처음 `run_batch.sh` 에 들어가
+드러났을 뿐, 코드는 그 전부터 틀려 있었다.
+
+**테스트 대역이 이 함정을 가린다.** 대역이 내부 엔티티 이름을 그대로 돌려주면
+배치가 camelCase 를 읽어도 통과한다. 그래서 대역은 **내부는 camelCase(실제 자바
+엔티티와 같게), 밖으로 나가는 것만 snake_case** 로 둔다
+(`tests/test_genre_mood.py` 의 `Server._wire_code`). 대역을 고치지 않고 소스만
+고치면 아무것도 검증되지 않는다.
+
+**`imageFile` 은 예외다.** 멀티파트 폼 필드라 `@RequestParam` 이름을 그대로 쓰므로
+camelCase 가 맞다 — `SNAKE_CASE` 는 JSON 본문에만 걸린다.
