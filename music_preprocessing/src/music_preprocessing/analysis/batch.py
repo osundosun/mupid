@@ -529,7 +529,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--demix-dir", default=None,
                     help="구간별 악기를 읽을 demucs 스템. 비우면 <artifact>/work/demix")
     ap.add_argument("--sections-dir", default=None,
-                    help="변환된 sections.json 디렉터리. 비우면 analysis_work_dir/allin1_raw")
+                    help="변환된 sections.json 디렉터리. 비우면 analysis_work_dir/sections")
+    ap.add_argument("--segmenter-python", default=None,
+                    help="②③④·① 을 돌릴 3.10 인터프리터. 비우면 config 값을 쓴다")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="--local 에서 돌릴 곡 수 상한. 0(기본)이면 전부 — 조용히 자르지 않는다")
     ap.add_argument("--keep", type=int, default=None, help="남길 이전 판 수")
     ap.add_argument("--force-unlock", action="store_true",
                     help="남아 있는 잠금을 지우고 시작한다. 앞 실행이 살아 있으면 안 된다")
@@ -660,6 +664,20 @@ def _collect_local(a, cfg):
     work = Path(getattr(cfg, "analysis_work_dir", "./analysis_work"))
     if not work.is_absolute():
         work = Path(a.config).parent / work
+    # 3.10 인터프리터 — ① 분할과 ②③④ 가 여기서 돈다. 부모(3.12)에는 torch 가 없어서
+    # 이 값이 비면 배치가 ②③④ 진입에서 죽는다. 그래서 **비어 있으면 멈춘다.**
+    py = getattr(a, "segmenter_python", None) or getattr(
+        cfg, "analysis_segmenter_python", "") or ""
+    if not py:
+        raise SystemExit(
+            "3.10 인터프리터가 없다 — config 의 `analysis_segmenter_python` 이나 "
+            "`--segmenter-python` 이 필요하다. ①(All-In-One)과 ②③④(MERT)가 그 "
+            "환경에서 돈다. 이 3.12 에는 torch 가 없다.")
+    if not Path(py).exists():
+        raise SystemExit(f"3.10 인터프리터가 없다: {py}")
+    # `--local` 은 **자르지 않는다.** `analysis_limit` 은 요구 5 한 페이지 크기라
+    # 로컬과 무관하고, 그 값을 그대로 쓰면 남은 곡이 조용히 빠진다.
+    limit = int(getattr(a, "limit", 0) or 0)
     # `registered.json` 은 artifact 밖(`~/music_preprocessing`)에 있다 — 청킹 배치가
     # 거기서 돌기 때문이다. config 가 가리키는 값을 그대로 쓴다.
     reg_json = getattr(cfg, "api_registry_log", "") or ""
@@ -682,14 +700,15 @@ def _collect_local(a, cfg):
         else artifact / "work" / seg.DEMIX_DIRNAME
     segmenter = seg.Segmenter(
         work_dir=work / "allin1", out_dir=allin1_dir,
-        python=getattr(cfg, "analysis_segmenter_python", "") or None,
+        python=py,
         device=getattr(cfg, "analysis_device", "") or seg.ALLIN1_DEVICE)
     log(f"  ① 원본 {allin1_dir} · 변환본 {out_dir} · 스템 {demix}")
+    log(f"  인터프리터 {py} · 상한 {limit or '없음(전부)'}")
     tracks, info = lib.build(
         ids,
         sections_of=lambda tid: Path(out_dir) / f"{tid}.json",
         demix_root=demix,
-        limit=int(getattr(cfg, "analysis_limit", 0) or 0))
+        limit=limit)
     for tid, why in list((info.get("skipped") or {}).items())[:20]:
         log(f"  건너뜀 {tid}: {why}")
     for tid, why in (info.get("failed") or {}).items():
@@ -734,7 +753,7 @@ def _collect_local(a, cfg):
         made += 1
     log(f"② 입력 sections.json {made}개 생성 (기존 {len(tracks) - made}개 재사용)")
 
-    analyzer = _child_analyzer(cfg, root)
+    analyzer = _child_analyzer(py, root, cfg)
     registrar = ai_registrar(cfg)
     return tracks, registrar, None, analyzer
 
@@ -779,13 +798,15 @@ def _tag_file(cfg, a, root: Path) -> Optional[Path]:
     return None
 
 
-def _child_analyzer(cfg, root: Path):
+def _child_analyzer(py: str, root: Path, cfg):
     """②③④ 를 돌릴 인터프리터. **없으면 None** — 부모가 직접 돌린다.
 
     배포 서버(3.12)에는 torch 가 없다. `analysis_segmenter_python`(All-In-One 용
     3.10)에 torch·transformers·MERT 가 함께 있으므로 그쪽에 맡긴다.
+
+    호출자가 이미 3.10 인터프리터를 확인해 `py` 로 넘긴다 — 두 곳에서 config 를
+    다시 읽으면 값이 갈린다.
     """
-    py = getattr(cfg, "analysis_segmenter_python", "") or ""
     if not py:
         return None
     src = Path(__file__).resolve().parents[2]

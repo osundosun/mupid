@@ -50,10 +50,18 @@ run classify --yes || failed=1
 run batch || failed=1
 # 구간 분석(① 분할 → ②③④ 특징 → ⑤ 색인 → ⑥ 등록·전환).
 # **맨 뒤다.** GPU 를 오래 잡고, 실패해도 위 단계의 결과는 이미 서비스에 반영돼 있다.
-#   · ① 은 conda mupid-ai(3.10), ②③④ 도 같은 환경(부모 3.12 에는 torch 가 없다),
-#     ⑤⑥ 은 이 3.12 — 색인 쓰기에 pandas 가 필요하다.
+#   · ①·②③④ 는 conda mupid-ai(3.10) 에서 돈다 — 이 3.12 에는 torch 가 없다.
+#     그래서 `--segmenter-python` 을 반드시 준다(비면 배치가 ②③④ 진입에서 멈춘다).
+#   · ⑤⑥ 은 이 3.12 — 색인 쓰기에 pandas 가 필요하다(`uv sync --extra analysis`).
 #   · 대상은 `~/flow_music_data` 에서 직접 고른다. 요구 5 조회 API 를 부르지 않는다.
-run analysis --yes --local || failed=1
+#   · `--limit` 을 주지 않는다 — 주면 남은 곡이 조용히 빠진다.
+MUPID_AI_PY="${MUPID_AI_PY:-$HOME/.conda/envs/mupid-ai/bin/python}"
+if [ -x "$MUPID_AI_PY" ]; then
+  run analysis --yes --local --segmenter-python "$MUPID_AI_PY" || failed=1
+else
+  echo "3.10 인터프리터가 없다: $MUPID_AI_PY — 분석 단계를 건너뛴다" >&2
+  failed=1
+fi
 
 # 앞 단계가 실패해도 나머지는 돌린다. catalog 가 실패했다고 이미 등록된 곡의
 # 청킹까지 멈출 이유가 없고, 무엇이 실패했는지는 종료 코드로 알린다.

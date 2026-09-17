@@ -12,6 +12,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from music_preprocessing.analysis import batch as ab
 from music_preprocessing.analysis import registry as rg
@@ -308,12 +309,90 @@ class TagFileDiscoveryTests(unittest.TestCase):
     def test_config_value_wins(self):
         explicit = Path(self.tmp.name) / "other.parquet"
         explicit.write_bytes(b"x")
-        cfg = json.loads("{}")
 
         class C:
             analysis_tag_file = str(explicit)
 
         self.assertEqual(ab._tag_file(C(), self._args(), self.root), explicit)
+
+
+class LocalCollectGuardsTests(unittest.TestCase):
+    """`--local` 이 **조용히 틀리지 않는가.**
+
+    두 가지 실패 모드를 막는다. 둘 다 오류 없이 지나가고 나중에야 드러난다.
+
+    1. 3.10 인터프리터가 없으면 ②③④ 진입에서 죽는다 — 부모(3.12)에는 torch 가 없다.
+       이건 그나마 시끄럽다. 그래서 **미리 멈춘다**(무엇이 없는지 말하고).
+    2. `analysis_limit`(요구 5 한 페이지 크기)을 `--local` 에 그대로 쓰면 남은 곡이
+       조용히 빠진다. 299곡 중 200곡만 분석되고 나머지는 영영 안 들어간다.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.artifact = Path(self.tmp.name) / "art"
+        self.root = self.artifact / "data" / "proc" / "mupid"
+        self.root.mkdir(parents=True)
+        # 색인 최소 요건 — `main()` 이 moments 존재를 본다
+        (self.root / "moments.parquet").write_bytes(b"x")
+        self.cfg_file = Path(self.tmp.name) / "config.json"
+        self.cfg_file.write_text(json.dumps({
+            "analysis_artifact_dir": str(self.artifact),
+            "analysis_work_dir": "./analysis_work",
+        }), encoding="utf-8")
+
+    def _args(self, **kw):
+        ns = argparse.Namespace(
+            manifest=None, config=str(self.cfg_file), data_dir=None, device=None,
+            local=True, flow_dir=None, all_tracks=False, allin1_dir=None,
+            demix_dir=None, sections_dir=None, segmenter_python=None, limit=0,
+            keep=None, force_unlock=False)
+        for k, v in kw.items():
+            setattr(ns, k, v)
+        return ns
+
+    def test_missing_interpreter_stops_with_a_reason(self):
+        """3.10 인터프리터가 없으면 **무엇이 없는지 말하고 멈춘다.**"""
+        with self.assertRaises(SystemExit) as got:
+            ab._collect_local(self._args(), ab._load_config(str(self.cfg_file)))
+        self.assertIn("3.10", str(got.exception))
+
+    def test_bogus_interpreter_path_stops(self):
+        with self.assertRaises(SystemExit) as got:
+            ab._collect_local(self._args(segmenter_python="/nope/python"),
+                              ab._load_config(str(self.cfg_file)))
+        self.assertIn("/nope/python", str(got.exception))
+
+    def test_config_limit_is_not_applied_to_local(self):
+        """`analysis_limit=200` 이 `--local` 을 200곡으로 자르면 안 된다.
+
+        실제로 299곡이 200곡으로 잘려 나갔다. 잘림을 잡으려면 대상 수가 곡 수와
+        같아야 하는데, 여기서는 곡이 없으므로 **호출이 limit=0 으로 가는지**를 본다
+        (`Registry.build` 에 넘어가는 값).
+        """
+        seen = {}
+
+        class FakeRegistry:
+            def __init__(self, **kw):
+                self.warn = []
+
+            def build(self, ids, **kw):
+                seen.update(kw)
+                return [], {"failed": {}, "skipped": {}, "warn": []}
+
+        py = sys.executable          # 존재하는 인터프리터면 충분하다
+        cfg = ab._load_config(str(self.cfg_file))
+        # config 에 큰 값을 심어도 --local 은 그걸 쓰면 안 된다
+        cfg.analysis_limit = 200
+        # `registry` 는 `_collect_local` 안에서 import 된다 — 모듈 속성으로 패치한다.
+        # 등록기 생성은 토큰 파일이 필요하다 — 시험 대상이 아니므로 빈 등록기로 바꾼다.
+        with mock.patch.object(rg, "LocalRegistry", FakeRegistry), \
+                mock.patch.object(ab, "_local_track_ids", return_value=[]), \
+                mock.patch.object(ab, "ai_registrar",
+                                  return_value=ab.UnavailableRegistrar("시험")), \
+                mock.patch.object(ab.seg, "Segmenter"):
+            ab._collect_local(self._args(segmenter_python=py), cfg)
+        self.assertEqual(seen.get("limit"), 0, "config 의 analysis_limit 이 샜다")
 
 
 if __name__ == "__main__":

@@ -652,6 +652,18 @@ def analysis(
             help="변환된 sections.json 디렉터리. 비우면 <work>/sections", show_default=False
         ),
     ] = None,
+    segmenter_python: Annotated[
+        Path | None,
+        typer.Option(
+            "--segmenter-python",
+            help="① 분할·②③④ 를 돌릴 3.10 인터프리터. 비우면 config 값을 쓴다",
+            show_default=False,
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option(help="--local 에서 돌릴 곡 수 상한. 0(기본)이면 전부"),
+    ] = 0,
     data_dir: Annotated[
         Path | None, typer.Option(help="색인 디렉터리 (기본: $MUPID_AI_ARTIFACT_DIR/...)", show_default=False)
     ] = None,
@@ -693,6 +705,10 @@ def analysis(
         argv += ["--demix-dir", str(demix_dir)]
     if sections_dir:
         argv += ["--sections-dir", str(sections_dir)]
+    if segmenter_python:
+        argv += ["--segmenter-python", str(segmenter_python)]
+    if limit:
+        argv += ["--limit", str(limit)]
     if data_dir:
         argv += ["--data-dir", str(data_dir)]
     if device:
