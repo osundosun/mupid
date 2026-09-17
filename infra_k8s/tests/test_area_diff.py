@@ -39,6 +39,7 @@ class PathMappingTest(unittest.TestCase):
             ("infra/image/Dockerfile", "Backend"),
             ("ai_server/app/main.py", "AI"),
             ("music_preprocessing/src/x.py", "Data"),
+            ("flow_music_automation/scripts/x.py", "Data"),
             ("infra/ci/deploy-jupyter.py", "Data"),
             ("infra/ci/labels.yml", "Infra"),
             ("infra_k8s/base/edge.yaml", "Infra"),
