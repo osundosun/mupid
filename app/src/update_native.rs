@@ -16,6 +16,11 @@
 //! `init()` 은 어느 플랫폼에서나 존재한다 — `Builder::plugin()` 이 그걸 부르기
 //! 때문이다. 모듈을 통째로 빼 버리면 데스크톱 빌드가 컴파일되지 않는다.
 //! (`media.rs` 의 판단과 같다.)
+//!
+//! 안드로이드가 아닌 타깃에서는 아래 `impl` 블록이 통째로 빠져 `Path` 가
+//! 미사용이 된다. 그 경고를 끄는 방식도 `media.rs` 와 같다.
+
+#![cfg_attr(not(target_os = "android"), allow(dead_code, unused_imports))]
 
 use std::path::Path;
 

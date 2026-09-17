@@ -280,7 +280,7 @@ pub fn expand(archive: &[u8], target: &Path) -> Result<Expanded, UpdateError> {
     fs::create_dir_all(target)?;
 
     for entry in tar.entries().map_err(|error| UpdateError::Archive(error.to_string()))? {
-        let mut entry = entry.map_err(|error| UpdateError::Archive(error.to_string()))?;
+        let entry = entry.map_err(|error| UpdateError::Archive(error.to_string()))?;
         let kind = entry.header().entry_type();
         let raw = entry
             .path()
