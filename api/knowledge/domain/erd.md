@@ -60,11 +60,28 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 (`MOOD`/`INSTRUMENT`/`GENRE`)으로 들어간다. 예전 `erd.sql` 에 있던 `genres` ·
 `moods` · `instruments` 세 테이블은 없다.
 
+`codes` 는 이름을 **두 벌** 갖는다 (2026-09-17 추가).
+
+| 컬럼 | 무엇 | 예 |
+|---|---|---|
+| `code_name` | **AI 색인과 맞추는 값.** 스프링이 AI 서버로 넘긴다 | 장르 `poprock`, 무드 `애상적인` |
+| `display_name` | **화면에 그릴 값** | 장르 `팝 록`, 무드 `melancholic` |
+
+**어느 쪽이 색인 값인지는 종류마다 반대다.** 장르 45종은 `code_name` 이 색인
+원문(`poprock`)이고 `display_name` 이 나중에 한국어가 된다. taxonomy 무드 9종은
+`code_name` 이 화면용 한국어(`애상적인`)이고 `display_name` 이 색인 원문
+(`melancholic`)이다 — 무드 9종이 기존 8종(`잔잔한`)과 같은 방향이기 때문이다.
+
+헷갈리면 **`AiRecommendToolImpl` 이 `CodeOption::name`(= `code_name`)을 보낸다**는
+것을 기준으로 삼는다. 여기에 한국어가 실수로 들어가면 색인에 없는 말이 가서
+씨앗이 0 이 되는데, **오류는 나지 않고 개인화만 사라진다.**
+
 ## ERD 가 쓰는 공통 규약
 
 | 항목 | 규칙 | 예외 |
 |---|---|---|
 | PK | `<단수명>_id`, `INT AUTO_INCREMENT` | `ai_chat_messages`·`play_histories` 는 `BIGINT`. `ai_chat_sessions` 는 `AUTO_INCREMENT` 가 없다. `music_analysis` 는 PK 가 곧 FK(`music_id`) 다 |
+| **FK 자리** | **`AUTO_INCREMENT` 를 붙이지 않는다.** 남의 PK 를 가리키는 컬럼은 값을 발급받는 자리가 아니다 | 아래 "`AUTO_INCREMENT` 는 PK 자리에만" 참고 |
 | 복합 PK | 매핑·이력 테이블은 두 컬럼을 묶는다 — `chunks`(`stream_id`,`index`), `listening`, `music_genres`, `music_moods`, `music_reactions`, `music_section_analysis_mood`, `music_analysis_instruments`, `daily_recommendation_tracks`(`…_id`,`rank_order`), `playlist_tracks`(`playlist_id`,`track_order`) | |
 | 테이블명 | 복수형 snake_case | `music`(불가산), `mubti`, `onboarding_survey`, `listening`(단수) |
 | 감사 컬럼 | `created_at` / `updated_at` `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` | 이력성 테이블은 `created_at` 만 둔다. `chunks`·`listening`·`lyrics`·`mubti`·`music_analysis`·`music_section_analysis`·`streams` 는 둘 다 없다 |
@@ -78,13 +95,55 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 재산출된 DDL 에는 **도구가 남긴 흔적**이 몇 군데 있다. 고치기 전에 팀에 묻되,
 읽을 때 당황하지 않도록 적어 둔다.
 
-- `music_analysis_instruments.music_section_analysis_id` 에 `AUTO_INCREMENT` 가
-  붙어 있다. 복합 PK 의 앞 컬럼이자 FK 인데 자동 증가일 수는 없다.
 - `ix_song_reactions_`(`music_reactions`)·`ux_play_histories_play_history_id`
   는 PK 와 같은 컬럼에 걸린 중복 인덱스다.
 - `reports` 의 유니크 인덱스 이름이
   `analysis_reports_copy_uq_analysis_report_period` 다. 예전 테이블명
   (`analysis_reports`)을 복사하며 생긴 이름이다.
+
+### `AUTO_INCREMENT` 는 PK 자리에만 — 오류 없이 어긋나는 자리
+
+**`AUTO_INCREMENT` 가 붙은 컬럼은 전부 단일 PK 여야 한다.** 특히 **FK 자리에는
+절대 붙이지 않는다.** 이 규칙은 미관이 아니라 실패 모드 때문이다.
+
+2026-09-17 재산출까지 `music_analysis_instruments.music_section_analysis_id` 에
+`AUTO_INCREMENT` 가 붙어 있었다. 그 컬럼은 복합 PK 의 앞 컬럼이면서
+**`music_section_analysis` 를 가리키는 FK** 다 — 값을 발급받는 자리가 아니다.
+붙어 있으면 `0` 이 들어올 때 MySQL 이 `NO_AUTO_VALUE_ON_ZERO` 를 보고
+**새 번호를 발급한다.** 로컬 재현(운영과 같은 모양의 임시 표):
+
+```sql
+INSERT INTO links (section_id, code_id) VALUES (1, 100);   -- 1번 구간에 기타
+INSERT INTO links (section_id, code_id) VALUES (0, 200);   -- 값이 0으로 들어온 경우
+
+section_id  code_id
+    1         100
+    2         200     ← 0을 넣었는데 2가 됐다. 외래키 검사도 통과했다
+```
+
+**세 가지가 겹쳐서 조용히 어긋난다.**
+
+1. 발급된 번호가 마침 존재하는 구간 번호라 **외래키 검사를 통과한다** —
+   무결성 검사가 이 오류를 못 잡는다.
+2. **오류가 나지 않는다.** INSERT 성공, 응답 200, 화면 정상. 악기만 엉뚱한
+   구간에 붙는다.
+3. 떼면 같은 INSERT 가 `ERROR 1452 ... foreign key constraint fails` 로
+   **시끄럽게 실패한다** — 그게 맞는 동작이다. 잘못된 구간 번호를 보낸 쪽을
+   즉시 알려 주니까.
+
+**지금 당장 터지지는 않는다.** JPA 경로는 `@MapsId` 가 실제 PK 를 채워 보내므로
+`0` 이 갈 일이 없다(`MusicAnalysisInstrument.MusicAnalysisInstrumentId` 참고 —
+`insertable = false` 를 두면 안 된다고 적혀 있다). 위험한 것은 손으로 쓴 SQL ·
+벌크 로더 · id 가 채워지지 않은 INSERT 다. 그때 이 컬럼이 조용히 남을 가리킨다.
+
+**그래서 게이트가 이걸 본다.** `infra_k8s/deploy/schema-check.py` 는 DB 의
+`extra` 에 `auto_increment` 가 있는데 `erd.sql` 에는 없는 컬럼을 차이로 보고한다.
+`information_schema.columns` 를 보면서 `extra` 를 안 읽던 동안에는 이 컬럼이
+정반대여도 **"차이 없음"** 이 나왔다 — 인덱스도 조회하지 않아 `external_id` 의
+UNIQUE 누락이 같이 숨었다. 둘 다 2026-09-17 에 고쳤다.
+
+`music_section_analysis.music_section_analysis_id` 는 **이름이 같아도 다른 표**라
+`AUTO_INCREMENT` 가 맞다 (그건 진짜 PK 다). 헷갈리기 쉬우니 표를 확인한다.
 
 코드 쪽에도 짝이 하나 있다. `storage/enumerate/` 에 **쓰이지 않는 쌍둥이 enum**
 `StorageFileCategory` · `StorageFileType` 이 남아 있다. 실제로 도는 것은
@@ -146,6 +205,52 @@ ERD 반입 시점(2026-09-11)에 기존 엔티티 3개가 ERD 와 여러 곳에�
 | `email_verifications.token` | `VARCHAR(6)` + **UNIQUE** | 길이·유니크 없음 | 6자리 랜덤이 충돌하면 발송이 실패한다 |
 | `onboarding_survey` | `mood_code_id` · `genre_code_id` **NOT NULL** | 같음 | 한 줄에 답 하나를 담을 수 없다. 지금은 분위기 × 장르 조합으로 우회한다 → [decision/0017](../decision/0017-onboarding-survey-cross-product.md) |
 
+### 아직 DB 에 적용하지 않은 DDL (2026-09-17 기준)
+
+`erd.sql` 이 **최종 모양**을 적고 실제 DB 가 뒤처져 있는 것들이다. `ddl-auto` 가
+`none` 이라 앱이 바꾸지 않는다 — **사람이 직접 실행해야 한다.**
+
+`infra_k8s/deploy/schema-check.py` 로 정확한 목록을 뽑는다 (아래 "출처" 참고).
+
+| | 대상 | 지금 DB | erd.sql | 운영 | 개발 |
+|---|---|---|---|---|---|
+| ① | `music_analysis_instruments.music_section_analysis_id` | `int auto_increment` | `int` | 미적용 | 미적용 |
+| ② | `music_section_analysis.external_id` UNIQUE | 없음 | 있음 | 미적용 | **적용됨** |
+| ③ | `codes.display_name` | 컬럼 없음 | `VARCHAR(200)` | 미적용 | **적용됨** |
+
+운영·개발이 갈린 이유는 개발 DB 를 손으로 고쳤기 때문이다. ①의 DDL:
+
+```sql
+-- FK 를 먼저 떼야 MODIFY 가 통과한다. 붙은 채로 하면 ERROR 1832 로 거부된다.
+ALTER TABLE music_analysis_instruments
+  DROP FOREIGN KEY fk_music_analysis_instruments_music_section_analysis_id;
+ALTER TABLE music_analysis_instruments
+  MODIFY music_section_analysis_id INT NOT NULL;
+ALTER TABLE music_analysis_instruments
+  ADD CONSTRAINT fk_music_analysis_instruments_music_section_analysis_id
+  FOREIGN KEY (music_section_analysis_id)
+  REFERENCES music_section_analysis (music_section_analysis_id);
+```
+
+②·③ 은 각각 이렇게 된다. **②는 행이 들어오기 전에 걸어야 한다** — 중복이 이미
+생긴 뒤에는 실패한다(세 테이블 모두 0행인 지금이 가장 싸다).
+
+```sql
+ALTER TABLE music_section_analysis
+  ADD UNIQUE KEY uk_music_section_analysis_external_id (external_id);
+
+ALTER TABLE codes ADD COLUMN display_name VARCHAR(200) NOT NULL AFTER code_name;
+UPDATE codes SET display_name = code_name WHERE display_name = '';
+```
+
+> **③ 은 앱보다 먼저 들어가야 한다.** `Code` 엔티티가 이 컬럼을 매핑하므로,
+> 없으면 스프링 컨텍스트가 못 뜨고 **모든 `@SpringBootTest` 가 통째로 죽는다.**
+> 원인이 "컨텍스트 로딩 실패" 로만 보여 스키마 문제인 줄 알아채기 어렵다.
+
+인덱스 이름은 곳에 따라 다르다 — erd.sql 은 `ux_…`, 위 DDL 은 `uk_…`, 이미 적용된
+개발 DB 도 `uk_…` 다. 게이트가 **이름을 보지 않으므로** 아무 문제가 없다
+(`schema-check.py` 의 "인덱스는 이름을 비교하지 않는다").
+
 ### 재산출이 풀어 준 것
 
 | 무엇 | 전 | 후 |
@@ -202,7 +307,40 @@ MySQL 도메인을 만들 때는 **`music_id` 를 쓴다.** ERD 에 `track_id` �
 
 ## 출처
 
-[erd.sql](erd.sql) — ERD 도구 산출 DDL (2026-09-11 반입, 2026-09-15 재산출).
+[erd.sql](erd.sql) — ERD 도구 산출 DDL (2026-09-11 반입, 2026-09-15 · **2026-09-17** 재산출).
+
+**2026-09-17 재산출은 `codes.display_name` 추가와 두 가지 결함 정정을 담았다.**
+
+| | 무엇 | 왜 |
+|---|---|---|
+| 추가 | `codes.display_name VARCHAR(200) NOT NULL` | 화면에 그릴 이름과 AI 색인 값을 갈라 두기 위해서다. 장르 45종은 `code_name` 이 색인 원문(`poprock`), taxonomy 무드 9종은 `code_name` 이 화면용 한국어(`애상적인`)다 — **어느 쪽이 색인 값인지는 종류마다 반대다.** 배경은 [open-questions.md](../open-questions.md) 와 `ai_server/app/onboarding.py` |
+| 정정 | `music_analysis_instruments.music_section_analysis_id` 의 `AUTO_INCREMENT` 제거 | FK 자리다. 위 "`AUTO_INCREMENT` 는 PK 자리에만" 참고 |
+| 정정 | `music_section_analysis.external_id` 에 UNIQUE 추가 | 문자열 UID 와 숫자 id 를 잇는 유일한 근거다. 없으면 같은 값이 두 구간에 존재할 수 있다 |
+
+> **이 재산출로 `erd.sql` 에서 손으로 넣었던 설명 주석이 사라졌다.** 도구가 `--`
+> 주석을 보존하지 않는다. 커밋 `b6d5c7e`(S15P21A204-344)가 붙였던 근거는 위
+> "`AUTO_INCREMENT` 는 PK 자리에만" 절로 옮겨 적었다 — **`erd.sql` 에 다시
+> 손으로 주석을 넣지 않는다.** 지식은 이 문서에만 산다.
+
+### 스키마 대조 도구
+
+[`infra_k8s/deploy/schema-check.py`](../../../infra_k8s/deploy/schema-check.py) 가
+`erd.sql` · DB · 엔티티 셋을 맞춰 본다. **여기서 뽑은 목록이 위 "아직 DB 에
+적용하지 않은 DDL" 표다.**
+
+```bash
+# 이 PC 에서 운영·개발 스키마를 뜬다 (kubectl / docker)
+bash infra_k8s/deploy/schema-dump-local.sh prod.tsv
+MUPID_SCHEMA_SOURCE=dev bash infra_k8s/deploy/schema-dump-local.sh dev.tsv
+
+# 대조. --unique-only 는 erd.sql 에 없는 일반 인덱스 소음을 뺀다
+python3 infra_k8s/deploy/schema-check.py --schema prod.tsv --unique-only
+```
+
+**`extra`(AUTO_INCREMENT)와 인덱스를 반드시 같이 뽑는다.** 한동안 `column_type`
+만 읽었는데, 그러면 `AUTO_INCREMENT` 는 `extra` 에 있고 인덱스는 다른 표에 있어
+**둘 다 안 보인다.** 실제로 그 상태에서 위 두 결함이 정반대인데도 "차이 없음" 이
+나왔다. `schema-dump.sh`(노드용)도 같은 두 조회를 한다.
 
 [seed-codes.sql](seed-codes.sql) — `codes` 기준 데이터. 비어 있으면 온보딩이 503 이다. 기동 때 `bootstrap/BootstrapRunner` 가 같은 목록으로 빠진 것만 채우므로 보통은 손댈 일이 없다. 테이블 자체는 `ddl-auto` 가 `none` 이라 사람이 만들어야 한다.
 
