@@ -15,7 +15,6 @@ import { commentable } from './comment-rules';
 import type { Track } from './mupid-data';
 
 export type TrackComment = {
-  avatarUrl?: string;
   /** 서버 댓글 번호를 문자열로 옮긴 값. */
   id: string;
   trackId: number;
@@ -48,7 +47,6 @@ const toComment = (track: Track, comment: MusicComment): TrackComment => ({
   at: comment.timestamp_ms / 1000,
   body: comment.content,
   author: comment.nickname,
-  avatarUrl: comment.image_url ?? undefined,
   authorId: comment.user_id,
   mine: comment.mine,
   createdAt: Date.parse(comment.created_at) || Date.now(),
@@ -58,13 +56,7 @@ export const trackComments = {
   async list(track: Track, signal?: AbortSignal): Promise<TrackComment[]> {
     if (!commentable(track)) return [];
     const page = await api.comment.list(track.musicId, { size: PAGE_SIZE }, signal);
-    const items = [...(page?.items ?? [])];
-    // 댓글이 많은 곡도 첫 100개 이후의 시점이 빠지지 않게 받는다.
-    for (let offset = 1; offset < (page?.total_pages ?? 0); offset++) {
-      const next = await api.comment.list(track.musicId, { page: page.page + offset, size: PAGE_SIZE }, signal);
-      items.push(...(next?.items ?? []));
-    }
-    return [...new Map(items.map(item => [item.comment_id, item])).values()].map(item => toComment(track, item));
+    return (page?.items ?? []).map((item) => toComment(track, item));
   },
   async add(track: Track, at: number, body: string): Promise<TrackComment> {
     if (!commentable(track)) throw new Error('이 곡에는 댓글을 남길 수 없어요.');

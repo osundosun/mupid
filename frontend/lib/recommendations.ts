@@ -92,7 +92,6 @@ export async function fetchTodayMoments(
       ...toTrack(row.music),
       mood: group.mood || '',
       reason: row.reason ?? '',
-      recommendationReason: row.reason?.trim() || group.reason?.trim() || '오늘의 추천으로 선정된 곡이에요. 자세한 이유는 아직 제공되지 않았어요.',
     })),
   };
 }

@@ -25,7 +25,7 @@ const pendingDrafts = new Map<number, { at: number; body: string; owner: number 
 function CommentAvatar({ comment }: { comment: TrackComment }) {
   const [failed, setFailed] = useState<string | null>(null);
   const myPhoto = useStore(profilePhotoStore, state => state.url);
-  const photo = comment.mine ? myPhoto || comment.avatarUrl : comment.avatarUrl;
+  const photo = comment.mine ? myPhoto : undefined;
   const src = photo && photo !== failed ? photo : DEFAULT_PROFILE_PHOTO;
   return <img className="comment-avatar-image" src={src} alt="" onError={() => { if (src !== DEFAULT_PROFILE_PHOTO) setFailed(src); }} />;
 }

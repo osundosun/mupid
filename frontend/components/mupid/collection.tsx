@@ -595,7 +595,6 @@ function NicknameForm({ model: m }: { model: MupidModel }) {
 export function ProfileView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
   const ignoredTracks = tracks.filter(track => m.ignored.includes(track.id));
-  const ignoredSelection = useTrackSelection(ignoredTracks.map(track => track.id));
   return (
     <div className="content-page">
       <PageHeader title="마이페이지" onBack={() => m.go('home')} />
@@ -622,24 +621,9 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
       )}
       <section className="profile-settings-card profile-ignored-card" aria-label="관심 없는 곡">
       <h2>관심 없는 곡 <span className="profile-section-count">{ignoredTracks.length}곡</span></h2>
-      {!!ignoredTracks.length && <div className="ignored-edit-toolbar">
-        {ignoredSelection.active ? <>
-          <label><input type="checkbox" checked={ignoredSelection.allPicked} onChange={ignoredSelection.toggleAll} />전체 선택</label>
-          <span aria-live="polite">{ignoredSelection.picked.length}곡 선택</span>
-          <button className="text-link" onClick={ignoredSelection.cancel}>취소</button>
-          <button className="secondary-button" disabled={!ignoredSelection.picked.length} onClick={() => {
-            ignoredSelection.picked.forEach(id => m.toggleIgnored(id));
-            ignoredSelection.cancel();
-          }}>선택 해제하기</button>
-        </> : <button className="text-link" onClick={ignoredSelection.start}><Pencil size={16} />목록 편집</button>}
-      </div>}
+      {!!ignoredTracks.length && <button className="text-link" onClick={m.clearIgnored}>관심 없음 전체 해제</button>}
       <section className="track-list profile-history" aria-label="관심 없는 곡 목록">
-        {ignoredTracks.map(track => <TrackRow
-          key={track.id} track={track} model={m} showDetail={false}
-          selected={ignoredSelection.has(track.id)}
-          onSelect={ignoredSelection.active ? () => ignoredSelection.toggle(track.id) : undefined}
-          action={ignoredSelection.active ? undefined : <button className="text-link" style={{ minHeight: 44, paddingInline: 12, whiteSpace: 'nowrap' }} aria-label={`${track.title} 관심 없음 해제`} onClick={() => m.toggleIgnored(track.id)}>해제</button>}
-        />)}
+        {ignoredTracks.map(track => <TrackRow key={track.id} track={track} model={m} showDetail={false} />)}
         {!ignoredTracks.length && <p className="listening-history-empty">관심 없는 곡이 없어요.<span>등록한 곡은 추천에서 제외돼요.</span></p>}
       </section>
       </section>

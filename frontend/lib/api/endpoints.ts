@@ -43,7 +43,6 @@ export type SignupBody = {
 };
 
 export type MusicComment = {
-  image_url?: string | null;
   comment_id: number;
   music_id: number;
   timestamp_ms: number;
