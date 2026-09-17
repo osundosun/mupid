@@ -18,6 +18,7 @@ import {
   Music2,
   Plus,
   Pencil,
+  Play,
   Trash2,
   X,
 } from 'lucide-react';
@@ -48,8 +49,8 @@ import {
   EmptyState,
   Heading,
   PageHeader,
-  TrackRow,
   PlayerControls,
+  TrackRow,
 } from './primitives';
 
 // 탭 이름을 그대로 화면 제목으로 쓴다. 어느 탭에 있는지 제목만 봐도 알 수 있게.
@@ -62,6 +63,14 @@ const LIBRARY_TAB_TITLES: Record<string, string> = {
 export function LibraryView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
   const selected = m.playlists.find((p) => p.id === m.selectedPlaylist);
+  /*
+   * 지금 울리는 곡이 이 목록의 곡인가.
+   *
+   * 눈금과 재생 아이콘은 이 값이 있을 때만 살린다. 전에는 전역 플레이어
+   * (`m.time`·`m.active`)를 그대로 비춰서, 목록에 없는 곡이 돌 때도 눈금이
+   * 같이 움직이고 이 목록이 재생 중인 것처럼 일시정지 모양이 됐다.
+   */
+  const playingTrack = m.active && selected?.tracks.some((t) => t.id === m.active!.id) ? m.active : null;
   // 저장한 순간은 되돌릴 수 없어서 삭제 전에 한 번 확인받는다.
   const [removeMoment, setRemoveMoment] = useState<number | null>(null);
   const momentToRemove = m.moments.find((v) => v.id === removeMoment);
@@ -140,17 +149,17 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                     )}
                     분
                   </p>
-                  {selected.tracks.length > 0 && m.active && <div className="playlist-transport" aria-label="플레이리스트 재생">
-                    <PlayerControls model={m} onPlay={() => {
-                      const sameQueue = m.queueTracks.length === selected.tracks.length && m.queueTracks.every(t => selected.tracks.some(s => s.id === t.id));
-                      if (sameQueue) m.play();
-                      else m.playPlaylist(selected);
-                    }} />
-                    <div className="playlist-seek">
-                      <span>{formatTime(m.time)}</span>
-                      <input type="range" min={0} max={m.active.duration} step={1} value={m.time} aria-label="재생 위치" onChange={event => m.seek(Number(event.target.value))} />
-                      <span>{formatTime(m.active.duration)}</span>
-                    </div>
+                  {selected.tracks.length > 0 && <div className="playlist-transport" aria-label="플레이리스트 재생">
+                    {playingTrack ? <>
+                      <PlayerControls model={m} />
+                      <div className="playlist-seek">
+                        <span>{formatTime(m.time)}</span>
+                        <input type="range" min={0} max={playingTrack.duration} step={1} value={Math.min(m.time, playingTrack.duration)} aria-label="재생 위치" onChange={event => m.seek(Number(event.target.value))} />
+                        <span>{formatTime(playingTrack.duration)}</span>
+                      </div>
+                    </> : <button className="primary-button playlist-play-all" onClick={() => m.playPlaylist(selected)}>
+                      <Play fill="currentColor" />전체 재생
+                    </button>}
                   </div>}
                 </div>
               </div>
@@ -595,6 +604,7 @@ function NicknameForm({ model: m }: { model: MupidModel }) {
 export function ProfileView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
   const ignoredTracks = tracks.filter(track => m.ignored.includes(track.id));
+  const historyTracks = m.history.flatMap(id => { const found = tracks.find(track => track.id === id); return found ? [found] : []; });
   return (
     <div className="content-page">
       <PageHeader title="마이페이지" onBack={() => m.go('home')} />
@@ -619,6 +629,13 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
           <PasswordForm />
         </section>
       )}
+      <section className="profile-settings-card profile-ignored-card" aria-label="최근 들은 음악">
+      <h2>최근 들은 음악 <span className="profile-section-count">{historyTracks.length}곡</span></h2>
+      <section className="track-list profile-history" aria-label="최근 들은 음악 목록">
+        {historyTracks.map(track => <TrackRow key={track.id} track={track} model={m} showDetail={false} />)}
+        {!historyTracks.length && <p className="listening-history-empty">아직 감상 기록이 없어요.<span>음악을 들으면 여기에 차곡차곡 모아둘게요.</span></p>}
+      </section>
+      </section>
       <section className="profile-settings-card profile-ignored-card" aria-label="관심 없는 곡">
       <h2>관심 없는 곡 <span className="profile-section-count">{ignoredTracks.length}곡</span></h2>
       {!!ignoredTracks.length && <button className="text-link" onClick={m.clearIgnored}>관심 없음 전체 해제</button>}

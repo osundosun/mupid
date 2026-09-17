@@ -33,16 +33,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
           <MobileListening model={m} />
           {/* 상단 헤더에 검색창이 이미 있어 홈에서는 중복이라 뺐다. */}
           <TodayMoment model={m} />
-          <Heading
-            eyebrow={forYou.eyebrow}
-            title={forYou.title}
-            action="모두 보기"
-            onAction={() => {
-              m.setLibraryTab('playlists');
-              m.setSelectedPlaylist(1);
-              m.go('library');
-            }}
-          />
+          <Heading eyebrow={forYou.eyebrow} title={forYou.title} />
           <AlbumDeck
             model={m}
             label="취향에 이어지는 음악"

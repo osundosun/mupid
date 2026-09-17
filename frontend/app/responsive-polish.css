@@ -54,9 +54,9 @@
   .mupid-shell .moment-story p { font-size:15px; }
   .mupid-shell .playlist-summary { display:flex; flex-direction:column; align-items:center; gap:20px; text-align:center; }
   .mupid-shell .playlist-summary > div { width:100%; min-width:0; }
-  .mupid-shell .playlist-summary .album-art { width:min(55vw,200px); height:auto; aspect-ratio:1; }
   .mupid-shell .playlist-transport { margin-inline:auto; }
   .mupid-shell .playlist-transport .player-controls { gap:6px; }
+  .mupid-shell .playlist-summary .album-art { width:min(55vw,200px); height:auto; aspect-ratio:1; }
   .mupid-shell .playlist-card strong { font-size:17px; overflow-wrap:anywhere; }
   .mupid-shell .playlist-card small { font-size:15px; }
   .mupid-shell .add-current { flex-wrap:wrap; }
@@ -1611,6 +1611,19 @@
 .player-quick-actions .quick-like[aria-pressed=true] { color: #cf739f; background: transparent; }
 .player-quick-actions .quick-like[aria-pressed=true] svg { color: inherit; }
 .player-quick-actions button:focus-visible { outline: 2px solid #aac8ec; outline-offset: 2px; }
+.mupid-shell .player-quick-actions button,
+.mupid-shell .player-quick-actions button:hover {
+  border: 0; background: transparent; box-shadow: none;
+}
+.mupid-shell .player-quick-actions button:hover { background: #eef4fd; }
+.mupid-shell .player-quick-actions button[aria-pressed='true']:not(.quick-like),
+.mupid-shell .player-quick-actions button[aria-expanded='true'] {
+  background: #dfeafb; color: #3f6dab;
+}
+.mupid-shell .player-quick-actions .quick-like[aria-pressed='true'],
+.mupid-shell .player-quick-actions .quick-like:hover {
+  background: transparent; color: #cf739f;
+}
 
 .mupid-shell.page-player .wave-comment-markers { border-top: 0; padding-top: 0; }
 .mupid-shell.page-player .wave-comment-markers:not(:has(button)) { min-height: 0; height: 0; }
@@ -1638,6 +1651,17 @@
   .mupid-shell.page-player .vinyl-record { width: min(60vw, 240px, max(96px, calc(100svh - 490px))); height: auto; }
   .mupid-shell.page-player .song-lyrics { font-size: 13px; line-height: 1.6; max-height: 44px; }
   .mupid-shell.page-player .track-comments > .full-controls .play-main { width: 52px; height: 52px; min-height: 52px; }
+  /*
+   * 마이페이지 목록은 좁은 화면에서 자체 스크롤을 걷어 낸다.
+   *
+   * 긴 페이지 안에 448px 짜리 스크롤 영역이 들어앉으면 스크롤이 중첩된다.
+   * `overscroll-behavior: contain` 까지 걸려 있어 손가락이 목록 위에 닿는
+   * 순간 페이지가 멈추고 목록만 움직였다. 감상 기록은 최대 8 곡이라 (`HISTORY_LIMIT`)
+   * 그냥 펼쳐도 길지 않고, 페이지 하나만 스크롤하는 편이 손에 맞는다.
+   */
+  .mupid-shell .main-content .profile-history {
+    max-height: none; overflow: visible; overscroll-behavior-y: auto;
+  }
   /*
    * 좁은 화면에서는 아이콘 위, 글자 아래로 쌓는다.
    *
@@ -1740,6 +1764,17 @@
   .mupid-shell .moment-page .moment-part-row > button:first-child { min-width: 0; flex-wrap: wrap; gap: 8px; }
 }
 
+.playlist-play-all { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 22px; border: 0; border-radius: 24px; font-size: 15px; font-weight: 600; }
+.playlist-play-all svg { width: 18px; height: 18px; }
+/*
+ * '관심 없음 전체 해제' 는 글자만 있어 안내문과 구별되지 않았다. 되돌릴 수
+ * 없는 일괄 동작이라 누를 것처럼 보여야 한다 — 테두리를 둘러 버튼으로 읽힌다.
+ */
+.mupid-shell .profile-ignored-card > .text-link {
+  align-self: flex-start; margin: 2px 0 10px; min-height: 36px; padding: 0 12px;
+  border: 1px solid #d9e4f2; border-radius: 18px; background: #f7faff;
+  font-size: 13px; font-weight: 500; color: #5c78a3;
+}
 .profile-settings-card .profile-section-count { margin-left: 6px; font-size: 13px; font-weight: 400; color: #8195b2; }
 .mupid-shell .main-content .profile-ignored-card .profile-history { border: 0; border-radius: 0; background: transparent; padding: 0; scrollbar-gutter: auto; }
 .mupid-shell .profile-ignored-card .listening-history-empty { padding: 22px 0; font-size: 14px; }

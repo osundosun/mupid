@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api/session';
 import { isStreamed } from '@/lib/stream-catalog';
 import { formatTime, type Track } from '@/lib/mupid-data';
@@ -14,7 +14,7 @@ import { localDemoEnabled } from '@/lib/api/local-demo';
  *
  * 기본은 현재 가사 두 줄, 가사 대화상자는 전체 가사를 보여 준다.
  */
-export function Lyrics({ track, time = 0, expanded = false }: { track: Track; time?: number; expanded?: boolean }) {
+export function Lyrics({ track, time = 0, expanded = false, onSeek }: { track: Track; time?: number; expanded?: boolean; onSeek?: (seconds: number) => void }) {
   const [lines, setLines] = useState<LyricLine[] | null>(null);
   const [error, setError] = useState(false);
   const streamed = isStreamed(track);
@@ -43,7 +43,9 @@ export function Lyrics({ track, time = 0, expanded = false }: { track: Track; ti
     return () => abort.abort();
   }, [track.id, track.musicId, streamed, local, track.localLyrics]);
   const displayedLines = lines;
-  const currentIndex = Math.max(0, (displayedLines ?? []).findLastIndex(line => line.time_ms <= time * 1000));
+  const activeIndex = (displayedLines ?? []).findLastIndex(line => line.time_ms <= time * 1000);
+  const currentIndex = Math.max(0, activeIndex);
+  const activeId = activeIndex >= 0 ? displayedLines?.[activeIndex]?.lyric_id ?? null : null;
   const previewLines = expanded ? displayedLines : displayedLines?.slice(currentIndex, currentIndex + 2);
   const note = !streamed && !local
     ? '체험용 곡이라 가사가 없어요.'
@@ -55,13 +57,33 @@ export function Lyrics({ track, time = 0, expanded = false }: { track: Track; ti
           // 원래 없는 곡과 아직 못 붙인 곡을 같은 말로 덮으면 사실이 아니게 된다.
           ? (track.instrumental ? '연주곡이라 원래 가사가 없어요.' : '등록된 가사가 없습니다.')
           : '';
+  const activeLine = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (!expanded) return;
+    const line = activeLine.current;
+    // 대화상자에서만 `.song-lyrics` 가 스크롤 상자다. 그 밖에서는 넘치는 부분을
+    // 잘라 두므로 움직일 것이 없다.
+    const box = line?.parentElement;
+    if (!line || !box || box.scrollHeight <= box.clientHeight) return;
+    const top = line.offsetTop - box.clientHeight / 2 + line.clientHeight / 2;
+    const gentle = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    box.scrollTo({ top: Math.max(0, top), behavior: gentle ? 'smooth' : 'auto' });
+  }, [activeId, expanded]);
   return <section className="song-lyrics" key={track.id} aria-label={`${track.title} 가사`}>
     <h3>{track.title}</h3>
     {note && <p className="song-lyrics-empty" role={error ? 'alert' : 'status'}>{note}</p>}
-    {previewLines?.map((line) => (
-      <p key={line.lyric_id}>
-        {line.text}
-      </p>
-    ))}
+    {previewLines?.map((line) => {
+      const current = line.lyric_id === activeId;
+      return <p
+        key={line.lyric_id}
+        ref={current ? activeLine : undefined}
+        className={current ? 'lyric-current' : undefined}
+        aria-current={current ? 'true' : undefined}
+      >
+        {onSeek
+          ? <button type="button" className="lyric-seek" onClick={() => onSeek(line.time_ms / 1000)} aria-label={`${formatTime(line.time_ms / 1000)}부터 듣기: ${line.text}`}>{line.text}</button>
+          : line.text}
+      </p>;
+    })}
   </section>;
 }
