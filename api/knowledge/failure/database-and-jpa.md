@@ -1,6 +1,6 @@
 # 데이터베이스 · JPA · 트랜잭션
 
-21건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+30건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -119,6 +119,37 @@
 - **원인**: `application.yaml` 에 `spring.datasource.hikari.*` 가 하나도 없다. 같은 파일의 `clickhouse:` 블록은 `max-pool-size: 8`, `min-idle: 1`, `connection-timeout: 3s`, `validation-timeout: 3s` 를 이유(주석)까지 명시하고 있어 착각하기 쉽다.
 - **해결**: MySQL 풀 튜닝이 필요하면 처음부터 새로 정한다.
 - **근거**: `api/src/main/resources/application.yaml:51-60`
+
+### 로컬 MySQL 이 `erd.sql` 과 전혀 다르다 — 해소됨 (2026-09-17)
+
+- **원인**: 로컬 `mupid-dev-mysql`(13306)의 표는 `erd.sql` 로 만든 것이 아니라 **과거
+  `ddl-auto: update` 가 만든 것**이었다. 지금은 `none` 이라 아무도 바꾸지 않으니
+  그 모습 그대로 남아 있었다. 표 30개와 이름은 전부 맞아서 겉으로는 멀쩡해 보인다.
+  지문은 이렇다 — FK 이름이 `FKncfaarj6gwd37j1fi98bmpmcl` 같은 해시, 모든 문자열이
+  `varchar(255)`, `TINYINT(1)` 대신 `bit(1)`, `DATE` 대신 `datetime(6)`,
+  `DEFAULT` 와 COMMENT 가 전부 없음.
+- **무엇이 깨져 있었나**:
+  - `object_storage_files.category` 에 `TRACK`·`MUBTI` 가 없었다. `FileCategory` enum 에는
+    있어서 **곡 커버와 MuBTI 캐릭터 이미지는 저장 자체가 불가능**했다. 그래서
+    `music.image_file_id` 가 전 행 NULL 이고, 곡 상세의 `LEFT JOIN FETCH m.imageFile` 이
+    늘 NULL 만 줬다.
+  - UNIQUE 가 거의 다 없었다 — `ix_codes_type_name`, `uq_email_verification_token`,
+    `uq_daily_recommendation_user_date`, `uq_playlist_song`, `ux_mubti_title` 등.
+  - 복합 PK 컬럼 순서가 알파벳순으로 뒤집혀 있었다. `music_genres`·`music_moods` 는
+    선두가 `code_id` 라 `WHERE music_id IN (...)` 이 PK 를 못 탔다.
+  - `playlist_tracks.user_id` 가 NOT NULL 이라 시스템 생성 트랙을 넣을 수 없었다.
+  - `music_reactions` 에 FK 가 하나도 없었다.
+- **해결**: `erd.sql` 기준으로 ALTER 를 만들어 한 번에 맞췄다. 데이터는 그대로 두고
+  구조만 바꾼다. **순서가 중요하다** — ① FK 전부 해제 ② Hibernate 인덱스 제거
+  ③ 컬럼·PK·주석 교정 ④ ERD 인덱스 생성 ⑤ ERD 이름으로 FK 재생성. FK 를 먼저 풀지
+  않으면 컬럼 타입 변경이 막힌다.
+- **적용 전에 반드시**: 백업(`mysqldump --single-transaction`)을 뜨고, **백업을 복원한
+  사본 DB 에서 먼저 돌린다.** 좁히는 컬럼(`varchar(255)` → `VARCHAR(6)` 등)과 새로
+  거는 UNIQUE 는 기존 데이터가 걸리면 그 자리에서 실패한다. 사전 점검 쿼리는
+  길이 초과·중복·NULL 잔존·음수(UNSIGNED 전환)·JSON 유효성을 센다.
+- **남은 것**: `mubti.image_file_id` 는 ERD 가 NOT NULL 이지만 기존 16행이 전부 NULL 이라
+  적용하지 못했다. 가리킬 MUBTI 이미지가 생기면 그때 `NOT NULL` 로 올린다.
+- **근거**: `api/knowledge/domain/erd.sql`, [domain/erd.md](../domain/erd.md) 의 "남은 차이"
 
 ### 인증 메일 만료 레코드가 계속 쌓인다
 

@@ -54,6 +54,16 @@ public class Code {
     private String codeName;
 
     /**
+     * 화면에 내보내는 이름.
+     *
+     * <p>`code_name` 과 따로 둔다. `code_name` 은 온보딩 설문·추천이 주고받는 식별자라
+     * 한 번 정하면 바꾸기 어렵고, 표기만 바꾸고 싶을 때 이 자리를 고친다. 지금은 둘이
+     * 같은 값이다 — 갈라질 일이 생기기 전까지는 seed 가 같은 값을 넣는다.
+     */
+    @Column(nullable = false)
+    private String displayName;
+
+    /**
      * 생성 일시
      */
     @CreatedDate

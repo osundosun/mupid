@@ -60,11 +60,17 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 (`MOOD`/`INSTRUMENT`/`GENRE`)으로 들어간다. 예전 `erd.sql` 에 있던 `genres` ·
 `moods` · `instruments` 세 테이블은 없다.
 
+이름 컬럼은 둘이다. `code_name` 은 **식별자** — 온보딩 설문과 추천이 이 값으로
+코드를 찾으므로 한 번 정하면 바꾸기 어렵다. `display_name` 은 **표기** — 화면에
+내보내는 이름이라 여기만 고치면 된다. 2026-09-17 에 `display_name` 이 추가됐고
+지금은 둘이 같은 값이다. 새 코드를 넣는 자리는 두 곳이며 **같이 고친다** —
+[seed-codes.sql](seed-codes.sql) 과 `bootstrap/BootstrapRunner`.
+
 ## ERD 가 쓰는 공통 규약
 
 | 항목 | 규칙 | 예외 |
 |---|---|---|
-| PK | `<단수명>_id`, `INT AUTO_INCREMENT` | `ai_chat_messages`·`play_histories` 는 `BIGINT`. `ai_chat_sessions` 는 `AUTO_INCREMENT` 가 없다. `music_analysis` 는 PK 가 곧 FK(`music_id`) 다 |
+| PK | `<단수명>_id`, `INT AUTO_INCREMENT` | `ai_chat_messages`·`play_histories` 는 `BIGINT`. `music_analysis` 는 PK 가 곧 FK(`music_id`) 다 |
 | 복합 PK | 매핑·이력 테이블은 두 컬럼을 묶는다 — `chunks`(`stream_id`,`index`), `listening`, `music_genres`, `music_moods`, `music_reactions`, `music_section_analysis_mood`, `music_analysis_instruments`, `daily_recommendation_tracks`(`…_id`,`rank_order`), `playlist_tracks`(`playlist_id`,`track_order`) | |
 | 테이블명 | 복수형 snake_case | `music`(불가산), `mubti`, `onboarding_survey`, `listening`(단수) |
 | 감사 컬럼 | `created_at` / `updated_at` `DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` | 이력성 테이블은 `created_at` 만 둔다. `chunks`·`listening`·`lyrics`·`mubti`·`music_analysis`·`music_section_analysis`·`streams` 는 둘 다 없다 |
@@ -132,19 +138,37 @@ ERD 반입 시점(2026-09-11)에 기존 엔티티 3개가 ERD 와 여러 곳에�
 
 ### 남은 차이
 
-2026-09-15 재산출 기준이다. 재산출이 `erd.sql` 을 코드·실제 DB 쪽으로 끌어와서
+2026-09-17 재산출 기준이다. 재산출이 `erd.sql` 을 코드·실제 DB 쪽으로 끌어와서
 차이가 많이 줄었다 — `onboarding_survey` 의 `_code_id`, 무드·장르의 `codes`
 통합, `chunks` 복합 PK, `music_section_analysis_id` 이름은 **모두 해소됐다.**
+
+**2026-09-17 부터 로컬 MySQL 이 `erd.sql` 과 실제로 같다.** 그전까지 로컬 DB 는
+과거 `ddl-auto: update` 가 만든 것이라 문자열이 전부 `varchar(255)` 였고 UNIQUE 도
+거의 없었다. 아래 "길이 미지정" 항목들이 그동안 무해했던 이유가 그것이다 — 이제는
+**DB 가 실제로 자른다.** 경위는 [failure/database-and-jpa.md](../failure/database-and-jpa.md) 를 본다.
 
 | 테이블 | ERD | 현재 코드 | 영향 |
 |---|---|---|---|
 | `music.release_date` · `albums.release_date` | `DATE` | `LocalDateTime` | 엔티티가 시:분:초까지 들고 API 도 `2026-09-11T00:00:00` 로 주고받는다. MySQL 이 `DATE` 로 잘라 저장하므로 **시각 부분은 버려진다.** 읽어 오면 언제나 `T00:00:00` 이다 |
 | `ai_chat_messages.ai_chat_message_id` | `BIGINT` | `Integer` | 21억 건을 넘길 일은 없지만, 타입이 어긋난 채로 두면 나중에 `Long` 으로 바꾸는 순간 API 응답 타입도 함께 바뀐다 |
-| `users.nickname` | `VARCHAR(10)` | 길이 미지정 | 요청 검증이 2~10자라 실질 충돌은 없다 |
-| `users.email` | `VARCHAR(320)`, 유니크 아님 (`CREATE INDEX uq_user_email`) | 길이 미지정, 중복은 애플리케이션에서만 막는다 | 동시 요청에서 같은 이메일이 두 번 들어갈 수 있다 |
+| `users.nickname` | `VARCHAR(10)` | 길이 미지정 | 요청 검증이 2~10자라 실질 충돌은 없다. 다만 검증을 건너뛰는 경로가 생기면 **이제 DB 가 1406 으로 막는다** |
+| `users.password` | `VARCHAR(60)` | 길이 미지정 | BCrypt 해시가 정확히 60자다. 다른 인코더로 바꾸면 **넘쳐서 저장이 실패한다** |
+| `users.email` | `VARCHAR(320)`, 유니크 아님 (`CREATE INDEX uq_user_email`) | 길이 미지정, 중복은 애플리케이션에서만 막는다 | 동시 요청에서 같은 이메일이 두 번 들어갈 수 있다. **ERD 의 `uq_user_email` 은 이름과 달리 UNIQUE 가 아니다** — 이름만 보고 막힌다고 믿지 않는다 |
 | `users.birth_year` | `SMALLINT` | `Integer` | 범위 안이면 무해 |
-| `email_verifications.token` | `VARCHAR(6)` + **UNIQUE** | 길이·유니크 없음 | 6자리 랜덤이 충돌하면 발송이 실패한다 |
+| `email_verifications.token` | `VARCHAR(6)` + **UNIQUE** | 길이·유니크 없음 | 6자리 랜덤이 충돌하면 발송이 실패한다. UNIQUE 가 이제 실제로 걸려 있다 |
+| `music_comments.content` · `playlists.title` 등 | `VARCHAR(100)` | 길이 미지정 | 요청 검증에 기대고 있다. 검증보다 긴 값이 들어오면 DB 가 막는다 |
 | `onboarding_survey` | `mood_code_id` · `genre_code_id` **NOT NULL** | 같음 | 한 줄에 답 하나를 담을 수 없다. 지금은 분위기 × 장르 조합으로 우회한다 → [decision/0017](../decision/0017-onboarding-survey-cross-product.md) |
+
+### ERD 가 매번 되돌리는 것 (수기 보정)
+
+ERD 도구 산출물에는 아래 셋이 계속 틀리게 나온다. `erd.sql` 을 교체할 때마다
+헤더의 목록을 보고 다시 넣는다.
+
+| 자리 | 도구 산출물 | 맞는 값 | 근거 |
+|---|---|---|---|
+| `music_analysis_instruments.music_section_analysis_id` | `AUTO_INCREMENT` | 없음 | 다른 표의 PK 를 가리키는 FK 자리다 (S15P21A204-344) |
+| `music_section_analysis.external_id` | UNIQUE 없음 | `UNIQUE` | 문자열 UID 와 숫자 ID 를 잇는 유일한 근거다 (S15P21A204-344) |
+| `ai_chat_sessions.ai_chat_session_id` | `AUTO_INCREMENT` 없음 | `AUTO_INCREMENT` | `AiChatSession` 이 `GenerationType.IDENTITY` 다. 빼면 세션 생성이 죽는다 |
 
 ### 재산출이 풀어 준 것
 

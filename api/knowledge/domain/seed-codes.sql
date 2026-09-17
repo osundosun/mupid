@@ -26,8 +26,11 @@
 
 -- `created_at` 을 직접 넣는다. 표를 Hibernate 가 만든 환경에서는 ERD 와 달리
 -- DEFAULT CURRENT_TIMESTAMP 가 붙지 않아 생략하면 1364 로 막힌다.
-INSERT INTO `codes` (`code_type`, `code_name`, `created_at`)
-SELECT wanted.t, wanted.n, NOW(6) FROM (
+--
+-- `display_name` 은 NOT NULL 이고 기본값이 없다. 화면에 내보내는 이름이라
+-- 지금은 `code_name` 과 같은 값을 넣는다 — 둘이 갈라지기 전까지는 같다.
+INSERT INTO `codes` (`code_type`, `code_name`, `display_name`, `created_at`)
+SELECT wanted.t, wanted.n, wanted.n, NOW(6) FROM (
   SELECT 'MOOD' AS t, '잔잔한' AS n
   UNION ALL SELECT 'MOOD', '벅찬'
   UNION ALL SELECT 'MOOD', '몽환적인'

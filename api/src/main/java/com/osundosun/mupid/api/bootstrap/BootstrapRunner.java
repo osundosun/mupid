@@ -310,6 +310,9 @@ public class BootstrapRunner implements ApplicationRunner {
                 missing.add(Code.builder()
                     .codeType(seed.type())
                     .codeName(seed.name())
+                    // `display_name` 은 NOT NULL 이고 기본값이 없다. 표기를 따로 정할 일이
+                    // 생기기 전까지는 code_name 과 같은 값이다 (seed-codes.sql 과 같다).
+                    .displayName(seed.name())
                     .build());
             }
         }
