@@ -17,10 +17,24 @@ set -eu
 : "${MUPID_DEPLOY_K8S_KNOWN_HOSTS:?GitLab file variable required}"
 printf '%s\n' "${CI_COMMIT_SHA:?}" | grep -Eq '^[0-9a-f]{40}$'
 
-component=${1:?Expected api or web}
+component=${1:?Expected api, web or ai}
+
+# **이미지는 파드가 뜨는 노드에 있어야 한다.** 레지스트리가 없어서 각 노드의
+# containerd 로 직접 들여오기 때문이다. api·web 은 node-a 에 뜨지만 ai 는
+# `nodeSelector: mupid.io/role=ai` 로 node-b 에 묶여 있다.
+#
+# 처음에 그걸 놓쳐서 이미지를 node-a 에만 넣었고, 파드는 node-b 에서
+# **ErrImagePull** 로 멈췄다 — 배포 job 은 성공으로 끝난 뒤였다. api·web 이
+# node-a 에 떠서 여태 드러나지 않은 구멍이다.
+#
+# 노드 주소는 변수로 받는다. 기본값은 지금까지 쓰던 엔드포인트(node-a)라
+# api·web 의 동작이 바뀌지 않고, ai 만 지정이 필요하다.
+endpoint=${MUPID_DEPLOY_K8S_SSH_HOST:-mupid-deploy-k8s@j15a204.p.ssafy.io}
 case "$component" in
   api) archive=.release/image.tar.gz ;;
   web) archive=.release/web/image.tar.gz ;;
+  ai)  archive=.release/ai/image.tar.gz
+       endpoint=${MUPID_AI_NODE_SSH:?ai 는 node-b 에 뜬다 — 그 노드의 배포 주소가 필요하다} ;;
   *) echo 'Unknown component' >&2; exit 64 ;;
 esac
 [ -s "$archive" ] || { echo "No archive at $archive; run the package job first" >&2; exit 64; }
@@ -58,7 +72,7 @@ checksum=$(sha256sum "$archive" | cut -d ' ' -f 1)
 
 ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
   -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" \
-  -i "$key" mupid-deploy-k8s@j15a204.p.ssafy.io \
+  -i "$key" "$endpoint" \
   "deploy-k8s $component $CI_COMMIT_SHA $checksum" < "$archive"
 
 # The receiver already waited for the rollout; this confirms the change is
@@ -93,4 +107,10 @@ check_web() {
 case "$component" in
   api) confirm check_api ;;
   web) confirm check_web ;;
+  # ai 는 **엣지로** 확인하지 않는다. nginx 가 /internal 을 밖으로 내보내지 않아
+  # 러너에서 닿을 길이 없다. 대신 수신기가 노드에서 `kubectl rollout status` 를
+  # 기다리고, replicas 가 1 이 된 지금은 그것이 곧 **readinessProbe 통과**를 뜻한다
+  # (`/internal/ready` — 색인 네 개가 행 수까지 맞고 카탈로그가 올라왔는가).
+  # replicas 가 0 이던 때에는 rollout status 가 즉시 성공해 아무 의미가 없었다.
+  ai)  echo 'ai: 준비 여부는 노드의 rollout status 가 확인했다 (엣지 경로 없음)' ;;
 esac

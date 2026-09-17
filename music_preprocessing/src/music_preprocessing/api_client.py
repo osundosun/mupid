@@ -326,6 +326,32 @@ class MupidClient:
         )
         return body["data"]
 
+    def add_code(self, code_type: str, code_name: str) -> dict:
+        """공통 코드를 더한다. **이미 있으면 그 행이 그대로 온다** (`created: false`).
+
+        `POST` 인데 멱등이다 — `codes` 의 `(code_type, code_name)` 이 UNIQUE 라
+        두 번 보내도 결과가 같다. 배치가 곡마다 같은 장르·악기를 수백 번 보내는데
+        두 번째부터 409 가 오면 부르는 쪽이 "이미 있음" 과 "진짜 실패" 를 가려야 하고,
+        그 분기를 빠뜨리면 배치가 통째로 멈춘다.
+
+        관리자 API 가 아니다. `@SystemRole` 이라 배치 계정으로 부를 수 있다.
+
+        Args:
+            code_type: `GENRE` · `MOOD` · `INSTRUMENT`
+            code_name: 표시 이름. 같은 종류 안에서 고유하고, MySQL 기본
+                콜레이션이라 **대소문자를 구분하지 않는다** (`Pop` 과 `pop` 은 같다).
+
+        Returns:
+            `{ "codeId": …, "codeType": …, "codeName": …, "created": bool }`.
+            `codeName` 은 서버에 저장된 철자다 — 보낸 것과 다를 수 있다.
+        """
+        body = self._request(
+            "POST",
+            "/api/v1/code",
+            json_body={"codeType": code_type, "codeName": code_name},
+        )
+        return body["data"]
+
     def replace_sections(
         self,
         music_id: int,
@@ -343,7 +369,10 @@ class MupidClient:
         Args:
             sections: `section_index` · `external_id` · `section_label` ·
                 `start_time_ms` · `end_time_ms` 를 담은 줄. 라벨은 대문자다
-                (`INTRO` · `VERSE` · `CHORUS` …).
+                (`INTRO` · `VERSE` · `CHORUS` …). `moods` · `instruments` 는
+                **코드 이름**으로 실어 보낸다 — 번호는 서버가 붙이고, 코드표에
+                없는 이름은 버리고 센다. 그래서 `instruments` 를 쓸 곡은
+                `add_code("INSTRUMENT", …)` 를 **먼저** 불러 둬야 한다.
 
         Returns:
             `{ "music_id": …, "analysis_version": …, "replaced": 바뀐 구간 수,

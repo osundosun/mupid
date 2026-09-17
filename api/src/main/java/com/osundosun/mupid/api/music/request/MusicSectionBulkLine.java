@@ -46,7 +46,16 @@ public record MusicSectionBulkLine(
      * 번호는 우리가 붙인다 — AI 는 MySQL 이 발급한 숫자를 모른다. 코드표에 없는
      * 이름은 버리고 센다. 비워 둬도 된다(분위기를 못 고른 곡이 실제로 14% 있다).
      */
-    List<@Size(max = 50) String> moods
+    List<@Size(max = 50) String> moods,
+
+    /**
+     * 이 구간에서 들리는 악기. <b>코드 이름</b>으로 받는다 (`보컬`·`드럼`·`베이스`…).
+     *
+     * 분위기와 같은 규칙이다 — 번호는 우리가 붙이고, 코드표에 없는 이름은 버리고
+     * 센다. 비워 둬도 된다. 악기는 곡이 아니라 구간에 달린다
+     * (`music_analysis_instruments` 의 외래키가 구간 번호다).
+     */
+    List<@Size(max = 50) String> instruments
 
 ) {
 

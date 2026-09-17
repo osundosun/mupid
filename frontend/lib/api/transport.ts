@@ -26,6 +26,17 @@ export type TransportRequest = {
   responseType: ResponseType;
   /** 쿠키(리프레시 토큰)를 함께 보낼지. 기본은 same-origin. */
   withCredentials?: boolean;
+  /**
+   * 화면이 사라져도 요청을 끝까지 보낸다.
+   *
+   * 탭을 닫거나 새로고침하는 순간에 보내는 요청은 보통 취소된다. 이 값을 켜면
+   * 브라우저가 문서와 무관하게 전송을 마친다 — 떠나기 직전에 저장을 밀어내는
+   * 경로(재생 목록)가 이걸 쓴다.
+   *
+   * 대신 본문이 64KB 로 제한되고 **응답을 받아 볼 수 없다**(문서가 이미 없다).
+   * 보내고 잊는 요청에만 쓴다.
+   */
+  keepalive?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 };
@@ -103,6 +114,7 @@ export function createFetchTransport(): Transport {
           headers: request.headers,
           body: request.body as BodyInit | null | undefined,
           credentials: request.withCredentials ? 'include' : 'same-origin',
+          keepalive: request.keepalive,
           signal: controller.signal,
         });
       } catch (error) {

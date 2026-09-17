@@ -1,11 +1,12 @@
 'use client';
 import { DailyAlbumTreemap } from './daily-album-treemap';
-import { QueueList } from './queue-list';
+
 import { PlaylistMenu } from './playlist-menu';
 import { SelectionToolbar, useTrackSelection } from './track-selection';
 import { MupidMascot } from './mascot';
+import { toImageSource } from '@/lib/platform/image';
 import { ProfilePhoto } from './profile-photo';
-import { DEFAULT_PROFILE_PHOTO } from '@/lib/profile-photo';
+import { DEFAULT_PROFILE_PHOTO } from './profile-image';
 import { PasswordForm } from './password-form';
 import { useEffect, useState } from 'react';
 import { DemoAccount } from './demo-login';
@@ -31,7 +32,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { QUEUE_LIMIT, type MupidModel } from '@/hooks/use-mupid';
+import { type MupidModel } from '@/hooks/use-mupid';
 import { NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH, normalizeNickname } from '@/lib/profile';
 import { useDailyReport } from '@/lib/report';
 import { formatTime, genreOptions, moodOptions } from '@/lib/mupid-data';
@@ -53,7 +54,7 @@ import {
 
 // 탭 이름을 그대로 화면 제목으로 쓴다. 어느 탭에 있는지 제목만 봐도 알 수 있게.
 const LIBRARY_TAB_TITLES: Record<string, string> = {
-  queue: '재생목록',
+
   playlists: '플레이리스트',
   moments: '저장한 순간',
   liked: '좋아한 곡',
@@ -64,16 +65,12 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
   // 저장한 순간은 되돌릴 수 없어서 삭제 전에 한 번 확인받는다.
   const [removeMoment, setRemoveMoment] = useState<number | null>(null);
   const momentToRemove = m.moments.find((v) => v.id === removeMoment);
-  // 재생목록·플레이리스트에서 여러 곡을 골라 한 번에 뺄 수 있게 한다.
-  const queuePick = useTrackSelection(m.queueTracks.map((t) => t.id));
+  // 플레이리스트에서 여러 곡을 골라 한 번에 뺄 수 있게 한다.
+  // 재생 목록 쪽 같은 흐름은 독이 들고 있다 (`components/mupid/queue-dock.tsx`).
   const playlistPick = useTrackSelection((selected?.tracks ?? []).map((t) => t.id));
   // 곡을 목록에서 빼는 건 한 곡이든 여러 곡이든 똑같이 한 번 확인받는다.
-  const [confirmRemove, setConfirmRemove] = useState<{
-    scope: 'queue' | 'playlist';
-    ids: number[];
-  } | null>(null);
-  const removeTargets = (confirmRemove?.scope === 'playlist' ? (selected?.tracks ?? []) : m.queueTracks)
-    .filter((t) => confirmRemove?.ids.includes(t.id));
+  const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
+  const removeTargets = (selected?.tracks ?? []).filter((t) => confirmRemove?.includes(t.id));
   return (
     <div className="content-page collection-page" data-playlist-detail={Boolean(selected && m.libraryTab === 'playlists')}>
       {!(selected && m.libraryTab === 'playlists') && <div className="desktop-library-page-heading">
@@ -118,44 +115,15 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
         }}
         className="sky-tabs"
       >
+        {/*
+          '재생목록' 탭은 없앴다. 목록을 보려고 듣던 화면을 떠나야 했던 것이 문제였고,
+          지금은 미니 플레이어의 목록 버튼이 독을 연다 (`components/mupid/queue-dock.tsx`).
+        */}
         <TabsList>
-          <TabsTrigger value="queue">재생목록</TabsTrigger>
           <TabsTrigger value="playlists">플레이리스트</TabsTrigger>
           <TabsTrigger value="moments">저장한 순간</TabsTrigger>
           <TabsTrigger value="liked">좋아한 곡</TabsTrigger>
         </TabsList>
-        <TabsContent value="queue">
-          <div className="intro-copy">
-            <p>
-              {queuePick.active
-                ? '뺄 곡을 고르세요. 전체 선택으로 한 번에 비울 수도 있어요.'
-                : `지금 재생 목록에 담긴 순서예요. 손잡이를 끌어 순서를 바꿀 수 있고, ${QUEUE_LIMIT}곡까지 담겨요.`}
-            </p>
-          </div>
-          {!!m.queueTracks.length && (
-            <SelectionToolbar
-              selection={queuePick}
-              total={m.queueTracks.length}
-              limit={QUEUE_LIMIT}
-              onDelete={() => setConfirmRemove({ scope: 'queue', ids: queuePick.picked })}
-            />
-          )}
-          <QueueList
-            model={m}
-            selection={queuePick}
-            onRemove={(track) => setConfirmRemove({ scope: 'queue', ids: [track.id] })}
-          />
-          {!m.queueTracks.length && (
-            <EmptyState
-              title="재생 목록이 비어 있어요"
-              description="음악을 재생하면 이어 들을 곡이 여기에 쌓여요."
-            >
-              <button className="secondary-button" onClick={() => m.go('player')}>
-                음악 들으러 가기
-              </button>
-            </EmptyState>
-          )}
-        </TabsContent>
         <TabsContent value="playlists">
           {selected ? (
             <div className="playlist-detail">
@@ -192,7 +160,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                 <SelectionToolbar
                   selection={playlistPick}
                   total={selected.tracks.length}
-                  onDelete={() => setConfirmRemove({ scope: 'playlist', ids: playlistPick.picked })}
+                  onDelete={() => setConfirmRemove(playlistPick.picked)}
                 />
               )}
               <div className="track-list">
@@ -208,7 +176,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                       <button
                         className="icon-button"
                         aria-label={`${t.title} 플레이리스트에서 빼기`}
-                        onClick={() => setConfirmRemove({ scope: 'playlist', ids: [t.id] })}
+                        onClick={() => setConfirmRemove([t.id])}
                       >
                         <X />
                       </button>
@@ -406,17 +374,15 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                 : `고른 ${removeTargets.length}곡을 뺄까요?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmRemove?.scope === 'playlist'
-                ? '플레이리스트에서만 빠지고, 곡 자체는 그대로 남아 있어요.'
-                : '재생 목록에서만 빠져요. 지금 듣고 있는 곡은 계속 재생돼요.'}
+              플레이리스트에서만 빠지고, 곡 자체는 그대로 남아 있어요.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                const gone = confirmRemove?.ids ?? [];
-                if (confirmRemove?.scope === 'playlist' && selected) {
+                const gone = confirmRemove ?? [];
+                if (selected) {
                   void m.removeFromPlaylist(selected.id, gone);
                   m.setToast(
                     removeTargets.length === 1
@@ -424,12 +390,6 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                       : `${gone.length}곡을 플레이리스트에서 뺐어요.`,
                   );
                   playlistPick.cancel();
-                } else if (removeTargets.length === 1) {
-                  m.removeFromQueue(removeTargets[0]);
-                  queuePick.cancel();
-                } else {
-                  m.removeManyFromQueue(gone);
-                  queuePick.cancel();
                 }
                 setConfirmRemove(null);
               }}
@@ -440,6 +400,51 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+/**
+ * 리포트 카드의 MuBTI 캐릭터 — 서버가 준 유형 일러스트.
+ *
+ * 서버는 16유형 각각의 캐릭터를 들고 있다(`image_url` = `/api/v1/storage/image/{fileId}`).
+ * 그 한 장이 곧 판정 결과라, 화면은 그 이미지를 그대로 쓴다.
+ *
+ * **이미지가 없으면 마스코트로 내려간다.** 서버가 아직 이미지를 못 올렸거나(부트스트랩이
+ * 도는 중) 응답이 `image_url: null` 이어도 카드가 비지 않게 하려는 것이다. 실패를 감지해
+ * 대체 이미지로 바꾸는 길은 쓰지 않는다 — `<img onError>` 는 이미지가 늦게 와도
+ * 한 번 깨진 뒤에는 되돌아오지 않고, 로딩 중에 빈 자리가 보인다. 대신 **응답에 주소가
+ * 없을 때만** 대체하고, 주소가 있으면 그 주소를 정직하게 내보낸다(서버에서 401·404 를
+ * 받으면 그때는 이미지가 깨져 보이는 편이 낫다 — 서버가 잘못 준 것을 숨기지 않는다).
+ *
+ * 앱(Tauri)에서는 주소를 Rust 가 받아 `mupidimg` 스킴으로 돌려주므로
+ * `toImageSource` 를 거쳐야 한다. 안 거치면 앱에서 캐릭터만 깨진다.
+ */
+function ReportMubtiArt({
+  code,
+  imageUrl,
+  alt,
+}: {
+  code: string;
+  imageUrl: string | null;
+  alt: string;
+}) {
+  const source = toImageSource(imageUrl);
+  if (!source) {
+    return <MupidMascot size={132} className="report-cupid" alt={alt} />;
+  }
+  return (
+    <img
+      className="report-cupid"
+      src={source}
+      alt={alt}
+      width={132}
+      height={132}
+      loading="lazy"
+      decoding="async"
+      // `key` 는 유형이 바뀔 때 브라우저가 앞 이미지를 재사용하지 않게 한다.
+      // 같은 자리에 다른 그림이 들어오는데 캐시가 섞이면 잘못된 유형이 보인다.
+      key={code}
+    />
   );
 }
 
@@ -479,10 +484,10 @@ export function ReportView({ model: m }: { model: MupidModel }) {
                   <br />
                   <em>{mubti.title}</em>
                 </h2>
-                <MupidMascot
-                  size={132}
-                  className="report-cupid"
-                  alt="헤드폰을 끼고 구름 위에서 음악에 잠긴 뮤피드"
+                <ReportMubtiArt
+                  code={mubti.code}
+                  imageUrl={mubti.image_url}
+                  alt={`헤드폰을 끼고 구름 위에서 음악에 잠긴 ${mubti.title} 뮤피드`}
                 />
                 <p>{mubti.description}</p>
                 {/* 축 점수 막대는 그리지 않는다. 화면에 없던 것을 리포트 연동하면서
@@ -655,6 +660,9 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // 장르가 45개를 넘는다. 전부 펼치면 '다음' 버튼이 화면 밖으로 밀려
+  // 고르다 말고 스크롤을 한참 내려야 한다 — 검색으로 좁힌다.
+  const [genreQuery, setGenreQuery] = useState('');
   // 고를 수 있는 항목은 서버가 정한다. 못 받아 오면 화면 기본 목록으로 돌아간다.
   const [options, setOptions] = useState<{ moods: string[]; genres: string[] }>({
     moods: moodOptions,
@@ -668,13 +676,19 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
     });
     return () => { abort.abort(); };
   }, []);
+  // 고른 것은 검색과 무관하게 남긴다 — 검색어를 바꿨다고 고른 것이 사라지면
+  // 무엇을 골랐는지 확인할 방법이 없다.
+  const query = genreQuery.trim().toLowerCase();
+  const visibleGenres = query
+    ? options.genres.filter((genre) => genre.toLowerCase().includes(query))
+    : options.genres;
   return (
     <div className="welcome-page">
       {(step > 0 || m.onboardingSubmitted) && <button
         className="icon-button welcome-back"
         aria-label={step > 0 ? '이전 단계로 돌아가기' : '홈으로 돌아가기'}
         disabled={busy}
-        onClick={() => { setError(''); if (step > 0) setStep(step - 1); else m.go('home'); }}
+        onClick={() => { setError(''); setGenreQuery(''); if (step > 0) setStep(step - 1); else m.go('home'); }}
       >
         <ChevronLeft />
       </button>}
@@ -734,7 +748,55 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
           <h1>{['어떤 장르를 좋아하세요?', '어떤 분위기를 좋아하세요?'][step]}</h1>
           {step === 0 && <fieldset key="genres" className="onboarding-choice-group">
             <legend>좋아하는 장르 <small>하나 이상 · 여러 개 선택 가능</small></legend>
-            <div className="filter-chips wrap">{options.genres.map(genre => <button type="button" key={genre} disabled={busy} aria-pressed={selectedGenres.includes(genre)} className={selectedGenres.includes(genre) ? 'selected' : ''} onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}>{genre}</button>)}</div>
+            {/* 고른 것을 위에 고정한다. 목록을 스크롤해도 무엇을 골랐는지 보이고,
+                되돌리려고 다시 찾아 내려갈 필요가 없다. */}
+            {selectedGenres.length > 0 && (
+              <div className="onboarding-picked">
+                <span className="onboarding-picked-count">{selectedGenres.length}개 선택</span>
+                {selectedGenres.map((genre) => (
+                  <button
+                    type="button"
+                    key={genre}
+                    className="onboarding-picked-chip"
+                    disabled={busy}
+                    aria-label={`${genre} 선택 해제`}
+                    onClick={() => setSelectedGenres((list) => list.filter((item) => item !== genre))}
+                  >
+                    {genre} <span aria-hidden="true">×</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* 목록이 길 때만 검색을 낸다. 8개뿐이던 때와 화면이 달라지지 않게. */}
+            {options.genres.length > 12 && (
+              <input
+                type="search"
+                className="onboarding-search"
+                value={genreQuery}
+                disabled={busy}
+                placeholder="장르 검색"
+                aria-label="장르 검색"
+                onChange={(e) => setGenreQuery(e.target.value)}
+              />
+            )}
+            <div className="filter-chips wrap onboarding-scroll">
+              {visibleGenres.map((genre) => (
+                <button
+                  type="button"
+                  key={genre}
+                  disabled={busy}
+                  aria-pressed={selectedGenres.includes(genre)}
+                  className={selectedGenres.includes(genre) ? 'selected' : ''}
+                  onClick={() => setSelectedGenres(list => list.includes(genre) ? list.filter(item => item !== genre) : [...list, genre])}
+                >
+                  {genre}
+                </button>
+              ))}
+            </div>
+            {/* 검색 결과가 없을 때 빈 화면만 남으면 고장으로 보인다. */}
+            {visibleGenres.length === 0 && (
+              <p className="onboarding-empty">‘{genreQuery}’와 맞는 장르가 없어요.</p>
+            )}
           </fieldset>}
           {step === 1 && <fieldset key="moods" className="onboarding-choice-group">
           <legend>좋아하는 분위기 <small>하나 이상 · 여러 개 선택 가능</small></legend>

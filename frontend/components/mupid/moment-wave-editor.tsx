@@ -40,7 +40,7 @@ export function MomentWaveEditor({ track, range, onSelect, onTrim }: {
         else if (press.current && !press.current.moved) onSelect(seconds(event));
         press.current = null;
       }} onPointerCancel={() => { drag.current = null; press.current = null; }}>
-      <Waveform audioUrl={track.localAudio} duration={track.duration} ranges={range ? [range] : []} />
+      <Waveform duration={track.duration} ranges={range ? [range] : []} />
       {range && track.duration > 0 && <>
         <span className="moment-wave-selection" style={{ left: `${range.start / track.duration * 100}%`, width: `${(range.end - range.start) / track.duration * 100}%` }} />
         {(['start', 'end'] as const).map(edge => <button key={edge} type="button" role="slider" data-edge={edge}

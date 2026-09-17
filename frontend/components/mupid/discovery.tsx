@@ -10,6 +10,7 @@ import { MupidMascot } from './mascot';
 import { useEffect, useState } from 'react';
 import {
   Check,
+  ListMusic,
   Bookmark,
   BookmarkMinus,
   ChevronDown,
@@ -102,7 +103,8 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
               <Bookmark />
               이 순간 저장
             </button>
-            <button className="quick-like" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
+            <button className="secondary-button" aria-expanded={m.queueOpen} aria-controls="queue-dock" onClick={m.toggleQueue}><ListMusic />재생목록</button>
+            <button className="secondary-button" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
               <Heart className="pink" fill={m.liked.includes(active.id) ? 'currentColor' : 'none'} />
               좋아요
             </button>

@@ -17,6 +17,11 @@ data-verify:
     # backend·frontend 와 같은 이유로 GitLab 의 `cache:` 를 쓰지 않는다.
     # /cache 는 러너가 붙여 주는 도커 볼륨이라 job 사이에 그대로 남는다.
     UV_CACHE_DIR: /cache/uv
+  needs:
+    # 모자란 라벨은 area-preflight 가 먼저 막는다. 순서일 뿐 게이트가 아니다.
+    - job: area-preflight
+      artifacts: false
+      optional: true
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)\s*Data\s*(,|$)/'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -40,6 +45,13 @@ data-verify:
     - cd ..
     - uv run --python 3.12 --with requests --with websocket-client
         python infra/ci/deploy-jupyter.py --dry-run
+    # 이 영역을 실제로 검증했다는 증거. area-gate 가 이것을 읽는다.
+    - mkdir -p .areas && printf '%s\n' Data > .areas/Data
+  artifacts:
+    when: on_success
+    expire_in: 1 day
+    paths:
+      - .areas/Data
 
 # 수동 job 은 web 과 api 두 소스에서 뜬다.
 #

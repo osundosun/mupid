@@ -29,6 +29,7 @@ import com.osundosun.mupid.api.report.repository.MubtiRepository;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
 import com.osundosun.mupid.api.storage.enumerate.FileCategory;
 import com.osundosun.mupid.api.storage.enumerate.FileType;
+import com.osundosun.mupid.api.storage.service.StorageImageService;
 import com.osundosun.mupid.api.storage.service.StorageService;
 
 import lombok.RequiredArgsConstructor;
@@ -95,8 +96,34 @@ public class BootstrapRunner implements ApplicationRunner {
     /** `object_storage_files.mime` 은 varchar(15) 다. `image/webp` 는 10 자라 들어간다. */
     private static final String MUBTI_IMAGE_MIME = "image/webp";
 
-    /** 올라간 이미지의 스토리지 키. 코드가 유일하니 키도 유일하다. */
-    private static final String MUBTI_IMAGE_KEY_FORMAT = "mubti/%s.webp";
+    /**
+     * 조회 키. 코드가 유일하니 키도 유일하다 (`VTFC.webp`).
+     *
+     * <p>이것은 저장 키가 아니다. 저장 키는 {@link #mubtiImageStorageKey} 가 만들고, 조회 URL 은
+     * {@code StorageImageService} 가 이 값에 카테고리를 붙여 만든다.
+     */
+    static String mubtiImageKey(String code) {
+        return code + MUBTI_IMAGE_SUFFIX;
+    }
+
+    /**
+     * 오브젝트 스토리지에 올릴 저장 키 — `image/mubti/VTFC.webp`.
+     *
+     * <p>접두사를 <b>손으로 적으면 안 된다.</b> 저장 키의 모양(`image/{카테고리}/{키}`)을 정하는
+     * 곳은 {@code StorageImageServiceImpl.getStorageKey} 한 곳이고,
+     * {@code StorageImageService.imageUrl(ObjectStorageFile)} 이 그 모양을 되짚어 조회 URL 을
+     * 만든다. 여기서 접두사를 빼고 `mubti/VTFC.webp` 로 올렸더니 {@code split("/", 3)} 이
+     * 3마디를 못 만들어 <b>조회 URL 이 조용히 null</b> 이 되었고, 그것이 `/report` 화면의
+     * MuBTI 캐릭터가 뜨지 않던 원인이다.
+     *
+     * <p>그래서 접두사를 직접 적지 않고 스토리지 계층에 물어본다. 규약이 한 곳에만 있으면
+     * 다음에 다른 시드가 들어와도 같은 방식으로 틀리지 않는다.
+     */
+    private String mubtiImageStorageKey(String code) {
+        // 접두사를 손으로 적지 않는다. 키 모양을 아는 곳은 `StorageImageService` 하나뿐이고,
+        // 조회 URL 이 그 모양을 되짚어 만들어진다 — 직접 적으면 둘이 조용히 갈라진다.
+        return StorageImageService.storageKey(FileCategory.MUBTI, mubtiImageKey(code));
+    }
 
     /**
      * 취향 유형(`mubti`) 16종. 기획의 조합표 그대로다.
@@ -149,6 +176,7 @@ public class BootstrapRunner implements ApplicationRunner {
         // 없거나 계정에 권한이 없더라도 기동은 그대로 두고, 무엇이 막혔는지만 남긴다.
         seed("공통 코드", this::seedCodes);
         seed("취향 유형", this::seedMubti);
+        seed("취향 유형 이미지 키", this::repairMubtiImageKeys);
     }
 
     /**
@@ -356,10 +384,17 @@ public class BootstrapRunner implements ApplicationRunner {
         }
     }
 
-    /** 이미지를 올리고 그 파일을 물린 유형 한 종을 만든다. */
+    /**
+     * 이미지를 올리고 그 파일을 물린 유형 한 종을 만든다.
+     *
+     * <p>업로드 경로가 {@code StorageImageService.uploadImage} 가 아니라 {@code StorageService}
+     * 직접인 것은 이 호출이 <b>컨트롤러 밖</b>이기 때문이다. 그래서 저장 키도
+     * {@link #mubtiImageStorageKey} 로 직접 만든다 — 대신 접두사를 손으로 적지 않고
+     * 스토리지 계층에 물어봐서 규약이 갈라지지 않게 한다.
+     */
     private void addMubti(MubtiSeed seed, byte[] image) {
-        String fileName = seed.code() + MUBTI_IMAGE_SUFFIX;
-        String key = MUBTI_IMAGE_KEY_FORMAT.formatted(seed.code());
+        String fileName = mubtiImageKey(seed.code());
+        String key = mubtiImageStorageKey(seed.code());
 
         // 같은 키가 이미 있으면 uploadFile 이 내용만 갱신한다 — 파일이 늘어나지 않는다.
         ObjectStorageFile imageFile = storageService.uploadFile(
@@ -402,6 +437,151 @@ public class BootstrapRunner implements ApplicationRunner {
             .filter(seed -> seed.code().equals(code))
             .findFirst()
             .orElseThrow();
+    }
+
+    /**
+     * 잘못된 접두사로 올라가 있는 캐릭터 이미지를 제자리로 되돌린다.
+     *
+     * <p>{@link #seedMubti} 는 <b>이미 있는 유형을 건드리지 않는다.</b> 그래서 규약을 고친 뒤
+     * 새 코드를 배포해도, 예전 코드가 `mubti/VTFC.webp` 로 올려 둔 행은 그대로 남는다 —
+     * {@code imageUrl} 이 3마디를 못 찾아 조회 URL 이 계속 null 이고, 화면은 여전히 캐릭터를
+     * 못 그린다. <b>기동은 그대로 통과하므로 조용히 실패한다.</b> 그래서 여기서 한 번 훑는다.
+     *
+     * <h2>바이트를 zip 이 아니라 스토리지에서 읽는다</h2>
+     *
+     * <p>수리 대상은 <b>이미 스토리지에 있는</b> 이미지의 자리를 옮기는 일이다. zip 을 다시 열어
+     * 그 코드의 그림을 올리면, 스토리지에 있는 것과 다른 판본으로 덮어써질 수 있다 — 운영에서
+     * 캐릭터를 손봤다면 그 수정이 사라진다. 그래서 있는 것을 그대로 옮긴다.
+     *
+     * <p>덤으로 얻는 것이 하나 더 있다. 이 경로는 스토리지만 읽으므로 <b>JPA 세션이 필요 없다.</b>
+     * 처음에는 `mubti.getImageFile().getStorageObjectKey()` 로 키를 읽으려 했는데, 그 연관이
+     * 지연 로딩이고 {@code ApplicationRunner} 에는 트랜잭션이 없어
+     * {@code LazyInitializationException} 으로 <b>기동 로그에만</b> 남고 넘어갔다. 키는
+     * {@link #mubtiImageKey} 로 코드에서 만들 수 있으므로 연관을 아예 건드리지 않는다.
+     *
+     * <h2>순서</h2>
+     *
+     * <ol>
+     *   <li>행의 키를 새 값으로 옮긴다.</li>
+     *   <li>그 키로 올린다 — {@code uploadFile} 이 그 행을 찾아 내용만 갱신한다.</li>
+     *   <li>옛 객체를 지운다.</li>
+     * </ol>
+     *
+     * <p><b>1번과 2번을 바꾸면 안 된다.</b> 올리기를 먼저 하면 {@code uploadFile} 이 새 키로 행을
+     * 찾지 못해 <b>행을 하나 더 만든다.</b> 그러면 한 키에 행이 둘이 되고
+     * {@code findByStorageObjectKeyAndIsDeletedFalse} 가 결과 두 개를 받아
+     * {@code IncorrectResultSizeDataAccessException} 으로 터진다 — 이미지 조회 전체가 죽는다.
+     * 실제로 그 순서로 한 번 돌려서 16행이 중복으로 생겼다. 행을 먼저 옮기면 `file_id` 도 그대로라
+     * (`mubti.image_file_id` 가 그 번호를 들고 있다) 그 점도 함께 지켜진다.
+     *
+     * <p>3번은 마지막이다. 먼저 지우면 그 사이 조회가 404 가 된다. S3 삭제는 <b>키 하나에만</b>
+     * 걸리므로 3번이 2번을 되돌릴 위험은 없다.
+     *
+     * <p>옛 키에서 읽지 못하면 <b>아무것도 하지 않는다.</b> 스토리지가 죽었거나 그 객체가 이미
+     * 없는 경우인데, 그때 새 키로 무엇을 올릴지 알 수 없다. zip 으로 대신 채우지 않는 것은
+     * 위의 판본 문제 때문이다.
+     */
+    private void repairMubtiImageKeys() {
+        int repaired = 0;
+
+        for (Mubti mubti : mubtiRepository.findAll()) {
+            String code = mubtiSeedCode(mubti);
+            if (code == null) {
+                // 네 축이 16종 밖이다. 시드가 만든 행이 아니므로 손대지 않는다.
+                continue;
+            }
+            String wanted = mubtiImageStorageKey(code);
+            String stale = legacyMubtiImageKeys(code).stream()
+                .filter(key -> !key.equals(wanted))
+                // 있는지 묻는 것은 **오브젝트**에 한다. `isFileExists` 는 DB 행을 보는데,
+                // 여기서 찾는 옛 키의 행은 이미 지워졌을 수 있다 — 그러면 "없다" 로 답해서
+                // 옮길 수 있는 이미지를 그냥 두고 지나간다. 실패하면 없는 것으로 본다.
+                .filter(key -> storageService.getFileDataByKey(key).isPresent())
+                .findFirst()
+                .orElse(null);
+            if (stale == null) {
+                // 이미 규약대로거나, 옮길 원본이 없다. 둘 다 할 일이 없다.
+                continue;
+            }
+
+            byte[] image = storageService.getFileDataByKey(stale).orElse(null);
+            if (image == null) {
+                log.warn("취향 유형 {} 의 옛 이미지({})를 읽지 못해 저장 키를 고치지 않았습니다.",
+                    code, stale);
+                continue;
+            }
+
+            // 순서가 중요하다. **행을 먼저 옮기고 나서 올린다.**
+            //
+            // 반대로 하면(upload → rename) `uploadFile` 이 새 키로 행을 찾지 못해
+            // **행을 하나 더 만든다.** 그 뒤 rename 이 옛 행까지 같은 키로 맞추면 한 키에 행이
+            // 둘이 되고, `findByStorageObjectKeyAndIsDeletedFalse` 가 결과 두 개를 받아
+            // `IncorrectResultSizeDataAccessException` 으로 터진다 — 이미지 조회 전체가 죽는다.
+            // 실제로 그 순서로 돌려서 16행이 중복으로 생겼다.
+            //
+            // 행을 먼저 옮기면 upload 가 그 행을 찾아 **내용만 갱신**하므로 `file_id` 가 그대로다.
+            // `mubti.image_file_id` 가 그 번호를 들고 있어서 이 점이 중요하다.
+            storageService.renameStorageObjectKey(stale, wanted);
+            try {
+                storageService.uploadFile(
+                    FileType.IMG,
+                    FileCategory.MUBTI,
+                    wanted,
+                    new InMemoryMultipartFile(mubtiImageKey(code), MUBTI_IMAGE_MIME, image),
+                    MUBTI_IMAGE_MIME);
+            } catch (RuntimeException e) {
+                // 올리기가 실패하면 행만 새 키를 가리키게 남는다 — 그 상태의 조회는 404 다.
+                // 되돌려서 "옛 키에 이미지가 있는" 원래 모양으로 만든다.
+                storageService.renameStorageObjectKey(wanted, stale);
+                throw e;
+            }
+            // 새 자리에 자리를 잡은 뒤에야 옛 객체를 지운다. S3 삭제는 키 하나에만 걸린다.
+            storageService.deleteObjectQuietly(stale);
+            repaired++;
+        }
+
+        if (repaired > 0) {
+            log.info("잘못된 접두사로 올라가 있던 취향 유형 이미지 {}장을 규약(`image/mubti/`)에 맞춰 "
+                + "다시 올렸습니다.", repaired);
+        }
+    }
+
+    /**
+     * 이 코드의 이미지가 놓여 있을 수 있는 옛 키들. 먼저 온 것부터 본다.
+     *
+     * <p>규약이 한 번 어긋났던 자리라 옛 모양을 <b>여기 적어 두는 것이 맞다.</b> 그때 무엇이었는지
+     * 아는 곳이 여기밖에 없고, 앞으로 또 달라지면 그때 이 목록에 더한다.
+     *
+     * <ul>
+     *   <li>`mubti/VTFC.webp` — 접두사 없이 올리던 시절의 키</li>
+     *   <li>`image/mubti/VTFC.webp` — 규약대로인 키. 옛 키가 없을 때 여기서 찾아
+     *       "이미 규약대로" 로 판정한다</li>
+     * </ul>
+     *
+     * <p><b>접두사 없는 키를 빠뜨리면 수리가 조용히 아무것도 하지 않는다.</b> 실제로 처음에
+     * 여기에 `VTFC.webp`(접두사도 카테고리도 없는 모양)를 적어 두는 바람에 후보가 하나도
+     * 맞지 않아 기동이 그냥 지나갔다 — 로그도 안 남고 화면도 그대로였다.
+     */
+    static List<String> legacyMubtiImageKeys(String code) {
+        String lookup = mubtiImageKey(code);
+        return List.of(
+            "mubti/" + lookup,
+            StorageImageService.storageKey(FileCategory.MUBTI, lookup));
+    }
+
+    /**
+     * 네 축을 이은 코드(`VTFC`). 16종 밖의 조합이면 null.
+     *
+     * <p>행의 정체를 축 조합으로 보는 것은 {@link #seedMubti} 와 같다 — 제목은 사람이 고칠 수 있다.
+     */
+    static String mubtiSeedCode(Mubti mubti) {
+        if (mubti.getClassA() == null || mubti.getClassB() == null
+            || mubti.getClassC() == null || mubti.getClassD() == null) {
+            return null;
+        }
+        String code = "" + mubti.getClassA() + mubti.getClassB()
+            + mubti.getClassC() + mubti.getClassD();
+        return MUBTI_SEEDS.stream().anyMatch(seed -> seed.code().equals(code)) ? code : null;
     }
 
     /** 넣어야 할 코드 한 건. 있는지 없는지를 이 값으로 비교한다. */

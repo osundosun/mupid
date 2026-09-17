@@ -1,7 +1,33 @@
-"""GPU 메타데이터의 장르·무드만 기존 곡에 연결하는 독립 실행 도구.
+"""곡별 장르·분위기를 서버에 등록한다.
 
-python -m music_preprocessing.genre_mood --help
-기존 catalog/batch 및 registered.json은 수정하지 않는다.
+`music-preprocessing classify` 가 배치 안에서 이것을 부른다. 손으로 돌릴 때는
+
+    python -m music_preprocessing.genre_mood --help
+
+오디오를 분석하지 않는다. 수집 파이프라인이 곡마다 남긴 메타데이터
+(`metadata/T*.json` 의 `genre` · `mood`)와 분류 어휘(`genre_mood_taxonomy.json`)를
+읽어, `catalog` 가 남긴 `registered.json` 의 `music_id` 에 연결한다.
+기존 catalog/batch 및 `registered.json` 은 수정하지 않는다.
+
+## 관리자 API 를 쓰지 않는다
+
+예전에는 `/api/v1/admin/resource/**` 로 코드와 연결 행을 하나씩 만들었다. 그러려면
+배치가 관리자 권한을 들고 있어야 한다 — 그 계정이면 회원·결제까지 닿는다.
+지금은 배치가 실제로 필요한 것만 열어 둔 두 엔드포인트를 쓴다.
+
+| 하는 일 | 엔드포인트 | 비고 |
+| --- | --- | --- |
+| 어휘 확인 | `GET /api/v1/onboarding/option` | 코드 번호까지 온다. 쓰기 없음 |
+| 곡 확인 | `GET /api/v1/music?page&size` | 곡명·현재 분류를 함께 준다 |
+| 코드 추가 | `POST /api/v1/code` | `@SystemRole`. 멱등 |
+| 분류 적재 | `PUT /api/v1/music/{id}/classification` | `@SystemRole`. **통째로 교체** |
+
+## 교체라서 달라지는 것
+
+`PUT` 은 그 곡의 장르·분위기를 통째로 갈아 끼운다. 그래서 이 도구는 **비어 있는
+곡에만 마음대로 쓴다.** 이미 분류가 있는데 원본과 다르면 건드리지 않고 보고서에
+남긴다 — 사람이 손으로 고친 값을 배치가 조용히 지우면 안 된다.
+덮어쓰려면 `--replace-existing` 을 명시한다.
 """
 from __future__ import annotations
 
@@ -12,73 +38,41 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 from urllib.parse import urlencode, urlsplit
 
 from .api_client import MupidClient
 from .mood_approximations import MOOD_APPROXIMATIONS, SOURCE as APPROXIMATION_SOURCE
 
+TAXONOMY_NAME = "genre_mood_taxonomy.json"
+
+# 한 번에 읽는 곡 수. 서버가 100 을 넘기면 100 으로 깎는다(`MusicServiceImpl`).
+PAGE_SIZE = 100
+
 
 def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
-# SSH stdin으로만 전달한다. 경로는 JSON 입력이며 셸 명령에 보간하지 않는다.
-REMOTE_READER = r'''
-import json, pathlib, sys
-settings = json.loads(sys.stdin.readline())
-root = pathlib.Path(settings['source_dir']).expanduser()
-registry = json.loads(pathlib.Path(settings['registry']).expanduser().read_text())
-tracks = []
-for p in sorted((root / 'metadata').glob('T*.json')):
-    raw = json.loads(p.read_text())
-    tracks.append({'filename': p.name, 'track_id': raw.get('track_id'),
-                   'title': raw.get('flow_title'), 'genre': raw.get('genre'),
-                   'mood': raw.get('mood')})
-print(json.dumps({'version': 1, 'metadata': tracks,
- 'taxonomy': json.loads((root / 'genre_mood_taxonomy.json').read_text()),
- 'registry': registry.get('catalog', {}).get('tracks', {})}, ensure_ascii=False))
-'''
-
-
-def fetch(args):
-    if args.ssh_host.startswith("-") or not re.fullmatch(r"[\w.@:-]+", args.ssh_host):
-        raise ValueError("잘못된 SSH 호스트")
-    command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
-    if args.ssh_key:
-        command += ["-i", args.ssh_key]
-    command += [args.ssh_host, "python3 -"]
-    if args.wsl_distro:
-        command = ["wsl", "-d", args.wsl_distro, "--"] + command
-    # python - 는 stdin 전체를 코드로 읽으므로 설정도 코드 안의 JSON 리터럴로 전달.
-    settings = json.dumps({"source_dir": args.source_dir, "registry": args.registry})
-    source = REMOTE_READER.replace(
-        "settings = json.loads(sys.stdin.readline())", f"settings = json.loads({settings!r})"
-    )
-    result = subprocess.run(command, input=source, text=True, encoding="utf-8",
-                            capture_output=True, timeout=120, check=True)
-    snapshot = json.loads(result.stdout)
-    save_snapshot(snapshot, args.output)
-
-
-def local_snapshot(args):
-    root = Path(args.source_dir).expanduser()
-    registry = read_json(Path(args.registry).expanduser())
+def build_snapshot(metadata_dir, registry, taxonomy):
+    """원본 세 곳을 읽어 검증 가능한 한 덩어리로 만든다. 아무것도 쓰지 않는다."""
     metadata = []
-    for path in sorted((root / "metadata").glob("T*.json")):
+    for path in sorted(Path(metadata_dir).expanduser().glob("T*.json")):
         raw = read_json(path)
         metadata.append({"filename": path.name, "track_id": raw.get("track_id"),
                          "title": raw.get("flow_title"), "genre": raw.get("genre"),
                          "mood": raw.get("mood")})
-    save_snapshot({"version": 1, "metadata": metadata,
-                   "taxonomy": read_json(root / "genre_mood_taxonomy.json"),
-                   "registry": registry.get("catalog", {}).get("tracks", {})}, args.output)
+    registered = read_json(Path(registry).expanduser())
+    return {"version": 1, "metadata": metadata,
+            "taxonomy": read_json(Path(taxonomy).expanduser()),
+            "registry": registered.get("catalog", {}).get("tracks", {})}
 
 
-def save_snapshot(snapshot, output):
+def local_snapshot(args):
+    root = Path(args.source_dir).expanduser()
+    snapshot = build_snapshot(root / "metadata", args.registry, root / TAXONOMY_NAME)
     plan = validate(snapshot)
-    destination = Path(output)
+    destination = Path(args.output)
     destination.parent.mkdir(parents=True, exist_ok=True)
     # 기존 스냅샷을 실수로 덮어쓰지 않는다.
     with destination.open("x", encoding="utf-8") as stream:
@@ -191,130 +185,204 @@ def supplement_moods(tracks, snapshot):
     return result, provenance
 
 
-class AdminClient(MupidClient):
-    """기존 인증 구현을 재사용하되 POST 자동 재시도는 하지 않는다."""
+class BatchClient(MupidClient):
+    """전처리 배치용 클라이언트.
 
-    def __init__(self, base_url, token_file=None, refresh_token_file=None):
+    기존 인증 구현(ROLE_SYSTEM 리프레시 토큰)을 그대로 쓰되 쓰기 요청은 자동으로
+    재시도하지 않는다. `PUT` 은 멱등이지만 `POST /api/v1/code` 도 멱등이라 재시도
+    자체가 해로운 것은 아니다 — 다만 서버가 5xx 를 주는 상황에서 같은 요청을 계속
+    밀어 넣기보다 멈추고 보고서를 남기는 편이 낫다.
+    """
+
+    def __init__(self, base_url, token_file=None, refresh_token_file=None, timeout=30):
         parsed = urlsplit(base_url)
         if parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.query or parsed.fragment:
             raise ValueError("잘못된 API 주소")
         if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
-            raise ValueError("관리자 인증은 HTTPS 또는 로컬 주소에서만 사용 가능")
+            raise ValueError("토큰을 실어 보내므로 HTTPS 또는 로컬 주소만 허용")
         self.bearer = Path(token_file).read_text().strip() if token_file else None
         refresh = Path(refresh_token_file).read_text().strip() if refresh_token_file else ""
         if not self.bearer and not refresh:
-            raise ValueError("관리자 토큰 파일 필요")
-        super().__init__(base_url, refresh, token_file=refresh_token_file, max_retries=1)
+            raise ValueError("토큰 파일 필요")
+        super().__init__(base_url, refresh, token_file=refresh_token_file,
+                         timeout=timeout, max_retries=1)
 
     def _ensure_access_token(self, force=False):
         return self.bearer or super()._ensure_access_token(force=force)
 
-    def rows(self, resource):
-        result, page, total = [], 0, None
-        while True:
-            params = urlencode({"page": page, "size": 200, "direction": "asc"})
-            data = self._request("GET", f"/api/v1/admin/resource/{resource}?{params}")["data"]
-            if total is not None and total != data["total"]:
-                raise ValueError(f"조회 중 행 수 변경: {resource}; 재실행 필요")
-            total = data["total"]
-            result.extend(data["content"])
-            page += 1
-            if page >= data["pages"]:
-                break
-            if not data["content"]:
-                raise ValueError(f"빈 페이지: {resource}")
-        if len(result) != total:
-            raise ValueError(f"조회 개수 불일치: {resource}")
-        return result
+    def options(self):
+        """온보딩 선택지 = 지금 서버에 있는 GENRE·MOOD 코드 전부. 번호까지 온다."""
+        return self._request("GET", "/api/v1/onboarding/option")["data"]
 
-    def create(self, resource, body):
-        if resource not in ("code", "musicGenre", "musicMood"):
-            raise ValueError("허용되지 않은 쓰기 대상")
-        return self._request("POST", f"/api/v1/admin/resource/{resource}", json_body=body)["data"]
+    def music_rows(self):
+        """곡 전체를 훑는다. 곡명과 **현재 분류**가 같이 오므로 한 번에 끝난다."""
+        rows, page, total = [], 0, None
+        while True:
+            params = urlencode({"page": page, "size": PAGE_SIZE})
+            data = self._request("GET", f"/api/v1/music?{params}")["data"]
+            if total is not None and total != data["totalElements"]:
+                raise ValueError("조회 중 곡 수가 바뀜; 재실행 필요")
+            total = data["totalElements"]
+            rows.extend(data["items"])
+            page += 1
+            if page >= data["totalPages"]:
+                break
+            if not data["items"]:
+                raise ValueError("빈 페이지")
+        if len(rows) != total:
+            raise ValueError("조회 개수 불일치")
+        return rows
+
+    # `add_code` 는 `MupidClient` 에 있다. 구간 분석 배치도 악기 코드를 넣느라
+    # 같은 것을 부르므로, 두 벌을 두면 한쪽만 고쳐졌을 때 조용히 갈린다.
+
+    def replace_classification(self, music_id, genre_code_ids, mood_code_ids):
+        """그 곡의 장르·분위기를 **통째로** 갈아 끼운다. 저장된 결과가 돌아온다."""
+        return self._request(
+            "PUT", f"/api/v1/music/{positive_id(music_id)}/classification",
+            json_body={"genreCodeIds": genre_code_ids, "moodCodeIds": mood_code_ids},
+        )["data"]
+
+
+def fold(codes):
+    """서버가 쓰는 철자를 찾기 위한 대소문자 무시 색인.
+
+    `codes` 의 `(code_type, code_name)` 은 MySQL 기본 콜레이션에서 대소문자를
+    구분하지 않는다. 부트스트랩이 심어 둔 `Pop` 이 있으면 원본의 `pop` 은 새로
+    만들어지지 않고 그 행이 돌아온다. 그걸 모르고 이름을 그대로 비교하면
+    반영한 뒤에도 영원히 "다르다" 가 되어 같은 곡을 매 배치마다 다시 쓴다.
+    """
+    return {(kind, name.casefold()): name for kind, name in codes}
+
+
+def wanted(track, folded):
+    """이 곡에 있어야 할 분류를 **서버 철자로** 돌려준다."""
+    genres = [folded.get(("GENRE", track["genre"].casefold()), track["genre"])]
+    moods = [folded.get(("MOOD", name.casefold()), name) for name in track["moods"]]
+    return sorted(set(genres)), sorted(set(moods))
 
 
 def inspect(client, tracks):
+    """쓰기 전에 서버 상태를 읽어 계획을 세운다. 아무것도 쓰지 않는다."""
+    options = client.options()
     codes = {}
-    code_rows = client.rows("code")
-    for row in code_rows:
-        key = (row["codeType"], row["codeName"])
-        if key[0] not in ("GENRE", "MOOD"):
-            continue
-        if key in codes:
-            raise ValueError(f"서버에 중복 코드 존재: {key}")
-        codes[key] = positive_id(row["codeId"])
-    music = {positive_id(row["musicId"]): row for row in client.rows("music")}
+    for kind, key in (("GENRE", "genres"), ("MOOD", "moods")):
+        for row in options[key]:
+            entry = (kind, row["name"])
+            if entry in codes:
+                raise ValueError(f"서버에 중복 코드 존재: {entry}")
+            codes[entry] = positive_id(row["codeId"])
+    folded = fold(codes)
+
+    server = {}
+    for row in client.music_rows():
+        music_id = positive_id(row["musicId"])
+        if music_id in server:
+            raise ValueError(f"곡 목록에 같은 번호가 두 번: {music_id}")
+        server[music_id] = row
+
+    empty, differs, held = [], [], {}
     for track in tracks:
-        row = music.get(track["music_id"])
+        row = server.get(track["music_id"])
+        # 곡명을 맞춰 본다. `registered.json` 이 낡아 다른 곡을 가리키고 있으면
+        # `PUT` 이 엉뚱한 곡의 분류를 지운다.
         if not row or row.get("title") != track["title"]:
             raise ValueError(f"서버 곡 누락/곡명 불일치: {track['track_id']}")
-    expected = {"musicGenre": set(), "musicMood": set()}
-    for t in tracks:
-        expected["musicGenre"].add((t["music_id"], "GENRE", t["genre"]))
-        expected["musicMood"].update((t["music_id"], "MOOD", mood) for mood in t["moods"])
-    reverse = {value: key for key, value in codes.items()}
-    target_ids = {t["music_id"] for t in tracks}
-    missing = {}
-    existing = {}
-    for resource, field in (("musicGenre", "genreCode"), ("musicMood", "moodCode")):
-        relations = set()
-        for row in client.rows(resource):
-            music_id = positive_id(row["music"])
-            code_id = positive_id(row[field])
-            if (music_id, code_id) in relations:
-                raise ValueError(f"중복 관계: {resource}")
-            relations.add((music_id, code_id))
-            if music_id in target_ids:
-                key = reverse.get(code_id)
-                if key is None or (music_id, *key) not in expected[resource]:
-                    raise ValueError(f"원본에 없는 기존 관계: {resource} music_id={music_id}; 자동 삭제하지 않음")
-        existing[resource] = relations
-        missing[resource] = sorted(item for item in expected[resource]
-                                   if (item[0], codes.get(item[1:])) not in relations)
-    needed_codes = {(kind, name) for relations in expected.values() for _, kind, name in relations}
-    return {"codes": codes, "missing_codes": sorted(needed_codes - codes.keys()),
-            "missing": missing, "existing": existing}
+        have = (sorted(set(row.get("genres") or [])), sorted(set(row.get("moods") or [])))
+        if have == wanted(track, folded):
+            continue
+        (empty if not (have[0] or have[1]) else differs).append(track["music_id"])
+        held[track["music_id"]] = {"genres": have[0], "moods": have[1]}
+
+    needed = {("GENRE", t["genre"]) for t in tracks}
+    needed |= {("MOOD", name) for t in tracks for name in t["moods"]}
+    return {"codes": codes, "folded": folded,
+            "missing_codes": sorted(key for key in needed
+                                    if (key[0], key[1].casefold()) not in folded),
+            "empty": empty, "differs": differs, "held": held}
 
 
-def apply_plan(client, tracks, state, report, save):
-    codes = dict(state["codes"])
+def apply_plan(client, tracks, state, report, save, replace_existing=False):
+    codes, folded = dict(state["codes"]), dict(state["folded"])
     by_music = {track["music_id"]: track for track in tracks}
+
+    # 이미 다른 분류가 있는 곡은 건드리지 않고 넘어간다. 사람이 손으로 고친 값을
+    # 배치가 조용히 지우면 안 된다. 한 곡 때문에 나머지를 멈추지도 않는다 —
+    # 무엇을 건너뛰었는지는 보고서의 `held` 와 화면 경고에 남는다.
+    report["skipped"] = [] if replace_existing else sorted(state["differs"])
+
     for kind, name in state["missing_codes"]:
-        row = client.create("code", {"codeType": kind, "codeName": name})
-        codes[(kind, name)] = positive_id(row["codeId"])
-        report["created"].append({"resource": "code", "id": row["codeId"], "type": kind, "name": name})
+        row = client.add_code(kind, name)
+        code_id = positive_id(row["codeId"])
+        # 서버가 돌려준 철자를 쓴다. 대소문자만 다른 코드가 이미 있었다면 그 이름이다.
+        codes[(kind, row["codeName"])] = code_id
+        folded[(kind, row["codeName"].casefold())] = row["codeName"]
+        report["created"].append({"resource": "code", "id": code_id, "type": kind,
+                                  "name": row["codeName"], "new": bool(row.get("created"))})
         save()
-    for resource, field in (("musicGenre", "genreCode"), ("musicMood", "moodCode")):
-        for music_id, kind, name in state["missing"][resource]:
-            code_id = codes[(kind, name)]
-            client.create(resource, {"music": music_id, field: code_id})
-            created = {"resource": resource, "music_id": music_id, "code_id": code_id}
-            if resource == "musicMood" and by_music[music_id].get("mood_confidence") == "approx":
-                created.update(track_id=by_music[music_id]["track_id"], confidence="approx",
-                               source=APPROXIMATION_SOURCE)
-            report["created"].append(created)
-            save()
-            if len(report["created"]) % 100 == 0:
-                print(f"등록 완료 {len(report['created'])}건", file=sys.stderr, flush=True)
+
+    for music_id in state["empty"] + (state["differs"] if replace_existing else []):
+        track = by_music[music_id]
+        genre_names, mood_names = wanted(track, folded)
+        genre_ids = [codes[("GENRE", name)] for name in genre_names]
+        mood_ids = [codes[("MOOD", name)] for name in mood_names]
+        stored = client.replace_classification(music_id, genre_ids, mood_ids)
+        # 보낸 것이 아니라 저장된 것이 돌아온다. 다르면 여기서 멈춘다.
+        if sorted(stored["genreCodeIds"]) != genre_ids or sorted(stored["moodCodeIds"]) != mood_ids:
+            raise ValueError(f"저장 결과가 요청과 다름: music_id={music_id}")
+        written = {"resource": "classification", "music_id": music_id,
+                   "genre_code_ids": genre_ids, "mood_code_ids": mood_ids}
+        if track.get("mood_confidence") == "approx":
+            written.update(track_id=track["track_id"], confidence="approx",
+                           source=APPROXIMATION_SOURCE)
+        if music_id in state["differs"]:
+            written["replaced"] = state["held"][music_id]
+        report["created"].append(written)
+        save()
+        if len(report["created"]) % 100 == 0:
+            print(f"등록 완료 {len(report['created'])}건", file=sys.stderr, flush=True)
+
     after = inspect(client, tracks)
-    if after["missing_codes"] or any(after["missing"].values()):
-        raise ValueError("반영 후 누락 관계가 남아 있음")
-    for resource, before in state["existing"].items():
-        if not before <= after["existing"][resource]:
-            raise ValueError(f"검증 중 기존 관계 소실 감지: {resource}")
+    if after["missing_codes"] or after["empty"] or (after["differs"] and replace_existing):
+        raise ValueError("반영 후에도 원본과 다른 곡이 남아 있음")
     report["status"] = "verified"
     report["rerun_additions"] = 0
     save()
 
 
+def load_source(args):
+    """`--snapshot` 이든 `--source-dir` 이든 같은 모양으로 돌려준다.
+
+    스냅샷 파일은 감사용이다. 배치는 JupyterHub 안에서 원본 디렉터리를 직접 읽는다.
+    """
+    if args.snapshot:
+        raw = Path(args.snapshot).read_bytes()
+        return json.loads(raw.decode("utf-8-sig")), hashlib.sha256(raw).hexdigest()
+    root = Path(args.source_dir).expanduser() if args.source_dir else None
+    metadata = Path(args.metadata_dir).expanduser() if args.metadata_dir else None
+    taxonomy = Path(args.taxonomy).expanduser() if args.taxonomy else None
+    if metadata is None or taxonomy is None:
+        if root is None:
+            raise ValueError("--source-dir 없이는 --metadata-dir 와 --taxonomy 를 모두 줘야 한다")
+        metadata = metadata or root / "metadata"
+        taxonomy = taxonomy or root / TAXONOMY_NAME
+    snapshot = build_snapshot(metadata, args.registry, taxonomy)
+    canonical = json.dumps(snapshot, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return snapshot, hashlib.sha256(canonical).hexdigest()
+
+
 def run(args):
-    snapshot = read_json(args.snapshot)
+    if not args.snapshot and not (args.source_dir or args.metadata_dir):
+        raise ValueError("--snapshot 또는 --source-dir 가 필요하다")
+    if not args.snapshot and not args.registry:
+        raise ValueError("--source-dir 에는 --registry 가 필요하다")
+    snapshot, digest = load_source(args)
     tracks = validate(snapshot)
     source_summary = summary(tracks)
     approximations = []
     if not args.skip_mood_approximations:
         tracks, approximations = supplement_moods(tracks, snapshot)
-    report = {"status": "source_validated", "source_sha256": hashlib.sha256(Path(args.snapshot).read_bytes()).hexdigest(),
+    report = {"status": "source_validated", "source_sha256": digest,
               "source_summary": source_summary, "summary": summary(tracks),
               "mood_approximations": approximations,
               "created": [], "api_base_url": args.api_base_url}
@@ -333,15 +401,20 @@ def run(args):
         if args.apply and not args.api_base_url:
             raise ValueError("--apply에는 --api-base-url 필요")
         if args.api_base_url:
-            client = AdminClient(args.api_base_url, args.token_file, args.refresh_token_file)
+            client = BatchClient(args.api_base_url, args.token_file, args.refresh_token_file)
             state = inspect(client, tracks)
             report["missing_codes"] = state["missing_codes"]
-            report["missing_relations"] = {k: len(v) for k, v in state["missing"].items()}
+            report["pending"] = {"empty": len(state["empty"]), "differs": len(state["differs"])}
+            report["held"] = {str(k): v for k, v in state["held"].items()
+                              if k in set(state["differs"])}
             report["status"] = "server_preflight_passed"
             save()
             if args.apply:
-                apply_plan(client, tracks, state, report, save)
-        print(json.dumps({k: v for k, v in report.items() if k != "created"}, ensure_ascii=False, indent=2))
+                apply_plan(client, tracks, state, report, save, args.replace_existing)
+        # 표로 다시 그리는 쪽(`music-preprocessing classify`)에서는 끈다.
+        if not getattr(args, "quiet", False):
+            print(json.dumps({k: v for k, v in report.items() if k != "created"},
+                             ensure_ascii=False, indent=2))
     except Exception as exc:
         report["status"] = "failed"
         # 서버 오류 응답에 들어갈 수 있는 인증정보/본문은 보고서에 복사하지 않는다.
@@ -353,39 +426,36 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("fetch", help="SSH로 JSON 원본과 기존 ID 매핑만 읽기")
-    p.add_argument("--ssh-host", required=True)
-    p.add_argument("--ssh-key")
-    p.add_argument("--wsl-distro")
-    p.add_argument("--source-dir", default="/home/j-j15a204/flow_music_data")
-    p.add_argument("--registry", default="/home/j-j15a204/music_preprocessing/registered.json")
-    p.add_argument("--output", required=True)
-    p.set_defaults(func=fetch)
-    p = sub.add_parser("snapshot", help="GPU 서버 또는 마운트된 로컬 원본 읽기")
+    p = sub.add_parser("snapshot", help="원본 디렉터리를 한 파일로 떠 둔다 (감사용)")
     p.add_argument("--source-dir", required=True)
     p.add_argument("--registry", required=True)
     p.add_argument("--output", required=True)
     p.set_defaults(func=local_snapshot)
-    p = sub.add_parser("import", help="기본: 사전 검증만, --apply: 누락 코드·관계 추가")
-    p.add_argument("--snapshot", required=True)
+    p = sub.add_parser("import", help="기본: 사전 검증만, --apply: 코드 추가 및 분류 적재")
+    source = p.add_argument_group("원본 (둘 중 하나)")
+    source.add_argument("--snapshot", help="snapshot 명령이 떠 둔 파일")
+    source.add_argument("--source-dir", help="flow_music_data 루트")
+    source.add_argument("--metadata-dir", help="비우면 <source-dir>/metadata")
+    source.add_argument("--taxonomy", help=f"비우면 <source-dir>/{TAXONOMY_NAME}")
+    source.add_argument("--registry", help="catalog 가 남긴 registered.json")
     p.add_argument("--report", required=True)
     p.add_argument("--api-base-url")
     auth = p.add_mutually_exclusive_group()
-    auth.add_argument("--token-file", help="ROLE_ADMIN 액세스 토큰 파일")
-    auth.add_argument("--refresh-token-file", help="ROLE_ADMIN 리프레시 토큰 파일 (회전 시 갱신)")
+    auth.add_argument("--token-file", help="ROLE_SYSTEM 액세스 토큰 파일")
+    auth.add_argument("--refresh-token-file", help="ROLE_SYSTEM 리프레시 토큰 파일 (회전 시 갱신)")
     p.add_argument("--apply", action="store_true")
+    p.add_argument("--replace-existing", action="store_true",
+                   help="이미 다른 분류가 있는 곡도 덮어쓴다 (기본은 건너뛰고 보고만)")
     p.add_argument("--skip-mood-approximations", action="store_true",
                    help="초기 10곡의 사용자 제공 근사치를 제외하고 원본 무드만 사용")
     p.set_defaults(func=run)
     args = parser.parse_args()
     try:
         args.func(args)
-    except (ValueError, KeyError, TypeError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+    except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
         # API 오류는 기존 클라이언트가 서버 메시지를 포함하므로 타입/상태만 출력한다.
         if hasattr(exc, "status"):
             print(f"실패: HTTP {exc.status} ({type(exc).__name__}); 권한/서버 상태 확인", file=sys.stderr)
-        elif isinstance(exc, subprocess.SubprocessError):
-            print(f"실패: SSH {type(exc).__name__}; 호스트·키·경로 확인", file=sys.stderr)
         else:
             print(f"실패: {exc}", file=sys.stderr)
         return 1

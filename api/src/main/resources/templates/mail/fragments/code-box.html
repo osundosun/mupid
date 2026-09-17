@@ -4,118 +4,19 @@
 
 <!--
   6자리 인증 코드 박스.
-  - 코드를 한 글자씩 6개의 칸(구멍)에 나누어 표시합니다.
-  - 클릭 시 동작 (위에서부터 우선 적용):
-      1) copyScript 가 살아 있으면 클립보드에 바로 복사됩니다.
-      2) 스크립트가 제거된 환경이라도 슬롯 영역에 user-select: all 이 걸려 있어
-         한 번의 클릭으로 코드 전체가 선택되므로 Ctrl+C 로 복사할 수 있습니다.
+  - 코드를 한 글자씩 6개의 칸에 나누어 표시합니다.
+  - 클립보드 복사 스크립트는 두지 않습니다. 메일 클라이언트가 <script> 를 제거해
+    대부분의 환경에서 동작하지 않기 때문입니다. 대신 슬롯 영역에 user-select: all 을
+    걸어 두어, 한 번의 클릭으로 코드 전체가 선택되고 Ctrl+C 로 복사됩니다.
   - 슬롯 span 은 반드시 공백 없이 한 줄로 두어야 합니다.
     (사이에 줄바꿈이 들어가면 선택/복사 결과에 공백이 섞입니다.)
 -->
 <div th:fragment="codeBox(code)"
-     th:attr="data-copy-code=${code}"
-     style="margin: 28px 0 4px 0; text-align: center;">
+     style="margin: 26px 0 0 0; text-align: center;">
 
-    <div data-copy-slots
-         style="cursor: pointer; -webkit-user-select: all; -moz-user-select: all; -ms-user-select: all; user-select: all;"
-         title="클릭하면 인증 코드가 복사됩니다."><span th:each="i : ${#numbers.sequence(0, 5)}" th:text="${#strings.length(code) > i} ? ${#strings.substring(code, i, i + 1)} : ''" style="display: inline-block; width: 44px; line-height: 58px; margin: 0 3px; text-align: center; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 30px; font-weight: bold; color: #1e293b; font-family: 'Segoe UI', Roboto, monospace;">1</span></div>
+    <div style="-webkit-user-select: all; -moz-user-select: all; -ms-user-select: all; user-select: all;"><span th:each="i : ${#numbers.sequence(0, 5)}" th:text="${#strings.length(code) > i} ? ${#strings.substring(code, i, i + 1)} : ''" style="display: inline-block; width: 44px; line-height: 58px; margin: 0 3px; text-align: center; background-color: #ffffff; border: 1px solid #d5e5fb; border-radius: 12px; font-size: 28px; font-weight: bold; letter-spacing: 0.02em; color: #2f4f85; font-family: 'Segoe UI', Roboto, monospace;">1</span></div>
 
-    <p data-copy-label
-       data-copy-label-idle="코드를 클릭하면 클립보드에 복사됩니다."
-       data-copy-label-done="클립보드에 복사되었습니다."
-       style="margin: 14px 0 0 0; font-size: 13px; color: #2563eb;">
-        코드를 클릭하면 클립보드에 복사됩니다.
-    </p>
 </div>
-
-<!--
-  클립보드 복사 스크립트.
-  Gmail·Outlook·네이버메일 등 대부분의 메일 클라이언트는 <script> 를 제거하므로
-  이 스크립트는 브라우저/웹뷰로 메일을 열었을 때만 동작합니다.
-  제거된 환경에서는 위의 user-select: all 폴백이 대신 동작합니다.
--->
-<script th:fragment="copyScript">
-    (function () {
-        function selectSlots(box) {
-            var slots = box.querySelector('[data-copy-slots]');
-            if (!slots || !window.getSelection || !document.createRange) return null;
-            var range = document.createRange();
-            range.selectNodeContents(slots);
-            var sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-            return sel;
-        }
-
-        function flash(box) {
-            var label = box.querySelector('[data-copy-label]');
-            if (!label) return;
-            label.textContent = label.getAttribute('data-copy-label-done');
-            setTimeout(function () {
-                label.textContent = label.getAttribute('data-copy-label-idle');
-            }, 2000);
-        }
-
-        // navigator.clipboard 는 보안 컨텍스트(https/localhost)에서만 존재하므로
-        // 그 외 환경에서는 선택 영역 기반 execCommand 로 떨어집니다.
-        function legacyCopy(box, text) {
-            var ok = false;
-            try {
-                var area = document.createElement('textarea');
-                area.value = text;
-                area.setAttribute('readonly', '');
-                area.style.position = 'fixed';
-                area.style.top = '0';
-                area.style.opacity = '0';
-                document.body.appendChild(area);
-                area.select();
-                area.setSelectionRange(0, text.length);
-                ok = document.execCommand('copy');
-                document.body.removeChild(area);
-            } catch (e) {
-                ok = false;
-            }
-
-            if (!ok) {
-                // textarea 조차 막힌 경우: 슬롯을 선택해 두고 Ctrl+C 를 유도합니다.
-                try {
-                    selectSlots(box);
-                    ok = document.execCommand('copy');
-                } catch (e2) {
-                    ok = false;
-                }
-            }
-            return ok;
-        }
-
-        function bind(box) {
-            box.addEventListener('click', function () {
-                var code = box.getAttribute('data-copy-code');
-                if (!code) return;
-
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(code).then(
-                        function () { flash(box); },
-                        function () { if (legacyCopy(box, code)) flash(box); }
-                    );
-                    return;
-                }
-                if (legacyCopy(box, code)) flash(box);
-            });
-        }
-
-        function init() {
-            var boxes = document.querySelectorAll('[data-copy-code]');
-            Array.prototype.forEach.call(boxes, bind);
-        }
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', init);
-        } else {
-            init();
-        }
-    })();
-</script>
 
 </body>
 </html>

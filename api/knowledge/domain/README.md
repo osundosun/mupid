@@ -11,7 +11,7 @@
 | [user-account.md](user-account.md) | 회원·이메일 인증·파일 — MySQL 에 있는 유일한 도메인 |
 | [track-sections.md](track-sections.md) | 곡과 구간, `analysis_version`, 재생 위치 → 구간 판정 |
 | [listening-events.md](listening-events.md) | 청취 이벤트 22종, 이벤트별 필드, 신호 가중치, 스킵 해석 |
-| [mubti-report.md](mubti-report.md) · [seed-mubti.sql](seed-mubti.sql) | '내 취향' 일간 리포트 — 집계 쿼리, MuBTI 네 축 판정 규칙, 적재 시점 |
+| [mubti-report.md](mubti-report.md) | '내 취향' 일간 리포트 — 집계 쿼리, MuBTI 네 축 판정 규칙, 적재 시점 |
 | [event-spec.html](event-spec.html) | 위 문서를 렌더한 한 장짜리 페이지 (브라우저로 열어 본다) |
 | [recommendation.md](recommendation.md) | 선호 신호 축적, 노출 기록, 평가 |
 

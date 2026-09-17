@@ -105,7 +105,23 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             <LikeButton model={m} />
           </div>
           </>}
-
+          <div className="desktop-audio-options">
+            {/* 감싸개는 그대로 둔다 — `.desktop-audio-options label` 에 배치가 걸려 있다. */}
+            <label>
+              <Volume2 />
+              <span className="sr-only">볼륨</span>
+              <VolumeSlider />
+            </label>
+            <button
+              className="icon-button"
+              aria-label={m.queueOpen ? '재생 목록 접기' : '재생 목록 펼치기'}
+              aria-expanded={m.queueOpen}
+              aria-controls="queue-dock"
+              onClick={m.toggleQueue}
+            >
+              <ListMusic />
+            </button>
+          </div>
         </section>
         <aside className="desktop-playlists today-moments" aria-label="오늘의 Moment 추천">
           <header>

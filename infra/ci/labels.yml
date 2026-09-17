@@ -1,44 +1,57 @@
-# 영역 라벨로 파이프라인을 고른다. Frontend · Backend · AI · Data.
+# 영역 라벨이 MR 파이프라인을 고른다. Frontend · Backend · AI · Data · Infra.
 #
-# MR 에 붙은 라벨이 그 MR 에서 무엇을 돌릴지 정한다. 라벨을 하나도 안 붙이면
-# 아래 require-area-label 이 실패해서 머지를 막는다 — 라벨 없이 지나가면
-# 아무 검증도 안 도는 초록불 MR 이 되기 때문이다.
+# **왜 rules 가 아니라 script 인가.**
 #
-# **라벨은 MR 파이프라인에만 있다.** GitLab 이 CI_MERGE_REQUEST_LABELS 를
-# merge_request_event 에서만 채운다. master · develop 푸시 파이프라인에는 그런
-# 변수가 없으므로 거기서는 예전처럼 `changes:` 경로로 판단한다. 배포 job 은
-# master 푸시에서 도니까 라벨과 무관하게 경로로 걸린다.
+# GitLab 은 job 의 rules 를 **파이프라인을 만들 때 한 번** 평가하고, 그 job 을
+# 다시 돌려도(retry) 그 결과를 바꾸지 않는다. 문서 그대로다 — "The configuration
+# for a pipeline is only fetched when the pipeline is created. When you rerun a job,
+# uses the same configuration each time."
 #
-# 라벨 이름은 정확히 일치해야 한다. `(^|,)` 와 `(,|$)` 로 양끝을 묶은 이유는
-# CI_MERGE_REQUEST_LABELS 가 "Backend,Data" 처럼 쉼표로 이어 오기 때문이다.
-# 그냥 /Backend/ 로 쓰면 나중에 "Backend-hotfix" 같은 라벨이 생겼을 때 같이
-# 걸린다. 사람이 쉼표 뒤에 공백을 넣는 경우가 있어 \s* 도 넣었다.
+# 실측으로도 확인했다. 라벨 없이 만들어진 MR 파이프라인(200778)에서 라벨 게이트를
+# 재시도한 job(556721)은 스크립트가 최신 라벨("AI,Backend,Data,Frontend")을 보고도
+# 실패했다. 스크립트는 실행 시점에 변수를 읽고 rules 는 생성 시점에 읽기 때문이다.
+# 그 파이프라인의 job 목록에는 영역 verify 가 **아예 없었고**, 재시도로도 생기지
+# 않는다. job 재시도가 만드는 것은 job 의 실행이지 job 자체가 아니다.
 #
-# 라벨을 새로 추가하려면 여기 목록과 그 영역 job 의 rules, 그리고
-# infra_k8s/tests 의 LabelRoutingTest 세 곳을 같이 고친다. 테스트가 세 곳이
-# 어긋나면 실패한다.
+# 그래서 판정을 실행 시점으로 옮겼다. 이 job 은 **변경 경로를 스스로 계산해**
+# (git diff) 라벨과 맞춰 보고, 모자라면 그 자리에서 실패한다. 라벨이 job 을 고르는
+# 구조는 그대로 두되, "고른 것이 무엇이든 검증은 다 돌았다" 를 뒤의 area-gate 가
+# marker 로 다시 확인한다 — 그래서 빠진 job 이 흔적 없이 사라질 수 없다.
+#
+# area-gate 는 **별도 stage** 에 있고 needs 가 없다(infra/ci/area-gate.yml).
+# 영역 job 을 needs 로 걸면 그 job 이 실패했을 때 게이트가 skipped 로 가서
+# 누락 원인을 말해 줄 사람이 사라지기 때문이다.
+#
+# **라벨을 나중에 붙였다면 새 파이프라인을 만들어야 한다.** job 재시도는 안 된다.
+# 로그가 붙여넣을 수 있는 복구 명령을 그대로 찍어 준다.
+#
+# 라벨을 새로 추가하려면 세 곳을 같이 고친다: infra/ci/area_diff.py 의 표,
+# 그 영역 job 의 rules 와 marker, infra_k8s/tests 의 AreaRoutingTest.
+# 테스트가 세 곳이 어긋나면 실패한다.
+#
+# 이 job 은 **MR 파이프라인에만** 있다. develop·master 는 보호 브랜치라 직접
+# push 가 없어(develop push 권한 "No one", 실측) 영역 판정이 개입할 자리가 없다.
 
-require-area-label:
+area-preflight:
   stage: verify
   image: alpine:3
   tags: [mupid-ci]
   interruptible: true
   timeout: 5m
+  variables:
+    # 변경 경로를 계산한다(base..head). 얕은 체크아웃이면 기준 커밋을 못 찾아
+    # "검증 대상 없음" 이 되고, 그러면 게이트가 통째로 무력해진다.
+    GIT_DEPTH: "0"
+  before_script:
+    - apk add --no-cache git python3
   rules:
-    # 영역 라벨이 하나라도 있으면 이 job 은 없는 셈 친다.
-    - if: '$CI_MERGE_REQUEST_LABELS =~ /(^|,)\s*(Frontend|Backend|AI|Data)\s*(,|$)/'
-      when: never
-    # 라벨이 없는 MR 만 여기 남는다.
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  artifacts:
+    # area-gate 가 이 목록을 근거로 삼는다 — 판정의 단일 출처.
+    # always 인 이유는 실패했을 때도 남겨야 원인을 볼 수 있기 때문이다.
+    when: always
+    expire_in: 1 day
+    paths:
+      - .areas/expected.txt
   script:
-    - |
-      echo "이 MR 에 영역 라벨이 없습니다."
-      echo
-      echo "  Frontend · Backend · AI · Data 중 해당하는 것을 붙이고"
-      echo "  파이프라인을 다시 돌려 주세요."
-      echo
-      echo "라벨이 없으면 어떤 검증 job 도 돌지 않습니다. 그대로 두면"
-      echo "아무것도 확인하지 않은 MR 이 초록불로 보입니다."
-      echo
-      echo "지금 붙어 있는 라벨: ${CI_MERGE_REQUEST_LABELS:-(없음)}"
-      exit 1
+    - python3 infra/ci/area_diff.py preflight

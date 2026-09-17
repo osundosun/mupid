@@ -49,7 +49,7 @@ const playing = (overrides = {}) => ({
   durationSec: 214,
   positionSec: 0,
   playing: true,
-  artwork: '/api/v1/storage/image/ALBUM/1',
+  artwork: '/api/v1/storage/image/12',
   canPrevious: true,
   canNext: true,
   ...overrides,
@@ -67,7 +67,7 @@ test('first update reaches the shell as a media_session_update', async () => {
   assert.equal(calls[0].command, 'media_session_update');
   assert.equal(calls[0].args.state.title, '별 헤는 밤');
   // 앨범 아트는 서버가 준 주소 그대로 넘긴다. `mupidimg` 변환은 웹뷰 전용이다.
-  assert.equal(calls[0].args.state.artwork, '/api/v1/storage/image/ALBUM/1');
+  assert.equal(calls[0].args.state.artwork, '/api/v1/storage/image/12');
 });
 
 test('clearing only speaks up when something was shown', async () => {

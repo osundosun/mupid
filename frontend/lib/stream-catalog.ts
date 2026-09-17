@@ -9,7 +9,6 @@
  */
 
 import { api } from './api/session';
-import { localDemoEnabled } from './api/local-demo';
 import type { MusicSummary } from './api/endpoints';
 import { DEFAULT_ALBUM_COVER, type Track } from './mupid-data';
 import { toImageSource, withCache } from './platform';
@@ -103,11 +102,6 @@ export const toTrack = (music: MusicSummary): Track => {
  * `toTrack` 한 곳에서만 일어나야 한다.
  */
 export async function fetchCatalog(signal?: AbortSignal): Promise<Track[]> {
-  if (localDemoEnabled()) {
-    const response = await fetch('/local-demo/catalog.json', { signal });
-    if (!response.ok) throw new Error('로컬 음악 데이터를 찾지 못했어요.');
-    return response.json();
-  }
   try {
     const items = await withCache('catalog', `size:${CATALOG_SIZE}`, async () => {
       const page = await api.music.search({ size: CATALOG_SIZE }, signal);

@@ -2,19 +2,17 @@
 import { useState } from 'react';
 import { ChevronDown, LockKeyhole } from 'lucide-react';
 import { api } from '@/lib/api/session';
-import { localDemoEnabled } from '@/lib/api/local-demo';
 
 export function PasswordForm() {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const local = localDemoEnabled();
-  return <details className="profile-password" open={local || undefined}>
+  return <details className="profile-password">
     <summary><span><LockKeyhole size={18} />비밀번호 변경</span><ChevronDown size={18} /></summary>
     <form onSubmit={async event => {
       event.preventDefault();
-      if (busy || local) return;
+      if (busy) return;
       if (password !== confirm) { setMessage('새 비밀번호가 일치하지 않아요.'); return; }
       setBusy(true); setMessage('');
       try {
@@ -27,9 +25,8 @@ export function PasswordForm() {
       <input id="profile-new-password" type="password" autoComplete="new-password" required value={password} onChange={e => setPassword(e.target.value)} disabled={busy} />
       <label htmlFor="profile-confirm-password">새 비밀번호 확인</label>
       <input id="profile-confirm-password" type="password" autoComplete="new-password" required value={confirm} onChange={e => setConfirm(e.target.value)} disabled={busy} />
-      {local && <p className="demo-note">데모 계정에서는 비밀번호 변경을 지원하지 않아요.</p>}
       {message && <p role="status">{message}</p>}
-      <button className="primary-button" disabled={busy || local || !password || !confirm}>{busy ? '변경 중…' : '비밀번호 변경'}</button>
+      <button className="primary-button" disabled={busy || !password || !confirm}>{busy ? '변경 중…' : '비밀번호 변경'}</button>
     </form>
   </details>;
 }

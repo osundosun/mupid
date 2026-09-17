@@ -21,7 +21,9 @@ import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
 import com.osundosun.mupid.api.music.error.MusicSectionErrorCode;
+import com.osundosun.mupid.api.music.mapping.entity.MusicAnalysisInstrument;
 import com.osundosun.mupid.api.music.mapping.entity.MusicSectionAnalysisMood;
+import com.osundosun.mupid.api.music.mapping.repository.MusicAnalysisInstrumentRepository;
 import com.osundosun.mupid.api.music.mapping.repository.MusicSectionAnalysisMoodRepository;
 import com.osundosun.mupid.api.music.repository.MusicSectionAnalysisRepository;
 import com.osundosun.mupid.api.music.request.MusicSectionBulkLine;
@@ -41,6 +43,7 @@ public class MusicSectionServiceImpl implements MusicSectionService {
     private final MusicService musicService;
     private final MusicSectionAnalysisRepository repository;
     private final MusicSectionAnalysisMoodRepository moodRepository;
+    private final MusicAnalysisInstrumentRepository instrumentRepository;
     private final CodeRepository codeRepository;
 
     @Override
@@ -57,14 +60,17 @@ public class MusicSectionServiceImpl implements MusicSectionService {
         validate(request.sections());
         rejectForeignExternalIds(musicId, request.sections());
 
-        // 분위기 연결을 먼저 끊는다. 구간을 지우면 FK 가 걸리고, 영속성 컨텍스트에는
-        // 지워진 구간을 가리키는 연결이 남는다.
+        // 구간에 달린 연결을 먼저 끊는다. 구간을 지우면 FK 가 걸리고, 영속성
+        // 컨텍스트에는 지워진 구간을 가리키는 연결이 남는다. 분위기와 악기 둘 다다.
         List<Integer> oldIds = repository.findByMusic_MusicIdOrderByIndexAsc(musicId).stream()
             .map(MusicSectionAnalysis::getMusicSectionAnalysisId)
             .toList();
         if (!oldIds.isEmpty()) {
             moodRepository.deleteByMusicSectionAnalysisMoodId_MusicSectionAnalysisIdIn(oldIds);
+            instrumentRepository
+                .deleteByMusicAnalysisInstrumentId_MusicSectionAnalysisIdIn(oldIds);
             moodRepository.flush();
+            instrumentRepository.flush();
         }
 
         // 지운 뒤 넣으므로 먼저 내보낸다. 안 그러면 같은 트랜잭션 안에서 INSERT 가
@@ -91,6 +97,7 @@ public class MusicSectionServiceImpl implements MusicSectionService {
         repository.flush();
 
         replaceMoods(request.sections(), rows);
+        replaceInstruments(request.sections(), rows);
 
         return new MusicSectionBulkResponse(
             musicId,
@@ -188,6 +195,57 @@ public class MusicSectionServiceImpl implements MusicSectionService {
             log.warn("코드표에 없는 분위기 {}건 제외 — {}", unknown.size(), unknown);
         }
         moodRepository.saveAll(links);
+    }
+
+    /**
+     * 구간마다 들리는 악기를 갈아 끼운다.
+     *
+     * <p>분위기와 같은 모양이다 — 구간을 통째로 지웠다 다시 만들었으므로 옛 연결은
+     * 함께 사라지고, 여기서는 새로 넣기만 한다. 코드표에 없는 이름은 버리고 센다.
+     *
+     * <p><b>`CodeType.INSTRUMENT` 는 부트스트랩이 심지 않는다.</b> 확정된 목록이
+     * 없어서다. 전처리 배치가 `POST /api/v1/code` 로 필요한 것을 먼저 넣고 구간을
+     * 올린다 — 그 순서가 아니면 여기서 전부 버려져 악기가 조용히 비어 보인다.
+     */
+    private void replaceInstruments(List<MusicSectionBulkLine> lines,
+                                    List<MusicSectionAnalysis> rows) {
+        boolean any = lines.stream()
+            .anyMatch(line -> line.instruments() != null && !line.instruments().isEmpty());
+        if (!any) {
+            return;
+        }
+        Map<String, Code> byName = codeRepository
+            .findAllByCodeTypeOrderByCodeIdAsc(CodeType.INSTRUMENT).stream()
+            .collect(Collectors.toMap(Code::getCodeName, code -> code, (a, b) -> a));
+
+        List<MusicAnalysisInstrument> links = new ArrayList<>();
+        Set<String> unknown = new HashSet<>();
+        for (int i = 0; i < lines.size(); i++) {
+            List<String> instruments = lines.get(i).instruments();
+            if (instruments == null) {
+                continue;
+            }
+            MusicSectionAnalysis row = rows.get(i);
+            Set<Integer> seen = new HashSet<>();
+            for (String name : instruments) {
+                Code code = byName.get(name == null ? "" : name.strip());
+                if (code == null) {
+                    unknown.add(String.valueOf(name));
+                    continue;
+                }
+                if (!seen.add(code.getCodeId())) {
+                    continue;                       // 같은 구간에 같은 악기를 두 번
+                }
+                // `@MapsId` 가 복합키를 관계에서 채운다. 빈 키를 주고 관계만 세운다.
+                links.add(new MusicAnalysisInstrument(
+                    new MusicAnalysisInstrument.MusicAnalysisInstrumentId(), row, code));
+            }
+        }
+        if (!unknown.isEmpty()) {
+            // 조용히 넘기면 "악기가 왜 비지" 로만 보인다. 이름을 남긴다.
+            log.warn("코드표에 없는 악기 {}건 제외 — {}", unknown.size(), unknown);
+        }
+        instrumentRepository.saveAll(links);
     }
 
     /** 요청 안에서 닫히는 검사. DB 를 보지 않는다. */

@@ -1,8 +1,12 @@
 # ai_server 할 일
 
 `2026-09-14` 작성 · `2026-09-15` 코드와 대조해 갱신. BE 쪽에서 코드를 읽고 정리한 목록이며
-**AI 팀 소유 코드에 대한 제안**이다. `app/legacy/` 와 추천 로직은 "원본 그대로" 가 원칙이므로
+**AI 팀 소유 코드에 대한 제안**이다. 추천 점수·가중치·필터·랭킹은 "원본 그대로" 가 원칙이므로
 손대기 전에 합의가 필요하다.
+
+`2026-09-16` 갱신 — `app/legacy/` 는 없어졌다. 세 모듈이 `app/labeler.py`,
+`app/features.py`, `app/stage1_torch.py` 로 올라왔고 `sys.path` 조작과 맨 이름 import 가
+빠졌다. **계산은 한 줄도 바꾸지 않았다** — 바뀐 것은 배치와 import 경로뿐이다.
 
 우선순위는 **채팅 기능(`POST /api/v1/ai/chat`)이 목업을 걷어내는 데 필요한 순서**로 잡았다.
 **그 목업은 걷혔다** — `api/src/main/java/com/osundosun/mupid/api/ai/tool/AiRecommendToolImpl.java`
@@ -170,11 +174,11 @@ MV 는 이벤트→구간 매핑과 가중치까지 이미 물고 있다.
 겪었다고 적어 둔 사고). 지금 이 파일을 채우는 경로가 없다.
 
 매 요청 조회로 대체할 수 **없다** — 한 사용자의 등급 라벨이 남의 데이터에 의존한다
-(`m09_labels.py:251-256`: baseline = 그 구간을 들은 **모든 사용자**의 평균 + 전역 위치 편향
+(`app/labeler.py:251-256`: baseline = 그 구간을 들은 **모든 사용자**의 평균 + 전역 위치 편향
 prior + shrinkage κ=5). 게다가 등급 우선순위·도달 마스킹·인접 구간 병합 같은 규칙이 15개 상수와
 함께 들어 있고, **모델이 이 정의로 학습됐다.**
 
-→ 야간 배치로 ClickHouse 에서 이벤트를 당겨 `m09_labels` 를 그대로 돌린다. 하루 1회면 충분하다
+→ 야간 배치로 ClickHouse 에서 이벤트를 당겨 `labeler` 를 그대로 돌린다. 하루 1회면 충분하다
 (최근성은 8번이 담당한다).
 
 ### 10. 온보딩 취향 유입
@@ -236,7 +240,35 @@ Spring `GET /api/v1/recommendation/daily` 는 `daily_recommendations` 를 **읽�
 > 사용자용 엔드포인트는 아직 없다 — `api/docs/AI/요구 4` 와 `infra/AI-API-BLOCKERS.md`.
 
 `moments_emb.npy` 가 이미 있어 계산은 되는데 노출이 없다. 화면은 데모 정렬 중이다
-(api-todo #15, Pinecone S15P21A204-214).
+(api-todo #15).
+
+### 13-1. 벡터 저장소 — Pinecone 을 붙이지 않는다
+
+> **2026-09-16 결정.** `S15P21A204-214` 는 현재 규모에서 근거가 없다.
+
+실측으로 판단했다.
+
+| 항목 | 값 | 출처 |
+|---|---|---|
+| 색인 전체 | 537MB | `SEED-RUNBOOK.md` |
+| `moments_emb.npy` | 403MB / 65,540행 | `ANALYSIS-BATCH.md` |
+| **추천 풀** | **10,007구간 / 1,063곡** | `SEED-RUNBOOK.md` |
+
+403MB 중 서빙이 읽는 것은 풀 10,007행뿐이다. 나머지는 PCA·Stage 1 을 학습시킨 FMA
+곡이고 추천 후보에 들어가지 않는다. 풀만 남기면 **약 80MB** 이고, 그 정도면 벡터를
+외부 저장소에 둘 이유가 없다 — 지금 하는 계산은 `Z[pool_rows] @ q` 한 번이고
+10,007 × 1,536 은 약 15 MFLOP, 1ms 미만이다.
+
+Pinecone 을 넣으면 그 자리에 **추천 요청마다 네트워크 왕복과 API 키 의존**이 생긴다.
+지금 p50 이 2.22초인 원인은 벡터 검색이 아니라 행동 로그 전수 스캔이다
+(`S15P21A204-217`) — 저장소를 바꿔도 그 숫자는 움직이지 않는다.
+
+**다시 꺼낼 조건.** 추천 풀이 수십만 구간이 되어 (가) 색인이 노드 디스크나 파드
+기동 시간에 부담이 되거나 (나) 완전 탐색이 응답 시간에 드러나기 시작할 때.
+그 전까지는 `tools/slice_index.py` 로 자른 색인을 노드에 올려 쓴다.
+
+`infra/AI-SPRING-CONTRACT.md` 의 Pinecone 절은 **아직 이 결정을 반영하지 않았다**
+— 그 문서는 Spring 팀과 공유하는 계약이라 따로 논의해 고친다.
 
 ### 14. `matched_dna_rep` 을 계약에 올리기
 
@@ -266,7 +298,7 @@ Spring `GET /api/v1/recommendation/daily` 는 `daily_recommendations` 를 **읽�
 | 값 | |
 |---|---|
 | `in_dim` 285 (PCA 256 + side 29) | `features_info.json` |
-| `DIM` 128 · `HIST_MAX` 32 | `app/legacy/m11_stage1.py:46-47` |
+| `DIM` 128 · `HIST_MAX` 32 | `app/stage1_torch.py:46-47` |
 | 파라미터 ~88,000개 · 체크포인트 357KB | |
 | 요청당 `(1,32,285)` forward ≈ **5 MFLOP** | |
 

@@ -1,0 +1,45 @@
+# 검증 누락을 막는 뒷단 게이트.
+#
+# **별도 stage 에 있고 needs 가 없다.** 이 두 가지가 핵심이다.
+#
+# 왜 stage 분리인가
+# ----------------
+# 처음에는 area-preflight 와 같은 verify stage 에 두고 영역 job 들을 needs 로
+# 걸었다. 그러면 영역 job 하나가 실패했을 때 이 게이트가 **skipped** 로 간다 —
+# needs 한 job 이 실패하면 그 job 을 필요로 하는 job 은 돌지 않기 때문이다
+# (GitLab 이 의도된 동작으로 본다). 게이트가 skip 되면 "무엇이 빠졌는지" 를
+# 말해 줄 사람이 없어지고, 파이프라인에는 실패한 job 하나만 남는다.
+#
+# stage 를 나누면 기본 규칙으로 돌아간다 — 앞 stage 가 실패하면 뒷 stage 가
+# 시작되지 않는다. 그래서 `when: always` 를 함께 준다. 그러면 영역 job 이
+# 실패해도 게이트가 **반드시 돌아서** 어느 영역의 marker 가 없는지 말한다.
+#
+# 왜 needs 가 없는가
+# ----------------
+# needs 를 쓰면 그 job 들의 아티팩트만 받는다. needs 를 쓰지 않으면 **앞 stage 의
+# 모든 아티팩트를 기본으로 받는다** — area-preflight 의 .areas/expected.txt 와
+# 영역 job 들의 .areas/<영역> marker 가 그대로 도착한다. 영역 job 목록을 손으로
+# 적어 두지 않아도 되고, 영역이 하나 늘어도 이 파일을 고칠 필요가 없다.
+#
+# 두 경우를 모두 잡는다
+# --------------------
+#   1. 라벨이 없어 영역 job 이 파이프라인에 아예 없던 경우
+#      → preflight 가 exit 1 로 먼저 말하고, 게이트도 "marker 가 없다" 를 확인한다
+#   2. 라벨은 맞았는데 그 영역 검증이 실패한 경우
+#      → 영역 job 이 실패하면 marker 를 남기지 않는다(artifacts: on_success).
+#        게이트가 "그 영역이 검증되지 않았다" 를 사실로 보고한다
+area-gate:
+  stage: area-gate
+  image: alpine:3
+  tags: [mupid-ci]
+  interruptible: true
+  timeout: 5m
+  rules:
+    # 앞 stage(verify) 가 실패해도 돌아야 원인을 말할 수 있다.
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+  before_script:
+    # git 은 필요 없다 — 판정도 marker 대조도 파일만 본다.
+    - apk add --no-cache python3
+  script:
+    - python3 infra/ci/area_diff.py gate

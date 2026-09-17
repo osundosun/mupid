@@ -19,9 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app" / "legacy"))
-
-from ai_server.app import paths, stage1_np  # noqa: E402
+from ai_server.app import paths, stage1_np
 
 
 def main() -> int:
@@ -33,7 +31,7 @@ def main() -> int:
 
     import torch
 
-    import m11_stage1 as s1
+    from ai_server.app import stage1_torch as s1
 
     data = paths.data_dir()
     ckpt = Path(a.ckpt) if a.ckpt else data / "stage1.pt"

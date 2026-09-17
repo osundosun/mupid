@@ -12,8 +12,9 @@
  *
  * ## 왜 `url` 만으로는 모자란가
  *
- * 사진을 올린 적이 없는 사람의 `image_url` 은 `/default` 를 가리키고, 그 키에
- * 파일은 없지만 백엔드가 기본 이미지를 돌려준다. 예전에는 이 URL 을 보고 그냥
+ * 사진을 올린 적이 없는 사람의 `image_url` 은 기본 프로필 주소
+ * (`.../PROFILE/default`)를 가리키고, 그 자리에는 파일이 없지만 백엔드가 기본
+ * 이미지를 돌려준다. 예전에는 이 URL 을 보고 그냥
  * 빈 문자열을 반환했는데, 그래서 **기본 이미지가 어디에도 보이지 않았다** —
  * 상단바는 사람 아이콘을, 마이페이지는 마스코트를 대신 그렸다.
  *
@@ -33,9 +34,19 @@ import { api, sessionStore } from './api/session';
 import { mupidService } from './services';
 import { createStore } from './store';
 
-/** 사진을 올린 적이 없는 사람의 `image_url` 이 가리키는 키. */
-const DEFAULT_KEY = '/default';
-export const DEFAULT_PROFILE_PHOTO = '/profile-default.png';
+/**
+ * 사진을 올린 적이 없는 사람의 `image_url` 이 가리키는 주소.
+ *
+ * 기본 이미지는 **파일이 아니라 classpath 자산**이라 파일 번호가 없다. 조회가
+ * 번호 기반(`/api/v1/storage/image/{fileId}`)으로 바뀐 뒤에도 이 자리만 경로로
+ * 남았고, 그래서 주소 모양도 예전 그대로다.
+ *
+ * 앞 마디가 **대문자 `PROFILE`** 인 것은 우연이 아니라 규약이다 — 저장 키와 조회
+ * URL 이 카테고리를 대문자로 쓰고, `SecurityConfig` 의 공개 경로도 대문자로 적혀
+ * 있다. 소문자로 내보내면 서버가 만들어 주는 값과 어긋나 `endsWith` 판정이 조용히
+ * false 가 된다.
+ */
+const DEFAULT_KEY = '/PROFILE/default';
 
 const signedIn = () => {
   const session = sessionStore.get();
@@ -57,7 +68,7 @@ export type ProfilePhotoState = {
 };
 
 export const profilePhotoStore = createStore<ProfilePhotoState>({
-  url: DEFAULT_PROFILE_PHOTO,
+  url: '',
   isDefault: true,
   loaded: false,
 });
@@ -66,7 +77,6 @@ export const profilePhotoStore = createStore<ProfilePhotoState>({
 let readToken = 0;
 
 const put = (url: string, isDefault: boolean) => {
-  if (isDefault) url = DEFAULT_PROFILE_PHOTO;
   const previous = profilePhotoStore.get().url;
   if (previous !== url) releasePhoto(previous);
   profilePhotoStore.set({ url, isDefault, loaded: true });
@@ -81,12 +91,12 @@ const fetchPhoto = async (signal?: AbortSignal): Promise<Photo> => {
   // 브라우저에 저장한 사진만 본다. 그것도 없으면 화면이 대체 그림을 그린다.
   if (!user) {
     const stored = await mupidService.readPhoto();
-    return { url: stored || DEFAULT_PROFILE_PHOTO, isDefault: !stored };
+    return { url: stored, isDefault: !stored };
   }
 
   const info = await api.user.me(signal);
   const url = info?.image_url ?? '';
-  if (!url || url.endsWith(DEFAULT_KEY)) return { url: DEFAULT_PROFILE_PHOTO, isDefault: true };
+  if (!url) return { url: '', isDefault: true };
 
   // `/default` 키에도 받아올 것이 있다 — 백엔드가 기본 이미지를 돌려준다.
   // 그래서 여기서 끊지 않고 똑같이 받아 오되, 올린 사진과 구분만 해 둔다.
@@ -152,7 +162,7 @@ export const profilePhoto = {
     readToken += 1;
     const previous = profilePhotoStore.get().url;
     releasePhoto(previous);
-    profilePhotoStore.set({ url: DEFAULT_PROFILE_PHOTO, isDefault: true, loaded: false });
+    profilePhotoStore.set({ url: '', isDefault: true, loaded: false });
   },
 
   /** 지금 어디에 저장되는가. 화면이 안내 문구에 쓴다. */

@@ -16,8 +16,8 @@ import { formatTime } from '@/lib/mupid-data';
 import { EmptyState, PlayerControls } from './primitives';
 import { commentable, validateComment } from '@/lib/comment-rules';
 import { trackComments, commentUserId, ownsComment, type TrackComment } from '@/lib/track-comments';
-import { localDemoEnabled } from '@/lib/api/local-demo';
-import { DEFAULT_PROFILE_PHOTO, profilePhotoStore } from '@/lib/profile-photo';
+import { profilePhotoStore } from '@/lib/profile-photo';
+import { DEFAULT_PROFILE_PHOTO } from './profile-image';
 import { useStore } from '@/lib/store';
 
 // 로그인 화면을 다녀오는 동안만 새 댓글 초안을 보관한다. 새로고침하면 폐기된다.
@@ -34,35 +34,9 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
   if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
-  const local = localDemoEnabled() && Boolean(active.localAudio);
-  const userId = local && m.demoSession ? 1 : commentUserId(m.demoSession);
-  const localKey = `mupid-local-comments:${active.id}`;
-  const service = local ? {
-    async list(_track: unknown, _signal?: AbortSignal): Promise<TrackComment[]> {
-      const stored = JSON.parse(localStorage.getItem(localKey) ?? '[]');
-      return Array.isArray(stored) ? stored : [];
-    },
-    async add(_track: unknown, at: number, text: string): Promise<TrackComment> {
-      const saved: TrackComment = { id: crypto.randomUUID(), trackId: active.id, at, body: text.trim(), author: m.displayName, mine: true, createdAt: Date.now() };
-      const stored = JSON.parse(localStorage.getItem(localKey) ?? '[]');
-      localStorage.setItem(localKey, JSON.stringify([...stored, saved]));
-      return saved;
-    },
-    async update(_track: unknown, id: string, text: string): Promise<TrackComment> {
-      const stored: TrackComment[] = JSON.parse(localStorage.getItem(localKey) ?? '[]');
-      const saved = stored.find(c => c.id === id && c.mine);
-      if (!saved) throw new Error('수정할 글을 찾지 못했어요.');
-      saved.body = text.trim();
-      localStorage.setItem(localKey, JSON.stringify(stored));
-      return saved;
-    },
-    async remove(id: string) {
-      const stored: TrackComment[] = JSON.parse(localStorage.getItem(localKey) ?? '[]');
-      localStorage.setItem(localKey, JSON.stringify(stored.filter(c => c.id !== id || !c.mine)));
-    },
-  } : trackComments;
-  // 데모 곡은 서버에 없어 댓글을 붙일 데가 없다.
-  const available = local ? userId !== null : commentable(active) && m.demoSession?.kind === 'authenticated';
+  const userId = commentUserId(m.demoSession);
+  const service = trackComments;
+  const available = commentable(active) && m.demoSession?.kind === 'authenticated';
   const [items, setItems] = useState<TrackComment[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');

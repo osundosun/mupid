@@ -434,6 +434,12 @@
   background-position: center;
   border-radius: 0;
 }
+/* 서버가 준 유형 일러스트는 정사각(1254×1254)이다. 위 규칙의 가로 비율을 그대로 두면
+   세로로 눌린다 — 이미지에만 정사각을 준다. */
+.mupid-shell .report-card.listening-story img.report-cupid {
+  aspect-ratio: 1;
+  height: auto;
+}
 /* 유형 이름도 옆 카드 제목과 같은 크기로 둔다. 강조는 크기가 아니라 색으로. */
 .mupid-shell .report-card.listening-story .report-story { margin: 2px 0 0; line-height: 1.45; }
 .mupid-shell .report-card.listening-story p { max-width: 34em; margin-inline: auto; }

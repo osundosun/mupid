@@ -4,7 +4,7 @@
 
 ## 왜 따로 내보내는가
 
-`m10_features.side_features()` 의 `_z()` 는 **넘긴 표 전체**로 평균·표준편차를 잡는다.
+`features.side_features()` 의 `_z()` 는 **넘긴 표 전체**로 평균·표준편차를 잡는다.
 그래서 신곡을 그냥 얹으면 두 갈래 모두 틀린다.
 
   · 신곡을 섞어 다시 만든다 → 기존 10,007구간의 값이 **전부** 바뀐다. 모델은 지금
@@ -36,7 +36,7 @@ import numpy as np
 import pandas as pd
 
 from ai_server.app import paths
-from ai_server.app.legacy.m10_features import FEATURE_VERSION, TRACK_COLS
+from ai_server.app.features import FEATURE_VERSION, TRACK_COLS
 
 STATS_NAME = "feature_stats_v1.npz"
 

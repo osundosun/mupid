@@ -27,7 +27,10 @@ import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.enumerate.SectionLabel;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
 import com.osundosun.mupid.api.music.error.MusicSectionErrorCode;
+import com.osundosun.mupid.api.code.entity.Code;
+import com.osundosun.mupid.api.music.mapping.entity.MusicAnalysisInstrument;
 import com.osundosun.mupid.api.music.mapping.entity.MusicSectionAnalysisMood;
+import com.osundosun.mupid.api.music.mapping.repository.MusicAnalysisInstrumentRepository;
 import com.osundosun.mupid.api.music.mapping.repository.MusicSectionAnalysisMoodRepository;
 import com.osundosun.mupid.api.music.repository.MusicSectionAnalysisRepository;
 import com.osundosun.mupid.api.music.request.MusicSectionBulkLine;
@@ -68,6 +71,9 @@ class MusicSectionReplaceTest {
 
     @Autowired
     private MusicSectionAnalysisMoodRepository moodRepository;
+
+    @Autowired
+    private MusicAnalysisInstrumentRepository instrumentRepository;
 
     @Autowired
     private CodeRepository codeRepository;
@@ -159,7 +165,7 @@ class MusicSectionReplaceTest {
     @DisplayName("다른 곡의 구간은 건드리지 않는다")
     void leavesOtherMusicAlone() {
         sectionService.replaceSections(otherMusic.getMusicId(), request(
-            new MusicSectionBulkLine(0, uid + "-other#0", SectionLabel.VERSE, 0, 9_000, null)));
+            new MusicSectionBulkLine(0, uid + "-other#0", SectionLabel.VERSE, 0, 9_000, null, null)));
         em.flush();
 
         replace(music, section(0, SectionLabel.INTRO, 0, 15_500));
@@ -195,8 +201,8 @@ class MusicSectionReplaceTest {
     void rejectsDuplicateExternalIdWithinRequest() {
         BusinessException e = assertThrows(BusinessException.class,
             () -> replace(music,
-                new MusicSectionBulkLine(0, uid + "#0", SectionLabel.INTRO, 0, 10_000, null),
-                new MusicSectionBulkLine(1, uid + "#0", SectionLabel.CHORUS, 10_000, 20_000, null)));
+                new MusicSectionBulkLine(0, uid + "#0", SectionLabel.INTRO, 0, 10_000, null, null),
+                new MusicSectionBulkLine(1, uid + "#0", SectionLabel.CHORUS, 10_000, 20_000, null, null)));
 
         assertEquals(MusicSectionErrorCode.SECTION_EXTERNAL_ID_DUPLICATED, e.getErrorCode());
     }
@@ -235,7 +241,7 @@ class MusicSectionReplaceTest {
         List<MusicSectionBulkLine> tooMany = new ArrayList<>();
         for (int i = 0; i <= MusicSectionBulkRequest.MAX_SECTIONS; i++) {
             tooMany.add(new MusicSectionBulkLine(
-                i, uid + "-many#" + i, SectionLabel.VERSE, i * 1_000, i * 1_000 + 500, null));
+                i, uid + "-many#" + i, SectionLabel.VERSE, i * 1_000, i * 1_000 + 500, null, null));
         }
 
         BusinessException e = assertThrows(BusinessException.class,
@@ -272,7 +278,7 @@ class MusicSectionReplaceTest {
     @DisplayName("external_id 앞뒤 공백은 잘라서 저장한다")
     void trimsExternalId() {
         replace(music, new MusicSectionBulkLine(
-            0, "  " + uid + "#0  ", SectionLabel.INTRO, 0, 15_500, null));
+            0, "  " + uid + "#0  ", SectionLabel.INTRO, 0, 15_500, null, null));
 
         MusicSectionAnalysis row =
             sectionRepository.findByMusic_MusicIdOrderByIndexAsc(music.getMusicId()).get(0);
@@ -304,7 +310,7 @@ class MusicSectionReplaceTest {
             .getFirst().getCodeName();
 
         MusicSectionBulkResponse result = replace(music, new MusicSectionBulkLine(
-            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, List.of(mood)));
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, List.of(mood), null));
         em.flush();
 
         List<MusicSectionAnalysisMood> links = moodRepository
@@ -318,7 +324,7 @@ class MusicSectionReplaceTest {
     @DisplayName("코드표에 없는 분위기는 버리고 구간은 살린다")
     void dropsUnknownMoodButKeepsTheSection() {
         MusicSectionBulkResponse result = replace(music, new MusicSectionBulkLine(
-            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, List.of("없는분위기")));
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, List.of("없는분위기"), null));
         em.flush();
 
         assertEquals(1, result.sections().size(), "분위기 때문에 구간까지 잃으면 안 된다");
@@ -334,7 +340,7 @@ class MusicSectionReplaceTest {
         String mood = codeRepository.findAllByCodeTypeOrderByCodeIdAsc(CodeType.MOOD)
             .getFirst().getCodeName();
         MusicSectionBulkResponse first = replace(music, new MusicSectionBulkLine(
-            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, List.of(mood)));
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, List.of(mood), null));
         em.flush();
         int oldSectionId = first.sections().getFirst().musicSectionAnalysisId();
 
@@ -346,7 +352,117 @@ class MusicSectionReplaceTest {
             .isEmpty(), "지워진 구간의 분위기 연결이 남았다");
     }
 
+    /*
+     * 악기는 구간에 달린다. 그리고 `music_analysis_instruments` 는 이 변경 전까지
+     * 0행이었다 — 관계와 `@EmbeddedId` 가 같은 컬럼을 각자 매핑하고 있어서 쓰는
+     * 순간 터지는 상태였고, 쓴 적이 없어 드러나지 않았다. 그래서 여기서는 실제로
+     * INSERT 가 되는지를 본다.
+     */
+
+    @Test
+    @DisplayName("악기를 이름으로 받아 구간에 잇는다 — 이 표가 처음으로 쓰이는 경로다")
+    void linksInstrumentsByName() {
+        Code guitar = persistInstrument("guitar");
+
+        MusicSectionBulkResponse result = replace(music, new MusicSectionBulkLine(
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, null,
+            List.of(guitar.getCodeName())));
+        em.flush();
+
+        List<MusicAnalysisInstrument> links = instrumentRepository
+            .findByMusicAnalysisInstrumentId_MusicSectionAnalysisIdIn(
+                List.of(result.sections().getFirst().musicSectionAnalysisId()));
+        assertEquals(1, links.size());
+        assertEquals(guitar.getCodeName(), links.getFirst().getInstrumentCode().getCodeName());
+    }
+
+    @Test
+    @DisplayName("구간마다 악기가 다르다 — 곡 단위로 뭉치지 않는다")
+    void instrumentsAreKeptPerSection() {
+        Code guitar = persistInstrument("guitar");
+        Code drums = persistInstrument("drums");
+
+        MusicSectionBulkResponse result = replace(music,
+            new MusicSectionBulkLine(0, uid + "#0", SectionLabel.INTRO, 0, 10_000, null,
+                List.of(guitar.getCodeName())),
+            new MusicSectionBulkLine(1, uid + "#1", SectionLabel.CHORUS, 10_000, 20_000, null,
+                List.of(guitar.getCodeName(), drums.getCodeName())));
+        em.flush();
+
+        assertEquals(List.of(guitar.getCodeName()),
+            instrumentNames(result.sections().get(0).musicSectionAnalysisId()));
+        assertEquals(List.of(drums.getCodeName(), guitar.getCodeName()),
+            instrumentNames(result.sections().get(1).musicSectionAnalysisId()));
+    }
+
+    @Test
+    @DisplayName("같은 악기를 두 번 주면 한 번만 저장한다 — 중복 키로 터지지 않는다")
+    void deduplicatesRepeatedInstruments() {
+        Code guitar = persistInstrument("guitar");
+
+        MusicSectionBulkResponse result = replace(music, new MusicSectionBulkLine(
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, null,
+            List.of(guitar.getCodeName(), guitar.getCodeName())));
+        em.flush();
+
+        assertEquals(1, instrumentNames(
+            result.sections().getFirst().musicSectionAnalysisId()).size());
+    }
+
+    @Test
+    @DisplayName("코드표에 없는 악기는 버리고 구간은 살린다")
+    void dropsUnknownInstrumentButKeepsTheSection() {
+        MusicSectionBulkResponse result = replace(music, new MusicSectionBulkLine(
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, null, List.of("없는악기")));
+        em.flush();
+
+        assertEquals(1, result.sections().size(), "악기 때문에 구간까지 잃으면 안 된다");
+        assertTrue(instrumentNames(
+            result.sections().getFirst().musicSectionAnalysisId()).isEmpty());
+    }
+
+    @Test
+    @DisplayName("구간을 갈아 끼우면 옛 악기 연결도 함께 사라진다")
+    void replacingSectionsClearsOldInstrumentLinks() {
+        Code guitar = persistInstrument("guitar");
+        MusicSectionBulkResponse first = replace(music, new MusicSectionBulkLine(
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, null,
+            List.of(guitar.getCodeName())));
+        em.flush();
+        int oldSectionId = first.sections().getFirst().musicSectionAnalysisId();
+
+        replace(music, section(0, SectionLabel.CHORUS, 0, 15_500));
+        em.flush();
+
+        assertTrue(instrumentNames(oldSectionId).isEmpty(),
+            "지워진 구간의 악기 연결이 남았다");
+    }
+
     // ─────────────────────────────────────────────────────────────
+
+    /** 이름 순으로 정렬한 그 구간의 악기. 저장 순서에 기대지 않는다. */
+    private List<String> instrumentNames(int sectionAnalysisId) {
+        return instrumentRepository
+            .findByMusicAnalysisInstrumentId_MusicSectionAnalysisIdIn(List.of(sectionAnalysisId))
+            .stream()
+            .map(link -> link.getInstrumentCode().getCodeName())
+            .sorted()
+            .toList();
+    }
+
+    /**
+     * `CodeType.INSTRUMENT` 는 부트스트랩이 심지 않는다 — 확정된 목록이 없어서다.
+     * 그래서 테스트가 직접 넣는다. 이름은 테스트끼리 겹치지 않게 만든다.
+     */
+    private Code persistInstrument(String name) {
+        Code code = Code.builder()
+            .codeType(CodeType.INSTRUMENT)
+            .codeName(name + "-" + uid)
+            .build();
+        em.persist(code);
+        em.flush();
+        return code;
+    }
 
     private MusicSectionBulkResponse replace(Music target, MusicSectionBulkLine... sections) {
         MusicSectionBulkResponse result =
@@ -361,7 +477,7 @@ class MusicSectionReplaceTest {
     }
 
     private MusicSectionBulkLine section(int index, SectionLabel label, int startMs, int endMs) {
-        return new MusicSectionBulkLine(index, uid + "#" + index, label, startMs, endMs, null);
+        return new MusicSectionBulkLine(index, uid + "#" + index, label, startMs, endMs, null, null);
     }
 
     /** 조회 순서(`index`) 그대로의 구간 종류. */

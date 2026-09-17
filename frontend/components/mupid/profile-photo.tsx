@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Camera, Trash2 } from 'lucide-react';
-import { DEFAULT_PROFILE_PHOTO, profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
+import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
+import { DEFAULT_PROFILE_PHOTO } from './profile-image';
 import { sessionStore } from '@/lib/api/session';
 import { useStore } from '@/lib/store';
 

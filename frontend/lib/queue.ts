@@ -97,3 +97,94 @@ export function upcomingQueue<T extends Keyed>(items: T[], uid: string | null | 
   if (index < 0) return items.slice();
   return [...items.slice(index + 1), ...items.slice(0, index)];
 }
+
+/** 담은 곡이 큐의 어디로 들어갈지. 사용자가 고른다. */
+export type QueueInsertPosition = 'bottom' | 'top' | 'afterCurrent';
+
+/** `placeInQueue` 가 알려 주는, 담는 과정에서 실제로 일어난 일. */
+export type QueuePlacement = {
+  entries: QueueEntry[];
+  /** 이미 담겨 있던 곡이라 자리를 옮긴 것이다. */
+  moved: boolean;
+  /** `afterCurrent` 인데 듣고 있는 자리가 없어 맨 아래로 내려갔다. */
+  fellBack: boolean;
+  /** 상한이 차서 밀려난 곡. 없으면 null. */
+  evictedTrackId: number | null;
+  /** 새로 놓인 자리의 번호. */
+  uid: string;
+};
+
+/**
+ * 곡 하나를 큐에 놓는다.
+ *
+ * **같은 곡을 두 번 담지 않는다.** 이미 담겨 있으면 그 자리를 걷어내고 새 자리에
+ * 다시 놓는다 — "또 담기" 는 거절이 아니라 **맨 최신 자리로 옮기기** 다. 방금 담은
+ * 곡이 목록 어딘가에 묻혀 있으면 담긴 것처럼 보이지 않기 때문이다.
+ *
+ * 상한을 넘기면 **새 곡이 들어온 반대쪽 끝**에서 뺀다. 그쪽이 가장 오래 머문
+ * 자리다 — 맨 아래로 담으면 위쪽이, 맨 위로 담으면 아래쪽이 묵는다.
+ * `afterCurrent` 는 가운데로 들어오므로 재생 커서에서 가장 먼 아래쪽을 뺀다.
+ * 지금 울리는 자리와 방금 놓은 자리는 건너뛴다 — 방금 놓은 것을 도로 빼면
+ * 담기 버튼이 아무 일도 하지 않는 것처럼 보인다.
+ */
+export function placeInQueue(
+  entries: QueueEntry[],
+  trackId: number,
+  position: QueueInsertPosition,
+  currentUid: string | null,
+  limit: number,
+): QueuePlacement {
+  const moved = entries.some((entry) => entry.trackId === trackId);
+  const rest = entries.filter((entry) => entry.trackId !== trackId);
+  const placed = queueEntry(trackId);
+
+  const currentIndex = currentUid ? rest.findIndex((entry) => entry.uid === currentUid) : -1;
+  const fellBack = position === 'afterCurrent' && currentIndex < 0;
+  const at =
+    position === 'top' ? 0
+      : position === 'afterCurrent' && currentIndex >= 0 ? currentIndex + 1
+        : rest.length;
+
+  const next = [...rest.slice(0, at), placed, ...rest.slice(at)];
+
+  let evictedTrackId: number | null = null;
+  if (next.length > limit) {
+    const fromTop = position === 'bottom' || fellBack;
+    const order = fromTop
+      ? next.map((_, index) => index)
+      : next.map((_, index) => next.length - 1 - index);
+    for (const index of order) {
+      const entry = next[index];
+      if (entry.uid === placed.uid || entry.uid === currentUid) continue;
+      evictedTrackId = entry.trackId;
+      next.splice(index, 1);
+      break;
+    }
+  }
+
+  return { entries: next, moved, fellBack, evictedTrackId, uid: placed.uid };
+}
+
+/** 자동 스크롤이 반응하는 위아래 가장자리 폭(px). */
+export const AUTO_SCROLL_EDGE = 56;
+/** 한 프레임에 밀 수 있는 최대 거리(px). */
+export const AUTO_SCROLL_MAX_STEP = 16;
+
+/**
+ * 끄는 손이 목록의 위아래 가장자리에 닿았을 때 한 프레임에 밀 거리.
+ *
+ * 가운데에서는 0 이고, 가장자리로 깊이 들어갈수록 빨라진다 — 끝을 살짝 넘긴
+ * 정도면 천천히 기어가야 놓을 자리를 겨눌 수 있고, 완전히 벗어나면 100곡짜리
+ * 목록도 한 번에 가로지를 만큼 빨라야 한다. 위로 밀 때는 음수다.
+ */
+export function autoScrollDelta(pointerY: number, top: number, bottom: number): number {
+  if (pointerY < top + AUTO_SCROLL_EDGE) {
+    const depth = Math.min(top + AUTO_SCROLL_EDGE - pointerY, AUTO_SCROLL_EDGE);
+    return -Math.ceil((depth / AUTO_SCROLL_EDGE) * AUTO_SCROLL_MAX_STEP);
+  }
+  if (pointerY > bottom - AUTO_SCROLL_EDGE) {
+    const depth = Math.min(pointerY - (bottom - AUTO_SCROLL_EDGE), AUTO_SCROLL_EDGE);
+    return Math.ceil((depth / AUTO_SCROLL_EDGE) * AUTO_SCROLL_MAX_STEP);
+  }
+  return 0;
+}

@@ -22,7 +22,7 @@
 | 곡 조회 | `GET /api/v1/music`, `GET /api/v1/music/{musicId}` | 인증 불필요 · 연결 완료 |
 | 콘텐츠 등록 | `POST/PATCH/DELETE` — music · album · artist · lyric | **album·artist·lyric 은 쓰기 전용** |
 | 스트리밍 | 스트림·청크 생성/업로드/조회/다운로드 | 연결 완료 |
-| 이미지 | `POST/GET/DELETE /api/v1/storage/image/{category}/{key}` | 연결 완료 |
+| 이미지 | `POST/GET/DELETE /api/v1/storage/image/…` | 연결 완료 · 조회는 `{fileId}`, 쓰기는 `{category}/{key}` |
 | 이벤트 수집 | `POST /api/v1/events` | 프론트 트래커 있음 |
 | 온보딩 | `GET /api/v1/onboarding/option`, `POST /api/v1/onboarding` | 연결 완료 · **제출은 계정당 한 번** |
 | 온보딩(배치) | `GET /api/v1/user/{userId}/onboarding` | **`ROLE_SYSTEM` 전용** · 추천 서버가 콜드스타트에 씀 |
@@ -281,30 +281,42 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 ### 9. 프로필 사진 — ✅ 완료
 
 **조회 URL 규약**: `image_url` 은 서버 기준 **상대 경로**다
-(`/api/v1/storage/image/{CATEGORY}/{키}`). 절대 URL 이 아니므로 프론트는
-`baseUrl` 과 합쳐 쓰면 된다. 카테고리는 **대문자**다.
+(`/api/v1/storage/image/{fileId}`). 절대 URL 이 아니므로 프론트는
+`baseUrl` 과 합쳐 쓰면 된다.
 
-규약을 만드는 자리는 하나다 — `StorageImageService.imageUrl(...)`. 곡 목록의
-앨범·아티스트 이미지도 같은 메서드를 쓴다.
+규약을 만드는 자리는 하나다 — `StorageImageService.imageUrl(ObjectStorageFile)`.
+곡 목록의 앨범·아티스트 이미지도 같은 메서드를 쓴다.
 
-사진이 없으면 `/api/v1/storage/image/PROFILE/default` 를 가리킨다. 그 키에는
-파일이 없고 서버가 기본 이미지를 돌려주므로 `<img>` 에 그대로 넣어도 된다.
-화면은 이 값이 `default` 로 끝나면 "사진 없음" 으로 보고 마스코트를 띄운다.
+**한때는 저장 키로 조회했다.** 그때는 카테고리가 **대문자**인 것이 규약이었고
+(`SecurityConfig` 의 공개 경로가 대문자로 적혀 있었다), 조회 URL 이 저장 키를 되짚어
+만들어졌다. 키 모양이 곧 계약이라 키를 손으로 만든 코드 하나가 주소를 조용히
+`null` 로 만들었고, 그것이 `/report` 의 MuBTI 캐릭터가 뜨지 않던 원인이었다.
+지금은 **파일 번호**로 만들기 때문에 키 모양이 주소에 관여하지 않는다.
+
+사진이 없으면 `/api/v1/storage/image/PROFILE/default` 를 가리킨다. 그 자리에는
+파일이 없고(파일이 아니라 classpath 자산이다) 서버가 기본 이미지를 돌려주므로,
+`<img src>` 에 그대로 넣어도 된다. 화면은 이 값이 `/PROFILE/default` 로 끝나면
+"사진 없음" 으로 보고 마스코트를 띄운다.
 
 **프로필 사진은 공개 경로가 아니다.** 개인 정보라 `SecurityConfig` 에서 열지
 않았다. `<img src>` 는 `Authorization` 을 달 수 없으므로 프론트가 토큰을 붙여
 바이트를 받고 object URL 로 바꿔 쓴다(`lib/profile-photo.ts`). 앨범·아티스트
 이미지는 공개라 URL 을 그대로 쓴다.
 
-업로드 키는 **본인 유저 번호**여야 한다. 아니면 403 이다.
+업로드 키는 **본인 유저 번호**여야 한다. 아니면 403 이다. 삭제도 같은 규칙을 지난다 —
+권한 판단이 카테고리 정책(`ImageAccessPolicy`) 하나로 모여 있어서, 업로드와 삭제가
+같은 검사를 지나지 않으면 잠그지 않은 쪽으로 우회된다. 카탈로그 이미지
+(`ARTIST`·`ALBUM`·`TRACK`·`MUBTI`)의 업로드·삭제는 `ROLE_SYSTEM` 이상만 한다.
 
-고친 것 다섯 (전부 [failure/](failure/) 에 기록):
+고친 것 여섯 (전부 [failure/](failure/) 에 기록):
 
 - `image_url` 이 저장 키를 통째로 넣어 **부를 수 없는 주소**였다
 - 업로드가 인증 principal 에 값을 넣어 **DB 에 저장되지 않았다**
 - principal 의 지연 연관을 읽어 `GET /api/v1/user` 가 500 이었다
 - 삭제가 파일을 두 번 지워 롤백됐다
 - **남의 번호를 키로 올려 남의 사진을 덮어쓸 수 있었다**
+- **카탈로그 이미지는 로그인만 하면 누구나 덮어쓰고 지울 수 있었다** — 프로필에만
+  검사가 있었다
 
 ---
 
@@ -405,8 +417,9 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 - **기간은 일간뿐이다.** 원래 이 항목은 `period=week|month|year&offset=N` 을
   적어 두었지만, 화면이 실제로 쓰는 것은 하루치다. 채우지 않을 파라미터를
   미리 열면 계약이 잘못 굳는다.
-- **`mubti` 표 16행을 사람이 넣어야 한다** (`domain/seed-mubti.sql`). 비어
-  있으면 503 이다 — 온보딩이 `codes` 표에 걸리는 것과 같은 구조.
+- **`mubti` 표 16행은 기동 때 `BootstrapRunner` 가 채운다** (S15P21A204-344).
+  `image_file_id` 가 NOT NULL 이라 행만 넣을 수 없어 손으로 넣던 `seed-mubti.sql`
+  은 없앴다. 비어 있으면 503 이라는 점은 그대로다.
 - **구간 기반 신호를 하나도 못 썼다.** `track_sections` 를 채우는 파이프라인이
   없어 `play_section_coverage` · `v_track_skips` 가 전부 빈 결과다. MuBTI
   A축(보컬/멜로디)이 가장 약한 축이 된 이유다.

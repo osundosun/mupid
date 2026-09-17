@@ -4,7 +4,6 @@ import { api } from '@/lib/api/session';
 import { isStreamed } from '@/lib/stream-catalog';
 import { formatTime, type Track } from '@/lib/mupid-data';
 import type { LyricLine } from '@/lib/api/endpoints';
-import { localDemoEnabled } from '@/lib/api/local-demo';
 
 /**
  * 곡 가사.
@@ -18,13 +17,8 @@ export function Lyrics({ track, time = 0, expanded = false }: { track: Track; ti
   const [lines, setLines] = useState<LyricLine[] | null>(null);
   const [error, setError] = useState(false);
   const streamed = isStreamed(track);
-  const local = localDemoEnabled() && Boolean(track.localAudio);
   useEffect(() => {
     setError(false);
-    if (local) {
-      setLines(track.localLyrics ?? []);
-      return;
-    }
     if (!streamed) {
       setLines([]);
       return;
@@ -41,11 +35,11 @@ export function Lyrics({ track, time = 0, expanded = false }: { track: Track; ti
         if (!abort.signal.aborted) setError(true);
       });
     return () => abort.abort();
-  }, [track.id, track.musicId, track.localLyrics, streamed, local]);
-  const displayedLines = local ? (track.localLyrics ?? []) : lines;
+  }, [track.id, track.musicId, streamed]);
+  const displayedLines = lines;
   const currentIndex = Math.max(0, (displayedLines ?? []).findLastIndex(line => line.time_ms <= time * 1000));
   const previewLines = expanded ? displayedLines : displayedLines?.slice(currentIndex, currentIndex + 2);
-  const note = !streamed && !local
+  const note = !streamed
     ? '체험용 곡이라 가사가 없어요.'
     : error
       ? '가사를 불러오지 못했어요.'

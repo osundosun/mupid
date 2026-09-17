@@ -19,5 +19,17 @@ docker build \
   -t mupid-ci-ai:1 \
   ai_server
 
+# 안드로이드 도구 사슬. 수 GB 라 처음 굽는 데 오래 걸린다.
+#
+# --platform linux/amd64 로 고정하는 이유: 안드로이드 NDK 는 리눅스용이
+# x86_64 바이너리만 나온다. 러너가 Apple Silicon 이어도 Docker Desktop 의
+# Rosetta 2 가 거의 네이티브 속도로 돌린다 (gzip 실측 arm64 0.86s / amd64 0.84s).
+docker build \
+  --platform linux/amd64 \
+  -f infra/runner/images/android.Dockerfile \
+  -t mupid-ci-android:1 \
+  infra/runner/images
+
 echo
-docker image ls mupid-ci-ai --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  {{.CreatedSince}}'
+docker image ls --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  {{.CreatedSince}}' \
+  | grep '^  mupid-ci-'

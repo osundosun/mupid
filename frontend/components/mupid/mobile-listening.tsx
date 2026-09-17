@@ -78,7 +78,15 @@ export function MobileListening({ model: m }: { model: MupidModel }) {
             <Sparkles aria-hidden="true" />
             AI로 추천받기
           </button>
-
+          <button
+            className="icon-button"
+            aria-label={m.queueOpen ? '재생 목록 접기' : '재생 목록 펼치기'}
+            aria-expanded={m.queueOpen}
+            aria-controls="queue-dock"
+            onClick={m.toggleQueue}
+          >
+            <ListMusic />
+          </button>
         </div>
       </div>
     </section>

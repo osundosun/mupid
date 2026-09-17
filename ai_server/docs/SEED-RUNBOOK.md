@@ -137,11 +137,25 @@ MySQL 에서 이미 적재된 것을 내보내 만드는 길도 남아 있다(`b
 
 ## 6. 라벨 배치
 
+먼저 표를 한 번 만든다. **앱은 표를 만들지 않는다**(decision/0011) — 이 단계를 건너뛰면
+배치가 적재에서 실패하고, 그 오류가 곧 "DDL 을 아직 안 돌렸다" 는 뜻이다.
+
+    clickhouse-client --host <host> --user <user> --password \
+        < ai_server/sql/section_labels.sql
+
     python -m ai_server.tools.run_labeler
 
 | 기대 | 확인 |
 | --- | --- |
 | `labels_service.parquet` 에 그 사용자 행 | 실측 9신호 → 라벨 6행 |
+| `section_labels` 에 같은 행 수 | `SELECT count() FROM section_labels WHERE run_id = (SELECT max(run_id) FROM section_labels)` |
+
+라벨의 **정본은 ClickHouse** 다. parquet 은 배치의 중간 산출물이고, 추천 파드는 파일을
+보지 않는다 — 그래야 파드가 상태를 갖지 않고 여러 벌로 늘어날 수 있다.
+
+판은 통째로 교체된다. 어제 있던 라벨이 오늘 없을 수 있어(행동이 바뀌었으므로) 행을
+갱신해 맞추지 않고 `run_id` 를 붙여 새로 넣는다. 읽기는 항상 `max(run_id)` 하나만 본다.
+오래된 판은 7일 TTL 로 사라진다.
 
 **L1 이 서지 않으면 개인화가 걸리지 않는다.** `user_positives()` 는 L1 만 보는데, L1 은
 구간 저장(`SECTION_MARK`)·파형 클릭 되감기·2회 이상 반복 중 하나가 있어야 선다. 곡 단위

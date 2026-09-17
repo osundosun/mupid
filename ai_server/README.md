@@ -127,7 +127,7 @@ Python **3.12**. GPU 도 `torch` 도 필요 없다 — 사용자 벡터 계산�
    │  ├─ stage1_weights.npz        랭킹 모델 (NumPy 판, 있으면 우선)
    │  ├─ content.parquet            곡 특징 (BPM 등)
    │  ├─ flow_meta.parquet          곡 메타
-   │  ├─ labels_service.parquet     사용자 선호 구간
+   │  ├─ labels_service.parquet     사용자 선호 구간 (ClickHouse 가 정본. 배치 중간물)
    │  ├─ logistic_flow_stage1.json  결합기
    │  ├─ clap_moments.npz           (선택) 자연어 의미 점수
    │  ├─ serve/                     prefs · onboarding
@@ -138,15 +138,24 @@ Python **3.12**. GPU 도 `torch` 도 필요 없다 — 사용자 벡터 계산�
 앞의 네 색인은 **같은 행 번호로 서로를 가리킨다.** 하나만 교체하면 엉뚱한 곡을 추천하면서도
 서비스는 정상처럼 뜬다. 반드시 묶음으로 교체한다.
 
-`labels_service.parquet` 을 빠뜨리면 오류 없이 **모든 사용자가 콜드스타트 추천**을 받는다.
-이식 중 실제로 겪었다. 이런 "있어도 되지만 없으면 기능이 조용히 꺼지는" 파일은 `/health`
-의 `artifacts` 가 이름과 이유를 함께 보여준다. 기동 로그에도 한 줄 남는다.
+선호 라벨이 없으면 오류 없이 **모든 사용자가 콜드스타트 추천**을 받는다. 이식 중 실제로
+겪었다. 이런 "있어도 되지만 없으면 기능이 조용히 꺼지는" 것들은 `/health` 의 `artifacts`
+가 이름과 이유를 함께 보여준다. 기동 로그에도 한 줄 남는다.
+
+**라벨의 정본은 ClickHouse `section_labels` 다**(`app/labels_store.py`). 파일은
+ClickHouse 주소가 없는 개발·오프라인에서만 쓰이고, 배치의 중간 산출물이기도 하다.
+`/health` 가 `store` 로 지금 어느 쪽을 보고 있는지 알려준다 — 파일만 보고 판단하면
+**개인화가 멀쩡한 배포를 콜드스타트로 잘못 읽는다.**
 
 ```json
 "artifacts": { "missing": ["labels_service.parquet"],
                "files": { "labels_service.parquet":
-                          { "exists": false, "why": "개인화. 없으면 모든 사용자가 콜드스타트다" } } }
+                          { "exists": false, "store": "clickhouse",
+                            "why": "개인화. 없으면 모든 사용자가 콜드스타트다" } } }
 ```
+
+표는 이 코드가 만들지 않는다. DDL 은 `ai_server/sql/section_labels.sql` 에 있고 사람이
+한 번 실행한다(decision/0011 — 앱이 스키마를 건드리지 않는다).
 
 ## API
 
@@ -181,7 +190,7 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 | 행동 데이터 | **요청마다 ClickHouse 직접 조회** (`user_section_signals`·`listen_events`) |
 | 온보딩 | **요청 본문** — Spring 코드표 이름 그대로 받아 카탈로그 어휘로 옮긴다 |
 | 곡·구간 메타 | 자체 색인 (임베딩과 같은 묶음이라 요청에 실을 수 없다) |
-| 선호 구간 등급 | `labels_service.parquet` — **배치가 만든다**(아래 "배치") |
+| 선호 구간 등급 | ClickHouse `section_labels` — **배치가 만든다**(아래 "배치") |
 
 ### 요청
 
@@ -396,7 +405,7 @@ pytest 11건 전부 통과.
 - `search` 의 실제 자연어 추천 — 해석기가 없어 501 만 확인했다 → `S15P21A204-219`
 - MySQL 실데이터 ID 매핑 — 시험용 임시 매핑으로만 검증
 - Spring 통합 호출, 운영 재시작·종료·롤백
-- Pinecone 연결 → `S15P21A204-214`
+- Pinecone 연결 → `S15P21A204-214` — **현재 규모에서는 붙이지 않기로 했다**(TODO "벡터 저장소") 
 
 이력이 있는 사용자는 응답이 p50 **2.22초**다(콜드스타트 0.30초). 요청마다 행동 로그를 전수
 스캔하는 구조이며 개선은 `S15P21A204-217`.
@@ -553,18 +562,18 @@ CI 는 `infra/ci/ai-server.yml` 의 `ai-server-verify` 가 오프라인 계약 �
 | `app/recommender.py` | 모델·색인을 불러오고 추천 점수를 계산하는 핵심 코드 |
 | `app/internal_api.py` | daily·next·search 요청을 받아 추천 계산을 호출하고 JSON 반환 |
 | `app/ids.py` | MySQL 숫자 ID와 기존 AI 문자열 ID 연결·검증 |
-| `app/legacy/m09_labels.py` | 재생·스킵·반복 같은 행동 로그를 선호 신호로 변환 |
-| `app/legacy/m10_features.py` | MERT 특징과 BPM·태그 등 부가 특징을 모델 입력 형태로 구성 |
-| `app/legacy/m11_stage1.py` | Dual Encoder 모델을 불러오고 구간별 점수를 계산 |
+| `app/labeler.py` | 재생·스킵·반복 같은 행동 로그를 선호 신호로 변환 |
+| `app/features.py` | MERT 특징과 BPM·태그 등 부가 특징을 모델 입력 형태로 구성 |
+| `app/stage1_torch.py` | Dual Encoder 모델 정의·학습 (torch). 서빙은 `stage1_np.py` 가 대신한다 |
 | `app/main.py` | FastAPI 앱 시작, `/health`, `/internal/ready` 제공 |
 
 | 순서 | 단계 |
 |---|---|
 | 1 | BE가 `internal_api` 호출 |
 | 2 | `ids` 가 숫자 ID 변환 |
-| 3 | `m09_labels` 가 사용자 취향 계산 |
-| 4 | `m10_features` 가 모델 입력 구성 |
-| 5 | `m11_stage1`·`recommender` 가 추천 계산 |
+| 3 | `labeler` 가 사용자 취향 계산 |
+| 4 | `features` 가 모델 입력 구성 |
+| 5 | `stage1_np`·`recommender` 가 추천 계산 |
 | 6 | `internal_api` 가 결과 반환 |
 
 | 구분 | 내용 |

@@ -1,6 +1,5 @@
 import { createPlatformTransport } from '../platform';
 import type { ListenEvent } from './types';
-import { localDemoEnabled } from '../api/local-demo';
 
 /**
  * 배치 하나를 실제로 내보내는 방법. 실패하면 throw 해야 큐가 이벤트를 되돌려 놓는다.
@@ -57,7 +56,6 @@ export type HttpTransportOptions = {
 export function createHttpTransport(options: HttpTransportOptions = {}): Transport {
   const url = options.url ?? '/api/v1/events';
   return async (events, leaving) => {
-    if (localDemoEnabled()) return;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = options.authorization?.();
     if (token) headers.Authorization = token;
