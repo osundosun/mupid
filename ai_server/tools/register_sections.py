@@ -52,6 +52,22 @@ from ai_server.tools.push_sections import SECTION_ENUM
 ANALYSIS_VERSION = "v1"
 TIMEOUT = 30
 
+
+def _instruments_module():
+    """구간별 악기 계산기. **music_preprocessing 안에 있다.**
+
+    여기서 최상위 import 를 하지 않는 이유: 이 도구는 AI 서버 환경에서 도는데,
+    `instruments` 는 `numpy`·`librosa` 를 끌어온다. 분위기만 갱신하려는 실행
+    (`--no-instruments`)까지 그 의존성을 요구할 이유가 없다.
+    """
+    try:
+        from music_preprocessing.analysis import instruments as mod
+    except ImportError as e:      # pragma: no cover - 환경 문제
+        raise SystemExit(
+            "악기를 재려면 music_preprocessing 이 필요하다 "
+            f"(pip install -e music_preprocessing). 원인: {e}") from None
+    return mod
+
 # AI 태그 → Spring 코드표 이름. `MOOD_MAP` 을 뒤집은 것이다.
 #
 # **번호는 보내지 않는다.** 코드 번호는 MySQL 이 발급하고 이 서버는 모른다 — 이름으로
@@ -108,15 +124,24 @@ def read_track_map(path: Path) -> dict[str, int]:
 
 
 def build_payload(group: pd.DataFrame,
-                  moods: list[str] | None = None) -> tuple[list[dict], dict]:
+                  moods: list[str] | None = None,
+                  instruments: list[list[str]] | None = None) -> tuple[list[dict], dict]:
     """한 곡의 구간 목록. 보낼 수 없는 것은 이유별로 센다.
 
     `moods` 는 곡 단위다. AI 카탈로그가 구간별 무드를 갖고 있지 않아 곡의 것을 그 곡의
     모든 구간에 같이 붙인다 — 구간별로 갈리면 그때 좁히면 된다.
+
+    `instruments` 는 **구간 단위**다(demucs 스템에서 잰 구간별 악기). `group` 의 행
+    순서와 같아야 한다. 없으면 악기 없이 보낸다.
+
+    **둘을 함께 보낸다.** `PUT .../section` 이 곡의 구간을 통째로 갈아 끼우면서
+    분위기와 악기를 같은 트랜잭션에서 **둘 다 지우고 다시 넣는다.** 악기만 실어
+    보내면 그 요청에 분위기가 없어 **기존 분위기가 사라진다.**
     """
     stat = {"unknown_label": 0, "bad_range": 0, "long_uid": 0}
     rows = []
-    for r in group.itertuples():
+    ordered = group.sort_values("section_idx") if "section_idx" in group.columns else group
+    for i, r in enumerate(ordered.itertuples()):
         label = str(r.section_label).upper()
         if label not in SECTION_ENUM:
             # 추천기는 `other` 를 만들 수 있는데 ERD ENUM 에는 없다. 억지로 다른
@@ -133,14 +158,19 @@ def build_payload(group: pd.DataFrame,
             # 값끼리는 1:1 검사까지 통과해 매핑이 어긋난 채 서비스가 올라온다.
             stat["long_uid"] += 1
             continue
-        rows.append({
+        row = {
             "section_index": int(r.section_idx),
             "external_id": uid,
             "section_label": label,
             "start_time_ms": s_ms,
             "end_time_ms": e_ms,
             "moods": list(moods or []),
-        })
+        }
+        if instruments is not None and i < len(instruments):
+            names = [str(x) for x in (instruments[i] or [])]
+            if names:
+                row["instruments"] = names
+        rows.append(row)
     rows.sort(key=lambda x: x["section_index"])
     return rows, stat
 
@@ -153,6 +183,67 @@ def put_sections(base: str, token: str, music_id: int, sections: list[dict],
         method="PUT", token=token, timeout=TIMEOUT,
         body={"analysis_version": version, "sections": sections})
     return (body.get("data") or {}).get("sections") or []
+
+
+def instruments_of(group: pd.DataFrame, *, audio_dir: Path, demix_root: Path,
+                   mix_rel: float | None = None,
+                   cache: dict | None = None) -> tuple[list[list[str]] | None, str]:
+    """곡 하나의 **구간별 악기**. `(악기목록, 실패이유)`.
+
+    `group` 의 행 순서(`section_idx` 오름차순)와 같은 순서로 돌려준다 —
+    `build_payload` 가 같은 정렬을 쓰므로 인덱스가 맞는다.
+
+    스템이 없으면 `(None, 이유)` 다. **빈 목록으로 넘어가지 않는다** — 그러면
+    "악기가 없는 곡" 과 "재지 못한 곡" 이 같아 보인다.
+
+    오디오는 `<audio_dir>/<track_id>.mp3` 다. `cache` 를 주면 곡별 결과를 재사용한다
+    (키는 `track_id` — 미매핑 곡의 `music_id` 는 0 이라 키로 쓸 수 없다).
+    """
+    sub = group.sort_values("section_idx") if "section_idx" in group.columns else group
+    tid = str(sub.iloc[0].track_id)
+    if cache is not None and tid in cache:
+        return cache[tid]
+    m = _instruments_module()
+    audio = Path(audio_dir) / f"{tid}.mp3"
+    if not audio.exists():
+        out: tuple = (None, f"음원이 없다: {audio.name}")
+    else:
+        segs = [m.Segment(label=str(r.section_label), start=float(r.start_sec),
+                          end=float(r.end_sec))
+                for r in sub.itertuples(index=False)]
+        kw = {} if mix_rel is None else {"mix_rel": mix_rel}
+        try:
+            out = (m.for_track(audio, segs, demix_root=Path(demix_root), **kw), "")
+        except m.StemsMissing as e:      # 스템을 못 찾았다. 빈 목록으로 넘어가지 않는다
+            out = (None, f"{e}"[:200])
+        except Exception as e:           # 오디오를 못 읽는 등
+            out = (None, f"{type(e).__name__}: {e}"[:200])
+    if cache is not None:
+        cache[tid] = out
+    return out
+
+
+def add_instrument_codes(names: set[str], *, dry_run: bool = False) -> list[dict]:
+    """악기 이름을 코드표에 넣는다. **구간을 올리기 전에** 해야 한다.
+
+    `CodeType.INSTRUMENT` 는 부트스트랩이 심지 않는다. 서버는 코드표에 없는 악기
+    이름을 **버리고 세는데**(구간은 살린다), 그 경고는 서버 로그에만 남으므로
+    순서가 뒤집히면 오류 없이 악기만 조용히 빈다. `POST /api/v1/code` 는 멱등이라
+    매 배치가 다시 불러도 값이 같다(`add_code` 가 이미 있으면 그 행을 돌려준다).
+    """
+    if dry_run or not names:
+        return []
+    added = []
+    for name in sorted(names):
+        row = _api_auth.request_json(f"{_api_auth.base()}/api/v1/code",
+                                     method="POST", token=_api_auth.access_token(),
+                                     timeout=TIMEOUT,
+                                     body={"code_type": "INSTRUMENT",
+                                           "code_name": name})
+        d = row.get("data") or row
+        if d.get("created"):
+            added.append({"code_id": d.get("code_id"), "name": d.get("code_name")})
+    return added
 
 
 def main() -> int:
@@ -172,6 +263,14 @@ def main() -> int:
                     help="보내지 않고 무엇을 보낼지만 센다")
     ap.add_argument("--force", action="store_true",
                     help="실패한 곡이 있어도 id_map 을 쓴다")
+    ap.add_argument("--no-instruments", action="store_true",
+                    help="악기를 재지 않고 보낸다 (분위기만 갱신할 때)")
+    ap.add_argument("--demix-root", default=None,
+                    help="기본: <ARTIFACT_DIR>/work/demix")
+    ap.add_argument("--audio-dir", default=None,
+                    help="기본: <ARTIFACT_DIR>/flow_music_data/audio")
+    ap.add_argument("--mix-rel", type=float, default=None,
+                    help=f"스템 판정 문턱(믹스 대비). 기본 {instruments.MIX_REL}")
     a = ap.parse_args()
 
     src = Path(a.moments) if a.moments else paths.moments_path()
@@ -206,6 +305,15 @@ def main() -> int:
     if a.limit:
         groups = groups[:a.limit]
 
+    # 악기 자리. `--no-instruments` 면 계산하지 않는다.
+    use_ins = not a.no_instruments
+    root = paths.artifact_root()
+    audio_dir = Path(a.audio_dir) if a.audio_dir else (root / "flow_music_data" / "audio")
+    demix_root = Path(a.demix_root) if a.demix_root else (root / "work" / "demix")
+    ins_cache: dict = {}
+    ins_missing: list[dict] = []
+    ins_hits = 0
+
     stat = {"unknown_label": 0, "bad_range": 0, "long_uid": 0}
     unmapped: list[str] = []
     empty: list[str] = []
@@ -216,13 +324,36 @@ def main() -> int:
     token = "" if a.dry_run else _api_auth.access_token()
     base = _api_auth.base()
 
+    # ── 코드표를 **먼저** 채운다. 서버는 코드표에 없는 악기를 버리고 세므로,
+    #    순서가 뒤집히면 오류 없이 악기만 조용히 빈다.
+    if use_ins:
+        wanted: set[str] = set()
+        for tid, group in groups:
+            got, why = instruments_of(group, audio_dir=audio_dir, demix_root=demix_root,
+                                      mix_rel=a.mix_rel, cache=ins_cache)
+            if got:
+                for names in got:
+                    wanted.update(names)
+        added = add_instrument_codes(wanted, dry_run=a.dry_run)
+        log(f"악기 코드 {len(wanted)}종 확인 · 새로 넣음 {len(added)}개"
+            + (f" (--dry-run 이라 안 보냄)" if a.dry_run else ""))
+
     for tid, group in groups:
         tid = str(tid)
         music_id = tmap.get(tid)
         if music_id is None:
             unmapped.append(tid)
             continue
-        sections, s = build_payload(group, mood_of.get(tid))
+        ins_list = None
+        if use_ins:
+            ins_list, why = instruments_of(group, audio_dir=audio_dir,
+                                           demix_root=demix_root,
+                                           mix_rel=a.mix_rel, cache=ins_cache)
+            if ins_list is None:
+                ins_missing.append({"track_id": tid, "why": why})
+            else:
+                ins_hits += 1
+        sections, s = build_payload(group, mood_of.get(tid), ins_list)
         for k in stat:
             stat[k] += s[k]
         if not sections:
@@ -250,6 +381,10 @@ def main() -> int:
     with_mood = sum(1 for t, _ in groups if mood_of.get(str(t)))
     log(f"곡 {len(groups)}개 중 {sent}개 적재 · 구간 {len(pairs)}개 "
         f"· 분위기 있는 곡 {with_mood}개")
+    if use_ins:
+        log(f"  악기를 잰 곡 {ins_hits}개 · 못 잰 곡 {len(ins_missing)}개")
+        for x in ins_missing[:5]:
+            log(f"    {x['track_id']}: {x['why']}")
     for k in ("unknown_label", "bad_range", "long_uid"):
         if stat[k]:
             log(f"  제외 구간 {k}={stat[k]}")
