@@ -5,6 +5,14 @@
 -- 다만 엔티티와 어긋난 것이 확인되면 산출물이 뒤처진 쪽이므로 엔티티를 기준으로 맞춘다
 -- (playlist_tracks 는 그렇게 고쳤다).
 -- 배경·규칙·코드와 어긋난 지점은 erd.md 를 본다.
+--
+-- **수기 보정 목록 — 산출물을 교체할 때마다 다시 확인한다.**
+-- 도구가 이 셋을 매번 되돌려 놓는다. 교체 후 아래가 살아 있는지 보고 없으면 다시 넣는다.
+--   1. music_analysis_instruments.music_section_analysis_id 에 AUTO_INCREMENT 를 뺀다
+--   2. music_section_analysis.external_id 에 UNIQUE 를 건다
+--      (1·2 는 S15P21A204-344 / b6d5c7e)
+--   3. ai_chat_sessions.ai_chat_session_id 에 AUTO_INCREMENT 를 넣는다
+--      (AiChatSession 이 GenerationType.IDENTITY 다. 빼면 세션 생성이 죽는다)
 
 CREATE TABLE IF NOT EXISTS `ai_chat_messages` (
   `ai_chat_message_id` BIGINT AUTO_INCREMENT NOT NULL,
@@ -24,7 +32,8 @@ CREATE TABLE IF NOT EXISTS `ai_chat_messages` (
   CONSTRAINT `ck_ai_chat_messages_1` CHECK (`index`>=0)
 );
 CREATE TABLE IF NOT EXISTS `ai_chat_sessions` (
-  `ai_chat_session_id` INT NOT NULL,
+  -- AiChatSession 이 GenerationType.IDENTITY 다. AUTO_INCREMENT 를 빼면 세션 생성이 죽는다.
+  `ai_chat_session_id` INT AUTO_INCREMENT NOT NULL,
   `title` VARCHAR(50) NOT NULL,
   `user_id` INT NOT NULL,
   `is_deleted` TINYINT(1) NOT NULL,

@@ -58,7 +58,7 @@ public record ReportResponse(
 
         String albumTitle,
 
-        /** 앨범 커버. 없으면 null. */
+        /** 곡(TRACK) 커버. 없으면 null. */
         String imageUrl,
 
         long listeningMs,

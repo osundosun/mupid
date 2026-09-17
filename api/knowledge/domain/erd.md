@@ -191,18 +191,25 @@ ERD 반입 시점(2026-09-11)에 기존 엔티티 3개가 ERD 와 여러 곳에�
 
 ### 남은 차이
 
-2026-09-15 재산출 기준이다. 재산출이 `erd.sql` 을 코드·실제 DB 쪽으로 끌어와서
+2026-09-17 재산출 기준이다. 재산출이 `erd.sql` 을 코드·실제 DB 쪽으로 끌어와서
 차이가 많이 줄었다 — `onboarding_survey` 의 `_code_id`, 무드·장르의 `codes`
 통합, `chunks` 복합 PK, `music_section_analysis_id` 이름은 **모두 해소됐다.**
+
+**2026-09-17 부터 로컬 MySQL 이 `erd.sql` 과 실제로 같다.** 그전까지 로컬 DB 는
+과거 `ddl-auto: update` 가 만든 것이라 문자열이 전부 `varchar(255)` 였고 UNIQUE 도
+거의 없었다. 아래 "길이 미지정" 항목들이 그동안 무해했던 이유가 그것이다 — 이제는
+**DB 가 실제로 자른다.** 경위는 [failure/database-and-jpa.md](../failure/database-and-jpa.md) 를 본다.
 
 | 테이블 | ERD | 현재 코드 | 영향 |
 |---|---|---|---|
 | `music.release_date` · `albums.release_date` | `DATE` | `LocalDateTime` | 엔티티가 시:분:초까지 들고 API 도 `2026-09-11T00:00:00` 로 주고받는다. MySQL 이 `DATE` 로 잘라 저장하므로 **시각 부분은 버려진다.** 읽어 오면 언제나 `T00:00:00` 이다 |
 | `ai_chat_messages.ai_chat_message_id` | `BIGINT` | `Integer` | 21억 건을 넘길 일은 없지만, 타입이 어긋난 채로 두면 나중에 `Long` 으로 바꾸는 순간 API 응답 타입도 함께 바뀐다 |
-| `users.nickname` | `VARCHAR(10)` | 길이 미지정 | 요청 검증이 2~10자라 실질 충돌은 없다 |
-| `users.email` | `VARCHAR(320)`, 유니크 아님 (`CREATE INDEX uq_user_email`) | 길이 미지정, 중복은 애플리케이션에서만 막는다 | 동시 요청에서 같은 이메일이 두 번 들어갈 수 있다 |
+| `users.nickname` | `VARCHAR(10)` | 길이 미지정 | 요청 검증이 2~10자라 실질 충돌은 없다. 다만 검증을 건너뛰는 경로가 생기면 **이제 DB 가 1406 으로 막는다** |
+| `users.password` | `VARCHAR(60)` | 길이 미지정 | BCrypt 해시가 정확히 60자다. 다른 인코더로 바꾸면 **넘쳐서 저장이 실패한다** |
+| `users.email` | `VARCHAR(320)`, 유니크 아님 (`CREATE INDEX uq_user_email`) | 길이 미지정, 중복은 애플리케이션에서만 막는다 | 동시 요청에서 같은 이메일이 두 번 들어갈 수 있다. **ERD 의 `uq_user_email` 은 이름과 달리 UNIQUE 가 아니다** — 이름만 보고 막힌다고 믿지 않는다 |
 | `users.birth_year` | `SMALLINT` | `Integer` | 범위 안이면 무해 |
-| `email_verifications.token` | `VARCHAR(6)` + **UNIQUE** | 길이·유니크 없음 | 6자리 랜덤이 충돌하면 발송이 실패한다 |
+| `email_verifications.token` | `VARCHAR(6)` + **UNIQUE** | 길이·유니크 없음 | 6자리 랜덤이 충돌하면 발송이 실패한다. UNIQUE 가 이제 실제로 걸려 있다 |
+| `music_comments.content` · `playlists.title` 등 | `VARCHAR(100)` | 길이 미지정 | 요청 검증에 기대고 있다. 검증보다 긴 값이 들어오면 DB 가 막는다 |
 | `onboarding_survey` | `mood_code_id` · `genre_code_id` **NOT NULL** | 같음 | 한 줄에 답 하나를 담을 수 없다. 지금은 분위기 × 장르 조합으로 우회한다 → [decision/0017](../decision/0017-onboarding-survey-cross-product.md) |
 
 ### 아직 DB 에 적용하지 않은 DDL (2026-09-17 기준)
