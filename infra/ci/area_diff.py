@@ -65,6 +65,9 @@ PREFIXES: tuple[tuple[str, str], ...] = (
     ("api/", "Backend"),
     ("ai_server/", "AI"),
     ("music_preprocessing/", "Data"),
+    # GPU 서버로 곡을 생성·다운로드하는 Playwright 자동화. music_preprocessing
+    # (다운스트림 가공)과는 별도 코드지만 같은 Data 영역이다.
+    ("flow_music_automation/", "Data"),
     # 나머지 infra/ 와 infra_k8s/ 는 매니페스트·배포 스크립트·CI 자신이다.
     ("infra/", "Infra"),
     ("infra_k8s/", "Infra"),
