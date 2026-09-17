@@ -1,6 +1,6 @@
 # 실패 사례 (failure)
 
-**막혔으면 여기부터 본다.** 팀이 이미 밟은 함정 228건을, 회고·`infra/` 운영 문서·코드 주석에 흩어져 있던 기록에서 모아 증상별로 정리했다.
+**막혔으면 여기부터 본다.** 팀이 이미 밟은 함정 229건을, 회고·`infra/` 운영 문서·코드 주석에 흩어져 있던 기록에서 모아 증상별로 정리했다.
 
 각 항목은 `### <증상>` 제목 아래 **원인 / 해결 / 근거**(파일 경로) 순이다. 제목은 실제로 겪을 때 검색해서 찾을 수 있는 말로 쓴다.
 
@@ -18,7 +18,7 @@
 | [windows-gitbash.md](windows-gitbash.md) | 7 | 경로 자동 변환, 포트 점유, `NODE_ENV` 때문에 devDependency 가 빠지는 경우 |
 | [cicd-and-ops.md](cicd-and-ops.md) | 21 | GitLab CI, 배포·롤백, 백업, 러너 |
 | [git-and-convention.md](git-and-convention.md) | 10 | husky 훅, 브랜치·커밋 규약 위반, 라벨 없이 만든 MR |
-| [frontend.md](frontend.md) | 28 | vinext·RSC 빌드와 자산 파이프라인, 재생기(이어듣기·seek·볼륨), 세션·로그인 상태, 큐 저장 유실, 끌어서 순서 바꾸기, 개발 서버 캐시 |
+| [frontend.md](frontend.md) | 29 | vinext·RSC 빌드와 자산 파이프라인, 재생기(이어듣기·seek·볼륨), 세션·로그인 상태, 큐 저장 유실, 끌어서 순서 바꾸기, 개발 서버 캐시, 앱에서만 깨지는 서버 이미지 |
 | [doc-drift.md](doc-drift.md) | 12 | **문서가 코드와 어긋난 곳.** 문서를 계약으로 믿기 전에 본다 |
 
 ## 추가하는 법
