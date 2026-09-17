@@ -92,8 +92,13 @@ function QueueDockPanel({
 
   // 열릴 때 닫기 버튼으로 초점을 옮긴다. 키보드로 연 사람이 독 안에서 이어가야 한다.
   useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement;
     closeRef.current?.focus();
-  }, []);
+    return () => {
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -146,7 +151,8 @@ function QueueDockPanel({
       <button
         className={`queue-dock-scrim ${open ? '' : 'is-closing'}`}
         tabIndex={-1}
-        aria-hidden="true"
+        aria-label="재생 목록 닫기"
+        inert={!open}
         onClick={() => m.setQueueOpen(false)}
       />
       <section

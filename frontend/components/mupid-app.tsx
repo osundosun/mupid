@@ -8,6 +8,7 @@ import { useStore } from '@/lib/store';
 import { fetchCatalog } from '@/lib/stream-catalog';
 import { restoreSession, sessionStore } from '@/lib/api/session';
 import { watchSafeArea } from '@/lib/platform';
+import { watchDevToolsErrors } from '@/lib/devtools-error-filter';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
 import {
@@ -93,6 +94,7 @@ export function MupidApp() {
   // 시스템 바가 가리는 자리를 CSS 에 건넨다. 곡을 받기 전 화면도 상태바 밑으로
   // 들어가면 안 되므로 여기, 가장 바깥에서 한 번만 건다.
   useEffect(() => watchSafeArea(), []);
+  useEffect(() => watchDevToolsErrors(), []);
   useEffect(() => {
     // 같은 계정 몫을 이미 받아 뒀으면 그대로 쓴다. 화면을 옮길 때마다 카탈로그를
     // 다시 받으면 그동안 로딩 화면이 뜨고 재생이 끊긴다. 계정이 바뀌었을 때는
