@@ -10,25 +10,41 @@
 
 ### 라벨 없이 MR 을 만들면 CI 가 빨간불로 남는다
 
-- **원인**: `require-area-label`(`infra/ci/labels.yml`)이 영역 라벨이 없는 MR 을 막는다. GitLab 의
-  `rules` 는 **파이프라인을 만드는 시점**에 `CI_MERGE_REQUEST_LABELS` 를 읽는데, MR 을 만든 직후
-  라벨을 붙이면 그 시점의 값은 이미 비어 있다.
-- **증상**: job 이 **하나뿐**인 파이프라인(`require-area-label` 만)이 실패한다. 로그 끝에
-  `지금 붙어 있는 라벨: Backend,Frontend` 가 찍혀 라벨이 있는데도 실패한 것처럼 보여 더 헷갈린다 —
-  job 스크립트는 **실행 시점**에 변수를 읽고 rules 는 **생성 시점**에 읽기 때문이다.
-  `backend-verify`·`frontend-verify` 는 `when: never` 로 조용히 빠져 있어 함께 확인할 수 없다.
-- **해결**: 라벨을 **MR 생성과 같은 명령에서** 붙인다. 나중에 붙였다면 파이프라인을 다시 돌린다.
+- **원인**: `area-preflight`(`infra/ci/labels.yml`)가 변경 경로를 스스로 계산해(=`git diff`)
+  영역 라벨과 맞춰 보고, 모자라면 실패한다. GitLab 의 `rules` 는 **파이프라인을 만드는 시점**에
+  `CI_MERGE_REQUEST_LABELS` 를 읽는데, MR 을 만든 직후 라벨을 붙이면 그 시점의 값은 이미 비어 있다.
+- **증상**: 로그가 두 시점을 한 화면에 보여줘서 헷갈린다. `area-preflight` 의 판정은 실행 시점이라
+  **최신 라벨을 정확히 안다** — "이 MR 은 Frontend 영역을 건드렸는데 Frontend 라벨이 없습니다" 라고
+  말한 뒤 바뀐 경로와 복구 명령을 찍는다. 반면 영역 verify job 은 `rules` 가 `when: never` 로
+  걸러 둔 상태라 **목록에 아예 없다.** 그래서 "라벨은 붙어 있는데 검증은 하나도 안 돌았다" 가 된다.
+- **해결**: 라벨을 **MR 생성과 같은 명령에서** 붙인다. 나중에 붙였다면 **새 파이프라인을 만든다** —
+  로그가 그 두 줄을 그대로 찍어 주니 복사해서 쓴다.
   ```bash
   # 만들 때 함께 (이렇게 해야 rules 가 처음부터 라벨을 본다)
-  glab mr create --label Backend --label Frontend ...
-  # 이미 만들었다면 라벨을 붙인 뒤 재실행
+  glab mr create --label Backend --label Frontend ... --label Infra
+  # 이미 만들었다면 라벨을 붙인 뒤 **새 파이프라인**
+  glab mr update <iid> --label Data
   glab api --method POST "projects/<프로젝트>/merge_requests/<iid>/pipelines"
   ```
-  재실행 후에는 `require-area-label` 이 **목록에서 사라지고** 영역 verify job 이 나타나야 정상이다.
+  새 파이프라인을 만들면 `area-preflight`·`area-gate` 가 통과하고 영역 verify job 이 나타난다.
   그게 라벨이 인식된 증거다.
+- **함정: job 재시도(↻)는 복구가 아니다.** GitLab 문서 그대로 —
+  *"The configuration for a pipeline is only fetched when the pipeline is created. When you rerun a
+  job, uses the same configuration each time."* 실측(2026-09-17, MR !102):
+  파이프라인 `200778` 의 라벨 게이트를 재시도한 job `556721` 은 스크립트가 최신 라벨
+  (`AI,Backend,Data,Frontend`)을 찍고도 실패했고, 그 파이프라인의 job 목록에는 영역 verify 가
+  없었다. **job 재시도가 만드는 것은 job 의 실행이지 job 자체가 아니다.**
+  같은 커밋(`18b464c9`)으로 **새 파이프라인을 만들면** 영역 verify 4개가 전부 돌아 success 였다
+  (파이프라인 `200895`). 검증 범위는 커밋의 함수가 아니라 **트리거의 함수**다.
 - **주의**: 라벨을 나중에 붙여도 **이미 만들어진 파이프라인은 되살아나지 않는다.** GitLab 은
-  라벨 변경으로 MR 파이프라인을 다시 돌리지 않는다.
-- **근거**: `infra/ci/labels.yml`, `infra/ci/backend.yml`·`frontend.yml` 의 `rules`,
+  라벨 변경으로 MR 파이프라인을 다시 돌리지 않는다. 그래서 `area-gate`(`infra/ci/area-gate.yml`)가
+  따로 있다 — 영역 job 이 남긴 marker(`.areas/<영역>`)와 기대 목록을 대조해, job 목록이 아니라
+  **실제로 돌아서 성공한 검증**을 본다.
+- **라벨을 하나만 붙이는 것도 같은 클래스의 실패다.** 영역 job 하나가 조용히 빠지고 파이프라인은
+  초록으로 보인다. `b0130b2` 는 `infra/ci/data.yml` 을 건드렸는데 라벨은 `Backend,Frontend` 뿐이라
+  `data-verify` 가 돌지 않았고 파이프라인 `200362` 는 `success` 였다. 빠진 job 은 흔적을 남기지 않는다.
+- **근거**: `infra/ci/labels.yml`, `infra/ci/area-gate.yml`, `infra/ci/area_diff.py`,
+  `infra/ci/{frontend,backend,ai-server,data,infra}.yml` 의 `rules`,
   `knowledge/convention/merge-request.md`(영역 라벨 항목)
 
 ### 클론만 했는데 티켓 번호 없는 커밋이 그대로 만들어진다
