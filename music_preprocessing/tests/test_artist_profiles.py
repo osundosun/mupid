@@ -8,23 +8,27 @@ import unittest
 from unittest.mock import patch
 
 from music_preprocessing.artist_profiles import (
-    ArtistClient, check_artists, digest, image_url, load_bundle, prepare, process,
-    validate_manifest, validate_png, write_json,
+    ArtistClient, artist_image_read_url, check_artists, digest, image_url, load_bundle,
+    prepare, process, validate_manifest, validate_png, write_json,
 )
 
 
 def png(index):
-    return b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + struct.pack(">II", 1254, 1254) + bytes(9) + str(index).encode()
+    return b"\x89PNG\x0d\x0a\x1a\x0a" + struct.pack(">I", 13) + b"IHDR" + struct.pack(">II", 1254, 1254) + bytes(9) + str(index).encode()
 
 
 class Server:
     base_url = "https://example.test"
 
     def __init__(self, manifest):
+        # 조회 API 는 **파일 번호** 주소를 준다(`StorageImageService.imageUrl`). 저장
+        # 키 주소(`/ARTIST/{key}`)를 주면 배치가 등록 기록의 `image_file_id` 와 대조하지
+        # 못해 `check_artists` 에서 멈춘다 — 운영에서 실제로 그렇게 멈추게 된다.
         self.info = sorted([{"artist_id": row["artist_id"], "name": row["name"],
-                             "image_url": image_url(row["artist_key"])} for row in manifest["artists"]],
+                             "image_url": artist_image_read_url(row["image_file_id"])}
+                            for row in manifest["artists"]],
                            key=lambda row: row["artist_id"])
-        self.images = {row["artist_key"]: b"old image " + row["artist_key"].encode() for row in manifest["artists"]}
+        self.images = {row["image_file_id"]: b"old image " + row["artist_key"].encode() for row in manifest["artists"]}
         self.writes = []
         self.lose_response = False
         self.break_content = False
@@ -32,12 +36,12 @@ class Server:
     def artists(self):
         return copy.deepcopy(self.info)
 
-    def download(self, key):
-        return self.images[key], "image/jpeg", key + ".jpg"
+    def download(self, file_id):
+        return self.images[file_id], "image/jpeg", str(file_id) + ".jpg"
 
     def upload(self, row, data, mime, filename):
         self.writes.append((row["artist_key"], mime, filename))
-        self.images[row["artist_key"]] = b"corrupt" if self.break_content else data
+        self.images[row["image_file_id"]] = b"corrupt" if self.break_content else data
         if self.lose_response:
             self.lose_response = False
             raise RuntimeError("server committed, response lost")
@@ -123,7 +127,7 @@ class ProfileTests(unittest.TestCase):
 
     def test_unexpected_remote_change_stops_entire_batch_before_writes(self):
         state = self.prepare()
-        self.server.images["artist_86"] = b"someone else changed this"
+        self.server.images[98] = b"someone else changed this"
         with self.assertRaisesRegex(ValueError, "예상 밖 이미지"):
             process(self.server, state, self.bundle, self.run_dir, apply=True)
         self.assertEqual(self.server.writes, [])
@@ -135,7 +139,7 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse((self.run_dir / "backup-manifest.json").exists())
 
     def test_existing_new_profile_is_skipped(self):
-        self.server.images["artist_0"] = png(0)
+        self.server.images[12] = png(0)
         state = self.prepare()
         result = process(self.server, state, self.bundle, self.run_dir, apply=True)
         self.assertEqual(result["pending"], 86)
@@ -180,6 +184,58 @@ class ProfileTests(unittest.TestCase):
         row["filename"] = row["artist_key"] + ".png"
         validate_manifest(self.manifest)
         self.assertIn("%2B", image_url(row["artist_key"]))
+
+    def test_read_and_write_urls_have_different_shapes(self):
+        """업로드는 자리를, 조회는 파일 번호를 가리킨다.
+
+        두 주소가 같은 모양이던 때는 조회 URL 이 저장 키를 되짚어 만들어졌고, 키를
+        손으로 만든 코드 하나가 주소를 조용히 null 로 만들었다. 지금은 조회가 번호라
+        서로 다른 모양인 것이 정상이다 — 같아지면 서버 계약이 되돌아간 것이다.
+        """
+        self.assertEqual(image_url("artist_0"), "/api/v1/storage/image/ARTIST/artist_0")
+        self.assertEqual(artist_image_read_url(42), "/api/v1/storage/image/42")
+
+    def test_artist_client_accepts_the_real_response_shape(self):
+        """`artist` 응답에는 `artist_key` 가 없다 — 실제 응답 모양 그대로 넣는다.
+
+        운영에서 확인한 응답은 `artist_id` · `name` · `image_url` 셋뿐이다. 처음에는
+        `image_file_ids` 대응표를 만들면서 `item["artist_key"]` 를 읽었는데, 그 필드가
+        없어 `KeyError` 로 죽었다. 테스트 대역(`Server`)이 `artist_key` 를 넣어 주고
+        있어서 단위 테스트로는 드러나지 않았다 — **가짜를 실제보다 너그럽게 만들면
+        그 너그러움이 버그를 감춘다.**
+        """
+        client = object.__new__(ArtistClient)
+        items = [{"artist_id": i, "name": "Artist %d" % i,
+                  "image_url": artist_image_read_url(i + 12)} for i in range(87)]
+        with patch.object(client, "_request",
+                          return_value={"data": {"total_elements": 87, "items": items}}):
+            client.artists()  # 예외가 없어야 한다
+
+    def test_artist_client_stops_when_read_url_has_no_file_number(self):
+        """주소 모양이 바뀌면 조용히 넘어가지 않고 멈춘다.
+
+        여기서 지나가면 `check_artists` 의 대조가 무의미해지고, 백업이 남의
+        아티스트 사진으로 채워질 수 있다.
+        """
+        client = object.__new__(ArtistClient)
+        items = [{"artist_id": i, "name": "Artist %d" % i,
+                  "image_url": "/api/v1/storage/image/ARTIST/artist_%d" % i}
+                 for i in range(87)]
+        with patch.object(client, "_request",
+                          return_value={"data": {"total_elements": 87, "items": items}}):
+            with self.assertRaisesRegex(ValueError, "파일 번호"):
+                client.artists()
+
+    def test_mismatched_read_url_stops_before_any_download(self):
+        """등록 기록의 파일 번호가 서버와 어긋나면 조회를 시작하지 않는다.
+
+        `download` 는 등록 기록의 번호를 그대로 믿으므로, 이 대조가 유일한 방어선이다.
+        """
+        rows = self.manifest["artists"]
+        current = [{"artist_id": r["artist_id"], "name": r["name"],
+                    "image_url": artist_image_read_url(r["image_file_id"] + 1)} for r in rows]
+        with self.assertRaisesRegex(ValueError, "이름/이미지 URL"):
+            check_artists(rows, current)
 
     def test_temporary_windows_file_lock_does_not_lose_report(self):
         import os

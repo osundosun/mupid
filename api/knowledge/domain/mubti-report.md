@@ -283,7 +283,7 @@ GET /api/v1/report?date=2026-09-15      인증 필요
     "unmatched_ms": 0,
     "tracks": [
       { "music_id": 12, "title": "...", "artist_name": "...",
-        "album_title": "...", "image_url": "/api/v1/storage/image/ALBUM/...",
+        "album_title": "...", "image_url": "/api/v1/storage/image/12",
         "listening_ms": 420000, "share": 0.118 }
     ],
     "keywords": [ { "name": "몽환적", "kind": "MOOD", "weight": 0.31 } ],
@@ -292,7 +292,7 @@ GET /api/v1/report?date=2026-09-15      인증 필요
       "title": "보컬 인싸형",
       "subtitle": "모두의 보컬은 곧 나의 최애",
       "description": "지금 사랑받는 목소리를 끝까지 듣고, 마음에 든 곡은 오래 곁에 둬요.",
-      "image_url": "/api/v1/storage/image/MUBTI/VTFC.webp",
+      "image_url": "/api/v1/storage/image/12",
       "axes": [
         { "axis": "A", "code": "V", "name": "보컬파",
           "opposite_code": "I", "opposite_name": "멜로디파",

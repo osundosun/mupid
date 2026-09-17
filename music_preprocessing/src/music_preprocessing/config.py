@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -34,6 +35,8 @@ class ChunkConfig:
         api_registry_log: 등록 결과(아티스트·앨범·곡 번호) 기록 파일
         api_timeout: API 요청 타임아웃 (초)
         api_max_retries: 5xx·네트워크 오류 재시도 횟수
+        genre_taxonomy_file: 장르·무드 어휘 파일 (`classify` 명령).
+            비우면 `metadata_dir` 의 부모에서 `genre_mood_taxonomy.json` 을 찾는다
     """
 
     # ── 오디오 인코딩 ──
@@ -73,6 +76,10 @@ class ChunkConfig:
     api_timeout: int = 30
     api_max_retries: int = 3
 
+    # ── 장르·무드 (`classify` 명령) ──
+    # 수집 파이프라인이 `metadata/` 옆에 같이 두는 파일이다. 비우면 그렇게 찾는다.
+    genre_taxonomy_file: str = ""
+
     # ── 구간 분석 (`analysis/`, `python -m music_preprocessing.analysis.batch`) ──
     #
     # 청킹 배치와 **다른 배치**다. 여기 있는 이유는 배포 규약 때문이다 — 서버 설정은
@@ -94,6 +101,13 @@ class ChunkConfig:
     def __post_init__(self) -> None:
         if self.max_workers <= 0:
             self.max_workers = max(1, multiprocessing.cpu_count())
+
+    @property
+    def taxonomy_path(self) -> Path:
+        """`classify` 가 읽을 어휘 파일. 설정이 비어 있으면 메타데이터 옆에서 찾는다."""
+        if self.genre_taxonomy_file:
+            return Path(self.genre_taxonomy_file)
+        return Path(self.metadata_dir).parent / "genre_mood_taxonomy.json"
 
     @property
     def register_enabled(self) -> bool:
@@ -131,6 +145,7 @@ class ChunkConfig:
             "api_registry_log": self.api_registry_log,
             "api_timeout": self.api_timeout,
             "api_max_retries": self.api_max_retries,
+            "genre_taxonomy_file": self.genre_taxonomy_file,
             "analysis_enabled": self.analysis_enabled,
             "analysis_artifact_dir": self.analysis_artifact_dir,
             "analysis_work_dir": self.analysis_work_dir,

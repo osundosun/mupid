@@ -6,6 +6,7 @@
  * 재발급을 시도한다. 실패하면 조용히 비로그인 상태가 된다.
  */
 
+import { apiBaseUrl } from './base-url';
 import { ApiClient, ApiError } from './client';
 import { createEndpoints, type UserInfo } from './endpoints';
 import { createStore } from '../store';
@@ -36,21 +37,15 @@ export const sessionStore = createStore<SessionState>({
 });
 
 /**
- * API 서버 주소. 비워 두면 같은 출처로 보낸다.
+ * API 서버 주소는 `./base-url` 하나가 들고 있다. `<img src>` 도 같은 값을 쓰는데
+ * (`lib/platform/image.ts`), 그쪽이 여기를 불러오면 순환이 되기 때문이다.
  *
  * 개발에서는 Vite 프록시가 `/api` 를 nginx(9900)로 넘긴다. 서버에 CORS 설정이
  * 없고 리프레시 토큰 쿠키가 SameSite=Strict 라, 브라우저에게는 같은 출처로
  * 보이게 하는 편이 유일하게 단순한 길이다.
- *
- * 앱에서는 비워 둔 채로 둔다. 경로만 받은 요청에 원본 주소를 붙이는 일은
- * Rust 가 한다 (`app/src/config.rs`) — 주소를 한 곳에서만 바꾸기 위해서다.
  */
-const baseUrl =
-  (import.meta as { env?: Record<string, string> }).env?.VITE_MUPID_API_BASE ??
-  '';
-
 export const apiClient = new ApiClient({
-  baseUrl,
+  baseUrl: apiBaseUrl,
   transport: createPlatformTransport(),
   onSessionExpired: () => {
     sessionStore.set({ status: 'anonymous', user: null });

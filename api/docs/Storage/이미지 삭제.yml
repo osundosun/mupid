@@ -33,6 +33,36 @@ examples:
             "message": "이미지가 삭제 되었습니다.",
             "data": null
           }
+  - name: 403 카탈로그 이미지 — 권한 부족
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_STORAGE_WRITE_FORBIDDEN",
+            "message": "이미지를 등록하거나 삭제할 권한이 없습니다.",
+            "error_details": null
+          }
+  - name: 403 프로필 — 남의 번호
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_STORAGE_KEY_MISMATCH",
+            "message": "본인 것만 지정할 수 있습니다.",
+            "error_details": null
+          }
   - name: 404 파일 없음
     response:
       status: 404
@@ -54,13 +84,35 @@ docs: |-
 
   `DELETE /api/v1/storage/image/{category}/{storageKey}` · 인증 필요
 
-  저장된 이미지를 삭제합니다. 오브젝트 스토리지의 실제 파일과
-  메타데이터 모두 삭제되며, 메타데이터는 `is_deleted = true` 로
-  표시됩니다.
+  저장된 이미지를 삭제합니다. 오브젝트 스토리지의 실제 파일과 메타데이터 모두
+  삭제되며, 메타데이터는 `is_deleted = true` 로 표시됩니다.
 
-  `PROFILE` 카테고리는 삭제 전에 해당 파일을 프로필로 쓰던 유저의 연결을
-  끊습니다. 파일 자체는 호출부가 한 번만 지웁니다 — 콜백이 같이 지우면 두 번
-  지우게 되어 `MUPID_FILE_NOT_FOUND` 로 롤백됩니다.
+  ## 누가 지울 수 있는가 — 카테고리 정책
+
+  권한 판단은 **카테고리가 들고 있는 정책**(`ImageAccessPolicy`) 하나가 합니다.
+  업로드와 삭제가 **같은 검사**를 지나는 것이 핵심입니다 — 한쪽만 잠그면 잠그지 않은
+  쪽으로 우회되기 때문입니다.
+
+  | 카테고리 | 정책 | 삭제할 수 있는 사람 |
+  | --- | --- | --- |
+  | `PROFILE` | `OWNER` | **본인만.** 키의 마지막 마디가 본인 유저 번호여야 한다 |
+  | `ARTIST` `ALBUM` `TRACK` `MUBTI` | `CATALOG` | `ROLE_SYSTEM` 이상 (배치·관리자) |
+  | `STREAMING` | `MACHINE` | `ROLE_SYSTEM` 이상 |
+
+  한때 `PROFILE` 에만 소유자 검사가 있었습니다. 그래서 카탈로그 이미지는 **로그인만
+  하면 누구나** 남의 표지를 덮어쓰고 지울 수 있었습니다 — 지금은 막습니다.
+
+  ## 파일 종류가 이미지여야 한다
+
+  `deleteFile` 은 스토리지 오브젝트까지 지웁니다. 그래서 삭제할 때도 **파일 종류가
+  `IMG` 인지**를 봅니다. 이 검사가 없으면 이미지 삭제 요청 한 번에 음원 청크가
+  사라집니다.
+
+  ## `PROFILE` 카테고리 동작
+
+  삭제 전에 해당 파일을 프로필로 쓰던 유저의 연결을 끊습니다. 파일 자체는 호출부가
+  한 번만 지웁니다 — 콜백이 같이 지우면 두 번 지우게 되어 `MUPID_FILE_NOT_FOUND` 로
+  롤백됩니다.
 
   삭제하면 `GET /api/v1/user` 의 `image_url` 이 다시
   `/api/v1/storage/image/PROFILE/default` 를 가리킵니다.
@@ -70,4 +122,7 @@ docs: |-
   | 코드 | 상태 | 설명 |
   | --- | --- | --- |
   | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_STORAGE_WRITE_FORBIDDEN` | 403 | 카탈로그 이미지인데 `ROLE_SYSTEM` 미만 |
+  | `MUPID_STORAGE_KEY_MISMATCH` | 403 | 프로필인데 키가 본인 번호가 아님 |
+  | `MUPID_INVALID_FILE_TYPE` | 400 | 이미지가 아닌 파일 |
   | `MUPID_FILE_NOT_FOUND` | 404 | 저장된 파일이 없음 |

@@ -1,4 +1,4 @@
-"""외부 서버 없이 원본 검증과 추가 전용 등록 계약을 검증한다."""
+"""외부 서버 없이 원본 검증과 분류 적재 계약을 검증한다."""
 import copy
 import json
 from pathlib import Path
@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from music_preprocessing.genre_mood import (
-    AdminClient, apply_plan, inspect, main, summary, supplement_moods, validate,
+    BatchClient, apply_plan, inspect, main, summary, supplement_moods, validate,
 )
 from music_preprocessing.mood_approximations import MOOD_APPROXIMATIONS
 
@@ -31,32 +31,59 @@ def source():
 
 
 class Server:
+    """`BatchClient` 가 부르는 네 가지만 흉내 낸다.
+
+    관리자 API 는 없다 — 그걸 부르면 테스트 대역에 메서드가 없어 터진다.
+    """
+
     def __init__(self):
-        self.data = {
-            "music": [{"musicId": 91, "title": "First"}, {"musicId": 37, "title": "Second"}],
-            "code": [{"codeId": 7, "codeType": "GENRE", "codeName": "Pop"},
-                     {"codeId": 30, "codeType": "MOOD", "codeName": "bright"}],
-            "musicGenre": [{"music": 999, "genreCode": 7}],
-            "musicMood": [],
-        }
+        self.codes = [{"codeId": 7, "codeType": "GENRE", "codeName": "Pop"},
+                      {"codeId": 30, "codeType": "MOOD", "codeName": "bright"}]
+        self.music = [{"musicId": 91, "title": "First", "genres": [], "moods": []},
+                      {"musicId": 37, "title": "Second", "genres": [], "moods": []}]
         self.writes = []
         self.fail_after_commit = False
+        self.swallow_moods = False
 
-    def rows(self, resource):
-        return copy.deepcopy(self.data[resource])
+    # ── 읽기 ────────────────────────────────────────────────────────────
+    def options(self):
+        return {kind.lower() + "s": [{"codeId": c["codeId"], "name": c["codeName"]}
+                                     for c in self.codes if c["codeType"] == kind]
+                for kind in ("GENRE", "MOOD")}
 
-    def create(self, resource, body):
-        if resource not in ("code", "musicGenre", "musicMood"):
-            raise AssertionError("기존 카탈로그 변경 시도")
-        row = dict(body)
-        if resource == "code":
-            row["codeId"] = max(r["codeId"] for r in self.data["code"]) + 1
-        self.data[resource].append(row)
-        self.writes.append((resource, row))
+    def music_rows(self):
+        return copy.deepcopy(self.music)
+
+    # ── 쓰기 ────────────────────────────────────────────────────────────
+    def add_code(self, code_type, name):
+        folded = {(c["codeType"], c["codeName"].casefold()): c for c in self.codes}
+        existing = folded.get((code_type, name.casefold()))
+        if existing:
+            return {**existing, "created": False}
+        row = {"codeId": max(c["codeId"] for c in self.codes) + 1,
+               "codeType": code_type, "codeName": name}
+        self.codes.append(row)
+        self.writes.append(("code", row))
+        self._maybe_lose_response()
+        return {**row, "created": True}
+
+    def replace_classification(self, music_id, genre_code_ids, mood_code_ids):
+        names = {c["codeId"]: c["codeName"] for c in self.codes}
+        row = next(m for m in self.music if m["musicId"] == music_id)
+        row["genres"] = [names[i] for i in dict.fromkeys(genre_code_ids)]
+        if self.swallow_moods:
+            mood_code_ids = []
+        row["moods"] = [names[i] for i in dict.fromkeys(mood_code_ids)]
+        self.writes.append(("classification", music_id))
+        self._maybe_lose_response()
+        return {"musicId": music_id,
+                "genreCodeIds": sorted(dict.fromkeys(genre_code_ids)),
+                "moodCodeIds": sorted(dict.fromkeys(mood_code_ids))}
+
+    def _maybe_lose_response(self):
         if self.fail_after_commit:
             self.fail_after_commit = False
             raise RuntimeError("응답 손실")
-        return row
 
 
 class SourceTests(unittest.TestCase):
@@ -108,23 +135,18 @@ class RegistrationTests(unittest.TestCase):
         self.server = Server()
         self.tracks = validate(source())
 
-    def apply(self):
+    def apply(self, replace_existing=False):
         state = inspect(self.server, self.tracks)
         report = {"created": []}
-        apply_plan(self.server, self.tracks, state, report, lambda: None)
+        apply_plan(self.server, self.tracks, state, report, lambda: None, replace_existing)
         return report
 
-    def test_add_only_and_second_run_is_noop(self):
-        before = copy.deepcopy(self.server.data)
+    def test_second_run_writes_nothing(self):
         self.assertEqual(self.apply()["status"], "verified")
         writes = len(self.server.writes)
-        self.assertEqual(writes, 6)  # 신규 코드 2 + 장르 2 + 무드 2
+        self.assertEqual(writes, 4)  # 신규 코드 2(synthpop·warm) + 곡 2
         self.assertEqual(self.apply()["created"], [])
         self.assertEqual(len(self.server.writes), writes)
-        self.assertEqual(self.server.data["music"], before["music"])
-        for resource in ("code", "musicGenre"):
-            for row in before[resource]:
-                self.assertIn(row, self.server.data[resource])
 
     def test_preflight_does_not_write(self):
         inspect(self.server, self.tracks)
@@ -135,23 +157,88 @@ class RegistrationTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.apply()
         self.apply()
-        self.assertEqual(len(self.server.data["code"]), 4)
-        self.assertEqual(len(self.server.writes), 6)
+        self.assertEqual(len(self.server.codes), 4)
+        self.assertEqual(len(self.server.writes), 4)
 
-    def test_unexpected_existing_relation_stops_before_writing(self):
-        self.server.data["musicMood"].append({"music": 91, "moodCode": 30})
-        with self.assertRaises(ValueError):
-            self.apply()
-        self.assertEqual(self.server.writes, [])
+    def test_classification_is_whole_song_not_per_relation(self):
+        self.apply()
+        first = next(m for m in self.server.music if m["musicId"] == 91)
+        self.assertEqual(sorted(first["genres"]), ["synthpop"])
+        # 한 곡에 한 번만 쓴다 — 관계마다 따로 부르면 중간 상태가 정상으로 보인다.
+        self.assertEqual([w for w in self.server.writes if w[0] == "classification"],
+                         [("classification", 91), ("classification", 37)])
+
+    def test_existing_different_classification_is_left_alone(self):
+        # 사람이 손으로 넣은 값을 배치가 조용히 지우면 안 된다.
+        held = next(m for m in self.server.music if m["musicId"] == 91)
+        held["genres"] = ["Pop"]
+        state = inspect(self.server, self.tracks)
+        self.assertEqual(state["differs"], [91])
+        self.assertEqual(state["empty"], [37])
+        report = {"created": []}
+        apply_plan(self.server, self.tracks, state, report, lambda: None)
+        self.assertEqual(report["skipped"], [91])
+        self.assertEqual(held["genres"], ["Pop"])
+        self.assertEqual([w for w in self.server.writes if w[0] == "classification"],
+                         [("classification", 37)])
+
+    def test_replace_existing_overwrites_and_records_what_was_there(self):
+        held = next(m for m in self.server.music if m["musicId"] == 91)
+        held["genres"] = ["Pop"]
+        report = self.apply(replace_existing=True)
+        self.assertEqual(held["genres"], ["synthpop"])
+        replaced = [r for r in report["created"] if r.get("replaced")]
+        self.assertEqual(replaced[0]["replaced"], {"genres": ["Pop"], "moods": []})
+
+    def test_case_only_difference_reuses_the_existing_code(self):
+        # 부트스트랩이 `Pop` 을 심어 두었고 원본 장르는 `pop` 이다. `codes` 의
+        # UNIQUE 는 대소문자를 구분하지 않아 새 행이 생기지 않는다. 이름 그대로
+        # 비교하면 반영 뒤에도 "다르다" 가 되어 매 배치가 같은 곡을 다시 쓴다.
+        raw = source()
+        for entry in raw["metadata"]:
+            entry["genre"] = "pop"
+        raw["taxonomy"]["genres"] = [{"name": "pop", "track_count": 2}]
+        tracks = validate(raw)
+        state = inspect(self.server, tracks)
+        self.assertEqual(state["missing_codes"], [("MOOD", "warm")])
+        report = {"created": []}
+        apply_plan(self.server, tracks, state, report, lambda: None)
+        self.assertEqual(len([c for c in self.server.codes if c["codeType"] == "GENRE"]), 1)
+        self.assertEqual(next(m for m in self.server.music if m["musicId"] == 91)["genres"],
+                         ["Pop"])
+        # 두 번째 실행이 아무것도 쓰지 않아야 수렴한 것이다.
+        self.assertEqual(self.apply_again(tracks), [])
+
+    def apply_again(self, tracks):
+        report = {"created": []}
+        apply_plan(self.server, tracks, inspect(self.server, tracks), report, lambda: None)
+        return report["created"]
+
+    def test_server_storing_less_than_it_was_sent_stops_at_that_song(self):
+        # 저장된 것이 돌아온다. 보낸 것과 다르면 나머지 1000곡을 마저 밀어 넣고
+        # 끝에 가서 알아차리는 대신 그 자리에서 멈춘다.
+        source_with_mood = source()
+        source_with_mood["metadata"][0]["mood"] = {"primary": "bright", "secondary": None}
+        source_with_mood["taxonomy"]["moods"] = [{"name": "bright", "track_count": 2},
+                                                 {"name": "warm", "track_count": 1}]
+        source_with_mood["taxonomy"]["tracks_without_mood"] = []
+        tracks = validate(source_with_mood)
+
+        self.server.swallow_moods = True
+        with self.assertRaisesRegex(ValueError, "저장 결과가 요청과 다름"):
+            apply_plan(self.server, tracks, inspect(self.server, tracks),
+                       {"created": []}, lambda: None)
+        self.assertEqual([w for w in self.server.writes if w[0] == "classification"],
+                         [("classification", 91)])
 
     def test_wrong_server_music_stops_before_writing(self):
-        self.server.data["music"][0]["title"] = "Wrong DB"
+        self.server.music[0]["title"] = "Wrong DB"
         with self.assertRaises(ValueError):
             self.apply()
         self.assertEqual(self.server.writes, [])
 
     def test_ambiguous_codes_stop_before_writing(self):
-        self.server.data["code"].append({"codeId": 99, "codeType": "MOOD", "codeName": "bright"})
+        self.server.codes.append({"codeId": 99, "codeType": "MOOD", "codeName": "bright"})
         with self.assertRaises(ValueError):
             self.apply()
         self.assertEqual(self.server.writes, [])
@@ -229,8 +316,8 @@ class ApproximationTests(unittest.TestCase):
         report = {"created": [], "mood_approximations": provenance}
         apply_plan(server, tracks, inspect(server, tracks), report, lambda: None)
         approximate = [row for row in report["created"] if row.get("confidence") == "approx"]
-        self.assertEqual(len(approximate), 2)
-        self.assertTrue(all(row["music_id"] == 91 for row in approximate))
+        self.assertEqual(len(approximate), 1)  # 곡 단위로 한 번
+        self.assertEqual(approximate[0]["music_id"], 91)
         second = {"created": []}
         apply_plan(server, tracks, inspect(server, tracks), second, lambda: None)
         self.assertEqual(second["created"], [])
@@ -249,25 +336,53 @@ class ApproximationTests(unittest.TestCase):
 
 
 class ClientTests(unittest.TestCase):
+    def write_source_tree(self, root, raw):
+        (root / "metadata").mkdir()
+        for track in raw["metadata"]:
+            entry = dict(track)
+            entry["flow_title"] = entry.pop("title")
+            (root / "metadata" / track["filename"]).write_text(json.dumps(entry))
+        (root / "genre_mood_taxonomy.json").write_text(json.dumps(raw["taxonomy"]))
+        registry = root / "registered.json"
+        registry.write_text(json.dumps({"catalog": {"tracks": raw["registry"]}}))
+        return registry
+
     def test_local_snapshot_preserves_source_files(self):
         raw = source()
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root / "metadata").mkdir()
-            for track in raw["metadata"]:
-                entry = dict(track)
-                entry["flow_title"] = entry.pop("title")
-                (root / "metadata" / track["filename"]).write_text(json.dumps(entry))
-            (root / "genre_mood_taxonomy.json").write_text(json.dumps(raw["taxonomy"]))
-            registry = root / "registered.json"
-            original = json.dumps({"catalog": {"tracks": raw["registry"]}})
-            registry.write_text(original)
+            registry = self.write_source_tree(root, raw)
+            original = registry.read_text()
             target = root / "snapshot.json"
             with patch("sys.argv", ["genre_mood", "snapshot", "--source-dir", str(root),
                                     "--registry", str(registry), "--output", str(target)]), patch("builtins.print"):
                 self.assertEqual(main(), 0)
             self.assertEqual(summary(validate(json.loads(target.read_text())))["tracks"], 2)
             self.assertEqual(registry.read_text(), original)
+
+    def test_import_reads_the_source_directory_without_a_snapshot_file(self):
+        # 배치는 JupyterHub 안에서 원본을 직접 읽는다. 중간 파일을 두지 않는다.
+        raw = source()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            registry = self.write_source_tree(root, raw)
+            report = root / "report.json"
+            with patch("sys.argv", ["genre_mood", "import", "--source-dir", str(root),
+                                    "--registry", str(registry), "--report", str(report),
+                                    "--skip-mood-approximations"]), patch("builtins.print"):
+                self.assertEqual(main(), 0)
+            data = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "source_validated")
+            self.assertEqual(data["summary"]["tracks"], 2)
+            self.assertEqual(len(data["source_sha256"]), 64)
+
+    def test_import_without_a_source_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            report = Path(temp) / "report.json"
+            with patch("sys.argv", ["genre_mood", "import", "--report", str(report)]), \
+                 patch("builtins.print"):
+                self.assertEqual(main(), 1)
+            self.assertFalse(report.exists())
 
     def test_report_cannot_overwrite_snapshot(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -280,25 +395,37 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(path.read_text(), original)
 
     def test_pagination_reads_all_pages(self):
-        client = object.__new__(AdminClient)
+        client = object.__new__(BatchClient)
         with patch.object(client, "_request", side_effect=[
-            {"data": {"content": [{"musicId": 1}], "pages": 2, "total": 2}},
-            {"data": {"content": [{"musicId": 2}], "pages": 2, "total": 2}},
+            {"data": {"items": [{"musicId": 1}], "totalPages": 2, "totalElements": 2}},
+            {"data": {"items": [{"musicId": 2}], "totalPages": 2, "totalElements": 2}},
         ]) as request:
-            self.assertEqual(len(client.rows("music")), 2)
+            self.assertEqual(len(client.music_rows()), 2)
             self.assertIn("page=1", request.call_args.args[1])
 
-    def test_catalog_writes_are_rejected(self):
-        client = object.__new__(AdminClient)
-        with self.assertRaises(ValueError):
-            client.create("music", {"title": "not allowed"})
-
-    def test_post_contract_uses_relation_names(self):
-        client = object.__new__(AdminClient)
+    def test_admin_api_is_never_called(self):
+        client = object.__new__(BatchClient)
         with patch.object(client, "_request", return_value={"data": {}}) as request:
-            client.create("musicGenre", {"music": 91, "genreCode": 31})
-            request.assert_called_once_with("POST", "/api/v1/admin/resource/musicGenre",
-                                            json_body={"music": 91, "genreCode": 31})
+            client.add_code("GENRE", "synthpop")
+            client.replace_classification(91, [31], [30])
+            client.options()
+        paths = [call.args[1] for call in request.call_args_list]
+        self.assertEqual(paths, ["/api/v1/code", "/api/v1/music/91/classification",
+                                 "/api/v1/onboarding/option"])
+        self.assertFalse(any("/admin/" in path for path in paths))
+
+    def test_post_and_put_contracts(self):
+        client = object.__new__(BatchClient)
+        with patch.object(client, "_request", return_value={"data": {}}) as request:
+            client.add_code("GENRE", "synthpop")
+            request.assert_called_once_with(
+                "POST", "/api/v1/code",
+                json_body={"codeType": "GENRE", "codeName": "synthpop"})
+        with patch.object(client, "_request", return_value={"data": {}}) as request:
+            client.replace_classification(91, [31], [30, 33])
+            request.assert_called_once_with(
+                "PUT", "/api/v1/music/91/classification",
+                json_body={"genreCodeIds": [31], "moodCodeIds": [30, 33]})
 
     def test_offline_cli_never_connects(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -306,7 +433,7 @@ class ClientTests(unittest.TestCase):
             snapshot.write_text(json.dumps(source()), encoding="utf-8")
             report = Path(temp) / "report.json"
             with patch("sys.argv", ["genre_mood", "import", "--snapshot", str(snapshot), "--report", str(report), "--skip-mood-approximations"]), \
-                 patch("music_preprocessing.genre_mood.AdminClient") as client, patch("builtins.print"):
+                 patch("music_preprocessing.genre_mood.BatchClient") as client, patch("builtins.print"):
                 self.assertEqual(main(), 0)
                 client.assert_not_called()
             self.assertEqual(json.loads(report.read_text())["status"], "source_validated")

@@ -1,6 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { formatListening } from '@/lib/report';
+import { resolveAlbumCover } from '@/lib/mupid-data';
+import { toImageSource } from '@/lib/platform/image';
 import { squarify } from '@/lib/treemap';
 import type { ReportTrack } from '@/lib/api/endpoints';
 
@@ -9,6 +11,36 @@ const LABEL_MIN_WIDTH = 14;
 const LABEL_MIN_HEIGHT = 12;
 
 type Tile = ReportTrack & { x: number; y: number; w: number; h: number };
+
+/**
+ * 타일 한 칸의 앨범 아트.
+ *
+ * **주소를 그대로 걸면 배포된 앱에서만 전부 깨진다.** 서버는 커버를
+ * `/api/v1/storage/image/{fileId}` 처럼 **경로로** 준다. 웹은 API 와 같은 출처라
+ * 그대로 열리지만, 앱(Tauri)의 출처는 `http://tauri.localhost` 라 그 경로에는
+ * 아무것도 없다 — 웹뷰가 엉뚱한 응답을 그리거나 깨진 아이콘을 남긴다.
+ * `toImageSource` 를 거치면 Rust 가 대신 받아 `mupidimg` 스킴으로 돌려준다
+ * (`lib/platform/image.ts`). 리포트의 MuBTI 캐릭터도 같은 이유로 이미 그렇게 한다.
+ *
+ * 개발 서버에서는 Vite 프록시가 `/api` 를 넘겨 주어 경로만으로도 열린다. 로컬에서만
+ * 멀쩡했던 것이 그래서다.
+ *
+ * 주소가 없거나 읽지 못하면 기본 커버로 내려간다. 목록의 커버(`AlbumArt`)와 같은
+ * 규칙이라 실패는 한 번으로 끝난다 — 기본 커버를 건 뒤에는 `onError` 를 떼어 다시
+ * 그리기가 끝없이 돌지 않는다.
+ */
+function TileArt({ imageUrl }: { imageUrl: string | null }) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const { src, isFallback } = resolveAlbumCover(toImageSource(imageUrl), failedSrc);
+  // 곡 제목은 타일의 `aria-label` 이 이미 읽어 준다. 여기서 또 읽으면 두 번이다.
+  return <img
+    src={src}
+    alt=""
+    loading="lazy"
+    decoding="async"
+    onError={isFallback ? undefined : () => setFailedSrc(src)}
+  />;
+}
 
 /**
  * 곡 목록을 면적이 청취 시간에 비례하는 타일로 바꾼다.
@@ -99,7 +131,7 @@ export function DailyAlbumTreemap({
                 setSelectedId((value) => (value === tile.music_id ? null : tile.music_id));
               }}
             >
-              {tile.image_url && <img src={tile.image_url} alt="" />}
+              <TileArt imageUrl={tile.image_url} />
               {/* 좁은 타일에 제목을 얹으면 글자가 잘려 오히려 안 읽힌다. */}
               {tile.w >= LABEL_MIN_WIDTH && tile.h >= LABEL_MIN_HEIGHT && <span>{tile.title}</span>}
             </button>)}

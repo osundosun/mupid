@@ -5,6 +5,7 @@ music-preprocessing catalog --config config.json --dry-run
 music-preprocessing catalog --config config.json
 music-preprocessing covers  --config config.json
 music-preprocessing lyrics  --config config.json
+music-preprocessing classify --config config.json
 music-preprocessing batch   --config config.json
 music-preprocessing status  --config config.json
 ```
@@ -32,6 +33,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Annotated
 
 import typer
@@ -58,6 +60,7 @@ from .catalog import (
 )
 from .chunker import process_file
 from .config import ChunkConfig
+from .genre_mood import run as run_classify
 from .logging_setup import default_log_path, setup_logging
 from .lyrics import LyricRegistrar, LyricSheet, load_lyrics
 from .registrar import Registry
@@ -360,6 +363,147 @@ def lyrics(
             console.print(f"[yellow]{message} {result[key]}개[/]{hint}")
 
     _report_errors(console, result)
+
+
+@app.command()
+def classify(
+    config: ConfigOpt = None,
+    metadata_dir: Annotated[
+        Path | None,
+        typer.Option(help="곡별 메타데이터 JSON 디렉터리 (장르·무드도 여기 있다)", show_default=False),
+    ] = None,
+    taxonomy: Annotated[
+        Path | None,
+        typer.Option(help="장르·무드 어휘 파일. 비우면 메타데이터 옆에서 찾는다", show_default=False),
+    ] = None,
+    api_base_url: Annotated[
+        str | None, typer.Option(help="Mupid API 루트", show_default=False)
+    ] = None,
+    report: Annotated[
+        Path | None,
+        typer.Option(help="실행 보고서 경로. 기본은 [cyan]<log_dir>/classify-<시각>.json[/]", show_default=False),
+    ] = None,
+    check: Annotated[
+        bool,
+        typer.Option("--check", help="서버까지 읽어 무엇이 바뀔지만 본다 (쓰지 않는다)"),
+    ] = False,
+    replace_existing: Annotated[
+        bool,
+        typer.Option(
+            "--replace-existing",
+            help="이미 다른 분류가 있는 곡도 덮어쓴다 (기본은 건너뛰고 보고만 한다)",
+        ),
+    ] = False,
+    skip_mood_approximations: Annotated[
+        bool,
+        typer.Option("--skip-mood-approximations", help="초기 10곡의 무드 근사치를 쓰지 않는다"),
+    ] = False,
+    dry_run: DryRunOpt = False,
+    yes: YesOpt = False,
+    log_file: LogFileOpt = None,
+    no_log_file: NoLogOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """곡별 장르·분위기를 서버에 등록한다. [b]catalog 를 먼저 돌려야 한다.[/]
+
+    관리자 API 를 쓰지 않는다 — `POST /api/v1/code` 와
+    `PUT /api/v1/music/{id}/classification` 만 부른다. 자세한 것은
+    `genre_mood.py` 의 머리말과 `GENRE_MOOD.md`.
+    """
+    console = _start("classify", log_file, no_log_file, config, verbose)
+    try:
+        cfg = ChunkConfig.from_file(str(config)) if config else ChunkConfig()
+        if metadata_dir:
+            cfg.metadata_dir = str(metadata_dir)
+        if taxonomy:
+            cfg.genre_taxonomy_file = str(taxonomy)
+        if api_base_url:
+            cfg.api_base_url = api_base_url
+    except (OSError, TypeError, ValueError) as e:
+        Console(stderr=True).print(f"[red]✖[/] {e}")
+        raise typer.Exit(1) from None
+
+    if not dry_run and not cfg.api_base_url:
+        Console(stderr=True).print(
+            "[red]✖[/] api_base_url 이 비어 있습니다. 설정 파일이나 --api-base-url 로"
+            " 등록할 서버를 지정하세요. (원본만 확인하려면 --dry-run)"
+        )
+        raise typer.Exit(1)
+
+    # 보고서는 실행마다 새 파일이다. 도구가 기존 파일을 덮어쓰지 않는다.
+    path = Path(report) if report else default_log_path(cfg.log_dir, "classify").with_suffix(".json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    info = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    info.add_row("메타데이터", f"[cyan]{cfg.metadata_dir}[/]")
+    info.add_row("어휘", f"[cyan]{cfg.taxonomy_path}[/]")
+    info.add_row("등록 기록", f"[cyan]{cfg.api_registry_log}[/]")
+    info.add_row(
+        "등록 대상",
+        "[dim]없음 (dry-run)[/]" if dry_run else f"[cyan]{cfg.api_base_url}[/]",
+    )
+    info.add_row("보고서", f"[cyan]{path}[/]")
+    console.print(info)
+    if dry_run:
+        console.print("[yellow]dry-run[/] — 서버에 붙지 않고 원본만 확인합니다.")
+    elif check:
+        console.print("[yellow]--check[/] — 서버를 읽기만 하고 아무것도 쓰지 않습니다.")
+
+    _confirm(
+        console,
+        yes,
+        dry_run or check,
+        f"곡별 장르·분위기를 {cfg.api_base_url} 에 등록합니다"
+        + (" (기존 분류가 있는 곡도 덮어씁니다)." if replace_existing else "."),
+    )
+
+    # `genre_mood` 는 argparse 로도 돌아간다. 같은 함수에 같은 모양을 넘긴다.
+    options = SimpleNamespace(
+        snapshot=None,
+        source_dir=None,
+        metadata_dir=cfg.metadata_dir,
+        taxonomy=str(cfg.taxonomy_path),
+        registry=cfg.api_registry_log,
+        report=str(path),
+        api_base_url="" if dry_run else cfg.api_base_url,
+        token_file=None,
+        refresh_token_file=cfg.api_refresh_token_file,
+        apply=not (dry_run or check),
+        replace_existing=replace_existing,
+        skip_mood_approximations=skip_mood_approximations,
+        quiet=True,
+    )
+    try:
+        run_classify(options)
+    except (OSError, RuntimeError, TypeError, ValueError) as e:
+        # 서버 오류 본문에는 토큰이 섞일 수 있다. 종류와 상태만 남긴다.
+        detail = f"HTTP {e.status} ({type(e).__name__})" if hasattr(e, "status") else str(e)
+        Console(stderr=True).print(f"[red]✖[/] {detail}  (보고서: {path})")
+        raise typer.Exit(1) from None
+
+    result = json.loads(path.read_text(encoding="utf-8"))
+    table = Table(title="장르·분위기 등록" + (" (dry-run)" if dry_run else ""), title_style="bold")
+    table.add_column("항목")
+    table.add_column("값", justify="right")
+    table.add_row("원본 곡", str(result["summary"]["tracks"]))
+    table.add_row("고유 장르 / 분위기",
+                  f"{result['summary']['distinct_genres']} / {result['summary']['distinct_moods']}")
+    if "missing_codes" in result:
+        table.add_row("추가할 코드", str(len(result["missing_codes"])))
+    if "pending" in result:
+        table.add_row("분류가 비어 있던 곡", str(result["pending"]["empty"]))
+        table.add_row("이미 다른 분류가 있던 곡", str(result["pending"]["differs"]))
+    table.add_row("이번에 쓴 건수", str(len(result["created"])))
+    table.add_row("상태", result["status"])
+    console.print(table)
+
+    held = result.get("held") or {}
+    if held and not replace_existing:
+        console.print(
+            f"[yellow]이미 다른 분류가 있어 건너뛴 곡 {len(held)}개[/]"
+            " — 보고서의 `held` 를 확인하세요."
+            " 원본으로 덮어쓰려면 --replace-existing."
+        )
 
 
 @app.command()

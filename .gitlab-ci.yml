@@ -1,18 +1,25 @@
 stages:
   - verify
+  # 영역 검증이 전부 끝난 뒤에만 도는 게이트 stage. verify 안에 두고 needs 로
+  # 걸면 영역 job 이 실패했을 때 게이트가 skipped 로 가서 누락 원인을 말해 줄
+  # 사람이 사라진다 — infra/ci/area-gate.yml 머리말에 자세히 있다.
+  - area-gate
   - ai-review
   - package
   - deploy
 
 include:
-  # 영역 라벨(Frontend·Backend·AI·Data)이 MR 파이프라인을 고른다. 라벨이 없는
-  # MR 은 require-area-label 이 막는다. 자세한 것은 그 파일 머리말에 있다.
+  # 영역 라벨(Frontend·Backend·AI·Data·Infra)이 MR 파이프라인을 고른다. 라벨이
+  # 모자란 MR 은 area-preflight 가 실행 시점에 막고, 실제로 검증이 돌았는지는
+  # area-gate 가 marker 로 확인한다. 자세한 것은 infra/ci/labels.yml 머리말에 있다.
   - local: infra/ci/labels.yml
   - local: infra/ci/frontend.yml
   - local: infra/ci/backend.yml
   - local: infra/ci/data.yml
   - local: infra/ci/app.yml
   - local: infra/ci/manifests.yml
+  - local: infra/ci/infra.yml
+  - local: infra/ci/area-gate.yml
   # infra/ci/release.yml (Compose 배포) 는 뺐다. frontend.yml·backend.yml 은
   # backend-verify·frontend-verify 때문에 남는다 — k8s job 이 needs 로 쓴다.
   - local: infra_k8s/ci/k8s-release.yml

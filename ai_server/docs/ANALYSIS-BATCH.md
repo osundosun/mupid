@@ -22,6 +22,7 @@
 | ② | 파형(24kHz mono) + 구간 목록 | `(n, 1536)` | `Embedder.embed` |
 | ③ | 구간 메타 + ② + 트랙 5값 | `(n, 285)` | `FeatureSpace.transform` |
 | ④ | ③ | `(n, 128)` | `FeatureSpace.enc_sec` |
+| (곁) | demucs 스템 + 구간 목록 | 구간별 악기 이름 | `instruments.for_track` |
 
 `analyze_track()` 이 셋을 묶어 `TrackResult` 로 돌려준다. 값의 규약은
 `EMBEDDING-RECIPE.md`(②)와 `FEATURE-SPACE.md`(③④)에 있다.
@@ -170,7 +171,7 @@ stage    sections · embed · features · section_vecs · done
      → 그때 색인 교체 → 재기동
 ```
 
-**등록이 끝나기 전에는 교체하지 않는다.** 등록이 불가능하면(구간 등록 API 미구현·미설정)
+**등록이 끝나기 전에는 교체하지 않는다.** 등록이 불가능하면(요구 1 미설정 — 주소·토큰이 없다)
 새 판을 만들어 두고 교체를 보류한 채 그 사실을 보고한다. **새 판은 지우지 않는다** —
 등록이 붙으면 그대로 이어서 쓴다. 지우면 그 곡들을 다시 분석해야 한다.
 
@@ -351,6 +352,68 @@ MUPID_SEG_TEST_AUDIO=~/flow_music_data/audio/T000004.mp3 \
 `mupid-ai` 에는 pytest 가 없어 박스에서는 같은 내용을 스크립트로 확인했다. 그 환경에
 pytest 를 넣지 않았다 — 색인을 만든 환경이라 손대지 않는 편이 낫다.
 
+## 6.5 구간별 악기 (`analysis/instruments.py`)
+
+`music_analysis_instruments` 는 곡이 아니라 **구간**에 매달린다 — 외래키가
+`music_section_analysis_id` 다. 같은 곡이라도 인트로에는 건반만, 후렴에는 드럼·베이스가
+들어간다.
+
+### 새 모델을 붙이지 않는다
+
+All-In-One 이 분할하면서 demucs 로 이미 스템을 나누고, `keep_byproducts=True` 라
+그 파일이 작업 디렉터리에 남는다(`<work>/allin1/demix/<모델>/<곡>/…`). 곡당 GPU 시간을
+한 번 더 쓰지 않고 그 결과를 읽기만 한다. 모델 폴더 이름은 박아 두지 않고 찾는다 —
+demucs 모델을 바꾸면 그 이름도 바뀐다.
+
+**demucs 는 4스템이다.** 피아노와 기타를 따로 가르지 못한다. 그래서 어휘가 넷뿐이고
+넷째는 "나머지 전부" 다.
+
+| 스템 | `codes.code_name` (`INSTRUMENT`) |
+|---|---|
+| `vocals` | 보컬 |
+| `drums` | 드럼 |
+| `bass` | 베이스 |
+| `other` | 그 외 악기 |
+
+### 판정
+
+    들린다  ⇔  rms(스템, 구간) ≥ MIX_REL × rms(믹스, 구간)  그리고  ≥ ABS_FLOOR
+
+스템 **자기 분포**와 견주지 않는다. 보컬이 없는 연주곡도 보컬 스템에 누설이 남는데,
+그 스템 안에서만 비교하면 누설의 최댓값이 기준이 되어 **모든 구간에 보컬이 있다**고
+답한다. 믹스와 견주면 누설은 작은 비율로 남는다. `ABS_FLOOR` 는 수치적 무음을 거르는
+바닥이다 — 구간이 통째로 조용하면 믹스도 작아서 비율만으로는 아무거나 통과한다.
+
+**이 문턱값은 아직 실측으로 맞춘 것이 아니다.** 실제 스템 분포를 본 적이 없다.
+지금 값은 -20 dB(`MIX_REL = 0.1`) 로, "제대로 들어간 파트는 믹스의 -20 dB 안쪽,
+누설은 그 아래" 라는 통상적인 관찰에서 잡은 출발점이다. 첫 실주행에서 아래 표를 보고
+고친다 — `section_levels()` 가 판정이 아니라 **비율 자체**를 낸다.
+
+```bash
+python -m music_preprocessing.analysis.instruments   --audio work/1234.audio --sections work/1234.sections.json   --demix work/allin1/demix
+```
+
+### 코드가 구간보다 **먼저**다
+
+`CodeType.INSTRUMENT` 는 부트스트랩이 심지 않는다 — 확정된 목록이 없어서다. 그리고
+서버는 코드표에 없는 악기 이름을 **버리고 센다**(구간은 살린다). 순서가 뒤집히면
+오류 없이 악기만 조용히 빈다. 그래서 `HttpRegistrar.register()` 가 구간을 올리기 전에
+`POST /api/v1/code` 로 필요한 것을 먼저 넣는다. 멱등이라 매 배치가 다시 불러도 같다.
+
+### 못 재도 곡은 산다
+
+악기는 곁들이는 값이고, 색인과 구간 적재는 그것 없이도 온전하다. 스템을 못 찾으면
+그 곡의 `instruments` 만 비우고 `TrackResult.instrument_error` 에 이유를 남긴다 —
+조용히 빈 목록으로 넘기지는 않는다. 그러면 "악기가 없는 곡" 과 "재지 못했다" 가
+같아 보인다.
+
+### 시험
+
+`ai_server/tests/test_section_instruments.py`. 음원도 demucs 도 없이 돈다 — 파형을
+numpy 로 만들고 적재 함수를 끼운다. 여기서 보는 것은 신호 처리가 아니라 **연결**이다:
+구간마다 답이 다른가, 코드가 구간보다 먼저 나가는가, 못 재도 곡이 사는가. 마지막 둘은
+진짜 HTTP 서버를 띄워 확인한다.
+
 ## 7. 실행 위치 · 운영 입출력 · 설정
 
 ### 7.1 어디서 도는가 — **분업**으로 간다
@@ -384,9 +447,13 @@ python 3.14.3   numpy 2.5.3 · scipy 1.18.1 · pandas 3.0.5 · pyarrow 25.0.1 ·
 
 ```
 요구 1  PUT   /api/v1/music/{id}/section            구간 적재 + 숫자 ID 회수     [구현됨]
+        POST  /api/v1/code                          악기 코드 확보 (멱등)        [구현됨]
 요구 5  GET   /internal/music/pending-analysis      무엇을 분석할까 (limit·cursor 전량 순회)
 요구 6  PATCH /internal/music/{id}/analysis-status  PROCESSING · FAILED
 ```
+
+`POST /api/v1/code` 도 `@SystemRole` 이라 같은 계정으로 부른다. 구간을 올리기 **전에**
+악기 코드를 확보하는 용도다 — 6.5 참고.
 
 **요구 1 은 2026-09-16 에 구현됐다.** 제안과 달라진 것이 둘이다 — 경로가 `/internal/*`
 이 아니고, 인증이 내부 토큰이 아니라 **ROLE_SYSTEM 계정의 `Authorization: Bearer`** 다.

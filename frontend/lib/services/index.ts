@@ -38,13 +38,14 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
           for (const key of ['liked', 'ignored', 'history'] as const) {
             if (Array.isArray(saved[key])) preferences[key] = saved[key].filter((id: unknown) => allTracks.some(t => t.id === id));
           }
-          if (Array.isArray(saved.playlists)) preferences.playlists = saved.playlists.flatMap((p: unknown) => {
-            if (!record(p) || typeof p.id !== 'number' || !Number.isFinite(p.id) || typeof p.name !== 'string' || !Array.isArray(p.tracks)) return [];
-            return [{ id: p.id, name: p.name, tracks: p.tracks.flatMap((t: unknown) => {
-              const found = record(t) ? allTracks.find(v => v.id === t.id) : undefined;
-              return found ? [found] : [];
-            }) }];
-          });
+          /*
+           * 플레이리스트는 **되살리지 않는다.** 계정이 기준이다 —
+           * `lib/playlists.ts` 가 `GET /api/v1/playlist` 로 받아 온다.
+           *
+           * 이 저장소는 계정별로 나뉘어 있지 않다. 남은 목록을 화면에 올리면 방금
+           * 가입한 계정에도 앞사람의 것이 보이고, 예전 빌드가 상수로 들고 있던
+           * 데모 목록('규원의 Mupid Mix' 등)이 남은 기기에서는 그것이 보인다.
+           */
           if (Array.isArray(saved.moments)) preferences.moments = saved.moments.flatMap((m: unknown) => {
             if (!record(m) || !record(m.track)) return [];
             const id = m.track.id, track = allTracks.find(t => t.id === id);
@@ -64,7 +65,9 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
       // 흔들린다.
       return { tracks: [...catalog], preferences, session };
     },
-    async savePreferences(value) { storage.setItem(preferencesKey, JSON.stringify(value)); },
+    // 플레이리스트는 빼고 적는다. 읽지 않는 값을 남겨 두면 예전 빌드가 넣어 둔
+    // 데모 목록이 기기에 눌러앉는다 — 저장할 때마다 덮어 지운다.
+    async savePreferences(value) { storage.setItem(preferencesKey, JSON.stringify({ ...value, playlists: [] })); },
     // 체험 로그인은 없앴다. 로그인하지 않으면 서비스를 쓸 수 없고, 로그인은
     // 서버 인증(`lib/api/session`)만을 거친다.
     login: unavailable,

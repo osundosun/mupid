@@ -553,6 +553,11 @@ export function createEndpoints(client: ApiClient) {
        *
        * 프로필 사진은 공개 경로가 아니라 `<img src>` 로 바로 못 건다. 토큰을
        * 달아 받아 온 뒤 object URL 로 바꿔 쓴다.
+       *
+       * `url` 은 서버가 준 조회 주소다. 조회는 파일 번호
+       * (`/api/v1/storage/image/{fileId}`)로 하고, 사진이 없는 계정만
+       * `/api/v1/storage/image/PROFILE/default` 를 가리킨다 — 그 자리는 파일이
+       * 아니라 서버가 돌려주는 classpath 기본 이미지다.
        */
       image: (url: string, signal?: AbortSignal) =>
         client.request<ArrayBuffer>({

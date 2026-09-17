@@ -20,6 +20,7 @@
   "api_registry_log": "./registered.json",
   "api_timeout": 30,
   "api_max_retries": 3,
+  "genre_taxonomy_file": "",
   "analysis_enabled": false,
   "analysis_artifact_dir": "",
   "analysis_work_dir": "./analysis_work",
