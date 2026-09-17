@@ -12,7 +12,7 @@
 | HTTP | `fetch` | Rust 커맨드 | `lib/platform/index.ts` → `createPlatformTransport()` |
 | 저장소 | `localStorage` | SQLite | `lib/services/index.ts` → `mupidService` |
 | 이벤트 전송 | `fetch(keepalive)` | Rust 커맨드 | `lib/analytics/index.ts` |
-| 앨범 아트 | 서버가 준 경로 그대로 | `mupidimg` 스킴 | `lib/platform/image.ts` → `toImageSource()` |
+| 앨범 아트 | 서버가 준 경로 (+`VITE_MUPID_API_BASE`) | `mupidimg` 스킴 | `lib/platform/image.ts` → `toImageSource()` |
 
 화면 컴포넌트에는 플랫폼 분기가 없다. **새로 넣지 말 것** — 분기가 퍼지면 웹에서만
 되는 화면, 앱에서만 되는 화면이 생긴다. 갈라야 할 일이 생기면 `lib/platform/` 안에서
@@ -80,6 +80,23 @@
 같은 출처라 그대로 열리지만, 앱의 출처는 `http://tauri.localhost` 라 그 경로에는
 아무것도 없다. `toImageSource()` 가 `http(s)://` 뿐 아니라 `/api/` 로 시작하는 주소도
 `mupidimg` 스킴으로 넘긴다. 앱이 들고 있는 파일(`/sky-vinyl.webp`)은 건드리지 않는다.
+
+**그래서 규칙은 하나다 — 서버가 준 이미지 주소는 `<img src>` 에 걸기 전에 반드시
+`toImageSource()` 를 지난다.** 한 자리만 빠뜨려도 그 자리만 앱에서 조용히 깨진다.
+실제로 리포트의 '오늘 들은 음악' 트리맵이 응답의 `image_url` 을 그대로 걸고 있었고
+(`components/mupid/daily-album-treemap.tsx`), 배포된 앱에서만 커버가 전부 깨졌다.
+개발 서버에서는 Vite 프록시가 `/api` 를 넘겨 주어 멀쩡했던 탓에 늦게 드러났다.
+
+주소를 못 구했거나 못 읽은 자리는 목록의 커버(`AlbumArt`)와 같은 규칙으로
+`resolveAlbumCover()` 가 기본 커버로 내린다. 기본 커버를 건 뒤에는 `onError` 를 떼어
+다시 그리기가 끝없이 돌지 않게 한다.
+
+웹도 늘 "경로 그대로" 는 아니다. 화면과 API 의 출처가 갈리는 배포에서는
+`VITE_MUPID_API_BASE` 가 채워지고, `toImageSource()` 가 `/api/` 로 시작하는 주소에 그
+값을 붙인다 — `fetch` 에는 `ApiClient` 가 붙여 주지만 `<img src>` 에는 붙여 줄 사람이
+없다. 주소를 읽는 자리는 `lib/api/base-url.ts` 하나다(`session.ts` 에 두면
+`platform → api/session → platform` 순환이 된다). 지금 배포(`ec2`)는 nginx 가 화면과
+API 를 같은 출처로 서빙하므로 이 값은 비어 있다.
 
 ### 탭을 누를 때마다 화면 전체가 다시 떴다
 
