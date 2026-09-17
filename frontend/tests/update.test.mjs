@@ -30,6 +30,9 @@ const {
   checkForUpdates,
   checkForUpdatesNow,
   installNativeUpdate,
+  noteUpdatePrompted,
+  readUpdateState,
+  shouldPromptUpdate,
   shouldSuggestNativeUpdate,
   UNKNOWN,
 } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
@@ -60,6 +63,9 @@ const state = (overrides = {}) => ({
   webAvailable: false,
   nativeAvailable: false,
   webRejected: false,
+  // 안드로이드 실기기 기준값. 데스크톱은 `canInstallNative: false` 다.
+  canInstallNative: true,
+  nativePromptDue: true,
   ...overrides,
 });
 
@@ -222,12 +228,131 @@ test('UpdateState 의 필드 이름이 Rust 와 짝을 이룬다', async () => {
 
 test('부르는 커맨드 이름이 Rust 에 실제로 등록돼 있다', async () => {
   const lib = await readFile(new URL('../../app/src/lib.rs', import.meta.url), 'utf8');
-  for (const command of ['update_status', 'update_web', 'update_check_now', 'update_native']) {
+  for (const command of [
+    'update_status',
+    'update_web',
+    'update_check_now',
+    'update_native',
+    'update_note_prompted',
+  ]) {
     assert.match(
       lib,
       new RegExp(`commands::${command}\\b`),
       `${command} 가 invoke_handler 에 등록되지 않았다`,
     );
-    assert.match(source, new RegExp(`invoke<[^>]*>\\('${command}'\\)`), `화면이 ${command} 를 안 부른다`);
   }
+  // 이 파일이 부르는 것들
+  for (const command of ['update_status', 'update_web', 'update_check_now', 'update_native', 'update_note_prompted']) {
+    assert.match(
+      source,
+      new RegExp(`invoke<[^>]*>\\('${command}'\\)`),
+      `lib/platform/update.ts 가 ${command} 를 안 부른다`,
+    );
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// 안내 창을 띄울 조건 (모바일 전용)
+// ─────────────────────────────────────────────────────────────
+
+test('안내는 폰 폭이고 안드로이드일 때만 뜬다', () => {
+  const ready = state({ nativeAvailable: true, canInstallNative: true, nativePromptDue: true });
+  assert.equal(shouldPromptUpdate({ isMobile: true, state: ready }), true);
+  // 폭이 넓으면 안 뜬다 — 데스크톱 브라우저로 같은 화면을 열었을 때.
+  assert.equal(shouldPromptUpdate({ isMobile: false, state: ready }), false);
+  // 폰 폭이어도 설치할 수 있는 플랫폼이 아니면 안 뜬다. 이게 없으면
+  // "눌러도 아무 일도 안 일어나는 창" 이 뜬다.
+  assert.equal(
+    shouldPromptUpdate({
+      isMobile: true,
+      state: state({ nativeAvailable: true, canInstallNative: false, nativePromptDue: true }),
+    }),
+    false,
+  );
+});
+
+test('새 APK 가 없으면 안내하지 않는다', () => {
+  assert.equal(
+    shouldPromptUpdate({
+      isMobile: true,
+      state: state({ nativeAvailable: false, canInstallNative: true, nativePromptDue: true }),
+    }),
+    false,
+  );
+});
+
+test('오늘 이미 보여 줬으면 조용히 있는다', () => {
+  // 앱을 켤 때마다 창이 뜨면 삭제로 이어진다. 기록은 Rust 가 DB 에 남긴다.
+  assert.equal(
+    shouldPromptUpdate({
+      isMobile: true,
+      state: state({ nativeAvailable: true, canInstallNative: true, nativePromptDue: false }),
+    }),
+    false,
+  );
+});
+
+test('상태를 모르면 안내하지 않는다', () => {
+  assert.equal(shouldPromptUpdate({ isMobile: true, state: null }), false);
+  assert.equal(shouldPromptUpdate({ isMobile: true, state: UNKNOWN }), false);
+});
+
+test('상태 읽기는 내려받지 않는다', async () => {
+  // 기동 훅이 이미 확인·내려받기를 했다. 안내 화면이 또 내려받으면 느린
+  // 회선에서 서로를 방해한다 — `update_status` 만 불러야 한다.
+  const calls = stub({ update_status: state() });
+  await readUpdateState();
+  assert.deepEqual(calls.map((call) => call.command), ['update_status']);
+});
+
+test('안내를 띄웠다고 기록한다', async () => {
+  const calls = stub({ update_note_prompted: null });
+  await noteUpdatePrompted();
+  assert.deepEqual(calls.map((call) => call.command), ['update_note_prompted']);
+});
+
+test('기록에 실패해도 던지지 않는다', async () => {
+  // 기록을 못 남긴 것 때문에 창을 막을 이유는 없다. 다음 기동에 한 번 더
+  // 뜨는 정도의 대가다.
+  stub({ update_note_prompted: new Error('db 잠김') });
+  await assert.doesNotReject(() => noteUpdatePrompted());
+});
+
+// ─────────────────────────────────────────────────────────────
+// 화면이 실제로 붙어 있는가
+// ─────────────────────────────────────────────────────────────
+
+test('안내 컴포넌트가 앱에 붙어 있다', async () => {
+  const app = await readFile(new URL('../components/mupid-app.tsx', import.meta.url), 'utf8');
+  assert.match(app, /<UpdatePrompt\s*\/>/, 'UpdatePrompt 가 렌더되지 않는다');
+  assert.match(
+    app,
+    /import \{ UpdatePrompt \} from '@\/components\/mupid\/update-prompt'/,
+    'import 가 없다',
+  );
+});
+
+test('안내 컴포넌트가 폭과 플랫폼을 모두 본다', async () => {
+  const prompt = await readFile(
+    new URL('../components/mupid/update-prompt.tsx', import.meta.url),
+    'utf8',
+  );
+  // 창 너비만 보면 태블릿·가로 화면에서 설치할 수 없는 창이 뜬다.
+  assert.match(prompt, /useIsMobile\(\)/, '폭을 안 본다');
+  // 조건 판단이 컴포넌트 안에 흩어져 있으면 창을 띄워 보지 않고는 확인할 수 없다.
+  assert.match(prompt, /shouldPromptUpdate\(/, '순수 함수를 안 쓴다');
+  // 닫을 방법이 없는 창은 없는 것만 못하다.
+  assert.match(prompt, /AlertDialogCancel/, '"나중에" 가 없다');
+  // 띄운 사실을 안 남기면 앱을 켤 때마다 같은 창이 다시 뜬다.
+  assert.match(prompt, /noteUpdatePrompted\(/, '띄웠다고 기록하지 않는다');
+});
+
+test('띄울 때 한 번만 기록한다', async () => {
+  const prompt = await readFile(
+    new URL('../components/mupid/update-prompt.tsx', import.meta.url),
+    'utf8',
+  );
+  // 다시 그려질 때마다 부르면 창이 열려 있는 동안 계속 DB 를 두드린다.
+  assert.match(prompt, /noted\s*=\s*useRef\(false\)/, '한 번만 기록하는 장치가 없다');
+  assert.match(prompt, /noted\.current/, 'ref 를 안 쓴다');
 });

@@ -225,6 +225,7 @@ pub fn run() {
             commands::update_web,
             commands::update_check_now,
             commands::update_native,
+            commands::update_note_prompted,
         ])
         .run(context)
         .expect("앱을 시작하지 못했습니다");

@@ -50,6 +50,16 @@ export type UpdateState = {
   nativeAvailable: boolean;
   /** 서버가 준 값이 두 번 실패해 거부 목록에 들어 있는가. */
   webRejected: boolean;
+  /**
+   * **이 기기에서 APK 설치를 시도할 수 있는가.**
+   *
+   * 안드로이드에서만 참이다. 데스크톱 개발 빌드에서 안내를 띄우면 "눌러도
+   * 아무 일도 안 일어나는 창" 이 된다 — 창 너비로 플랫폼을 추측하지 않고
+   * 이 값을 본다.
+   */
+  canInstallNative: boolean;
+  /** 지금 안내를 띄워도 되는가 (24시간에 한 번). 기록은 Rust 가 DB 에 남긴다. */
+  nativePromptDue: boolean;
 };
 
 /** 아직 아무것도 모르는 상태. 첫 확인 전이나 앱이 아닐 때 쓴다. */
@@ -63,6 +73,8 @@ export const UNKNOWN: UpdateState = {
   webAvailable: false,
   nativeAvailable: false,
   webRejected: false,
+  canInstallNative: false,
+  nativePromptDue: false,
 };
 
 /**
@@ -123,6 +135,64 @@ export async function checkForUpdatesNow(): Promise<UpdateState | null> {
 export async function installNativeUpdate(): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>('update_native');
+}
+
+/**
+ * 지금 안내를 띄울 만한가 — **순수 함수.**
+ *
+ * 창을 띄워 보지 않고 규칙을 확인할 수 있게 렌더 밖에 둔다. `isMobile` 은
+ * 화면(창 너비)이 정하고, `canInstallNative` 는 Rust 가 정한다 — **둘 다**
+ * 필요하다. 폭만 보면 태블릿·가로 화면에서 설치할 수 없는 창이 뜨고,
+ * 플랫폼만 보면 데스크톱 브라우저로 같은 화면을 열었을 때 뜬다.
+ *
+ * 새 APK 가 없으면 알릴 것이 없고, 오늘 이미 보여 줬으면 조용히 있는다.
+ */
+export function shouldPromptUpdate(input: {
+  isMobile: boolean;
+  state: UpdateState | null;
+}): boolean {
+  const { state } = input;
+  if (!state || !input.isMobile) return false;
+  if (!state.canInstallNative) return false;
+  if (!state.nativeAvailable) return false;
+  return state.nativePromptDue;
+}
+
+/**
+ * 상태만 읽는다 — **내려받지 않는다.**
+ *
+ * `checkForUpdates` 와 다른 점이 이것이다. 안내 화면은 "새 APK 가 있나" 만
+ * 알면 되는데, 기동 훅이 이미 확인과 내려받기를 끝냈다. 여기서 또 부르면
+ * 같은 순간에 두 번 내려받아 느린 회선에서 서로를 방해한다.
+ *
+ * 실패하면 `null` — 그러면 창이 뜨지 않는다.
+ */
+export async function readUpdateState(): Promise<UpdateState | null> {
+  if (!isTauri()) return null;
+  try {
+    return await invoke<UpdateState>('update_status');
+  } catch (error) {
+    console.warn('[update]', error);
+    return null;
+  }
+}
+
+/**
+ * 안내를 띄웠다고 기록한다 — 24시간 창을 닫는 자리.
+ *
+ * **빠뜨리면 앱을 켤 때마다 같은 창이 다시 뜨고, 그건 삭제로 이어진다.**
+ * 설치를 누르지 않고 "나중에" 로 닫아도 기록한다 — 봤으면 충분하다.
+ *
+ * 실패해도 조용히 넘긴다. 기록을 못 남긴 것 때문에 창을 막을 이유는 없다
+ * (다음 기동에 한 번 더 뜨는 정도의 대가다).
+ */
+export async function noteUpdatePrompted(): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke<void>('update_note_prompted');
+  } catch (error) {
+    console.warn('[update]', error);
+  }
 }
 
 /**

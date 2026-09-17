@@ -264,6 +264,20 @@ pub async fn update_native(
     install_apk(&app, &apk)
 }
 
+/// 안내를 **띄웠다**고 기록한다. 24시간 창을 닫는 유일한 자리다.
+///
+/// 화면이 안내 창을 띄운 직후에 부른다. 이걸 빠뜨리면 앱을 켤 때마다 같은
+/// 창이 다시 떠서 삭제로 이어진다 — 간격 규칙(`should_prompt`)이 있지만
+/// **기록이 남지 않으면 규칙이 아무 일도 하지 않는다.**
+///
+/// 사용자가 "나중에" 를 눌러도 부른다. 닫은 것도 안내를 본 것이므로 다시
+/// 띄울 이유가 없다.
+#[tauri::command]
+pub fn update_note_prompted(db: State<'_, Db>) -> Result<(), String> {
+    crate::update_net::note_prompted(&db, crate::db::now_ms());
+    Ok(())
+}
+
 /// 시스템 설치기에 APK 를 넘긴다 (안드로이드 전용).
 #[cfg(target_os = "android")]
 fn install_apk(app: &tauri::AppHandle, apk: &std::path::Path) -> Result<(), String> {

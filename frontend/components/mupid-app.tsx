@@ -52,6 +52,7 @@ import {
 import { QueueDock } from '@/components/mupid/queue-dock';
 import { FloatingChat } from '@/components/mupid/chat';
 import { AppDialogs } from '@/components/mupid/dialogs';
+import { UpdatePrompt } from '@/components/mupid/update-prompt';
 import { DemoLoginDialog } from '@/components/mupid/demo-login';
 
 const navigation = [
@@ -337,6 +338,9 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
       )}
       <AppDialogs model={m} />
       <ArtistInfo model={m} />
+      {/* 새 APK 가 있으면 폰에서만 뜬다. 자리 판단은 컴포넌트가 한다 —
+          데스크톱 폭이거나 안드로이드가 아니면 스스로 아무것도 그리지 않는다. */}
+      <UpdatePrompt />
       <DemoLoginDialog model={m} />
       {m.toast && <output className="app-toast">{m.toast}</output>}
     </div>

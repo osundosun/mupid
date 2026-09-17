@@ -71,6 +71,19 @@ pub struct UpdateState {
     pub native_available: bool,
     /// 서버가 거부한 값인가 — 있으면 화면에 "확인" 버튼을 보여 준다.
     pub web_rejected: bool,
+    /// **이 기기에서 APK 설치를 시도할 수 있는가.**
+    ///
+    /// 안드로이드에서만 참이다. 데스크톱 개발 빌드에서는 설치 인텐트 자체가
+    /// 없으므로, 화면이 안내를 띄우면 "눌러도 아무 일도 안 일어나는 창" 이
+    /// 된다. 플랫폼 판단은 여기 한 곳에서만 한다 — 화면이 창 너비로 추측하면
+    /// 태블릿이나 가로 화면에서 어긋난다.
+    pub can_install_native: bool,
+    /// 지금 안내를 띄워도 되는가 (24시간에 한 번).
+    ///
+    /// 앱을 켤 때마다 설치 창이 뜨면 삭제로 이어진다. 그 판단을 화면에
+    /// 맡기면 기록이 메모리에만 남아 앱을 껐다 켤 때마다 되살아난다 —
+    /// 그래서 DB(`kv`)에 남기고 여기서 알려 준다.
+    pub native_prompt_due: bool,
 }
 
 /// 주소를 절대 URL 로 만든다. 경로만 온 요청은 API 원본을 붙인다 —
@@ -277,6 +290,8 @@ pub async fn check(db: &Db, state: &HttpState) -> UpdateState {
             .as_ref()
             .is_some_and(|manifest| manifest.version_code > local_version_code),
         web_rejected: rejected_now,
+        can_install_native: cfg!(target_os = "android"),
+        native_prompt_due: should_prompt(db, crate::db::now_ms()),
     }
 }
 
@@ -393,8 +408,40 @@ pub fn should_prompt(db: &Db, now_ms: i64) -> bool {
     now_ms.saturating_sub(last) >= PROMPT_INTERVAL_MS
 }
 
-/// 안내를 띄웠다고 기록한다.
-#[allow(dead_code)]
+/// 지금 안내를 띄웠다고 기록한다 (24시간 창을 닫는다).
 pub fn note_prompted(db: &Db, now_ms: i64) {
     let _ = kv::put(db, PROMPTED_KEY, &now_ms.to_string());
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+    use crate::db::Db;
+
+    /// 안내 간격이 실제로 창을 닫는가. 기록이 없으면 규칙이 아무 일도 하지
+    /// 않으므로(`should_prompt`), 두 함수가 짝으로 동작하는지 본다.
+    #[test]
+    fn noting_a_prompt_closes_the_window_for_a_day() {
+        let directory = std::env::temp_dir().join(format!("mupid-prompt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("스크래치");
+        let db = Db::open(&directory.join("t.db")).expect("db");
+        let start = 1_700_000_000_000i64;
+
+        // 처음에는 띄운다.
+        assert!(should_prompt(&db, start), "처음에는 안내해야 한다");
+        note_prompted(&db, start);
+        // 같은 순간에 다시 보면 창이 닫혀 있다.
+        assert!(!should_prompt(&db, start), "기록 직후에는 안내하면 안 된다");
+        assert!(
+            !should_prompt(&db, start + PROMPT_INTERVAL_MS - 1),
+            "24시간이 되기 전에는 안내하면 안 된다"
+        );
+        // 하루가 지나면 다시 띄운다.
+        assert!(
+            should_prompt(&db, start + PROMPT_INTERVAL_MS),
+            "하루가 지나면 다시 안내한다"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
 }
