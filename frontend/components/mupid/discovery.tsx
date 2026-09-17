@@ -90,9 +90,6 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
           </button>
         </div>
         <div className="player-detail">
-          <div className="section-pill">
-            {part.label} · {formatTime(part.start)} – {formatTime(part.end)}
-          </div>
           {/* 줄은 `TrackComments` 가 그린다 — 같은 줄에 설 댓글 토글이 그쪽 상태를 쓴다. */}
           <TrackComments key={active.id} model={m}>
             <button className="secondary-button quick-like" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>

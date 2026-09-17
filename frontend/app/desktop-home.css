@@ -254,7 +254,8 @@
   }
   .desktop-playlist-open {
     display: flex;
-    flex: 1;
+    flex: 0 1 auto;
+    margin-right: auto;
     min-width: 0;
     align-items: center;
     gap: 12px;

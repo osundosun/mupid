@@ -8,7 +8,6 @@ import {
   ListMusic,
   Pause,
   Play,
-  Sparkles,
   Volume2,
 } from 'lucide-react';
 import { pickTodayMoments, todayMomentNote } from './today-moment';
@@ -17,7 +16,6 @@ import type { MupidModel } from '@/hooks/use-mupid';
 import { VolumeSlider } from './volume-slider';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
 import { AlbumArt, LikeButton, PlayerControls, TrackRow } from './primitives';
-import { MupidMascot } from './mascot';
 import { AlbumDeck } from './album-deck';
 
 export function DesktopHome({ model: m }: { model: MupidModel }) {
@@ -148,17 +146,6 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
           </button>
         </aside>
       </div>
-      <div className="desktop-home-bottom">
-        <button className="desktop-ai-entry" onClick={m.openChat}>
-          <MupidMascot size={64} />
-          <span>
-            <small>이 곡, 조금 다른 느낌으로</small>
-            <strong>
-              Mupid AI와 이어듣기 <ArrowUpRight />
-            </strong>
-          </span>
-        </button>
-      </div>
       <div className="desktop-home-shelves">
         <section className="desktop-recommendations">
           <header>
@@ -202,9 +189,6 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
       </div>
       <footer className="desktop-home-footer">
         <span>Music for your sky.</span>
-        <button className="text-link" onClick={m.openChat}>
-          <Sparkles /> Mupid AI
-        </button>
       </footer>
     </div>
   );

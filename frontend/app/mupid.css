@@ -1245,11 +1245,6 @@ h1 {
   margin: 0 0 8px;
   letter-spacing: 0.04em;
 }
-.section-pill {
-  font-size: 15px;
-  color: #557ab7;
-  text-align: center;
-}
 .player-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2534,9 +2529,6 @@ img.report-cupid {
   }
   .player-waveform .waveform {
     height: 50px;
-  }
-  .player-detail .section-pill {
-    font-size: 0.875rem;
   }
   .full-controls {
     margin: 16px auto;

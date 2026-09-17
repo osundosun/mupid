@@ -911,7 +911,7 @@
   .explore-result-column .keyword-results { margin-top: 0; }
 }
 
-.track-info > .track-title-link, .track-info > .track-artist-link { display: block; width: 100%; text-align: left; padding: 3px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-info > .track-title-link, .track-info > .track-artist-link { display: block; width: fit-content; max-width: 100%; text-align: left; padding: 3px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .track-title-link { color: #293d60; font-weight: 600; }
 .track-artist-link { color: #748cad; font-size: 14px; }
 .track-artist-link:hover { color: #4e79b5; text-decoration: underline; }
@@ -1637,7 +1637,6 @@
 .mupid-shell.page-player .player-heading { margin-bottom: 8px; }
 .mupid-shell.page-player .player-body { gap: 14px; }
 .mupid-shell.page-player .song-lyrics { margin-block: 8px; padding-block: 0; }
-.mupid-shell.page-player .player-detail .section-pill { margin-block: 4px 8px; padding-block: 2px; font-size: 14px; }
 .mupid-shell.page-player .track-comments .time-labels { margin-block: 4px 8px; font-size: 14px; }
 .mupid-shell.page-player .track-comments > .full-controls { margin-block: 24px 20px; }
 .mupid-shell.page-player .player-quick-actions { margin: 12px 0 0; padding: 8px 0 24px; }
@@ -1770,15 +1769,21 @@
  * '관심 없음 전체 해제' 는 글자만 있어 안내문과 구별되지 않았다. 되돌릴 수
  * 없는 일괄 동작이라 누를 것처럼 보여야 한다 — 테두리를 둘러 버튼으로 읽힌다.
  */
+.mupid-shell .profile-ignored-card .ignored-restore {
+  flex-shrink: 0; min-height: 34px; padding: 0 11px;
+  border: 1px solid #e3e9f2; border-radius: 17px; background: #fff;
+  font-size: 12.5px; font-weight: 500; color: #7387a4;
+}
+.mupid-shell .profile-ignored-card .ignored-restore:hover { background: #eef4fd; color: #4a72aa; }
 .mupid-shell .profile-ignored-card > .text-link {
   align-self: flex-start; margin: 2px 0 10px; min-height: 36px; padding: 0 12px;
   border: 1px solid #d9e4f2; border-radius: 18px; background: #f7faff;
   font-size: 13px; font-weight: 500; color: #5c78a3;
 }
 .profile-settings-card .profile-section-count { margin-left: 6px; font-size: 13px; font-weight: 400; color: #8195b2; }
-.mupid-shell .main-content .profile-ignored-card .profile-history { border: 0; border-radius: 0; background: transparent; padding: 0; scrollbar-gutter: auto; }
-.mupid-shell .profile-ignored-card .listening-history-empty { padding: 22px 0; font-size: 14px; }
-.profile-ignored-card .listening-history-empty > span { display: block; margin-top: 6px; color: #91a2b9; font-size: 12px; }
+.mupid-shell .main-content .profile-list-card .profile-history { border: 0; border-radius: 0; background: transparent; padding: 0; scrollbar-gutter: auto; }
+.mupid-shell .profile-list-card .listening-history-empty { padding: 22px 0; font-size: 14px; }
+.profile-list-card .listening-history-empty > span { display: block; margin-top: 6px; color: #91a2b9; font-size: 12px; }
 .profile-settings-card .profile-password form label { font-size: 14px; }
 .profile-settings-card .profile-password form .demo-note { font-size: 12px; line-height: 1.6; margin: 8px 0 0; }
 .profile-settings-card .primary-button { box-shadow: none; }

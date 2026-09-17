@@ -629,18 +629,24 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
           <PasswordForm />
         </section>
       )}
-      <section className="profile-settings-card profile-ignored-card" aria-label="최근 들은 음악">
+      <section className="profile-settings-card profile-list-card" aria-label="최근 들은 음악">
       <h2>최근 들은 음악 <span className="profile-section-count">{historyTracks.length}곡</span></h2>
       <section className="track-list profile-history" aria-label="최근 들은 음악 목록">
         {historyTracks.map(track => <TrackRow key={track.id} track={track} model={m} showDetail={false} />)}
         {!historyTracks.length && <p className="listening-history-empty">아직 감상 기록이 없어요.<span>음악을 들으면 여기에 차곡차곡 모아둘게요.</span></p>}
       </section>
       </section>
-      <section className="profile-settings-card profile-ignored-card" aria-label="관심 없는 곡">
+      <section className="profile-settings-card profile-list-card profile-ignored-card" aria-label="관심 없는 곡">
       <h2>관심 없는 곡 <span className="profile-section-count">{ignoredTracks.length}곡</span></h2>
-      {!!ignoredTracks.length && <button className="text-link" onClick={m.clearIgnored}>관심 없음 전체 해제</button>}
+      {!!ignoredTracks.length && <button className="text-link" onClick={m.clearIgnored}>전체 해제</button>}
       <section className="track-list profile-history" aria-label="관심 없는 곡 목록">
-        {ignoredTracks.map(track => <TrackRow key={track.id} track={track} model={m} showDetail={false} />)}
+        {ignoredTracks.map(track => <TrackRow
+          key={track.id}
+          track={track}
+          model={m}
+          showDetail={false}
+          action={<button className="text-link ignored-restore" onClick={() => m.restoreIgnored(track.id)}>해제</button>}
+        />)}
         {!ignoredTracks.length && <p className="listening-history-empty">관심 없는 곡이 없어요.<span>등록한 곡은 추천에서 제외돼요.</span></p>}
       </section>
       </section>
