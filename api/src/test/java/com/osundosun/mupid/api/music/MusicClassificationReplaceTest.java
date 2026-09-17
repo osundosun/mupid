@@ -184,8 +184,8 @@ class MusicClassificationReplaceTest {
     void addingTheSameCodeTwiceReturnsTheSameRow() {
         String name = "synthwave-" + UUID.randomUUID().toString().substring(0, 8);
 
-        CodeResponse first = codeService.addCode(new CodeCreateRequest(CodeType.GENRE, name));
-        CodeResponse second = codeService.addCode(new CodeCreateRequest(CodeType.GENRE, name));
+        CodeResponse first = codeService.addCode(new CodeCreateRequest(CodeType.GENRE, name, null));
+        CodeResponse second = codeService.addCode(new CodeCreateRequest(CodeType.GENRE, name, null));
 
         assertTrue(first.created(), "처음에는 만들어야 한다");
         assertEquals(false, second.created(), "두 번째는 만들지 않는다");
@@ -197,8 +197,8 @@ class MusicClassificationReplaceTest {
     void theSameNameInAnotherTypeIsAnotherCode() {
         String name = "bright-" + UUID.randomUUID().toString().substring(0, 8);
 
-        CodeResponse genre = codeService.addCode(new CodeCreateRequest(CodeType.GENRE, name));
-        CodeResponse mood = codeService.addCode(new CodeCreateRequest(CodeType.MOOD, name));
+        CodeResponse genre = codeService.addCode(new CodeCreateRequest(CodeType.GENRE, name, null));
+        CodeResponse mood = codeService.addCode(new CodeCreateRequest(CodeType.MOOD, name, null));
 
         assertTrue(genre.created());
         assertTrue(mood.created());
@@ -224,7 +224,7 @@ class MusicClassificationReplaceTest {
     }
 
     private Code persistCode(CodeType type, String name) {
-        Code code = Code.builder().codeType(type).codeName(name).build();
+        Code code = Code.builder().codeType(type).codeName(name).displayName(name).build();
         em.persist(code);
         return code;
     }

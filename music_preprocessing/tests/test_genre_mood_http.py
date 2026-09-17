@@ -111,7 +111,7 @@ class OverHttpTests(unittest.TestCase):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Fake)
         self.server.state = {
             "codes": [{"codeId": 7, "codeType": "GENRE", "codeName": "Pop"},
-                      {"codeId": 30, "codeType": "MOOD", "codeName": "bright"}],
+                      {"codeId": 30, "codeType": "MOOD", "codeName": "화사한"}],
             "music": [{"musicId": 91, "title": "First", "genres": [], "moods": []},
                       {"musicId": 37, "title": "Second", "genres": [], "moods": []}],
             "seen": [],
@@ -134,7 +134,7 @@ class OverHttpTests(unittest.TestCase):
             tracks = validate(source())
 
             state = inspect(client, tracks)
-            self.assertEqual(state["missing_codes"], [("GENRE", "synthpop"), ("MOOD", "warm")])
+            self.assertEqual(state["missing_codes"], [("GENRE", "synthpop"), ("MOOD", "따뜻한")])
             self.assertEqual(state["empty"], [91, 37])
 
             report = {"created": []}
@@ -143,7 +143,7 @@ class OverHttpTests(unittest.TestCase):
 
             stored = {m["musicId"]: (m["genres"], m["moods"]) for m in self.server.state["music"]}
             self.assertEqual(stored[91], (["synthpop"], []))
-            self.assertEqual(sorted(stored[37][1]), ["bright", "warm"])
+            self.assertEqual(sorted(stored[37][1]), ["따뜻한", "화사한"])
 
             # 토큰 회전을 받아 파일에 저장한다. 놓치면 다음 배치가 못 붙는다.
             self.assertEqual(token.read_text(encoding="utf-8"), "rotated-2")

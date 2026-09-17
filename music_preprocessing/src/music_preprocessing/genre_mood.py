@@ -255,10 +255,117 @@ def fold(codes):
     return {(kind, name.casefold()): name for kind, name in codes}
 
 
+# 이 저장소가 곧 분류 어휘다. taxonomy 무드 9종은 색인(`mood_tags`)에 그 이름이
+# 하나도 없어 뜻으로 이어야 했다 — 그 대응이 여기 있다 (`ai_server/app/onboarding.py`
+# 의 `MOOD_MAP` 과 **같은 출처**다). 서버에 심을 때 `code_name` 은 화면용 한국어,
+# `display_name` 은 taxonomy 원문이 된다.
+#
+# `genre_mood` 가 직접 계산하지 않고 `ai_server` 를 부르지 않는 이유: 이 패키지는
+# 배치 서버에서 단독으로 도는 도구라 `ai_server` 의 의존성(numpy·pandas·torch)을
+# 끌고 올 수 없다. 그래서 표를 여기서 한 번 더 적는다 — **한쪽만 고치면 조용히
+# 어긋난다.** `test_genre_mood.py` 의 `test_mood_display_names_match_the_ai_table`
+# 이 둘을 대조한다.
+
+GENRE_DISPLAY_NAMES = {
+    "contemporary_pop": "컨템포러리 팝",
+    "dance_pop": "댄스 팝",
+    "synthpop": "신스팝",
+    "lofi_hiphop": "로파이 힙합",
+    "indie_pop": "인디 팝",
+    "alternative_rock": "얼터너티브 록",
+    "poprock": "팝 록",
+    "city_pop": "시티 팝",
+    "pop_ballad": "팝 발라드",
+    "rnb": "R&B",
+    "solo_piano": "피아노 솔로",
+    "singing_rap_melodic_hiphop": "싱잉 랩/멜로딕 힙합",
+    "modern_trap_hiphop": "모던 트랩 힙합",
+    "synthwave": "신스웨이브",
+    "game_battle_bgm": "게임 배틀 BGM",
+    "indie_rock": "인디 록",
+    "hard_rock": "하드 록",
+    "punk_power_pop": "펑크/파워 팝",
+    "atmospheric_post_rock": "포스트 록",
+    "alternative_rnb": "얼터너티브 R&B",
+    "neo_soul": "네오 소울",
+    "boom_bap_hiphop": "붐뱁 힙합",
+    "house": "하우스",
+    "future_bass": "퓨처 베이스",
+    "drum_and_bass": "드럼 앤 베이스",
+    "chillhop": "칠합",
+    "downtempo": "다운템포",
+    "chillwave_dreamy_electronica": "칠웨이브",
+    "modern_jazz": "모던 재즈",
+    "funk": "펑크",
+    "cinematic_orchestral": "시네마틱 오케스트라",
+    "adventure_fantasy": "어드벤처/판타지",
+    "emotional_drama": "감성 드라마",
+    "mystery_suspense": "미스터리/서스펜스",
+    "casual_light_game_bgm": "캐주얼 게임 BGM",
+    "neo_classical": "네오 클래식",
+    "acoustic_guitar_folk": "어쿠스틱 기타/포크",
+    "ambient": "앰비언트",
+    "breakbeat_uk_garage": "브레이크비트/UK 개러지",
+    "ambient_electronic": "앰비언트 일렉트로닉",
+    "acoustic_chill": "어쿠스틱 칠",
+    "jazzhop": "재즈합",
+    "jazz_fusion": "재즈 퓨전",
+    "bossa_smooth_jazz": "보사/스무스 재즈",
+    "chamber_classical": "체임버 클래식"
+}
+
+MISMATCHED_MOOD_DISPLAY_NAMES = {
+    "melancholic": "애상적인",
+    "warm": "따뜻한",
+    "dreamy": "몽글한",
+    "bright": "화사한",
+    "hopeful": "희망찬",
+    "powerful": "웅장한",
+    "dark": "어두운",
+    "calm": "고요한",
+    "exciting": "짜릿한",
+}
+
+
+def display_name_for(kind: str, name: str, folded: dict) -> str:
+    """서버에 보낼 표시명. **화면용 한국어가 색인 원문과 다를 때만** 값이 다르다.
+
+    `name` 은 taxonomy 원문(`melancholic`)이고, 화면에 그릴 말은 따로 있다
+    (`애상적인`). 대응이 없으면 빈 문자열을 돌려주고, 그러면 서버가 코드 이름을
+    그대로 표시명으로 쓴다 — 기존 동작과 같다.
+
+    **서버 철자를 먼저 본다.** 이미 `애상적인` 이라는 코드가 손으로 들어가 있어도
+    (`folded` 는 대소문자만 무시하고 한국어↔영문은 구분한다) 여기서는 걸리지
+    않으므로, 없는 코드에만 표시명이 붙는다.
+    """
+    if kind != "MOOD":
+        return ""
+    korean = MISMATCHED_MOOD_DISPLAY_NAMES.get(name.casefold())
+    if korean and (kind, korean.casefold()) not in folded:
+        return korean
+    return ""
+
+
+def validate_taxonomy_moods(tracks) -> None:
+    """원본이 아는 taxonomy 무드가 **전부** 뜻 표에 있어야 한다.
+
+    원본에 새 무드가 생기면 그 곡들은 코드 이름(영문)이 곧 표시명이 되어,
+    화면에 영문이 뜨고 분류도 조용히 어긋난다. 여기서 멈춘다.
+    """
+    unknown = sorted({name for t in tracks for name in t["moods"]
+                      if name.casefold() not in MISMATCHED_MOOD_DISPLAY_NAMES})
+    if unknown:
+        raise ValueError(f"뜻 표에 없는 taxonomy 무드: {unknown}"
+                         " — `MISMATCHED_MOOD_DISPLAY_NAMES` 를 채워야 한다")
+
+
 def wanted(track, folded):
     """이 곡에 있어야 할 분류를 **서버 철자로** 돌려준다."""
     genres = [folded.get(("GENRE", track["genre"].casefold()), track["genre"])]
-    moods = [folded.get(("MOOD", name.casefold()), name) for name in track["moods"]]
+    moods = []
+    for name in track["moods"]:
+        korean = MISMATCHED_MOOD_DISPLAY_NAMES.get(name.casefold(), name)
+        moods.append(folded.get(("MOOD", korean.casefold()), korean))
     return sorted(set(genres)), sorted(set(moods))
 
 
@@ -295,7 +402,10 @@ def inspect(client, tracks):
         held[track["music_id"]] = {"genres": have[0], "moods": have[1]}
 
     needed = {("GENRE", t["genre"]) for t in tracks}
-    needed |= {("MOOD", name) for t in tracks for name in t["moods"]}
+    for t in tracks:
+        for name in t["moods"]:
+            korean = MISMATCHED_MOOD_DISPLAY_NAMES.get(name.casefold(), name)
+            needed.add(("MOOD", korean))
     return {"codes": codes, "folded": folded,
             "missing_codes": sorted(key for key in needed
                                     if (key[0], key[1].casefold()) not in folded),
@@ -312,13 +422,20 @@ def apply_plan(client, tracks, state, report, save, replace_existing=False):
     report["skipped"] = [] if replace_existing else sorted(state["differs"])
 
     for kind, name in state["missing_codes"]:
-        row = client.add_code(kind, name)
+        if kind == "MOOD":
+            korean = MISMATCHED_MOOD_DISPLAY_NAMES.get(name.casefold(), name)
+            row = client.add_code(kind, korean, name)
+        else:
+            korean = GENRE_DISPLAY_NAMES.get(name.casefold(), name)
+            row = client.add_code(kind, name, korean)
         code_id = positive_id(row["codeId"])
         # 서버가 돌려준 철자를 쓴다. 대소문자만 다른 코드가 이미 있었다면 그 이름이다.
         codes[(kind, row["codeName"])] = code_id
         folded[(kind, row["codeName"].casefold())] = row["codeName"]
         report["created"].append({"resource": "code", "id": code_id, "type": kind,
-                                  "name": row["codeName"], "new": bool(row.get("created"))})
+                                  "name": row["codeName"],
+                                  "display_name": row.get("displayName"),
+                                  "new": bool(row.get("created"))})
         save()
 
     for music_id in state["empty"] + (state["differs"] if replace_existing else []):
@@ -328,7 +445,7 @@ def apply_plan(client, tracks, state, report, save, replace_existing=False):
         mood_ids = [codes[("MOOD", name)] for name in mood_names]
         stored = client.replace_classification(music_id, genre_ids, mood_ids)
         # 보낸 것이 아니라 저장된 것이 돌아온다. 다르면 여기서 멈춘다.
-        if sorted(stored["genreCodeIds"]) != genre_ids or sorted(stored["moodCodeIds"]) != mood_ids:
+        if sorted(stored["genreCodeIds"]) != sorted(genre_ids) or sorted(stored["moodCodeIds"]) != sorted(mood_ids):
             raise ValueError(f"저장 결과가 요청과 다름: music_id={music_id}")
         written = {"resource": "classification", "music_id": music_id,
                    "genre_code_ids": genre_ids, "mood_code_ids": mood_ids}

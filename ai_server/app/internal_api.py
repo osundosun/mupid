@@ -354,7 +354,10 @@ def _behavior_events(user_id: int) -> Optional[list]:
 def _genre_catalog(svc) -> list[str]:
     """AI 카탈로그의 장르 어휘. 없으면 빈 목록이고, 그때는 장르가 반영되지 않는다."""
     try:
-        return [str(x["value"]) for x in svc.catalog_facets().get("genre", [])]
+        facets = svc.catalog_facets()
+        genre = [str(x["value"]) for x in facets.get("genre", [])]
+        style = [str(x["value"]) for x in facets.get("style", [])]
+        return list(set(genre + style))
     except Exception as e:
         log(f"장르 어휘를 읽지 못했다 — 온보딩 장르가 반영되지 않는다 ({type(e).__name__})")
         return []
