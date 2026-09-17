@@ -668,16 +668,16 @@ export function useMupid(bootstrap: Bootstrap) {
   /** 화면이 쓰는 곡 번호(`id`)를 서버 음악 번호로 옮긴다. 이벤트는 서버 번호로 나간다. */
   const musicIdOf = (id: number) => tracks.find((t) => t.id === id)?.musicId;
   /**
-   * 이벤트에 실을 플레이리스트 번호. 서버 번호가 아니면 0("모름")을 보낸다.
+   * 이벤트에 실을 플레이리스트 번호. 범위를 벗어나면 0("모름")을 보낸다.
    *
-   * **플레이리스트는 아직 서버에 저장되지 않는다.** `createPlaylist` 가 `Date.now()`
-   * 로 화면 안에서만 쓰는 번호를 만드는데, 그 값은 1.7조쯤이라 `listen_events` 의
-   * `playlist_id`(UInt32)에 들어가지 않는다. 그대로 보내면 **그 이벤트가 실린 배치
-   * 전체가 400 으로 거부되고**, 같이 실려 가던 재생 기록까지 사라진다.
+   * 이제 `Playlist.id` 는 서버의 `playlist_id` 라 이 검사는 늘 통과한다. 그래도
+   * 남겨 둔 것은 여기서 걸러 내지 못한 값이 **그 이벤트가 실린 배치 전체를 400 으로
+   * 떨어뜨리고**, 같이 실려 가던 재생 기록까지 날리기 때문이다. 화면 전용 번호를
+   * 쓰던 시절(`Date.now()`, ≈1.7조)에 `listen_events.playlist_id`(UInt32)를 넘겨
+   * 실제로 그렇게 됐다.
    *
    * 0 으로 보내도 손해가 적다. `PLAYLIST_ADD` 의 구간 신호(+0.8)는 `track_id` 와
    * `position_ms` 로 만들어지므로 그대로 남는다 — 어느 목록에 담았는지만 모른다.
-   * 서버 플레이리스트 API 를 붙이면 그때 진짜 번호가 이 검사를 통과한다.
    */
   const playlistIdOf = (id: number) =>
     Number.isInteger(id) && id > 0 && id <= 4294967295 ? id : 0;
