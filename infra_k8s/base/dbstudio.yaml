@@ -31,13 +31,6 @@ spec:
     app: dbstudio
   ports: [{name: http, port: 8080, targetPort: 8080}]
 ---
-apiVersion: v1
-kind: Service
-metadata: {name: dbstudio-replica, namespace: mupid}
-spec:
-  selector: {app: dbstudio, dbstudio.io/role: replica}
-  ports: [{name: http, port: 8080, targetPort: 8080}]
----
 apiVersion: apps/v1
 kind: StatefulSet
 metadata: {name: dbstudio, namespace: mupid}
@@ -156,60 +149,3 @@ spec:
         resources:
           requests:
             storage: 64Mi
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata: {name: dbstudio-replica, namespace: mupid}
-spec:
-  serviceName: dbstudio-replica
-  replicas: 1
-  selector: {matchLabels: {app: dbstudio, dbstudio.io/role: replica}}
-  template:
-    metadata: {labels: {app: dbstudio, dbstudio.io/role: replica}}
-    spec:
-      nodeSelector: {mupid.io/role: edge}
-      containers:
-        - name: dbstudio
-          # 마스터와 같은 digest 여야 한다. 다르면 마스터에만 있는 컬럼을 건너뛰고
-          # 스냅샷에 없는 표는 손대지 않은 채, 어디에도 오류를 남기지 않는다.
-          image: 
-            ghcr.io/yejun614/db-studio@sha256:75edf043d6c4ff3c5b856f6adf9f4cde53e28a30b1f57c88993df619ce8acfb4
-          env:
-            - {name: TZ, value: Asia/Seoul}
-            - {name: DBSTUDIO_ADDR, value: ':8080'}
-            - {name: DBSTUDIO_DATA, value: /data}
-            - {name: DBSTUDIO_TRUST_PROXY, value: '1'}
-            - {name: DBSTUDIO_CLUSTER_ROLE, value: replica}
-            # Service 이름으로 부른다. 승격할 때 이 값을 새 마스터로 바꿔야 하는데,
-            # 이름을 쓰면 Service 의 selector 만 옮겨도 된다.
-            - {name: DBSTUDIO_CLUSTER_MASTER, value: 'http://dbstudio:8080'}
-            - {name: DBSTUDIO_CLUSTER_ADVERTISE, value: 'http://dbstudio-replica:8080'}
-            - {name: DBSTUDIO_CLUSTER_NODE_NAME, value: replica-node-a}
-            - name: DBSTUDIO_CLUSTER_SECRET
-              valueFrom: {secretKeyRef: {name: dbstudio-secrets, key: 
-                    DBSTUDIO_CLUSTER_SECRET}}
-            - name: DBSTUDIO_MASTER_KEY
-              valueFrom: {secretKeyRef: {name: dbstudio-secrets, key: 
-                    DBSTUDIO_MASTER_KEY}}
-          ports: [{containerPort: 8080}]
-          resources:
-            # 리플리카는 폴링·정기 실행·감사 기록을 하지 않는다.
-            requests: {cpu: 100m, memory: 128Mi}
-            limits: {memory: 512Mi}
-          volumeMounts: [{name: data, mountPath: /data}]
-          readinessProbe:
-            httpGet: {path: /api/v1/health, port: 8080}
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            failureThreshold: 6
-          livenessProbe:
-            httpGet: {path: /api/v1/health, port: 8080}
-            initialDelaySeconds: 30
-            periodSeconds: 30
-            failureThreshold: 5
-  volumeClaimTemplates:
-    - metadata: {name: data}
-      spec:
-        accessModes: [ReadWriteOnce]
-        storageClassName: local-path
-        resources: {requests: {storage: 5Gi}}
