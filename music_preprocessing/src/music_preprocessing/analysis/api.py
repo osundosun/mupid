@@ -201,6 +201,7 @@ class InternalApi:
 
 def prepare(track: dict, api: InternalApi, work_dir: Path, *,
             sections_json: Optional[Path] = None,
+            demix_root: Optional[Path] = None,
             load=None, measure=None) -> BatchTrack:
     """곡 하나를 내려받아 배치 입력으로 만든다.
 
@@ -222,6 +223,7 @@ def prepare(track: dict, api: InternalApi, work_dir: Path, *,
     sj = Path(sections_json) if sections_json else work / f"{mid}.sections.json"
     return BatchTrack(track_id=mid, audio_path=audio, sections_json=sj,
                       content_row=row, meta_row=meta_row(track, mid), source="flow",
+                      demix_root=Path(demix_root) if demix_root else None,
                       temp_audio=True)      # 내려받은 사본이다. 처리 뒤 배치가 지운다
 
 
@@ -315,6 +317,7 @@ class HttpRegistrar:
     analysis_version: str = "v1"
     registered: list = field(default_factory=list)
     errors: list = field(default_factory=list)
+    codes_added: list = field(default_factory=list)
 
     def available(self) -> tuple[bool, str]:
         if self.client is None:
@@ -324,6 +327,7 @@ class HttpRegistrar:
         return True, ""
 
     def register(self, tracks: Sequence, new_dir: Path) -> dict:
+        self.ensure_instrument_codes(tracks)
         rows = []
         for t in tracks:
             mid = str(t.track_id)
@@ -338,7 +342,29 @@ class HttpRegistrar:
             self.registered.append({"track_id": mid,
                                     "sections": int(d.get("replaced") or len(got))})
         n = merge_id_map(Path(new_dir), rows)
-        return {"tracks": len(self.registered), "sections": len(rows), "id_map_rows": n}
+        return {"tracks": len(self.registered), "sections": len(rows),
+                "id_map_rows": n, "codes_added": len(self.codes_added)}
+
+    def ensure_instrument_codes(self, tracks: Sequence) -> None:
+        """구간을 올리기 **전에** 악기 코드를 만들어 둔다.
+
+        `CodeType.INSTRUMENT` 는 부트스트랩이 심지 않는다 — 확정된 목록이 없어서다.
+        그리고 서버는 코드표에 없는 악기 이름을 **버리고 센다** (구간은 살린다).
+        그래서 순서가 뒤집히면 오류 없이 악기만 조용히 비어 보인다.
+
+        `POST /api/v1/code` 는 멱등이라 매 배치가 다시 불러도 값이 같다.
+        """
+        wanted = []
+        for t in tracks:
+            for s in getattr(t, "sections", []):
+                for name in (s.get("instruments") or []):
+                    if name not in wanted:
+                        wanted.append(name)
+        for name in wanted:
+            row = self.client.add_code("INSTRUMENT", name)
+            if row.get("created"):
+                self.codes_added.append({"code_id": row.get("codeId"),
+                                         "name": row.get("codeName")})
 
 
 def sections_payload(new_track) -> list[dict]:
@@ -352,9 +378,16 @@ def sections_payload(new_track) -> list[dict]:
         a, b = int(round(float(s["start_sec"]) * 1000)), int(round(float(s["end_sec"]) * 1000))
         if b <= a:
             raise ValueError(f"{mid}: 경계가 뒤집혔다 {a} >= {b}")
-        out.append({"section_index": int(s["section_idx"]),
-                    "external_id": f"{mid}#{int(s['section_idx'])}",
-                    "section_label": label, "start_time_ms": a, "end_time_ms": b})
+        line = {"section_index": int(s["section_idx"]),
+                "external_id": f"{mid}#{int(s['section_idx'])}",
+                "section_label": label, "start_time_ms": a, "end_time_ms": b}
+        # 악기는 **코드 이름**으로 보낸다 — 번호는 서버가 붙인다. 못 잰 곡은 비어
+        # 있고, 그때 필드를 아예 빼 옛 값을 지키지 않는다: 요구 1 은 곡 단위 교체라
+        # 빈 목록과 "안 보냄" 이 같다.
+        names = [str(x) for x in (s.get("instruments") or [])]
+        if names:
+            line["instruments"] = names
+        out.append(line)
     return out
 
 
@@ -380,6 +413,12 @@ def merge_id_map(new_dir: Path, rows: list[dict]) -> int:
     return len(out)
 
 
+def segmenter_demix_dirname() -> str:
+    from .segmenter import DEMIX_DIRNAME
+
+    return DEMIX_DIRNAME
+
+
 def collect(api: InternalApi, work_dir: Path, *, limit: int = 200,
             segmenter=None) -> tuple[list, dict]:
     """요구 5 → 내려받기 → 분할 → 배치 입력.
@@ -392,12 +431,16 @@ def collect(api: InternalApi, work_dir: Path, *, limit: int = 200,
     """
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
+    # 분할기가 demucs 스템을 남기는 곳. 구간별 악기를 거기서 읽는다
+    # (`segmenter.ALLIN1_KEEP_BYPRODUCTS`). 분할기가 없으면 악기도 없다.
+    demix = (Path(segmenter.work_dir) / segmenter_demix_dirname()
+             if segmenter is not None else None)
     _, pending = api.pending(limit=limit)
     out, failed, sha = [], {}, {}
     for t in pending:
         mid = str(t.get("music_id"))
         try:
-            bt_ = prepare(t, api, work)
+            bt_ = prepare(t, api, work, demix_root=demix)
             sha[mid] = str(t.get("audio_sha256") or "")
             if segmenter is not None and not bt_.sections_json.exists():
                 got = segmenter.analyze([(mid, bt_.audio_path)])
