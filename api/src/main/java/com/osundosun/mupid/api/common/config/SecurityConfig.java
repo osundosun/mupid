@@ -72,22 +72,29 @@ public class SecurityConfig {
                  * (`frontend/lib/routes.ts` 의 publicPaths 는 `/`·`/login`·`/signup`
                  * 뿐이다) 데모 곡도 없앴다. 비로그인이 곡을 보는 화면 자체가 없으니
                  * 열어 둘 이유가 사라졌다. 열어 두면 곡·가사·분석이 통째로 공개된다.
-                 *
-                 * 다만 **앨범·아티스트·곡 커버 이미지는 연다.** `<img src>` 에는
-                 * Authorization 헤더를 붙일 수 없어서, 닫으면 목록의 표지가 전부
-                 * 깨진다. 키가 앨범·아티스트 이름이거나 곡 번호라 개인 정보도 아니다.
-                 * 프로필 사진(PROFILE)은 개인 정보라 열지 않는다 — 그쪽은 토큰을
-                 * 붙여 바이트를 받아 object URL 로 쓴다(`lib/profile-photo.ts`).
-                 *
-                 * **MuBTI 캐릭터도 같은 이유로 연다** (`/report` 의 유형 일러스트).
-                 * 키가 네 축 조합(`VTFC.webp`)이라 개인 정보가 아니다. 닫아 두면
-                 * `<img src>` 가 401 을 받아 캐릭터가 뜨지 않는다 — 실제로
-                 * `ALBUM`·`ARTIST`·`TRACK` 만 열려 있어서 그랬다.
                  */
-                .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/ALBUM/*").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/ARTIST/*").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/TRACK/*").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/MUBTI/*").permitAll()
+                /*
+                 * 이미지 저장소 (`StorageImageController`).
+                 *
+                 * 쓰기(업로드·삭제)는 경로에 카테고리가 보여 가릴 수 있지만, 여기서
+                 * 가리지 않는다 — 권한 판단은 카테고리가 들고 있는 정책 하나가 한다
+                 * (`FileCategory.accessPolicy`). 인증만 요구하고 나머지는 서비스가 본다.
+                 *
+                 * 읽기는 둘로 나뉜다.
+                 *   - `/{fileId}` — 번호만 보이는 주소라 경로로 가릴 수 없다.
+                 *   - `/PROFILE/default` — 사진 없는 계정의 자리를 채우는 기본 이미지.
+                 *
+                 * 그래서 읽기 경로를 통째로 열고, 실제 공개 여부는 서비스가 카테고리
+                 * 정책으로 판단한다(`StorageImageServiceImpl.getImageData`). 열어 둘 수
+                 * 있는 근거는 곡 카탈로그를 닫은 것과 다르지 않다 — 공개 카테고리
+                 * (ALBUM·ARTIST·TRACK·MUBTI)는 `<img src>` 로 그리는데 거기에
+                 * Authorization 헤더를 붙일 수 없어 닫으면 목록의 표지가 전부 깨지고,
+                 * 키가 앨범·아티스트 이름이나 유형 코드라 개인 정보도 아니다.
+                 * 프로필 사진(PROFILE)은 개인 정보라, 스트리밍 청크(STREAMING)는 내부
+                 * 자원이라 서비스가 401 로 막는다.
+                 */
+                .requestMatchers(HttpMethod.GET, "/api/v1/storage/image/**").permitAll()
+
                 // 온보딩 선택지(무드·장르 이름)는 마스터 데이터다. 지금은 온보딩
                 // 화면이 로그인한 사람에게만 뜨므로 닫아도 되지만, 개인 정보가
                 // 아니고 가입 흐름을 건드리지 않으려 열어 둔다. 제출·조회는
