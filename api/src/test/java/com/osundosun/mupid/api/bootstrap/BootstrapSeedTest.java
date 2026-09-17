@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.report.entity.Mubti;
 import com.osundosun.mupid.api.report.enumerate.MubtiClass;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
@@ -107,6 +108,51 @@ class BootstrapSeedTest {
         Set<BootstrapRunner.CodeSeed> distinct = new HashSet<>(BootstrapRunner.CODE_SEEDS);
 
         assertThat(distinct).hasSize(BootstrapRunner.CODE_SEEDS.size());
+    }
+
+    @Test
+    @DisplayName("공통 코드의 표시명이 비어 있지 않다 — 화면이 빈 칸을 그리면 안 된다")
+    void codeSeedDisplayNamesArePresent() {
+        /* `codes.display_name` 은 NOT NULL 이고 최대 200자다.
+           `BootstrapRunner` 가 이 값으로 INSERT 하므로 기동 시점에 터진다. */
+        BootstrapRunner.CODE_SEEDS.forEach(seed -> {
+            assertThat(seed.displayName()).as("%s 표시명", seed.name()).isNotBlank();
+            assertThat(seed.displayName()).as("%s 표시명 길이", seed.name())
+                .hasSizeLessThanOrEqualTo(200);
+            assertThat(seed.name()).as("%s 이름 길이", seed.name())
+                .hasSizeLessThanOrEqualTo(50);
+        });
+    }
+
+    @Test
+    @DisplayName("분위기 17종은 대분류 8종을 앞에 그대로 두고 taxonomy 9종을 뒤에 붙인다")
+    void moodSeedsKeepTheOriginalEightFirst() {
+        /* 화면 차례가 곧 `code_id` 차례다(`findAllByCodeTypeOrderByCodeIdAsc`).
+           기존 8종의 차례와 이름은 **바뀌면 안 된다** — 이미 저장된
+           `onboarding_survey` 가 번호로 답을 갖고 있어서, 차례가 밀리면
+           기존 사용자의 답이 다른 분위기로 읽힌다. */
+        List<String> moods = BootstrapRunner.CODE_SEEDS.stream()
+            .filter(seed -> seed.type() == CodeType.MOOD)
+            .map(BootstrapRunner.CodeSeed::name)
+            .toList();
+
+        assertThat(moods).hasSize(17);
+        assertThat(moods.subList(0, 8)).containsExactly(
+            "잔잔한", "벅찬", "몽환적인", "신나는", "집중되는", "감성적인", "강렬한", "설레는");
+        assertThat(moods.subList(8, 17)).containsExactly(
+            "애상적인", "따뜻한", "몽글한", "화사한", "희망찬", "웅장한", "어두운", "고요한", "짜릿한");
+    }
+
+    @Test
+    @DisplayName("장르 8종도 차례가 그대로다")
+    void genreSeedsKeepTheirOrder() {
+        List<String> genres = BootstrapRunner.CODE_SEEDS.stream()
+            .filter(seed -> seed.type() == CodeType.GENRE)
+            .map(BootstrapRunner.CodeSeed::name)
+            .toList();
+
+        assertThat(genres).containsExactly(
+            "Electronic", "Indie", "R&B", "Rock", "Pop", "Hip-hop", "Jazz", "Classical");
     }
 
     @Test

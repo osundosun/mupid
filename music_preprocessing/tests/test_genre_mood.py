@@ -2,10 +2,12 @@
 import copy
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
+import music_preprocessing.genre_mood as gn
 from music_preprocessing.genre_mood import (
     BatchClient, apply_plan, inspect, main, summary, supplement_moods, validate,
 )
@@ -55,13 +57,17 @@ class Server:
         return copy.deepcopy(self.music)
 
     # ── 쓰기 ────────────────────────────────────────────────────────────
-    def add_code(self, code_type, name):
+    def add_code(self, code_type, name, display_name=None):
+        """표시명을 따로 받는다 — 서버가 `(종류, 이름)` 으로 멱등 판정을 하므로
+        이미 있는 코드면 표시명은 무시된다(`CodeServiceImpl.addCode`)."""
         folded = {(c["codeType"], c["codeName"].casefold()): c for c in self.codes}
         existing = folded.get((code_type, name.casefold()))
         if existing:
             return {**existing, "created": False}
+        # 표시명을 안 보내면 코드 이름이 곧 표시명이 된다 (서버와 같은 규칙).
+        shown = display_name if display_name else name
         row = {"codeId": max(c["codeId"] for c in self.codes) + 1,
-               "codeType": code_type, "codeName": name}
+               "codeType": code_type, "codeName": name, "displayName": shown}
         self.codes.append(row)
         self.writes.append(("code", row))
         self._maybe_lose_response()
@@ -426,6 +432,69 @@ class ClientTests(unittest.TestCase):
             request.assert_called_once_with(
                 "PUT", "/api/v1/music/91/classification",
                 json_body={"genreCodeIds": [31], "moodCodeIds": [30, 33]})
+
+    def test_post_code_carries_display_name_only_when_given(self):
+        """표시명은 **줄 게 있을 때만** 싣는다.
+
+        taxonomy 무드처럼 코드 이름이 영문 원문인 경우에만 한국어 표시명이 필요하다.
+        빈 값을 실어 보내면 옛 서버(이 필드를 모르는 판)에서 검증에 걸릴 수 있다."""
+        client = object.__new__(BatchClient)
+        with patch.object(client, "_request", return_value={"data": {}}) as request:
+            client.add_code("MOOD", "melancholic", "애상적인")
+            request.assert_called_once_with(
+                "POST", "/api/v1/code",
+                json_body={"codeType": "MOOD", "codeName": "melancholic",
+                           "displayName": "애상적인"})
+        with patch.object(client, "_request", return_value={"data": {}}) as request:
+            client.add_code("MOOD", "bright")
+            body = request.call_args.kwargs["json_body"]
+            self.assertNotIn("displayName", body)
+
+    def test_mood_display_names_match_the_ai_table(self):
+        """뜻 표가 AI 쪽과 어긋나면 안 된다.
+
+        `MISMATCHED_MOOD_DISPLAY_NAMES` 는 `ai_server/app/onboarding.py` 의
+        `MOOD_MAP` 뒷 9줄과 **같은 출처**인데, 이 패키지가 `ai_server` 를 부르면
+        numpy·pandas·torch 를 끌고 오게 되어 표를 두 벌로 둘 수밖에 없다.
+        그래서 대조를 여기서 한다 — 한쪽만 고치면 여기서 멈춘다."""
+        ai_root = Path(__file__).resolve().parents[2] / "ai_server"
+        if not (ai_root / "app" / "onboarding.py").exists():
+            self.skipTest("ai_server 가 없다")
+        sys.path.insert(0, str(ai_root))
+        try:
+            from app import onboarding as onb
+        finally:
+            sys.path.remove(str(ai_root))
+
+        # taxonomy 원문 → 그 태그가 뜻으로 이어지는 한국어 이름이 아니라,
+        # **taxonomy 이름 → 한국어 코드 이름** 표를 직접 맞춘다. 이게 두 벌이
+        # 어긋나는지 볼 수 있는 유일한 지점이다 — 색인 태그(emotional 등)를
+        # 거쳐서는 melancholic 이 어느 항목인지 알 수 없다.
+        self.assertEqual(gn.MISMATCHED_MOOD_DISPLAY_NAMES, onb.TAXONOMY_MOOD_NAMES,
+                         "taxonomy 무드의 한국어 이름이 AI 표와 다르다")
+        # 그 이름들이 실제로 MOOD_MAP 에 있어야 한다 — 없으면 변환이 비어
+        # 온보딩에서 고른 그 무드가 추천에 반영되지 않는다.
+        for korean in onb.TAXONOMY_MOOD_NAMES.values():
+            self.assertIn(korean, onb.MOOD_MAP, f"{korean} 이 AI 표에 없다")
+
+    def test_display_name_is_blank_for_genres_and_known_moods(self):
+        """장르·악기는 표시명이 그대로 코드 이름이다 (빈 값 → 서버가 채운다).
+
+        이미 한국어 코드가 서버에 있으면 그 코드에는 표시명을 붙이지 않는다."""
+        self.assertEqual(gn.display_name_for("GENRE", "synthpop", {}), "")
+        self.assertEqual(gn.display_name_for("INSTRUMENT", "drums", {}), "")
+        # 뜻 표에 없는 이름 — 서버가 코드 이름을 표시명으로 쓴다.
+        self.assertEqual(gn.display_name_for("MOOD", "잔잔한", {}), "")
+        # 이미 한국어 코드가 서버에 있으면 붙이지 않는다.
+        folded = gn.fold([("MOOD", "애상적인")])
+        self.assertEqual(gn.display_name_for("MOOD", "melancholic", folded), "")
+
+    def test_taxonomy_mood_outside_the_table_stops_the_run(self):
+        """원본에 새 taxonomy 무드가 생기면 멈춘다 — 영문이 화면에 뜨는 것을 막는다."""
+        gn.validate_taxonomy_moods([{"moods": ["warm", "calm"]}])
+        with self.assertRaises(ValueError) as caught:
+            gn.validate_taxonomy_moods([{"moods": ["warm", "새로운무드"]}])
+        self.assertIn("새로운무드", str(caught.exception))
 
     def test_offline_cli_never_connects(self):
         with tempfile.TemporaryDirectory() as temp:

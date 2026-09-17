@@ -155,11 +155,14 @@ class OnboardingSubmitOnceTest {
     }
 
     private Code persistCode(CodeType type, String name) {
+        /* `codes` 는 (code_type, code_name) 이 유니크다. 부트스트랩이 채운 기준
+         * 데이터와 부딪히지 않게 꼬리를 붙인다 — `OnboardingResultTest` 와 같다.
+         * `display_name` 은 NOT NULL 이라 같은 값으로 채운다. */
+        String unique = "%s-%s".formatted(name, UUID.randomUUID().toString().substring(0, 8));
         Code code = Code.builder()
             .codeType(type)
-            /* `codes` 는 (code_type, code_name) 이 유니크다. 부트스트랩이 채운 기준
-             * 데이터와 부딪히지 않게 꼬리를 붙인다 — `OnboardingResultTest` 와 같다. */
-            .codeName("%s-%s".formatted(name, UUID.randomUUID().toString().substring(0, 8)))
+            .codeName(unique)
+            .displayName(unique)
             .build();
         em.persist(code);
         return code;

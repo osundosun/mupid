@@ -326,7 +326,7 @@ class MupidClient:
         )
         return body["data"]
 
-    def add_code(self, code_type: str, code_name: str) -> dict:
+    def add_code(self, code_type: str, code_name: str, display_name: str = "") -> dict:
         """공통 코드를 더한다. **이미 있으면 그 행이 그대로 온다** (`created: false`).
 
         `POST` 인데 멱등이다 — `codes` 의 `(code_type, code_name)` 이 UNIQUE 라
@@ -340,16 +340,20 @@ class MupidClient:
             code_type: `GENRE` · `MOOD` · `INSTRUMENT`
             code_name: 표시 이름. 같은 종류 안에서 고유하고, MySQL 기본
                 콜레이션이라 **대소문자를 구분하지 않는다** (`Pop` 과 `pop` 은 같다).
+            display_name: 화면에 보여줄 이름. **비우면 서버가 `code_name` 으로 채운다.**
+                분위기 taxonomy 9종처럼 색인 원문이 코드 이름과 다를 때만 넘긴다 —
+                이때 `code_name` 이 화면용 한국어, `display_name` 이 색인 원문이 된다.
 
         Returns:
-            `{ "codeId": …, "codeType": …, "codeName": …, "created": bool }`.
+            `{ "codeId": …, "codeType": …, "codeName": …, "displayName": …, "created": bool }`.
             `codeName` 은 서버에 저장된 철자다 — 보낸 것과 다를 수 있다.
         """
-        body = self._request(
-            "POST",
-            "/api/v1/code",
-            json_body={"codeType": code_type, "codeName": code_name},
-        )
+        payload = {"codeType": code_type, "codeName": code_name}
+        # 빈 문자열을 실어 보내지 않는다. 서버는 `null`·빈 값을 같은 뜻으로 보지만,
+        # 옛 서버(이 필드를 모르는 판)에 `displayName` 을 실어 보내면 검증에 걸릴 수 있다.
+        if display_name:
+            payload["displayName"] = display_name
+        body = self._request("POST", "/api/v1/code", json_body=payload)
         return body["data"]
 
     def replace_sections(

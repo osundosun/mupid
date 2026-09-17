@@ -148,15 +148,18 @@ class OnboardingResultTest {
     }
 
     private Code persistCode(CodeType type, String name) {
+        /* `codes` 는 (code_type, code_name) 이 유니크다 (`ix_codes_type_name`).
+           기동 때 `BootstrapRunner` 가 기준 데이터를 채우므로 "잔잔한" 을 그대로
+           넣으면 부딪힌다. 검증에 쓰는 것은 이름이 아니라 번호라 꼬리를 붙인다.
+           `code_name` 이 VARCHAR(50) 이라 UUID 를 통째로 붙이지는 않는다.
+
+           `display_name` 은 NOT NULL 이라 비우면 INSERT 가 터진다. 화면용 값이라
+           검증에 쓰지 않으므로 코드 이름과 **같은 값**으로 둔다. */
+        String unique = "%s-%s".formatted(name, UUID.randomUUID().toString().substring(0, 8));
         Code code = Code.builder()
             .codeType(type)
-            /*
-             * `codes` 는 (code_type, code_name) 이 유니크다 (`ix_codes_type_name`).
-             * 기동 때 `BootstrapRunner` 가 기준 데이터를 채우므로 "잔잔한" 을 그대로
-             * 넣으면 부딪힌다. 검증에 쓰는 것은 이름이 아니라 번호라 꼬리를 붙인다.
-             * `code_name` 이 VARCHAR(50) 이라 UUID 를 통째로 붙이지는 않는다.
-             */
-            .codeName("%s-%s".formatted(name, UUID.randomUUID().toString().substring(0, 8)))
+            .codeName(unique)
+            .displayName(unique)
             .build();
         em.persist(code);
         return code;

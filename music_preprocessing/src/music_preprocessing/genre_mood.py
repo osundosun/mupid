@@ -255,6 +255,61 @@ def fold(codes):
     return {(kind, name.casefold()): name for kind, name in codes}
 
 
+# 이 저장소가 곧 분류 어휘다. taxonomy 무드 9종은 색인(`mood_tags`)에 그 이름이
+# 하나도 없어 뜻으로 이어야 했다 — 그 대응이 여기 있다 (`ai_server/app/onboarding.py`
+# 의 `MOOD_MAP` 과 **같은 출처**다). 서버에 심을 때 `code_name` 은 화면용 한국어,
+# `display_name` 은 taxonomy 원문이 된다.
+#
+# `genre_mood` 가 직접 계산하지 않고 `ai_server` 를 부르지 않는 이유: 이 패키지는
+# 배치 서버에서 단독으로 도는 도구라 `ai_server` 의 의존성(numpy·pandas·torch)을
+# 끌고 올 수 없다. 그래서 표를 여기서 한 번 더 적는다 — **한쪽만 고치면 조용히
+# 어긋난다.** `test_genre_mood.py` 의 `test_mood_display_names_match_the_ai_table`
+# 이 둘을 대조한다.
+MISMATCHED_MOOD_DISPLAY_NAMES = {
+    "melancholic": "애상적인",
+    "warm": "따뜻한",
+    "dreamy": "몽글한",
+    "bright": "화사한",
+    "hopeful": "희망찬",
+    "powerful": "웅장한",
+    "dark": "어두운",
+    "calm": "고요한",
+    "exciting": "짜릿한",
+}
+
+
+def display_name_for(kind: str, name: str, folded: dict) -> str:
+    """서버에 보낼 표시명. **화면용 한국어가 색인 원문과 다를 때만** 값이 다르다.
+
+    `name` 은 taxonomy 원문(`melancholic`)이고, 화면에 그릴 말은 따로 있다
+    (`애상적인`). 대응이 없으면 빈 문자열을 돌려주고, 그러면 서버가 코드 이름을
+    그대로 표시명으로 쓴다 — 기존 동작과 같다.
+
+    **서버 철자를 먼저 본다.** 이미 `애상적인` 이라는 코드가 손으로 들어가 있어도
+    (`folded` 는 대소문자만 무시하고 한국어↔영문은 구분한다) 여기서는 걸리지
+    않으므로, 없는 코드에만 표시명이 붙는다.
+    """
+    if kind != "MOOD":
+        return ""
+    korean = MISMATCHED_MOOD_DISPLAY_NAMES.get(name.casefold())
+    if korean and (kind, korean.casefold()) not in folded:
+        return korean
+    return ""
+
+
+def validate_taxonomy_moods(tracks) -> None:
+    """원본이 아는 taxonomy 무드가 **전부** 뜻 표에 있어야 한다.
+
+    원본에 새 무드가 생기면 그 곡들은 코드 이름(영문)이 곧 표시명이 되어,
+    화면에 영문이 뜨고 분류도 조용히 어긋난다. 여기서 멈춘다.
+    """
+    unknown = sorted({name for t in tracks for name in t["moods"]
+                      if name.casefold() not in MISMATCHED_MOOD_DISPLAY_NAMES})
+    if unknown:
+        raise ValueError(f"뜻 표에 없는 taxonomy 무드: {unknown}"
+                         " — `MISMATCHED_MOOD_DISPLAY_NAMES` 를 채워야 한다")
+
+
 def wanted(track, folded):
     """이 곡에 있어야 할 분류를 **서버 철자로** 돌려준다."""
     genres = [folded.get(("GENRE", track["genre"].casefold()), track["genre"])]
@@ -312,13 +367,18 @@ def apply_plan(client, tracks, state, report, save, replace_existing=False):
     report["skipped"] = [] if replace_existing else sorted(state["differs"])
 
     for kind, name in state["missing_codes"]:
-        row = client.add_code(kind, name)
+        # 표시명을 함께 보낸다. taxonomy 무드는 `code_name` 이 영문 원문이라
+        # 화면에 그대로 뜨는데, 한국어 표시명을 여기서 붙인다. 그 외 종류는
+        # 빈 값이 가고 서버가 코드 이름을 표시명으로 쓴다.
+        row = client.add_code(kind, name, display_name_for(kind, name, folded))
         code_id = positive_id(row["codeId"])
         # 서버가 돌려준 철자를 쓴다. 대소문자만 다른 코드가 이미 있었다면 그 이름이다.
         codes[(kind, row["codeName"])] = code_id
         folded[(kind, row["codeName"].casefold())] = row["codeName"]
         report["created"].append({"resource": "code", "id": code_id, "type": kind,
-                                  "name": row["codeName"], "new": bool(row.get("created"))})
+                                  "name": row["codeName"],
+                                  "display_name": row.get("displayName"),
+                                  "new": bool(row.get("created"))})
         save()
 
     for music_id in state["empty"] + (state["differs"] if replace_existing else []):

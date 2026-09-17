@@ -123,6 +123,18 @@ export type ChatMessage = {
  */
 export const tracks: Track[] = [];
 
+/**
+ * 온보딩 선택지의 **대체 목록**이다.
+ *
+ * 평소에는 `GET /api/v1/onboarding/option` 이 준 목록을 쓴다 (`lib/onboarding.ts`
+ * 의 `loadOnboardingOptions`). 서버가 없거나 비로그인일 때만 여기로 돌아간다 —
+ * 온보딩은 앱에 들어가는 관문이라 여기서 막히면 아무것도 못 하기 때문이다.
+ *
+ * 그래서 **서버 코드표(`codes`)와 순서까지 같게 유지한다.** 서버가 심는 순서는
+ * `BootstrapRunner.CODE_SEEDS` 이고, 화면 차례가 곧 `code_id` 차례다
+ * (`findAllByCodeTypeOrderByCodeIdAsc`). 여기가 어긋나면 서버가 죽은 동안 고른
+ * 답이 다른 항목으로 저장된다.
+ */
 export const genreOptions = [
   'Electronic',
   'Indie',
@@ -133,6 +145,18 @@ export const genreOptions = [
   'Jazz',
   'Classical',
 ];
+/** 위와 같은 대체 목록 — 무드 쪽. **17종이다** (2026-09-17 추가).
+ *
+ * **앞 8개는 대분류, 뒤 9개는 taxonomy 세분류다.** taxonomy 무드 9종은 색인 축
+ * (`mood_tags`)에 그 이름이 하나도 없어 뜻으로 이어야 했고
+ * (`ai_server/app/onboarding.py` 의 `MOOD_MAP`), 세분류를 온보딩에 넣기로 하면서
+ * 선택지가 8에서 17로 늘었다.
+ *
+ * **두 층이 한 목록에 있다.** 대분류만 보이게 하려면 온보딩 화면에서
+ * `moodOptions.slice(0, 8)` 을 쓰거나 서버 응답을 갈라야 한다. 지금은 온보딩의
+ * 분위기 단계가 장르 단계와 분리돼 있어서(`WelcomeView` 의 `step === 1`) 섞이지
+ * 않는다 — 층위가 문제가 되는 곳은 장르 단계(대분류 8 + 세분류 45)뿐이다.
+ */
 export const moodOptions = [
   '잔잔한',
   '벅찬',
@@ -142,6 +166,16 @@ export const moodOptions = [
   '감성적인',
   '강렬한',
   '설레는',
+  // taxonomy 무드 9종 (색인 어휘 → 한국어). 순서는 곡 수 많은 순이다.
+  '애상적인',
+  '따뜻한',
+  '몽글한',
+  '화사한',
+  '희망찬',
+  '웅장한',
+  '어두운',
+  '고요한',
+  '짜릿한',
 ];
 
 export const formatTime = (seconds: number) => {
