@@ -222,7 +222,15 @@ def test_no_demix_root_means_empty_not_an_error():
 # ────────────────────────────────────────────── 5. 요구 1 로 나가는 모양
 
 class Track:
+    """등록기가 받는 곡 대역.
+
+    `music_id` 가 **따로 있다.** 요구 1 은 Spring 이 발급한 숫자 ID 를 요구하고,
+    `track_id` 는 로컬 파일명(`T000501`)일 수 있다 — 그래서 둘을 같은 값으로 두되
+    별도 필드로 흉내 낸다(`analysis/indexer.NewTrack` 과 같은 모양).
+    """
+
     track_id = "1234"
+    music_id = 1234
 
     def __init__(self, sections):
         self.sections = sections
