@@ -4,6 +4,7 @@ import { api } from '@/lib/api/session';
 import { isStreamed } from '@/lib/stream-catalog';
 import { formatTime, type Track } from '@/lib/mupid-data';
 import type { LyricLine } from '@/lib/api/endpoints';
+import { localDemoEnabled } from '@/lib/api/local-demo';
 
 /**
  * 곡 가사.
@@ -17,8 +18,13 @@ export function Lyrics({ track, time = 0, expanded = false }: { track: Track; ti
   const [lines, setLines] = useState<LyricLine[] | null>(null);
   const [error, setError] = useState(false);
   const streamed = isStreamed(track);
+  const local = localDemoEnabled() && Boolean(track.localAudio);
   useEffect(() => {
     setError(false);
+    if (local) {
+      setLines(track.localLyrics ?? []);
+      return;
+    }
     if (!streamed) {
       setLines([]);
       return;
@@ -35,18 +41,19 @@ export function Lyrics({ track, time = 0, expanded = false }: { track: Track; ti
         if (!abort.signal.aborted) setError(true);
       });
     return () => abort.abort();
-  }, [track.id, track.musicId, streamed]);
+  }, [track.id, track.musicId, streamed, local, track.localLyrics]);
   const displayedLines = lines;
   const currentIndex = Math.max(0, (displayedLines ?? []).findLastIndex(line => line.time_ms <= time * 1000));
   const previewLines = expanded ? displayedLines : displayedLines?.slice(currentIndex, currentIndex + 2);
-  const note = !streamed
+  const note = !streamed && !local
     ? '체험용 곡이라 가사가 없어요.'
     : error
       ? '가사를 불러오지 못했어요.'
       : displayedLines === null
         ? '가사를 불러오고 있어요…'
         : displayedLines.length === 0
-          ? '등록된 가사가 없습니다.'
+          // 원래 없는 곡과 아직 못 붙인 곡을 같은 말로 덮으면 사실이 아니게 된다.
+          ? (track.instrumental ? '연주곡이라 원래 가사가 없어요.' : '등록된 가사가 없습니다.')
           : '';
   return <section className="song-lyrics" key={track.id} aria-label={`${track.title} 가사`}>
     <h3>{track.title}</h3>

@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Clock3, Heart, X } from 'lucide-react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Clock3, MessageCircle, X } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,6 +16,7 @@ import { formatTime } from '@/lib/mupid-data';
 import { EmptyState, PlayerControls } from './primitives';
 import { commentable, validateComment } from '@/lib/comment-rules';
 import { trackComments, commentUserId, ownsComment, type TrackComment } from '@/lib/track-comments';
+import { localDemoEnabled } from '@/lib/api/local-demo';
 import { profilePhotoStore } from '@/lib/profile-photo';
 import { DEFAULT_PROFILE_PHOTO } from './profile-image';
 import { useStore } from '@/lib/store';
@@ -30,13 +31,15 @@ function CommentAvatar({ comment }: { comment: TrackComment }) {
   return <img className="comment-avatar-image" src={src} alt="" onError={() => { if (src !== DEFAULT_PROFILE_PHOTO) setFailed(src); }} />;
 }
 
-export function TrackComments({ model: m }: { model: MupidModel }) {
+export function TrackComments({ model: m, children }: { model: MupidModel; children?: ReactNode }) {
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
   if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
   const userId = commentUserId(m.demoSession);
   const service = trackComments;
-  const available = commentable(active) && m.demoSession?.kind === 'authenticated';
+  // 로컬 데모 곡은 서버에 없지만(`musicId` 없음) 브라우저 저장소가 댓글을 받는다.
+  const localComments = localDemoEnabled() && Boolean(active.localAudio);
+  const available = (commentable(active) || localComments) && m.demoSession?.kind === 'authenticated';
   const [items, setItems] = useState<TrackComment[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
@@ -62,7 +65,13 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
   useEffect(() => {
     if (!draft || busy) return;
     const dismiss = (event: PointerEvent) => {
-      if (!bubble.current?.contains(event.target as Node)) setDraft(null);
+      const node = event.target as Node | null;
+      if (bubble.current?.contains(node as Node)) return;
+      // 토글 자신을 누른 것은 '바깥 클릭' 이 아니다. 여기서 닫아 버리면
+      // 토글의 onClick 이 닫힌 상태를 보고 곧바로 다시 연다.
+      const element = node instanceof Element ? node : node?.parentElement ?? null;
+      if (element?.closest('[data-comment-toggle]')) return;
+      setDraft(null);
     };
     const escape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setDraft(null); waveInput.current?.focus(); }
@@ -112,6 +121,7 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
       input.current?.focus({ preventScroll: true });
     });
   };
+  const closePanel = () => { setSelectedTime(null); setDraft(null); setBody(''); };
   const visible = items.filter(c => c.trackId === active.id && Number.isFinite(c.at) && c.at >= 0 && c.at <= active.duration);
   // 같은 시점만 묶는다. 가까운 다른 시점은 가로 위치를 유지하고 다음 줄에 둔다.
   const moments = new Map<number, TrackComment[]>();
@@ -120,16 +130,45 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
     comments.push(comment);
     moments.set(comment.at, comments);
   }
-  const laneEnds: number[] = [];
-  const markers = [...moments.entries()].sort(([a], [b]) => a - b).map(([at, comments]) => {
-    const left = at / Math.max(1, active.duration) * 100;
-    const x = left / 100 * railWidth;
-    let lane = laneEnds.findIndex(end => x - end >= 44);
-    if (lane === -1) lane = laneEnds.length;
-    laneEnds[lane] = x;
-    return { at, comments, left, lane };
-  });
-  const selectedComments = selectedTime === null ? [] : moments.get(selectedTime) ?? [];
+  /*
+   * 하트는 **한 줄에만 둔다.**
+   *
+   * 전에는 겹치는 것을 아래 줄로 내렸는데, 가까운 시점 몇 개 때문에 레일이
+   * 세로로 흩어져 어느 하트가 어느 시점인지 읽기 어려웠다. 대신 서로 겹칠
+   * 만큼 가까운 시점끼리 하나로 묶고 개수를 배지로 보여 준다.
+   *
+   * 묶는 기준은 **처음 놓인 하트**에서의 거리다. 직전 하트에서 재면 조금씩
+   * 가까운 것들이 사슬처럼 이어져 묶음 하나가 레일 끝까지 자란다.
+   */
+  const MARKER_WIDTH = 44;
+  const clusters: { at: number; comments: TrackComment[]; left: number }[] = [];
+  let anchorX = -Infinity;
+  for (const [at, comments] of [...moments.entries()].sort(([a], [b]) => a - b)) {
+    const x = at / Math.max(1, active.duration) * railWidth;
+    const last = clusters[clusters.length - 1];
+    if (last && x - anchorX < MARKER_WIDTH) { last.comments.push(...comments); continue; }
+    clusters.push({ at, comments: [...comments], left: at / Math.max(1, active.duration) * 100 });
+    anchorX = x;
+  }
+  const selectedComments = selectedTime === null
+    ? []
+    : clusters.find(c => c.at === selectedTime)?.comments ?? moments.get(selectedTime) ?? [];
+  const composer = draft && <form ref={bubble} className="wave-comment-composer" role="dialog" aria-label={`${formatTime(draft.at)} 댓글 ${draft.id ? '수정' : '작성'}`} onSubmit={async e => {
+    e.preventDefault(); if (busy || !ready || !validateComment(body, draft.at, active.duration)) return;
+    if (userId === null) { m.openLogin(); return; }
+    if (draft.id && !items.some(c => c.id === draft.id && ownsComment(c, userId))) return;
+    const done = await run(async () => {
+      const saved = draft.id
+        ? await service.update(active, draft.id, body)
+        : await service.add(active, draft.at, body);
+      setItems(current => draft.id ? current.map(c => c.id === saved.id ? saved : c) : [...current, saved]);
+    });
+    if (done) { pendingDrafts.delete(active.id); setSelectedTime(draft.at); setPoint(draft.at); setDraft(null); setBody(''); }
+  }}>
+    <label htmlFor="moment-comment" className={selectedTime !== null && !draft.id ? 'sr-only' : undefined}><Clock3 size={16} /> {draft.id ? `${formatTime(draft.at)} · 댓글 수정` : `${formatTime(draft.at)}에 댓글 남기기`}</label>
+    <textarea ref={input} id="moment-comment" value={body} onChange={e => {setBody(e.target.value); if (!draft.id) pendingDrafts.set(active.id, {at: draft.at, body: e.target.value, owner: userId});}} maxLength={100} rows={2} disabled={busy} placeholder="이 순간, 어떤 느낌이 들었나요?" required />
+    <footer><span>{body.length}/100</span><button type="button" className="text-link" disabled={busy} onClick={() => {pendingDrafts.delete(active.id); setDraft(null); setBody('');}}>취소</button><button className="primary-button" disabled={!ready || busy || !body.trim() || (userId !== null && !available)}>{busy ? '저장 중…' : userId === null ? '로그인하고 등록' : draft.id ? '수정 저장' : '댓글 등록'}</button></footer>
+  </form>;
   // 수정·삭제 권한은 서버가 판정한 `mine` 을 따른다. 화면이 user_id 를 비교하지 않는다.
   return <section className="track-comments" style={{'--comment-anchor': `${Math.min(100, Math.max(0, (draft?.at ?? m.time) / Math.max(1, active.duration) * 100))}%`} as CSSProperties} aria-labelledby="track-comments-heading">
     <h2 id="track-comments-heading" className="sr-only">순간 댓글</h2>
@@ -137,49 +176,46 @@ export function TrackComments({ model: m }: { model: MupidModel }) {
       <div className="player-waveform player-line-timeline">
         <span className="player-progress-line" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.max(0, m.time / Math.max(1, active.duration) * 100))}%` }} /></span>
         <span className="wave-playhead" aria-hidden="true" style={{ left: `${Math.min(100, Math.max(0, m.time / Math.max(1, active.duration) * 100))}%` }} />
-        <input ref={waveInput} className="playback-range" type="range" aria-label="재생 위치 선택, Enter로 이 시점에 댓글 작성" aria-valuetext={formatTime(m.time)} min={0} max={active.duration} step={1} value={m.time} onChange={e => { const at = Number(e.target.value); m.seek(at); if (!draft) setPoint(at); }} onPointerUp={e => { const at = Number(e.currentTarget.value); setSelectedTime(at); setPoint(at); }} onKeyDown={e => {if (e.key === 'Enter') {e.preventDefault(); start(undefined, Number(e.currentTarget.value));}}} />
+        <input ref={waveInput} className="playback-range" type="range" aria-label="재생 위치 선택, Enter로 이 시점에 댓글 작성" aria-valuetext={formatTime(m.time)} min={0} max={active.duration} step={1} value={m.time} onChange={e => { const at = Number(e.target.value); m.seek(at); if (!draft) setPoint(at); }} onPointerUp={e => { const at = Number(e.currentTarget.value); setPoint(at); if (selectedTime !== null) setSelectedTime(at); }} onKeyDown={e => {if (e.key === 'Enter') {e.preventDefault(); const at = Number(e.currentTarget.value); setPoint(at); setSelectedTime(at); start(undefined, at);}}} />
       </div>
       <div className="moment-heart-scroll" aria-label="시간별 댓글">
-        <div ref={markerRail} className="moment-heart-rail" style={{ height: markers.length ? laneEnds.length * 44 : 0 }}>
-          {markers.map(({ at, comments, left, lane }) => <button key={at} className="moment-heart-marker" style={{ left: left + '%', top: lane * 44 }} aria-expanded={selectedTime === at} aria-label={formatTime(at) + ' 댓글 ' + comments.length + '개'} onClick={() => { setSelectedTime(at); setPoint(at); m.seek(at); }}>
-            <Heart size={19} fill="currentColor" />
+        <div ref={markerRail} className="moment-heart-rail" style={{ height: clusters.length ? MARKER_WIDTH : 0 }}>
+          {clusters.map(({ at, comments, left }) => <button key={at} className="moment-heart-marker" style={{ left: left + '%', top: 0 }} aria-expanded={selectedTime === at} aria-label={formatTime(at) + ' 댓글 ' + comments.length + '개'} onClick={() => { setSelectedTime(at); setPoint(at); m.seek(at); }}>
+            <span className="moment-author-avatar" aria-hidden="true"><CommentAvatar comment={comments[0]} /></span>
             {comments.length > 1 && <small>{comments.length}</small>}
           </button>)}
         </div>
       </div>
       {/* 팝오버가 파형을 덮으면 숫자만 남아 무슨 시간인지 알 수 없다. 이름표를 붙인다. */}
       <div className="time-labels"><span aria-label={`현재 재생 시간 ${formatTime(m.time)}`}>{formatTime(m.time)}</span><span aria-label={`전체 재생 시간 ${formatTime(active.duration)}`}>{formatTime(active.duration)}</span></div>
+      <PlayerControls model={m} />
+      <div className="player-quick-actions" aria-label="좋아요와 곡 저장, 댓글">
+        {children}
+        <button type="button" className="moment-panel-toggle" aria-expanded={selectedTime !== null} onClick={() => {
+          if (selectedTime !== null) { closePanel(); return; }
+          // 마지막으로 짚은 지점이 없으면 지금 듣고 있는 자리를 연다.
+          setSelectedTime(point ?? Math.min(active.duration, Math.max(0, Math.round(m.time))));
+        }}><MessageCircle />{selectedTime !== null ? '댓글 닫기' : `댓글 ${visible.length}개`}</button>
+      </div>
       {selectedTime !== null && <div className="wave-comment-popover selected-moment-popover" key={selectedTime} role="region" aria-label="선택한 시점의 댓글">
-        <header className="wave-comment-popover-head"><span>{formatTime(selectedTime)} · 댓글 {selectedComments.length}개</span><button className="icon-button" aria-label="댓글 닫기" onClick={() => setSelectedTime(null)}><X size={18} /></button></header>
+        <header className="wave-comment-popover-head"><span>{formatTime(selectedTime)} · 댓글 {selectedComments.length}개</span><button className="icon-button" aria-label="댓글 닫기" onClick={closePanel}><X size={18} /></button></header>
         <div className="selected-moment-messages">
           {selectedComments.length ? selectedComments.map(c => <article key={c.id}>
-            <div className="wave-comment-line"><span className="moment-author-avatar" aria-hidden="true"><CommentAvatar comment={c} /></span><strong>{c.author}</strong><span className="moment-comment-timestamp">{formatTime(c.at)}</span>{ownsComment(c, userId) && <button className="text-link moment-edit" onClick={() => start(c)}>수정</button>}</div>
+            <div className="wave-comment-line"><span className="moment-author-avatar" aria-hidden="true"><CommentAvatar comment={c} /></span><strong>{c.author}</strong><span className="moment-comment-timestamp">{formatTime(c.at)}</span>{ownsComment(c, userId) && <button className="text-link moment-edit" onClick={() => start(c)}>수정</button>}{ownsComment(c, userId) && <button className="text-link moment-delete" disabled={busy} onClick={() => setRemove(c.id)}>삭제</button>}</div>
             <p>{c.body}</p>
           </article>) : <p className="moment-popup-empty">이 순간에 첫 글을 남겨보세요.</p>}
         </div>
-        <button className="moment-popup-write" onClick={() => start(undefined, selectedTime)}><Clock3 size={16} />이 순간에 글 남기기</button>
+        <button type="button" data-comment-toggle className="moment-popup-write" aria-pressed={draft !== null && !draft.id} onClick={() => {
+          if (draft && !draft.id) { pendingDrafts.delete(active.id); setDraft(null); setBody(''); return; }
+          start(undefined, selectedTime);
+        }}><Clock3 size={16} />{formatTime(selectedTime)}에 댓글 남기기</button>
+        {composer}
       </div>}
 
     </div>
-    <PlayerControls model={m} />
     {!ready && !error && <output>댓글을 불러오고 있어요…</output>}
     {error && <p role="alert">{error} {!ready && <button className="text-link" onClick={() => {setError(''); setReload(v => v + 1);}}>다시 불러오기</button>}</p>}
-    {draft && <form ref={bubble} className="wave-comment-composer" role="dialog" aria-label={`${formatTime(draft.at)} 댓글 ${draft.id ? '수정' : '작성'}`} onSubmit={async e => {
-      e.preventDefault(); if (busy || !ready || !validateComment(body, draft.at, active.duration)) return;
-      if (userId === null) { m.openLogin(); return; }
-      if (draft.id && !items.some(c => c.id === draft.id && ownsComment(c, userId))) return;
-      const done = await run(async () => {
-        const saved = draft.id
-          ? await service.update(active, draft.id, body)
-          : await service.add(active, draft.at, body);
-        setItems(current => draft.id ? current.map(c => c.id === saved.id ? saved : c) : [...current, saved]);
-      });
-      if (done) { pendingDrafts.delete(active.id); setSelectedTime(draft.at); setPoint(draft.at); setDraft(null); setBody(''); }
-    }}>
-      <label htmlFor="moment-comment"><Clock3 size={16} /> {formatTime(draft.at)} · {draft.id ? '댓글 수정' : '이 시점에 남기기'}</label>
-      <textarea ref={input} id="moment-comment" value={body} onChange={e => {setBody(e.target.value); if (!draft.id) pendingDrafts.set(active.id, {at: draft.at, body: e.target.value, owner: userId});}} maxLength={100} rows={2} disabled={busy} placeholder="이 순간, 어떤 느낌이 들었나요?" required />
-      <footer><span>{body.length}/100</span><button type="button" className="text-link" disabled={busy} onClick={() => {pendingDrafts.delete(active.id); setDraft(null); setBody('');}}>취소</button><button className="primary-button" disabled={!ready || busy || !body.trim() || (userId !== null && !available)}>{busy ? '저장 중…' : userId === null ? '로그인하고 등록' : draft.id ? '수정 저장' : '댓글 등록'}</button></footer>
-    </form>}
+    {selectedTime === null && composer}
     <AlertDialog open={remove !== null} onOpenChange={open => { if (!open) setRemove(null); }}>
       <AlertDialogContent className="sky-dialog">
         <AlertDialogHeader>

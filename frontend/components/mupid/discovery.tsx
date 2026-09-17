@@ -93,8 +93,12 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
           <div className="section-pill">
             {part.label} · {formatTime(part.start)} – {formatTime(part.end)}
           </div>
-          <TrackComments key={active.id} model={m} />
-          <div className="player-quick-actions" aria-label="곡 저장과 좋아요">
+          {/* 줄은 `TrackComments` 가 그린다 — 같은 줄에 설 댓글 토글이 그쪽 상태를 쓴다. */}
+          <TrackComments key={active.id} model={m}>
+            <button className="secondary-button" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
+              <Heart className="pink" fill={m.liked.includes(active.id) ? 'currentColor' : 'none'} />
+              좋아요
+            </button>
             <button
               className="quick-save"
               aria-label="현재 곡의 저장할 순간 선택하기"
@@ -104,11 +108,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
               이 순간 저장
             </button>
             <button className="secondary-button" aria-expanded={m.queueOpen} aria-controls="queue-dock" onClick={m.toggleQueue}><ListMusic />재생목록</button>
-            <button className="secondary-button" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
-              <Heart className="pink" fill={m.liked.includes(active.id) ? 'currentColor' : 'none'} />
-              좋아요
-            </button>
-          </div>
+          </TrackComments>
           {recommendationReason && <details className="player-recommendation-toggle" key={`${active.id}:${recommendationReason}`}>
             <summary><Sparkles size={15} /><span>추천 이유</span><ChevronDown size={16} /></summary>
             <p>{recommendationReason}</p>

@@ -654,7 +654,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
   });
   useEffect(() => {
     const abort = new AbortController();
-    loadOnboardingOptions(abort.signal).then((value) => {
+    loadOnboardingOptions().then((value) => {
       if (abort.signal.aborted) return;
       setOptions({ moods: namesOf(value.moods), genres: namesOf(value.genres) });
     });
@@ -692,9 +692,19 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
           </button>
           <figure className="welcome-qr">
             <div className="welcome-qr-emblem">
-              {[false, true].map(right => <svg key={String(right)} className={`welcome-qr-wing${right ? ' is-right' : ''}`} viewBox="0 0 80 96" fill="none" aria-hidden="true">
-                <path d="M75 78C57 87 39 82 27 72C21 67 24 61 32 62C20 56 10 46 10 40C10 33 17 33 24 37C14 26 7 13 12 8C18 2 26 13 34 23C42 34 50 37 59 42C72 50 79 65 75 78Z" fill="#fdfdff" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                <path d="M25 38C34 49 46 58 61 63M32 62C40 68 50 72 61 73" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              {[false, true].map(right => <svg key={String(right)} className={`welcome-qr-wing${right ? ' is-right' : ''}`} viewBox="0 0 120 112" fill="none" aria-hidden="true">
+                <defs>
+                  <linearGradient id={`wing-body-${right}`} x1="40" y1="12" x2="82" y2="112" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#fff" /><stop offset=".55" stopColor="#fafbff" /><stop offset="1" stopColor="#dce3f2" />
+                  </linearGradient>
+                  <filter id={`wing-soft-${right}`} x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2.6" /></filter>
+                </defs>
+                <path d="M111 66C105 52 87 48 68 40C47 31 34 17 24 8C15 0 5 5 5 17C5 28 11 38 19 45C7 41 1 48 5 59C8 68 17 75 27 78C16 78 12 85 18 93C27 104 44 101 59 94C63 107 76 112 90 107C109 102 118 85 111 66Z" fill={`url(#wing-body-${right})`} stroke="#e4e9f5" strokeWidth=".8" />
+                <g stroke="#bdc9de" strokeWidth="4" strokeLinecap="round" filter={`url(#wing-soft-${right})`} opacity=".46">
+                  <path d="M19 44C29 54 42 57 51 54M27 77C37 82 48 77 54 71" />
+                  <path d="M62 93C53 76 65 63 79 65C94 67 98 83 87 89C80 93 73 88 76 82" />
+                </g>
+                <path d="M14 16C19 29 38 44 55 49" stroke="white" strokeWidth="5" strokeLinecap="round" opacity=".8" filter={`url(#wing-soft-${right})`} />
               </svg>)}
               <div className="welcome-qr-image"><img src="/mupid-qr.png" width={132} height={132} alt="뮤피드 접속 QR 코드" /></div>
             </div>

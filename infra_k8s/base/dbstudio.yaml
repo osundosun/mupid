@@ -23,12 +23,12 @@
 # 노드의 포트로 내놓지 않고, 내부 서비스를 통한 프록시로만 접근한다. 아래 두
 # Service 는 ClusterIP 이고 nodePort 도 hostPort 도 없다. nginx.conf 에도
 # dbstudio 업스트림이 없다 — 테스트가 셋 다 검사한다.
----
 apiVersion: v1
 kind: Service
 metadata: {name: dbstudio, namespace: mupid}
 spec:
-  selector: {app: dbstudio, dbstudio.io/role: master}
+  selector:
+    app: dbstudio
   ports: [{name: http, port: 8080, targetPort: 8080}]
 ---
 apiVersion: v1
@@ -44,35 +44,40 @@ metadata: {name: dbstudio, namespace: mupid}
 spec:
   serviceName: dbstudio
   replicas: 1
-  selector: {matchLabels: {app: dbstudio, dbstudio.io/role: master}}
+  selector: {matchLabels: {app: dbstudio}}
   template:
-    metadata: {labels: {app: dbstudio, dbstudio.io/role: master}}
+    metadata: {labels: {app: dbstudio}}
     spec:
       nodeSelector: {mupid.io/role: ai}
       containers:
         - name: dbstudio
-          # v0.2.1-alpine 의 digest 다. 태그가 아니라 digest
+          # v0.2.3-alpine 의 digest 다. 태그가 아니라 digest
           # 로 고정한 이유는 SeaweedFS 와 같고, 여기서는 하나 더 있다 — 두 노드의
           # 버전이 갈리면 복제가 조용히 일부만 된다. 실제로 :alpine 은 이 업그레이드
           # 사이에 0.1.21 에서 0.2.0 으로 옮겨 갔다.
-          image: ghcr.io/yejun614/db-studio@sha256:d43e93c5b7078d188ca5ca5f34e69128d79aa7a1c32378648d48ccf5e03dc555
+          image: 
+            ghcr.io/yejun614/db-studio@sha256:75edf043d6c4ff3c5b856f6adf9f4cde53e28a30b1f57c88993df619ce8acfb4
           env:
             - {name: TZ, value: Asia/Seoul}
             - {name: DBSTUDIO_ADDR, value: ':8080'}
             - {name: DBSTUDIO_DATA, value: /data}
             - {name: DBSTUDIO_TRUST_PROXY, value: '1'}
-            - {name: DBSTUDIO_CLUSTER_ROLE, value: master}
+            - {name: DBSTUDIO_CLUSTER_ROLE, value: replica}
+            - name: DBSTUDIO_CLUSTER_MASTER
+              value: http://100.114.240.20:8080
             # 다른 노드가 이 노드를 부를 주소. 비우면 요청을 넘길 수 없고 담당
             # 노드로 고를 수도 없다.
-            - {name: DBSTUDIO_CLUSTER_ADVERTISE, value: 'http://dbstudio:8080'}
-            - {name: DBSTUDIO_CLUSTER_NODE_NAME, value: master-node-b}
+            - {name: DBSTUDIO_CLUSTER_ADVERTISE, value: 'http://mupid-dbstudio-replica:8080'}
+            - {name: DBSTUDIO_CLUSTER_NODE_NAME, value: replica-node-b}
             # 환경변수로만 준다. 명령줄 인자는 프로세스 목록에 그대로 보이고,
             # 이 값 하나로 클러스터의 모든 데이터를 받아 갈 수 있다.
             - name: DBSTUDIO_CLUSTER_SECRET
-              valueFrom: {secretKeyRef: {name: dbstudio-secrets, key: DBSTUDIO_CLUSTER_SECRET}}
+              valueFrom: {secretKeyRef: {name: dbstudio-secrets, key: 
+                    DBSTUDIO_CLUSTER_SECRET}}
             # 저장된 접속 정보를 푸는 키. 두 노드가 같아야 한다.
             - name: DBSTUDIO_MASTER_KEY
-              valueFrom: {secretKeyRef: {name: dbstudio-secrets, key: DBSTUDIO_MASTER_KEY}}
+              valueFrom: {secretKeyRef: {name: dbstudio-secrets, key: 
+                    DBSTUDIO_MASTER_KEY}}
           ports: [{containerPort: 8080}]
           resources:
             # 마스터가 지표 폴링과 매크로 정기 실행을 맡는다.
@@ -89,6 +94,48 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 30
             failureThreshold: 5
+        - name: tailscale
+          image: 
+            tailscale/tailscale:v1.102.3@sha256:8c42c4574ab066384fcb72f69e086a2ff1dd3652eb6f56856cee34bcf0d2f680
+          env:
+            - name: TS_HOSTNAME
+              value: mupid-dbstudio-replica
+            - name: TS_STATE_DIR
+              value: /var/lib/tailscale
+            - name: TS_KUBE_SECRET
+              value: ''
+            - name: TS_AUTH_ONCE
+              value: 'true'
+            - name: TS_USERSPACE
+              value: 'false'
+            - name: TS_ACCEPT_DNS
+              value: 'false'
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: dbstudio-tailscale
+                  key: TS_AUTHKEY
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+                - NET_RAW
+          volumeMounts:
+            - name: tailscale-state
+              mountPath: /var/lib/tailscale
+            - name: devnet
+              mountPath: /dev/net/tun
+      volumes:
+        - name: devnet
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
   volumeClaimTemplates:
     # dbstudio.db(메타)·master.key·node.id 가 여기 생긴다. **이 디렉터리를 복사해
     # 새 노드를 만들면 안 된다** — node.id 가 같아져 두 노드가 노드 목록의 한 줄을
@@ -100,6 +147,15 @@ spec:
         accessModes: [ReadWriteOnce]
         storageClassName: local-path
         resources: {requests: {storage: 5Gi}}
+    - metadata:
+        name: tailscale-state
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 64Mi
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -116,7 +172,8 @@ spec:
         - name: dbstudio
           # 마스터와 같은 digest 여야 한다. 다르면 마스터에만 있는 컬럼을 건너뛰고
           # 스냅샷에 없는 표는 손대지 않은 채, 어디에도 오류를 남기지 않는다.
-          image: ghcr.io/yejun614/db-studio@sha256:d43e93c5b7078d188ca5ca5f34e69128d79aa7a1c32378648d48ccf5e03dc555
+          image: 
+            ghcr.io/yejun614/db-studio@sha256:75edf043d6c4ff3c5b856f6adf9f4cde53e28a30b1f57c88993df619ce8acfb4
           env:
             - {name: TZ, value: Asia/Seoul}
             - {name: DBSTUDIO_ADDR, value: ':8080'}
@@ -129,9 +186,11 @@ spec:
             - {name: DBSTUDIO_CLUSTER_ADVERTISE, value: 'http://dbstudio-replica:8080'}
             - {name: DBSTUDIO_CLUSTER_NODE_NAME, value: replica-node-a}
             - name: DBSTUDIO_CLUSTER_SECRET
-              valueFrom: {secretKeyRef: {name: dbstudio-secrets, key: DBSTUDIO_CLUSTER_SECRET}}
+              valueFrom: {secretKeyRef: {name: dbstudio-secrets, key: 
+                    DBSTUDIO_CLUSTER_SECRET}}
             - name: DBSTUDIO_MASTER_KEY
-              valueFrom: {secretKeyRef: {name: dbstudio-secrets, key: DBSTUDIO_MASTER_KEY}}
+              valueFrom: {secretKeyRef: {name: dbstudio-secrets, key: 
+                    DBSTUDIO_MASTER_KEY}}
           ports: [{containerPort: 8080}]
           resources:
             # 리플리카는 폴링·정기 실행·감사 기록을 하지 않는다.

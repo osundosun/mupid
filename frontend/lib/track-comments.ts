@@ -9,6 +9,8 @@
  */
 
 import { api } from './api/session';
+import { localDemoEnabled } from './api/local-demo';
+import { isLocalDemoCommentId, localDemoComments } from './local-demo-comments';
 import type { MusicComment } from './api/endpoints';
 import { analytics } from './analytics';
 import { commentable } from './comment-rules';
@@ -38,6 +40,14 @@ export {
   validateComment,
 } from './comment-rules';
 
+/**
+ * 이 곡의 댓글이 브라우저 저장소에 있는가.
+ *
+ * 로컬 데모 곡은 서버에 없어(`musicId` 없음) 보낼 데가 없다. 그 경우에만
+ * `lib/local-demo-comments.ts` 로 간다.
+ */
+const storedLocally = (track: Track) => localDemoEnabled() && Boolean(track.localAudio);
+
 /** 한 번에 받아 올 댓글 수. 넘치면 페이징으로 바꾼다. */
 const PAGE_SIZE = 100;
 
@@ -54,11 +64,13 @@ const toComment = (track: Track, comment: MusicComment): TrackComment => ({
 
 export const trackComments = {
   async list(track: Track, signal?: AbortSignal): Promise<TrackComment[]> {
+    if (storedLocally(track)) return localDemoComments.list(track);
     if (!commentable(track)) return [];
     const page = await api.comment.list(track.musicId, { size: PAGE_SIZE }, signal);
     return (page?.items ?? []).map((item) => toComment(track, item));
   },
   async add(track: Track, at: number, body: string): Promise<TrackComment> {
+    if (storedLocally(track)) return localDemoComments.add(track, at, body);
     if (!commentable(track)) throw new Error('이 곡에는 댓글을 남길 수 없어요.');
     const saved = await api.comment.add(track.musicId, {
       timestamp_ms: Math.round(at * 1000),
@@ -70,10 +82,13 @@ export const trackComments = {
     return toComment(track, saved);
   },
   async update(track: Track, id: string, body: string): Promise<TrackComment> {
+    if (isLocalDemoCommentId(id)) return localDemoComments.update(id, body);
     const saved = await api.comment.update(Number(id), body.trim());
     return toComment(track, saved);
   },
   async remove(id: string): Promise<void> {
+    // 곡을 받지 않으므로 댓글 번호의 접두사로 가른다.
+    if (isLocalDemoCommentId(id)) { localDemoComments.remove(id); return; }
     await api.comment.remove(Number(id));
     // 삭제는 `comment_id` 하나면 된다. 곡·시점은 원본 이벤트를 되짚으면 나온다.
     analytics.deleteComment(Number(id));
