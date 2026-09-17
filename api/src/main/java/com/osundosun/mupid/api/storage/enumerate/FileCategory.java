@@ -6,18 +6,38 @@ import com.osundosun.mupid.api.user.service.UserImageServiceImpl;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 
+/**
+ * 이미지 저장 용도.
+ *
+ * <p>들고 있는 것이 둘이다 — 사람이 읽을 이름과 <b>접근 정책</b>. 정책이 여기 붙어 있는
+ * 것은 카테고리를 아는 곳이 여기 하나이기 때문이다. 검사할 자리가 늘어나도
+ * ({@code StorageImageService} 의 조회·업로드·삭제) 규칙은 {@link ImageAccessPolicy}
+ * 한 곳만 본다.
+ */
 @Getter
 @RequiredArgsConstructor
 public enum FileCategory {
     
-    PROFILE("프로필 이미지", UserImageServiceImpl.class),
-    ARTIST("아티스트 이미지", null),
-    ALBUM("앨범 이미지", null),
-    TRACK("곡 커버 이미지", null),
-    MUBTI("MuBTI 캐릭터 이미지", null),
-    STREAMING("스트리밍용 오디오 청크", null);
+    /** 프로필 사진. 본인만 쓰고 지우며, 읽기는 비공개다. */
+    PROFILE("프로필 이미지", ImageAccessPolicy.OWNER, UserImageServiceImpl.class),
+
+    /** 아티스트 이미지. 배치 이상만 쓰고, 읽기는 공개다. */
+    ARTIST("아티스트 이미지", ImageAccessPolicy.CATALOG, null),
+
+    /** 앨범 이미지. 배치 이상만 쓰고, 읽기는 공개다. */
+    ALBUM("앨범 이미지", ImageAccessPolicy.CATALOG, null),
+
+    /** 곡 커버 이미지. 배치 이상만 쓰고, 읽기는 공개다. */
+    TRACK("곡 커버 이미지", ImageAccessPolicy.CATALOG, null),
+
+    /** MuBTI 캐릭터 이미지. 배치 이상만 쓰고, 읽기는 공개다. */
+    MUBTI("MuBTI 캐릭터 이미지", ImageAccessPolicy.CATALOG, null),
+
+    /** 스트리밍용 오디오 청크. 배치 이상만 다루고, 읽기도 비공개다. */
+    STREAMING("스트리밍용 오디오 청크", ImageAccessPolicy.MACHINE, null);
 
     private final String displayName;
+    private final ImageAccessPolicy accessPolicy;
     private final Class<? extends StorageImageServiceCallback> service;
 
 }

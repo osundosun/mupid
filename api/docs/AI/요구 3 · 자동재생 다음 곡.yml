@@ -62,7 +62,7 @@ examples:
                     "title": "첫 번째 곡",
                     "duration_ms": 213020,
                     "playable": true,
-                    "image_url": "/api/v1/storage/image/TRACK/...",
+                    "image_url": "/api/v1/storage/image/14",
                     "artist": { "artist_id": 1, "name": "무피드 테스트 아티스트" },
                     "album": { "album_id": 1, "title": "무피드 테스트 앨범" }
                   }

@@ -43,7 +43,7 @@ examples:
                   "title": "첫 번째 곡",
                   "artist_name": "무피드 테스트 아티스트",
                   "album_title": "무피드 테스트 앨범",
-                  "image_url": "/api/v1/storage/image/ALBUM/...",
+                  "image_url": "/api/v1/storage/image/12",
                   "listening_ms": 420000,
                   "share": 0.1186
                 }
@@ -57,7 +57,7 @@ examples:
                 "title": "보컬 인싸형",
                 "subtitle": "모두의 보컬은 곧 나의 최애",
                 "description": "지금 사랑받는 목소리를 끝까지 듣고, 마음에 든 곡은 오래 곁에 둬요.",
-                "image_url": "/api/v1/storage/image/MUBTI/VTFC.webp",
+                "image_url": "/api/v1/storage/image/12",
                 "axes": [
                   {
                     "axis": "A",
@@ -130,7 +130,7 @@ examples:
                   "title": "첫 번째 곡",
                   "artist_name": "무피드 테스트 아티스트",
                   "album_title": "무피드 테스트 앨범",
-                  "image_url": "/api/v1/storage/image/ALBUM/...",
+                  "image_url": "/api/v1/storage/image/12",
                   "listening_ms": 94000,
                   "share": 1.0
                 }

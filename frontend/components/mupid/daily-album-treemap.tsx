@@ -16,7 +16,7 @@ type Tile = ReportTrack & { x: number; y: number; w: number; h: number };
  * 타일 한 칸의 앨범 아트.
  *
  * **주소를 그대로 걸면 배포된 앱에서만 전부 깨진다.** 서버는 커버를
- * `/api/v1/storage/image/ALBUM/…` 처럼 **경로로** 준다. 웹은 API 와 같은 출처라
+ * `/api/v1/storage/image/{fileId}` 처럼 **경로로** 준다. 웹은 API 와 같은 출처라
  * 그대로 열리지만, 앱(Tauri)의 출처는 `http://tauri.localhost` 라 그 경로에는
  * 아무것도 없다 — 웹뷰가 엉뚱한 응답을 그리거나 깨진 아이콘을 남긴다.
  * `toImageSource` 를 거치면 Rust 가 대신 받아 `mupidimg` 스킴으로 돌려준다

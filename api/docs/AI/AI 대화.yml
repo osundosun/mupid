@@ -55,7 +55,7 @@ examples:
                   "title": "첫 번째 곡",
                   "artist": "무피드 테스트 아티스트",
                   "album": "무피드 테스트 앨범",
-                  "image_url": "/api/v1/storage/image/ALBUM/1-...",
+                  "image_url": "/api/v1/storage/image/12",
                   "music_section_id": 118,
                   "section_label": "CHORUS",
                   "start_time_ms": 90000,

@@ -5,7 +5,7 @@ info:
 
 http:
   method: GET
-  url: "{{BASE_URL}}/api/v1/storage/image/PROFILE/{{USER_ID}}"
+  url: "{{BASE_URL}}/api/v1/storage/image/{{IMAGE_FILE_ID}}"
   headers:
     - name: Authorization
       value: Bearer {{ACCESS_TOKEN}}
@@ -27,12 +27,63 @@ examples:
         - name: Content-Type
           value: image/webp
         - name: Content-Disposition
+          value: attachment; filename="photo.webp"
+  - name: 200 기본 프로필 이미지
+    request:
+      url: "{{BASE_URL}}/api/v1/storage/image/PROFILE/default"
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: image/webp
+        - name: Content-Disposition
           value: attachment; filename="default-user-profile.webp"
+  - name: 401 비공개 카테고리
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_UNAUTHORIZED",
+            "message": "인증 정보가 유효하지 않거나 존재하지 않습니다.",
+            "error_details": null
+          }
+  - name: 400 이미지가 아닌 파일
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_FILE_TYPE",
+            "message": "이미지 파일이 아닙니다.",
+            "error_details": null
+          }
 
 docs: |-
   # 이미지 조회
 
-  `GET /api/v1/storage/image/{category}/{storageKey}` · 인증 필요
+  `GET /api/v1/storage/image/{fileId}` · 인증은 카테고리에 따라 다름
+
+  ## 왜 저장 키가 아니라 파일 번호인가
+
+  쓰기(업로드·삭제)는 **자리를 지정**하는 일이라 카테고리와 키가 필요하지만,
+  읽기는 **이미 있는 파일**을 가리키는 일이라 번호 하나로 충분합니다.
+
+  예전에는 조회도 `/{category}/{storageKey}` 였습니다. 그때는 조회 URL 이 저장 키를
+  되짚어 만들어져서 **키 모양이 곧 조회 계약**이었고, 키를 손으로 만든 코드 하나 때문에
+  `/report` 의 MuBTI 캐릭터가 예외도 로그도 없이 뜨지 않았습니다. 번호로 읽으면 조회가
+  키 모양을 몰라도 되므로 그 종류의 사고가 생기지 않습니다.
 
   ## 응답
 
@@ -41,25 +92,38 @@ docs: |-
   - `Content-Type` — 저장된 파일의 미디어 타입
   - `Content-Disposition: attachment; filename="..."`
 
-  ## 기본 이미지
+  ## 공개 여부는 카테고리가 정한다
 
-  `PROFILE` 카테고리에서 파일이 없으면 기본 프로필 이미지
-  (`default-user-profile.webp`, WebP) 를 200 으로 반환합니다. 그래서
-  `GET /api/v1/user` 의 `image_url` 이 가리키는 `.../PROFILE/default` 도
-  그대로 부를 수 있습니다.
+  경로에 카테고리가 없어 `SecurityConfig` 가 경로로 가릴 수 없습니다. 그래서 **공개
+  여부 판정은 서버가** 하고, `SecurityConfig` 는 읽기 경로만 열어 둡니다.
 
-  ## 프로필 사진은 공개가 아닙니다
+  | 카테고리 | 읽기 | 이유 |
+  | --- | --- | --- |
+  | `ALBUM` `ARTIST` `TRACK` `MUBTI` | **공개** | 목록의 표지를 `<img src>` 로 그리는데 거기에는 `Authorization` 헤더를 붙일 수 없다. 키가 앨범·아티스트 이름이나 유형 코드라 개인 정보도 아니다 |
+  | `PROFILE` | 비공개 (401) | 개인 정보라 열지 않는다. 토큰을 붙여 바이트를 받아 object URL 로 쓴다 (`frontend/lib/profile-photo.ts`) |
+  | `STREAMING` | 비공개 (401) | 음원 청크. 원래 nginx 가 스프링을 거치지 않고 스토리지로 흘려보낸다 |
 
-  앨범·아티스트 이미지는 로그인 없이 볼 수 있지만(`SecurityConfig`),
-  `PROFILE` 은 개인 정보라 열지 않았습니다. 브라우저의 `<img src>` 는
-  `Authorization` 헤더를 달 수 없으므로, 화면은 토큰을 붙여 바이트를 받은 뒤
-  object URL 로 바꿔 씁니다.
-  다른 카테고리는 콜백이 없어 파일이 없으면 404
-  (`MUPID_FILE_NOT_FOUND`) 입니다.
+  ## 파일 종류가 이미지여야 한다
+
+  `fileId` 는 순번이라 추측할 수 있습니다. 그래서 조회할 때 **파일 종류
+  (`file_type`)가 `IMG` 인지**를 봅니다. 이 검사가 없으면 음원 청크(`FileType.MUSIC`)
+  바이트가 표지 자리로 그대로 나갑니다 — 막는 기준이 카테고리가 아니라 **파일 종류**인
+  것은 `STREAMING` 이 같은 테이블을 쓰기 때문입니다.
+
+  ## 기본 프로필 이미지
+
+  사진을 올린 적이 없는 계정의 `image_url` 은
+  `/api/v1/storage/image/PROFILE/default` 를 가리킵니다. 이 이미지는 **파일이 아니라
+  classpath 자산**이라 파일 번호가 없고, 그래서 이 자리만 경로로 남았습니다.
+
+  `PROFILE` 이 비공개 카테고리인데도 이 경로가 열리는 것은, 이 그림이 **특정 사람의
+  사진이 아니라 자리를 채우는 기본값**이기 때문입니다. 닫으면 사진 없는 계정의 프로필
+  자리가 빈 채로 남습니다.
 
   ## 오류
 
   | 코드 | 상태 | 설명 |
   | --- | --- | --- |
-  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
-  | `MUPID_FILE_NOT_FOUND` | 404 | 저장된 파일이 없음 (PROFILE 제외) |
+  | `MUPID_UNAUTHORIZED` | 401 | 토큰이 없거나 유효하지 않음 (비공개 카테고리) |
+  | `MUPID_INVALID_FILE_TYPE` | 400 | 이미지가 아닌 파일 (`FileType.MUSIC` 등) |
+  | `MUPID_FILE_NOT_FOUND` | 404 | 그 번호의 파일이 없거나 지워짐 |

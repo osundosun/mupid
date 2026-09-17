@@ -144,46 +144,55 @@ class BootstrapSeedTest {
     }
 
     @Test
-    @DisplayName("취향 유형 이미지의 저장 키가 조회 URL 로 이어진다")
-    void mubtiImageKeysRoundTrip() {
-        // 저장 키를 만드는 곳은 `StorageImageService` 하나이고, 조회 URL 도 그 모양을
-        // 되짚어 만들어진다. 이 둘이 갈라지면 `imageUrl` 이 예외도 로그도 없이 null 이
-        // 되고 화면은 조용히 캐릭터를 못 그린다 — 실제로 그렇게 캐릭터가 뜨지 않았다.
-        // 그래서 여기서 16종 전부 왕복시켜 본다.
+    @DisplayName("MuBTI 캐릭터 행은 파일 번호로 조회 URL 이 된다")
+    void mubtiImageKeyYieldsNumberedUrl() {
+        // 한때 조회 URL 이 저장 키를 되짚어 만들어졌다(`image/mubti/VTFC.webp` → 마디를
+        // 떼어 URL 조립). 그때는 키 모양이 곧 조회 계약이라, 키를 손으로 만든 코드 하나가
+        // `imageUrl` 을 예외도 로그도 없이 null 로 만들었고 `/report` 캐릭터가 조용히
+        // 사라졌다. 지금은 파일 번호로 URL 을 만들므로 키 모양이 URL 에 관여하지 않는다 —
+        // 그래서 옛 키든 새 키든 같은 주소가 나오고, 저장 키를 만드는 자리는
+        // `StorageImageService.storageKey` 하나로 남는다.
         for (BootstrapRunner.MubtiSeed seed : BootstrapRunner.MUBTI_SEEDS) {
             String lookup = BootstrapRunner.mubtiImageKey(seed.code());
 
             String storageKey = StorageImageService.storageKey(FileCategory.MUBTI, lookup);
             assertThat(storageKey).as("%s 저장 키", seed.code())
                 .isEqualTo("image/mubti/" + lookup);
-
-            assertThat(StorageImageService.imageUrl(fileAtKey(storageKey)))
-                .as("%s 조회 URL", seed.code())
-                .isEqualTo("/api/v1/storage/image/MUBTI/" + lookup);
         }
+
+        assertThat(StorageImageService.imageUrl(fileAtKey("image/mubti/VTFC.webp", 7)))
+            .as("저장 키가 아니라 파일 번호로 만든다")
+            .isEqualTo("/api/v1/storage/image/7");
     }
 
     @Test
-    @DisplayName("접두사를 뺀 옛 키는 조회 URL 이 되지 않는다 — 캐릭터가 안 뜨던 그 모양이다")
-    void legacyKeyWithoutCategoryPrefixYieldsNoUrl() {
-        // 고치는 자리는 `imageUrl` 이 아니라 키를 만드는 쪽이다. 여기서 너그럽게 받아 주면
-        // 규약이 둘로 갈라진 채 남고, 어느 쪽이 맞는지 아무도 모르게 된다.
-        assertThat(StorageImageService.imageUrl(fileAtKey("mubti/VTFC.webp"))).isNull();
-    }
-
-    @Test
-    @DisplayName("지워진 파일과 키가 어긋난 행은 주소를 만들지 않는다")
-    void deletedOrMalformedFilesHaveNoUrl() {
-        ObjectStorageFile deleted = fileAtKey("image/mubti/VTFC.webp");
+    @DisplayName("이미지가 아닌 파일과 지워진 행은 주소를 만들지 않는다")
+    void deletedOrNonImageFilesHaveNoUrl() {
+        ObjectStorageFile deleted = fileAtKey("image/mubti/VTFC.webp", 3);
         deleted.setIsDeleted(true);
         assertThat(StorageImageService.imageUrl(deleted)).isNull();
 
-        assertThat(StorageImageService.imageUrl(fileAtKey("VTFC.webp"))).isNull();
+        // 음원 청크(`FileType.MUSIC`)는 이미지가 아니다. 주소를 주면 화면이 그 주소를
+        // <img> 에 걸고, 조회 API 가 `INVALID_FILE_TYPE` 으로 거절해 깨진 그림이 된다.
+        ObjectStorageFile chunk = fileAtKey("image/streaming/chunk_0001.rtp", 4);
+        chunk.setFileType(FileType.MUSIC);
+        chunk.setCategory(FileCategory.STREAMING);
+        assertThat(StorageImageService.imageUrl(chunk)).isNull();
+
         assertThat(StorageImageService.imageUrl(null)).isNull();
     }
 
-    private static ObjectStorageFile fileAtKey(String storageKey) {
+    @Test
+    @DisplayName("기본 프로필 주소는 카테고리 대문자 규약을 따른다")
+    void defaultProfileUrlKeepsCategoryUppercase() {
+        // `SecurityConfig` 의 공개 경로와 프런트의 `DEFAULT_KEY` 가 이 모양에 맞물려 있다.
+        assertThat(StorageImageService.defaultProfileImageUrl())
+            .isEqualTo("/api/v1/storage/image/PROFILE/default");
+    }
+
+    private static ObjectStorageFile fileAtKey(String storageKey, int fileId) {
         return ObjectStorageFile.builder()
+            .fileId(fileId)
             .fileType(FileType.IMG)
             .category(FileCategory.MUBTI)
             .originalFileName(storageKey)

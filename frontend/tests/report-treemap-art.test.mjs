@@ -17,6 +17,10 @@ const [treemap, image, baseUrl, session] = await Promise.all([
  * Vite 프록시가 `/api` 를 넘겨 주어 멀쩡했지만, 배포된 앱에서는 화면의 출처가
  * `http://tauri.localhost` 라 그 경로에 아무것도 없어 커버가 전부 깨졌다.
  * 리포트의 MuBTI 캐릭터가 같은 이유로 이미 `toImageSource` 를 거친다.
+ *
+ * 조회 주소는 파일 번호(`/api/v1/storage/image/{fileId}`)다. 키 기반이던 때는
+ * 저장 키 모양이 곧 조회 계약이라 키를 손으로 만든 코드 하나가 주소를 조용히
+ * null 로 만들었는데, 번호로 바꾼 뒤로는 그 종류의 사고가 나지 않는다.
  */
 void test('트리맵 커버가 스킴 변환을 거친다', () => {
   const art = treemap.slice(
