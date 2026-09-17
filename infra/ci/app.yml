@@ -1,0 +1,80 @@
+# app 영역 — Tauri 안드로이드 앱.
+#
+# APK 는 `frontend/dist/client` 를 그 안에 담는다(tauri.conf.json 의
+# frontendDist). 그래서 프론트엔드가 바뀌면 APK 도 낡는다 — 트리거에
+# frontend/** 가 들어가 있는 이유다.
+#
+# **master 푸시에는 라벨이 없다.** GitLab 이 CI_MERGE_REQUEST_LABELS 를
+# merge_request_event 에서만 채우므로, 다른 배포 job 과 같이 경로로 건다.
+# MR 에서는 Frontend 라벨이 app-verify 를 고른다.
+
+.app-changes: &app_changes
+  - app/**/*
+  - frontend/**/*
+  - infra/ci/app.yml
+  - infra_k8s/ci/deploy-apk.sh
+  - .gitlab-ci.yml
+
+# MR 게이트. 안드로이드 도구 사슬 없이 도는 것만 본다 — Rust 단위 시험이다.
+# APK 를 굽는 것은 master 에서 한다. MR 마다 4개 ABI 를 컴파일하면 너무 길다.
+app-verify:
+  stage: verify
+  image:
+    name: mupid-ci-android:1
+    pull_policy: if-not-present
+  tags: [mupid-ci]
+  interruptible: true
+  timeout: 30m
+  variables:
+    # 러너의 /cache 볼륨에 둔다. backend·frontend 와 같은 이유로 GitLab 의
+    # `cache:` 는 쓰지 않는다 — 압축·해제가 빌드보다 오래 걸린다.
+    CARGO_HOME: /cache/cargo
+    CARGO_TARGET_DIR: /cache/app-target
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)\s*Frontend\s*(,|$)/'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "master"'
+      changes: *app_changes
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/'
+  script:
+    - cat /opt/toolchain.txt
+    # 저장소 왕복·계정 분리·캐시 만료를 본다. 실제 SQLite 파일을 쓴다 —
+    # 메모리 DB 로는 WAL 과 마이그레이션이 돌지 않는다(app/README.md).
+    - cd app && cargo test --locked
+
+# APK 를 굽고 노드로 보낸다. 빌드와 전송을 한 job 에서 하는 것은 api·web 과
+# 같은 이유다 — 수십 MB 를 GitLab 아티팩트로 왕복시키지 않는다.
+app-build:
+  stage: deploy
+  image:
+    name: mupid-ci-android:1
+    pull_policy: if-not-present
+  tags: [mupid-ci]
+  needs:
+    - job: app-verify
+      artifacts: false
+      optional: true
+  # 한 번에 하나만. 같은 자리(/srv/mupid-k8s/downloads)에 쓴다.
+  resource_group: mupid-apk
+  interruptible: false
+  # Rust 를 4개 ABI 로 컴파일한다. 캐시가 비어 있으면 오래 걸린다.
+  timeout: 2h
+  environment:
+    name: demo
+    url: https://j15a204.p.ssafy.io/download/mupid.apk
+  variables:
+    CARGO_HOME: /cache/cargo
+    CARGO_TARGET_DIR: /cache/app-target
+    npm_config_cache: /cache/npm
+    GRADLE_USER_HOME: /cache/gradle-android
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true" && $MUPID_APP_ENV'
+      changes: *app_changes
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_APP_ENV'
+      when: manual
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends openssh-client curl
+  script:
+    - sh infra/ci/build-apk.sh
+    - sh infra_k8s/ci/deploy-apk.sh

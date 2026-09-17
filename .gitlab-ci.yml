@@ -16,6 +16,8 @@ include:
   - local: infra/ci/frontend.yml
   - local: infra/ci/backend.yml
   - local: infra/ci/data.yml
+  - local: infra/ci/app.yml
+  - local: infra/ci/manifests.yml
   - local: infra/ci/infra.yml
   - local: infra/ci/area-gate.yml
   # infra/ci/release.yml (Compose 배포) 는 뺐다. frontend.yml·backend.yml 은
