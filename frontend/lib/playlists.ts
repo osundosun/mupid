@@ -108,25 +108,12 @@ export async function removeTracks(playlistId: number, tracks: Track[]): Promise
   await Promise.all(removable.map((track) => api.playlist.removeTrack(playlistId, track.musicId)));
 }
 
-/**
- * 브라우저에만 있던 플레이리스트를 계정으로 옮긴다.
+/*
+ * 브라우저에 남은 플레이리스트를 계정으로 올리는 길은 없앴다 (S15P21A204-358).
  *
- * 서버 연동 전에는 플레이리스트가 `localStorage` 에만 남았다. 그대로 두면 계정에
- * 플레이리스트가 하나도 없는 상태로 덮여 **사용자가 만들어 둔 목록이 사라진다.**
- * 계정이 비어 있을 때 한 번만 올린다 — 이미 하나라도 있으면 서버가 기준이다.
- *
- * 올린 뒤의 모양을 그대로 돌려준다. 번호가 서버 것으로 바뀌기 때문이다.
+ * 서버 연동 전에 `localStorage` 에만 남은 목록을 살리려던 것인데, 그 저장소는
+ * 계정별로 나뉘어 있지 않다. 그래서 **방금 가입한 계정**이 이 기기에 남아 있던
+ * 목록을 자기 것으로 넘겨받았다 — 예전 빌드가 상수로 들고 있던 데모 목록
+ * ('규원의 Mupid Mix' 등)이 신규 가입자의 플레이리스트로 올라간 경로가 이것이다.
+ * 이제 플레이리스트는 계정이 유일한 출처다.
  */
-export async function migrateLocalPlaylists(local: Playlist[]): Promise<Playlist[]> {
-  const migrated: Playlist[] = [];
-  for (const playlist of local) {
-    const id = await createPlaylist(playlist.name);
-    // 순서를 지키려고 한 곡씩 차례로 담는다. 트랙 순서는 담은 순서다.
-    const saved: Track[] = [];
-    for (const track of playlist.tracks) {
-      if (await addTrack(id, track)) saved.push(track);
-    }
-    migrated.push({ id, name: playlist.name, tracks: saved });
-  }
-  return migrated;
-}

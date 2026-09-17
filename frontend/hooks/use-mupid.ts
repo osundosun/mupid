@@ -458,26 +458,15 @@ export function useMupid(bootstrap: Bootstrap) {
     );
   };
   /**
-   * 계정에 저장된 플레이리스트를 가져온다. **서버가 기준이다.**
+   * 계정에 저장된 플레이리스트를 가져온다. **서버가 유일한 출처다.**
    *
-   * 계정이 비어 있는데 브라우저에만 남은 목록이 있으면 그것부터 올린다. 서버 연동
-   * 전에 만든 플레이리스트가 계정에 없다는 이유로 조용히 사라지면 안 된다.
+   * 계정이 비어 있으면 화면도 빈다. 예전에는 그때 이 기기에 남아 있던 목록을
+   * 계정으로 올렸는데, 그 저장소가 계정별로 나뉘어 있지 않아 신규 가입자가
+   * 앞사람의 목록(과 예전 빌드의 데모 목록)을 넘겨받았다. 그 길은 없앴다.
    */
   const adoptServerPlaylists = async (signal?: AbortSignal) => {
     const saved = await playlistApi.fetchPlaylists(tracks, signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
-    if (!saved.length && playlists.length) {
-      try {
-        const migrated = await playlistApi.migrateLocalPlaylists(playlists);
-        if (signal?.aborted || !mountedRef.current) return;
-        setPlaylists(migrated);
-        return;
-      } catch {
-        // 올리지 못했으면 화면에 있는 것을 그대로 둔다. 다음 기회에 다시 시도된다.
-        if (mountedRef.current) setToast('플레이리스트를 계정에 저장하지 못했어요.');
-        return;
-      }
-    }
     setPlaylists(saved);
   };
   /**
