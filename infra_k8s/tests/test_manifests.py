@@ -242,7 +242,7 @@ class BuildTest(unittest.TestCase):
             if d.get("kind") == "StatefulSet"
             and d["metadata"]["name"].startswith("dbstudio")
         ]
-        self.assertEqual(2, len(nodes), "expected one master and one replica")
+        self.assertEqual(1, len(nodes), "expected exactly one dbstudio node in the cluster")
 
         images = {containers(d)[0]["image"] for d in nodes}
         self.assertEqual(1, len(images), f"version skew between nodes: {images}")
