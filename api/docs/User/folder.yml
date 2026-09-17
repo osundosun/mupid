@@ -31,10 +31,21 @@ docs:
     | 동작 | 방법 |
     | --- | --- |
     | 등록/수정 | `POST /api/v1/storage/image/PROFILE/{{USER_ID}}` (`multipart/form-data`) |
-    | 조회 | `GET /api/v1/storage/image/profile/{{USER_ID}}` |
-    | 삭제 | `DELETE /api/v1/storage/image/profile/{{USER_ID}}` |
+    | 조회 | `GET /api/v1/storage/image/{fileId}` — `image_url` 이 주는 주소 |
+    | 삭제 | `DELETE /api/v1/storage/image/PROFILE/{{USER_ID}}` |
 
-    사진이 없으면 기본 프로필 이미지(`default-user-profile.webp`)가 200 으로 반환됩니다.
+    사진이 없으면 기본 프로필 이미지(`default-user-profile.webp`)가 200 으로
+    반환됩니다. 그때 `image_url` 은 `/api/v1/storage/image/PROFILE/default` 를
+    가리킵니다 — 그 자리에는 파일이 없고 서버가 기본 이미지를 돌려줍니다.
+
+    조회가 유저 번호가 아니라 **파일 번호**인 것에 주의하세요. 프로필 파일 번호는
+    `GET /api/v1/user` 의 `image_url` 로 확인합니다. 유저 번호로 조회하던 때는
+    경로 모양이 곧 계약이라 키가 어긋나면 주소가 조용히 비었습니다.
+
+    프로필 사진은 **공개 경로가 아닙니다**(개인 정보). `<img src>` 로 바로 걸 수
+    없고, 토큰을 붙여 바이트를 받아 object URL 로 씁니다
+    (`frontend/lib/profile-photo.ts`). 수정·삭제도 **본인만** 가능합니다 —
+    삭제는 키가 본인 번호여야 하고(`MUPID_STORAGE_KEY_MISMATCH`), 아니면 403 입니다.
 
     ## 회원가입 순서
 

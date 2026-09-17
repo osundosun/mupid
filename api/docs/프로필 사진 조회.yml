@@ -5,7 +5,7 @@ info:
 
 http:
   method: GET
-  url: "{{BASE_URL}}/api/v1/storage/image/profile/default"
+  url: "{{BASE_URL}}/api/v1/storage/image/PROFILE/default"
   headers:
     - name: Authorization
       value: Bearer {{ACCESS_TOKEN}}
