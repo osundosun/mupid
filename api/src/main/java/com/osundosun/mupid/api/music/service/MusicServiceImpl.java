@@ -97,8 +97,11 @@ public class MusicServiceImpl implements MusicService {
         int safePage = Math.max(0, page);
         String trimmed = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
 
-        Page<Music> found = repository.search(
-            trimmed,
+        if (trimmed != null) {
+            return searchIndexed(trimmed, safePage, safeSize);
+        }
+
+        Page<Music> found = repository.findPage(
             PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "musicId")));
 
         List<MusicSummary> items = assembler.assemble(found.getContent());
@@ -108,6 +111,41 @@ public class MusicServiceImpl implements MusicService {
             found.getSize(),
             found.getTotalElements(),
             found.getTotalPages());
+    }
+
+    private MusicPageResponse searchIndexed(String keyword, int page, int size) {
+        PageRequest pageable = PageRequest.of(page, size);
+        Page<Integer> ids = keyword.codePointCount(0, keyword.length()) < 2
+            ? repository.searchIdsByPrefix(keyword, pageable)
+            : repository.searchIdsFullText(toBooleanPrefixQuery(keyword), pageable);
+
+        if (ids.isEmpty()) {
+            return new MusicPageResponse(
+                List.of(), ids.getNumber(), ids.getSize(), ids.getTotalElements(), ids.getTotalPages());
+        }
+
+        Map<Integer, Music> musicById = repository.findDetailAllByIds(ids.getContent()).stream()
+            .collect(Collectors.toMap(Music::getMusicId, Function.identity()));
+        List<Music> ordered = ids.getContent().stream()
+            .map(musicById::get)
+            .filter(java.util.Objects::nonNull)
+            .toList();
+
+        return new MusicPageResponse(
+            assembler.assemble(ordered),
+            ids.getNumber(),
+            ids.getSize(),
+            ids.getTotalElements(),
+            ids.getTotalPages());
+    }
+
+    /** Boolean 연산자는 버리고 모든 단어를 prefix 필수어로 만든다. */
+    static String toBooleanPrefixQuery(String keyword) {
+        return java.util.regex.Pattern.compile("[^\\p{L}\\p{N}]+")
+            .splitAsStream(keyword.strip())
+            .filter(token -> !token.isBlank())
+            .map(token -> "+" + token + "*")
+            .collect(Collectors.joining(" "));
     }
 
     @Override

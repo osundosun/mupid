@@ -7,12 +7,14 @@
 -- 배경·규칙·코드와 어긋난 지점은 erd.md 를 본다.
 --
 -- **수기 보정 목록 — 산출물을 교체할 때마다 다시 확인한다.**
--- 도구가 이 셋을 매번 되돌려 놓는다. 교체 후 아래가 살아 있는지 보고 없으면 다시 넣는다.
+-- 도구가 아래 항목을 되돌릴 수 있다. 교체 후 살아 있는지 보고 없으면 다시 넣는다.
 --   1. music_analysis_instruments.music_section_analysis_id 에 AUTO_INCREMENT 를 뺀다
 --   2. music_section_analysis.external_id 에 UNIQUE 를 건다
 --      (1·2 는 S15P21A204-344 / b6d5c7e)
 --   3. ai_chat_sessions.ai_chat_session_id 에 AUTO_INCREMENT 를 넣는다
 --      (AiChatSession 이 GenerationType.IDENTITY 다. 빼면 세션 생성이 죽는다)
+--   4. music.title·artists.name·albums.title 의 일반/FULLTEXT ngram 인덱스를 유지한다
+--      (통합 검색 성능 결정은 decision/0024)
 
 CREATE TABLE IF NOT EXISTS `ai_chat_messages` (
   `ai_chat_message_id` BIGINT AUTO_INCREMENT NOT NULL,
@@ -52,6 +54,8 @@ CREATE TABLE IF NOT EXISTS `albums` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`album_id`)
 ) COMMENT='앨범 정보';
+CREATE INDEX `ix_albums_title` ON `albums` (`title`);
+CREATE FULLTEXT INDEX `ft_albums_title_ngram` ON `albums` (`title`) WITH PARSER ngram;
 CREATE TABLE IF NOT EXISTS `artists` (
   `artist_id` INT AUTO_INCREMENT NOT NULL COMMENT '아티스트 PK',
   `name` VARCHAR(200) NOT NULL COMMENT '아티스트명',
@@ -61,6 +65,8 @@ CREATE TABLE IF NOT EXISTS `artists` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`artist_id`)
 ) COMMENT='아티스트';
+CREATE INDEX `ix_artists_name` ON `artists` (`name`);
+CREATE FULLTEXT INDEX `ft_artists_name_ngram` ON `artists` (`name`) WITH PARSER ngram;
 CREATE TABLE IF NOT EXISTS `chunks` (
   `stream_id` INT NOT NULL,
   `index` INT NOT NULL,
@@ -152,6 +158,8 @@ CREATE TABLE IF NOT EXISTS `music` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`music_id`)
 ) COMMENT='음악 (메타데이터 조회 GET /api/v1/song/info)';
+CREATE INDEX `ix_music_title` ON `music` (`title`);
+CREATE FULLTEXT INDEX `ft_music_title_ngram` ON `music` (`title`) WITH PARSER ngram;
 CREATE TABLE IF NOT EXISTS `music_analysis` (
   `music_id` INT NOT NULL,
   `has_vocal` TINYINT(1) NOT NULL,

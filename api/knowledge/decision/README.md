@@ -31,6 +31,7 @@
 | [0021](0021-query-plan-instead-of-nl-interpreter.md) | 자연어는 대화 모델이 조건으로 바꾼다 — 별도 해석기를 세우지 않는다 | 채택 |
 | [0022](0022-play-queue-in-redis.md) | 재생 큐는 Redis 에 사용자당 문서 하나로 둔다 | 채택 · 규칙 일부 대체됨 |
 | [0023](0023-queue-insert-position-is-a-user-choice.md) | 담을 자리는 사용자가 고르고, 큐에 같은 곡은 한 번만 둔다 | 채택 |
+| [0024](0024-mysql-ngram-fulltext-for-catalog-search.md) | 카탈로그 통합 검색은 MySQL ngram FULLTEXT 로 시작한다 | 채택 |
 
 ## 먼저 볼 것
 
