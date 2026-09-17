@@ -19,6 +19,22 @@
 
 ## 일자별 진행사항
 
+### 2026-09-17
+
+- **[AI·데이터 남은 일과 순서](AI데이터_인수인계_계획.md)** · **[세션 이어가기](세션_이어가기.md)** 작성
+  - 곡 분석 결과를 서비스에 붙이는 적재 경로를 develop 에 반영 (MR !103 · !104 · !105 · !107)
+    - `PUT /api/v1/music/{id}/section` 에 `instruments` 추가, 구간별 악기를 demucs 스템에서 측정
+    - 전처리 배치가 관리자 API 없이 곡별 장르·분위기를 직접 등록 (`music-preprocessing classify`)
+  - **어휘가 세 벌**인 것을 확인 — Spring `codes`(8) · 색인 `genre` 축(57) · 색인 `style` 축(37).
+    taxonomy 45종은 style 축이고, 추천기는 genre·style 을 이미 둘 다 보는데 온보딩 변환만
+    genre 축을 넘긴다. 45종을 그냥 등록하면 **39종이 씨앗 0** — 오류 없이 개인화만 죽는다.
+    무드는 9/9 전부 0 이고 축이 달라 변환표를 사람이 적어야 한다
+  - 기존 온보딩 사용자 35명은 영향 없음을 운영 색인 어휘로 직접 확인
+  - 운영 스키마 문제 2건 확인 — `music_analysis_instruments` 의 FK 컬럼에 AUTO_INCREMENT
+    (값이 0 이면 MySQL 이 번호를 발급해 엉뚱한 구간에 붙고 외래키 검사까지 통과. 로컬 재현),
+    `music_section_analysis.external_id` 의 UNIQUE 누락. 세 테이블 모두 0행이라 지금이 반영 시점
+  - `@EmbeddedId` + 관계 이중 매핑 함정을 `MusicAnalysisInstrument` 에서도 발견해 `@MapsId` 로 수정
+
 ### 2026-08-24
 
 - **[위성 이미지 기반 농지 이상탐지](위성_이미지_이상탐지.md)** 파이프라인 구축 및 검증
