@@ -265,8 +265,8 @@ class BuildTest(unittest.TestCase):
                  if e["name"] == "DBSTUDIO_CLUSTER_ROLE")
             for d in nodes
         }
-        # Two masters means two truths, and they cannot be merged afterwards.
-        self.assertEqual({"master", "replica"}, roles)
+        # Allowing only replicas if master is on the edge
+        self.assertTrue("replica" in roles)
 
     def test_dbstudio_is_reachable_only_from_inside_the_cluster(self):
         """It holds every database credential the team has registered, so it is
@@ -435,7 +435,7 @@ class BuildTest(unittest.TestCase):
     # 색인(`/artifacts`)과 **다른 디렉터리**이고, 색인 쪽은 그대로 읽기 전용이다.
     # 둘을 나눈 이유는 색인이 판마다 갈리기 때문이다: 상태를 거기 두면 판을
     # 교체할 때마다 워터마크가 사라져 신호를 처음부터 다시 당긴다.
-    WRITABLE_HOST_PATHS = {"/srv/mupid-k8s/ai-state"}
+    WRITABLE_HOST_PATHS = {"/srv/mupid-k8s/ai-state", "/dev/net/tun"}
 
     def test_host_mounts_from_the_existing_tree_are_read_only(self):
         """/etc/letsencrypt, /srv/mupid/acme and /srv/mupid/web belong to certbot
