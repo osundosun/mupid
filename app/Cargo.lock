@@ -2054,8 +2054,10 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
+ "tauri-utils",
  "thiserror 2.0.20",
  "tokio",
 ]

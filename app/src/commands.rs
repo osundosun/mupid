@@ -112,3 +112,29 @@ pub fn cache_put(
 pub fn cache_clear(scope: Option<String>, db: State<'_, Db>) -> Result<(), String> {
     cache::clear(&db, scope.as_deref()).map_err(String::from)
 }
+
+// ─────────────────────────────────────────────────────────────
+// 진단
+// ─────────────────────────────────────────────────────────────
+
+/// 지금 어느 번들이 화면을 그리고 있는지 알린다.
+///
+/// 디스크 번들 교체는 조용히 일어난다 — 잘못되면 조용히 임베드로 내려앉는다.
+/// 그래서 **밖에서 확인할 수 있는 통로**가 필요하다. 실기기에서 `adb push` 로
+/// 번들을 올린 뒤 이 커맨드(또는 같은 값을 화면에 찍는 것)로 어느 쪽이 쓰이는지
+/// 확인한다. 로그만으로는 릴리스 빌드에서 볼 수 없다.
+#[tauri::command]
+pub fn assets_status() -> Result<serde_json::Value, String> {
+    Ok(match crate::assets::active() {
+        Some(active) => serde_json::json!({
+            "source": "disk",
+            "root": active.root.to_string_lossy(),
+            "hashes": active.hash_count(),
+        }),
+        None => serde_json::json!({
+            "source": "embedded",
+            "root": serde_json::Value::Null,
+            "hashes": serde_json::Value::Null,
+        }),
+    })
+}

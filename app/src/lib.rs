@@ -7,6 +7,7 @@
 //! - 저장소:   `db.rs` + `store/` 의 SQLite
 //! - 알림:     `media.rs` 의 상단 알림·잠금화면 플레이어
 
+mod assets;
 mod commands;
 mod config;
 mod db;
@@ -152,6 +153,20 @@ fn serve_rsc<R: tauri::Runtime>(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 자산 프로바이더를 갈아 끼운다 — 디스크에 활성화된 웹 번들이 있으면 거기서,
+    // 없으면 임베드 번들에서 준다 (`assets.rs`).
+    //
+    // **여기서 바꿔야 한다.** `Assets::setup` 은 `Builder::build` 안에서 불리므로
+    // 그때는 이미 `AppManager` 가 프로바이더를 들고 난 뒤다. `Context.assets` 가
+    // `pub` 필드라 이 자리에서 그대로 갈아 끼울 수 있다.
+    //
+    // 임베드 프로바이더는 버리지 않고 감싼다. 업데이트가 깨져도 앱은 벽돌이 되지
+    // 않는다 — 매니페스트가 어긋나거나 디렉터리가 사라지면 조용히 그쪽으로
+    // 내려앉는다.
+    let mut context = tauri::generate_context!();
+    let embedded = std::mem::replace(&mut context.assets, Box::new(assets::EmptyAssets));
+    context.assets = Box::new(assets::LayeredAssets::new(embedded));
+
     tauri::Builder::default()
         .plugin(media::init())
         .register_asynchronous_uri_scheme_protocol(config::IMAGE_SCHEME, |ctx, request, responder| {
@@ -200,7 +215,8 @@ pub fn run() {
             commands::cache_clear,
             media::media_session_update,
             media::media_session_clear,
+            commands::assets_status,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("앱을 시작하지 못했습니다");
 }
