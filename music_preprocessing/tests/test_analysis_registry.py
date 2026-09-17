@@ -4,6 +4,7 @@
 metadata 의 `genre`·`mood` 와 다른 값이고(실측), 태그는 쉼표로 이은 문자열이어야
 parquet 쓰기가 멈추지 않는다. 여기서 그 두 가지를 못 박는다.
 """
+import argparse
 import json
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
+from music_preprocessing.analysis import batch as ab
 from music_preprocessing.analysis import registry as rg
 from music_preprocessing.analysis import pipeline as pl
 
@@ -263,6 +265,55 @@ class _FakeTrack:
 class _FakeSections:
     def __init__(self, segs):
         self.segments = [pl.emb.Segment(label=l, start=s, end=e) for l, s, e in segs]
+
+
+class TagFileDiscoveryTests(unittest.TestCase):
+    """태깅 산출물의 **기본 자리**를 찾는가.
+
+    `root` 는 `<artifact>/data/proc/mupid` 이고 태깅 산출물은 `<artifact>/data/
+    test_pipeline/tracks.parquet` 이다 — **두 단계** 위다. 한 단계로 잡으면 못 찾고,
+    그러면 태그 없이 색인이 만들어져 299곡이 빈 태그로 고정된다. 오류는 나지 않는다.
+
+    실제 디렉터리 구조를 만들어 확인한다(경로 계산은 문자열 비교로는 안 잡힌다).
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.artifact = Path(self.tmp.name) / "art"
+        self.root = self.artifact / "data" / "proc" / "mupid"
+        self.root.mkdir(parents=True)
+        self.cfg = Path(self.tmp.name) / "config.json"
+        self.cfg.write_text("{}", encoding="utf-8")
+
+    def _args(self, sections_dir=None):
+        ns = argparse.Namespace()
+        ns.config = str(self.cfg)
+        ns.sections_dir = sections_dir
+        ns.allin1_dir = None
+        ns.demix_dir = None
+        return ns
+
+    def test_default_location_is_two_levels_up(self):
+        got = self.artifact / "data" / "test_pipeline" / "tracks.parquet"
+        got.parent.mkdir(parents=True)
+        got.write_bytes(b"x")
+        found = ab._tag_file(self.cfg, self._args(), self.root)
+        self.assertEqual(found, got)
+
+    def test_missing_tag_file_is_not_an_error(self):
+        """태그가 없어도 배치는 돈다 — 빈 값으로 넣고 이유를 남긴다."""
+        self.assertIsNone(ab._tag_file(self.cfg, self._args(), self.root))
+
+    def test_config_value_wins(self):
+        explicit = Path(self.tmp.name) / "other.parquet"
+        explicit.write_bytes(b"x")
+        cfg = json.loads("{}")
+
+        class C:
+            analysis_tag_file = str(explicit)
+
+        self.assertEqual(ab._tag_file(C(), self._args(), self.root), explicit)
 
 
 if __name__ == "__main__":

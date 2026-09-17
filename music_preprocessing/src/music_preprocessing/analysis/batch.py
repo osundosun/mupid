@@ -695,6 +695,10 @@ def _collect_local(a, cfg):
     for tid, why in (info.get("failed") or {}).items():
         log(f"  실패 {tid}: {why}")
     log(f"대상 {len(tracks)}곡 · 건너뜀 {len(info.get('skipped') or {})}곡")
+    # 태그 산출물을 못 찾은 것 같은 **설정 실수는 조용히 넘어가면 안 된다.** 태그 없이
+    # 색인을 만들면 299곡이 빈 태그로 고정되고 ⑤⑥ 을 한 번 더 돌려야 한다.
+    for why in (info.get("warn") or []):
+        log(f"  주의 {why}")
 
     # ① 분할 — **원본 JSON 이 없는 곡만.** GPU·3.10 이 필요하므로 여기서 맡는다.
     # 있는 곡은 원본을 그대로 읽어 변환만 한다(`to_sections`) — 분할은 이미 끝났다.
@@ -759,12 +763,17 @@ def _tag_file(cfg, a, root: Path) -> Optional[Path]:
 
     없으면 태그 없이 넣는다 — 태그는 곁들이는 값이고, 이것 때문에 배치가 멈추면
     태그가 아직 없는 날의 분석까지 밀린다.
+
+    기본 자리는 `<artifact>/data/test_pipeline/tracks.parquet` 이다. `root` 는
+    `<artifact>/data/proc/mupid` 이므로 **두 단계** 위다(`data/proc/mupid` → `data`).
     """
     v = getattr(cfg, "analysis_tag_file", "") or ""
     if v:
         p = Path(v)
         return p if p.is_absolute() else Path(a.config).parent / p
-    for cand in (Path(root).parent / "test_pipeline" / "tracks.parquet",):
+    base = Path(root).parents[1] if len(Path(root).parents) > 1 else Path(root)
+    for cand in (base / "test_pipeline" / "tracks.parquet",
+                 Path(root).parent / "test_pipeline" / "tracks.parquet"):
         if cand.exists():
             return cand
     return None
