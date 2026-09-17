@@ -315,3 +315,12 @@
 - **찾는 법**: `grep -rnE "private [A-Za-z.<>]+ [a-z][A-Za-z]*[a-z][A-Z];" src/main/java` — 현재 걸리는 것은 `Mubti` 의 넷뿐이다.
 - **함께 드러난 것**: `knowledge/domain/erd.sql` 은 `classa` 라고 적어 실제 DB(`class_a`)와 다르다 → [open-questions B7](../open-questions.md).
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/report/entity/Mubti.java`
+
+### 배치(Python)가 서버 JSON 키를 camelCase 로 읽고 보내 400/KeyError 로 죽는다
+
+- **증상**: `data-batch` 스케줄 job 이 `music-preprocessing classify` 에서 `KeyError: 'codeId'` 로 실패한다(`genre_mood.py` 의 `inspect`). 앞 단계(catalog·covers·lyrics)는 정상이다.
+- **원인**: `application.yaml` 의 `spring.jackson.property-naming-strategy: SNAKE_CASE` 가 **요청·응답의 모든 필드**를 snake_case 로 바꾼다. 자바 record 의 필드명(`codeId`·`genreCodeIds`)은 와이어에 나오지 않는다. 배치가 camelCase 로 보내면 스프링이 **모르는 필드로 버리고**(`FAIL_ON_UNKNOWN_PROPERTIES` 기본 활성) 필수값이 `null` 이 되어 400 이며, 응답을 camelCase 로 읽으면 `KeyError` 다.
+- **해결**: 배치의 와이어 키를 전부 snake_case 로 맞춘다 — `code_type`·`code_name`·`display_name`·`code_id`·`music_id`·`genre_code_ids`·`mood_code_ids`·`total_elements`·`total_pages`. **`imageFile` 만 예외**다(멀티파트 `@RequestParam` 이라 SNAKE_CASE 가 적용되지 않는다).
+- **가려졌던 이유**: 테스트 대역이 **내부 엔티티 이름을 그대로 돌려줬다.** 대역이 `codeId` 를 주면 배치가 `codeId` 를 읽어도 통과하므로 계약 위반이 잡히지 않는다. 대역을 고치지 않고 소스만 고치면 아무것도 검증되지 않는다. 또 `data-verify` CI 는 `uv sync` + `--help` + `--dry-run` 만 돌리고 `music_preprocessing/tests` 를 실행하지 않으며, `backend-verify` 는 `build -x test` 다.
+- **참고**: `code_id` 응답이 없는 자리에서 `row.get("code_id")` 를 쓰면 **오류 없이 `None` 이 기록된다**(`analysis/api.py` 의 `codes_added`). 실패가 아니라 조용한 손실이라 더 나쁘다.
+- **근거**: `api/src/main/resources/application.yaml:19-20`, `music_preprocessing/src/music_preprocessing/genre_mood.py`, `music_preprocessing/GENRE_MOOD.md`, `music_preprocessing/tests/test_genre_mood.py`
