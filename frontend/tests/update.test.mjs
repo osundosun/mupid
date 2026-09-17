@@ -356,3 +356,88 @@ test('띄울 때 한 번만 기록한다', async () => {
   assert.match(prompt, /noted\s*=\s*useRef\(false\)/, '한 번만 기록하는 장치가 없다');
   assert.match(prompt, /noted\.current/, 'ref 를 안 쓴다');
 });
+
+// ─────────────────────────────────────────────────────────────
+// 보이는 모습 (실기기에서 실제로 어긋났던 것들)
+// ─────────────────────────────────────────────────────────────
+
+test('제목·설명을 가운데로 되돌린다', async () => {
+  const css = await readFile(new URL('../app/update-prompt.css', import.meta.url), 'utf8');
+  const viewport = await readFile(new URL('../app/dialog-viewport.css', import.meta.url), 'utf8');
+
+  // 공통 규칙이 헤더 오른쪽에 닫기 버튼 자리(52px)를 비운다. AlertDialog 에는
+  // 닫기 버튼이 없어서(`AlertDialogCancel` 은 footer) 그대로 두면 내용이
+  // 왼쪽으로 밀린다 — 실기기에서 눈에 띄게 어긋났다.
+  assert.match(
+    viewport,
+    /\.sky-dialog \[data-slot='alert-dialog-header'\][\s\S]{0,200}padding-right: 52px/,
+    '공통 규칙이 바뀌었다 — 이 시험의 전제를 다시 확인해야 한다',
+  );
+  assert.match(
+    css,
+    /\.update-dialog \[data-slot='alert-dialog-header'\]\s*\{\s*padding-right: 0;/,
+    '닫기 버튼 자리를 되돌리지 않는다',
+  );
+  assert.match(
+    css,
+    /\.update-dialog \[data-slot='alert-dialog-title'\],\s*\.update-dialog \[data-slot='alert-dialog-description'\]\s*\{\s*text-align: center;/,
+    '가운데 정렬이 없다',
+  );
+});
+
+test('설명문은 두 줄로 끊어 읽기 쉽게 둔다', async () => {
+  const prompt = await readFile(
+    new URL('../components/mupid/update-prompt.tsx', import.meta.url),
+    'utf8',
+  );
+  // 한 줄로 두면 폰 폭에서 어절이 임의로 끊겨 두 문장의 경계가 흐려진다.
+  // 문장 단위로 끊어 주면 눈이 한 번에 한 줄씩 읽는다.
+  assert.match(
+    prompt,
+    /돌아왔어요\.\s*<br\s*\/>\s*설치하면/,
+    '설명문에 의도적인 개행이 없다',
+  );
+});
+
+test('설명문 줄 간격이 답답하지 않다', async () => {
+  const css = await readFile(new URL('../app/update-prompt.css', import.meta.url), 'utf8');
+  // 개행을 넣었으니 줄 간격이 좁으면 두 줄이 한 덩어리로 뭉쳐 보인다.
+  const block = css.slice(css.indexOf("[data-slot='alert-dialog-description']"));
+  const lineHeight = block.match(/line-height:\s*([\d.]+)/);
+  assert.ok(lineHeight, '줄 간격이 없다');
+  assert.ok(
+    Number(lineHeight[1]) >= 1.5,
+    `줄 간격이 좁다 (${lineHeight[1]}) — 두 줄이 뭉쳐 보인다`,
+  );
+});
+
+test('주 버튼은 브랜드 파랑이다 (붉은색이 아니다)', async () => {
+  const css = await readFile(new URL('../app/update-prompt.css', import.meta.url), 'utf8');
+  const polish = await readFile(new URL('../app/responsive-polish.css', import.meta.url), 'utf8');
+
+  // 공통 규칙이 `.sky-dialog` 의 action 버튼을 전부 붉게 칠한다(삭제·초기화용).
+  // 설치에는 뜻이 어긋나므로 되돌린다.
+  assert.match(
+    polish,
+    /\.sky-dialog \[data-slot='alert-dialog-action'\]\s*\{\s*border: 0;\s*background: #c9636e;/,
+    '공통 규칙이 바뀌었다 — 이 시험의 전제를 다시 확인해야 한다',
+  );
+  assert.match(
+    css,
+    /\.update-dialog \[data-slot='alert-dialog-action'\]\s*\{[\s\S]*?background: linear-gradient\(110deg, #6b97dc, #507dcc\)/,
+    '브랜드 파랑으로 되돌리지 않는다',
+  );
+  // 호버도 함께 되돌려야 한다. 안 그러면 마우스를 올리는 순간 붉어진다.
+  assert.match(
+    css,
+    /\.update-dialog \[data-slot='alert-dialog-action'\]:hover:not\(:disabled\)/,
+    '호버 색을 되돌리지 않는다',
+  );
+  // 브랜드 색은 앱의 주 버튼과 같은 값이어야 한다.
+  const mupid = await readFile(new URL('../app/mupid.css', import.meta.url), 'utf8');
+  assert.match(
+    mupid,
+    /\.primary-button \{\s*color: white;\s*background: linear-gradient\(110deg, #6b97dc, #507dcc\);/,
+    '브랜드 주 버튼 색이 바뀌었다 — 위 값과 맞춰야 한다',
+  );
+});

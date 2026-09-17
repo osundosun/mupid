@@ -6,6 +6,26 @@
  * 다르게 보인다.
  */
 
+/*
+ * 정렬.
+ *
+ * `dialog-viewport.css` 는 `.sky-dialog` 헤더에 오른쪽 `padding-right: 52px` 를
+ * 준다 — **닫기 버튼 자리를 비우는 규칙**이다. 그런데 `AlertDialog` 에는 닫기
+ * 버튼이 없다(`AlertDialogCancel` 은 footer 에 있다). 그래서 내용 상자가
+ * 오른쪽만 52px 좁아지고, 가운데 정렬이 왼쪽으로 밀려 보인다(실측: 다이얼로그
+ * 안쪽 304px 인데 제목 상자는 252px → 중심이 26px 어긋남).
+ *
+ * 이 창은 비울 자리가 없으므로 되돌린다.
+ */
+.update-dialog [data-slot='alert-dialog-header'] {
+  padding-right: 0;
+}
+
+.update-dialog [data-slot='alert-dialog-title'],
+.update-dialog [data-slot='alert-dialog-description'] {
+  text-align: center;
+}
+
 .update-dialog [data-slot='alert-dialog-title'] {
   font-size: 19px;
   font-weight: 700;
@@ -21,6 +41,24 @@
   /* 한국어는 단어 중간에서 끊지 않는다. 좁은 폰에서 어절이 깨지면 읽기 나쁘다. */
   word-break: keep-all;
   overflow-wrap: anywhere;
+}
+
+/*
+ * 주 버튼은 **브랜드 파랑**이다.
+ *
+ * `responsive-polish.css` 가 `.sky-dialog [data-slot='alert-dialog-action']` 을
+ * 통째로 붉은색(`#c9636e`)으로 칠한다 — "지우는 동작이라 확인 버튼은 파랑 대신
+ * 차분한 붉은색" 이라는 판단이고, 삭제·초기화 다이얼로그에는 맞다. 하지만
+ * **설치는 지우는 일이 아니다.** 붉은 버튼은 "위험한 일이 일어난다" 는 신호라
+ * 여기서는 뜻이 어긋난다. 같은 이유로 호버 색까지 함께 되돌린다.
+ */
+.update-dialog [data-slot='alert-dialog-action'] {
+  background: linear-gradient(110deg, #6b97dc, #507dcc);
+  box-shadow: 0 5px 15px #527dc529;
+  color: #fff;
+}
+.update-dialog [data-slot='alert-dialog-action']:hover:not(:disabled) {
+  background: linear-gradient(110deg, #7ba4e2, #5a86d4);
 }
 
 /*

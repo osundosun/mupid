@@ -119,7 +119,9 @@ export function UpdatePrompt() {
         <AlertDialogHeader>
           <AlertDialogTitle>새 버전이 있어요</AlertDialogTitle>
           <AlertDialogDescription>
-            뮤피드가 더 나은 모습으로 돌아왔어요. 설치하면 바로 쓸 수 있어요.
+            뮤피드가 더 나은 모습으로 돌아왔어요.
+            <br />
+            설치하면 바로 쓸 수 있어요.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
