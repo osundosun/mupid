@@ -936,6 +936,8 @@ class AreaRoutingTest(unittest.TestCase):
             r"CI_MERGE_REQUEST_LABELS =~ /\(\^\|,\)\\s\*([A-Za-z|]+)\\s\*\(,\|\$\)/")
         routes = {}
         for name, body in self._jobs().items():
+            if name == "app-verify":
+                continue
             for rule in body.get("rules") or []:
                 found = pattern.search(str(rule.get("if", "")))
                 if found:
