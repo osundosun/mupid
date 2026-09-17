@@ -200,21 +200,19 @@ class ArtistClient(MupidClient):
         data = self._request("GET", "/api/v1/artist?size=100&page=0")["data"]
         if data["total_elements"] != 87 or len(data["items"]) != 87:
             raise ValueError("운영 아티스트 수가 87명이 아님")
-        # 조회 URL 이 파일 번호 주소라, 그 번호를 다시 `artist_key` 로 되돌릴 대응표가
-        # 필요하다. 여기서 한 번 채우고 `download` 가 쓴다.
+        # 이 응답에는 `artist_key` 도 `file_id` 도 없다 — 아티스트 이름·번호와
+        # **조회 URL** 뿐이다. 그래서 등록 기록과 맞출 수 있는 것은 `artist_id` 와
+        # `image_url` 둘이고, 그 대조는 `check_artists` 가 한다.
         #
-        # 파일 번호를 응답에 실어 달라고 서버에 요구하지 않는 것은, 그 필드를 더하면
-        # `artist` 응답 계약이 바뀌어 이 배치 말고도 손댈 곳이 늘기 때문이다. 조회
-        # 주소의 마지막 마디는 이미 공개된 값이라 그것을 읽으면 계약을 건드리지 않는다.
-        #
-        # 읽지 못하는 주소 모양이면 여기서 멈춘다 — 조용히 빈 표를 만들면 GET 이
-        # 엉뚱한 번호로 나간다.
-        self.image_file_ids = {}
+        # 여기서 조회 URL 의 마지막 마디가 숫자인지만 본다. 이게 깨져 있으면
+        # `check_artists` 가 만드는 기대값과 비교할 수 없어 사전 검증이 통째로
+        # 무의미해지는데, 그 사실이 "URL 불일치" 라는 뭉뚱그린 메시지로만 보이면
+        # 서버 계약이 바뀐 것인지 등록 기록이 낡은 것인지 가릴 수 없다.
         for item in data["items"]:
-            tail = item["image_url"].rpartition("/")[2]
+            tail = (item.get("image_url") or "").rpartition("/")[2]
             if not tail.isdigit():
-                raise ValueError(f"조회 URL 에서 파일 번호를 읽지 못함: {item['image_url']}")
-            self.image_file_ids[tail] = item["artist_key"]
+                raise ValueError(
+                    f"조회 URL 에서 파일 번호를 읽지 못함: {item.get('image_url')!r}")
         return sorted(data["items"], key=lambda r: r["artist_id"])
 
     def download(self, file_id):

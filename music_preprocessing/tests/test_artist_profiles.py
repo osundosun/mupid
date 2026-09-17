@@ -195,30 +195,32 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(image_url("artist_0"), "/api/v1/storage/image/ARTIST/artist_0")
         self.assertEqual(artist_image_read_url(42), "/api/v1/storage/image/42")
 
-    def test_artist_client_reads_file_ids_from_the_read_url(self):
-        """`artist` 응답에 `file_id` 필드를 더하지 않고 조회 주소에서 읽는다.
+    def test_artist_client_accepts_the_real_response_shape(self):
+        """`artist` 응답에는 `artist_key` 가 없다 — 실제 응답 모양 그대로 넣는다.
 
-        조회가 번호 주소로 바뀌면서 `artist_key` → 파일 번호 대응이 필요해졌는데,
-        응답 계약을 건드리지 않으려고 이미 공개된 주소의 마지막 마디를 쓴다.
+        운영에서 확인한 응답은 `artist_id` · `name` · `image_url` 셋뿐이다. 처음에는
+        `image_file_ids` 대응표를 만들면서 `item["artist_key"]` 를 읽었는데, 그 필드가
+        없어 `KeyError` 로 죽었다. 테스트 대역(`Server`)이 `artist_key` 를 넣어 주고
+        있어서 단위 테스트로는 드러나지 않았다 — **가짜를 실제보다 너그럽게 만들면
+        그 너그러움이 버그를 감춘다.**
         """
         client = object.__new__(ArtistClient)
-        items = [{"artist_id": i, "name": "Artist %d" % i, "artist_key": "artist_%d" % i,
+        items = [{"artist_id": i, "name": "Artist %d" % i,
                   "image_url": artist_image_read_url(i + 12)} for i in range(87)]
         with patch.object(client, "_request",
                           return_value={"data": {"total_elements": 87, "items": items}}):
-            client.artists()
-        self.assertEqual(client.image_file_ids["12"], "artist_0")
-        self.assertEqual(client.image_file_ids["98"], "artist_86")
+            client.artists()  # 예외가 없어야 한다
 
     def test_artist_client_stops_when_read_url_has_no_file_number(self):
         """주소 모양이 바뀌면 조용히 넘어가지 않고 멈춘다.
 
-        여기서 빈 표를 만들고 지나가면 `download` 가 엉뚱한 번호로 GET 을 던지고,
-        백업이 남의 아티스트 사진으로 채워진다.
+        여기서 지나가면 `check_artists` 의 대조가 무의미해지고, 백업이 남의
+        아티스트 사진으로 채워질 수 있다.
         """
         client = object.__new__(ArtistClient)
-        items = [{"artist_id": i, "name": "Artist %d" % i, "artist_key": "artist_%d" % i,
-                  "image_url": image_url("artist_%d" % i)} for i in range(87)]
+        items = [{"artist_id": i, "name": "Artist %d" % i,
+                  "image_url": "/api/v1/storage/image/ARTIST/artist_%d" % i}
+                 for i in range(87)]
         with patch.object(client, "_request",
                           return_value={"data": {"total_elements": 87, "items": items}}):
             with self.assertRaisesRegex(ValueError, "파일 번호"):
