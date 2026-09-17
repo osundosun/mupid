@@ -676,6 +676,9 @@ def analysis(
     force_unlock: Annotated[
         bool, typer.Option("--force-unlock", help="남아 있는 잠금을 지우고 시작한다")
     ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="확인 프롬프트를 건너뛴다 (크론용)")
+    ] = False,
     verbose: VerboseOpt = False,
 ) -> None:
     """구간 분석을 돌린다 — ① 분할 → ②③④ 특징 → ⑤ 색인 → ⑥ 등록·전환.
@@ -687,6 +690,10 @@ def analysis(
     `--local` 이 기본이다 — 분석 대상과 숫자 ID 매핑을 `~/flow_music_data` 와
     `registered.json` 에서 얻는다. 요구 5(분석 대상 조회)를 부를 이유가 없다.
     설계는 `ai_server/docs/ANALYSIS-BATCH.md`.
+
+    `--yes` 는 cron·`run_batch.sh` 용이다. **이 명령은 아무것도 묻지 않지만 인자를
+    받아 둔다** — `run_batch.sh` 가 `run()` 헬퍼로 `--yes` 를 붙여 부르므로, 없으면
+    `No such option` 으로 죽는다(실제로 그렇게 죽었다).
     """
     from .analysis import batch as ab
 
