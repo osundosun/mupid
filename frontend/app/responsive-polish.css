@@ -848,7 +848,7 @@
 .mupid-shell .selected-moment-popover .wave-comment-popover-head { position: static; padding: 8px 2px; background: transparent; border-bottom: 1px solid #eaf1f8; }
 .mupid-shell .selected-moment-popover .wave-comment-popover-head > span { font-size: 13px; color: #6485ad; background: #edf5fc; padding: 6px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
 .mupid-shell .selected-moment-popover .wave-comment-popover-head .icon-button { margin: 0; width: 44px; height: 44px; }
-.selected-moment-messages { max-height: 220px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #d4e3f1 transparent; }
+.selected-moment-messages { max-height: 220px; overflow-y: auto; padding-right: 8px; scrollbar-width: thin; scrollbar-color: #d4e3f1 transparent; }
 .mupid-shell .selected-moment-popover article { padding: 12px 2px; }
 .mupid-shell .selected-moment-popover article p { margin: 4px 0 0 38px; font-size: 14px; line-height: 1.65; color: #3d5270; }
 .mupid-shell .selected-moment-popover .wave-comment-line { gap: 8px; }
@@ -856,8 +856,14 @@
 .mupid-shell .selected-moment-popover strong { font-size: 14px; color: #344c70; }
 .moment-comment-timestamp { font-size: 12px; color: #8b9db5; white-space: nowrap; }
 .mupid-shell .selected-moment-popover .moment-edit { margin-left: auto; min-height: 44px; padding-inline: 8px; font-size: 12px; color: #8196b2; }
+.mupid-shell .selected-moment-popover .moment-delete { min-height: 44px; padding-inline: 8px; font-size: 12px; color: #c07093; }
+.player-quick-actions .moment-panel-toggle[aria-expanded='true'] { color: #527fba; }
 .moment-popup-write { display: flex; justify-content: center; align-items: center; gap: 8px; width: 100%; min-height: 44px; margin-top: 10px; border: 1px solid #dce9f7; border-radius: 12px; background: #edf5fd; color: #517aaf; font-size: 14px; font-weight: 500; }
 .moment-popup-write:hover { background: #e3effc; }
+.moment-popup-write[aria-pressed='true'] { border-color: #a9c6e8; background: #d7e7fa; color: #37629b; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.mupid-shell .track-comments .selected-moment-popover form.wave-comment-composer {
+  margin: 0; padding: 12px 0 0; border: 0; border-radius: 0; background: none; box-shadow: none;
+}
 .mupid-shell .selected-moment-popover .moment-popup-empty { margin: 0; padding: 20px 8px; text-align: center; font-size: 14px; }
 .mupid-shell .wave-comment-avatar { border-radius: 50%; background: #9bbdde; box-shadow: 0 2px 6px #607ba61a; }
 .mupid-shell .wave-comment-avatar[aria-expanded='true'] { background: #759dcc; outline: 2px solid #d5e6f7; }
@@ -1071,8 +1077,10 @@
   .mupid-shell .track-comments .player-waveform .waveform { height: 64px; gap: 2px; }
 }
 
-.record-info-trigger { display: block; width: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; border-radius: 50%; }
-.record-info-trigger:focus-visible { outline: 2px solid #83aadc; outline-offset: 6px; }
+.record-info-trigger { display: block; width: fit-content; max-width: 100%; margin-inline: auto; padding: 0; border: 0; background: transparent; cursor: pointer; border-radius: 50%; line-height: 0; -webkit-tap-highlight-color: transparent; }
+.record-info-trigger:focus:not(:focus-visible) { outline: none; }
+.record-info-trigger:focus-visible { outline: 2px dashed #a2afc5; outline-offset: 3px; }
+.record-info-trigger .vinyl-record { width: min(70vw, 440px); max-width: 100%; }
 .track-info-dialog .track-info-fields { display: grid; gap: 16px; margin: 8px 0; }
 .track-info-fields > div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 12px; align-items: baseline; }
 .track-info-fields dt { color: #879bb6; font-size: 13px; }
@@ -1618,8 +1626,8 @@
 .mupid-shell.page-player .song-lyrics { margin-block: 8px; padding-block: 0; }
 .mupid-shell.page-player .player-detail .section-pill { margin-block: 4px 8px; padding-block: 2px; font-size: 14px; }
 .mupid-shell.page-player .track-comments .time-labels { margin-block: 4px 8px; font-size: 14px; }
-.mupid-shell.page-player .track-comments > .full-controls { margin-block: 8px; }
-.mupid-shell.page-player .player-quick-actions { margin: 0; padding: 0; }
+.mupid-shell.page-player .track-comments > .full-controls { margin-block: 24px 20px; }
+.mupid-shell.page-player .player-quick-actions { margin: 12px 0 0; padding: 8px 0 24px; }
 .mupid-shell.page-player .track-comments .player-line-timeline { height: 34px; margin-top: 16px; margin-bottom: 0; }
 @media (max-width: 767px) {
   .mupid-shell.page-player .main-content { padding-top: 6px; padding-bottom: calc(var(--nav-height) + 12px + var(--safe-area-inset-bottom)); }
@@ -1630,6 +1638,19 @@
   .mupid-shell.page-player .vinyl-record { width: min(60vw, 240px, max(96px, calc(100svh - 490px))); height: auto; }
   .mupid-shell.page-player .song-lyrics { font-size: 13px; line-height: 1.6; max-height: 44px; }
   .mupid-shell.page-player .track-comments > .full-controls .play-main { width: 52px; height: 52px; min-height: 52px; }
+  /*
+   * 좁은 화면에서는 아이콘 위, 글자 아래로 쌓는다.
+   *
+   * 가로로 두면 네 개가 325px 를 나눠 갖느라 버튼마다 64px 로 찌그러지고
+   * 라벨이 버튼 안에서 줄바꿈된다 ("재생목 록"). 세로로 쌓으면 글자를 줄이고도
+   * 네 개가 한 줄에 들어간다. 하단 탭바와 같은 모양이라 낯설지도 않다.
+   */
+  .mupid-shell .player-quick-actions { gap: 4px; }
+  .mupid-shell .player-quick-actions button {
+    flex: 1 1 0; min-width: 0; flex-direction: column; gap: 4px;
+    padding: 6px 2px; font-size: 11px; line-height: 1.3; white-space: nowrap;
+  }
+  .mupid-shell .player-quick-actions button svg { width: 20px; height: 20px; }
 }
 @media (min-width: 768px) {
   .mupid-shell.page-player .vinyl-record { width: min(100%, 420px, max(180px, calc(100dvh - 330px))); height: auto; }
@@ -1729,10 +1750,13 @@
 .profile-settings-card .primary-button:disabled { background: #e8eef7; color: #95a7c0; opacity: 1; }
 
 /* Exact-time hearts keep their horizontal position even in crowded moments. */
-.moment-heart-scroll { max-height: 88px; overflow-y: auto; overflow-x: hidden; padding-inline: 22px; margin-inline: -22px; scrollbar-width: thin; overscroll-behavior: contain; }
+.moment-heart-scroll { max-height: 44px; overflow-y: hidden; overflow-x: hidden; padding-inline: 22px; margin-inline: -22px; scrollbar-width: thin; overscroll-behavior: contain; }
 .moment-heart-rail { position: relative; width: 100%; }
 .moment-heart-marker { position: absolute; transform: translateX(-50%); width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; color: #d991b5; cursor: pointer; }
 .moment-heart-marker:hover, .moment-heart-marker[aria-expanded='true'] { color: #c96096; }
+/* 흰 테두리를 둘러 파형 위에서도 표식이 배경과 섞이지 않게 한다. */
+.moment-heart-marker .moment-author-avatar { width: 28px; height: 28px; box-shadow: 0 0 0 2px #fff, 0 2px 6px #607ba626; }
+.moment-heart-marker[aria-expanded='true'] .moment-author-avatar { box-shadow: 0 0 0 2px #7aa3d6, 0 2px 7px #607ba633; }
 .moment-heart-marker:focus-visible { outline: 2px solid #729bd0; outline-offset: -3px; border-radius: 12px; }
 .moment-heart-marker small { position: absolute; top: 0; right: 0; font-size: 10px; line-height: 16px; min-width: 16px; padding-inline: 2px; border-radius: 8px; background: #fff; color: #a7517b; }
 
@@ -1745,6 +1769,7 @@
 .player-title-trigger:hover { color: #557fc2; }
 .player-title-trigger:focus-visible { outline: 2px solid #83aadc; outline-offset: 4px; border-radius: 4px; }
 .player-lyrics-dialog .song-lyrics { max-height: min(55dvh, 480px); overflow-y: auto; overscroll-behavior: contain; padding: 4px 12px; color: #4e688e; font-size: 15px; line-height: 1.6; text-align: center; word-break: keep-all; overflow-wrap: break-word; }
+.player-lyrics-dialog .song-lyrics { scrollbar-width: thin; scrollbar-color: #cfdded transparent; }
 .player-lyrics-dialog .song-lyrics h3 { display: none; }
 .player-lyrics-dialog .song-lyrics > p { display: block; margin: 0 0 5px; overflow: visible; -webkit-line-clamp: unset; }
 .track-menu-divider { width: 100%; margin: 8px 0; border: 0; border-top: 1px solid #e0e8f5; }

@@ -51,11 +51,11 @@ spec:
       nodeSelector: {mupid.io/role: ai}
       containers:
         - name: dbstudio
-          # v0.2.0-alpine 의 digest 다. 태그가 아니라 digest
+          # v0.2.1-alpine 의 digest 다. 태그가 아니라 digest
           # 로 고정한 이유는 SeaweedFS 와 같고, 여기서는 하나 더 있다 — 두 노드의
           # 버전이 갈리면 복제가 조용히 일부만 된다. 실제로 :alpine 은 이 업그레이드
           # 사이에 0.1.21 에서 0.2.0 으로 옮겨 갔다.
-          image: ghcr.io/yejun614/db-studio@sha256:9f903e9b3b032996e11f6d1efff3ee8c35d87a984518c6c1d35e3529706caf40
+          image: ghcr.io/yejun614/db-studio@sha256:d43e93c5b7078d188ca5ca5f34e69128d79aa7a1c32378648d48ccf5e03dc555
           env:
             - {name: TZ, value: Asia/Seoul}
             - {name: DBSTUDIO_ADDR, value: ':8080'}
@@ -116,7 +116,7 @@ spec:
         - name: dbstudio
           # 마스터와 같은 digest 여야 한다. 다르면 마스터에만 있는 컬럼을 건너뛰고
           # 스냅샷에 없는 표는 손대지 않은 채, 어디에도 오류를 남기지 않는다.
-          image: ghcr.io/yejun614/db-studio@sha256:9f903e9b3b032996e11f6d1efff3ee8c35d87a984518c6c1d35e3529706caf40
+          image: ghcr.io/yejun614/db-studio@sha256:d43e93c5b7078d188ca5ca5f34e69128d79aa7a1c32378648d48ccf5e03dc555
           env:
             - {name: TZ, value: Asia/Seoul}
             - {name: DBSTUDIO_ADDR, value: ':8080'}
