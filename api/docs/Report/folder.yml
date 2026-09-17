@@ -55,8 +55,13 @@ docs:
     ## 기준 데이터가 필요합니다
 
     `mubti` 표 16행이 비어 있으면 **503 `MUPID_REPORT_MUBTI_NOT_SEEDED`** 입니다.
-    `api/knowledge/domain/seed-mubti.sql` 을 넣으세요. 온보딩이 `codes` 표에
-    걸리는 것과 같은 구조입니다.
+    이 표는 **기동할 때 API 서버가 스스로 채웁니다**(`bootstrap/BootstrapRunner`) —
+    `image_file_id` 가 NOT NULL 이라 행만 넣을 수 없고, 캐릭터 이미지를 오브젝트
+    스토리지에 올린 뒤 그 `file_id` 를 물려야 하기 때문입니다. 캐릭터는 jar 안의
+    `bootstrap/mubti-characters.zip` 에 들어 있습니다.
+
+    손으로 넣지 않습니다. 503 이 뜨면 기동 로그의 `취향 유형` 항목을 보세요 —
+    스토리지가 죽었거나 계정에 권한이 없을 때 그렇게 됩니다.
 
     ## 설계 배경
 

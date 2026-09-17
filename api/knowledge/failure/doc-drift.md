@@ -1,12 +1,26 @@
 # 문서가 코드와 어긋난 곳
 
-11건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+12건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
 ---
 
 문서를 계약으로 믿지 말 것. 아래는 실제 파일과 대조해 확인한 어긋남이다.
+
+### 영역 라벨이 MR 의 필수 조건인데 어느 규약 문서에도 없다
+
+- **원인**: `infra/ci/labels.yml` 이 "라벨을 하나도 안 붙이면 `require-area-label` 이 실패해서 머지를 막는다"고 못 박고, `backend-verify`·`frontend-verify` 의 `rules` 도 라벨을 봐서 돌지 말지 정한다. 그런데 **그 요구사항이 CI 파일 주석 밖에 없다** — `knowledge/convention/merge-request.md`(MR 정책 표)와 `api/AGENTS.md`(MR 지침) 어디에도 라벨 이야기가 없고, 저장소 전체를 뒤져도 `*.md` 에는 한 줄도 없다. MR 을 만들 때 CI 설정 파일을 먼저 읽지 않으면 알 수 없다.
+- **증상**: 라벨 없이 MR 을 만든다. 그러면 `require-area-label` 만 든 파이프라인이 만들어져 **실패**하고, 영역 verify job 은 **하나도 돌지 않는다** — 아무것도 검증하지 않은 MR 이 생긴다. 그리고 이걸 막아야 할 문서가 없어 같은 일이 반복된다.
+- **해결**: 라벨을 **MR 생성 명령에서 함께** 넘긴다. 이미 만들었다면 라벨을 붙인 뒤 파이프라인을 재실행한다(재실행하면 `require-area-label` 이 목록에서 사라지고 영역 verify job 이 나타난다 — 그게 라벨이 인식된 증거다).
+  ```bash
+  glab mr create --label Backend --label Frontend ...
+  glab api --method POST "projects/<프로젝트>/merge_requests/<iid>/pipelines"
+  ```
+- **주의**: 라벨을 나중에 붙여도 **이미 만들어진 파이프라인은 되살아나지 않는다.** GitLab 은 라벨 변경으로 MR 파이프라인을 다시 돌리지 않는다. 이 점도 위 문서들에는 없다.
+- **근거**: `infra/ci/labels.yml:21-44`, `infra/ci/backend.yml`·`frontend.yml` 의 `rules`,
+  `knowledge/convention/merge-request.md`, `api/AGENTS.md`. 어긋남은 **2026-09-16 에 해소**했다 —
+  `merge-request.md` 의 MR 정책 표에 영역 라벨 행을 추가했다.
 
 ### `.gitignore` 에 `.env` 가 없다는 경고는 이미 틀렸다 — 해소됨
 

@@ -11,6 +11,13 @@ import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import com.osundosun.mupid.api.report.entity.Mubti;
+import com.osundosun.mupid.api.report.enumerate.MubtiClass;
+import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
+import com.osundosun.mupid.api.storage.enumerate.FileCategory;
+import com.osundosun.mupid.api.storage.enumerate.FileType;
+import com.osundosun.mupid.api.storage.service.StorageImageService;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
@@ -134,6 +141,75 @@ class BootstrapSeedTest {
             assertThat(BootstrapRunner.recoverDoubleEncoded(seed.title())).as(seed.title()).isNull();
             assertThat(BootstrapRunner.recoverDoubleEncoded(seed.subtitle())).as(seed.subtitle()).isNull();
         });
+    }
+
+    @Test
+    @DisplayName("취향 유형 이미지의 저장 키가 조회 URL 로 이어진다")
+    void mubtiImageKeysRoundTrip() {
+        // 저장 키를 만드는 곳은 `StorageImageService` 하나이고, 조회 URL 도 그 모양을
+        // 되짚어 만들어진다. 이 둘이 갈라지면 `imageUrl` 이 예외도 로그도 없이 null 이
+        // 되고 화면은 조용히 캐릭터를 못 그린다 — 실제로 그렇게 캐릭터가 뜨지 않았다.
+        // 그래서 여기서 16종 전부 왕복시켜 본다.
+        for (BootstrapRunner.MubtiSeed seed : BootstrapRunner.MUBTI_SEEDS) {
+            String lookup = BootstrapRunner.mubtiImageKey(seed.code());
+
+            String storageKey = StorageImageService.storageKey(FileCategory.MUBTI, lookup);
+            assertThat(storageKey).as("%s 저장 키", seed.code())
+                .isEqualTo("image/mubti/" + lookup);
+
+            assertThat(StorageImageService.imageUrl(fileAtKey(storageKey)))
+                .as("%s 조회 URL", seed.code())
+                .isEqualTo("/api/v1/storage/image/MUBTI/" + lookup);
+        }
+    }
+
+    @Test
+    @DisplayName("접두사를 뺀 옛 키는 조회 URL 이 되지 않는다 — 캐릭터가 안 뜨던 그 모양이다")
+    void legacyKeyWithoutCategoryPrefixYieldsNoUrl() {
+        // 고치는 자리는 `imageUrl` 이 아니라 키를 만드는 쪽이다. 여기서 너그럽게 받아 주면
+        // 규약이 둘로 갈라진 채 남고, 어느 쪽이 맞는지 아무도 모르게 된다.
+        assertThat(StorageImageService.imageUrl(fileAtKey("mubti/VTFC.webp"))).isNull();
+    }
+
+    @Test
+    @DisplayName("지워진 파일과 키가 어긋난 행은 주소를 만들지 않는다")
+    void deletedOrMalformedFilesHaveNoUrl() {
+        ObjectStorageFile deleted = fileAtKey("image/mubti/VTFC.webp");
+        deleted.setIsDeleted(true);
+        assertThat(StorageImageService.imageUrl(deleted)).isNull();
+
+        assertThat(StorageImageService.imageUrl(fileAtKey("VTFC.webp"))).isNull();
+        assertThat(StorageImageService.imageUrl(null)).isNull();
+    }
+
+    private static ObjectStorageFile fileAtKey(String storageKey) {
+        return ObjectStorageFile.builder()
+            .fileType(FileType.IMG)
+            .category(FileCategory.MUBTI)
+            .originalFileName(storageKey)
+            .storageObjectKey(storageKey)
+            .fileSizeBytes(1)
+            .mime("image/webp")
+            .build();
+    }
+
+    /**
+     * 네 축이 16종 밖인 행은 코드를 만들지 않는다.
+     *
+     * <p>수리는 축 조합을 코드로 봐서 하는데, 그 판정이 너그러우면 시드가 만든 적 없는 행을
+     * 건드리게 된다.
+     */
+    @Test
+    @DisplayName("16종 밖의 조합은 시드 코드로 보지 않는다")
+    void unknownCombinationsHaveNoSeedCode() {
+        assertThat(BootstrapRunner.mubtiSeedCode(Mubti.builder()
+            .classA(null).classB(MubtiClass.B.T).classC(MubtiClass.C.F).classD(MubtiClass.D.C)
+            .title("t").subtitle("s").description("d").build())).isNull();
+
+        assertThat(BootstrapRunner.mubtiSeedCode(Mubti.builder()
+            .classA(MubtiClass.A.V).classB(MubtiClass.B.T)
+            .classC(MubtiClass.C.F).classD(MubtiClass.D.C)
+            .title("t").subtitle("s").description("d").build())).isEqualTo("VTFC");
     }
 
     /**

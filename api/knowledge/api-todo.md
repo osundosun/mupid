@@ -405,8 +405,9 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 - **기간은 일간뿐이다.** 원래 이 항목은 `period=week|month|year&offset=N` 을
   적어 두었지만, 화면이 실제로 쓰는 것은 하루치다. 채우지 않을 파라미터를
   미리 열면 계약이 잘못 굳는다.
-- **`mubti` 표 16행을 사람이 넣어야 한다** (`domain/seed-mubti.sql`). 비어
-  있으면 503 이다 — 온보딩이 `codes` 표에 걸리는 것과 같은 구조.
+- **`mubti` 표 16행은 기동 때 `BootstrapRunner` 가 채운다** (S15P21A204-344).
+  `image_file_id` 가 NOT NULL 이라 행만 넣을 수 없어 손으로 넣던 `seed-mubti.sql`
+  은 없앴다. 비어 있으면 503 이라는 점은 그대로다.
 - **구간 기반 신호를 하나도 못 썼다.** `track_sections` 를 채우는 파이프라인이
   없어 `play_section_coverage` · `v_track_skips` 가 전부 빈 결과다. MuBTI
   A축(보컬/멜로디)이 가장 약한 축이 된 이유다.
