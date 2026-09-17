@@ -360,7 +360,7 @@ public class ReportServiceImpl implements ReportService {
     // 응답 조립
     // ─────────────────────────────────────────────────────────────
 
-    private List<ReportResponse.TrackListening> toTiles(
+    static List<ReportResponse.TrackListening> toTiles(
         Map<Integer, Long> listeningMs, Map<Integer, MusicSummary> musics, long totalMs
     ) {
         return listeningMs.entrySet().stream()
@@ -373,7 +373,7 @@ public class ReportServiceImpl implements ReportService {
                     music.title(),
                     music.artist().name(),
                     music.album().title(),
-                    music.album().imageUrl(),
+                    music.imageUrl(),
                     entry.getValue(),
                     totalMs == 0 ? 0 : (double)entry.getValue() / totalMs);
             })
