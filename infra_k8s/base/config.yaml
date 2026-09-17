@@ -28,8 +28,45 @@ data:
   MUPID_CLICKHOUSE_USER: mupid
   MUPID_KAFKA_BOOTSTRAP: kafka:9092
   MUPID_KAFKA_TOPIC: mupid.listen.events
-  # Consumed once the Spring internal client lands (Phase 4). Harmless until then.
-  MUPID_AI_BASE_URL: http://ai:8100
+  # LLM 게이트웨이. **바깥 주소다** — OpenAI 호환 API 의 `/chat/completions`
+  # 앞까지를 가리킨다 (application.yaml 의 `ai.base-url`).
+  #
+  # 예전에 여기에 http://ai:8100 이 들어 있었다. 그 이름을 추천 서버 주소로
+  # 착각한 것인데, 그 탓에 **대화 요청이 LLM 이 아니라 클러스터에 있지도 않은
+  # 주소로 나가고 있었다.** application.yaml 의 주석이 정확히 그 경우를
+  # 경고한다 — "거기에 추천 서버 주소를 넣으면 대화가 추천 서버로 나간다".
+  #
+  # 추천 서버(ai_server)는 MUPID_RECOMMENDER_BASE_URL 이라는 **다른 이름**을
+  # 쓴다. 둘은 서로 다른 서버다: 이쪽은 대화를 만들고 저쪽은 곡을 고른다.
+  # MUPID_AI_BASE_URL · MUPID_AI_MODEL · MUPID_AI_GMS_KEY 는 여기 두지 않는다.
+  # 셋 다 MUPID_API_ENV 한 곳에서 관리한다 — 개발 환경의 api/.env 와 같은
+  # 묶음이라 나눠 두면 어느 쪽이 이기는지 헷갈린다.
+  #
+  # 대신 api.yaml 이 셋을 secretKeyRef 로 읽는다(optional: true). Secret 에
+  # 없으면 스프링 기본값으로 간다 — 주소와 모델은 기본값이 맞는 값이고,
+  # 키가 비면 /api/v1/ai/chat 만 503 이다.
+  #
+  # **여기에 같은 이름을 다시 넣지 않는다.** env 로 지정한 값이 envFrom 을
+  # 이기므로 ConfigMap 쪽은 조용히 무시되고, 읽는 사람만 헷갈린다.
+  #
+  # 짝이 되는 MUPID_AI_GMS_KEY 는 비밀이라 여기 두지 않는다 — mupid-secrets 로
+  # 간다(MUPID_API_ENV). 그 키가 비면 /api/v1/ai/chat 이 503 이다.
+
+  # --- 추천 서버(ai_server) -------------------------------------------------
+  # 2026-09-16 배포했다. 주소를 채운다 — 비어 있으면 곡 추천이 503 이다.
+  #
+  # 클러스터 안 이름이다. Service 가 ClusterIP 이고 nginx 는 /internal 을 밖으로
+  # 내보내지 않으므로 이 주소는 클러스터 밖에서 닿지 않는다.
+  MUPID_RECOMMENDER_BASE_URL: http://ai:8100
+  #
+  # **짝이 되는 토큰은 아직 비어 있다.** MUPID_RECOMMENDER_INTERNAL_TOKEN(Spring)과
+  # MUPID_AI_INTERNAL_TOKEN(추천 서버)이 같은 값이어야 하고, 둘 다 비면 /internal 이
+  # 인증 없이 열린다 — 지금이 그 상태다. 클러스터 밖에서 닿을 길이 없어 당장
+  # 위험하지는 않지만, 같은 네임스페이스의 어떤 파드든 추천 API 를 부를 수 있다.
+  #
+  # 채울 때는 **양쪽을 동시에** 켠다. 한쪽만 켜면 추천이 통째로 401 이고, 그 증상은
+  # 배포 설정만 보고는 드러나지 않는다. 값은 비밀이라 여기가 아니라 MUPID_API_ENV
+  # (mupid-secrets)로 간다.
 ---
 apiVersion: v1
 kind: ConfigMap

@@ -429,20 +429,34 @@ class BuildTest(unittest.TestCase):
                     with self.subTest(overlay=overlay, path=path):
                         self.assertFalse(path.startswith(forbidden))
 
+    # 쓰기를 여는 hostPath. **여기 없는 것은 전부 읽기 전용이어야 한다.**
+    #
+    # `/state` 는 배치가 쌓는 자리다 — 워터마크·이벤트 로그·라벨 중간물·선호 구간.
+    # 색인(`/artifacts`)과 **다른 디렉터리**이고, 색인 쪽은 그대로 읽기 전용이다.
+    # 둘을 나눈 이유는 색인이 판마다 갈리기 때문이다: 상태를 거기 두면 판을
+    # 교체할 때마다 워터마크가 사라져 신호를 처음부터 다시 당긴다.
+    WRITABLE_HOST_PATHS = {"/srv/mupid-k8s/ai-state"}
+
     def test_host_mounts_from_the_existing_tree_are_read_only(self):
         """/etc/letsencrypt, /srv/mupid/acme and /srv/mupid/web belong to certbot
         and to the Compose deployment. This option only reads them."""
         for overlay in OVERLAYS:
             for doc in build(overlay):
-                if doc.get("kind") not in ("Deployment", "StatefulSet"):
+                if doc.get("kind") == "CronJob":
+                    spec = doc["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+                elif doc.get("kind") in ("Deployment", "StatefulSet"):
+                    spec = doc["spec"]["template"]["spec"]
+                else:
                     continue
-                spec = doc["spec"]["template"]["spec"]
                 host_volumes = {
-                    v["name"] for v in spec.get("volumes", []) if "hostPath" in v
+                    v["name"]: v["hostPath"]["path"]
+                    for v in spec.get("volumes", []) if "hostPath" in v
                 }
                 for container in spec["containers"]:
                     for mount in container.get("volumeMounts", []):
                         if mount["name"] not in host_volumes:
+                            continue
+                        if host_volumes[mount["name"]] in self.WRITABLE_HOST_PATHS:
                             continue
                         with self.subTest(overlay=overlay, mount=mount["mountPath"]):
                             self.assertTrue(mount.get("readOnly"))
@@ -1336,6 +1350,369 @@ class PrebuiltJobImageTest(unittest.TestCase):
         self.assertIsNone(job.get("cache"), "pip 캐시를 다시 나르고 있다")
 
 
+class AiEndpointNamesTest(unittest.TestCase):
+    """LLM 게이트웨이와 추천 서버(ai_server)는 **다른 서버**이고 이름도 다르다.
+
+      MUPID_AI_BASE_URL           대화를 만드는 바깥 LLM
+      MUPID_RECOMMENDER_BASE_URL  곡을 고르는 ai_server
+
+    한쪽 이름에 다른 쪽 주소를 넣으면 대화가 추천 서버로 나간다. 실제로
+    그랬다 — api/.env.example 에 MUPID_AI_BASE_URL 이 두 번 있었고 뒤의 것이
+    http://ai-server:8100 이었으며, 그 값이 운영 ConfigMap 까지 베껴졌다.
+    호출은 성공한 것처럼 보이고 대화만 조용히 망가진다."""
+
+    EXAMPLE = ROOT / "api" / ".env.example"
+
+    def _entries(self, text):
+        found = {}
+        for number, line in enumerate(text.splitlines(), start=1):
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            found.setdefault(line.split("=", 1)[0].strip(), []).append(number)
+        return found
+
+    def test_no_name_is_defined_twice_in_the_example(self):
+        """`.env` 는 뒤가 이긴다. 같은 이름이 두 번이면 앞의 설명과 다른 값이
+        실제로 쓰이고, 읽는 사람은 앞의 것을 믿는다."""
+        for name, lines in self._entries(self.EXAMPLE.read_text(encoding="utf-8")).items():
+            with self.subTest(name=name):
+                self.assertEqual(
+                    1, len(lines),
+                    f"{name} 이 {lines} 번 줄에 여러 번 있다 — 뒤의 값이 이긴다",
+                )
+
+    def test_the_llm_name_never_points_inside_the_cluster(self):
+        """MUPID_AI_BASE_URL 은 바깥 LLM 이다. 클러스터 안 주소가 들어가면
+        대화가 나가지 못한다."""
+        sources = [self.EXAMPLE, K8S / "base" / "config.yaml"]
+        for path in sources:
+            text = path.read_text(encoding="utf-8")
+            for line in text.splitlines():
+                stripped = line.strip().lstrip("-").strip()
+                if not stripped.startswith("MUPID_AI_BASE_URL"):
+                    continue
+                value = stripped.split("=", 1)[-1].split(":", 1)[-1].strip() \
+                    if "=" in stripped else stripped.split(":", 1)[1].strip()
+                if not value:
+                    continue
+                with self.subTest(file=path.name, value=value):
+                    self.assertNotIn("ai-server", value)
+                    self.assertNotRegex(value, r"^http://ai\b")
+
+    def test_the_llm_key_actually_reaches_the_container(self):
+        """Secret 은 envFrom 으로 통째로 주입하지 않고 이름을 하나씩 적는다.
+        그래서 .env 에 키를 넣는 것만으로는 컨테이너에 도달하지 않는다 —
+        api.yaml 에 secretKeyRef 가 있어야 한다.
+
+        빠뜨리면 아무 오류 없이 그 설정만 조용히 비어 있다."""
+        api = yaml.safe_load_all((K8S / "base" / "api.yaml").read_text(encoding="utf-8"))
+        container = next(
+            d["spec"]["template"]["spec"]["containers"][0]
+            for d in api if d and d.get("kind") == "Deployment")
+        named = {e["name"] for e in container.get("env", [])}
+        self.assertIn("MUPID_AI_GMS_KEY", named,
+                      "LLM 키가 컨테이너에 전달되지 않는다")
+        # Secret 을 통째로 주입하면 api 가 쓸 일 없는 비밀(루트 비밀번호 등)까지
+        # 들고 있게 된다. 그래서 통째 주입은 하지 않는다.
+        for source in container.get("envFrom", []):
+            with self.subTest(source=source):
+                self.assertNotIn("secretRef", source)
+
+    def test_the_llm_settings_live_in_one_place(self):
+        """주소·모델·키를 MUPID_API_ENV 한 묶음으로 관리한다 — 개발 환경의
+        api/.env 와 같은 구성이다.
+
+        ConfigMap 에 같은 이름을 다시 넣으면 안 된다. env 로 지정한 값이
+        envFrom 을 이기므로 ConfigMap 쪽이 조용히 무시되고, 두 곳을 보는
+        사람만 헷갈린다."""
+        for doc in yaml.safe_load_all((K8S / "base" / "config.yaml").read_text(encoding="utf-8")):
+            if doc and doc.get("kind") == "ConfigMap" and doc["metadata"]["name"] == "api-config":
+                data = doc["data"]
+                break
+        else:
+            raise AssertionError("api-config 를 찾지 못했다")
+        for name in ("MUPID_AI_BASE_URL", "MUPID_AI_MODEL", "MUPID_AI_GMS_KEY"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, data)
+
+    def test_the_llm_settings_are_optional_so_the_pod_still_starts(self):
+        """Secret 에 없는 키를 optional 없이 참조하면 파드가
+        CreateContainerConfigError 로 아예 뜨지 않는다 — 대화 하나 때문에
+        서비스 전체가 내려간다."""
+        api = yaml.safe_load_all((K8S / "base" / "api.yaml").read_text(encoding="utf-8"))
+        container = next(
+            d["spec"]["template"]["spec"]["containers"][0]
+            for d in api if d and d.get("kind") == "Deployment")
+        refs = {e["name"]: (e.get("valueFrom") or {}).get("secretKeyRef", {})
+                for e in container.get("env", [])}
+        for name in ("MUPID_AI_GMS_KEY", "MUPID_AI_BASE_URL", "MUPID_AI_MODEL"):
+            with self.subTest(name=name):
+                self.assertIn(name, refs, "컨테이너에 전달되지 않는다")
+                self.assertTrue(refs[name].get("optional"),
+                                "optional 이 아니면 Secret 에 없을 때 파드가 안 뜬다")
+
+    def test_the_recommender_pair_is_documented_together(self):
+        """한쪽만 켜면 추천이 통째로 401 이다. 둘이 같이 보여야 한다."""
+        text = self.EXAMPLE.read_text(encoding="utf-8")
+        self.assertIn("MUPID_RECOMMENDER_BASE_URL", text)
+        self.assertIn("MUPID_RECOMMENDER_INTERNAL_TOKEN", text)
+        self.assertIn("MUPID_AI_INTERNAL_TOKEN", text,
+                      "추천 서버 쪽 짝 이름이 적혀 있지 않다")
+
+
+class ApkDownloadTest(unittest.TestCase):
+    """APK 는 웹 이미지에 굽지 않고 노드의 디렉터리에 두고 nginx 가 읽는다.
+    그 사이에 맞아야 하는 것이 넷이고, 하나라도 어긋나면 받는 사람이 404 를
+    본다 — 올린 쪽은 성공했다고 나온다."""
+
+    DEPLOY = K8S / "deploy"
+
+    def _nginx(self):
+        return (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
+
+    def _edge(self):
+        for doc in yaml.safe_load_all(
+                (K8S / "base" / "edge.yaml").read_text(encoding="utf-8")):
+            if doc and doc.get("kind") == "Deployment":
+                return doc["spec"]["template"]["spec"]
+        raise AssertionError("edge Deployment 를 찾지 못했다")
+
+    def test_nginx_serves_the_apk_from_where_the_pod_mounts_it(self):
+        """alias 가 가리키는 곳과 파드가 마운트하는 곳이 다르면 404 다."""
+        alias = re.search(r"location = /download/mupid\.apk \{[^}]*?alias\s+(\S+);",
+                          self._nginx(), re.S)
+        self.assertTrue(alias, "nginx 에 /download/mupid.apk 가 없다")
+        served = pathlib.PurePosixPath(alias.group(1)).parent.as_posix()
+        mounts = {m["mountPath"] for c in self._edge()["containers"]
+                  for m in c.get("volumeMounts", [])}
+        self.assertIn(served, mounts, f"{served} 를 엣지 파드가 마운트하지 않는다")
+
+    def test_the_mount_comes_from_the_node_directory_the_receiver_writes(self):
+        """수신기가 쓰는 곳과 파드가 읽는 곳이 같아야 한다."""
+        spec = self._edge()
+        volume = next(v for v in spec["volumes"] if v["name"] == "downloads")
+        host = volume["hostPath"]["path"]
+        receiver = (self.DEPLOY / "receive-apk.py").read_text(encoding="utf-8")
+        self.assertIn(f'DOWNLOADS = ROOT / "{pathlib.PurePosixPath(host).name}"', receiver)
+        # 한 번도 올리지 않은 클러스터에서도 파드가 떠야 한다. Directory 면
+        # 디렉터리가 없을 때 파드가 아예 스케줄되지 않는다.
+        self.assertEqual(volume["hostPath"]["type"], "DirectoryOrCreate")
+
+    def test_the_forced_command_takes_nothing_but_a_versioned_apk(self):
+        """이 엔드포인트는 CI 키로 닿는다. 모양이 하나라도 헐거우면 그 키를
+        훔친 쪽이 다른 일을 할 수 있다."""
+        script = (self.DEPLOY / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        # 패턴 안에 [0-9a-f] 가 있어 ] 로 끊으면 안 된다. 기존
+        # DeployEndpointTest 와 같은 방식으로 게으르게 잡는다.
+        found = re.search(r"\$command =~ (\^upload-apk.+?) \]\]", script)
+        self.assertTrue(found, "upload-apk 를 받는 규칙이 없다")
+        pattern = re.compile(found.group(1))
+        good = "upload-apk " + "a" * 40 + " " + "b" * 64
+        self.assertTrue(pattern.match(good))
+        for bad in (
+            good + "; rm -rf /",
+            good + " extra",
+            good.replace("a" * 40, "A" * 40),
+            good.replace("b" * 64, "b" * 63),
+            "upload-apk",
+            "upload-apk ../../etc/passwd " + "b" * 64,
+        ):
+            with self.subTest(command=bad):
+                self.assertIsNone(pattern.match(bad))
+
+    def test_the_receiver_never_takes_a_path_from_the_caller(self):
+        """파일 이름에 들어가는 것은 40자 hex 로 검증한 커밋뿐이다."""
+        receiver = (self.DEPLOY / "receive-apk.py").read_text(encoding="utf-8")
+        self.assertIn('RELEASE = re.compile(r"^[0-9a-f]{40}$")', receiver)
+        self.assertIn("if not RELEASE.match(release)", receiver)
+        # 올라온 것이 APK 인지 본다. 공개 URL 로 아무 파일이나 나가면 안 된다.
+        self.assertIn("def is_apk", receiver)
+        self.assertIn("SIZE_LIMIT", receiver)
+
+    def test_the_apk_build_refuses_an_unsigned_artifact(self):
+        """서명 없는 APK 는 안드로이드가 설치를 거부한다. 그것을 받는 사람이
+        겪게 두면 안 된다."""
+        build = (ROOT / "infra" / "ci" / "build-apk.sh").read_text(encoding="utf-8")
+        self.assertIn("! -name '*unsigned*'", build)
+        self.assertIn("apksigner", build)
+
+    def test_signing_is_optional_for_a_local_build(self):
+        """키스토어가 없다고 로컬에서 `cargo tauri android build` 가 막히면
+        안 된다. CI 만 서명한다."""
+        gradle = (ROOT / "app" / "gen" / "android" / "app"
+                  / "build.gradle.kts").read_text(encoding="utf-8")
+        self.assertIn("keystorePropertiesFile.exists()", gradle)
+        self.assertIn("signingConfig = signingConfigs.getByName(\"release\")", gradle)
+        ignored = (ROOT / "app" / "gen" / "android" / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("keystore.properties", ignored)
+        # 키스토어 자체가 커밋되면 서명 키가 저장소에 들어간다.
+        self.assertEqual(
+            [], [p for p in (ROOT / "app").rglob("*.jks")],
+            "키스토어가 작업 트리에 있다",
+        )
+
+
+class AiServerDeployTest(unittest.TestCase):
+    """추천 서버는 **무상태**로 띄운다. 인계 문서는 산출물 513MB 를 /artifacts 로
+    마운트하는 전제였는데, 구조를 따져 보니 나눌 수 있었다 — 임베딩은 Pinecone,
+    라벨은 ClickHouse(원천이 거기다), 모델 가중치 352KB 는 이미지에.
+
+    파드는 아직 0 이다. 코드가 아직 파일 산출물에 의존해서 지금 띄우면
+    /internal/ready 가 503 이다. 배포 경로만 먼저 세워 둔다."""
+
+    AI = K8S / "base" / "ai.yaml"
+
+    def _deployment(self):
+        for doc in yaml.safe_load_all(self.AI.read_text(encoding="utf-8")):
+            if doc and doc.get("kind") == "Deployment":
+                return doc
+        raise AssertionError("ai Deployment 를 찾지 못했다")
+
+    def test_the_pod_reads_the_index_read_only(self):
+        """색인은 hostPath 로 온다. 앞서 이 시험은 "볼륨이 없다" 를 고정하고
+        있었는데, 그 설계는 두 가지 틀린 근거 위에 있었다 — 특징값을 서빙이
+        읽지 않는다(읽는다)와 임베딩을 Pinecone 으로 옮긴다(풀이 10,007구간이라
+        근거가 없다).
+
+        읽기 전용인 것이 핵심이다. 이 파드는 색인을 만들지 않는다 — 배치가
+        만들고 CI 가 올린다. 쓸 수 있게 두면 파드가 노드 디스크를 고칠 수 있고,
+        레플리카를 늘렸을 때 서로의 색인을 덮어쓴다."""
+        spec = self._deployment()["spec"]["template"]["spec"]
+        volume = {v["name"]: v for v in spec["volumes"]}["artifacts"]
+        self.assertIn("hostPath", volume)
+        mount = {m["name"]: m for m in spec["containers"][0]["volumeMounts"]}
+        self.assertTrue(mount["artifacts"]["readOnly"])
+
+    def test_replicas_can_still_be_raised(self):
+        """hostPath 를 쓰면서도 레플리카를 늘릴 수 있어야 한다.
+
+        읽기 전용이고 같은 노드에 고정(nodeSelector)이라 여러 파드가 같은
+        디렉터리를 함께 읽는다. ReadWriteMany 가 필요해지는 것은 쓰기를 열 때다.
+        """
+        spec = self._deployment()["spec"]["template"]["spec"]
+        self.assertEqual("ai", spec["nodeSelector"]["mupid.io/role"])
+        mount = {m["name"]: m for m in spec["containers"][0]["volumeMounts"]}
+        self.assertTrue(mount["artifacts"]["readOnly"])
+
+    def test_the_pool_excludes_sources_that_cannot_be_played(self):
+        """jamendo 는 실서비스에서 재생되지 않는다. 추천에 섞이면 사용자가 누를 수
+        없는 결과가 나간다 — 오류가 아니라 '재생이 안 되는 추천' 이라 화면만 보고는
+        무엇이 잘못됐는지 알기 어렵다.
+
+        코드 기본값이 `MUPID_POOL_EXTRA=jamendo` 라 **매니페스트가 덮지 않으면 그 값이
+        그대로 나간다.** 실제로 그렇게 나가고 있었다."""
+        container = self._deployment()["spec"]["template"]["spec"]["containers"][0]
+        env = {e["name"]: e.get("value") for e in container["env"] if "value" in e}
+        self.assertEqual("flow", env["MUPID_POOL"])
+        self.assertEqual("", env["MUPID_POOL_EXTRA"],
+                         "기본값(jamendo)이 새어 나간다")
+
+    def test_the_probes_are_not_swapped(self):
+        """/health 는 프로세스 생존만, /internal/ready 는 실제로 추천할 수 있는가를
+        본다. /health 를 readiness 로 쓰면 추천이 안 되는 파드로 트래픽이 가고,
+        /internal/ready 를 liveness 로 쓰면 준비되기 전에 계속 재시작한다."""
+        container = self._deployment()["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual("/health", container["livenessProbe"]["httpGet"]["path"])
+        self.assertEqual("/internal/ready", container["readinessProbe"]["httpGet"]["path"])
+
+    def test_the_internal_api_is_not_reachable_from_outside(self):
+        """/internal 에는 인증이 없고 Spring 만 부른다는 전제다. 열리면 누구나
+        추천 API 를 호출할 수 있다."""
+        for doc in yaml.safe_load_all(self.AI.read_text(encoding="utf-8")):
+            if doc and doc.get("kind") == "Service":
+                with self.subTest(service=doc["metadata"]["name"]):
+                    self.assertIn(doc["spec"].get("type", "ClusterIP"), ("ClusterIP",))
+        nginx = (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
+        self.assertNotIn("/internal/", nginx.replace("/internal/chunk-upload-auth", ""))
+
+    def test_the_shared_secret_is_optional_so_the_pod_still_starts(self):
+        """Secret 에 없는 키를 optional 없이 참조하면 파드가
+        CreateContainerConfigError 로 아예 뜨지 않는다."""
+        container = self._deployment()["spec"]["template"]["spec"]["containers"][0]
+        refs = {e["name"]: (e.get("valueFrom") or {}).get("secretKeyRef", {})
+                for e in container["env"] if "valueFrom" in e}
+        self.assertTrue(refs["MUPID_AI_INTERNAL_TOKEN"].get("optional"))
+
+    def test_the_deploy_path_knows_the_component(self):
+        """매니페스트만 있고 배포 경로가 없으면 올릴 때가 되어서야 처음 돌려
+        보게 된다. 컴포넌트는 열거라 세 곳이 맞아야 한다."""
+        entry = (K8S / "deploy" / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        self.assertIn(r"(api|web|ai)", entry)
+        receiver = (K8S / "deploy" / "receive-k8s.py").read_text(encoding="utf-8")
+        self.assertIn('"ai": ("deployment/ai", "ai", "mupid-ai")', receiver)
+        deploy = (K8S / "ci" / "deploy-k8s.sh").read_text(encoding="utf-8")
+        self.assertIn("ai)  archive=.release/ai/image.tar.gz", deploy)
+        # 매니페스트의 이름과 수신기가 부르는 이름이 같아야 한다.
+        self.assertEqual("ai", self._deployment()["metadata"]["name"])
+        self.assertEqual(
+            "ai", self._deployment()["spec"]["template"]["spec"]["containers"][0]["name"])
+
+    def test_the_manifest_is_actually_in_the_overlay(self):
+        """목록에서 빠져 있으면 매니페스트가 클러스터에 들어가지 않는다."""
+        kustomization = (K8S / "base" / "kustomization.yaml").read_text(encoding="utf-8")
+        self.assertRegex(kustomization, re.compile(r"^\s+- ai\.yaml\s*$", re.M))
+
+
+class ManifestApplyTest(unittest.TestCase):
+    """매니페스트는 저장소에서 고친다고 클러스터에 반영되지 않는다. 하루에 세 번
+    같은 사고가 났다 — Secret 은 갱신됐는데 파드가 그 키를 안 읽고, nginx 수정이
+    k8s 사본에만 없고, APK 는 올라갔는데 /download/ 가 404 였다.
+
+    이 엔드포인트는 다른 둘보다 힘이 세다. 이미지 수신기는 태그만, 환경변수
+    수신기는 Secret 하나만 건드리지만 여기는 클러스터의 모양을 바꾼다."""
+
+    CI = K8S / "ci"
+    DEPLOY = K8S / "deploy"
+
+    def test_the_forced_command_takes_nothing_but_a_versioned_bundle(self):
+        script = (self.DEPLOY / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        found = re.search(r"\$command =~ (\^apply-manifests.+?) \]\]", script)
+        self.assertTrue(found, "apply-manifests 를 받는 규칙이 없다")
+        pattern = re.compile(found.group(1))
+        good = "apply-manifests " + "a" * 40 + " " + "b" * 64
+        self.assertTrue(pattern.match(good))
+        for bad in (good + "; rm -rf /", good + " extra", "apply-manifests",
+                    good.replace("a" * 40, "A" * 40),
+                    good.replace("b" * 64, "b" * 63)):
+            with self.subTest(command=bad):
+                self.assertIsNone(pattern.match(bad))
+
+    def test_the_receiver_refuses_a_bundle_that_reaches_outside(self):
+        """tar 는 `../` 와 절대경로로 밖에 쓸 수 있다. 이건 root 로 돈다."""
+        receiver = (self.DEPLOY / "receive-manifests.py").read_text(encoding="utf-8")
+        self.assertIn('name.startswith("/")', receiver)
+        self.assertIn('".." in pathlib.PurePosixPath(name).parts', receiver)
+        # 경로를 열거로 묶는다. 저 둘 밖은 애초에 받지 않는다.
+        self.assertIn('ALLOWED = ("infra_k8s/base/", "infra_k8s/overlays/")', receiver)
+        # 심볼릭 링크로도 밖을 가리킬 수 있다.
+        self.assertIn("member.isfile()", receiver)
+
+    def test_the_receiver_refuses_manifests_for_another_namespace(self):
+        """CI 키를 훔친 쪽이 ClusterRole 을 심으면 클러스터 전체를 쥔다."""
+        receiver = (self.DEPLOY / "receive-manifests.py").read_text(encoding="utf-8")
+        self.assertIn("assert_only_our_namespace", receiver)
+        self.assertIn('CLUSTER_KINDS = {"Namespace"}', receiver)
+
+    def test_the_apply_goes_through_the_guarded_script(self):
+        """`kubectl apply -k` 를 직접 쓰면 이미지 태그가 placeholder 로 덮인다.
+        maxUnavailable 이 0 이라 옛 Pod 가 계속 서빙해서 겉으로는 멀쩡해 보이고,
+        그 Pod 가 죽는 순간 서비스가 내려간다. mupid-apply 가 그 함정 때문에
+        존재한다."""
+        receiver = (self.DEPLOY / "receive-manifests.py").read_text(encoding="utf-8")
+        self.assertIn("/usr/local/sbin/mupid-apply", receiver)
+        self.assertNotRegex(receiver, r'"apply",\s*"-k"')
+
+    def test_images_wait_for_the_manifests(self):
+        """새 매니페스트가 요구하는 것(볼륨·Secret 키)이 없는 상태로 이미지만
+        바뀌면 파드가 못 뜬다."""
+        jobs = yaml.safe_load((self.CI / "k8s-release.yml").read_text(encoding="utf-8"))
+        for name in ("k8s-deploy-api", "k8s-deploy-web", "k8s-deploy-env"):
+            with self.subTest(job=name):
+                needs = {n["job"] for n in jobs[name].get("needs", [])}
+                self.assertIn("k8s-deploy-manifests", needs)
+
+
 class CiVariableDocTest(unittest.TestCase):
     """CI 변수 이름이 코드 어딘가에만 있고 아무 데도 적혀 있지 않으면, 새 사람이
     '왜 이 job 이 안 뜨지' 로 반나절을 쓴다. 실제로 이 저장소에서 한 번 있었다 —
@@ -1398,6 +1775,411 @@ class CiVariableDocTest(unittest.TestCase):
         }
         self.assertIn("MUPID_DATA_ENV", gates)
         self.assertIn("| `MUPID_DATA_ENV` |", self.DOC.read_text(encoding="utf-8"))
+
+class IndexUploadTest(unittest.TestCase):
+    """추천 색인은 지금까지 사람이 노드에 놓았다("placed there by an
+    administrator"). 매니페스트를 손으로 적용하던 때와 같은 모양이고, 그때
+    "고쳤는데 클러스터에 닿지 않은" 사고가 하루 세 번 났다.
+
+    네 색인은 **같은 행 번호로 서로를 가리킨다.** 한 파일씩 덮으면 그 사이에
+    기동한 파드가 서로 다른 판을 섞어 읽고, 그때 서비스는 정상처럼 뜨면서
+    엉뚱한 곡을 추천한다."""
+
+    CI = K8S / "ci"
+    DEPLOY = K8S / "deploy"
+
+    def test_the_forced_command_takes_nothing_but_a_versioned_bundle(self):
+        script = (self.DEPLOY / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        found = re.search(r"\$command =~ (\^upload-index.+?) \]\]", script)
+        self.assertTrue(found, "upload-index 를 받는 규칙이 없다")
+        pattern = re.compile(found.group(1))
+        good = "upload-index " + "a" * 40 + " " + "b" * 64
+        self.assertTrue(pattern.match(good))
+        for bad in (good + "; rm -rf /", good + " extra", "upload-index",
+                    good.replace("a" * 40, "A" * 40),
+                    good.replace("b" * 64, "b" * 63)):
+            with self.subTest(command=bad):
+                self.assertIsNone(pattern.match(bad))
+
+    def test_the_receiver_refuses_a_bundle_that_reaches_outside(self):
+        """tar 는 `../` 와 절대경로로 밖에 쓸 수 있다. 이건 root 로 돈다."""
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn('name.startswith("/")', receiver)
+        self.assertIn('".." in pathlib.PurePosixPath(name).parts', receiver)
+        self.assertIn("member.isfile()", receiver)
+
+    def test_the_receiver_only_accepts_known_index_files(self):
+        """이 엔드포인트로 노드에 임의의 파일을 놓을 수 있으면 안 된다."""
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn("ALLOWED = {", receiver)
+        for name in ("moments.parquet", "moments_emb.npy",
+                     "features_v1.npz", "stage1_section.npy"):
+            with self.subTest(file=name):
+                self.assertIn(f'"{name}"', receiver)
+        # 경로도 한 겹으로 묶는다. data/proc/mupid 바로 아래만 받는다.
+        self.assertIn('INNER = "data/proc/mupid"', receiver)
+        self.assertIn("parent != INNER", receiver)
+
+    def test_the_swap_is_atomic(self):
+        """한 파일씩 덮으면 그 사이에 기동한 파드가 판을 섞어 읽는다."""
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn("symlink_to(release)", receiver)
+        self.assertIn("pending.replace(current)", receiver)
+
+    def test_the_receiver_explains_a_directory_where_the_link_belongs(self):
+        """실제로 겪은 고장이다. hostPath 를 `.../current` 로 잡아 두면 kubelet 의
+        DirectoryOrCreate 가 그 이름으로 **디렉터리**를 만들고, 그러면 os.replace 가
+        IsADirectoryError 로 죽는다. 원문 예외는 원인을 짐작하게 하지 않는다."""
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn("current.exists() and not current.is_symlink()", receiver)
+
+    def test_the_receiver_checks_the_same_thing_the_pod_will(self):
+        """여기서 막지 않으면 증상이 "파드는 떴는데 ready 가 영영 false" 로만
+        보인다. 그때는 이미 current 가 새 판을 가리켜 되돌릴 대상이 헷갈린다."""
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn("emb_row", receiver)
+        self.assertIn("duplicated", receiver)
+        self.assertIn("REQUIRED = {", receiver)
+
+    def test_the_mount_matches_where_the_receiver_writes(self):
+        """둘이 어긋나면 올리기는 성공하고 파드만 빈 디렉터리를 본다."""
+        deployment = [d for d in yaml.safe_load_all(
+            (K8S / "base" / "ai.yaml").read_text(encoding="utf-8"))
+            if d and d["kind"] == "Deployment"][0]
+        spec = deployment["spec"]["template"]["spec"]
+        volume = {v["name"]: v for v in spec["volumes"]}["artifacts"]
+        # **부모를 마운트한다.** `.../current` 를 직접 마운트하면 kubelet 이 그
+        # 이름으로 디렉터리를 만들어 수신기가 링크를 갈아 끼우지 못한다(실제로 겪었다).
+        self.assertEqual("/srv/mupid-k8s/ai-artifacts", volume["hostPath"]["path"])
+        receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
+        self.assertIn('ARTIFACTS = ROOT / "ai-artifacts"', receiver)
+        self.assertIn('ROOT = pathlib.Path("/srv/mupid-k8s")', receiver)
+
+        # 마운트 지점과 컨테이너가 읽는 경로도 같아야 한다.
+        mount = {m["name"]: m for m in spec["containers"][0]["volumeMounts"]}
+        self.assertEqual("/artifacts", mount["artifacts"]["mountPath"])
+        self.assertTrue(mount["artifacts"]["readOnly"])
+        env = {e["name"]: e.get("value") for e in spec["containers"][0]["env"]}
+        # 마운트는 부모이고, 읽는 곳은 그 안의 심볼릭 링크다.
+        self.assertEqual("/artifacts/current", env["MUPID_AI_ARTIFACT_DIR"])
+
+    def test_the_volume_is_created_rather_than_required(self):
+        """Directory 로 두면 한 번도 올리지 않은 노드에서 **파드가 뜨지도 못해**
+        /health 로 원인을 볼 수 없다. 빈 디렉터리로 뜨면 무결성 검사가 실패하고
+        그 이유가 /health 에 그대로 실린다."""
+        deployment = [d for d in yaml.safe_load_all(
+            (K8S / "base" / "ai.yaml").read_text(encoding="utf-8"))
+            if d and d["kind"] == "Deployment"][0]
+        volume = {v["name"]: v for v in
+                  deployment["spec"]["template"]["spec"]["volumes"]}["artifacts"]
+        self.assertEqual("DirectoryOrCreate", volume["hostPath"]["type"])
+
+    def test_the_manifest_no_longer_claims_the_pod_is_stateless(self):
+        """그 주장은 두 가지 틀린 근거 위에 있었다 — 특징값을 서빙이 읽지
+        않는다(읽는다: Catalog.__init__ 이 features.load() 를 부른다)와 임베딩을
+        Pinecone 으로 옮긴다(풀이 10,007구간이라 근거가 없다)."""
+        text = (K8S / "base" / "ai.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("PVC 도 initContainer 도 hostPath 도 없다", text)
+        self.assertNotIn("서빙 경로가 읽지 않는다", text)
+
+    def test_the_uploader_refuses_to_send_an_incomplete_index(self):
+        """네 개가 다 있어야 한다. 하나라도 빠지면 ready 가 영영 false 다."""
+        script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
+        for name in ("moments.parquet", "moments_emb.npy",
+                     "features_v1.npz", "stage1_section.npy"):
+            with self.subTest(file=name):
+                self.assertIn(name, script)
+        self.assertIn("slice_index", script)
+
+    def test_the_uploader_demands_the_node_the_pod_runs_on(self):
+        """색인은 파드가 뜨는 노드의 디스크에 있어야 한다(hostPath). ai 는 node-b 에
+        묶여 있는데 배포 엔드포인트는 node-a 다. 처음에 그걸 놓쳐 색인을 node-a 에
+        올려 두고, 파드는 node-b 에서 **빈 /artifacts** 를 봤다 — 증상은 /health 의
+        data_dir_exists=false 뿐이었다."""
+        script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
+        self.assertIn("MUPID_AI_NODE_SSH", script)
+        # 기본값을 두지 않는다. 있으면 잘못된 노드로 조용히 올라간다.
+        self.assertNotIn("MUPID_AI_NODE_SSH:-", script)
+        self.assertNotIn("mupid-deploy-k8s@j15a204.p.ssafy.io", script)
+
+    def test_the_uploader_never_prints_the_private_key(self):
+        """`< "$VAR"` 로 열면 Variable 로 등록돼 있을 때 셸이 열기 실패
+        메시지에 개인키 전문을 실어 출력한다 — 실제로 겪었다."""
+        script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
+        self.assertIn("read_secret()", script)
+        self.assertNotIn('< "$MUPID_DEPLOY_K8S_SSH_KEY"', script)
+
+    def test_the_bundle_is_reproducible(self):
+        """같은 색인이면 같은 체크섬이어야 로그를 비교할 수 있다."""
+        script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
+        for flag in ("--sort=name", "--mtime=@0", "--owner=0", "--group=0"):
+            with self.subTest(flag=flag):
+                self.assertIn(flag, script)
+
+def _load_receiver():
+    """`receive-index.py` 를 모듈로 읽는다. 이름에 하이픈이 있어 import 가 안 된다."""
+    import importlib.util
+
+    path = K8S / "deploy" / "receive-index.py"
+    spec = importlib.util.spec_from_file_location("mupid_receive_index", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _npy(path, rows, cols=4, version=1):
+    """헤더만 진짜인 .npy 를 만든다. numpy 없이 만들어야 한다 — 이 시험은
+    python:3.12-slim 에서 돌고 거기엔 numpy 가 없다(`infra/ci/manifests.yml`).
+
+    노드도 같은 처지라 파서가 존재하는 것이고, 그래서 시험도 같은 방식으로 만든다.
+    """
+    header = ("{'descr': '<f4', 'fortran_order': False, "
+              "'shape': (%d, %d), }" % (rows, cols))
+    if version == 1:
+        prefix = b"\x93NUMPY\x01\x00"
+        width = 2
+    else:
+        prefix = b"\x93NUMPY\x02\x00"
+        width = 4
+    pad = -(len(prefix) + width + len(header) + 1) % 64
+    body = (header + " " * pad + "\n").encode("latin-1")
+    path.write_bytes(prefix + len(body).to_bytes(width, "little") + body
+                     + b"\x00" * (rows * cols * 4))
+
+
+class IndexReceiverCheckTest(unittest.TestCase):
+    """노드에는 numpy 도 pandas 도 없다(2026-09-16 실측). 그래서 처음 쓴 전체 검사가
+    **운영에서는 건너뛰어졌다** — 막으려고 쓴 검사가 정작 돌지 않았다. NPY 헤더는
+    ASCII 라 표준 라이브러리로 읽을 수 있으니 행 수만은 언제나 본다."""
+
+    def setUp(self):
+        self.mod = _load_receiver()
+        self.tmp = tempfile.mkdtemp()
+        self.data = pathlib.Path(self.tmp) / self.mod.INNER
+        self.data.mkdir(parents=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _fill(self, emb_rows, sec_rows, report_rows=None):
+        _npy(self.data / "moments_emb.npy", emb_rows)
+        _npy(self.data / "stage1_section.npy", sec_rows)
+        (self.data / "moments.parquet").write_bytes(b"PAR1")
+        (self.data / "features_v1.npz").write_bytes(b"PK\x03\x04")
+        if report_rows is not None:
+            (self.data / "slice_report.json").write_text(
+                json.dumps({"rows": {"moments": report_rows}}), encoding="utf-8")
+
+    def test_reads_the_row_count_without_numpy(self):
+        _npy(self.data / "a.npy", 10007)
+        self.assertEqual(10007, self.mod.npy_rows(self.data / "a.npy"))
+
+    def test_reads_the_v2_header_too(self):
+        """v2 는 헤더 길이가 2바이트가 아니라 4바이트다. 폭을 틀리면 엉뚱한 곳을 읽는다."""
+        _npy(self.data / "b.npy", 4242, version=2)
+        self.assertEqual(4242, self.mod.npy_rows(self.data / "b.npy"))
+
+    def test_refuses_a_file_that_is_not_npy(self):
+        (self.data / "c.npy").write_bytes(b"not a numpy file at all")
+        with self.assertRaises(SystemExit):
+            self.mod.npy_rows(self.data / "c.npy")
+
+    def test_mismatched_vectors_are_refused(self):
+        """네 색인은 같은 행 번호로 서로를 가리킨다. 서로 다른 판에서 온 파일이
+        섞이면 서비스는 정상처럼 뜨면서 엉뚱한 곡을 추천한다 — 오류는 안 난다."""
+        self._fill(10007, 9999)
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.check_rows(self.data)
+        self.assertEqual(65, caught.exception.code)
+
+    def test_a_stale_report_is_refused(self):
+        """보고서만 새 판이고 파일이 옛 판인 경우. 보고서를 믿으면 놓친다."""
+        self._fill(10007, 10007, report_rows=12345)
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.check_rows(self.data)
+        self.assertEqual(65, caught.exception.code)
+
+    def test_a_consistent_bundle_passes_without_numpy(self):
+        """numpy 가 없어도 통과해야 한다. 여기서 막히면 배포가 아예 안 된다."""
+        self._fill(10007, 10007, report_rows=10007)
+        self.assertEqual(10007, self.mod.check_rows(self.data))
+
+    def test_a_missing_index_is_named(self):
+        self._fill(10007, 10007)
+        (self.data / "features_v1.npz").unlink()
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.verify(pathlib.Path(self.tmp))
+        self.assertEqual(65, caught.exception.code)
+
+class ApplyTagSubstitutionTest(unittest.TestCase):
+    """`mupid-apply` 는 placeholder 가 클러스터에 올라가는 것을 막으려고 존재한다.
+
+    그런데 **그 함정을 세 가지 방식으로 밟았다.** 셋 다 배포 job 은 성공으로 끝나고,
+    maxUnavailable 이 0 이라 옛 Pod 가 계속 서빙해 겉으로는 멀쩡해 보였다.
+    """
+
+    SCRIPT = K8S / "deploy" / "apply.sh"
+
+    def setUp(self):
+        self.text = self.SCRIPT.read_text(encoding="utf-8")
+
+    def test_every_component_in_the_overlay_is_substituted(self):
+        """ai 가 목록에서 빠져 있었다. ai.yaml 이 오버레이에 들어온 뒤로
+        `mupid-ai:placeholder` 가 그대로 클러스터에 올라갔다."""
+        self.assertIn('for component in ("api", "web", "ai"):', self.text)
+
+        # 오버레이가 참조하는 base 파일에 placeholder 가 있으면 목록에도 있어야 한다.
+        listed = re.search(r'for component in \(([^)]*)\)', self.text).group(1)
+        listed = set(re.findall(r'"(\w+)"', listed))
+        for path in sorted((K8S / "base").glob("*.yaml")):
+            for name in re.findall(r"mupid-(\w+):placeholder", path.read_text(encoding="utf-8")):
+                with self.subTest(component=name, file=path.name):
+                    self.assertIn(name, listed)
+
+    def test_the_workload_name_is_mapped_not_assumed(self):
+        """컴포넌트 이름과 Deployment 이름이 같지 않다 — web 은 클러스터에서 `edge` 다.
+        이 한 글자 차이로 클러스터 조회가 조용히 빗나가고 파일로 되돌아간다."""
+        self.assertIn('WORKLOAD = {"api": "api", "web": "edge", "ai": "ai"}', self.text)
+
+        # 매니페스트가 실제로 그 이름을 쓰는지 확인한다.
+        names = set()
+        for path in sorted((K8S / "base").glob("*.yaml")):
+            for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
+                if doc and doc.get("kind") == "Deployment":
+                    names.add(doc["metadata"]["name"])
+        for expected in ("api", "edge", "ai"):
+            with self.subTest(deployment=expected):
+                self.assertIn(expected, names)
+
+    def test_the_cluster_lookup_actually_reaches_the_program(self):
+        """`cmd | python3 - <<'PY'` 는 **heredoc 이 stdin 을 차지한다.** 파이프로 준
+        데이터가 프로그램에 닿지 않고 조용히 빈 값이 된다 — 클러스터를 본다고 적어
+        놓고 실제로는 파일만 보고 있었다. 그 파일이 한 판 뒤처져 있어서, 노드에 없는
+        이미지를 요구하는 배포가 나갔다."""
+        self.assertNotRegex(self.text, r'\|\s*python3 -\s+"')
+        self.assertIn('python3 - "$rendered" "$root" "$live"', self.text)
+        self.assertIn("live_path.exists()", self.text)
+
+    def test_a_leftover_placeholder_fails_the_job(self):
+        """예전에는 경고만 찍고 성공으로 끝났다. 그래서 placeholder 배포가 초록으로
+        지나갔다 — 이 검사가 말을 하고도 아무 일이 없었던 셈이다."""
+        tail = self.text.split("placeholder 로 남은 워크로드", 1)[1]
+        self.assertIn("exit 65", tail)
+        # 최초 설치는 막지 않는다. 그때는 치환 단계가 그렇게 말해 둔다.
+        self.assertIn("태그를 찾지 못했다", tail)
+
+# `build()` 가 kubectl 을 쓴다. CI 이미지(python:3.12-slim)에는 없어서, 이 표시가
+# 없으면 통째로 TypeError 로 무너진다 — 실제로 그렇게 파이프라인을 깼다.
+@unittest.skipUnless(KUBECTL, "kubectl not installed")
+class LabelBatchTest(unittest.TestCase):
+    """라벨이 없으면 **오류 없이 모든 사용자가 콜드스타트**가 된다. 서버는 정상으로
+    보이고 개인화만 없다 — 그래서 이 배치는 반드시 주기적으로 돌아야 한다."""
+
+    def _cronjob(self):
+        for doc in build("cutover"):
+            if doc.get("kind") == "CronJob" and doc["metadata"]["name"] == "ai-labeler":
+                return doc
+        raise AssertionError("ai-labeler CronJob 을 찾지 못했다")
+
+    def _pod(self):
+        return self._cronjob()["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+
+
+    def test_the_batch_runs_the_same_image_as_serving(self):
+        """등급 판정은 한 곳에서만 한다. 배치와 서빙이 다른 코드를 쓰면 라벨의
+        의미가 갈린다."""
+        self.assertEqual("mupid-ai:placeholder", self._pod()["containers"][0]["image"])
+
+    def test_the_batch_writes_outside_the_index(self):
+        """색인 마운트는 읽기 전용이다. 배치가 거기 쓰면 그 순간 실패하고, 열어
+        준다 해도 색인을 교체할 때마다 워터마크가 사라져 신호를 처음부터 다시
+        당긴다."""
+        pod = self._pod()
+        mounts = {m["name"]: m for m in pod["containers"][0]["volumeMounts"]}
+        self.assertTrue(mounts["artifacts"].get("readOnly"))
+        self.assertFalse(mounts["state"].get("readOnly", False))
+
+        volumes = {v["name"]: v["hostPath"]["path"] for v in pod["volumes"]}
+        self.assertNotEqual(volumes["artifacts"], volumes["state"])
+
+        env = {e["name"]: e.get("value") for e in pod["containers"][0]["env"]}
+        self.assertEqual("/state", env["MUPID_AI_STATE_DIR"])
+
+    def test_serving_reads_the_same_state(self):
+        """서빙이 선호 구간·온보딩 씨앗을 그 자리에서 읽는다. 갈리면 배치는 도는데
+        화면에는 아무것도 안 나오는, 오류 없는 고장이 된다."""
+        deployment = [d for d in build("cutover")
+                      if d.get("kind") == "Deployment" and d["metadata"]["name"] == "ai"][0]
+        spec = deployment["spec"]["template"]["spec"]
+        env = {e["name"]: e.get("value") for e in spec["containers"][0]["env"]}
+        self.assertEqual("/state", env["MUPID_AI_STATE_DIR"])
+
+        serving = {v["name"]: v["hostPath"]["path"] for v in spec["volumes"]}
+        self.assertEqual(serving["state"],
+                         {v["name"]: v["hostPath"]["path"]
+                          for v in self._pod()["volumes"]}["state"])
+
+    def test_the_state_dir_is_owned_by_the_container_user(self):
+        """hostPath 는 kubelet 이 **root 소유로** 만든다(DirectoryOrCreate). 컨테이너는
+        비root(uid 100)로 돌기 때문에 그대로면 첫 쓰기에서 Permission denied 다 —
+        실제로 겪었다. 배치가 신호를 다 읽고 워터마크를 저장하다 죽었다.
+
+        fsGroup 은 hostPath 에 적용되지 않는다. 그래서 root 로 한 번 맞춰 준다."""
+        init = {c["name"]: c for c in self._pod()["initContainers"]}
+        own = init["own-state"]
+        self.assertEqual(0, own["securityContext"]["runAsUser"])
+        self.assertIn("/state", " ".join(own["command"]))
+        # 색인은 건드리지 않는다. 읽기만 하는 것을 root 로 만지면 실수의 여지가 커진다.
+        self.assertEqual(["state"], [m["name"] for m in own["volumeMounts"]])
+
+    def test_serving_only_reads_the_state(self):
+        """쓰는 것은 `learn` 하나이고 그건 배치에서만 불린다. 읽기 전용으로 두면
+        서빙이 배치의 결과를 덮어쓸 길이 없다."""
+        deployment = [d for d in build("cutover")
+                      if d.get("kind") == "Deployment" and d["metadata"]["name"] == "ai"][0]
+        mounts = {m["name"]: m for m
+                  in deployment["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]}
+        self.assertTrue(mounts["state"].get("readOnly"))
+
+    def test_two_runs_do_not_overlap(self):
+        """라벨러는 전체 사용자를 훑어 `section_labels` 를 판째로 갈아 끼운다.
+        두 판이 동시에 들어가면 어느 쪽이 최신인지 뒤섞인다."""
+        self.assertEqual("Forbid", self._cronjob()["spec"]["concurrencyPolicy"])
+
+    def test_it_does_not_collide_with_the_backup_window(self):
+        """MySQL 백업이 한국시간 03:00~03:05 에 돈다(infra/README.md)."""
+        spec = self._cronjob()["spec"]
+        self.assertEqual("Asia/Seoul", spec["timeZone"])
+        minute, hour = spec["schedule"].split()[:2]
+        self.assertNotEqual("3", hour, "백업 시간과 겹친다")
+
+    def test_the_pull_runs_before_the_labeler(self):
+        """반쯤 당긴 이벤트로 라벨을 만들면 그 판이 최신으로 잡힌다."""
+        args = " ".join(self._pod()["containers"][0]["args"])
+        self.assertIn("set -e", args)
+        self.assertLess(args.index("pull_signals"), args.index("run_labeler"))
+
+
+class LabelBatchFileTest(unittest.TestCase):
+    """kubectl 없이도 도는 부분. CI 이미지에는 kubectl 이 없어서, 여기 있는 것만이
+    파이프라인에서 실제로 확인된다."""
+
+    def test_it_is_in_the_overlay(self):
+        """목록에서 빠지면 클러스터에 들어가지 않는다 — 그리고 라벨이 안 생기는
+        것은 오류가 아니라 침묵이라 한참 뒤에야 드러난다."""
+        kustomization = (K8S / "base" / "kustomization.yaml").read_text(encoding="utf-8")
+        self.assertRegex(kustomization, re.compile(r"^\s+- ai-labeler\.yaml\s*$", re.M))
+
+    def test_the_batch_and_serving_agree_on_the_state_path(self):
+        """갈리면 배치는 도는데 화면에는 아무것도 안 나오는, 오류 없는 고장이 된다."""
+        state = []
+        for name in ("ai.yaml", "ai-labeler.yaml"):
+            text = (K8S / "base" / name).read_text(encoding="utf-8")
+            self.assertIn("MUPID_AI_STATE_DIR, value: /state", text)
+            found = re.findall(r"path: (/srv/mupid-k8s/ai-state)", text)
+            self.assertTrue(found, name)
+            state.append(found[0])
+        self.assertEqual(state[0], state[1])
 
 
 if __name__ == "__main__":
