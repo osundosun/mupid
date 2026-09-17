@@ -121,6 +121,101 @@ async fn fetch_bounded(state: &HttpState, url: &str, limit: u64) -> Result<Vec<u
     Ok(body)
 }
 
+/// 상한을 지키며 본문을 **파일로 흘려보낸다.**
+///
+/// APK 는 수십 MB 라 `Vec<u8>` 에 통째로 담으면 안 된다 — 조각을 받는 대로
+/// 디스크에 쓰고 해시만 누적한다. 램 사용량은 조각 하나 크기만큼이다.
+///
+/// 쓰는 도중 실패하면 **찌꺼기를 지운다.** 반쪽 파일이 캐시에 남으면 다음
+/// 시도가 그것을 완성본으로 착각할 여지가 생긴다.
+///
+/// 돌려주는 값은 (쓴 바이트 수, sha256 16진수).
+async fn fetch_to_file(
+    state: &HttpState,
+    url: &str,
+    limit: u64,
+    target: &std::path::Path,
+) -> Result<(u64, String), String> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("임시 디렉터리를 만들지 못했습니다: {error}"))?;
+    }
+
+    let result = stream_to_file(state, url, limit, target).await;
+    if result.is_err() {
+        // 실패한 반쪽을 남기지 않는다.
+        let _ = std::fs::remove_file(target);
+    }
+    result
+}
+
+async fn stream_to_file(
+    state: &HttpState,
+    url: &str,
+    limit: u64,
+    target: &std::path::Path,
+) -> Result<(u64, String), String> {
+    use sha2::Digest;
+    use tokio::io::AsyncWriteExt;
+
+    let client = state.client().clone();
+    let mut response = client
+        .get(&absolute(url))
+        .send()
+        .await
+        .map_err(|error| format!("요청 실패: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("서버가 {} 를 돌려줬습니다", response.status()));
+    }
+    // 값싼 검사 — 헤더가 상한을 넘는다고 하면 받기 시작하지 않는다.
+    if let Some(length) = response.content_length() {
+        if length > limit {
+            return Err(format!("APK 가 상한을 넘습니다 (헤더 {length} > {limit})"));
+        }
+    }
+
+    let mut file = tokio::fs::File::create(target)
+        .await
+        .map_err(|error| format!("파일을 만들지 못했습니다: {error}"))?;
+    let mut hasher = sha2::Sha256::new();
+    let mut written: u64 = 0;
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("본문 읽기 실패: {error}"))?
+    {
+        written += chunk.len() as u64;
+        // 헤더가 없거나 거짓이어도 여기서 막힌다.
+        if written > limit {
+            return Err(format!("APK 가 상한을 넘었습니다 (상한 {limit})"));
+        }
+        hasher.update(&chunk);
+        file.write_all(&chunk)
+            .await
+            .map_err(|error| format!("파일 쓰기 실패: {error}"))?;
+    }
+
+    // 디스크로 실제로 내려갔는지 확인한다. 이걸 빠뜨리면 정전·디스크 만재에서
+    // 조용히 잘린 파일이 남고, 다음 검사가 그것을 통과시킬 수 있다.
+    file.flush()
+        .await
+        .map_err(|error| format!("파일 마무리 실패: {error}"))?;
+    file.sync_all()
+        .await
+        .map_err(|error| format!("파일 동기화 실패: {error}"))?;
+    drop(file);
+
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        hex.push(char::from_digit((byte >> 4) as u32, 16).unwrap_or('0'));
+        hex.push(char::from_digit((byte & 0x0f) as u32, 16).unwrap_or('0'));
+    }
+    Ok((written, hex))
+}
+
 /// 웹 매니페스트를 받는다.
 pub async fn fetch_web_manifest(state: &HttpState) -> Result<WebManifest, String> {
     let body = fetch_bounded(state, WEB_MANIFEST_URL, MAX_MANIFEST_BYTES).await?;
@@ -255,25 +350,30 @@ pub async fn download_native(
         return Err("이미 더 새것이거나 같은 버전입니다".to_string());
     }
 
-    let bytes = fetch_bounded(state, &manifest.apk, update::MAX_APK_BYTES).await?;
+    std::fs::create_dir_all(cache_dir)
+        .map_err(|error| format!("임시 디렉터리를 만들지 못했습니다: {error}"))?;
+    let target = cache_dir.join(format!("mupid-{}.apk", manifest.version_code));
 
-    // 내려받은 뒤 실제로 확인한다. 매니페스트를 믿고 넘기면 서버가 잘못된
-    // 파일을 가리켰을 때 사용자가 그것을 설치한다.
-    if bytes.len() as u64 != manifest.bytes {
+    // **파일로 흘려보내며 해시를 함께 누적한다.** APK 는 수십 MB 라 메모리에
+    // 통째로 담으면 안 된다 — 조각마다 쓰면서 세고, 다 쓰고 나서 대조한다.
+    let (written, digest) =
+        fetch_to_file(state, &manifest.apk, update::MAX_APK_BYTES, &target).await?;
+
+    // 실제로 확인한다. 매니페스트를 믿고 넘기면 서버가 잘못된 파일을
+    // 가리켰을 때 사용자가 그것을 설치한다.
+    if written != manifest.bytes {
+        let _ = std::fs::remove_file(&target);
         return Err(format!(
-            "APK 크기가 다릅니다 (기대 {}, 실제 {})",
-            manifest.bytes,
-            bytes.len()
+            "APK 크기가 다릅니다 (기대 {}, 실제 {written})",
+            manifest.bytes
         ));
     }
-    if !update::sha256_hex(&bytes).eq_ignore_ascii_case(&manifest.sha256) {
+    if !digest.eq_ignore_ascii_case(&manifest.sha256) {
+        let _ = std::fs::remove_file(&target);
         return Err("APK 체크섬이 맞지 않습니다".to_string());
     }
 
-    std::fs::create_dir_all(cache_dir).map_err(|error| format!("임시 디렉터리를 만들지 못했습니다: {error}"))?;
-    let target = cache_dir.join(format!("mupid-{}.apk", manifest.version_code));
-    std::fs::write(&target, &bytes).map_err(|error| format!("APK 를 쓰지 못했습니다: {error}"))?;
-    log::info!("APK 를 받았습니다: {}", target.display());
+    log::info!("APK 를 받았습니다: {} ({written} bytes)", target.display());
     Ok(target)
 }
 
