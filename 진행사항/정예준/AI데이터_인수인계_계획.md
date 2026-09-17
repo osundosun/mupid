@@ -230,8 +230,31 @@ ALTER TABLE music_section_analysis
   ADD UNIQUE KEY uk_music_section_analysis_external_id (external_id);
 ```
 
-> `erd.sql` 은 운영에서 재생성한 것으로 보인다. 3-2·3-3 을 반영한 뒤
-> 저장소의 `erd.sql` 도 같이 맞춰야 한다 — 지금은 운영이 문서를 덮어쓴 상태다.
+> **2026-09-17 실측 정정 — 앞선 판단은 틀렸다.**
+> "운영이 문서를 덮어쓴 상태" 가 아니라 **반대**다. 운영 MySQL 을 덤프해
+> `infra_k8s/deploy/schema-check.py --schema <dump>` 로 대조하면 **커밋된 `erd.sql`
+> (=`HEAD`)이 운영과 차이 0건**이다 (`DB 테이블 30개 / erd.sql 30개 / 엔티티 30개 ·
+> 차이 없음`). 어긋나 있던 것은 **작업 트리 쪽**이었고, 그것도 무관한 두 변경이 섞인
+> 손편집이었다 — `display_name` 추가(전진)와 커밋 `b6d5c7e`(S15P21A204-344)의 되돌림
+> 2건(`AUTO_INCREMENT` 부활 · `VARCHAR(50)`+UNIQUE 삭제)이다.
+>
+> **되돌림 쪽은 버린다.** 커밋 이력과 `erd.md` 의 "재산출이 풀어 준 것" 이 전부
+> `VARCHAR(64)` + UNIQUE + AUTO_INCREMENT 없음 쪽을 가리키므로, 그게 운영이 수렴할
+> 대상이다. 운영의 현재 상태(실측)는 다음과 같고 **3-2 · 3-3 만 아직 남았다.**
+>
+> | | 운영 현재 | 3절 DDL 이후 |
+> |---|---|---|
+> | `music_analysis_instruments.music_section_analysis_id` | `int NOT NULL AUTO_INCREMENT` + FK | `int NOT NULL` + FK |
+> | `music_section_analysis.external_id` | `varchar(64)`, PRIMARY·FK 인덱스만 | + UNIQUE |
+> | `codes.display_name` | 컬럼 없음 (16행) | 추가 |
+>
+> 따라서 **3-2 · 3-3 을 실행한 뒤에는 `erd.sql` 을 고칠 필요가 없다** — 이미 그 모양이고
+> 이미 커밋돼 있다. ERD 반영 대상은 **`display_name`(3-1) 하나**이고, 그때는 `erd.md`
+> 의 규칙대로 **ERD 도구에서 산출한 DDL 로 통째로 교체**한다 (지금처럼 손으로 한 줄
+> 넣지 않는다). `erd.sql` 변경은 3-1 DDL·엔티티 매핑과 **같은 티켓**에서 다룬다.
+>
+> 3절의 세 DDL 을 운영에 적용한 뒤 위 대조를 다시 돌려 **`codes.display_name` 1건만
+> 남는지** 확인한다. 조회·대조 명령은 `세션_이어가기.md` 의 "운영 조회" 에 있다.
 
 ---
 
