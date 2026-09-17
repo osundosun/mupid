@@ -352,3 +352,9 @@ rolling 대상이 아니다.
 
 철거 뒤에 클러스터 쪽에서 잘못된 것은 전부 복구 가능하다. 네임스페이스를 지우고
 4~6번을 다시 하면 된다. 데이터가 없으므로 잃을 것도 없다.
+
+## `dbstudio-tailscale` Secret
+Tailscale auth key.
+```bash
+kubectl create secret generic dbstudio-tailscale --from-literal=TS_AUTHKEY='tskey-auth-...' -n mupid
+```
