@@ -27,7 +27,17 @@ public enum GlobalErrorCode implements ErrorCode {
     /**
      * 서버 내부 오류가 발생했습니다.
      */
-    INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 내부 오류가 발생했습니다.");
+    INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 내부 오류가 발생했습니다."),
+
+    /**
+     * 그 주소가 받지 않는 요청 방식입니다.
+     *
+     * <p>경로는 있는데 메서드가 다를 때다. 그냥 두면 아래 {@code Exception} 핸들러에 먹혀
+     * 500 으로 나가고, 보낸 쪽은 서버가 고장 난 것으로 읽는다. 같은 이유로
+     * {@code AccessDeniedException}·{@code JwtException}·{@code MethodArgumentTypeMismatchException}
+     * 에도 핸들러를 붙였다.
+     */
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "그 주소가 받지 않는 요청 방식입니다.");
 
     private final HttpStatus status;
     private final String message;
