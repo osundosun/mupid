@@ -1000,22 +1000,29 @@ class AreaRoutingTest(unittest.TestCase):
                 self.assertIn(f".areas/{area}", paths,
                               f"{name} 의 artifacts 에 {area} marker 가 없다")
 
-    def test_the_gate_needs_every_area_job_with_artifacts(self):
-        """게이트가 영역 job 하나를 needs 에서 빠뜨리면 그 marker 가 닿지 않아
-        게이트가 영역을 못 본다. 빠뜨린 쪽이 조용하다는 점이 제일 나쁘다."""
+    def test_the_gate_is_a_separate_stage_without_needs(self):
+        """게이트는 별도 stage 에 있고 needs 가 없어야 한다.
+
+        같은 stage 에 두고 영역 job 을 needs 로 걸면, 영역 job 하나가 실패했을 때
+        needs 한 job 이 실패하면 게이트가 skipped 로 간다(GitLab 이 의도된 동작으로
+        본다). 그러면 누락 원인을 말해 줄 사람이 사라진다. stage 를 나누고
+        when: always 를 주면 영역 job 이 실패해도 게이트가 반드시 돈다.
+
+        needs 가 없으면 앞 stage 의 아티팩트를 기본으로 받으므로 영역 job 목록을
+        손으로 적지 않아도 된다 — 영역이 늘어도 이 파일을 고칠 필요가 없다."""
         gate = self._jobs()["area-gate"]
-        needs = {need["job"]: need for need in gate["needs"]}
-        self.assertIn("area-preflight", needs)
-        self.assertTrue(needs["area-preflight"].get("artifacts"),
-                        "게이트가 기대 영역 목록을 받지 않는다")
-        for name in self._routes().values():
-            with self.subTest(job=name):
-                self.assertIn(name, needs, f"게이트의 needs 에 {name} 이 없다")
-                self.assertTrue(needs[name].get("artifacts"),
-                                f"게이트가 {name} 의 marker 를 받지 않는다")
-                self.assertTrue(needs[name].get("optional"),
-                                f"{name} 이 needs 에서 optional 이 아니다 — "
-                                "라벨이 그 영역을 켜지 않으면 파이프라인 생성이 깨진다")
+        self.assertEqual(gate["stage"], "area-gate")
+        self.assertNotIn("needs", gate,
+                         "게이트에 needs 가 생기면 영역 job 실패 시 skipped 로 간다")
+        self.assertEqual(gate["rules"][0].get("when"), "always",
+                         "앞 stage 가 실패하면 게이트가 돌지 않는다 — 원인을 말할 수 없다")
+
+        root = yaml.safe_load(
+            (ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8"))
+        self.assertIn("area-gate", root["stages"])
+        self.assertLess(root["stages"].index("verify"),
+                        root["stages"].index("area-gate"),
+                        "게이트 stage 가 verify 앞에 있으면 영역 검증 전에 돈다")
 
     def test_the_old_gate_is_gone(self):
         """rules 로 라벨을 보던 게이트는 재시도로 복구되지 않는다 — 실측으로

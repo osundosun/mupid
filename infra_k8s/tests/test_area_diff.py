@@ -223,6 +223,28 @@ class GateTest(unittest.TestCase):
         self.write("Backend")
         self.assertEqual(area_diff.gate(self.areas), 1)
 
+    def test_the_message_names_both_causes(self):
+        """게이트의 값어치는 '무엇이 빠졌는지' 뿐 아니라 '왜' 를 구분해 말하는
+        데 있다. 영역 job 이 실패한 경우와 job 자체가 없는 경우는 대응이
+        전혀 다르다 — 전자는 그 job 의 로그를 봐야 하고, 후자는 라벨을 붙이고
+        새 파이프라인을 만들어야 한다. 메시지가 둘을 뭉뚱그리면 사람이 엉뚱한
+        쪽을 고친다."""
+        self.write("expected.txt", "Backend\nInfra\n")
+        self.write("Infra")
+        import contextlib
+        import io
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = area_diff.gate(self.areas)
+        printed = buffer.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("Backend", printed, "빠진 영역을 이름으로 말하지 않는다")
+        self.assertIn("실패", printed, "job 실패 가능성을 말하지 않는다")
+        self.assertIn("아예 없다", printed, "job 부재 가능성을 말하지 않는다")
+        self.assertIn("새 파이프라인", printed, "복구 방법을 말하지 않는다")
+        self.assertIn("merge_requests/<iid>/pipelines", printed,
+                      "붙여넣을 수 있는 복구 명령이 없다")
+
     def test_an_extra_marker_is_fine(self):
         self.write("expected.txt", "Frontend\n")
         self.write("Frontend")
