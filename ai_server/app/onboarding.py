@@ -81,7 +81,8 @@ MOOD_MAP = {
 GENRE_EXTRA = {
     "Electronic": ["House", "Downtempo", "Synthwave", "Tropical House", "Dubstep",
                    "Drum n Bass", "Electro House", "Chillwave", "Nu-Disco", "Synth-pop"],
-    "Hip-hop": ["Cloud Rap", "Trap"],
+    "Hip-hop": ["Cloud Rap", "Trap", "lofi_hiphop", "boom_bap_hiphop", "modern_trap_hiphop", 
+                "singing_rap_melodic_hiphop", "chillhop", "jazzhop"],
     "Indie": ["Folk"],
 }
 

@@ -88,22 +88,16 @@ const isAlreadySubmitted = (error: unknown): boolean =>
 /**
  * 화면에 그릴 이름 목록.
  *
- * **`name` 을 쓴다 — `display_name` 이 아니다.** `name` 은 AI 추천 서버로
- * 넘어가는 값(`code_name`)이고, 온보딩 제출도 이 이름으로 코드 번호를 찾는다
- * (`idsOf`). 표시명으로 바꾸면 저장된 응답과 서버 코드표가 어긋난다.
- *
- * taxonomy 무드 9종은 `name` 자체가 한국어라(`애상적인`) 지금 그대로 맞게
- * 보인다. 장르 세분류 45종이 코드표에 들어오면 `name` 이 `poprock` 같은 원문이
- * 되므로, 그때는 화면용 `display_name` 을 쓰도록 이 함수를 갈라야 한다.
+ * `display_name`을 우선적으로 사용하며, 없을 경우 `name`을 씁니다.
  */
-export const namesOf = (options: CodeOption[]): string[] => options.map((o) => o.name);
+export const namesOf = (options: CodeOption[]): string[] => options.map((o) => o.display_name || o.name);
 
 /**
  * 이름을 코드 번호로 바꾼다. 서버가 모르는 이름은 버린다 — 예전 브라우저 저장분에
  * 지금은 없는 항목이 남아 있을 수 있다.
  */
 const idsOf = (options: CodeOption[], names: string[]): number[] => {
-  const byName = new Map(options.map((o) => [o.name, o.code_id]));
+  const byName = new Map(options.map((o) => [o.display_name || o.name, o.code_id]));
   const ids: number[] = [];
   for (const name of names) {
     const id = byName.get(name);

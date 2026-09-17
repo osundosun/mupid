@@ -40,7 +40,7 @@ class Server:
 
     def __init__(self):
         self.codes = [{"codeId": 7, "codeType": "GENRE", "codeName": "Pop"},
-                      {"codeId": 30, "codeType": "MOOD", "codeName": "bright"}]
+                      {"codeId": 30, "codeType": "MOOD", "codeName": "화사한"}]
         self.music = [{"musicId": 91, "title": "First", "genres": [], "moods": []},
                       {"musicId": 37, "title": "Second", "genres": [], "moods": []}]
         self.writes = []
@@ -206,7 +206,7 @@ class RegistrationTests(unittest.TestCase):
         raw["taxonomy"]["genres"] = [{"name": "pop", "track_count": 2}]
         tracks = validate(raw)
         state = inspect(self.server, tracks)
-        self.assertEqual(state["missing_codes"], [("MOOD", "warm")])
+        self.assertEqual(state["missing_codes"], [("MOOD", "따뜻한")])
         report = {"created": []}
         apply_plan(self.server, tracks, state, report, lambda: None)
         self.assertEqual(len([c for c in self.server.codes if c["codeType"] == "GENRE"]), 1)
@@ -244,7 +244,7 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(self.server.writes, [])
 
     def test_ambiguous_codes_stop_before_writing(self):
-        self.server.codes.append({"codeId": 99, "codeType": "MOOD", "codeName": "bright"})
+        self.server.codes.append({"codeId": 99, "codeType": "MOOD", "codeName": "화사한"})
         with self.assertRaises(ValueError):
             self.apply()
         self.assertEqual(self.server.writes, [])
