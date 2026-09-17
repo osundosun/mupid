@@ -91,7 +91,7 @@ export function AlbumDeck({
         <div className="album-deck-copy" key={selected.id}>
           <span className="album-deck-mood">{selected.mood}</span>
           <h3>{selected.title}</h3>
-          <p>{selected.artist}</p>
+          <button className="track-artist-link" onClick={() => m.setSelectedArtist(selected.artist)}>{selected.artist}</button>
         </div>
         <button
           className="icon-button album-deck-play"

@@ -1,0 +1,236 @@
+{
+  "genres": [
+    {
+      "name": "contemporary_pop",
+      "track_count": 62
+    },
+    {
+      "name": "dance_pop",
+      "track_count": 49
+    },
+    {
+      "name": "synthpop",
+      "track_count": 45
+    },
+    {
+      "name": "lofi_hiphop",
+      "track_count": 41
+    },
+    {
+      "name": "indie_pop",
+      "track_count": 39
+    },
+    {
+      "name": "alternative_rock",
+      "track_count": 39
+    },
+    {
+      "name": "poprock",
+      "track_count": 36
+    },
+    {
+      "name": "city_pop",
+      "track_count": 34
+    },
+    {
+      "name": "pop_ballad",
+      "track_count": 34
+    },
+    {
+      "name": "rnb",
+      "track_count": 32
+    },
+    {
+      "name": "solo_piano",
+      "track_count": 31
+    },
+    {
+      "name": "singing_rap_melodic_hiphop",
+      "track_count": 24
+    },
+    {
+      "name": "modern_trap_hiphop",
+      "track_count": 22
+    },
+    {
+      "name": "synthwave",
+      "track_count": 21
+    },
+    {
+      "name": "game_battle_bgm",
+      "track_count": 21
+    },
+    {
+      "name": "indie_rock",
+      "track_count": 20
+    },
+    {
+      "name": "hard_rock",
+      "track_count": 20
+    },
+    {
+      "name": "punk_power_pop",
+      "track_count": 20
+    },
+    {
+      "name": "atmospheric_post_rock",
+      "track_count": 20
+    },
+    {
+      "name": "alternative_rnb",
+      "track_count": 20
+    },
+    {
+      "name": "neo_soul",
+      "track_count": 20
+    },
+    {
+      "name": "boom_bap_hiphop",
+      "track_count": 20
+    },
+    {
+      "name": "house",
+      "track_count": 20
+    },
+    {
+      "name": "future_bass",
+      "track_count": 20
+    },
+    {
+      "name": "drum_and_bass",
+      "track_count": 20
+    },
+    {
+      "name": "chillhop",
+      "track_count": 20
+    },
+    {
+      "name": "downtempo",
+      "track_count": 20
+    },
+    {
+      "name": "chillwave_dreamy_electronica",
+      "track_count": 20
+    },
+    {
+      "name": "modern_jazz",
+      "track_count": 20
+    },
+    {
+      "name": "funk",
+      "track_count": 20
+    },
+    {
+      "name": "cinematic_orchestral",
+      "track_count": 20
+    },
+    {
+      "name": "adventure_fantasy",
+      "track_count": 20
+    },
+    {
+      "name": "emotional_drama",
+      "track_count": 20
+    },
+    {
+      "name": "mystery_suspense",
+      "track_count": 20
+    },
+    {
+      "name": "casual_light_game_bgm",
+      "track_count": 20
+    },
+    {
+      "name": "neo_classical",
+      "track_count": 20
+    },
+    {
+      "name": "acoustic_guitar_folk",
+      "track_count": 20
+    },
+    {
+      "name": "ambient",
+      "track_count": 20
+    },
+    {
+      "name": "breakbeat_uk_garage",
+      "track_count": 10
+    },
+    {
+      "name": "ambient_electronic",
+      "track_count": 10
+    },
+    {
+      "name": "acoustic_chill",
+      "track_count": 10
+    },
+    {
+      "name": "jazzhop",
+      "track_count": 10
+    },
+    {
+      "name": "jazz_fusion",
+      "track_count": 10
+    },
+    {
+      "name": "bossa_smooth_jazz",
+      "track_count": 10
+    },
+    {
+      "name": "chamber_classical",
+      "track_count": 10
+    }
+  ],
+  "moods": [
+    {
+      "name": "melancholic",
+      "track_count": 322
+    },
+    {
+      "name": "warm",
+      "track_count": 314
+    },
+    {
+      "name": "dreamy",
+      "track_count": 296
+    },
+    {
+      "name": "bright",
+      "track_count": 296
+    },
+    {
+      "name": "hopeful",
+      "track_count": 263
+    },
+    {
+      "name": "powerful",
+      "track_count": 262
+    },
+    {
+      "name": "dark",
+      "track_count": 152
+    },
+    {
+      "name": "calm",
+      "track_count": 143
+    },
+    {
+      "name": "exciting",
+      "track_count": 52
+    }
+  ],
+  "genre_total_distinct": 45,
+  "mood_total_distinct": 9,
+  "tracks_without_mood": [
+    "T000001",
+    "T000003",
+    "T000004",
+    "T000005",
+    "T000006",
+    "T000007",
+    "T000008",
+    "T000009",
+    "T000010",
+    "T000014"
+  ]
+}

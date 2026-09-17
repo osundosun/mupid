@@ -1,18 +1,22 @@
 'use client';
 import { VinylRecord } from './vinyl-record';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Lyrics } from './lyrics';
 import { TrackMenu } from './track-menu';
+import { TrackInfoDialog } from './track-info-dialog';
 import { TrackComments } from './track-comments';
+import { MomentWaveEditor } from './moment-wave-editor';
 import { MupidMascot } from './mascot';
 import { useEffect, useState } from 'react';
 import {
   Check,
+  ListMusic,
   Bookmark,
   BookmarkMinus,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ListMusic,
+  ThumbsDown,
   Heart,
   Play,
   Search,
@@ -36,35 +40,43 @@ import {
   EmptyState,
   LikeButton,
   PageHeader,
+  PlayerControls,
   TrackRow,
   Waveform,
 } from './primitives';
 
 export function PlayerView({ model: m }: { model: MupidModel }) {
+  const [confirmUnsave, setConfirmUnsave] = useState(false);
+  const [trackInfoOpen, setTrackInfoOpen] = useState(false);
+  const [lyricsOpen, setLyricsOpen] = useState(false);
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
   if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
+  const recommendationReason = active.recommended?.reason?.trim() || active.recommendationReason?.trim();
   const part = getSongSectionAt(active, m.time || active.moment);
   // 지금 재생 중인 순간이 이미 저장돼 있는지 본다. 저장했다면 여기서 바로 해제할 수 있다.
   const savedMoment = m.moments.find(
     (v) => v.track.id === active.id && v.start === part.start && v.end === part.end,
   );
   const momentSaved = !!savedMoment;
-  const [confirmUnsave, setConfirmUnsave] = useState(false);
   return (
     <div className="player-page">
+      <div className="desktop-player-page-heading">
+        <PageHeader title="플레이어" onBack={m.goBack} aside={<TrackMenu model={m} />} />
+      </div>
       <header className="player-heading">
         <button className="icon-button" aria-label="뒤로 가기" onClick={m.goBack}>
           <ChevronLeft />
         </button>
         <div>
-          <h1>{active.title}</h1>
-          <p>{active.artist}</p>
+          <h1><button type="button" className="player-title-trigger" aria-label={`${active.title} 곡 정보 보기`} aria-haspopup="dialog" onClick={() => setTrackInfoOpen(true)}>{active.title}</button></h1>
+          <button className="track-artist-link" onClick={() => m.setSelectedArtist(active.artist)}>{active.artist}</button>
         </div>
         <TrackMenu model={m} />
       </header>
       <div className="player-body">
         <div className="player-art-area">
+          <button type="button" className="record-info-trigger" aria-label={`${active.title} 가사 보기`} aria-haspopup="dialog" onClick={() => setLyricsOpen(true)}>
           <VinylRecord
             playing={m.playing}
             track={active}
@@ -75,62 +87,44 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             width="440"
             height="440"
           />
-          <Lyrics track={active} />
+          </button>
         </div>
         <div className="player-detail">
           <div className="section-pill">
             {part.label} · {formatTime(part.start)} – {formatTime(part.end)}
           </div>
           <TrackComments key={active.id} model={m} />
-          <div className="player-actions">
+          <div className="player-quick-actions" aria-label="곡 저장과 좋아요">
             <button
-              className="secondary-button"
-              aria-pressed={momentSaved}
-              onClick={() => {
-                if (momentSaved) { setConfirmUnsave(true); return; }
-                m.addMoments([
-                  { id: Date.now(), track: active, start: part.start, end: part.end, section: part.label },
-                ]);
-                m.setToast(`${part.label} 순간을 저장했어요.`);
-              }}
+              className="quick-save"
+              aria-label="현재 곡의 저장할 순간 선택하기"
+              onClick={() => m.openMoment(active)}
             >
-              {/* '저장됨'은 상태로만 읽혀 누를 수 있는지 알 수 없다. 누르면 무슨 일이 일어나는지 적는다. */}
-              {momentSaved ? <BookmarkMinus /> : <Bookmark />}
-              {momentSaved ? '저장 취소' : '이 순간 저장'}
+              <Bookmark />
+              이 순간 저장
             </button>
             <button className="secondary-button" aria-expanded={m.queueOpen} aria-controls="queue-dock" onClick={m.toggleQueue}><ListMusic />재생목록</button>
             <button className="secondary-button" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
               <Heart className="pink" fill={m.liked.includes(active.id) ? 'currentColor' : 'none'} />
               좋아요
             </button>
-            <button
-              className="secondary-button"
-              onClick={() => m.go('similar')}
-            >
-              <Search />
-              파생곡 찾기
-            </button>
           </div>
-          <details className="player-insights">
-            <summary>
-              이 곡이 추천된 이유 <ChevronDown />
-            </summary>
-            <div className="player-reason">
-              <p className="album-name">{active.album}</p>
-              <span className="eyebrow" lang="en">WHY THIS MOMENT</span>
-              <p>저장한 순간의 분위기를 따라 새로운 음악을 만나보세요.</p>
-              <div className="tags">
-                {active.tags.map((t) => (
-                  <span key={t}>{t}</span>
-                ))}
-              </div>
-            </div>
-            <button className="text-link" onClick={m.openChat}>
-              <Sparkles />AI 기능 <ChevronRight />
-            </button>
-          </details>
+          {recommendationReason && <details className="player-recommendation-toggle" key={`${active.id}:${recommendationReason}`}>
+            <summary><Sparkles size={15} /><span>추천 이유</span><ChevronDown size={16} /></summary>
+            <p>{recommendationReason}</p>
+          </details>}
         </div>
       </div>
+      <Dialog open={lyricsOpen} onOpenChange={setLyricsOpen}>
+        <DialogContent className="sky-dialog player-lyrics-dialog">
+          <DialogHeader>
+            <DialogTitle>가사</DialogTitle>
+            <DialogDescription>{active.title} · {active.artist}</DialogDescription>
+          </DialogHeader>
+          <Lyrics key={active.id} track={active} time={m.time} expanded />
+        </DialogContent>
+      </Dialog>
+      <TrackInfoDialog track={active} open={trackInfoOpen} onOpenChange={setTrackInfoOpen} onArtist={m.setSelectedArtist} />
       {/* 저장은 한 번 더 물어보고 푼다. 보관함의 순간 삭제와 같은 규칙. */}
       <AlertDialog open={confirmUnsave} onOpenChange={(open) => { if (!open) setConfirmUnsave(false); }}>
         <AlertDialogContent className="sky-dialog">
@@ -165,19 +159,31 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
   const active = m.active;
   if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
   const editing = m.editingMomentId !== null;
+  // Keep preview sections local to the editor; never send them as AI analysis.
+  const previewSections = active.sections.length === 0;
+  const labels = ['인트로', '벌스 1', '프리코러스', '코러스 1', '벌스 2', '브리지', '파이널 코러스', '아웃트로'];
+  const sections = previewSections
+    ? labels.map((label, i) => ({ label, start: Math.round(active.duration * i / labels.length), end: Math.round(active.duration * (i + 1) / labels.length) })).filter(part => part.end > part.start)
+    : active.sections;
   // 수정으로 들어왔으면 그 순간을 미리 골라 둔다.
   const [selected, setSelected] = useState<number[]>(() => {
-    if (!editing) return [];
-    const index = active.sections.findIndex(
+    const index = sections.findIndex(
       (s) => s.start === m.momentRange[0] && s.end === m.momentRange[1],
     );
-    return index < 0 ? [] : [index];
+    if (index >= 0) return [index];
+    if (editing) {
+      const containing = sections.findIndex(s => m.momentRange[0] >= s.start && m.momentRange[0] < s.end);
+      return containing >= 0 ? [containing] : [];
+    }
+    return [];
   });
   const [saved, setSaved] = useState(false);
-  const parts = active.sections.filter((_, i) => selected.includes(i));
+  const [trimmed, setTrimmed] = useState<Record<number, { start: number; end: number }>>(() => editing && selected.length ? { [selected[0]]: { start: m.momentRange[0], end: m.momentRange[1] } } : {});
+  const parts = selected.map(i => ({ ...sections[i], ...trimmed[i] }));
+  const focusedPart = parts.at(-1);
   return <div className="content-page moment-page">
     <PageHeader
-      title={editing ? '순간 수정' : '저장한 순간'}
+      title={editing ? '순간 수정' : '이 순간 저장'}
       onBack={() => { m.setEditingMomentId(null); m.go(editing ? 'library' : 'player'); }}
       aside={<LikeButton model={m} />}
     />
@@ -185,33 +191,41 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
       <div>
         <div className="intro-copy">
           <h2>{editing ? '어느 순간으로 바꿀까요?' : '마음에 드는 순간을 저장하세요.'}</h2>
-          <p>{editing ? '새로 고른 순간이 기존 순간을 대신해요.' : '인트로·벌스·코러스 등을 여러 개 선택할 수 있어요.'}</p>
+          <p>파형에서 구간을 누르고, 양 끝을 끌어 원하는 부분만 저장하세요.</p>
         </div>
         <TrackRow track={active} model={m} detail={parts.length ? parts.map(p => p.label).join(' · ') : '저장할 순간을 선택해 주세요'} />
         <div className="moment-editor">
+          {previewSections && <p className="moment-wave-help">AI 연결 전 미리보기 · 곡 길이를 임시로 나눈 구간이에요.</p>}
           <div className="song-parts" aria-label="저장할 순간 다중 선택">
-            {active.sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) ? 'selected' : ''} onClick={() => {
-              setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : [...ids, i]);
+            {sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) ? 'selected' : ''} onClick={() => {
+              setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : editing ? [i] : [...ids, i]);
               setSaved(false);
             }}>{part.label}</button>)}
           </div>
-          <Waveform duration={active.duration} ranges={parts} />
+          <MomentWaveEditor track={active} range={focusedPart} onSelect={time => {
+              const index = sections.findIndex(part => time >= part.start && time < part.end);
+              if (index >= 0) setSelected(ids => editing ? [index] : [...ids.filter(id => id !== index), index]);
+            setSaved(false);
+          }} onTrim={(start, end) => {
+            if (selected.length) setTrimmed(value => ({ ...value, [selected[selected.length - 1]]: { start, end } }));
+            setSaved(false);
+          }} />
           <div className="time-labels"><span>00:00</span><span>{formatTime(active.duration)}</span></div>
           {/* 고른 순간은 여기서 바로 빼는 게 빠르다. 위 칩을 다시 찾아 누를 필요가 없다. */}
           <div className="track-menu-options moment-part-list">
-            {parts.map(part => {
-              const index = active.sections.indexOf(part);
-              return <div className="moment-part-row" key={part.start}>
+            {parts.map((part, partIndex) => {
+              const index = selected[partIndex];
+              return <div className="moment-part-row" key={index}>
                 <button onClick={() => m.playSavedMoment({ id: part.start, track: active, start: part.start, end: part.end, section: part.label })} aria-label={part.label + ' 미리듣기'}>
                   <Play /><span>{part.label}</span><small>{formatTime(part.start)} – {formatTime(part.end)}</small>
                 </button>
-                <button
+                {<button
                   className="icon-button moment-part-remove"
                   aria-label={part.label + ' 선택 해제'}
                   onClick={() => { setSelected(ids => ids.filter(id => id !== index)); setSaved(false); }}
                 >
                   <X />
-                </button>
+                </button>}
               </div>;
             })}
           </div>
@@ -350,14 +364,6 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
           더 많은 순간 추천 받기 <ChevronRight />
         </button>
       )}
-      <button className="ai-prompt-card" onClick={m.openChat}>
-        <MupidMascot size={70} />
-        <span>
-          <strong>조금 다른 느낌을 찾고 있나요?</strong>
-          <small>Mupid AI에게 원하는 분위기를 말해보세요.</small>
-        </span>
-        <ChevronRight />
-      </button>
     </div>
   );
 }
