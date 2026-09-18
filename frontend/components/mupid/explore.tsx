@@ -7,6 +7,7 @@ import { exploreFilterQuery } from '@/lib/explore-filter';
 import { ExploreCategories } from './explore-categories';
 import { PageHeader, TrackRow } from './primitives';
 import { api } from '@/lib/api/session';
+import { expandPhraseSearch } from '@/lib/phrase-search';
 import { localDemoEnabled } from '@/lib/api/local-demo';
 import { toTrack } from '@/lib/stream-catalog';
 import type { Track } from '@/lib/mupid-data';
@@ -82,6 +83,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
 
     const controller = new AbortController();
     void api.music.search({ q: query, vocal: appliedVocal, mood: appliedMood, genre: appliedGenre, page: 0, size: PAGE_SIZE }, controller.signal)
+      .then(page => expandPhraseSearch(page, query, { vocal: appliedVocal, mood: appliedMood, genre: appliedGenre }, controller.signal, api.music.search))
       .then((page) => {
         if (!controller.signal.aborted) setListing({
           key: requestKey,
