@@ -29,5 +29,6 @@
   "analysis_limit": 200,
   "analysis_device": "",
   "analysis_segmenter_python": "",
+  "analysis_tag_file": "",
   "analysis_keep_versions": 3
 }

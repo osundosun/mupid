@@ -614,6 +614,121 @@ def single(
 
 
 @app.command()
+def analysis(
+    config: ConfigOpt = None,
+    local: Annotated[
+        bool,
+        typer.Option(
+            "--local",
+            help="~/flow_music_data 에서 직접 대상·태그를 모은다 (요구 5 조회 API 를 부르지 않는다)",
+        ),
+    ] = True,
+    flow_dir: Annotated[
+        Path | None, typer.Option(help="음원·metadata 루트 (기본: ~/flow_music_data)", show_default=False)
+    ] = None,
+    all_tracks: Annotated[
+        bool,
+        typer.Option("--all", help="색인에 있는 곡까지 전부 돌린다 (재분석·태그 backfill)"),
+    ] = False,
+    allin1_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--allin1-dir",
+            help="① 원본 JSON 디렉터리(All-In-One). 비우면 <artifact>/flow/allin1",
+            show_default=False,
+        ),
+    ] = None,
+    demix_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--demix-dir",
+            help="구간별 악기를 읽을 demucs 스템. 비우면 <artifact>/work/demix",
+            show_default=False,
+        ),
+    ] = None,
+    sections_dir: Annotated[
+        Path | None,
+        typer.Option(
+            help="변환된 sections.json 디렉터리. 비우면 <work>/sections", show_default=False
+        ),
+    ] = None,
+    segmenter_python: Annotated[
+        Path | None,
+        typer.Option(
+            "--segmenter-python",
+            help="① 분할·②③④ 를 돌릴 3.10 인터프리터. 비우면 config 값을 쓴다",
+            show_default=False,
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option(help="--local 에서 돌릴 곡 수 상한. 0(기본)이면 전부"),
+    ] = 0,
+    data_dir: Annotated[
+        Path | None, typer.Option(help="색인 디렉터리 (기본: $MUPID_AI_ARTIFACT_DIR/...)", show_default=False)
+    ] = None,
+    device: Annotated[
+        str | None, typer.Option(help="cuda:0 · cpu. 비우면 있는 쪽", show_default=False)
+    ] = None,
+    keep: Annotated[
+        int | None, typer.Option(help="남길 이전 색인 판 수", show_default=False)
+    ] = None,
+    force_unlock: Annotated[
+        bool, typer.Option("--force-unlock", help="남아 있는 잠금을 지우고 시작한다")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="확인 프롬프트를 건너뛴다 (크론용)")
+    ] = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """구간 분석을 돌린다 — ① 분할 → ②③④ 특징 → ⑤ 색인 → ⑥ 등록·전환.
+
+    **청킹(`batch`)과 다른 단계다.** ①은 All-In-One(conda `mupid-ai`, 3.10)이 필요하고
+    GPU 를 오래 잡는다. 그래서 독립 도구로 두되 `run_batch.sh` 의 **맨 뒤**에 걸어
+    스케줄이 "언제"를 정하게 한다.
+
+    `--local` 이 기본이다 — 분석 대상과 숫자 ID 매핑을 `~/flow_music_data` 와
+    `registered.json` 에서 얻는다. 요구 5(분석 대상 조회)를 부를 이유가 없다.
+    설계는 `ai_server/docs/ANALYSIS-BATCH.md`.
+
+    `--yes` 는 cron·`run_batch.sh` 용이다. **이 명령은 아무것도 묻지 않지만 인자를
+    받아 둔다** — `run_batch.sh` 가 `run()` 헬퍼로 `--yes` 를 붙여 부르므로, 없으면
+    `No such option` 으로 죽는다(실제로 그렇게 죽었다).
+    """
+    from .analysis import batch as ab
+
+    argv: list[str] = []
+    if config:
+        argv += ["--config", str(config)]
+    if local:
+        argv.append("--local")
+    if flow_dir:
+        argv += ["--flow-dir", str(flow_dir)]
+    if all_tracks:
+        argv.append("--all")
+    if allin1_dir:
+        argv += ["--allin1-dir", str(allin1_dir)]
+    if demix_dir:
+        argv += ["--demix-dir", str(demix_dir)]
+    if sections_dir:
+        argv += ["--sections-dir", str(sections_dir)]
+    if segmenter_python:
+        argv += ["--segmenter-python", str(segmenter_python)]
+    if limit:
+        argv += ["--limit", str(limit)]
+    if data_dir:
+        argv += ["--data-dir", str(data_dir)]
+    if device:
+        argv += ["--device", str(device)]
+    if keep is not None:
+        argv += ["--keep", str(keep)]
+    if force_unlock:
+        argv.append("--force-unlock")
+    # 분석 배치는 자기 로그·보고를 스스로 남긴다. `run_batch.sh` 가 종료 코드만 본다.
+    raise SystemExit(ab.main(argv))
+
+
+@app.command()
 def batch(
     config: ConfigOpt = None,
     input_dir: Annotated[

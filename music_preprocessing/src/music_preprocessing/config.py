@@ -95,7 +95,8 @@ class ChunkConfig:
     analysis_version: str = "v1"
     analysis_limit: int = 200                # 요구 5 한 페이지 곡 수
     analysis_device: str = ""                # cuda:0 · cpu. 비우면 있는 쪽
-    analysis_segmenter_python: str = ""      # All-In-One(3.10) 실행 파일. 비우면 같은 프로세스
+    analysis_segmenter_python: str = ""      # All-In-One·MERT(3.10) 실행 파일. 비우면 같은 프로세스
+    analysis_tag_file: str = ""              # 태깅 산출물(tracks.parquet). 비우면 태그 없이 넣는다
     analysis_keep_versions: int = 3          # 롤백용으로 남길 이전 색인 판 수
 
     def __post_init__(self) -> None:
@@ -154,5 +155,6 @@ class ChunkConfig:
             "analysis_limit": self.analysis_limit,
             "analysis_device": self.analysis_device,
             "analysis_segmenter_python": self.analysis_segmenter_python,
+            "analysis_tag_file": self.analysis_tag_file,
             "analysis_keep_versions": self.analysis_keep_versions,
         }
