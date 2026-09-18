@@ -120,7 +120,74 @@ sh infra_k8s/ci/deploy-apk.sh
 수신기를 새로 설치할 때는 `infra_k8s/deploy/` 의 스크립트를 `/usr/local/sbin/` 에
 넣고(`mupid-receive-web` 이 새로 늘었다), `ssh-entrypoint-k8s.sh` 를 갱신한다.
 `upload-web` 갈래가 없으면 그 명령은 `Only versioned k8s deployment uploads are
-accepted` 로 거절된다.
+accepted` 로 거절된다 — 두 업로더가 그 경우를 `UPLOADER_UPGRADE_REQUIRED` 로 짚어 준다.
+
+### 노드에 수신기 설치하기 (사람이 한다)
+
+**설치하지 않으면 배포 job 이 실패한다.** 두 업로더가 노드에 없는 것/옛것을 부르기
+때문이다. 자동화할 수 없다 — `receive-manifests.py` 의 `ALLOWED` 가
+`infra_k8s/{base,overlays}` 뿐이라 `deploy/` 를 실어 보낼 통로가 없다. 그건 root 로
+도는 코드를 실어 보낼 통로를 여는 일이고, `receive-manifests.py` 자신이 그 이유를
+적어 두었다.
+
+`j15a204.p.ssafy.io` 에 **root 로** 들어갈 수 있는 사람이 한다. `sudo` 가 필요하다.
+
+```bash
+# 1. 파일을 노드로 보낸다 (임시 자리)
+scp infra_k8s/deploy/{ssh-entrypoint-k8s.sh,receive-apk.py,receive-web.py} \
+  <user>@j15a204.p.ssafy.io:/tmp/mupid-receivers/
+
+# 2. 노드에서 — 문법 확인 → 백업 → 설치
+ssh <user>@j15a204.p.ssafy.io
+sudo -i
+cd /tmp/mupid-receivers
+bash -n ssh-entrypoint-k8s.sh                     # 셸 문법
+python3 -m py_compile receive-apk.py receive-web.py   # 파이썬 문법
+
+# 되돌릴 수 있게 먼저 백업한다. DEPLOYMENT-CONTRACT.md 가 쓰는 방식과 같다.
+backup=$(mktemp -d /srv/mupid-k8s/receivers-before-$(date +%Y%m%d).XXXXXX)
+cp -a /usr/local/sbin/mupid-ssh-entrypoint-k8s /usr/local/sbin/mupid-receive-apk \
+      "$backup/" 2>/dev/null || true
+printf '백업: %s\n' "$backup"
+
+install -o root -g root -m 755 ssh-entrypoint-k8s.sh /usr/local/sbin/mupid-ssh-entrypoint-k8s
+install -o root -g root -m 755 receive-apk.py        /usr/local/sbin/mupid-receive-apk
+install -o root -g root -m 755 receive-web.py        /usr/local/sbin/mupid-receive-web
+ls -l /usr/local/sbin/mupid-ssh-entrypoint-k8s /usr/local/sbin/mupid-receive-*
+```
+
+#### 설치가 됐는지 확인
+
+**`upload-web` 이 강제 명령을 지나 수신기까지 닿는지**를 본다. 일부러 깨진
+체크섬을 보내면 된다 — 강제 명령이 거절하면 `Only versioned...`, 통과하면 수신기가
+`Empty upload` 로 답한다. 두 문구가 갈리므로 어느 쪽인지 분명해진다.
+
+```bash
+# CI 키로 (저장소가 있는 곳에서)
+ssh -i <배포키> mupid-deploy-k8s@j15a204.p.ssafy.io \
+  "upload-web $(git rev-parse HEAD) $(printf '0%.0s' {1..64})" < /dev/null
+```
+
+| 나오는 것 | 뜻 |
+| --- | --- |
+| `Only versioned k8s deployment uploads are accepted` | **설치가 안 됐다.** entrypoint 가 `upload-web` 자체를 모른다 |
+| 그 밖에 **수신기가 내는 문구** (`Empty upload` 등) | **설치됐다.** 강제 명령을 지나 수신기까지 닿았다 |
+
+판정 기준은 **entrypoint 의 거절 문구가 나오는지** 하나다. 수신기가 무엇을 답하든
+(빈 입력·체크섬 불일치·versionCode 역행) 그건 강제 명령을 통과했다는 뜻이고,
+우리가 확인하려는 것이 바로 그것이다. 같은 방법으로 `upload-apk` 의 3인자 모양도 본다.
+
+```bash
+ssh -i <배포키> mupid-deploy-k8s@j15a204.p.ssafy.io \
+  "upload-apk $(git rev-parse HEAD) $(printf '0%.0s' {1..64}) 1789704065" < /dev/null
+```
+
+여기서 `Empty upload` 가 아니라 `versionCode 가 뒤로 간다` 가 나온다면 **설치는 된
+것이다** — 그 문구는 수신기가 이미 게시본과 비교하고 있다는 뜻이다.
+
+되돌리려면 백업한 파일을 같은 자리에 `install` 한다. **옛 entrypoint 로 되돌리면
+새 업로더도 함께 되돌려야 한다** — 둘은 짝이다(옛 entrypoint 는 3인자 `upload-apk`
+과 `upload-web` 을 모른다).
 
 ## 매니페스트를 다시 적용할 때 — 이미지가 되돌아간다
 
