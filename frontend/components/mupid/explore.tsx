@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Music2, X } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { filterExploreTracks } from '@/lib/explore';
+import { vocalQueryValue } from '@/lib/explore-vocal';
 import { ExploreCategories } from './explore-categories';
 import { PageHeader, TrackRow } from './primitives';
 import { api } from '@/lib/api/session';
@@ -24,6 +25,8 @@ export function SearchView({ model: m }: { model: MupidModel }) {
   }>({ requestKey: '', tracks: [], total: 0, error: '' });
   const [keywordsOpen, setKeywordsOpen] = useState(!m.query.trim());
   const resultColumn = useRef<HTMLDivElement>(null);
+  // 확정된 보컬 필터. 편집 중인 `keywords` 와 분리한다 — 검색하기를 눌러야 반영된다.
+  const appliedVocal = appliedKeywords ? vocalQueryValue(appliedKeywords) : undefined;
   useEffect(() => {
     if (filterRevision > 0 || m.query.trim()) {
       resultColumn.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
@@ -32,14 +35,25 @@ export function SearchView({ model: m }: { model: MupidModel }) {
   useEffect(() => {
     if (m.query.trim()) setKeywordsOpen(false);
   }, [m.query]);
+
+  /**
+   * 서버 검색. **검색어가 없어도 보컬 필터만으로 부른다.**
+   *
+   * 예전에는 `if (!query) return` 이었다. 그때는 서버에 보낼 조건이 검색어뿐이었기
+   * 때문이다. 이제 필터가 있으므로, 검색어가 비어도 필터가 걸려 있으면 서버가
+   * 걸러 준 목록을 받아야 한다.
+   *
+   * 요청 키에 필터를 넣는다. 안 넣으면 필터를 바꿔도 같은 키가 나와, 화면이
+   * "이미 받아 둔 결과" 로 여기고 **이전 필터의 곡을 그대로 보여 준다.**
+   */
   useEffect(() => {
     const query = m.query.trim();
     // 로컬 데모에는 API 서버가 없다. 실제 서비스에서는 아래 API 경로만 사용한다.
-    if (!query || localDemoEnabled()) return;
+    if ((!query && !appliedVocal) || localDemoEnabled()) return;
 
     const controller = new AbortController();
-    const requestKey = `${m.searchRevision}:${query}`;
-    void api.music.search({ q: query, size: 100 }, controller.signal)
+    const requestKey = `${m.searchRevision}:${query}:${appliedVocal ?? ''}`;
+    void api.music.search({ q: query, vocal: appliedVocal, size: 100 }, controller.signal)
       .then(page => {
         if (controller.signal.aborted) return;
         setSearchResponse({
@@ -58,21 +72,30 @@ export function SearchView({ model: m }: { model: MupidModel }) {
         });
       });
     return () => controller.abort();
-  }, [m.query, m.searchRevision]);
+  }, [m.query, m.searchRevision, appliedVocal]);
 
   // Demo keywords are UI-only until the analysis API is connected.
   const query = m.query.trim();
-  const requestKey = `${m.searchRevision}:${query}`;
+  const requestKey = `${m.searchRevision}:${query}:${appliedVocal ?? ''}`;
   const localResults = query && localDemoEnabled()
     ? filterExploreTracks(m.tracks, query, '전체', [])
     : null;
-  const searching = !!query && !localResults && searchResponse.requestKey !== requestKey;
+  const searching = (!!query || !!appliedVocal) && !localResults && searchResponse.requestKey !== requestKey;
   const searchError = searchResponse.requestKey === requestKey ? searchResponse.error : '';
   const searchTotal = localResults?.length ??
     (searchResponse.requestKey === requestKey ? searchResponse.total : 0);
+  /*
+   * 서버가 걸러 준 목록을 쓴다.
+   *
+   * 예전에는 검색어가 없으면 `m.tracks`(카탈로그)를 그대로 썼다. 이제 필터만 걸고
+   * 검색어가 없을 때도 서버가 걸러 준 목록이 필요하므로, **서버 응답이 있으면
+   * 그것을 먼저** 본다. 서버가 무시하는 조건(분위기·장르 등)만 골랐을 때는 응답이
+   * 없으므로 예전처럼 카탈로그로 내려간다.
+   */
+  const serverResults = searchResponse.requestKey === requestKey ? searchResponse.tracks : null;
   const source = query
-    ? localResults ?? (searchResponse.requestKey === requestKey ? searchResponse.tracks : [])
-    : m.tracks;
+    ? localResults ?? serverResults ?? []
+    : serverResults ?? m.tracks;
   const results = filterExploreTracks(source, '', '전체', m.ignored);
 
 
