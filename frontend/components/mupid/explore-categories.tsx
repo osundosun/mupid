@@ -13,9 +13,6 @@ const categories = [
   ] },
   { title: '보컬·악기', icon: Mic2, description: '좋아하는 목소리와 소리를 찾아서', groups: [
     { title: '보컬', options: ['여성 보컬', '남성 보컬', '인스트루멘탈'] },
-    { title: '기타', options: ['어쿠스틱 기타', '일렉 기타', '기타'] },
-    { title: '건반', options: ['피아노', '키보드', '신디사이저'] },
-    { title: '리듬', options: ['드럼'] },
   ] },
 ];
 
