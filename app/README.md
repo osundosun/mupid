@@ -310,6 +310,41 @@ aapt2 dump badging <apk> | grep ^package      # versionCode 가 스탬프/1000 �
 수 있고, 그때까지 네이티브 갈래를 죽이면 안 된다. 내려받은 바이트는 매니페스트
 해시로 그대로 검증한다.
 
+### 매니페스트를 몇 번 요청하나 — **기동 1회에 2회가 정상**
+
+이 숫자가 헷갈려서 한 번 잘못 짚었다(라이브 로그에 `native.json` 이 한 초에
+4회 찍혀 "중복 요청 버그" 로 보였다). 실측으로 확인한 정상값을 적어 둔다.
+
+```
+콜드 스타트 1회
+  기동 훅  checkForUpdates()  → update_status 1회  → web.json 1 + native.json 1
+  안내 창  readUpdateState()  → update_status 1회  → web.json 1 + native.json 1
+                                                      ─────────────────────────
+                                                      web.json 2 + native.json 2
+```
+
+**2회인 이유는 소비자가 둘이기 때문이다.** 기동 훅은 "내려받을 게 있나" 를,
+안내 창은 "설치 안내를 띄울까" 를 각각 판단한다. 하나로 합치려면 상태를 전역
+스토어로 넘겨야 하는데, 그건 이 범위를 넘는다 — 그래서 **정상값을 여기 적는다.**
+
+**내려받을 게 없으면 그 이상 늘지 않는다.** `checkForUpdates` 는
+`webAvailable` 이 아니면 상태를 다시 읽지 않고 첫 값을 그대로 돌려준다. 예전에는
+항상 다시 읽어서 기동당 `update_status` 가 3회, 즉 `web.json` 3 + `native.json` 6
+이었다. 지금은 2 + 2 다.
+
+**`native.json` 만 두 배였던 적이 있다.** `fetch_native_manifest` 가 `404` 를
+보려고 요청을 한 번 보내고 본문을 받으려고 또 한 번 보냈다. 지금은 상태와 본문을
+한 번에 받는다(`fetch_bounded_optional`). 그래도 `404` 구분은 그대로다 —
+`classify_optional` 이 그 판단을 맡고, **`500` 같은 서버 고장을 "없음" 으로
+삼키지 않는다**(시험이 그 구분을 고정한다).
+
+로그에서 이 숫자가 **더 크게** 보이면 그때는 진짜 중복이다. 세는 법:
+
+```sh
+# 엣지 파드의 nginx 로그에서 앱이 보낸 요청만 (User-Agent 가 앱이다)
+sudo k3s kubectl -n mupid logs deploy/edge --tail=2000 | grep MupidApp | grep download
+```
+
 ### Tauri 를 올릴 때 확인할 것
 
 `src/assets.rs` 는 `Context.assets` 를 `generate_context!()` 결과에서 꺼내

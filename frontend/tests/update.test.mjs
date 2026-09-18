@@ -73,14 +73,23 @@ const state = (overrides = {}) => ({
 // 웹 갈래
 // ─────────────────────────────────────────────────────────────
 
-test('새 번들이 없으면 내려받지 않는다', async () => {
+test('새 번들이 없으면 내려받지 않고 상태를 한 번만 읽는다', async () => {
   const calls = stub({ update_status: state() });
   await checkForUpdates();
-  // 상태만 두 번 읽고 `update_web` 은 부르지 않는다.
+  // **한 번만 읽는다.** 다시 읽어도 같은 값인데, 그 한 번이 매 기동마다
+  // 매니페스트 요청을 두 배로 만든다(각 `update_status` 가 두 개를 받는다).
   assert.deepEqual(
     calls.map((call) => call.command),
-    ['update_status', 'update_status'],
+    ['update_status'],
   );
+});
+
+test('새 번들이 없으면 그 값을 그대로 돌려준다', async () => {
+  // 다시 읽지 않으므로, 돌려주는 값이 첫 읽기여야 한다. 여기서 undefined 를
+  // 주면 안내 창이 "새 APK 있음" 을 못 보고 조용히 안 뜬다.
+  stub({ update_status: state({ serverVersionCode: 7 }) });
+  const result = await checkForUpdates();
+  assert.equal(result?.serverVersionCode, 7);
 });
 
 test('새 번들이 있으면 내려받아 활성화한다', async () => {
@@ -97,6 +106,7 @@ test('새 번들이 있으면 내려받아 활성화한다', async () => {
   });
 
   const result = await checkForUpdates();
+  // 내려받았으면 **다시 읽는다** — 활성화된 빌드가 상태에 반영됐을 수 있다.
   assert.deepEqual(
     calls.map((call) => call.command),
     ['update_status', 'update_web', 'update_status'],
@@ -104,7 +114,7 @@ test('새 번들이 있으면 내려받아 활성화한다', async () => {
   assert.equal(result.serverWebBuild, 2000);
 });
 
-test('거부 목록에 있는 값은 다시 내려받지 않는다', async () => {
+test('거부 목록에 있는 값은 다시 내려받지 않고 상태를 한 번만 읽는다', async () => {
   // 서버가 잘못된 번들을 올려 둔 상태다. 자동으로는 영영 다시 시도하지 않는다.
   const calls = stub({
     update_status: state({ webAvailable: true, webRejected: true }),
@@ -112,7 +122,7 @@ test('거부 목록에 있는 값은 다시 내려받지 않는다', async () =>
   await checkForUpdates();
   assert.deepEqual(
     calls.map((call) => call.command),
-    ['update_status', 'update_status'],
+    ['update_status'],
   );
 });
 
