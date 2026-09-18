@@ -1,0 +1,33 @@
+/* 내 취향 리포트의 MUBTI 달력 (`components/mupid/listening-calendar.tsx`). 칸에 날짜와 그날의 유형 캐릭터만. */
+.calendar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mupid-shell .report-grid .listening-calendar .calendar-head > h2 { margin: 0; }
+.calendar-month { display: flex; align-items: center; gap: 2px; }
+.calendar-month strong { min-width: 62px; text-align: center; font-size: 14px; color: #35548c; font-variant-numeric: tabular-nums; }
+.calendar-month .icon-button { width: 32px; height: 32px; min-width: 32px; min-height: 32px; }
+.calendar-month .icon-button:disabled { opacity: .35; cursor: default; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; margin-top: 8px; }
+.calendar-weekday { display: block; padding: 2px 0 4px; text-align: center; font-size: 11px; color: #8b9db5; }
+.calendar-weekday:first-child { color: #d07a95; }
+.calendar-weekday:nth-child(7) { color: #6a8fd0; }
+.calendar-day { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; min-height: 48px; padding: 4px 0 3px; border-radius: 10px; color: #46608a; }
+.calendar-date { font-size: 12px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.calendar-day.is-future .calendar-date { color: #c3cfe0; }
+.calendar-day.is-today .calendar-date { font-weight: 700; color: #4876c2; }
+/* 유형이 찍힌 날은 칸을 살짝 채우고 그 유형의 캐릭터를 놓는다. 그림이 없으면 네 글자. */
+.calendar-day.is-typed { background: #edf3fc; }
+.calendar-art { display: block; width: 26px; height: 26px; object-fit: contain; border-radius: 50%; }
+.calendar-code { font-size: 9.5px; line-height: 1.2; font-weight: 700; letter-spacing: .02em; color: #4876c2; }
+/* 들었지만 유형이 없는 날은 점 하나. */
+.calendar-dot { width: 4px; height: 4px; margin-top: 3px; border-radius: 50%; background: #a9c2e6; }
+/* 리포트 격자에서의 자리: 한 줄이면 맨 뒤, 두 칸이면 오른쪽 칸의 앨범 리포트 아래. */
+@media (max-width: 1199px) {
+  .mupid-shell .report-grid .listening-calendar { order: 2; padding-top: 20px; border-top: 1px solid #e3ebf5; }
+}
+@media (min-width: 1200px) {
+  .mupid-shell .report-grid .report-details { grid-row: 1 / span 2; }
+  .mupid-shell .report-grid .listening-calendar { grid-column: 2; padding-top: 20px; border-top: 1px solid #e3ebf5; }
+}
+@media (max-width: 767px) {
+  .calendar-day { min-height: 46px; }
+  .calendar-art { width: 24px; height: 24px; }
+}

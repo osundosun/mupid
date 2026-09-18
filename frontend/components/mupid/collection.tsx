@@ -1,4 +1,5 @@
 'use client';
+import { ListeningCalendar } from './listening-calendar';
 import { DailyAlbumTreemap } from './daily-album-treemap';
 
 import { PlaylistMenu } from './playlist-menu';
@@ -482,6 +483,7 @@ export function ReportView({ model: m }: { model: MupidModel }) {
           totalMs={report?.total_listening_ms ?? 0}
           loading={loading}
         />
+        <ListeningCalendar today={report} />
         <div className="report-details">
           <section className="report-card listening-story">
             {/* 유형 이름을 먼저 읽히게 두고, 그 아래 캐릭터로 분위기를 전한 뒤 설명을 잇는다. */}
