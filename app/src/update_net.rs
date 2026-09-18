@@ -367,6 +367,9 @@ pub async fn refresh_web(
     state: &HttpState,
     root: &std::path::Path,
 ) -> Result<Option<u64>, String> {
+    // 계측용 시작 시각. 아래에서 내려받기와 전개를 나눠 재고 로그로 남긴다 —
+    // 화면의 진행 임계값(`UPDATE_PROGRESS_DELAY_MS`)을 실측으로 정하기 위해서다.
+    let started = std::time::Instant::now();
     let manifest = fetch_web_manifest(state).await?;
 
     // 이미 쓰고 있는 번들이면 끝. 여기서 멈추지 않으면 매 기동마다 같은 것을
@@ -390,10 +393,22 @@ pub async fn refresh_web(
             return Err(error);
         }
     };
+    // 내려받기가 끝난 시각. 전개·검증 시간은 여기서부터 잰다.
+    let downloaded = started.elapsed().as_millis() as u64;
 
     match update::activate(root, &archive, &manifest) {
         Ok(applied) => {
-            log::info!("웹 번들을 활성화했습니다: {}", applied.built_at);
+            // **계측.** 폰에서 전개가 실제로 얼마나 걸리는지 알 수 없어
+            // 화면의 임계값을 감으로 정하게 된다. 그 값이 실제 시간보다 낮으면
+            // 정상 업데이트에도 진행 화면이 떠서 "빠르면 안 띄운다" 는 의도가
+            // 깨진다. 그래서 두 구간을 나눠 남긴다 — `adb logcat` 에서 보고
+            // 값을 확정한다.
+            log::info!(
+                "웹 번들을 활성화했습니다: {} (내려받기 {downloaded}ms, 전개·검증 {}ms, 파일 {}개)",
+                applied.built_at,
+                started.elapsed().as_millis() as u64 - downloaded,
+                applied.files,
+            );
             Ok(Some(applied.built_at))
         }
         Err(error) => {
