@@ -40,14 +40,16 @@
   .mupid-shell .side-nav {
     display: none;
   }
+  /* 메뉴는 로고 옆에 붙인다. 가운데 두면 로고와 메뉴 사이가 비어 따로 놀았다. */
   .desktop-app-nav {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     flex: 1;
     min-width: 0;
     gap: 6px;
+    margin-left: 28px;
   }
   .desktop-app-nav button {
     display: inline-flex;
