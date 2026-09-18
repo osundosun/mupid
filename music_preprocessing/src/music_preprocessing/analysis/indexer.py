@@ -77,6 +77,10 @@ class NewTrack:
     section_vecs: np.ndarray                      # (n, 128)
     content_row: dict                             # content.parquet 한 줄
     meta_row: dict                                # flow_meta.parquet 한 줄
+    # 요구 1 이 요구하는 **Spring 발급 숫자 ID**. `track_id` 는 로컬 파일명
+    # (`T000501`)일 수 있으므로 등록은 이 값을 쓴다(`api.HttpRegistrar`).
+    # `registered.json`(catalog 산출물)에서 온다 — 지어내지 않는다.
+    music_id: Optional[int] = None
 
     def check(self) -> None:
         n = len(self.sections)

@@ -22,6 +22,13 @@ UV=${UV:-$(command -v uv || echo /opt/tljh/user/bin/uv)}
 # 이게 빠지면 청킹이 전부 실패한다.
 export PATH="$directory/bin:$PATH"
 
+# 색인 루트. 분석 단계(⑤⑥)가 `moments.parquet` 을 여기서 찾는다.
+# **없으면 배치가 즉시 멈춘다** — `analysis` 는 "analysis_artifact_dir ·
+# MUPID_AI_ARTIFACT_DIR · --data-dir 중 하나가 필요하다" 로 끝난다.
+# 청킹 단계는 이 값을 쓰지 않아서, 여기서 주지 않으면 분석 단계만 죽는다.
+# AI 서버(`mupid_ai_project_dev/run.sh`)도 같은 경로를 쓴다.
+export MUPID_AI_ARTIFACT_DIR="${MUPID_AI_ARTIFACT_DIR:-$HOME/rec_mupid}"
+
 log_dir=$(python3 -c "import json;print(json.load(open('config.json'))['log_dir'])" 2>/dev/null || echo ./logs)
 mkdir -p "$log_dir"
 
@@ -48,6 +55,20 @@ run lyrics --yes --no-progress || failed=1
 run classify --yes || failed=1
 # 청킹. 해시 기반이라 이미 처리한 곡은 건너뛴다.
 run batch || failed=1
+# 구간 분석(① 분할 → ②③④ 특징 → ⑤ 색인 → ⑥ 등록·전환).
+# **맨 뒤다.** GPU 를 오래 잡고, 실패해도 위 단계의 결과는 이미 서비스에 반영돼 있다.
+#   · ①·②③④ 는 conda mupid-ai(3.10) 에서 돈다 — 이 3.12 에는 torch 가 없다.
+#     그래서 `--segmenter-python` 을 반드시 준다(비면 배치가 ②③④ 진입에서 멈춘다).
+#   · ⑤⑥ 은 이 3.12 — 색인 쓰기에 pandas 가 필요하다(`uv sync --extra analysis`).
+#   · 대상은 `~/flow_music_data` 에서 직접 고른다. 요구 5 조회 API 를 부르지 않는다.
+#   · `--limit` 을 주지 않는다 — 주면 남은 곡이 조용히 빠진다.
+MUPID_AI_PY="${MUPID_AI_PY:-$HOME/.conda/envs/mupid-ai/bin/python}"
+if [ -x "$MUPID_AI_PY" ]; then
+  run analysis --yes --local --segmenter-python "$MUPID_AI_PY" || failed=1
+else
+  echo "3.10 인터프리터가 없다: $MUPID_AI_PY — 분석 단계를 건너뛴다" >&2
+  failed=1
+fi
 
 # 앞 단계가 실패해도 나머지는 돌린다. catalog 가 실패했다고 이미 등록된 곡의
 # 청킹까지 멈출 이유가 없고, 무엇이 실패했는지는 종료 코드로 알린다.

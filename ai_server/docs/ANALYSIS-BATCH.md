@@ -556,12 +556,45 @@ MUPID_AI_ARTIFACT_DIR=/경로 python -m ai_server.tools.freeze_feature_stats
 # 운영 — 요구 5 에서 대상을 받는다
 python -m music_preprocessing.analysis.batch --config config.json
 
+# 로컬 — 배치 서버에서 `~/flow_music_data` 를 직접 훑는다 (요구 5 를 부르지 않는다)
+#   `--segmenter-python` 은 **필수다.** ①·②③④ 가 그 3.10 환경에서 돈다.
+MUPID_AI_ARTIFACT_DIR=$HOME/rec_mupid \
+  uv run music-preprocessing analysis -c config.json \
+    --local --segmenter-python "$HOME/.conda/envs/mupid-ai/bin/python"
+
 # 손으로 — 대상 곡 목록을 파일로 준다 (등록기 없이 돌면 교체는 보류된다)
 python -m music_preprocessing.analysis.batch manifest.json --data-dir /경로
 ```
 
 `manifest.json` 은 곡마다 `track_id` · `audio_path` · `sections_json` · `content` ·
 `meta` 를 담는다.
+
+#### `--local` 로 돌릴 때 실측한 함정 (2026-09-18)
+
+전부 **오류 없이 지나가거나 단계가 통째로 죽는** 것들이었다. 순서대로 밟는다.
+
+| 함정 | 증상 | 대응 |
+|---|---|---|
+| `MUPID_AI_ARTIFACT_DIR` 미설정 | `analysis_artifact_dir · MUPID_AI_ARTIFACT_DIR · --data-dir 중 하나가 필요하다` | env 로 준다. `config.json` 의 `analysis_artifact_dir` 이 비어 있을 수 있다. `run_batch.sh` 도 맨 앞에서 export 한다 |
+| `--segmenter-python` 없음 | ②③④ 진입에서 부모(3.12)가 torch 를 못 찾아 죽는다 | 3.10 인터프리터를 준다. **비어 있으면 배치가 미리 멈춘다**(조용히 도는 대신) |
+| `analysis_limit` 이 `--local` 에 샘 | 299곡이 200곡으로 **조용히 잘린다** | `--local` 은 자르지 않는다. `--limit` 을 줘야 자른다 |
+| ① 원본과 변환본을 같은 디렉터리로 | 변환본이 All-In-One 원본을 덮어씀 → 다음 실행 때 전곡 GPU 재분할 | `--allin1-dir`(`<artifact>/flow/allin1`)과 `--sections-dir`(`<work>/sections`)를 나눈다 |
+| `analysis` 에 `--yes` 없음 | `No such option: --yes` — **`run_batch.sh` 가 이 단계에서 죽는다** | CLI 가 받는다 |
+| 태깅 산출물 경로 오인 | 태그가 조용히 빈다(오류 없음) | `<artifact>/data/test_pipeline/tracks.parquet` — `flow/allin1` 에서 **두 단계** 위다 |
+
+#### 태그를 **먼저** 채운다
+
+`registry.tags()` 가 ⑤ 색인을 만들 때 태그를 읽는다. 태그 없이 색인을 만들면 전곡이
+빈 태그로 고정되고 ⑤⑥ 을 한 번 더 돌려야 한다.
+
+```bash
+# 색인에 없는 곡의 태그를 t01 로 채운다 (envs/rec · Essentia 워커는 t01 이 띄운다)
+~/envs/rec/bin/python -c "import sys;sys.path.insert(0,'$HOME/rec_mupid/src');\
+import t01_pipeline as t01;t01.run([...], force=False)"
+```
+
+`mood_tags` 는 **확신도(confident) 미달이면 정상적으로 빈다.** 기존 761곡도
+534/640(≈83%)만 채워져 있다 — 신곡만 다른 분포에 놓이지 않는다.
 
 ### 7.7 필요한 산출물
 
@@ -572,6 +605,26 @@ python -m music_preprocessing.analysis.batch manifest.json --data-dir /경로
 | `features_info.json` | **멈춘다.** 판·sha256 을 대조할 근거가 없다 |
 | `features_v1.npz` | PCA 기저 |
 | `stage1_weights.npz` | ④ 를 못 한다 |
+
+**운영 조치 기록 (2026-09-18).** 운영 색인(`$MUPID_AI_ARTIFACT_DIR/data/proc/mupid`)에
+`feature_stats_v1.npz` 가 없어 ⑤⑥ 이 멈췄다. 정본 도구로 만들어 넣었고, 그 값이
+마스터본(`~/mupid_port_verify/artifacts/data/proc/mupid/`)과 `max|diff|=0.00e+00` 로
+일치하는 것을 확인한 뒤 설치했다.
+
+```bash
+# 1. 먼저 빈 곳에 만들어 기존 값과 대조한다 (색인을 건드리지 않는다)
+MUPID_AI_ARTIFACT_DIR=$HOME/rec_mupid PYTHONPATH=$HOME/mupid_ai_project_dev \
+  $HOME/envs/mupid-ai-project-dev/bin/python -m ai_server.tools.freeze_feature_stats \
+    --out /tmp/stats_probe.npz --force
+#    → trk_bpm mean 109.644135 · std 43.291216 (문서의 동결 통계와 일치)
+
+# 2. 일치하면 색인에 넣는다. 다른 색인 파일은 건드리지 않는다.
+cp /tmp/stats_probe.npz $HOME/rec_mupid/data/proc/mupid/feature_stats_v1.npz
+```
+
+이 파일은 `indexer.CARRY_FILES` 에 있어 **색인 교체 시 새 판으로 함께 복사된다**
+(`stage()`). 그래서 한 번 넣으면 이후 판에도 따라간다.
+
 
 ## 8. CronJob · 재기동
 

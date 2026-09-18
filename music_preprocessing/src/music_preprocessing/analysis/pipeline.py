@@ -186,6 +186,135 @@ def _section_rms(y: np.ndarray, segs: Sequence[emb.Segment]) -> list[float]:
     return out
 
 
+# ──────────────────────────────────────────────── 다른 인터프리터에서 돌리기
+
+# 자식이 실행할 코드. **여기서 하는 일은 ②③④ 뿐이다** — 색인 쓰기(⑤⑥)는 부모가
+# 한다. 두 곳에서 만들면 어긋난다(`segmenter._RUNNER` 와 같은 판단).
+#
+# 부모(3.12)에는 torch 가 없다. 800MB 짜리 모델 런타임을 배치 본체에 넣는 대신,
+# 이미 ①(All-In-One)을 위해 GPU 박스에 있는 3.10 환경에서 ②③④를 함께 돌린다.
+# 그 환경에는 torch·transformers·MERT 가 다 있고, **pandas 는 없다** — 그래서 그
+# 환경에서 pandas 를 import 하는 코드는 여기 두면 안 된다(pandas 는 ⑤⑥ 몫이다).
+_RUNNER = r'''
+import json, sys
+p = json.loads(sys.stdin.read())
+sys.path.insert(0, p["src"])
+from music_preprocessing.analysis import pipeline as pl
+from music_preprocessing.analysis import embedder as emb
+from music_preprocessing.analysis.feature_space import FeatureSpace
+
+space = FeatureSpace(p["data_dir"])
+engine = emb.Embedder(p["data_dir"], device=p.get("device") or None)
+out = []
+for t in p["tracks"]:
+    segs = [emb.Segment(label=s["label"], start=s["start"], end=s["end"])
+            for s in t["sections"]]
+    meta = pl.TrackStats(**t["meta"])
+    r = pl.analyze_track(t["track_id"], t["audio"], segs, meta, engine=engine,
+                         space=space, demix_root=t.get("demix_root") or None)
+    out.append({"track_id": r.track_id, "status": r.status, "stage": r.stage,
+                "n_sections": r.n_sections, "error": r.error,
+                "instrument_error": r.instrument_error,
+                "rows": r.rows,
+                "embeddings": None if r.embeddings is None else r.embeddings.tolist(),
+                "features": None if r.features is None else r.features.tolist(),
+                "section_vecs": None if r.section_vecs is None else r.section_vecs.tolist()})
+print("ANALYZE_OK")
+sys.stdout.write(json.dumps(out))
+'''
+
+
+@dataclass
+class ChildAnalyzer:
+    """②③④ 를 **다른 인터프리터에서** 돌린다.
+
+    `Segmenter(python=…)` 와 같은 형태다. 3.10 환경의 파이썬을 주면 그 프로세스가
+    `analyze_track` 을 그대로 부르고, 결과 배열을 JSON 으로 돌려받는다.
+
+    **재구현하지 않는다.** 유일한 차이는 프로세스 경계다 — 계산식이 두 벌이 되면
+    신곡만 다른 분포에 놓인다.
+    """
+
+    python: str
+    data_dir: Path
+    src_root: Path
+    device: str = ""
+    timeout_sec: int = 3600          # 곡 묶음 단위. 넘으면 그 묶음만 실패로 둔다
+    # 자식이 실행할 코드. 시험에서 가짜 자식으로 바꿔 **프로토콜만** 보기 위한 자리다
+    # (`batch.analyze=` · `registry.load=` 와 같은 이유 — 무거운 것을 빼고 규약을 본다).
+    runner: str = ""
+    failures: dict = field(default_factory=dict)
+
+    def run(self, items: Sequence[tuple]) -> dict:
+        """`[(BatchTrack, SectionsFile)]` → `{track_id: TrackResult}`.
+
+        곡 단위로 격리한다 — 묶음이 통째로 깨지면 한 곡씩 다시 돌려 진짜 원인 곡만
+        실패로 남긴다(`Segmenter.analyze` 와 같은 규칙).
+        """
+        items = list(items)
+        self.failures = {}
+        out: dict = {}
+        for t, sections in items:
+            r = self._one(t, sections)
+            if isinstance(r, str):                  # 실패 이유
+                self.failures[str(t.track_id)] = {"stage": "analyze", "error": r}
+            else:
+                out[str(t.track_id)] = r
+        return out
+
+    def _one(self, t, sections):
+        import numpy as np
+
+        # 트랙 5값은 `content_row`(=`content.parquet` 한 줄)에서 온다. 3.12 가 이미
+        # 측정해 둔 값을 **그대로** 쓴다 — 여기서 다시 재면 값이 미세하게 갈린다.
+        meta = read_track_stats(dict(t.content_row or {}))
+        payload = {
+            "src": str(self.src_root), "data_dir": str(self.data_dir),
+            "device": self.device or "",
+            "tracks": [{
+                "track_id": str(t.track_id), "audio": str(t.audio_path),
+                "sections": [{"label": s.label, "start": float(s.start),
+                              "end": float(s.end)} for s in sections.segments],
+                "meta": {"bpm": float(meta.bpm), "centroid": float(meta.centroid),
+                         "rolloff": float(meta.rolloff),
+                         "rms_mean": float(meta.rms_mean),
+                         "flatness": float(meta.flatness)},
+                "demix_root": str(t.demix_root) if getattr(t, "demix_root", None) else None,
+            }],
+        }
+        import subprocess
+
+        try:
+            r = subprocess.run([str(self.python), "-c", self.runner or _RUNNER],
+                               input=json.dumps(payload), capture_output=True,
+                               text=True, encoding="utf-8", timeout=self.timeout_sec)
+        except FileNotFoundError:
+            return f"파이썬을 찾지 못했다: {self.python}"
+        except subprocess.TimeoutExpired:
+            return f"{self.timeout_sec}초를 넘겼다"
+        if r.returncode != 0 or "ANALYZE_OK" not in (r.stdout or ""):
+            tail = "\n".join((r.stderr or "").strip().splitlines()[-20:])
+            return f"분석기 종료 코드 {r.returncode}\n{tail}"
+
+        body = (r.stdout or "").split("ANALYZE_OK", 1)[1]
+        # 자식이 마커만 찍고 끝났거나(중간 사망) 본문이 잘렸을 수 있다. 여기서 예외를
+        # 그대로 올리면 **그 곡 하나 때문에 배치 전체가 traceback 으로 멈춘다** —
+        # 곡 단위 격리 규칙대로 실패 문자열로 돌려 이 곡만 실패로 남긴다.
+        try:
+            got = json.loads(body)[0]
+            res = TrackResult(track_id=got["track_id"], status=got["status"],
+                              stage=got["stage"], n_sections=got["n_sections"],
+                              error=got["error"], instrument_error=got["instrument_error"],
+                              rows=got["rows"])
+        except (ValueError, IndexError, KeyError, TypeError) as e:
+            return f"자식 응답을 읽지 못했다({type(e).__name__}): {body.strip()[:200]!r}"
+        for name in ("embeddings", "features", "section_vecs"):
+            v = got.get(name)
+            if v is not None:
+                setattr(res, name, np.asarray(v, dtype=np.float32))
+        return res
+
+
 # ────────────────────────────────────────────────────────────── 배치
 
 @dataclass
@@ -302,5 +431,5 @@ def read_track_stats(d: dict) -> TrackStats:
 
 
 __all__ = ["TrackResult", "BatchReport", "TrackInput", "analyze_track", "run_batch",
-           "read_sections", "read_track_stats", "load_state", "save_state",
-           "ArtifactMissing"]
+           "ChildAnalyzer", "read_sections", "read_track_stats", "load_state",
+           "save_state", "ArtifactMissing"]
