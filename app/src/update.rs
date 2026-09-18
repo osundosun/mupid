@@ -179,6 +179,68 @@ pub struct NativeManifest {
 /// 모르는 채로 적용하면 조용히 어긋난다.
 pub const SCHEMA: u32 = 1;
 
+/// APK 와 함께 놓이는 체크섬 파일의 주소. 매니페스트와 **다른 통로**다.
+///
+/// 이 파일은 `sha256sum` 형식이고, APK 와 같이 놓이는 유일한 다른 단서다.
+/// 그래서 매니페스트와 맞대어 볼 수 있다 — 두 값이 다른데 매니페스트만 믿으면
+/// 서버가 잘못된 파일을 가리켰을 때 사용자가 그것을 설치한다.
+pub const NATIVE_CHECKSUM_PATH: &str = "/download/mupid.apk.sha256";
+
+/// `sha256sum` 형식의 한 줄에서 해시만 꺼낸다.
+///
+///   `<64hex>  mupid-<커밋>.apk`      (우리 수신기가 쓰는 모양)
+///   `<64hex> *mupid-<커밋>.apk`      (바이너리 모드, 다른 도구가 쓸 수 있다)
+///
+/// 해시는 소문자 16진수 64자다. 대문자로 오면 받아 주지 않는다 — 우리 수신기는
+/// 소문자로 쓰고, 두 모양을 다 받으면 어느 쪽이 정본인지가 흐려진다.
+pub fn parse_checksum_line(text: &str) -> Option<&str> {
+    let hex = text.split_whitespace().next()?;
+    let looks_like_hash = hex.len() == 64
+        && hex.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    looks_like_hash.then_some(hex)
+}
+
+/// 매니페스트와 체크섬 파일이 **같은 판을 가리키는지** 본다.
+///
+/// 왜 두 번 보나. 매니페스트의 `sha256` 만 믿으면 그 파일 하나가 잘못됐을 때
+/// (서버가 옛 매니페스트를 남겨 두거나, 손으로 고쳤거나) 앱이 그것을 그대로
+/// 따른다. 체크섬 파일은 APK 와 함께 놓이는 **다른 단서**라, 둘이 어긋나면
+/// 그 사실 자체가 신호다.
+///
+/// **파일 이름까지 본다.** 체크섬 파일은 `mupid-<커밋>.apk` 를 가리키고
+/// 매니페스트에는 `commit` 이 있다. 둘이 같은 판이면 그 이름도 같아야 한다 —
+/// 해시만 맞대면 "다른 커밋의 같은 바이트" 를 구별할 수 없다(해시가 같으면
+/// 내용이 같으므로 실해는 없지만, 이름이 어긋나는 것 자체가 게시가 꼬였다는
+/// 신호다).
+pub fn verify_native_checksum(manifest: &NativeManifest, sidecar: &str) -> Result<(), UpdateError> {
+    let Some(published) = parse_checksum_line(sidecar) else {
+        return Err(UpdateError::ChecksumSidecar(
+            "체크섬 파일에서 해시를 읽지 못했습니다".to_string(),
+        ));
+    };
+    if !published.eq_ignore_ascii_case(&manifest.sha256) {
+        return Err(UpdateError::ChecksumSidecar(format!(
+            "매니페스트 {} vs 체크섬 파일 {published}",
+            manifest.sha256
+        )));
+    }
+    // 이름이 있으면 맞대어 본다. `mupid-<커밋>.apk` 여야 한다.
+    if let Some(name) = sidecar.split_whitespace().nth(1) {
+        let name = name.trim_start_matches('*');
+        let commit_ok = manifest.commit.len() == 40
+            && manifest.commit.bytes().all(|b| b.is_ascii_hexdigit());
+        if commit_ok {
+            let expected = format!("mupid-{}.apk", manifest.commit);
+            if name != expected {
+                return Err(UpdateError::ChecksumSidecar(format!(
+                    "체크섬 파일이 다른 이름을 가리킵니다: {name} (기대 {expected})"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────
 // 오류
 // ─────────────────────────────────────────────────────────────
@@ -201,6 +263,10 @@ pub enum UpdateError {
     Mismatch(String),
     #[error("알 수 없는 스키마입니다: {0}")]
     Schema(u32),
+    /// 매니페스트와 APK 옆의 체크섬 파일이 어긋난다. **둘 중 하나가 잘못됐다는
+    /// 뜻이므로 어느 쪽도 믿지 않는다** — 받은 APK 를 설치하지 않는다.
+    #[error("체크섬 파일과 매니페스트가 어긋납니다: {0}")]
+    ChecksumSidecar(String),
     #[error("파일 입출력 실패: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -967,9 +1033,84 @@ mod tests {
         assert!(matches!(error, UpdateError::Size { .. }), "{error:?}");
     }
 
+    /// 매니페스트와 APK 옆 체크섬 파일이 어긋나면 **아무것도 설치하지 않는다.**
+    ///
+    /// 매니페스트 하나만 믿으면 그 파일이 잘못됐을 때(서버가 옛 매니페스트를
+    /// 남겨 두거나 손으로 고쳤거나) 앱이 그것을 그대로 따른다. 체크섬 파일은
+    /// APK 와 함께 놓이는 **다른 단서**라, 둘이 어긋나면 그 사실 자체가 신호다.
+    #[test]
+    fn a_checksum_sidecar_that_disagrees_is_refused() {
+        let commit = "a".repeat(40);
+        let manifest = NativeManifest {
+            schema: SCHEMA,
+            built_at: 1_789_722_000_000,
+            version_code: 1_789_722_000,
+            commit: commit.clone(),
+            apk: "/download/mupid.apk".to_string(),
+            sha256: "b".repeat(64),
+            bytes: 53_841_578,
+            min_sdk: 24,
+        };
+        let name = format!("mupid-{commit}.apk");
+
+        // 맞는 줄은 통과한다.
+        let good = format!("{}  {name}\n", "b".repeat(64));
+        assert!(verify_native_checksum(&manifest, &good).is_ok(), "{good:?}");
+        // 바이너리 모드 표시(` *`)도 받는다 — 다른 도구가 쓸 수 있다.
+        let binary = format!("{} *{name}\n", "b".repeat(64));
+        assert!(verify_native_checksum(&manifest, &binary).is_ok(), "{binary:?}");
+
+        // 해시가 다르면 거부.
+        let wrong_hash = format!("{}  {name}\n", "c".repeat(64));
+        assert!(matches!(
+            verify_native_checksum(&manifest, &wrong_hash),
+            Err(UpdateError::ChecksumSidecar(_))
+        ));
+        // 같은 바이트라도 **다른 판을 가리키면** 거부한다. 게시가 꼬였다는 신호다.
+        let wrong_name = format!("{}  mupid-{}.apk\n", "b".repeat(64), "d".repeat(40));
+        assert!(matches!(
+            verify_native_checksum(&manifest, &wrong_name),
+            Err(UpdateError::ChecksumSidecar(_))
+        ));
+        // 해시를 못 읽으면 거부 — 빈 파일이나 다른 형식.
+        for bad in ["", "\n", "not-a-hash  x\n", &"b".repeat(63)] {
+            let outcome = verify_native_checksum(&manifest, bad);
+            assert!(
+                matches!(outcome, Err(UpdateError::ChecksumSidecar(_))),
+                "{bad:?} 를 받아들였다"
+            );
+        }
+        // 대문자 해시는 받지 않는다. 우리 수신기는 소문자로 쓰고, 두 모양을
+        // 다 받으면 어느 쪽이 정본인지가 흐려진다.
+        let upper = format!("{}  {name}\n", "B".repeat(64));
+        assert!(matches!(
+            verify_native_checksum(&manifest, &upper),
+            Err(UpdateError::ChecksumSidecar(_))
+        ));
+    }
+
+    /// 이름이 없는 체크섬 줄도 받는다 — 해시만 맞으면 된다.
+    ///
+    /// `sha256sum` 출력을 파이프로 흘려보내면 이름이 잘릴 수 있다. 그때
+    /// 거부하면 멀쩡한 배포가 막힌다.
+    #[test]
+    fn a_bare_hash_is_enough() {
+        let manifest = NativeManifest {
+            schema: SCHEMA,
+            built_at: 1,
+            version_code: 1,
+            commit: "a".repeat(40),
+            apk: "/download/mupid.apk".to_string(),
+            sha256: "b".repeat(64),
+            bytes: 1,
+            min_sdk: 24,
+        };
+        assert!(verify_native_checksum(&manifest, &"b".repeat(64)).is_ok());
+        assert!(parse_checksum_line(&format!("{}\n", "b".repeat(64))).is_some());
+    }
+
     /// **실제 산출물로 왕복한다.** `frontend/scripts/web-archive.mjs` 가 만든
     /// 아카이브와 `web.json` 을 우리 `activate()` 가 그대로 받는지 본다.
-    ///
     /// 단위 시험은 우리가 만든 시험용 아카이브를 쓴다. 그래서 **생성기와 앱이
     /// 어긋나도** 두 쪽 시험이 각각 통과한다 — 실제로 그런 어긋남을 잡으려면
     /// 진짜 산출물을 통과시켜야 한다. 이 시험의 목적이 그것이다

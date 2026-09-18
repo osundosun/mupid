@@ -1534,6 +1534,27 @@ class ApkDownloadTest(unittest.TestCase):
             with self.subTest(command=bad):
                 self.assertIsNone(pattern.match(bad))
 
+    def test_the_sidecar_format_is_what_the_app_parses(self):
+        """수신기가 `mupid.apk.sha256` 에 쓰는 한 줄과, 앱이 그것을 읽는 규칙이
+        같은 모양이어야 한다. 어긋나면 앱이 체크섬 파일을 못 읽고, 그 실패는
+        조용히 "네이티브 갈래를 건너뛴다" 로만 보인다.
+
+        앱 쪽 규칙은 `app/src/update.rs` 의 `parse_checksum_line` 이다:
+        첫 토큰이 소문자 16진수 64자, 둘째 토큰이 `mupid-<커밋>.apk`.
+        """
+        receiver = (self.DEPLOY / "receive-apk.py").read_text(encoding="utf-8")
+        # 쓰는 줄.
+        self.assertIn('digest.write_text(f"{checksum}  mupid-{release}.apk\\n")', receiver)
+        rust = (ROOT / "app" / "src" / "update.rs").read_text(encoding="utf-8")
+        # 읽는 규칙. 두 토큰을 그대로 본다.
+        self.assertIn("pub fn parse_checksum_line", rust)
+        self.assertIn("hex.len() == 64", rust)
+        self.assertIn('(b\'a\'..=b\'f\').contains(&byte)', rust)
+        self.assertIn('let expected = format!("mupid-{}.apk", manifest.commit);', rust)
+        # 앱이 보는 주소가 nginx 가 내려주는 주소와 같아야 한다.
+        self.assertIn('pub const NATIVE_CHECKSUM_PATH: &str = "/download/mupid.apk.sha256";', rust)
+        self.assertRegex(self._nginx(), r"location = /download/mupid\.apk\.sha256 \{")
+
     def test_the_receiver_refuses_a_version_code_that_goes_backwards(self):
         """뒤로 가는 versionCode 는 안드로이드가 설치를 거부한다. 한 번 게시되면
         그 APK 를 받은 **모든 기기에서 안내만 뜨고 설치가 실패한다** — 캐시가

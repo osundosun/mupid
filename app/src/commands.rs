@@ -255,6 +255,12 @@ pub async fn update_native(
         return Err("올려진 APK 정보가 없습니다".to_string());
     };
 
+    // **매니페스트와 체크섬 파일을 맞대어 본다**(설계 7.3). 어긋나면 받지도
+    // 않는다 — 한쪽이 틀렸다는 확실한 신호이고, 그 상태로 설치하면 사용자가
+    // 잘못된 APK 를 설치한다. 파일이 없는 것은 막지 않는다(그 판단은
+    // `verify_native_sidecar` 안에 있다).
+    crate::update_net::verify_native_sidecar(&http, &manifest).await?;
+
     let cache = native_cache(&app)?;
     let apk = crate::update_net::download_native(&http, &cache, &manifest).await?;
     let _ = &db;

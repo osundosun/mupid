@@ -349,6 +349,41 @@ pub async fn refresh_web(
     }
 }
 
+/// 매니페스트가 가리키는 APK 를 **체크섬 파일과 맞대어** 확인한다.
+///
+/// 왜 필요한가. `native.json` 하나만 믿으면 그 파일이 잘못됐을 때(서버가 옛
+/// 매니페스트를 남겨 두거나 손으로 고쳤거나) 앱이 그것을 그대로 따른다.
+/// `mupid.apk.sha256` 은 APK 와 함께 놓이는 **다른 단서**라, 둘이 어긋나면
+/// 그 사실 자체가 신호다 — 설계 7.3 이 이것을 요구한다.
+///
+/// **체크섬 파일이 없어도 막지 않는다.** `404` 는 "아직 그 통로를 안 열었다"
+/// 는 뜻일 수 있고, 그때까지 네이티브 갈래를 통째로 죽이면 안 된다. 이미
+/// 매니페스트의 `sha256` 으로 내려받은 바이트를 검증하므로(그 검사는 그대로
+/// 있다) 여기서 얻는 것은 **두 출처가 일치한다는 확인**이지 유일한 방어선이
+/// 아니다. 다만 어긋나면 막는다 — 그쪽은 한쪽이 틀렸다는 확실한 신호다.
+pub async fn verify_native_sidecar(
+    state: &HttpState,
+    manifest: &NativeManifest,
+) -> Result<(), String> {
+    let sidecar = match fetch_bounded(
+        state,
+        update::NATIVE_CHECKSUM_PATH,
+        MAX_MANIFEST_BYTES,
+    )
+    .await
+    {
+        Ok(body) => body,
+        Err(error) => {
+            // 없다/못 받았다는 막을 이유가 아니다. 로그만 남긴다.
+            log::info!("APK 체크섬 파일을 건너뜁니다: {error}");
+            return Ok(());
+        }
+    };
+    let text = String::from_utf8(sidecar)
+        .map_err(|_| "체크섬 파일이 UTF-8 이 아닙니다".to_string())?;
+    update::verify_native_checksum(manifest, &text).map_err(|error| error.to_string())
+}
+
 /// APK 를 내려받아 설치를 유도할 자리에 놓는다.
 ///
 /// `app_cache_dir()/update/` 에 둔다 —
