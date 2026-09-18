@@ -194,13 +194,14 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                   />
                 ))}
               </div>
-              </div>
+              {/* 빈 안내는 '수록곡' 자리 안에 둔다. 밖에 두면 PC 에서 왼쪽 카드 밑으로 내려가 오른쪽이 텅 빈다. */}
               {!selected.tracks.length && (
                 <EmptyState
                   title="첫 번째 음악을 담아볼까요?"
                   description="현재 듣는 곡부터 플레이리스트를 채워보세요."
                 />
               )}
+              </div>
               {/* 듣고 있는 곡이 없으면 담을 것도 없다. */}
               {m.active && <div className="add-current">
                 <span>현재 재생 중인 곡</span>
