@@ -117,18 +117,32 @@ app-build:
     # **같은 값**을 넘기고, `deploy-apk.sh` 가 그 값에서 versionCode 를 만들어
     # 수신기에 넘긴다(수신기는 그 값으로 native.json 을 만든다 — 앱이 읽는다).
     #
-    # **두 스크립트를 한 줄에서 `&&` 로 잇는다.** GitLab 은 `script:` 의 각 줄을
-    # **별도 셸**로 돌린다. 그래서 `build-apk.sh` 안의 `export MUPID_NATIVE_BUILD`
-    # 는 그 줄의 프로세스에서만 살아 있고, 다음 줄의 `deploy-apk.sh` 에는 오지
-    # 않는다 — 업로더가 `MUPID_NATIVE_BUILD 가 없다` 로 죽는다.
+    # **스탬프를 CI 줄에서 읽어 export 한다 — 자식 스크립트의 export 에 기대지 않는다.**
     #
-    # 실제로 그렇게 실패했다(master, 2026-09-18, job 575976). 값싼 실수지만
-    # 증상이 나쁘다: APK 를 다 굽고 서명까지 확인한 뒤(60MB·6분) 업로드 직전
-    # 한 줄로 죽고, 남는 것은 `exit code 2` 뿐이다. 웹 갈래(`app-web-release`)는
-    # 스탬프를 그 줄에서 `$(...)` 로 만들어 넘기므로 이 함정이 없었다.
+    # 진단을 한 번 틀렸고 그래서 한 번 헛고쳤다. 기록해 둔다.
+    #
+    #   틀린 진단 ①  "GitLab 은 `script:` 의 각 줄을 별도 셸로 돌린다"
+    #     -> 아니다. **한 셸에서 돈다.** `app-web-release` 의 줄1 에서 export 한
+    #        `MUPID_WEB_BUILD` 가 **줄2 의 printf 에서 그대로 찍혔다**
+    #        (job 576700 로그: `빌드 스탬프 1789710172000`).
+    #        줄 경계가 원인이었다면 그 값이 비어 있었을 것이다.
+    #
+    #   틀린 진단 ②  "그러니 한 줄로 `&&` 로 이으면 된다"
+    #     -> 안 된다. `sh infra/ci/build-apk.sh` 는 **자식 프로세스**라, 그 안의
+    #        `export MUPID_NATIVE_BUILD` 는 부모 셸로 올라오지 않는다.
+    #        `&&` 는 이 문제를 건드리지 못한다. 실제로 다시 죽었다(job 576699).
+    #
+    #   맞는 진단  `app-web-release` 는 **CI 줄에서** 값을 만들어 export 한다.
+    #     그래서 그 줄의 자식인 `deploy-web.sh` 가 상속받아 잘 동작한다.
+    #     APK 갈래만 값을 자식 안에서 만들어 export 하는 구조였다.
+    #
+    # 그래서 값을 만드는 쪽(`build-apk.sh`)이 **파일로 남기고**, CI 줄이 그 파일을
+    # 읽어 export 한다. `app-web-release` 와 같은 모양이 된다.
     #
     # `infra_k8s/tests` 의 `CiShellScopeTest` 가 이 모양을 고정한다.
-    - sh infra/ci/build-apk.sh && sh infra_k8s/ci/deploy-apk.sh
+    - MUPID_NATIVE_BUILD=$(sh infra/ci/build-apk.sh >/dev/null && cat .release/app/build-stamp) && export MUPID_NATIVE_BUILD
+    - printf '넘기는 스탬프 %s\n' "$MUPID_NATIVE_BUILD"
+    - sh infra_k8s/ci/deploy-apk.sh
 
 # 웹 번들(코드 자산만)을 굽고 노드로 보낸다.
 #

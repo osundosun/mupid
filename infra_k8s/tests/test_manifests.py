@@ -1487,21 +1487,46 @@ class CiShellScopeTest(unittest.TestCase):
     def _lines_with(self, script, needle):
         return [line for line in script if needle in line]
 
-    def test_the_apk_build_and_upload_share_one_shell(self):
-        # `build-apk.sh` 가 `export MUPID_NATIVE_BUILD` 하고 `deploy-apk.sh` 가
-        # 그 값을 요구한다. 다른 줄이면 export 가 죽는다.
+    def test_the_apk_job_exports_the_stamp_from_the_ci_line_not_from_a_child(self):
+        """**CI 줄에서 export 해야 한다.** 자식 스크립트의 export 는 부모에 오지 않는다.
+
+        이 함정을 두 번 밟았고 진단도 한 번 틀렸다. 시험도 처음엔 '두 줄이 한 줄에
+        있는가' 를 봤는데, 그건 **틀린 진단을 고정한 것**이라 무용했다(한 줄로
+        이어도 여전히 죽는다 — 진짜 원인은 `sh build-apk.sh` 가 자식이라는 것이다).
+
+        그래서 보는 것을 바꿨다: **값을 CI 줄에서 만들어 export 하는가.**
+        `app-web-release` 가 처음부터 그 모양이라 한 번도 안 깨졌다.
+        """
         script = self._job_script("app-build")
-        build = self._lines_with(script, "build-apk.sh")
-        upload = self._lines_with(script, "deploy-apk.sh")
-        self.assertEqual(1, len(build), f"build-apk.sh 호출이 정확히 하나여야 한다: {build}")
-        self.assertEqual(1, len(upload), f"deploy-apk.sh 호출이 정확히 하나여야 한다: {upload}")
-        self.assertIn(
-            "&&", build[0],
-            "build-apk.sh 와 deploy-apk.sh 가 **한 줄**에 있어야 한다 — GitLab 은 "
-            "script 의 각 줄을 별도 셸로 돌리므로, export 한 MUPID_NATIVE_BUILD 가 "
-            f"다음 줄로 가지 않는다: {build[0]!r} / {upload[0]!r}",
-        )
-        self.assertEqual(build[0], upload[0])
+        exporter = self._lines_with(script, "export MUPID_NATIVE_BUILD")
+        self.assertEqual(1, len(exporter),
+                         f"CI 줄에서 MUPID_NATIVE_BUILD 를 export 하는 줄이 하나여야 한다: {exporter}")
+        line = exporter[0]
+        # 그 줄에서 **값을 만들어** export 한다. 자식의 export 에 기대지 않는다.
+        self.assertIn("build-stamp", line,
+                      f"CI 줄이 스탬프를 직접 읽어야 한다(자식의 export 는 안 온다): {line!r}")
+        self.assertIn("build-apk.sh", line, "스탬프를 만드는 스크립트를 그 줄에서 돌려야 한다")
+        # 그리고 업로더가 그 값을 상속받아야 한다 — 같은 셸(앞 줄들의 export)이므로
+        # 업로더를 부르는 줄보다 앞에 있으면 된다.
+        upload_idx = next(i for i, l in enumerate(script) if "deploy-apk.sh" in l)
+        export_idx = next(i for i, l in enumerate(script) if l == line)
+        self.assertLess(export_idx, upload_idx,
+                        "export 가 업로더 호출보다 앞에 있어야 자식이 상속한다")
+
+    def test_the_stamp_handoff_file_is_written_and_read_at_the_same_path(self):
+        """양쪽이 같은 경로를 써야 한다. 한쪽만 바뀌면 배포가 다시 죽는다."""
+        build = (self.CI / "build-apk.sh").read_text(encoding="utf-8")
+        script = self._job_script("app-build")
+        # 쓰는 쪽
+        self.assertIn("> .release/app/build-stamp", build,
+                      "build-apk.sh 가 스탬프를 파일로 남기지 않는다")
+        # 읽는 쪽
+        joined = "\n".join(self._lines_with(script, "export MUPID_NATIVE_BUILD"))
+        self.assertIn(".release/app/build-stamp", joined,
+                      "CI 줄이 그 파일을 읽지 않는다")
+        # 값이 숫자인지 양쪽에서 본다 — 아니면 조용히 빈 값이 간다.
+        self.assertIn('*[!0-9]*', build)
+        self.assertIn("${MUPID_NATIVE_BUILD:?", (self.K8S_CI / "deploy-apk.sh").read_text(encoding="utf-8"))
 
     def test_the_stamp_really_crosses_that_boundary(self):
         """경계를 넘어야 하는 값이 무엇인지 실제 파일에서 확인한다.
