@@ -1251,12 +1251,30 @@ def similar_moments(moment_id: str, n: int, exclude_tracks: set[str] | None = No
     return out
 
 
-def build_dna(user: str) -> tuple[np.ndarray, np.ndarray, list[dict]]:
+def build_dna(user: str, query_plan: Optional[dict] = None,
+              current_track_id: Optional[str] = None,
+              current_moment_id: Optional[str] = None) -> tuple[np.ndarray, np.ndarray, list[dict]]:
     """규칙 경로. 군집은 **원공간**에서(구조가 살아 있음), 점수용 변환은 center() 로 통일."""
     from scipy.cluster.hierarchy import fcluster, linkage
 
     c = CAT
     pos = user_positives(user)
+    if query_plan is not None and not pos.empty:
+        plan = copy.deepcopy(query_plan)
+        matched = c.mom[c.mom.moment_id.isin(pos.section_key)]
+        matched, qdiag = filter_query_pool(matched, plan, current_track_id, current_moment_id)
+        want_mood = _qvals((plan.get("filters") or {}).get("mood"))
+        if want_mood:
+            meta = catalog_facet_rows()
+            matched = matched.loc[np.asarray([
+                _qmatch((meta.get(t) or {}).get("moods", []), want_mood)
+                for t in matched.track_id
+            ], dtype=bool)]
+            qdiag["applied"].append("filters.mood")
+        # 판정할 수 없는 조건이 하나라도 있으면 DNA 전체를 섞지 않는다.
+        if qdiag.get("ignored") or not qdiag.get("applied"):
+            matched = matched.iloc[0:0]
+        pos = pos[pos.section_key.isin(matched.moment_id)]
     if pos.empty:
         return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
     rowmap = c.mom.set_index("moment_id").emb_row
@@ -1279,11 +1297,12 @@ def build_dna(user: str) -> tuple[np.ndarray, np.ndarray, list[dict]]:
 
     # 2) 다른 사용자 평균 (질의 측 개인화 보정용)
     OV = None
-    o = other_positives(user)
-    if not o.empty:
-        ok = [k for k in o.section_key if k in rowmap.index]
-        if ok:
-            OV = center(np.asarray(c.Z[rowmap.loc[ok].to_numpy()], dtype=np.float32)).mean(0)
+    if query_plan is None:
+        o = other_positives(user)
+        if not o.empty:
+            ok = [k for k in o.section_key if k in rowmap.index]
+            if ok:
+                OV = center(np.asarray(c.Z[rowmap.loc[ok].to_numpy()], dtype=np.float32)).mean(0)
 
     C, W, meta = [], [], []
     for cid in ids:
@@ -1522,13 +1541,23 @@ def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional
     raw_f = plan.get("filters") or {}
     f = _canonicalize_query_tags(raw_f, fac, pool)
     ex = _canonicalize_query_tags(plan.get("exclude") or {}, fac, pool)
+    available = {
+        "instrument": any(_qvals(v) for v in fac.instruments),
+        "vocal": any(x not in ("unknown", "voice")
+                     for v in fac.vocal_type for x in _qvals(v)),
+    }
+    ignored = []
+    for name, ok in available.items():
+        if not ok and (_qvals(raw_f.get(name)) or _qvals((plan.get("exclude") or {}).get(name))):
+            ignored.append(name + "(카탈로그 데이터 없음)")
+            f[name], ex[name] = [], []
     plan["filters"], plan["exclude"] = f, ex
 
     # 사전에 없어 통째로 사라진 필수 조건을 찾는다. 조용히 넘기면 조건을 푼 것이 된다.
     unsat = []
     for name in ("genre", "language", "vocal", "instrument"):
         asked = _qvals(raw_f.get(name))
-        if asked and not _qvals(f.get(name)):
+        if asked and available.get(name, True) and not _qvals(f.get(name)):
             unsat.append({"field": name, "requested": asked})
     if unsat:
         return pool.iloc[0:0].copy(), {
@@ -1537,7 +1566,7 @@ def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional
             "reason": "요청한 조건이 현재 카탈로그 어휘에 없다",
             "plan": {k: v for k, v in plan.items() if not k.startswith("_")}}
     keep = np.ones(len(pool), dtype=bool)
-    applied, ignored = [], []
+    applied = []
 
     def gate(name: str, values, negate: bool = False) -> None:
         nonlocal keep
@@ -1645,28 +1674,31 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
               beh_events: Optional[list] = None,
               onboarding: Optional[dict] = None) -> dict:
     c = CAT
-    C, W, dna_meta = build_dna(user)
+    C, W, dna_meta = build_dna(user, query_plan, current_track_id, current_moment_id)
     query_source = "labels" if len(C) else "none"
-    if not len(C):
+    if query_plan is None and not len(C):
         C, W, dna_meta = onboarding_seeds(user, onboarding)
         if len(C):
             query_source = "onboarding"
-    zu = model_user_vec(user)
-    _t_beh = time.perf_counter()
-    # `beh_events` 는 요청 경계에서 ClickHouse 로 읽어 온 것이다. 없으면 종전대로
-    # 파일 로그를 읽는다 — 배치와 오프라인 테스트가 그 경로로 돈다.
-    beh = user_behavior(user, events=beh_events)
-    metrics.observe_behavior(time.perf_counter() - _t_beh)
+    zu = model_user_vec(user) if query_plan is None else None
+    if query_plan is None:
+        _t_beh = time.perf_counter()
+        # `beh_events` 는 요청 경계에서 ClickHouse 로 읽어 온 것이다. 없으면 종전대로
+        # 파일 로그를 읽는다 — 배치와 오프라인 테스트가 그 경로로 돈다.
+        beh = user_behavior(user, events=beh_events)
+        metrics.observe_behavior(time.perf_counter() - _t_beh)
+    else:
+        beh = {"dislike": set(), "delta": {}, "recent_pen": {}, "skip_pen": {}, "events": 0}
     # 하드 필터 = 현재 목록/세션 재생곡 + 활성 DISLIKE
     # 최근 4시간 재생곡은 **제외하지 않는다** — 감점만 주고 4시간에 걸쳐 복구한다.
     # 통째로 빼면 많이 들은 사용자일수록 후보가 말라 추천이 빈약해진다.
     hard = set(exclude) | beh["dislike"]
     diag: dict[str, Any] = {"dna": len(C), "model_vector": zu is not None,
                             "query_source": query_source,
-                            "behavior_source": ("clickhouse" if beh_events is not None
-                                                else "file"),
-                            "onboarding_source": ("request" if onboarding is not None
-                                                  else "file"),
+                            "behavior_source": ("disabled_for_query" if query_plan is not None else
+                                                "clickhouse" if beh_events is not None else "file"),
+                            "onboarding_source": ("disabled_for_query" if query_plan is not None else
+                                                  "request" if onboarding is not None else "file"),
                             "behavior_events": beh["events"],
                             "dropped_bpm": 0, "dropped_short": 0, "excluded": len(hard),
                             "excluded_session": len(set(exclude)),
@@ -1678,7 +1710,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     pool = c.pool[~c.pool.track_id.isin(hard)]
     pool = pool[pool.dur_sec >= MIN_MOMENT_SEC]
     diag["dropped_short"] = int((c.pool.dur_sec < MIN_MOMENT_SEC).sum())
-    if query_plan:
+    if query_plan is not None:
         pool, qdiag = filter_query_pool(pool, query_plan, current_track_id, current_moment_id)
         diag["nlp"] = qdiag
     diag["candidates"] = len(pool)
@@ -1745,12 +1777,13 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         q /= max(np.linalg.norm(q), 1e-9)
         rule_mean = V @ q
 
-    pos = user_positives(user)
     bpm_pref = 0.0
-    if not pos.empty:
-        bs = [float(c.content.bpm.get(t, 0.0)) for t in pos.track_id.unique()]
-        bs = [x for x in bs if x > 0]
-        bpm_pref = float(np.median(bs)) if bs else 0.0
+    if query_plan is None:
+        pos = user_positives(user)
+        if not pos.empty:
+            bs = [float(c.content.bpm.get(t, 0.0)) for t in pos.track_id.unique()]
+            bs = [x for x in bs if x > 0]
+            bpm_pref = float(np.median(bs)) if bs else 0.0
 
     needs_model = bool(c.comb) and ("model_sim" in c.comb["features"])
     can_logistic = bool(c.comb) and len(C) and (zu is not None or not needs_model)
@@ -1787,7 +1820,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     # BPM 게이트 (사용자 선호 BPM 중앙값 기준)
     keep = np.ones(len(pool), dtype=bool)
     # ---- 명시 선호 게이트: 청취 이력 유무와 무관하게 항상 적용 (게이트 인계) ----
-    ans = onboarding_of(user, onboarding) or {}
+    ans = (onboarding_of(user, onboarding) or {}) if query_plan is None else {}
     if ans:
         fac = catalog_facets()["_df"].set_index("track_id")   # 온보딩 게이트. 캐시된 df 다
         wl = ans.get("language") or []
@@ -1882,11 +1915,14 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             r = pool.iloc[int(i)]
             if not keep[i] or r.track_id in taken_tracks:
                 continue
+            if query_plan is not None and vecs and max(
+                    float(V[int(i)] @ q) for q in vecs) >= NEAR_DUP_COS:
+                continue
             picked.append((int(i), float(final[int(i)]), 0))
             taken_tracks.add(r.track_id)
             vecs.append(V[int(i)])
 
-    if explore and EXPLORE_SLOTS and len(picked) >= 3:
+    if query_plan is None and explore and EXPLORE_SLOTS and len(picked) >= 3:
         rng = np.random.default_rng(int(time.time()) // 60)
         gorder = np.argsort(-np.where(keep, final, -1e9))
         cands = [int(i) for i in gorder[n:n * 6]

@@ -188,6 +188,86 @@ def test_query_plan_actually_gates(svc):
         assert svc.CAT.track_info(r["track_id"])["category"] == "pop"
 
 
+def test_query_plan_uses_only_matching_dna_moments(svc, monkeypatch):
+    pos = pd.DataFrame([
+        {"section_key": "T000000#1", "track_id": "T000000"},  # verse
+        {"section_key": "T000001#2", "track_id": "T000001"},  # chorus
+    ])
+    monkeypatch.setattr(svc, "user_positives", lambda _user: pos)
+    monkeypatch.setattr(
+        svc, "other_positives",
+        lambda _user: (_ for _ in ()).throw(AssertionError("검색에 타 사용자 이력을 사용했다")))
+
+    out = svc.recommend("internal:query-dna", 4, set(), True,
+                        {"filters": {"flow": "verse"}})
+
+    assert out["diagnostics"]["query_source"] == "labels"
+    assert sum(x["n_members"] for x in out["dna"]) == 1
+    assert {x["rep_moment_id"] for x in out["dna"]} == {"T000000#1"}
+    assert out["results"] and all(x["section_label"] == "verse" for x in out["results"])
+
+
+def test_query_plan_searches_without_dna_when_none_match(svc, monkeypatch):
+    pos = pd.DataFrame([{"section_key": "T000001#2", "track_id": "T000001"}])
+    monkeypatch.setattr(svc, "user_positives", lambda _user: pos)
+
+    out = svc.recommend("internal:no-query-dna", 4, set(), True,
+                        {"filters": {"flow": "verse", "mood": ["relaxing"]}})
+
+    assert out["dna"] == []
+    assert out["diagnostics"]["query_source"] == "none"
+    assert out["results"] and all(x["section_label"] == "verse" for x in out["results"])
+
+
+def test_query_plan_ignores_history_onboarding_bpm_and_explore(svc, monkeypatch):
+    calls = {"positives": 0}
+
+    def positives(_user):
+        calls["positives"] += 1
+        return pd.DataFrame()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("자연어 검색이 무관한 사용자 상태를 읽었다")
+
+    monkeypatch.setattr(svc, "user_positives", positives)
+    for name in ("model_user_vec", "user_behavior", "onboarding_seeds", "onboarding_of"):
+        monkeypatch.setattr(svc, name, forbidden)
+
+    kwargs = {"user": "internal:isolated-query", "n": 4, "exclude": {"T000005"},
+              "explore": True, "onboarding": {"genres": ["ROCK"]}}
+    a = svc.recommend(**kwargs, query_plan={"filters": {"flow": "verse"}},
+                      beh_events=[{"type": "DISLIKE", "track_id": "T000000"}])
+    b = svc.recommend(**kwargs, query_plan={"filters": {"flow": "verse"}},
+                      beh_events=[{"type": "LIKE", "track_id": "T000004"}])
+
+    assert calls["positives"] == 2  # DNA 확인만; 선호 BPM용 재조회 없음
+    assert [x["moment_id"] for x in a["results"]] == [x["moment_id"] for x in b["results"]]
+    assert all(x["slot_source"] != "explore" for x in a["results"])
+    assert all(x["track_id"] != "T000005" for x in a["results"])
+    assert len({x["track_id"] for x in a["results"]}) == len(a["results"])
+    assert a["diagnostics"]["bpm_pref"] == 0
+    assert a["diagnostics"]["behavior_source"] == "disabled_for_query"
+
+
+def test_missing_vocal_and_instrument_data_do_not_drop_candidates(svc):
+    old = svc.CAT.meta.copy()
+    svc.CAT.meta["vocal_type"] = "unknown"
+    svc.CAT.meta["instrument_tags"] = ""
+    svc.CAT.__dict__.pop("_facets_cache", None)
+    svc.CAT.__dict__.pop("_facets_by_track", None)
+    try:
+        pool, diag = svc.filter_query_pool(
+            svc.CAT.pool, {"filters": {"vocal": ["female"], "instrument": ["piano"]}},
+            None, None)
+        assert len(pool) == len(svc.CAT.pool)
+        assert set(diag["ignored"]) == {
+            "vocal(카탈로그 데이터 없음)", "instrument(카탈로그 데이터 없음)"}
+    finally:
+        svc.CAT.meta = old
+        svc.CAT.__dict__.pop("_facets_cache", None)
+        svc.CAT.__dict__.pop("_facets_by_track", None)
+
+
 def test_unsatisfiable_condition_returns_nothing_not_anything(svc):
     """어휘에 없는 조건을 조용히 풀고 아무 곡이나 주면 안 된다."""
     out = svc.recommend("internal:1", 5, set(), True,
