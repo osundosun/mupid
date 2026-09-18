@@ -465,8 +465,8 @@ python -m ai_server.tools.register_sections --track-map track_map.csv
 
 ```bash
 mysql ... --batch -e "
-  SELECT s.external_id AS source_section_uid,
-         s.music_section_analysis_id AS music_section_id,
+  SELECT s.external_id,
+         s.music_section_analysis_id,
          m.source_track_id, m.music_id
   FROM music_section_analysis s JOIN music m ON m.music_id = s.music_id
 " > sections.tsv

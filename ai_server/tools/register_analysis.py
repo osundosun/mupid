@@ -14,14 +14,13 @@ A축(`findVocalShare`)이 여기서 온다. 그런데 **넣는 경로가 없었�
     voice_label      has_vocal    gender_label   vocal_gender
     ---------------  -----------  -------------  ------------
     voice            True         female         F
-    instrumental     False        male           M
+    instrumental     False        (무관)         None (비움)
     unknown          **(제외)**   unknown        None (비움)
 
 `unknown` 을 뺀 이유
     `has_vocal` 은 ERD 에서 `NOT NULL` 이다. `unknown` 135곡(13%)은 넣을 값이 없다.
     `true` 로 밀면 연주곡을 보컬곡으로 만들고, `false` 로 밀면 그 반대다 —
     둘 다 **추측을 사실처럼** 넣는 것이다. 판정이 나오면 그때 넣는다.
-    (`--include-unknown` 으로 강제할 수 있지만 기본은 제외다.)
 
 `vocal_gender` 의 `unknown` 은 **비운다.** `ETC` 로 뭉개지 않는다 — `ETC` 는
 "기타로 판정했다" 이고 `None` 은 "모른다" 다.
@@ -52,10 +51,7 @@ TIMEOUT = 30
 # 원천 열 → (has_vocal, gender 열)
 VOICE_TRUE = "voice"
 VOICE_FALSE = "instrumental"
-VOICE_UNKNOWN = "unknown"
-
 GENDER_BY_LABEL = {"female": "F", "male": "M"}
-GENDER_UNKNOWN = "unknown"
 
 
 def read_track_map(path: Path) -> dict[str, int]:
@@ -86,27 +82,24 @@ def read_track_map(path: Path) -> dict[str, int]:
     return out
 
 
-def payload_from(voice: str, gender: str, *,
-                 include_unknown: bool = False) -> tuple[dict | None, str]:
+def payload_from(voice: str, gender: str) -> tuple[dict | None, str]:
     """`(voice_label, gender_label)` → 요구 1 본문. 넣을 수 없으면 `(None, 이유)`."""
     if voice == VOICE_TRUE:
-        has_vocal = True
+        # 성별을 판정하지 못한 보컬은 null 로 둔다. ETC 는 "기타로 판정함" 이다.
+        vocal_gender = GENDER_BY_LABEL.get(gender)
     elif voice == VOICE_FALSE:
-        has_vocal = False
-    elif voice == VOICE_UNKNOWN and include_unknown:
-        # 강제 옵션. **추측이다** — 화면에 사실처럼 뜬다.
-        has_vocal = True
+        # 연주곡에 성별 분류기가 값을 냈더라도 보컬 성별로 저장하면 모순이다.
+        return {"has_vocal": False, "vocal_gender": None}, ""
     else:
         return None, f"voice_label={voice or '(빈값)'}"
 
-    vg = GENDER_BY_LABEL.get(gender)      # 모르면 None (비운다. ETC 로 뭉개지 않는다)
     # **와이어는 snake_case 다.** Spring 이
     # `spring.jackson.property-naming-strategy: SNAKE_CASE` 로 돌아서 DTO 의
     # `hasVocal`·`vocalGender` 는 JSON 에서 `has_vocal`·`vocal_gender` 다.
     # camelCase 로 보내면 두 필드가 **매핑되지 않아** `has_vocal` 이 null 이 되고
     # `@NotNull` 에 걸려 400 `MUPID_INVALID_REQUEST_BODY` 가 난다 — 실제로 그렇게
     # 400 을 받고 찾았다. 형제 도구(`register_sections.py`)도 같은 철자를 쓴다.
-    return {"has_vocal": has_vocal, "vocal_gender": vg}, ""
+    return {"has_vocal": True, "vocal_gender": vocal_gender}, ""
 
 
 def put_analysis(base: str, token: str, music_id: int, body: dict) -> dict:
@@ -123,8 +116,6 @@ def main() -> int:
                     help="source_track_id,music_id 표 (CSV/TSV)")
     ap.add_argument("--tracks", default=None,
                     help="기본: <ARTIFACT_DIR>/data/test_pipeline/tracks.parquet")
-    ap.add_argument("--include-unknown", action="store_true",
-                    help="voice_label=unknown 을 has_vocal=true 로 넣는다 (추측)")
     ap.add_argument("--limit", type=int, default=0, help="곡 수 상한 (시험용)")
     ap.add_argument("--dry-run", action="store_true",
                     help="보내지 않고 무엇을 보낼지만 센다")
@@ -176,7 +167,7 @@ def main() -> int:
         if mid is None:
             unmapped.append(tid)
             continue
-        body, why = payload_from(voice, gender, include_unknown=a.include_unknown)
+        body, why = payload_from(voice, gender)
         if body is None:
             skipped.append({"track_id": tid, "why": why})
             continue

@@ -251,7 +251,11 @@ def test_query_plan_ignores_history_onboarding_bpm_and_explore(svc, monkeypatch)
 
 def test_missing_vocal_and_instrument_data_do_not_drop_candidates(svc):
     old = svc.CAT.meta.copy()
-    svc.CAT.meta["vocal_type"] = "unknown"
+    svc.CAT.meta["vocal_type"] = ""
+    svc.CAT.meta["voice_label"] = ""
+    svc.CAT.meta["gender_label"] = ""
+    svc.CAT.meta["has_vocal"] = np.nan
+    svc.CAT.meta["vocal_gender"] = ""
     svc.CAT.meta["instrument_tags"] = ""
     svc.CAT.__dict__.pop("_facets_cache", None)
     svc.CAT.__dict__.pop("_facets_by_track", None)
@@ -264,6 +268,27 @@ def test_missing_vocal_and_instrument_data_do_not_drop_candidates(svc):
             "vocal(카탈로그 데이터 없음)", "instrument(카탈로그 데이터 없음)"}
     finally:
         svc.CAT.meta = old
+        svc.CAT.__dict__.pop("_facets_cache", None)
+        svc.CAT.__dict__.pop("_facets_by_track", None)
+
+
+def test_instrument_filter_uses_each_moments_instruments(svc):
+    old_pool, old_mom = svc.CAT.pool, svc.CAT.mom
+    svc.CAT.pool = old_pool.copy()
+    svc.CAT.mom = old_mom.copy()
+    svc.CAT.pool["instruments"] = svc.CAT.pool.section_idx.map(
+        lambda i: ["piano"] if i % 2 == 0 else ["guitar"])
+    svc.CAT.mom["instruments"] = svc.CAT.mom.section_idx.map(
+        lambda i: ["piano"] if i % 2 == 0 else ["guitar"])
+    svc.CAT.__dict__.pop("_facets_cache", None)
+    svc.CAT.__dict__.pop("_facets_by_track", None)
+    try:
+        pool, diag = svc.filter_query_pool(
+            svc.CAT.pool, {"filters": {"instrument": ["guitar"]}}, None, None)
+        assert not pool.empty and set(pool.section_idx) == {1, 3}
+        assert "filters.instrument" in diag["applied"]
+    finally:
+        svc.CAT.pool, svc.CAT.mom = old_pool, old_mom
         svc.CAT.__dict__.pop("_facets_cache", None)
         svc.CAT.__dict__.pop("_facets_by_track", None)
 
@@ -425,7 +450,7 @@ def test_facet_rows_match_the_dataframe(svc):
     meta = svc.catalog_facet_rows()
     assert set(meta) == set(fac.index)
     for t in list(meta)[:20]:
-        for col in ("genre", "style", "language", "vocal_type", "bpm"):
+        for col in ("genre", "style", "language", "has_vocal", "vocal_gender", "bpm"):
             assert meta[t].get(col) == fac.loc[t].get(col), (t, col)
         for col in ("moods", "instruments"):
             assert list(meta[t].get(col) or []) == list(fac.loc[t].get(col) or []), (t, col)

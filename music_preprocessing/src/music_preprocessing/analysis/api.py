@@ -344,8 +344,9 @@ class HttpRegistrar:
             for s in got:
                 rows.append({"source_track_id": mid,
                              "music_id": int(d.get("music_id") or api_id),
-                             "source_section_uid": _uid_to_moment(str(s["external_id"])),
-                             "music_section_id": int(s["music_section_analysis_id"])})
+                             "external_id": _uid_to_moment(str(s["external_id"])),
+                             "music_section_analysis_id":
+                                 int(s["music_section_analysis_id"])})
             self.registered.append({"track_id": mid,
                                     "sections": int(d.get("replaced") or len(got))})
         if missing:
@@ -410,16 +411,23 @@ def _uid_to_moment(external_id: str) -> str:
 
 
 def merge_id_map(new_dir: Path, rows: list[dict]) -> int:
-    """새 판의 `id_map.parquet` 에 **덧붙인다.** 기존 매핑을 지우지 않는다."""
+    """새 판의 `id_map.parquet` 에 **덧붙인다.** 기존 매핑을 지우지 않는다.
+
+    이전 산출물의 별칭은 읽을 때 실제 DB 컬럼명으로 한 번만 바꾼다.
+    """
     import pandas as pd
 
-    cols = ["source_track_id", "music_id", "source_section_uid", "music_section_id"]
+    cols = ["source_track_id", "music_id", "external_id", "music_section_analysis_id"]
     p = Path(new_dir) / "id_map.parquet"
     base = pd.read_parquet(p) if p.exists() else pd.DataFrame(columns=cols)
+    base = base.rename(columns={
+        "source_section_uid": "external_id",
+        "music_section_id": "music_section_analysis_id",
+    })
     add = pd.DataFrame(rows, columns=cols)
     if len(add):
         out = pd.concat([base[cols], add], ignore_index=True)
-        out = out.drop_duplicates("source_section_uid", keep="last")
+        out = out.drop_duplicates("external_id", keep="last")
     else:
         out = base[cols]
     out.to_parquet(p, index=False)

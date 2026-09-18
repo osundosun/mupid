@@ -458,7 +458,7 @@ def test_one_track_goes_all_the_way(spring, sandbox, tmp_path):
     idm = pd.read_parquet(data / "id_map.parquet")
     mine = idm[idm.source_track_id == "9501"]
     assert len(mine) == len(seed.sections)
-    assert mine.music_section_id.min() >= 7_000_001
+    assert mine.music_section_analysis_id.min() >= 7_000_001
 
 
 def test_second_run_skips_by_sha256(spring, sandbox, tmp_path):
