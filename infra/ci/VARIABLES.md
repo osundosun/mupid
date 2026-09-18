@@ -17,6 +17,9 @@
 | `MUPID_AI_NODE_SSH` | Variable | `mupid-deploy-k8s@<node-b 주소>` | **필수.** 추천 서버는 `nodeSelector` 로 node-b 에 뜨고, 이미지·색인은 레지스트리 없이 **그 노드**의 디스크로 간다. 기본값을 두지 않는다 — 있으면 잘못된 노드로 조용히 올라간다 |
 | `MUPID_DEPLOY_K8S_SSH_HOST` | Variable | (기본값 node-a) | api·web 이 쓰는 배포 주소. 지금까지 쓰던 엔드포인트가 기본값이라 보통 설정하지 않는다 |
 | `MUPID_APP_ENV` | **File** | 릴리스 키스토어(base64)·비밀번호·별칭·`MUPID_API_ORIGIN` | `app-verify`·`app-build` (Tauri APK). 서명 키가 들어 있다 — **원본 .jks 는 따로 백업**한다 |
+| `MUPID_NATIVE_BUILD` | Variable | `sh infra/ci/build-stamp.sh` — **CI job 이 정하고 export 한다** | `build-apk.sh` 가 APK 의 `versionCode`(`/1000`)와 Rust 상수를 같은 값으로 박고, `deploy-apk.sh` 가 그 값을 `upload-apk` 의 셋째 인자로 넘긴다(수신기가 그 값으로 `native.json` 을 만든다 — 앱이 읽는다) |
+| `MUPID_WEB_BUILD` | Variable | 같음. 같은 스탬프를 `MUPID_WEB_BUILD` 로 다시 export 한다 | `build:archive` 가 웹 번들의 `builtAt` 을 정하고, APK 빌드가 **같은 값**을 `option_env!` 로 박아 임베드 번들의 나이로 쓴다. 두 값이 다르면 새 APK 를 설치한 직후 앱이 자기 번들을 다시 받는다 |
+| `MUPID_BUILD_STAMP` | Variable | `sh infra/ci/build-stamp.sh` 가 값의 출처를 찾을 때 **가장 먼저** 본다 | 위 두 값의 유일한 출처다. 사람이 수동 배포하거나 값을 고정하고 싶을 때 여기에 넣는다. 없으면 `CI_COMMIT_TIMESTAMP` → `git show` → 현재 시각 순으로 내려간다 |
 | `MUPID_DATA_ENV` | **File** | `music_preprocessing/deploy.env.example` 를 채운 것 | `data-deploy`·`data-batch`·`data-check` (JupyterHub). 접속 정보·배치 설정·토큰이 **전부 이 파일 하나** 안에 있다 |
 
 ## 아직 배선하지 않은 것
