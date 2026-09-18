@@ -21,6 +21,7 @@ import {
   LogIn,
   MessageCircle,
   Search,
+  Sparkle,
   Volume2,
 } from 'lucide-react';
 import { useMupid } from '@/hooks/use-mupid';
@@ -305,6 +306,19 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
                 onClick={m.toggleQueue}
               >
                 <ListMusic />
+              </button>
+              {/*
+                Mupid AI 는 화면 구석에 떠 있던 버튼이었다. 재생 목록 버튼 옆으로
+                들여 컨트롤과 한 줄에 둔다. 떠 있던 런처는 이 버튼이 보이는 동안
+                감춘다 (`mupid.css`).
+              */}
+              <button
+                className="icon-button ai-button"
+                aria-label={m.chatOpen ? 'Mupid AI 닫기' : 'Mupid AI 열기'}
+                aria-expanded={m.chatOpen}
+                onClick={m.chatOpen ? m.closeChat : m.openChat}
+              >
+                <Sparkle />
               </button>
             </section>
           )}

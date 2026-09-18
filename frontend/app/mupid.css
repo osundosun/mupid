@@ -2091,6 +2091,20 @@ img.report-cupid {
   background: #d6e8ff;
   border-radius: 50%;
 }
+/* Mupid AI 버튼이 미니 플레이어의 재생 목록 버튼 옆으로 들어갔다. 그 버튼이 보이는
+   너비 — 데스크톱(901px~)과 폰(360~767px) — 에서는 구석에 떠 있던 런처를 감춘다.
+   768~900px 과 359px 이하는 미니 플레이어에 그 자리가 없어 런처를 그대로 둔다. */
+@media (min-width: 901px), (min-width: 360px) and (max-width: 767px) {
+  .mupid-shell:not(.no-mini) .chat-launcher {
+    display: none;
+  }
+}
+.mini-player .ai-button {
+  color: #547dbd;
+}
+.mini-player .ai-button[aria-expanded='true'] {
+  background: #e8f0fc;
+}
 .chat-panel {
   position: fixed;
   right: 26px;
@@ -2410,7 +2424,8 @@ img.report-cupid {
 }
 @media (max-width: 900px) {
   .mini-timeline,
-  .queue-button {
+  .queue-button,
+  .ai-button {
     display: none;
   }
   .player-body {
