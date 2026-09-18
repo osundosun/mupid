@@ -19,7 +19,7 @@ export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }
   onTrim: (start: number, end: number) => void;
 }) {
   const drag = useRef<'start' | 'end' | null>(null);
-  // 진짜 파형. 서버 값이 있으면 그것, 없으면 청크를 받아 여기서 계산한다(`lib/track-waveform.ts`).
+  // 현재 기기에서 음원 청크를 받아 파형을 계산한다(`lib/track-waveform.ts`).
   // 받는 동안은 받은 데까지 그려지고, 아래 안내에 진행률이 보인다.
   const wave = useTrackWaveform(track);
   const press = useRef<{ x: number; y: number; moved: boolean } | null>(null);
@@ -70,8 +70,8 @@ export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }
     </div>
     <p className="moment-wave-help">
       {wave.progress < 1 && !wave.failed
-        ? `파형을 읽고 있어요 … ${Math.round(wave.progress * 100)}%`
-        : '순간을 누른 뒤 분홍색 양 끝을 끌어 조절하세요.'}
+        ? `이 기기에서 파형을 분석하고 있어요 … ${Math.round(wave.progress * 100)}%`
+        : wave.failed ? '이 기기에서 파형을 분석하지 못했어요. 시간 범위는 선택할 수 있어요.' : '순간을 누른 뒤 분홍색 양 끝을 끌어 조절하세요.'}
     </p>
   </div>;
 }
