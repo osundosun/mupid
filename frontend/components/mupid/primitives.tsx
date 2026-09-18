@@ -254,7 +254,7 @@ export function Waveform({
     }).catch(() => { if (alive) setAnalysis(null); });
     return () => { alive = false; };
   }, [audioUrl, count]);
-  // 1순위 서버 파형 → 2순위 로컬 음원 디코드 → 데이터가 없으면 중립적인 기준선.
+  // 기기에서 계산한 파형 → 로컬 음원 디코드 → 데이터가 없으면 중립적인 기준선.
   const served = samples && samples.length > 1 ? resampleWaveform(samples, count) : null;
   const amplitudes = served ?? (analysis?.url === audioUrl && analysis?.values.length === count ? analysis.values : null);
   return (

@@ -9,6 +9,7 @@ import { toImageSource } from '@/lib/platform/image';
 import { ProfilePhoto } from './profile-photo';
 import { DEFAULT_PROFILE_PHOTO } from './profile-image';
 import { PasswordForm } from './password-form';
+import { WithdrawAccount } from './withdraw-account';
 import { useEffect, useMemo, useState } from 'react';
 import { DemoAccount } from './demo-login';
 import {
@@ -715,6 +716,7 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
           <h2>계정 설정</h2>
           <NicknameForm key={m.nickname} model={m} />
           <PasswordForm />
+          {m.demoSession?.kind === 'authenticated' && <WithdrawAccount model={m} />}
         </section>
       )}
       <section className="profile-settings-card profile-list-card" aria-label="최근 들은 음악">

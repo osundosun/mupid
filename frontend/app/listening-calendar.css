@@ -55,3 +55,12 @@
   .weekly-card { flex-basis: 78%; }
   .weekly-nav strong { min-width: 0; font-size: 13px; }
 }
+
+/* 모바일에서는 제목 줄과 유형 설명 사이에 읽을 여백을 둔다. */
+@media (max-width: 767px) {
+  .mupid-shell .report-grid .report-card.listening-story { padding: 28px 20px; }
+  .mupid-shell .listening-story > .mubti-heading-row { flex-wrap: wrap; row-gap: 12px; margin-bottom: 24px; }
+  .mupid-shell .report-card.listening-story > .report-story { margin: 0; padding-inline: 4px; line-height: 1.65; }
+  .mupid-shell .report-card.listening-story > .report-story em { display: inline-block; margin-top: 6px; }
+  .mupid-shell .report-grid .listening-story .report-cupid { margin-block: 28px; }
+}
