@@ -7,8 +7,6 @@ import { SlidersHorizontal, Music2, Mic2, RotateCcw, X } from 'lucide-react';
 const categories = [
   { title: '분위기', icon: SlidersHorizontal, description: '지금 마음에 어울리는 음악', groups: [
     { title: '무드', options: ['행복한', '묵직한', '사랑스러운', '명상적인', '선율적인', '편안한', '어두운', '활기찬', '영감을 주는', '의욕적인'] },
-    { title: '템포', options: ['매우 느린', '느린', '보통', '빠른', '매우 빠른'] },
-    { title: '에너지', options: ['잔잔한', '적당한', '강렬한'] },
   ] },
   { title: '장르', icon: Music2, description: '익숙한 취향부터 새로운 장르까지', groups: [
     { title: '장르', options: ['Pop', 'Electronic', 'R&B / Soul', 'Rock', 'Folk', 'Classical'] },
