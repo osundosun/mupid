@@ -734,15 +734,25 @@ export function createEndpoints(client: ApiClient) {
       /**
        * 곡 목록·검색. 로그인 없이도 부를 수 있다.
        *
-       * @param q 제목·아티스트명·앨범명 통합 검색
+       * @param q     제목·아티스트명·앨범명 통합 검색
+       * @param vocal 보컬 필터. 쉼표로 이어 보낸다(`vocal=female,male`).
+       *              서버는 반복 파라미터도 받는다(`vocal=female&vocal=male`).
+       *              비우면 걸지 않고 예전과 같은 결과가 나온다
        */
       search: (
-        options: { q?: string; page?: number; size?: number } = {},
+        options: { q?: string; vocal?: string; page?: number; size?: number } = {},
         signal?: AbortSignal,
       ) =>
         client.request<MusicPage>({
           path: '/api/v1/music',
-          query: { q: options.q, page: options.page, size: options.size },
+          query: {
+            q: options.q,
+            // 빈 문자열은 보내지 않는다. 서버는 빈 값을 '고르지 않음' 으로 보지만,
+            // 주소에 `vocal=` 이 남으면 캐시 키와 로그만 더러워진다.
+            vocal: options.vocal || undefined,
+            page: options.page,
+            size: options.size,
+          },
           signal,
         }),
       get: (musicId: number, signal?: AbortSignal) =>

@@ -29,7 +29,7 @@ import lombok.extern.slf4j.Slf4j;
  * 추천 서버에 실제로 물어본다.
  *
  * 대화 모델은 **곡을 고르지 않는다.** 사용자가 말한 조건을 카탈로그 어휘로 옮기는 일까지만
- * 한다. 어떤 곡의 어느 구간이 나올지는 추천 파이프라인이 정한다 — 모델에게 카탈로그를
+ * 한다. 어떤 곡의 어느 순간이 나올지는 추천 파이프라인이 정한다 — 모델에게 카탈로그를
  * 통째로 물릴 수도 없고, 물리면 없는 곡을 지어낸다.
  *
  * <h2>왜 자연어 원문을 보내지 않는가</h2>
@@ -66,10 +66,14 @@ public class AiRecommendToolImpl implements AiRecommendTool {
 
     @Override
     public OpenAiTool declaration() {
+        // 어휘는 **선언 하나당 한 번만** 받는다. conditionSchema 가 filters·exclude 두 번
+        // 불리는데, 여기서 받아 두지 않으면 어휘를 못 받았을 때 대화마다 연결 타임아웃을
+        // 두 번 기다린다 (실패는 캐시되지 않는다).
+        RecommenderDto.Facets facets = facetsOrNull();
         return OpenAiTool.function(
             NAME,
             """
-            지금 듣고 있는 곡과 사용자의 취향을 바탕으로 다음에 들을 곡(구간)을 찾는다.
+            지금 듣고 있는 곡과 사용자의 취향을 바탕으로 다음에 들을 곡(순간)을 찾는다.
             곡·분위기·장르를 추천해 달라는 요청에는 반드시 이 툴을 먼저 부른다.
             결과에 없는 곡을 지어내지 않는다.
             조건은 열거된 값 중에서만 고른다. 목록에 없는 말을 넣으면 결과가 0 이 된다.
@@ -88,12 +92,30 @@ public class AiRecommendToolImpl implements AiRecommendTool {
                         "minimum", 1,
                         "maximum", MAX_LIMIT
                     ),
-                    "filters", conditionSchema("반드시 만족해야 하는 조건"),
-                    "exclude", conditionSchema("빼야 하는 조건")
+                    "filters", conditionSchema(facets, "반드시 만족해야 하는 조건"),
+                    "exclude", conditionSchema(facets, "빼야 하는 조건")
                 ),
                 "required", List.of("query")
             )
         );
+    }
+
+    /**
+     * 태그 어휘를 받아 온다. **어떤 실패도 툴 선언을 막지 않는다.**
+     *
+     * <p>{@link RecommenderClient#facets()} 는 실패를 이미 {@code null} 로 뭉갠다. 그런데도
+     * 여기서 한 번 더 막는 이유는, 대화의 **첫 문장**이 툴 선언이고 그 선언이 추천 서버에
+     * 매달려 있기 때문이다. 저쪽 계약이 깨지거나(예: 새 실패 모드) 어휘 해석에서 예상 못 한
+     * 예외가 나면 툴 선언을 만들지도 못하고 LLM 호출도 가지 않는다 — 사용자 눈에는 정확히
+     * "도구 호출이 안 되는" 상태로 보인다. 어휘가 없으면 enum 없이 진행하면 된다.
+     */
+    private RecommenderDto.Facets facetsOrNull() {
+        try {
+            return recommender.facets();
+        } catch (RuntimeException e) {
+            log.warn("추천 서버 어휘 조회가 예외로 끝났다 — 조건 값 목록 없이 툴 선언을 만든다", e);
+            return null;
+        }
     }
 
     /**
@@ -102,8 +124,7 @@ public class AiRecommendToolImpl implements AiRecommendTool {
      * 어휘를 못 받으면 열거 없이 자유 문자열로 둔다. 그래도 조건이 조용히 사라지지는
      * 않는다 — 추천 서버가 어휘에 없는 조건을 "만족시킬 수 없음" 으로 보고 결과 0 을 준다.
      */
-    private Map<String, Object> conditionSchema(String description) {
-        RecommenderDto.Facets facets = recommender.facets();
+    private Map<String, Object> conditionSchema(RecommenderDto.Facets facets, String description) {
         Map<String, Object> properties = new LinkedHashMap<>();
         for (String field : FILTER_FIELDS) {
             Map<String, Object> item = new LinkedHashMap<>();
@@ -261,15 +282,21 @@ public class AiRecommendToolImpl implements AiRecommendTool {
             .collect(Collectors.toMap(Music::getMusicId, m -> m, (a, b) -> a));
 
         List<AiRecommendedTrack> out = new ArrayList<>();
+        // 버린 건수를 센다. 건별 경고만으로는 "전부 버려서 곡 0건인데 대화는 정상 응답" 하는
+        // 상태가 눈에 띄지 않는다 — 사용자에게는 "추천이 안 온다" 로 보인다.
+        int missingSection = 0;
+        int missingMusic = 0;
         for (RecommenderDto.Item item : items) {
             MusicSectionAnalysis section = sections.get(item.externalId());
             if (section == null) {
+                missingSection++;
                 log.warn("추천된 external_id={} 가 DB 에 없다 — 구간 적재가 색인보다 낡았다",
                     item.externalId());
                 continue;
             }
             Music music = byId.get(section.getMusic().getMusicId());
             if (music == null) {
+                missingMusic++;
                 log.warn("구간 external_id={} 의 곡을 찾지 못했다", item.externalId());
                 continue;
             }
@@ -288,6 +315,14 @@ public class AiRecommendToolImpl implements AiRecommendTool {
                 item.reasonCode(),
                 RecommendReason.of(item.reasonCode(), section.getSectionLabel())
             ));
+        }
+        int dropped = missingSection + missingMusic;
+        if (dropped > 0) {
+            // 곡이 0건이 된 경우는 **한 줄로 드러낸다.** 조용히 빈 목록을 돌려주면 원인을
+            // 찾을 단서가 사라진다. 원인은 보통 구간 적재가 색인보다 낡은 것이다.
+            log.warn("추천 {}건 중 {}건을 DB 에서 찾지 못해 버렸다 (구간 없음={} 곡 없음={})"
+                + " — 남은 곡 {}건. 구간 적재가 색인보다 낡았는지 본다",
+                items.size(), dropped, missingSection, missingMusic, out.size());
         }
         return List.copyOf(out);
     }
