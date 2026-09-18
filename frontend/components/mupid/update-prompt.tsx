@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * 앱 업데이트 안내 — **모바일 전용**.
+ * 앱 업데이트 안내 — **모바일 전용, 그리고 로그인과 무관하게 뜬다.**
  *
  * 새 APK 가 있을 때만 뜨고, 설치 화면으로 넘기는 일만 한다. 설치 자체는
  * 안드로이드가 한다(사용자가 "이 출처의 앱 설치" 를 허용해야 한다).
@@ -21,6 +21,17 @@
  * 조건 판단은 `shouldPromptUpdate` 한 곳에 있다(`lib/platform/update.ts`) —
  * 렌더 안에 섞어 두면 창을 띄워 보지 않고는 규칙을 확인할 수 없다.
  *
+ * ## 왜 로그인 화면에도 있어야 하나
+ *
+ * 이 컴포넌트는 **`app/layout.tsx`(root)에 있다.** 예전에는 인증이 필요한
+ * `(music)` 그룹 안에만 있었고, 그래서 **로그인 전에는 업데이트를 알 수
+ * 없었다.** 확인 훅이 거기 같이 있었기 때문이다.
+ *
+ * 실기기에서 확인했다 — 랜딩 화면에 머무는 동안 엣지 로그에 앱의
+ * `native.json` 요청이 **0건**이었고, 로그인하니 그때부터 요청이 시작됐다.
+ * 업데이트는 로그인과 무관한 일이다: 서버가 새 판을 올렸으면 **아직
+ * 로그인하지 않은 사용자도** 그것을 알아야 한다.
+ *
  * ## 재촉하지 않는다
  *
  * 앱을 켤 때마다 설치 창이 뜨면 삭제로 이어진다. 그래서
@@ -36,10 +47,14 @@
  * 안내는 화면 위에 겹쳐 뜨고 배경 재생은 그대로 돈다. 업데이트는 곡을 멈출
  * 이유가 아니다.
  *
- * ## 상태를 다시 받아 오지 않는다
+ * ## 확인과 상태 읽기를 **이 컴포넌트가** 한다
  *
- * 확인은 `mupid-app.tsx` 의 기동 훅이 이미 했다(`checkForUpdates`). 여기서
- * 또 부르면 같은 순간에 두 번 내려받아 느린 회선에서 서로를 방해한다.
+ * 예전에는 확인을 `mupid-app.tsx` 의 기동 훅이 했다. 그 훅은 인증 뒤에만
+ * 있어서, 이 컴포넌트를 root 로 옮기면 **확인은 안 되고 창만 뜨는** (또는
+ * 그 반대의) 어긋난 상태가 된다. 그래서 확인을 여기로 합쳤다.
+ *
+ * 기동 훅이 하던 웹 갈래(번들 활성화)는 `checkForUpdates` 안에 있으므로
+ * 그대로 함께 돈다 — 두 곳에 두면 매니페스트를 중복으로 받는다.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -55,9 +70,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
+  checkForUpdates,
   installNativeUpdate,
   noteUpdatePrompted,
-  readUpdateState,
   shouldPromptUpdate,
   type UpdateState,
 } from '@/lib/platform/update';
@@ -73,7 +88,14 @@ export function UpdatePrompt() {
 
   useEffect(() => {
     let live = true;
-    void readUpdateState().then((next) => {
+    // 기동 뒤 한 번 확인한다. **첫 화면을 막지 않는다** — 결과를 기다리지 않고
+    // 던져 두기만 한다. 새 웹 번들이 있으면 디스크에만 활성화되고 화면은 옛
+    // 번들로 계속 돈다(다음 콜드 스타트에 교체된다). 그래야 듣던 곡이 끊기지
+    // 않는다. 실패해도 아무 일도 일어나지 않는다.
+    //
+    // 반환값에는 `nativeAvailable` 이 들어 있다 — 매니페스트 두 개는 한 번의
+    // 확인에서 함께 읽히므로, 상태를 따로 읽지 않아도 된다.
+    void checkForUpdates().then((next) => {
       if (live) setState(next);
     });
     return () => {
