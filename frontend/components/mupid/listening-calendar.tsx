@@ -89,6 +89,7 @@ export function ListeningCalendar({ today }: { today: DailyReport | null }) {
         <button type="button" className="icon-button" aria-label="다음 달" disabled={atCurrentMonth} onClick={() => setMonth(({ y, m }) => m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 })}><ChevronRight /></button>
       </div>
     </div>
+    <p className="calendar-caption">들은 날마다 그날의 유형이 도장처럼 찍혀요.</p>
     <div className="calendar-grid" role="grid" aria-label={`${month.y}년 ${month.m + 1}월 MUBTI`}>
       {WEEKDAYS.map(w => <span key={w} className="calendar-weekday" role="columnheader">{w}</span>)}
       {cells.map((d, i) => {
@@ -106,10 +107,12 @@ export function ListeningCalendar({ today }: { today: DailyReport | null }) {
         >
           <span className="calendar-date">{d}</span>
           {day?.code
-            ? (toImageSource(day.image)
-              // 앱(Tauri)에서는 서버 그림 주소를 `toImageSource` 로 바꿔야 열린다 — 위 `ReportMubtiArt` 와 같은 사정.
-              ? <img className="calendar-art" src={toImageSource(day.image)} alt="" width={26} height={26} loading="lazy" decoding="async" title={day.code} />
-              : <span className="calendar-code" aria-hidden="true">{day.code}</span>)
+            ? <span className="calendar-stamp" title={day.code}>
+              {toImageSource(day.image)
+                // 앱(Tauri)에서는 서버 그림 주소를 `toImageSource` 로 바꿔야 열린다 — 위 `ReportMubtiArt` 와 같은 사정.
+                ? <img className="calendar-art" src={toImageSource(day.image)} alt="" width={40} height={40} loading="lazy" decoding="async" />
+                : <span className="calendar-code" aria-hidden="true">{day.code}</span>}
+            </span>
             : day?.listened ? <span className="calendar-dot" aria-hidden="true" /> : null}
         </span>;
       })}
