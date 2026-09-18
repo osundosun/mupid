@@ -95,3 +95,77 @@
     justify-content: center;
   }
 }
+
+/*
+ * 번들 교체가 **오래 걸릴 때만** 뜨는 진행 화면 (대비책).
+ *
+ * 정상은 전체가 1초 안쪽이라 이 화면이 아예 안 뜬다 — 임계값 판단은
+ * `lib/platform/update.ts` 의 `withSlowNotice` 가 하고(타이머가 먼저 끝나야
+ * 그린다), 여기서는 생김새만 정한다.
+ *
+ * ## 배치
+ *
+ * 화면 전체를 덮고(`inset: 0`) 내용을 세로 가운데에 둔다. 인디케이터가 위,
+ * 라벨이 아래이며 **둘 다 가로 가운데** — `align-items: center` 가 두 자식
+ * 모두를 가운데로 맞춘다.
+ *
+ * ## 조작을 막는다
+ *
+ * 이 요소가 화면을 다 덮으므로 아래 화면은 눌리지 않는다. 그게 의도다 —
+ * 반쯤 교체된 화면을 만지는 것보다 잠깐 막는 편이 낫고, 이 시점은 콜드
+ * 스타트 직후라 사용자가 하던 일이 없다. `pointer-events` 를 따로 줄 필요가
+ * 없다(덮는 것만으로 충분하다).
+ *
+ * ## 왜 불확정 인디케이터인가
+ *
+ * 얼마나 남았는지 알 수 없다 — 아카이브 크기는 알지만 전개 속도는 기기마다
+ * 다르다. **모르는 숫자를 지어내면** 멈춘 것처럼 보인다.
+ */
+.update-progress {
+  position: fixed;
+  inset: 0;
+  z-index: 60; /* 안내 창(alert-dialog)보다 위 — 겹쳐 뜨지 않게 한다 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  /*
+   * 배경은 앱의 하늘색 계열을 살짝 덮는다. 완전 불투명하게 하면 화면이
+   * 갑자기 사라진 것처럼 보이고, 투명하게 두면 반쯤 그려진 화면이 비친다.
+   */
+  background: #f3f7fee8;
+  backdrop-filter: blur(2px);
+}
+
+.update-progress-spinner {
+  /* 기본 `size-4`(16px)는 안내 문구 옆 아이콘 크기다. 여기서는 화면 가운데
+     단독으로 서므로 눈에 띄어야 한다. */
+  width: 34px;
+  height: 34px;
+  color: #507dcc;
+}
+
+.update-progress-label {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #42669f;
+  text-align: center;
+  /* 한국어는 어절 중간에서 끊지 않는다. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * 움직임을 줄이도록 설정한 사용자에게는 회전을 멈춘다.
+ *
+ * `animate-spin` 은 Tailwind 유틸이라 여기서 끄려면 `animation` 을 덮어야 한다.
+ * **인디케이터를 아예 없애지는 않는다** — 그러면 "멈춘 것" 으로 보여서 없애려던
+ * 문제가 그대로 돌아온다. 회전만 멈추고 모양은 남긴다.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .update-progress-spinner {
+    animation: none;
+  }
+}

@@ -34,6 +34,8 @@ const {
   readUpdateState,
   shouldPromptUpdate,
   shouldSuggestNativeUpdate,
+  UPDATE_PROGRESS_DELAY_MS,
+  withSlowNotice,
   UNKNOWN,
 } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
 
@@ -367,7 +369,10 @@ test('안내 컴포넌트가 스스로 확인한다', async () => {
     new URL('../components/mupid/update-prompt.tsx', import.meta.url),
     'utf8',
   );
-  assert.match(prompt, /checkForUpdates\(\)/, '확인이 컴포넌트 안에 없다');
+  // **인자를 받는 형태까지 본다.** 진행 화면 게이트(`onSlow`/`onDone`)가
+  // 같은 호출에 얹혀야 한다 — 따로 부르면 확인이 두 번이 되어 매니페스트를
+  // 중복으로 받고, 그건 이 컴포넌트가 애초에 없애려던 것이다.
+  assert.match(prompt, /checkForUpdates\(\{/, '확인이 컴포넌트 안에 없다');
   // 상태만 읽는 함수에 기대면 네이티브 정보가 갱신되지 않아 창이 안 뜬다.
   assert.doesNotMatch(prompt, /readUpdateState/, '상태만 읽는 경로에 기대고 있다');
 });
@@ -480,4 +485,120 @@ test('주 버튼은 브랜드 파랑이다 (붉은색이 아니다)', async () =
     /\.primary-button \{\s*color: white;\s*background: linear-gradient\(110deg, #6b97dc, #507dcc\);/,
     '브랜드 주 버튼 색이 바뀌었다 — 위 값과 맞춰야 한다',
   );
+});
+
+// ─────────────────────────────────────────────────────────────
+// 오래 걸릴 때만 뜨는 진행 화면 (대비책)
+// ─────────────────────────────────────────────────────────────
+
+test('빨리 끝나면 진행 화면을 띄우지 않는다', async () => {
+  // **이게 이 대비책의 핵심이다.** 정상 경로(337KB / 0.16초)가 대부분인데
+  // 매 기동마다 화면이 번쩍이면 대비책이 오히려 해가 된다.
+  let slowed = 0;
+  const result = await withSlowNotice(
+    async () => 'done',
+    () => { slowed += 1; },
+    50, // 임계값보다 훨씬 빨리 끝난다
+  );
+  assert.equal(result, 'done', '결과를 그대로 돌려줘야 한다');
+  assert.equal(slowed, 0, '빠른데 진행 화면을 띄웠다');
+});
+
+test('임계값을 넘기면 진행 화면을 띄운다', async () => {
+  let slowed = 0;
+  await withSlowNotice(
+    () => new Promise((resolve) => setTimeout(() => resolve('done'), 80)),
+    () => { slowed += 1; },
+    20, // 작업이 더 오래 걸린다
+  );
+  assert.equal(slowed, 1, '느린데 진행 화면을 안 띄웠다');
+});
+
+test('임계값을 넘긴 뒤에도 한 번만 알린다', async () => {
+  // 여러 번 부르면 그만큼 다시 그려지고, 화면이 깜빡인다.
+  let slowed = 0;
+  await withSlowNotice(
+    () => new Promise((resolve) => setTimeout(() => resolve('done'), 120)),
+    () => { slowed += 1; },
+    20,
+  );
+  assert.equal(slowed, 1, `진행 화면을 ${slowed}번 알렸다 — 한 번이어야 한다`);
+});
+
+test('작업이 실패해도 타이머를 남기지 않는다', async () => {
+  // 실패했는데 타이머가 살아 있으면, 화면이 사라진 뒤에 진행 화면이
+  // 되살아난다 — 성공 경로보다 알아채기 어렵다.
+  let slowed = 0;
+  await assert.rejects(
+    () => withSlowNotice(
+      async () => { throw new Error('바뀐 서버'); },
+      () => { slowed += 1; },
+      20,
+    ),
+    /바뀐 서버/,
+    '오류를 삼키면 안 된다',
+  );
+  // 실패 직후 잠깐 기다려 타이머가 살아 있었다면 불렸을 시점을 넘긴다.
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(slowed, 0, '실패했는데 진행 화면이 떴다');
+});
+
+test('느리면 진행 화면을 걷는다 (onDone)', async () => {
+  // 걷지 않으면 느린 경우에 화면이 남는다 — 교체가 끝났는데 오버레이가
+  // 화면을 계속 덮는다.
+  const events = [];
+  await checkForUpdates({
+    onSlow: () => events.push('slow'),
+    onDone: () => events.push('done'),
+  });
+  // 이 테스트의 stub 은 내려받을 게 없다(webAvailable=false) → 아무것도 안 뜬다.
+  assert.deepEqual(events, [], '할 일이 없는데 진행 화면을 건드렸다');
+});
+
+test('진행 화면이 느릴 때만 뜨도록 배선되어 있다', async () => {
+  const prompt = await readFile(
+    new URL('../components/mupid/update-prompt.tsx', import.meta.url),
+    'utf8',
+  );
+  // 확인 호출에 게이트를 얹었는가 — 따로 부르면 확인이 두 번이 되어
+  // 매니페스트를 중복으로 받는다.
+  assert.match(prompt, /checkForUpdates\(\{\s*onSlow[^}]*onDone/s, '게이트가 안 붙었다');
+  assert.match(prompt, /className="update-progress"/, '진행 화면이 없다');
+  assert.match(prompt, /앱을 업데이트하고 있어요/, '라벨이 없다');
+  // 겹쳐 뜨지 않아야 한다 — 둘 다 뜨면 어느 것을 눌러야 할지 모른다.
+  assert.match(prompt, /if \(!visible \|\| applying\)/, '진행 중에 안내 창이 겹친다');
+});
+
+test('진행 화면이 가운데 정렬로 배치되어 있다', async () => {
+  const css = await readFile(new URL('../app/update-prompt.css', import.meta.url), 'utf8');
+  const block = /\.update-progress \{([^}]*)\}/.exec(css);
+  assert.ok(block, '.update-progress 규칙이 없다');
+  const body = block[1];
+  assert.match(body, /position: fixed/, '화면을 덮지 않는다');
+  assert.match(body, /inset: 0/, 'inset: 0 이 아니면 화면 전체를 못 덮는다');
+  // 인디케이터와 라벨이 **둘 다** 가로 가운데여야 한다.
+  assert.match(body, /align-items: center/, '가로 가운데 정렬이 없다');
+  assert.match(body, /justify-content: center/, '세로 가운데 정렬이 없다');
+  assert.match(body, /flex-direction: column/, '위아래로 쌓이지 않는다');
+  assert.match(css, /\.update-progress-label \{[^}]*text-align: center/, '라벨이 가운데 정렬이 아니다');
+  // 조작을 막는다 — 덮는 것만으로 충분하고, pointer-events: none 이면 안 막힌다.
+  assert.ok(!/\.update-progress \{[^}]*pointer-events: none/.test(css),
+    '조작을 막지 않는다(pointer-events: none)');
+});
+
+test('움직임을 줄이는 설정에서도 인디케이터가 남는다', async () => {
+  const css = await readFile(new URL('../app/update-prompt.css', import.meta.url), 'utf8');
+  // 회전만 멈춘다. 인디케이터를 아예 없애면 "멈춘 것" 으로 보여서
+  // 없애려던 문제가 그대로 돌아온다.
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,200}animation: none/,
+    'reduced-motion 대응이 없다');
+});
+
+test('진행 화면 임계값이 한 곳에 있고 근거가 적혀 있다', async () => {
+  // 감으로 정한 값이 여러 곳에 흩어지면 조정할 때 한쪽만 바뀐다.
+  assert.equal(typeof UPDATE_PROGRESS_DELAY_MS, 'number');
+  assert.ok(UPDATE_PROGRESS_DELAY_MS >= 500 && UPDATE_PROGRESS_DELAY_MS <= 5000,
+    `임계값 ${UPDATE_PROGRESS_DELAY_MS}ms 는 정상(1초 이내)과 느린 회선 사이가 아니다`);
+  // 실측 근거가 주석에 있어야 조정할 사람이 판단할 수 있다.
+  assert.match(source, /실측/, '임계값의 근거가 주석에 없다');
 });
