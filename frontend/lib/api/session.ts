@@ -146,3 +146,14 @@ export async function logout() {
     }
   }
 }
+
+/** 서버가 탈퇴를 확정한 뒤에만 기기의 인증 상태를 비운다. */
+export async function withdrawAccount() {
+  if (localDemoEnabled()) throw new Error('데모 계정에서는 회원탈퇴를 사용할 수 없어요.');
+  await api.user.withdraw();
+  apiClient.clearSession();
+  sessionStore.set({ status: 'anonymous', user: null });
+  if (isTauri()) {
+    await Promise.allSettled([clearNativeCookies(), clearCache(), setStoredAccount(null)]);
+  }
+}

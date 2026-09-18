@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { guardPath, pageForPath, pagePaths } from '@/lib/routes';
 import { mupidService } from '@/lib/services';
 import { localDemoEnabled } from '@/lib/api/local-demo';
-import { login, logout, restoreSession } from '@/lib/api/session';
+import { login, logout, restoreSession, withdrawAccount } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed } from '@/lib/stream-catalog';
 import {
@@ -603,8 +603,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * 보게 된다. 스트리밍 재생기도 따로 멈춰야 한다 — `<audio>` 만 멈추면
    * 청크로 재생 중이던 소리는 계속 난다.
    */
-  const signOutDemo = async () => {
-    try { await logout(); } catch { setToast('로그아웃하지 못했어요. 다시 시도해 주세요.'); return; }
+  const finishSignOut = () => {
     setDemoSession(null);
     sessionRef.current = null;
     onboardingRef.current = false;
@@ -620,7 +619,16 @@ export function useMupid(bootstrap: Bootstrap) {
     setPage('welcome');
     // 보던 화면이 보호된 곳이라 가드가 어차피 로그인으로 보낸다. 코드도 그렇게 적는다.
     router.replace('/login');
+  };
+  const signOutDemo = async () => {
+    try { await logout(); } catch { setToast('로그아웃하지 못했어요. 다시 시도해 주세요.'); return; }
+    finishSignOut();
     setToast('로그아웃했어요. 다시 로그인하면 이어서 들을 수 있어요.');
+  };
+  const withdrawMembership = async () => {
+    await withdrawAccount();
+    finishSignOut();
+    setToast('회원탈퇴가 완료되었어요.');
   };
 
   const loadTrack = (track: Track) => {
@@ -1696,6 +1704,7 @@ export function useMupid(bootstrap: Bootstrap) {
     openLogin,
     signInDemo,
     signOutDemo,
+    withdrawMembership,
     moods,
     genres,
     active,

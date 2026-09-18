@@ -12,7 +12,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { useIsMobile } from '@/hooks/use-mobile';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { formatTime } from '@/lib/mupid-data';
 import { EmptyState, PlayerControls } from './primitives';
@@ -53,8 +52,6 @@ export function TrackComments({ model: m, children }: { model: MupidModel; child
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
   const [point, setPoint] = useState<number | null>(null);
   const markerRail = useRef<HTMLDivElement>(null);
-  // 폰에서는 선택한 시점의 댓글을 본문에 펼치지 않고 대화상자로 띄운다(아래 `panel`).
-  const isMobile = useIsMobile();
   const [railWidth, setRailWidth] = useState(300);
   useEffect(() => {
     const rail = markerRail.current;
@@ -173,13 +170,7 @@ export function TrackComments({ model: m, children }: { model: MupidModel; child
     <textarea ref={input} id="moment-comment" value={body} onChange={e => {setBody(e.target.value); if (!draft.id) pendingDrafts.set(active.id, {at: draft.at, body: e.target.value, owner: userId});}} maxLength={100} rows={2} disabled={busy} placeholder="이 순간, 어떤 느낌이 들었나요?" required />
     <footer><span>{body.length}/100</span><button type="button" className="text-link" disabled={busy} onClick={() => {pendingDrafts.delete(active.id); setDraft(null); setBody('');}}>취소</button><button className="primary-button" disabled={!ready || busy || !body.trim() || (userId !== null && !available)}>{busy ? '저장 중…' : userId === null ? '로그인하고 등록' : draft.id ? '수정 저장' : '댓글 등록'}</button></footer>
   </form>;
-  /*
-   * 선택한 시점의 댓글 묶음. 데스크톱은 파형 아래에 카드로 펼치고, 폰은 같은 내용을
-   * 대화상자로 띄운다(`.moment-comment-dialog`). 폰에서 본문에 펼치면 그 높이만큼
-   * 플레이어가 한 화면을 넘겨 스크롤이 생기고, 댓글을 읽는 동안 LP 와 컨트롤이
-   * 위로 밀려 나갔다. 대화상자 머리말이 시각과 개수를 대신 말하므로 안의 머리말은
-   * CSS 로 감춘다.
-   */
+  // 댓글은 모든 화면에서 대화상자로 열어 플레이어 본문의 크기를 유지한다.
   const panel = selectedTime !== null && <div className="wave-comment-popover selected-moment-popover" key={selectedTime} role="region" aria-label="선택한 시점의 댓글">
       <header className="wave-comment-popover-head"><span>{formatTime(selectedTime)} · 댓글 {selectedComments.length}개</span><button className="icon-button" aria-label="댓글 닫기" onClick={closePanel}><X size={18} /></button></header>
       <div className="selected-moment-messages">
@@ -222,13 +213,12 @@ export function TrackComments({ model: m, children }: { model: MupidModel; child
           setSelectedTime(point ?? Math.min(active.duration, Math.max(0, Math.round(m.time))));
         }}><MessageCircle />{selectedTime !== null ? '댓글 닫기' : `댓글 ${visible.length}개`}</button>
       </div>
-      {!isMobile && panel}
 
     </div>
     {!ready && !error && <output>댓글을 불러오고 있어요…</output>}
     {error && <p role="alert">{error} {!ready && <button className="text-link" onClick={() => {setError(''); setReload(v => v + 1);}}>다시 불러오기</button>}</p>}
     {selectedTime === null && composer}
-    <Dialog open={isMobile && selectedTime !== null} onOpenChange={open => { if (!open) closePanel(); }}>
+    <Dialog open={selectedTime !== null} onOpenChange={open => { if (!open) closePanel(); }}>
       <DialogContent className="sky-dialog moment-comment-dialog">
         <DialogHeader>
           <DialogTitle>{selectedTime !== null ? formatTime(selectedTime) : ''} 순간의 댓글</DialogTitle>

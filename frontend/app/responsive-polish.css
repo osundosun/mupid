@@ -1939,3 +1939,8 @@
 .mupid-shell.page-player .player-lyrics-inline .song-lyrics > p { display: block; margin: 0 0 2px; overflow: visible; -webkit-line-clamp: unset; }
 .player-lyrics-dialog .song-lyrics > p { display: block; margin: 0 0 5px; overflow: visible; -webkit-line-clamp: unset; }
 .track-menu-divider { width: 100%; margin: 8px 0; border: 0; border-top: 1px solid #e0e8f5; }
+
+/* PC LP는 오른쪽 콘텐츠 높이가 달라져도 위쪽 기준을 유지한다. */
+@media (min-width: 768px) {
+  .mupid-shell.page-player .player-body { align-items: start; }
+}
