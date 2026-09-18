@@ -74,7 +74,19 @@ printf 'APK %s 바이트, sha256 %s, versionCode %s\n' "$size" "$checksum" "$ver
 ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
   -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" \
   -i "$key" mupid-deploy-k8s@j15a204.p.ssafy.io \
-  "upload-apk $CI_COMMIT_SHA $checksum $version_code" < "$apk"
+  "upload-apk $CI_COMMIT_SHA $checksum $version_code" < "$apk" || {
+  # 64 는 강제 명령이 모양을 거절했다는 뜻이다. 원인이 거의 하나뿐이라
+  # (노드의 entrypoint 가 아직 옛것) 짚어 준다 — 그러지 않으면 "ssh 가 64 로
+  # 끝났다" 만 남고, 배포한 사람은 키나 권한을 의심하며 시간을 쓴다.
+  # Compose 경로가 같은 상황을 RECEIVER_UPGRADE_REQUIRED 로 안내한다.
+  status=$?
+  if [ "$status" -eq 64 ]; then
+    echo 'UPLOADER_UPGRADE_REQUIRED: 노드의 /usr/local/sbin/mupid-ssh-entrypoint-k8s 가' >&2
+    echo '옛것이다. upload-apk 이 versionCode 를 받는 새 모양을 모른다.' >&2
+    echo 'ssh-entrypoint-k8s.sh 와 receive-apk.py 를 노드에 설치한 뒤 다시 돌린다.' >&2
+  fi
+  exit "$status"
+}
 
 # 실제로 내려받히는지 본다. 수신기가 성공했다고 해도 nginx 설정이나 마운트가
 # 어긋나 있으면 404 가 난다 — 그건 올린 사람이 아니라 받는 사람이 겪는다.
