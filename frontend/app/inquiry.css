@@ -26,4 +26,8 @@
 .inquiry-error { margin: 0; font-size: 13px; color: #c0504d; }
 /* 취소 · 전송 순서로, 오른쪽 정렬. `.sky-dialog` 푸터의 row-reverse(`responsive-polish.css`)는 여기서 되돌린다. */
 .inquiry-dialog .inquiry-actions[data-slot='dialog-footer'] { margin-top: 8px; gap: 8px; flex-direction: row; justify-content: flex-end; }
-.inquiry-dialog .inquiry-actions .secondary-button, .inquiry-dialog .inquiry-actions .primary-button { min-height: 42px; padding-inline: 18px; }
+/* 두 버튼은 같은 높이·같은 폭·같은 모서리로 나란히. 기본 `.primary-button`·`.secondary-button` 은 높이와 모서리가 달라 어긋나 보였다. */
+.inquiry-dialog .inquiry-actions .secondary-button, .inquiry-dialog .inquiry-actions .primary-button {
+  flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
+  height: 46px; min-height: 46px; margin: 0; padding: 0 18px; border-radius: 14px; font-size: 15px; font-weight: 600; line-height: 1;
+}
