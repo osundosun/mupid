@@ -65,7 +65,11 @@ export function Lyrics({ track, time = 0, expanded = false, onSeek }: { track: T
     // 잘라 두므로 움직일 것이 없다.
     const box = line?.parentElement;
     if (!line || !box || box.scrollHeight <= box.clientHeight) return;
-    const top = line.offsetTop - box.clientHeight / 2 + line.clientHeight / 2;
+    // `offsetTop` 은 가장 가까운 positioned 조상 기준이라, 상자가 positioned 가 아니면
+    // 페이지 어딘가를 기준으로 잰 큰 값이 나와 상자가 맨 아래로 튀었다(PC 플레이어의
+    // 인라인 가사에서 그랬다). 화면 좌표 차이로 재면 어디에 놓여도 같다.
+    const offset = line.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+    const top = offset - box.clientHeight / 2 + line.clientHeight / 2;
     const gentle = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     box.scrollTo({ top: Math.max(0, top), behavior: gentle ? 'smooth' : 'auto' });
   }, [activeId, expanded]);
