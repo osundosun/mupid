@@ -2485,9 +2485,18 @@ img.report-cupid {
     /* 상태바 몫은 셸 바깥 여백이 비운다 (`responsive-polish.css`). */
     padding-top: 24px;
   }
-  .page-player .app-header,
-  .page-moment .app-header,
-  .page-similar .app-header {
+  /*
+   * 플레이어·순간·비슷한 곡 화면은 곡에만 집중하는 전용 화면이라 검색 헤더를
+   * 걷는다. 뒤로 가기와 아래 탭 바가 남아 길을 잃지 않는다.
+   *
+   * `.mupid-shell.page-player` 로 쓴다. `.page-player .app-header` 만으로는
+   * 뒤에 읽히는 `nav-account.css` 의 `.mupid-shell .app-header { display: flex }`
+   * 와 우선순위가 같아 그쪽이 이겼고, 헤더가 그대로 남아 플레이어가 한 화면을
+   * 넘겨 스크롤이 생겼다.
+   */
+  .mupid-shell.page-player .app-header,
+  .mupid-shell.page-moment .app-header,
+  .mupid-shell.page-similar .app-header {
     display: none;
   }
   .page-player .main-content,
