@@ -7,6 +7,12 @@
 .inquiry-button svg { width: 16px; height: 16px; }
 .inquiry-button:hover { background: #edf3fc; }
 .inquiry-button:focus-visible { outline: 2px solid #799bd0; outline-offset: 2px; }
+/* PC 헤더: 메뉴 오른쪽, 검색창 왼쪽 빈 자리에 오른쪽 정렬로 둔다. 폰에서는 홈 인사말 옆 버튼이 대신한다. */
+.header-inquiry { display: none; }
+@media (min-width: 768px) {
+  .header-inquiry { display: flex; justify-content: flex-end; flex: 0 0 auto; margin-right: 12px; }
+  .page-home .greeting .inquiry-button { display: none; }
+}
 .inquiry-dialog form { display: flex; flex-direction: column; gap: 6px; }
 .inquiry-dialog form > .field-label { margin-top: 10px; }
 .inquiry-dialog form > .field-label:first-child { margin-top: 0; }
