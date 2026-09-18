@@ -1,5 +1,6 @@
 package com.osundosun.mupid.api.music.service;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -16,6 +17,7 @@ import com.osundosun.mupid.api.music.dto.MusicSectionSummary;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicAnalysis;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
+import com.osundosun.mupid.api.music.enumerate.VocalFilter;
 import com.osundosun.mupid.api.music.error.AlbumErrorCode;
 import com.osundosun.mupid.api.music.error.ArtistErrorCode;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
@@ -92,16 +94,19 @@ public class MusicServiceImpl implements MusicService {
 
     @Override
     @Transactional(readOnly = true)
-    public MusicPageResponse searchMusic(String keyword, int page, int size) {
+    public MusicPageResponse searchMusic(
+        String keyword, Collection<VocalFilter> vocalFilters, int page, int size) {
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
         int safePage = Math.max(0, page);
         String trimmed = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
+        VocalFilterQuery vocal = VocalFilterQuery.of(vocalFilters);
 
         if (trimmed != null) {
-            return searchIndexed(trimmed, safePage, safeSize);
+            return searchIndexed(trimmed, vocal, safePage, safeSize);
         }
 
         Page<Music> found = repository.findPage(
+            vocal.filtered(), vocal.wantFemale(), vocal.wantMale(), vocal.wantInstrumental(),
             PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "musicId")));
 
         List<MusicSummary> items = assembler.assemble(found.getContent());
@@ -113,11 +118,16 @@ public class MusicServiceImpl implements MusicService {
             found.getTotalPages());
     }
 
-    private MusicPageResponse searchIndexed(String keyword, int page, int size) {
+    private MusicPageResponse searchIndexed(
+        String keyword, VocalFilterQuery vocal, int page, int size) {
         PageRequest pageable = PageRequest.of(page, size);
         Page<Integer> ids = keyword.codePointCount(0, keyword.length()) < 2
-            ? repository.searchIdsByPrefix(keyword, pageable)
-            : repository.searchIdsFullText(toBooleanPrefixQuery(keyword), pageable);
+            ? repository.searchIdsByPrefix(
+                keyword, vocal.filtered(), vocal.wantFemale(), vocal.wantMale(),
+                vocal.wantInstrumental(), pageable)
+            : repository.searchIdsFullText(
+                toBooleanPrefixQuery(keyword), vocal.filtered(), vocal.wantFemale(),
+                vocal.wantMale(), vocal.wantInstrumental(), pageable);
 
         if (ids.isEmpty()) {
             return new MusicPageResponse(

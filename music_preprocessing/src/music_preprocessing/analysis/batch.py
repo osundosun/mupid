@@ -169,8 +169,12 @@ def verify_mapping(new_dir: Path, tracks: Sequence[ix.NewTrack]) -> tuple[bool, 
         det["error"] = "새 판에 id_map.parquet 이 없다"
         return False, det
     df = pd.read_parquet(p)
+    df = df.rename(columns={
+        "source_section_uid": "external_id",
+        "music_section_id": "music_section_analysis_id",
+    })
     have_t = set(df.loc[df.music_id.notna(), "source_track_id"].astype(str))
-    have_s = set(df.loc[df.music_section_id.notna(), "source_section_uid"].astype(str))
+    have_s = set(df.loc[df.music_section_analysis_id.notna(), "external_id"].astype(str))
 
     want_t = {str(t.track_id) for t in tracks}
     want_s = {str(s["moment_id"]) for t in tracks for s in t.sections}
@@ -200,6 +204,11 @@ class BatchTrack:
     source: str = "flow"
     temp_audio: bool = False             # 내려받은 사본이면 처리 뒤 지운다
     demix_root: Optional[Path] = None    # 분할기가 남긴 demucs 스템. 구간별 악기를 여기서 읽는다
+    # `track_id` 는 **로컬 파일명**(`T000501`)일 수 있다. 요구 1 은 Spring 이 발급한
+    # 숫자 `music_id` 를 요구하므로, 그 값을 `registered.json`(catalog 산출물)에서
+    # 받아 여기 담는다. **지어내지 않는다** — 파일명에서 숫자를 뽑으면 등록된 값과
+    # 어긋날 수 있고, 그 상태로 교체하면 엉뚱한 곡에 구간이 붙는다.
+    music_id: Optional[int] = None
 
     def load(self) -> tuple[seg.SectionsFile, pl.TrackStats]:
         f = seg.load_sections(Path(self.sections_json), track_id=self.track_id)
@@ -244,10 +253,13 @@ def run(tracks: Iterable[BatchTrack], data_dir: Path, *,
         keep_versions: int = ix.KEEP_VERSIONS,
         summary_path: Optional[Path] = None,
         status=None,
-        analyze: Optional[Callable] = None) -> BatchSummary:
+        analyze: Optional[Callable] = None,
+        analyzer=None) -> BatchSummary:
     """한 사이클. **교체는 등록 확인을 통과한 뒤에만 한다.**
 
     `analyze` 는 시험에서 무거운 MERT 를 빼기 위한 자리다. 비우면 실제 ②③④ 를 돈다.
+    `analyzer` 를 주면 그쪽이 ②③④ 를 맡는다 — 부모 인터프리터에 torch 가 없을 때
+    (배포 서버가 3.12 이고 MERT 가 3.10 에 있을 때) 쓰는 길이다.
     """
     t0 = time.time()
     data = Path(data_dir)
@@ -261,7 +273,8 @@ def run(tracks: Iterable[BatchTrack], data_dir: Path, *,
     log(f"대상 {s.tracks}곡")
 
     new_tracks = _analyze_all(items, data, state, s,
-                              device=device, analyze=analyze, status=status)
+                              device=device, analyze=analyze, status=status,
+                              analyzer=analyzer)
 
     if not new_tracks:
         s.hold_reason = "붙일 신곡이 없다"
@@ -324,7 +337,8 @@ def run(tracks: Iterable[BatchTrack], data_dir: Path, *,
 
 
 def _analyze_all(items: Sequence[BatchTrack], data: Path, state_path: Path,
-                 s: BatchSummary, *, device, analyze, status=None) -> list:
+                 s: BatchSummary, *, device, analyze, status=None,
+                 analyzer=None) -> list:
     """곡 단위 격리. 한 곡이 깨져도 나머지는 간다."""
     space = FeatureSpace(data)               # 판 검사(sha256·feature_version)
     engine = None
@@ -368,6 +382,17 @@ def _analyze_all(items: Sequence[BatchTrack], data: Path, state_path: Path,
 
         if analyze is not None:
             r = analyze(t, sections, meta)
+        elif analyzer is not None:
+            # ②③④ 를 다른 인터프리터에서. 부모(3.12)에 torch 가 없을 때의 길이다.
+            got = analyzer.run([(t, sections)])
+            r = got.get(tid)
+            if r is None:
+                why = analyzer.failures.get(tid, {}).get("error", "분석 결과가 없다")
+                s.failed += 1
+                s.failures.append({"track_id": tid, "stage": "analyze", "error": why})
+                _say(status, "failed", tid, "MERT_INFERENCE_FAILED", why)
+                _discard(t)
+                continue
         else:
             if engine is None:
                 engine = emb.Embedder(data, device=device)   # 모델은 배치당 한 번
@@ -399,7 +424,9 @@ def _analyze_all(items: Sequence[BatchTrack], data: Path, state_path: Path,
             features=np.asarray(r.features, dtype=np.float32),
             section_vecs=np.asarray(r.section_vecs, dtype=np.float32),
             content_row={**t.content_row, "track_id": tid},
-            meta_row={**t.meta_row, "track_id": tid}))
+            meta_row={**t.meta_row, "track_id": tid},
+            # 등록은 Spring 발급 숫자 ID 로 한다 — `tid` 는 로컬 파일명일 수 있다.
+            music_id=getattr(t, "music_id", None)))
 
     pl.save_state(state_path, state)
     log(f"분석 — 성공 {s.ok} · 실패 {s.failed} · 건너뜀 {s.skipped} · 변경 {s.changed}")
@@ -466,6 +493,14 @@ def read_manifest(path: Path) -> list[BatchTrack]:
     base = Path(path).parent
     out = []
     for t in d.get("tracks", []):
+        # 요구 1 은 숫자 `music_id` 를 요구한다. manifest 에 없으면 **여기서 멈춘다** —
+        # 파일명에서 숫자를 뽑는 것은 지어내는 것이다(`T000501` 은 우연히 맞지만
+        # `JAMENDO_1083659` 같은 ID 는 맞지 않는다).
+        mid = t.get("music_id")
+        if mid in (None, ""):
+            raise SystemExit(
+                f"manifest 의 {t.get('track_id')!r} 에 music_id 가 없다. 요구 1 은 "
+                "Spring 이 발급한 숫자 ID 를 요구한다 — 파일명에서 뽑지 않는다.")
         out.append(BatchTrack(
             track_id=str(t["track_id"]),
             audio_path=(base / t["audio_path"]).resolve() if not Path(
@@ -475,7 +510,8 @@ def read_manifest(path: Path) -> list[BatchTrack]:
             content_row=dict(t.get("content") or {}),
             meta_row=dict(t.get("meta") or {}),
             source=str(t.get("source", "flow")),
-            demix_root=_rel(base, t.get("demix_root"))))
+            demix_root=_rel(base, t.get("demix_root")),
+            music_id=int(mid)))
     return out
 
 
@@ -503,6 +539,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--data-dir", default=os.environ.get("MUPID_AI_DATA_DIR"),
                     help="색인 디렉터리 (기본: $MUPID_AI_ARTIFACT_DIR/data/proc/mupid)")
     ap.add_argument("--device", default=None, help="cuda:0 · cpu. 비우면 있는 쪽")
+    ap.add_argument("--local", action="store_true",
+                    help="~/flow_music_data 에서 직접 모은다 (요구 5 를 부르지 않는다)")
+    ap.add_argument("--flow-dir", default=None, help="음원·metadata 루트 (기본: ~/flow_music_data)")
+    ap.add_argument("--all", dest="all_tracks", action="store_true",
+                    help="--local 에서 색인에 있는 곡까지 전부 돌린다 (재분석·태그 backfill)")
+    ap.add_argument("--allin1-dir", default=None,
+                    help="① 원본 JSON 디렉터리(All-In-One). 비우면 <artifact>/flow/allin1")
+    ap.add_argument("--demix-dir", default=None,
+                    help="구간별 악기를 읽을 demucs 스템. 비우면 <artifact>/work/demix")
+    ap.add_argument("--sections-dir", default=None,
+                    help="변환된 sections.json 디렉터리. 비우면 analysis_work_dir/sections")
+    ap.add_argument("--segmenter-python", default=None,
+                    help="②③④·① 을 돌릴 3.10 인터프리터. 비우면 config 값을 쓴다")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="--local 에서 돌릴 곡 수 상한. 0(기본)이면 전부 — 조용히 자르지 않는다")
     ap.add_argument("--keep", type=int, default=None, help="남길 이전 판 수")
     ap.add_argument("--force-unlock", action="store_true",
                     help="남아 있는 잠금을 지우고 시작한다. 앞 실행이 살아 있으면 안 된다")
@@ -524,13 +575,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         with lock:
             try:
-                tracks, reg, status = _collect(a, cfg)
+                tracks, reg, status, analyzer = _collect(a, cfg)
             except Exception as e:
                 print(f"대상을 모으지 못했다: {type(e).__name__}: {e}", file=sys.stderr)
                 return EXIT_FAIL
             try:
                 s = run(tracks, data, device=device, keep_versions=keep,
-                        registrar=reg, status=status)
+                        registrar=reg, status=status, analyzer=analyzer)
             except (ArtifactMissing, seg.SectionsError) as e:
                 print(f"{type(e).__name__}: {e}", file=sys.stderr)
                 return EXIT_FAIL
@@ -558,13 +609,24 @@ def _pick_data_dir(cli, cfg) -> Path:
 
 
 def _collect(a, cfg):
-    """대상 곡 · 등록기 · 상태 알림을 만든다.
+    """대상 곡 · 등록기 · 상태 알림 · 분석기를 만든다.
 
-    manifest 를 주면 파일로 받고 등록기는 기본값(보류)이다. `--config` 로 받으면
-    요구 5 에서 받아 오고 요구 1·6 클라이언트가 붙는다.
+    세 갈래다.
+
+    `manifest`   파일로 받는다. 등록기는 기본값(보류)이다.
+    `--local`    **`~/flow_music_data` 에서 직접 모은다.** 요구 5를 부르지 않는다 —
+                 분석 대상은 JupyterHub 가 이미 알고 있고, 숫자 ID 매핑도
+                 `registered.json`(catalog 산출물)에 있다.
+    `--config`   요구 5 에서 받는다. 요구 1·6 클라이언트가 붙는다.
+
+    `--local` 이 등록기를 못 받으면 `UnavailableRegistrar` 로 끝난다 — 교체하지 않는다.
     """
     if a.manifest:
-        return read_manifest(Path(a.manifest)), None, None
+        return read_manifest(Path(a.manifest)), None, None, None
+    if getattr(a, "local", None):
+        if not a.config:
+            raise SystemExit("--local 은 --config 와 함께 쓴다 (경로·토큰이 거기 있다)")
+        return _collect_local(a, cfg)
     if cfg is None:
         raise SystemExit("manifest 를 주거나 --config 로 요구 5 설정을 준다")
     if not getattr(cfg, "analysis_enabled", False):
@@ -587,8 +649,201 @@ def _collect(a, cfg):
         # 모으다 깨진 곡도 이유를 남긴다. 다음 배치가 맹목적으로 다시 돌지 않게.
         status.failed(tid, "INGEST_FAILED", why)
     log(f"요구 5 — 대상 {len(tracks)}곡 · 수집 실패 {len(info['failed'])}곡")
-    return tracks, ai.HttpRegistrar(client=_mupid_client(cfg),
-                                    analysis_version=getattr(cfg, "analysis_version", "v1")), status
+    return (tracks, ai.HttpRegistrar(client=_mupid_client(cfg),
+                                     analysis_version=getattr(cfg, "analysis_version", "v1")),
+            status, None)
+
+
+def _collect_local(a, cfg):
+    """`~/flow_music_data` 만으로 대상과 등록기를 만든다.
+
+    **요구 5·6 을 부르지 않는다.** 다만 ①(분할)은 GPU·3.10 이 필요하므로 여기서 하지
+    않는다 — `run()` 이 `Segmenter` 로 맡는다.
+
+    ## ① 원본과 변환본은 **다른 디렉터리**다
+
+    All-In-One 이 남기는 JSON(`flow/allin1/T000001.json`)은 시간·라벨만 있고, 배치가
+    읽는 `sections.json`(`mupid.sections/v1`)은 여기에 `duration_sec`·`audio_sha256`
+    이 붙은 **다른 형식**이다(`segmenter.to_sections`). 둘을 같은 디렉터리로 잡으면
+    변환본이 원본을 덮어써서, 다시 돌릴 때 원본이 없어 전곡을 GPU 로 재분할한다.
+
+    그래서 자리를 셋으로 나눈다.
+
+        allin1_dir    <artifact>/flow/allin1        원본. 있으면 **재사용**한다 (GPU 0회)
+        sections_dir  <artifact>/work/sections      변환본. 배치가 읽는 것
+        demix_dir     <artifact>/work/demix         구간별 악기(스템). 원본과 같은 실행
+
+    원본 JSON 이 이미 있는 곡은 ① 을 건너뛴다 — B1 이 299곡을 만들어 둔 자리다.
+    """
+    from . import registry as rg
+
+    root = Path(_pick_data_dir(a.data_dir, cfg))          # <artifact>/data/proc/mupid
+    artifact = root.parents[2]                           # <artifact>
+    home = Path.home()
+    flow = Path(a.flow_dir) if getattr(a, "flow_dir", None) else home / "flow_music_data"
+    work = Path(getattr(cfg, "analysis_work_dir", "./analysis_work"))
+    if not work.is_absolute():
+        work = Path(a.config).parent / work
+    # 3.10 인터프리터 — ① 분할과 ②③④ 가 여기서 돈다. 부모(3.12)에는 torch 가 없어서
+    # 이 값이 비면 배치가 ②③④ 진입에서 죽는다. 그래서 **비어 있으면 멈춘다.**
+    py = getattr(a, "segmenter_python", None) or getattr(
+        cfg, "analysis_segmenter_python", "") or ""
+    if not py:
+        raise SystemExit(
+            "3.10 인터프리터가 없다 — config 의 `analysis_segmenter_python` 이나 "
+            "`--segmenter-python` 이 필요하다. ①(All-In-One)과 ②③④(MERT)가 그 "
+            "환경에서 돈다. 이 3.12 에는 torch 가 없다.")
+    if not Path(py).exists():
+        raise SystemExit(f"3.10 인터프리터가 없다: {py}")
+    # `--local` 은 **자르지 않는다.** `analysis_limit` 은 요구 5 한 페이지 크기라
+    # 로컬과 무관하고, 그 값을 그대로 쓰면 남은 곡이 조용히 빠진다.
+    limit = int(getattr(a, "limit", 0) or 0)
+    # `registered.json` 은 artifact 밖(`~/music_preprocessing`)에 있다 — 청킹 배치가
+    # 거기서 돌기 때문이다. config 가 가리키는 값을 그대로 쓴다.
+    reg_json = getattr(cfg, "api_registry_log", "") or ""
+    reg_path = Path(a.config).parent / (reg_json or "registered.json")
+
+    lib = rg.LocalRegistry(
+        flow_dir=flow, artifact_root=artifact,
+        registered_json=reg_path,
+        tag_file=_tag_file(cfg, a, root),
+        source="flow")
+    ids = _local_track_ids(a, lib, root, flow)
+    log(f"로컬 수집 — 음원 {len(ids)}곡 (요구 5 를 부르지 않는다)")
+
+    # ① 원본(All-In-One) · 변환본 · 스템, 셋을 각각 잡는다.
+    allin1_dir = Path(a.allin1_dir) if getattr(a, "allin1_dir", None) \
+        else root / "flow" / "allin1"
+    out_dir = Path(a.sections_dir) if getattr(a, "sections_dir", None) \
+        else work / "sections"
+    demix = Path(a.demix_dir) if getattr(a, "demix_dir", None) \
+        else artifact / "work" / seg.DEMIX_DIRNAME
+    segmenter = seg.Segmenter(
+        work_dir=work / "allin1", out_dir=allin1_dir,
+        python=py,
+        device=getattr(cfg, "analysis_device", "") or seg.ALLIN1_DEVICE)
+    log(f"  ① 원본 {allin1_dir} · 변환본 {out_dir} · 스템 {demix}")
+    log(f"  인터프리터 {py} · 상한 {limit or '없음(전부)'}")
+    tracks, info = lib.build(
+        ids,
+        sections_of=lambda tid: Path(out_dir) / f"{tid}.json",
+        demix_root=demix,
+        limit=limit)
+    for tid, why in list((info.get("skipped") or {}).items())[:20]:
+        log(f"  건너뜀 {tid}: {why}")
+    for tid, why in (info.get("failed") or {}).items():
+        log(f"  실패 {tid}: {why}")
+    log(f"대상 {len(tracks)}곡 · 건너뜀 {len(info.get('skipped') or {})}곡")
+    # 태그 산출물을 못 찾은 것 같은 **설정 실수는 조용히 넘어가면 안 된다.** 태그 없이
+    # 색인을 만들면 299곡이 빈 태그로 고정되고 ⑤⑥ 을 한 번 더 돌려야 한다.
+    for why in (info.get("warn") or []):
+        log(f"  주의 {why}")
+
+    # ① 분할 — **원본 JSON 이 없는 곡만.** GPU·3.10 이 필요하므로 여기서 맡는다.
+    # 있는 곡은 원본을 그대로 읽어 변환만 한다(`to_sections`) — 분할은 이미 끝났다.
+    raw = {t.track_id for t in tracks
+           if (Path(allin1_dir) / f"{t.track_id}.json").exists()}
+    need = [t for t in tracks if t.track_id not in raw]
+    if need:
+        log(f"① 분할 — {len(need)}곡 (All-In-One) · 원본 재사용 {len(raw)}곡")
+        segmenter.analyze([(t.track_id, t.audio_path) for t in need])
+        for t in need:
+            why = segmenter.failures.get(str(t.track_id), {}).get("error")
+            if why:
+                log(f"  분할 실패 {t.track_id}: {why}")
+    else:
+        log(f"① 분할 — 원본 재사용 {len(raw)}곡 (GPU 0회)")
+
+    # 변환 — 배치가 읽는 `sections.json` 을 여기서 만든다. `to_sections` 가 곡 길이를
+    # ②와 같은 적재 함수(`embedder.load_audio`, 24kHz)로 재므로 `rel_*` 가 어긋나지
+    # 않는다. 이미 변환본이 있으면 만들지 않는다(재실행이 읽기만 하도록).
+    from .segmenter import dump_sections
+
+    made = 0
+    for t in tracks:
+        dest = Path(out_dir) / f"{t.track_id}.json"
+        if dest.exists():
+            continue
+        try:
+            f = segmenter.to_sections(str(t.track_id), Path(t.audio_path))
+        except Exception as e:
+            log(f"  변환 실패 {t.track_id}: {type(e).__name__}: {e}")
+            continue
+        dump_sections(f, dest)
+        made += 1
+    log(f"② 입력 sections.json {made}개 생성 (기존 {len(tracks) - made}개 재사용)")
+
+    analyzer = _child_analyzer(py, root, cfg)
+    registrar = ai_registrar(cfg)
+    return tracks, registrar, None, analyzer
+
+
+def _local_track_ids(a, lib, root: Path, flow: Path) -> list:
+    """분석할 곡 — 음원이 있는데 **색인에 없는** 곡이다.
+
+    `--all` 을 주면 등록된 전곡을 돌린다(재분석·태그 backfill 용). 기본은 신곡만이라
+    매일 돌아도 첫날 이후로는 읽기만 한다(`classify` 와 같은 규칙).
+    """
+    audio = sorted(p.stem for p in (flow / "audio").glob("*.mp3"))
+    if getattr(a, "all_tracks", False):
+        return audio
+    import pandas as pd
+
+    p = Path(root) / "moments.parquet"
+    if not p.exists():
+        return audio
+    df = pd.read_parquet(p, columns=["track_id", "source"])
+    done = set(df.loc[df.source == lib.source, "track_id"].astype(str))
+    return [t for t in audio if t not in done]
+
+
+def _tag_file(cfg, a, root: Path) -> Optional[Path]:
+    """태깅 산출물(`tracks.parquet`). config 가 가리키면 그 값을 쓴다.
+
+    없으면 태그 없이 넣는다 — 태그는 곁들이는 값이고, 이것 때문에 배치가 멈추면
+    태그가 아직 없는 날의 분석까지 밀린다.
+
+    기본 자리는 `<artifact>/data/test_pipeline/tracks.parquet` 이다. `root` 는
+    `<artifact>/data/proc/mupid` 이므로 **두 단계** 위다(`data/proc/mupid` → `data`).
+    """
+    v = getattr(cfg, "analysis_tag_file", "") or ""
+    if v:
+        p = Path(v)
+        return p if p.is_absolute() else Path(a.config).parent / p
+    base = Path(root).parents[1] if len(Path(root).parents) > 1 else Path(root)
+    for cand in (base / "test_pipeline" / "tracks.parquet",
+                 Path(root).parent / "test_pipeline" / "tracks.parquet"):
+        if cand.exists():
+            return cand
+    return None
+
+
+def _child_analyzer(py: str, root: Path, cfg):
+    """②③④ 를 돌릴 인터프리터. **없으면 None** — 부모가 직접 돌린다.
+
+    배포 서버(3.12)에는 torch 가 없다. `analysis_segmenter_python`(All-In-One 용
+    3.10)에 torch·transformers·MERT 가 함께 있으므로 그쪽에 맡긴다.
+
+    호출자가 이미 3.10 인터프리터를 확인해 `py` 로 넘긴다 — 두 곳에서 config 를
+    다시 읽으면 값이 갈린다.
+    """
+    if not py:
+        return None
+    src = Path(__file__).resolve().parents[2]
+    return pl.ChildAnalyzer(python=py, data_dir=Path(root), src_root=src,
+                            device=getattr(cfg, "analysis_device", "") or "")
+
+
+def ai_registrar(cfg):
+    """요구 1 적재기. 주소·토큰이 없으면 `UnavailableRegistrar`(교체 보류)."""
+    from . import api as ai
+
+    try:
+        return ai.HttpRegistrar(client=_mupid_client(cfg),
+                                analysis_version=getattr(cfg, "analysis_version", "v1"))
+    except Exception as e:
+        log(f"등록기를 만들지 못했다 — 교체를 보류한다: {type(e).__name__}: {e}")
+        return UnavailableRegistrar(f"{type(e).__name__}: {e}")
 
 
 def _mupid_client(cfg):

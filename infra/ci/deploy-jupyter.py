@@ -503,9 +503,10 @@ if tokenfile.exists():
     tokenfile.chmod(0o600)
     print("refresh_token.txt 권한 600")
 
-done = subprocess.run([uv, "sync", "--frozen", "--python", "3.12"],
+done = subprocess.run([uv, "sync", "--frozen", "--python", "3.12",
+                       "--extra", "analysis"],
                       cwd=directory, capture_output=True, text=True)
-print("uv sync:", done.returncode)
+print("uv sync (--extra analysis):", done.returncode)
 print(done.stdout[-2000:], done.stderr[-2000:])
 if done.returncode:
     raise SystemExit("uv sync 실패")
@@ -515,6 +516,17 @@ check = subprocess.run([uv, "run", "music-preprocessing", "--help"],
 if check.returncode:
     raise SystemExit("CLI 가 뜨지 않는다:\n" + check.stderr[-2000:])
 print("CLI ok")
+
+# 분석 배치(⑤⑥)는 색인을 parquet 로 쓴다 — pandas·pyarrow 가 실제로 올라왔는지 본다.
+# 선택 의존성이라 빠져도 `--help` 는 뜬다. 빠진 채로 배치가 돌면 ⑤⑥에서 죽는다.
+probe = subprocess.run([uv, "run", "python", "-c",
+                        "import pandas, pyarrow, numpy, scipy, librosa; "
+                        "print('analysis deps ok')"],
+                       cwd=directory, capture_output=True, text=True)
+if probe.returncode:
+    raise SystemExit("분석 의존성이 없다 (uv sync --extra analysis 가 필요하다):\n"
+                     + probe.stderr[-2000:])
+print(probe.stdout.strip())
 
 '''
 

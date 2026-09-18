@@ -207,7 +207,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
   );
 }
 export function MomentView({ model: m }: { model: MupidModel }) {
-  return <MomentSelection key={m.active?.id ?? 0} model={m} />;
+  return <MomentSelection key={`${m.active?.id ?? 0}:${m.editingMomentId ?? 'new'}`} model={m} />;
 }
 function MomentSelection({ model: m }: { model: MupidModel }) {
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
@@ -220,15 +220,15 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
   const sections = previewSections
     ? labels.map((label, i) => ({ label, start: Math.round(active.duration * i / labels.length), end: Math.round(active.duration * (i + 1) / labels.length) })).filter(part => part.end > part.start)
     : active.sections;
-  // 수정으로 들어왔으면 그 순간을 미리 골라 둔다.
+  // 수정으로 들어왔으면 이 곡에 저장한 모든 순간을 한 번에 올린다.
+  const editingMoments = editing
+    ? m.moments.filter((moment) => moment.track.id === active.id)
+    : [];
   const [selected, setSelected] = useState<number[]>(() => {
-    const index = sections.findIndex(
-      (s) => s.start === m.momentRange[0] && s.end === m.momentRange[1],
-    );
-    if (index >= 0) return [index];
     if (editing) {
-      const containing = sections.findIndex(s => m.momentRange[0] >= s.start && m.momentRange[0] < s.end);
-      return containing >= 0 ? [containing] : [];
+      return [...new Set(editingMoments.map((moment) => sections.findIndex(
+        (section) => moment.start >= section.start && moment.start < section.end,
+      )).filter((index) => index >= 0))];
     }
     return [];
   });
@@ -236,7 +236,13 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
   // 마지막에 만진 구간. 폰은 마우스를 올릴 수 없어 툴팁이 뜨지 않으니, 그 구간의
   // 설명을 칩 아래 한 줄로 보여 준다. 처음에는 고른 것이 있으면 그것.
   const [hinted, setHinted] = useState<number | null>(() => selected.at(-1) ?? null);
-  const [trimmed, setTrimmed] = useState<Record<number, { start: number; end: number }>>(() => editing && selected.length ? { [selected[0]]: { start: m.momentRange[0], end: m.momentRange[1] } } : {});
+  const [trimmed, setTrimmed] = useState<Record<number, { start: number; end: number }>>(() => {
+    if (!editing) return {};
+    return Object.fromEntries(editingMoments.flatMap((moment) => {
+      const index = sections.findIndex((section) => moment.start >= section.start && moment.start < section.end);
+      return index >= 0 ? [[index, { start: moment.start, end: moment.end }]] : [];
+    }));
+  });
   /*
    * 분홍 양 끝을 끌어 범위를 다른 구간까지 늘리거나 옮기면, 위 칩과 이름도 따라간다.
    * 범위가 걸치는 구간이 하나면 그 구간 이름을, 여럿이면 '벌스 2 – 브리지' 처럼
@@ -284,31 +290,31 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
     <div className="moment-layout">
       <div>
         <div className="intro-copy">
-          <h2>{editing ? '어느 순간으로 바꿀까요?' : '마음에 드는 순간을 저장하세요.'}</h2>
-          <p>파형에서 구간을 누르고, 양 끝을 끌어 원하는 부분만 저장하세요.</p>
+          <h2>{editing ? '저장한 순간을 함께 다듬어 보세요.' : '마음에 드는 순간을 저장하세요.'}</h2>
+          <p>파형에서 순간을 누르고, 양 끝을 끌어 원하는 부분만 저장하세요.</p>
         </div>
         <TrackRow track={active} model={m} detail={parts.length ? parts.map(p => p.label).join(' · ') : '저장할 순간을 선택해 주세요'} />
         <div className="moment-editor">
-          {previewSections && <p className="moment-wave-help">AI 연결 전 미리보기 · 곡 길이를 임시로 나눈 구간이에요.</p>}
+          {previewSections && <p className="moment-wave-help">AI 연결 전 미리보기 · 곡 길이를 임시로 나눈 순간이에요.</p>}
           <div className="song-parts" aria-label="저장할 순간 다중 선택">
             {sections.map((part, i) => <button key={i} title={sectionHint(part.label)} aria-pressed={selected.includes(i)} className={selected.includes(i) || covered.has(i) ? 'selected' : ''} onClick={() => {
               // 다른 순간의 범위에 이미 걸린 구간을 누르면 새로 더하지 않고 그 순간을 손보는 대상으로 삼는다.
               setHinted(i);
               const within = !selected.includes(i) ? partAt(part.start + (part.end - part.start) / 2) : -1;
               if (within >= 0) { focus(within); return; }
-              setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : editing ? [i] : [...ids, i]);
+              setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : [...ids, i]);
               setSaved(false);
             }}>{part.label}</button>)}
           </div>
           {hinted !== null && sections[hinted] && sectionHint(sections[hinted].label) && (
             <p className="song-parts-hint" role="status"><strong>{sections[hinted].label}</strong> {sectionHint(sections[hinted].label)}</p>
           )}
-          <MomentWaveEditor track={active} range={focusedPart} onSelect={time => {
+          <MomentWaveEditor track={active} range={focusedPart} others={parts.slice(0, -1)} onSelect={time => {
             // 이미 고른 순간 안을 누르면 그 순간을 손보는 대상으로. 바깥이면 그 구간을 새로 고른다.
             const within = partAt(time);
             if (within >= 0) { focus(within); return; }
             const index = sections.findIndex(part => time >= part.start && time < part.end);
-            if (index >= 0) { setHinted(index); setSelected(ids => editing ? [index] : [...ids.filter(id => id !== index), index]); }
+            if (index >= 0) { setHinted(index); setSelected(ids => [...ids.filter(id => id !== index), index]); }
             setSaved(false);
           }} onTrim={(start, end) => {
             trimFocused(start, end);
@@ -337,19 +343,25 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
       </div>
       <div className="moment-story">
         <h2>{parts.length}개의 순간 선택</h2>
-        <p>{editing ? '한 순간만 골라 주세요. 기존에 저장한 순간을 이걸로 바꿔요.' : <>선택한 부분은 각각 따로 저장돼요.<br />선택하지 않은 부분은 포함하지 않아요.</>}</p>
+        <p>{editing ? <>이 곡에 저장한 순간을 모두 보여드려요.<br />수정 후에도 각 순간은 따로 저장돼요.</> : <>선택한 부분은 각각 따로 저장돼요.<br />선택하지 않은 부분은 포함하지 않아요.</>}</p>
         <button className="primary-button wide" disabled={!parts.length || saved} onClick={() => {
           if (editing) {
-            const part = parts[0];
-            if (m.editingMomentId !== null) {
-              m.replaceMoment(m.editingMomentId, { start: part.start, end: part.end, section: part.label });
-            }
+            m.replaceMoments(
+              editingMoments.map((moment) => moment.id),
+              parts.map((part, index) => ({
+                id: editingMoments[index]?.id ?? Date.now() + index,
+                track: active,
+                start: part.start,
+                end: part.end,
+                section: part.label,
+              })),
+            );
             m.setToast('저장한 순간을 바꿨어요.'); setSaved(true);
             return;
           }
           m.addMoments(parts.map((p, i) => ({ id: Date.now() + i, track: active, start: p.start, end: p.end, section: p.label })));
           m.setToast('선택한 순간을 저장했어요.'); setSaved(true);
-        }}>{saved ? <Check /> : <Bookmark />}{saved ? (editing ? '수정 완료' : '저장 완료') : (editing ? '이 순간으로 바꾸기' : '선택한 순간 저장하기')}</button>
+        }}>{saved ? <Check /> : <Bookmark />}{saved ? (editing ? '수정 완료' : '저장 완료') : (editing ? '선택한 순간 모두 수정하기' : '선택한 순간 저장하기')}</button>
         <button className="text-link" onClick={() => { m.setLibraryTab('moments'); m.go('library'); }}>저장한 순간 모두 보기 <ChevronRight /></button>
       </div>
     </div>

@@ -222,7 +222,15 @@ def test_no_demix_root_means_empty_not_an_error():
 # ────────────────────────────────────────────── 5. 요구 1 로 나가는 모양
 
 class Track:
+    """등록기가 받는 곡 대역.
+
+    `music_id` 가 **따로 있다.** 요구 1 은 Spring 이 발급한 숫자 ID 를 요구하고,
+    `track_id` 는 로컬 파일명(`T000501`)일 수 있다 — 그래서 둘을 같은 값으로 두되
+    별도 필드로 흉내 낸다(`analysis/indexer.NewTrack` 과 같은 모양).
+    """
+
     track_id = "1234"
+    music_id = 1234
 
     def __init__(self, sections):
         self.sections = sections
@@ -485,7 +493,25 @@ def test_register_sends_codes_then_sections_over_real_http(spring, tmp_path):
 
     # `id_map` 이 실제로 채워져야 추천 결과가 곡으로 이어진다.
     saved = pd.read_parquet(tmp_path / "id_map.parquet")
-    assert sorted(saved["source_section_uid"]) == ["1234#0", "1234#1"]
+    assert sorted(saved["external_id"]) == ["1234#0", "1234#1"]
+
+
+def test_merge_id_map_migrates_legacy_columns(tmp_path):
+    pd.DataFrame([{
+        "source_track_id": "old", "music_id": 1,
+        "source_section_uid": "old#0", "music_section_id": 10,
+    }]).to_parquet(tmp_path / "id_map.parquet", index=False)
+
+    ap.merge_id_map(tmp_path, [{
+        "source_track_id": "new", "music_id": 2,
+        "external_id": "new#0", "music_section_analysis_id": 20,
+    }])
+
+    saved = pd.read_parquet(tmp_path / "id_map.parquet")
+    assert list(saved.columns) == [
+        "source_track_id", "music_id", "external_id", "music_section_analysis_id"]
+    assert dict(zip(saved.external_id, saved.music_section_analysis_id)) == {
+        "old#0": 10, "new#0": 20}
 
 
 def test_every_call_carries_the_bearer_token(spring, tmp_path):

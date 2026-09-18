@@ -9,14 +9,14 @@ import { toImageSource } from '@/lib/platform/image';
 import { ProfilePhoto } from './profile-photo';
 import { DEFAULT_PROFILE_PHOTO } from './profile-image';
 import { PasswordForm } from './password-form';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DemoAccount } from './demo-login';
 import {
   Check,
   ChevronLeft,
   ChevronRight,
   Heart,
-  Music2,
+  Pause,
   Plus,
   Pencil,
   Play,
@@ -38,6 +38,7 @@ import { type MupidModel } from '@/hooks/use-mupid';
 import { NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH, normalizeNickname } from '@/lib/profile';
 import { useDailyReport } from '@/lib/report';
 import { formatTime, genreOptions, moodOptions } from '@/lib/mupid-data';
+import { groupSavedMoments } from '@/lib/saved-moments';
 import {
   loadOnboardingOptions,
   namesOf,
@@ -52,6 +53,7 @@ import {
   PageHeader,
   PlayerControls,
   TrackRow,
+  Waveform,
 } from './primitives';
 
 // 탭 이름을 그대로 화면 제목으로 쓴다. 어느 탭에 있는지 제목만 봐도 알 수 있게.
@@ -72,9 +74,12 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
    * 같이 움직이고 이 목록이 재생 중인 것처럼 일시정지 모양이 됐다.
    */
   const playingTrack = m.active && selected?.tracks.some((t) => t.id === m.active!.id) ? m.active : null;
-  // 저장한 순간은 되돌릴 수 없어서 삭제 전에 한 번 확인받는다.
-  const [removeMoment, setRemoveMoment] = useState<number | null>(null);
-  const momentToRemove = m.moments.find((v) => v.id === removeMoment);
+  const momentGroups = useMemo(() => groupSavedMoments(m.moments), [m.moments]);
+  // 화면은 곡별 한 줄이므로 삭제도 그 곡에 저장한 모든 순간을 대상으로 확인한다.
+  const [removeMomentTrack, setRemoveMomentTrack] = useState<number | null>(null);
+  const momentGroupToRemove = momentGroups.find((group) => group.track.id === removeMomentTrack);
+  const [openMomentPlayer, setOpenMomentPlayer] = useState<number | null>(null);
+  const [focusedMoment, setFocusedMoment] = useState<number | null>(null);
   // 플레이리스트에서 여러 곡을 골라 한 번에 뺄 수 있게 한다.
   // 재생 목록 쪽 같은 흐름은 독이 들고 있다 (`components/mupid/queue-dock.tsx`).
   const playlistPick = useTrackSelection((selected?.tracks ?? []).map((t) => t.id));
@@ -287,31 +292,92 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
             <p>짧지만, 오래 남는 당신의 음악 취향.</p>
           </div>
           <div className="track-list">
-            {m.moments.map((moment) => (
-              <article className="saved-moment" key={moment.id}>
+            {momentGroups.map(({ track, moments }) => {
+              const expanded = openMomentPlayer === track.id;
+              const isActive = m.active?.id === track.id;
+              const playingMoment = isActive
+                ? moments.find((moment) => m.time >= moment.start && m.time < moment.end)
+                : undefined;
+              const focused = playingMoment ?? moments.find((moment) => moment.id === focusedMoment) ?? moments[0];
+              return (
+              <article className={`saved-moment ${expanded ? 'is-expanded' : ''}`} key={track.id}>
                 <TrackRow
-                  track={moment.track}
+                  track={track}
                   model={m}
-                  onPlay={() => m.playSavedMoment(moment)}
-                  detail={`${moment.section} · ${formatTime(moment.start)} – ${formatTime(moment.end)}`}
+                  showDetail={false}
+                  onPlay={() => m.playSavedMoments(moments)}
+                  playingOverride={Boolean(m.playing && m.savedMomentPlayback?.trackId === track.id && m.savedMomentPlayback.mode === 'all')}
                   action={
-                    <button
-                      aria-label={`${moment.track.title} 저장 순간 삭제`}
-                      className="icon-button"
-                      onClick={() => setRemoveMoment(moment.id)}
-                    >
-                      <X />
-                    </button>
+                    <>
+                      <button aria-label={`${track.title} 저장 순간 모두 삭제`} className="icon-button" onClick={() => setRemoveMomentTrack(track.id)}>
+                        <X />
+                      </button>
+                      <button
+                        aria-label={`${track.title} 구간별 재생 ${expanded ? '접기' : '펼치기'}`}
+                        aria-expanded={expanded}
+                        className="icon-button saved-moment-expand"
+                        onClick={() => {
+                          if (expanded) m.stopSavedMomentPlayback(track.id, 'single');
+                          setOpenMomentPlayer((id) => id === track.id ? null : track.id);
+                          setFocusedMoment(moments[0]?.id ?? null);
+                        }}
+                      >
+                        <span className="saved-moment-composite-icon" aria-hidden="true">
+                          <span className="saved-moment-bracket">[</span>
+                          <span className="saved-moment-mini-wave">
+                            <i /><i /><i /><i /><i />
+                          </span>
+                          <span className="saved-moment-bracket">]</span>
+                          <Play fill="currentColor" />
+                        </span>
+                      </button>
+                    </>
                   }
                 />
-                <button
-                  className="text-link"
-                  onClick={() => m.openMoment(moment.track, moment)}
-                >
-                  순간 수정 <ChevronRight />
-                </button>
+                <div className="saved-moment-detail-section">
+                  <span className="moment-meta" title={moments.map((moment) => moment.section).join(' · ')}>
+                    {moments.map((moment) => moment.section).join(' · ')}
+                  </span>
+                  <button className="text-link" onClick={() => m.openMoment(track, moments[0])}>
+                    {moments.length}개 순간 수정 <ChevronRight />
+                  </button>
+                </div>
+                {expanded && <section className="saved-moment-player" aria-label={`${track.title} 저장한 순간 재생`}>
+                  <div className="saved-moment-parts">
+                    {moments.map((moment) => {
+                      const playing = isActive && m.playing && m.savedMomentPlayback?.mode === 'single' && focused.id === moment.id && m.time >= moment.start && m.time < moment.end;
+                      return <div className="saved-moment-part" key={moment.id}>
+                        <button
+                          className={focused.id === moment.id ? 'is-focused' : ''}
+                          onClick={() => { setFocusedMoment(moment.id); m.playSavedMoments(moments, moment); }}
+                          aria-label={`${moment.section} ${formatTime(moment.start)}부터 재생`}
+                        >
+                          {playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
+                          <span>{moment.section}</span>
+                          <small>{formatTime(moment.start)} – {formatTime(moment.end)}</small>
+                        </button>
+                      </div>;
+                    })}
+                  </div>
+                  <div className="saved-moment-wave">
+                    <Waveform duration={track.duration} ranges={moments} progress={isActive ? m.time : 0} />
+                    {moments.map((moment) => <span key={moment.id} className={`saved-wave-range ${focused.id === moment.id ? 'is-focused' : ''}`} style={{ left: `${moment.start / track.duration * 100}%`, width: `${(moment.end - moment.start) / track.duration * 100}%` }} />)}
+                    {isActive && <span className="saved-wave-playhead" style={{ left: `${Math.min(100, m.time / track.duration * 100)}%` }} />}
+                    <button
+                      className="saved-wave-hit"
+                      onClick={(event) => {
+                        const box = event.currentTarget.getBoundingClientRect();
+                        const at = Math.max(0, Math.min(track.duration, ((event.clientX - box.left) / box.width) * track.duration));
+                        const target = moments.find((moment) => at >= moment.start && at < moment.end);
+                        if (target) { setFocusedMoment(target.id); m.playSavedMoments(moments, target); }
+                      }}
+                      aria-label="파형에서 저장한 순간 선택"
+                    />
+                  </div>
+                  <div className="saved-moment-time"><span>{isActive ? formatTime(m.time) : '00:00'}</span><span>{formatTime(track.duration)}</span></div>
+                </section>}
               </article>
-            ))}
+            );})}
           </div>
           {!m.moments.length && (
             <EmptyState
@@ -360,26 +426,26 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
         </TabsContent>
       </Tabs>
       <AlertDialog
-        open={removeMoment !== null}
-        onOpenChange={(open) => { if (!open) setRemoveMoment(null); }}
+        open={removeMomentTrack !== null}
+        onOpenChange={(open) => { if (!open) setRemoveMomentTrack(null); }}
       >
         <AlertDialogContent className="sky-dialog">
           <AlertDialogHeader>
-            <AlertDialogTitle>저장한 순간을 삭제할까요?</AlertDialogTitle>
+            <AlertDialogTitle>이 곡의 저장한 순간을 모두 삭제할까요?</AlertDialogTitle>
             <AlertDialogDescription>
-              {momentToRemove
-                ? `${momentToRemove.track.title} · ${momentToRemove.section}`
+              {momentGroupToRemove
+                ? `${momentGroupToRemove.track.title}의 ${momentGroupToRemove.moments.length}개 순간`
                 : ''}
-              {' '}순간만 지워지고, 곡과 플레이리스트는 그대로예요.
+              만 지워지고, 곡과 플레이리스트는 그대로예요.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                if (removeMoment !== null) m.removeMoment(removeMoment);
-                setRemoveMoment(null);
-                m.setToast('저장한 순간을 삭제했어요.');
+                if (momentGroupToRemove) m.removeMoments(momentGroupToRemove.moments.map((moment) => moment.id));
+                setRemoveMomentTrack(null);
+                m.setToast('이 곡의 저장한 순간을 모두 삭제했어요.');
               }}
             >
               삭제
@@ -547,7 +613,9 @@ export function ReportView({ model: m }: { model: MupidModel }) {
               <div className="tags">
                 {report.keywords.map((keyword) => (
                   <span key={`${keyword.kind}:${keyword.name}`}>
-                    {keyword.name.startsWith('#') ? keyword.name : `#${keyword.name}`}
+                    {(keyword.display_name || keyword.name).startsWith('#')
+                      ? keyword.display_name || keyword.name
+                      : `#${keyword.display_name || keyword.name}`}
                   </span>
                 ))}
               </div>

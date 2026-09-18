@@ -17,6 +17,15 @@ infra-verify:
   tags: [mupid-ci]
   interruptible: true
   timeout: 10m
+  variables:
+    # **이력이 필요하다.** 아래 before_script 가 git 을 설치하는 이유와 같다 —
+    # `test_area_diff.py` 가 실제 병합 커밋(`18b464c9`)의 부모를 찾아 diff 를 뜬다.
+    # GitLab 기본값(20)으로 얕게 받으면 그 객체가 없어 `fatal: ambiguous argument
+    # ...^1` 로 실패한다. 실제로 develop→master 릴리스 MR 에서 그렇게 깨졌다.
+    #
+    # `labels.yml`(area-preflight)이 같은 이유로 같은 값을 쓴다. 그쪽은 변경 경로를
+    # 계산하고, 이쪽은 이력을 읽는다.
+    GIT_DEPTH: "0"
   needs:
     # 앞단 판정을 먼저 통과해야 한다. optional 인 이유는 브랜치 파이프라인에
     # area-preflight 가 없기 때문이다 — 없으면 이 needs 는 무시된다.

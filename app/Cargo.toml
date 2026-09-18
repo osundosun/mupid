@@ -17,6 +17,17 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# 웹 번들 교체용 자산 프로바이더가 쓴다 (src/assets.rs).
+#
+# `html2` 는 Tauri 가 HTML 의 inline 스크립트 해시를 계산할 때 쓰는 것과 **같은
+# 구현**이다. 직접 흉내 내면 브라우저의 HTML 해석(주석·CDATA·중첩)과 미묘하게
+# 어긋나고, 그러면 교체된 번들의 스크립트가 전부 차단되어 화면이 하얗게 뜬다.
+# 그래서 파서를 새로 쓰지 않는다.
+#
+# 런타임 쪽에서는 이 feature 가 꺼져 있으므로(실측: tauri-utils FEATURES 에
+# html-manipulation-2 가 없다) 여기서 명시적으로 켠다.
+tauri-utils = { version = "2", features = ["html-manipulation-2"] }
+sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -34,8 +45,18 @@ reqwest_cookie_store = "0.8"
 cookie_store = { version = "0.21", features = ["serde_json"] }
 
 rusqlite = { version = "0.32", features = ["bundled"] }
+# 자동 업데이트가 아카이브를 푼다 (src/update.rs).
+#
+# `flate2` 는 이미 의존성 트리에 있고 기본이 순수 Rust `miniz_oxide` 다 —
+# NDK 에 zlib 을 붙이지 않아도 안드로이드로 크로스 컴파일된다
+# (reqwest 의 gzip 기능이 이미 같은 것을 쓴다).
+flate2 = "1"
+# `tar` 는 직접 쓴다. 항목을 하나씩 검사하며 풀어야 하므로 `extractall` 에
+# 해당하는 편의 API 를 쓰지 않는다 — 심볼릭 링크·`..`·크기 폭탄을 항목마다
+# 거부한다 (`receive-front.py` 와 같은 규칙).
+tar = "0.4"
 base64 = "0.22"
-tokio = { version = "1", features = ["sync", "macros", "time"] }
+tokio = { version = "1", features = ["sync", "macros", "time", "fs", "io-util"] }
 thiserror = "2"
 log = "0.4"
 

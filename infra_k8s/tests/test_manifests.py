@@ -1463,6 +1463,143 @@ class AiEndpointNamesTest(unittest.TestCase):
                       "추천 서버 쪽 짝 이름이 적혀 있지 않다")
 
 
+class CiShellScopeTest(unittest.TestCase):
+    """GitLab 은 `script:` 의 **각 줄을 별도 셸**로 돌린다.
+
+    그래서 한 줄에서 `export` 한 변수는 다음 줄에 오지 않는다. 이걸 모르면
+    스탬프 배선이 조용히 끊긴다 — 실제로 그렇게 실패했다(master, 2026-09-18,
+    job 575976). 증상이 나쁜 이유는 **실패 지점이 늦다**는 것이다: APK 를 다
+    굽고 서명까지 확인한 뒤(60MB·6분) 업로드 직전 한 줄에서 죽고, job 로그에는
+    `exit code 2` 만 남는다.
+
+    여기서는 그 모양을 **구조로** 고정한다: 생성 스크립트와 업로더 스크립트가
+    같은 줄에 있어야 한다.
+    """
+
+    CI = ROOT / "infra" / "ci"
+    K8S_CI = K8S / "ci"
+
+    def _job_script(self, job):
+        """job 의 script 줄 목록. GitLab 의 YAML 은 `script` 를 리스트로 준다."""
+        config = yaml.safe_load((self.CI / "app.yml").read_text(encoding="utf-8"))
+        return config[job]["script"]
+
+    def _lines_with(self, script, needle):
+        return [line for line in script if needle in line]
+
+    def test_the_apk_job_exports_the_stamp_from_the_ci_line_not_from_a_child(self):
+        """**CI 줄에서 export 해야 한다.** 자식 스크립트의 export 는 부모에 오지 않는다.
+
+        이 함정을 두 번 밟았고 진단도 한 번 틀렸다. 시험도 처음엔 '두 줄이 한 줄에
+        있는가' 를 봤는데, 그건 **틀린 진단을 고정한 것**이라 무용했다(한 줄로
+        이어도 여전히 죽는다 — 진짜 원인은 `sh build-apk.sh` 가 자식이라는 것이다).
+
+        그래서 보는 것을 바꿨다: **값을 CI 줄에서 만들어 export 하는가.**
+        `app-web-release` 가 처음부터 그 모양이라 한 번도 안 깨졌다.
+        """
+        script = self._job_script("app-build")
+        exporter = self._lines_with(script, "export MUPID_NATIVE_BUILD")
+        self.assertEqual(1, len(exporter),
+                         f"CI 줄에서 MUPID_NATIVE_BUILD 를 export 하는 줄이 하나여야 한다: {exporter}")
+        line = exporter[0]
+        # 그 줄에서 **값을 만들어** export 한다. 자식의 export 에 기대지 않는다.
+        self.assertIn("build-stamp", line,
+                      f"CI 줄이 스탬프를 직접 읽어야 한다(자식의 export 는 안 온다): {line!r}")
+        self.assertIn("build-apk.sh", line, "스탬프를 만드는 스크립트를 그 줄에서 돌려야 한다")
+        # 그리고 업로더가 그 값을 상속받아야 한다 — 같은 셸(앞 줄들의 export)이므로
+        # 업로더를 부르는 줄보다 앞에 있으면 된다.
+        upload_idx = next(i for i, l in enumerate(script) if "deploy-apk.sh" in l)
+        export_idx = next(i for i, l in enumerate(script) if l == line)
+        self.assertLess(export_idx, upload_idx,
+                        "export 가 업로더 호출보다 앞에 있어야 자식이 상속한다")
+
+    def test_the_stamp_handoff_file_is_written_and_read_at_the_same_path(self):
+        """양쪽이 같은 경로를 써야 한다. 한쪽만 바뀌면 배포가 다시 죽는다."""
+        build = (self.CI / "build-apk.sh").read_text(encoding="utf-8")
+        script = self._job_script("app-build")
+        # 쓰는 쪽
+        self.assertIn("> .release/app/build-stamp", build,
+                      "build-apk.sh 가 스탬프를 파일로 남기지 않는다")
+        # 읽는 쪽
+        joined = "\n".join(self._lines_with(script, "export MUPID_NATIVE_BUILD"))
+        self.assertIn(".release/app/build-stamp", joined,
+                      "CI 줄이 그 파일을 읽지 않는다")
+        # 값이 숫자인지 양쪽에서 본다 — 아니면 조용히 빈 값이 간다.
+        self.assertIn('*[!0-9]*', build)
+        self.assertIn("${MUPID_NATIVE_BUILD:?", (self.K8S_CI / "deploy-apk.sh").read_text(encoding="utf-8"))
+
+    def test_the_stamp_really_crosses_that_boundary(self):
+        """경계를 넘어야 하는 값이 무엇인지 실제 파일에서 확인한다.
+
+        시험이 '&& 가 있다' 만 보면, 나중에 스크립트가 export 를 그만둬도 통과한다.
+        한쪽이 export 하고 다른 쪽이 요구하는지를 함께 본다.
+        """
+        build = (self.CI / "build-apk.sh").read_text(encoding="utf-8")
+        upload = (self.K8S_CI / "deploy-apk.sh").read_text(encoding="utf-8")
+        # 왼쪽이 넘기고
+        self.assertIn("export MUPID_NATIVE_BUILD", build)
+        # 오른쪽이 요구한다
+        self.assertIn("${MUPID_NATIVE_BUILD:?", upload)
+
+    def test_the_web_job_does_not_depend_on_a_previous_line(self):
+        """웹 갈래는 스탬프를 **그 줄에서** 만들어 넘기므로 이 함정이 없다.
+
+        같은 이유로 이 job 은 나눠도 안전하다 — 그래서 `deploy-web.sh` 는
+        스탬프를 환경변수로 받지 않고 아카이브와 `web.json` 에서 읽는다.
+        """
+        script = self._job_script("app-web-release")
+        stamp_line = self._lines_with(script, "build-stamp.sh")
+        self.assertEqual(1, len(stamp_line), f"스탬프를 찍는 줄이 하나여야 한다: {stamp_line}")
+        self.assertIn("export", stamp_line[0], "찍은 값을 같은 줄에서 export 해야 한다")
+
+    def test_the_uploaders_do_not_hide_the_remote_reason(self):
+        """업로더는 원격 stderr 를 그대로 보여주고, 알려진 고장은 이름을 붙인다.
+
+        이것이 없으면 job 로그에 `exit code 1` 만 남는다 — 그 숫자는 어느
+        고장인지 말해 주지 않아, 키나 권한을 의심하며 시간을 쓴다. 실제로 그랬다.
+        """
+        for name, receiver in (("deploy-apk.sh", "mupid-receive-apk"),
+                               ("deploy-web.sh", "mupid-receive-web")):
+            with self.subTest(uploader=name):
+                text = (self.K8S_CI / name).read_text(encoding="utf-8")
+                # 원격의 말을 그대로 보여준다.
+                self.assertIn('2>"$err"', text)
+                self.assertIn('cat "$err" >&2', text)
+                # sudoers 누락을 짚어 준다.
+                self.assertIn("RECEIVER_NOT_PERMITTED", text)
+                self.assertIn("a terminal is required", text)
+                self.assertIn(receiver, text)
+
+    def test_the_documented_sudoers_rule_matches_what_the_entrypoint_sudoes(self):
+        """수신기를 부르는 곳은 entrypoint 의 `sudo` 뿐이다. 그 목록과 운영 문서가
+        적은 sudoers 규칙이 어긋나면, 파일만 넣고 권한을 빠뜨린다 — 그것이 이번에
+        라이브에서 실패한 원인이다(`sudo: a password is required`).
+
+        `mupid-receive-index` 는 뺀다. 그 동사는 **다른 노드**로 가고(추천 서버는
+        nodeSelector 로 node-b 에 뜬다) 그쪽 sudoers 를 쓴다. 이 저장소의 k8s
+        노드 문서에 그 규칙을 요구하면 거짓 실패가 된다.
+        """
+        entrypoint = (K8S / "deploy" / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        # `[a-z0-9-]` 여야 한다. `k8s` 의 `8` 을 빼면 `mupid-receive-k` 로 잘려
+        # 엉뚱한 이름을 찾는다.
+        sudoed = sorted(set(re.findall(r"exec sudo (/usr/local/sbin/mupid-receive-[a-z0-9-]+)",
+                                       entrypoint)))
+        self.assertTrue(sudoed, "entrypoint 에서 sudo 호출을 찾지 못했다")
+        self.assertIn("/usr/local/sbin/mupid-receive-web", sudoed,
+                      "upload-web 이 sudo 로 mupid-receive-web 을 부르지 않는다")
+        doc = (K8S / "OPERATIONS-K8S.md").read_text(encoding="utf-8")
+        self.assertIn("NOPASSWD", doc, "운영 문서에 sudoers 등록 절이 없다")
+        for receiver in sudoed:
+            if receiver.endswith("mupid-receive-index"):
+                continue
+            with self.subTest(receiver=receiver):
+                self.assertIn(
+                    receiver, doc,
+                    f"{receiver} 가 운영 문서의 sudoers 절에 없다 — 파일만 넣으면 "
+                    "sudo 가 비밀번호를 요구하며 배포가 실패한다",
+                )
+
+
 class ApkDownloadTest(unittest.TestCase):
     """APK 는 웹 이미지에 굽지 않고 노드의 디렉터리에 두고 nginx 가 읽는다.
     그 사이에 맞아야 하는 것이 넷이고, 하나라도 어긋나면 받는 사람이 404 를
@@ -1503,14 +1640,19 @@ class ApkDownloadTest(unittest.TestCase):
 
     def test_the_forced_command_takes_nothing_but_a_versioned_apk(self):
         """이 엔드포인트는 CI 키로 닿는다. 모양이 하나라도 헐거우면 그 키를
-        훔친 쪽이 다른 일을 할 수 있다."""
+        훔친 쪽이 다른 일을 할 수 있다.
+
+        **인자가 셋이다.** versionCode 는 앱이 "새 APK 가 있나" 를 판단하는
+        유일한 값인데(update.rs), 노드에는 aapt2 가 없고 APK 안 tauri.conf.json
+        의 version 은 `0.1.0` 그대로라 바이트에서 읽어 낼 수 없다(실측).
+        """
         script = (self.DEPLOY / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
         # 패턴 안에 [0-9a-f] 가 있어 ] 로 끊으면 안 된다. 기존
         # DeployEndpointTest 와 같은 방식으로 게으르게 잡는다.
         found = re.search(r"\$command =~ (\^upload-apk.+?) \]\]", script)
         self.assertTrue(found, "upload-apk 를 받는 규칙이 없다")
         pattern = re.compile(found.group(1))
-        good = "upload-apk " + "a" * 40 + " " + "b" * 64
+        good = "upload-apk " + "a" * 40 + " " + "b" * 64 + " 1789725600"
         self.assertTrue(pattern.match(good))
         for bad in (
             good + "; rm -rf /",
@@ -1519,9 +1661,80 @@ class ApkDownloadTest(unittest.TestCase):
             good.replace("b" * 64, "b" * 63),
             "upload-apk",
             "upload-apk ../../etc/passwd " + "b" * 64,
+            # versionCode 가 없으면 앱이 판단할 근거를 잃는다 — 받지 않는다.
+            "upload-apk " + "a" * 40 + " " + "b" * 64,
+            # 숫자가 아니거나 상한을 넘는 값.
+            "upload-apk " + "a" * 40 + " " + "b" * 64 + " abc",
+            "upload-apk " + "a" * 40 + " " + "b" * 64 + " 17897256000",
+            "upload-apk " + "a" * 40 + " " + "b" * 64 + " -1",
         ):
             with self.subTest(command=bad):
                 self.assertIsNone(pattern.match(bad))
+
+    def test_the_sidecar_format_is_what_the_app_parses(self):
+        """수신기가 `mupid.apk.sha256` 에 쓰는 한 줄과, 앱이 그것을 읽는 규칙이
+        같은 모양이어야 한다. 어긋나면 앱이 체크섬 파일을 못 읽고, 그 실패는
+        조용히 "네이티브 갈래를 건너뛴다" 로만 보인다.
+
+        앱 쪽 규칙은 `app/src/update.rs` 의 `parse_checksum_line` 이다:
+        첫 토큰이 소문자 16진수 64자, 둘째 토큰이 `mupid-<커밋>.apk`.
+        """
+        receiver = (self.DEPLOY / "receive-apk.py").read_text(encoding="utf-8")
+        # 쓰는 줄.
+        self.assertIn('digest.write_text(f"{checksum}  mupid-{release}.apk\\n")', receiver)
+        rust = (ROOT / "app" / "src" / "update.rs").read_text(encoding="utf-8")
+        # 읽는 규칙. 두 토큰을 그대로 본다.
+        self.assertIn("pub fn parse_checksum_line", rust)
+        self.assertIn("hex.len() == 64", rust)
+        self.assertIn('(b\'a\'..=b\'f\').contains(&byte)', rust)
+        self.assertIn('let expected = format!("mupid-{}.apk", manifest.commit);', rust)
+        # 앱이 보는 주소가 nginx 가 내려주는 주소와 같아야 한다.
+        self.assertIn('pub const NATIVE_CHECKSUM_PATH: &str = "/download/mupid.apk.sha256";', rust)
+        self.assertRegex(self._nginx(), r"location = /download/mupid\.apk\.sha256 \{")
+
+    def test_the_receiver_refuses_a_version_code_that_goes_backwards(self):
+        """뒤로 가는 versionCode 는 안드로이드가 설치를 거부한다. 한 번 게시되면
+        그 APK 를 받은 **모든 기기에서 안내만 뜨고 설치가 실패한다** — 캐시가
+        남은 러너가 옛 산출물을 다시 올리는 사고가 실제로 가능한 자리다.
+
+        호출자를 믿지 않고 직전 게시본과 맞대어 보는지 확인한다. 이 검사가
+        없으면 수신기는 그냥 덮어쓴다.
+
+        **같은 값은 받는다.** 같은 파이프라인을 재시도하면 스탬프가 커밋 시각에서
+        나오므로 같은 versionCode 가 다시 온다 — 그때 막으면 실패한 job 을 다시
+        돌릴 수 없다. 앱은 "내 것보다 크지 않으면" 안내하지 않으므로 재촉도 없다.
+        """
+        receiver = (self.DEPLOY / "receive-apk.py").read_text(encoding="utf-8")
+        self.assertIn("def published_version_code", receiver)
+        self.assertIn('DOWNLOADS / "native.json"', receiver)
+        self.assertIn("version_code < published", receiver)
+        self.assertNotIn("version_code <= published", receiver,
+                         "같은 값을 막으면 재시도가 안 된다")
+        self.assertIn("다운그레이드", receiver)
+        # 범위도 본다 — gradle 의 require 와 같은 상한이어야 한다.
+        gradle = (ROOT / "app" / "gen" / "android" / "app"
+                  / "build.gradle.kts").read_text(encoding="utf-8")
+        self.assertIn("2_100_000_000", gradle)
+        self.assertIn("VERSION_CODE_MAX = 2_100_000_000", receiver)
+
+    def test_the_receiver_writes_the_manifest_the_app_reads(self):
+        """앱은 "새 APK 가 있나" 를 native.json 의 versionCode 로만 판단한다.
+        이 파일이 없으면 네이티브 갈래가 통째로 죽는다 — 실제로 그 상태였다
+        (라이브 404).
+
+        필드 이름은 `app/src/update.rs` 의 `NativeManifest` 와 1:1 이어야 한다
+        (`rename_all = "camelCase"`). 어긋나면 파싱이 실패하고 그 실패는 조용하다.
+        """
+        receiver = (self.DEPLOY / "receive-apk.py").read_text(encoding="utf-8")
+        self.assertIn('"versionCode": version_code', receiver)
+        self.assertIn('"builtAt": version_code * 1000', receiver)
+        self.assertIn('"apk": "/download/mupid.apk"', receiver)
+        # 매니페스트는 **APK 를 다 놓은 뒤에** 쓴다. 순서가 뒤집히면 앱이 아직
+        # 없는 파일을 가리키는 매니페스트를 읽는다.
+        self.assertLess(receiver.index("pending.replace(DOWNLOADS / \"mupid.apk\")"),
+                        receiver.index('pending_manifest.replace(DOWNLOADS / "native.json")'))
+        # minSdk 는 호출자가 아니라 APK 바이트에서 읽는다.
+        self.assertIn("def min_sdk_of", receiver)
 
     def test_the_receiver_never_takes_a_path_from_the_caller(self):
         """파일 이름에 들어가는 것은 40자 hex 로 검증한 커밋뿐이다."""
@@ -1553,6 +1766,176 @@ class ApkDownloadTest(unittest.TestCase):
             [], [p for p in (ROOT / "app").rglob("*.jks")],
             "키스토어가 작업 트리에 있다",
         )
+
+
+class WebBundleTest(unittest.TestCase):
+    """웹 갈래는 APK 와 **같은 디렉터리**에 얹는다. 새 트리를 만들지 않은 이유는
+    마운트·nginx·수신기 셋을 새로 맞춰야 하고, 그 중 하나가 어긋나면 받는 쪽만
+    404 를 보기 때문이다 — 올린 쪽은 성공했다고 나온다.
+
+    라이브에서 확인한 상태가 이랬다(2026-09-18):
+
+        /download/mupid.apk.sha256 → 200
+        /download/web.json         → 404   ← 앱이 읽어야 하는 매니페스트
+        /download/native.json      → 404
+
+    앱은 그 두 주소를 읽도록 짜여 있는데 서버가 만들지도, 내려주지도 않았다.
+    이 클래스가 그 셋을 맞대어 본다.
+    """
+
+    CI = K8S / "ci"
+    DEPLOY = K8S / "deploy"
+
+    def _nginx(self):
+        return (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
+
+    def _edge_mounts(self):
+        for doc in yaml.safe_load_all(
+                (K8S / "base" / "edge.yaml").read_text(encoding="utf-8")):
+            if doc and doc.get("kind") == "Deployment":
+                return {m["mountPath"] for c in doc["spec"]["template"]["spec"]["containers"]
+                        for m in c.get("volumeMounts", [])}
+        raise AssertionError("edge Deployment 를 찾지 못했다")
+
+    def test_nginx_serves_both_manifests_and_the_bundle(self):
+        """앱이 읽는 주소 셋이 nginx 에 있어야 한다. 하나라도 없으면 그 갈래가
+        통째로 죽고, 증상은 "업데이트가 안 된다" 뿐이다."""
+        conf = self._nginx()
+        for path in ("/download/web.json", "/download/native.json"):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    conf, r"location = " + re.escape(path) + r" \{",
+                    f"nginx 에 {path} 가 없다")
+        # 아카이브는 이름 규칙으로 잡는다. 생성기(web-archive.mjs)가
+        # `web-<builtAt>.tar.gz` 를 만들고 매니페스트의 bundle 이 그 이름이다.
+        self.assertRegex(conf, r"location ~ \^/download/\(\?<bundle>web-\[0-9\]\+\\\.tar\\\.gz\)\$")
+        # alias 가 **이름 있는 캡처 전체**를 써야 한다. regex location 에서
+        # nginx 는 매칭된 접두사를 잘라 내므로, `alias /srv/web/downloads/;` 로
+        # 두면 디렉터리를 가리키게 되어 404 가 난다.
+        self.assertIn("alias /srv/web/downloads/$bundle;", conf)
+
+    def test_the_manifests_are_never_cached_but_the_bundle_may_be(self):
+        """매니페스트가 스위치다. 중간 캐시가 값을 붙들면 새 판을 올려도
+        업데이트가 영영 안 뜬다.
+
+        반대로 아카이브는 **이름에 타임스탬프가 있어 내용이 바뀌지 않으므로**
+        오래 캐시해야 한다 — 그래야 같은 판을 다시 받지 않는다.
+        """
+        conf = self._nginx()
+        for path in ("/download/web.json", "/download/native.json"):
+            with self.subTest(path=path):
+                block = re.search(
+                    r"location = " + re.escape(path) + r" \{.*?\n    \}", conf, re.S)
+                self.assertTrue(block, f"{path} 블록을 찾지 못했다")
+                self.assertIn("no-store", block.group(0))
+        bundle = re.search(r"location ~ \^/download/\(\?<bundle>.+?\n    \}", conf, re.S)
+        self.assertTrue(bundle, "아카이브 location 을 찾지 못했다")
+        self.assertIn("immutable", bundle.group(0))
+
+    def test_the_bundle_is_served_from_the_directory_the_pod_mounts(self):
+        """alias 가 가리키는 곳과 파드가 마운트하는 곳이 다르면 404 다."""
+        served = pathlib.PurePosixPath("/srv/web/downloads")
+        self.assertIn(served.as_posix(), self._edge_mounts())
+
+    def test_the_receiver_writes_where_nginx_reads(self):
+        """수신기의 DOWNLOADS 와 nginx 의 alias, 파드의 마운트가 같은 곳이어야 한다."""
+        receiver = (self.DEPLOY / "receive-web.py").read_text(encoding="utf-8")
+        self.assertIn('DOWNLOADS = ROOT / "downloads"', receiver)
+        self.assertIn("ROOT = pathlib.Path(\"/srv/mupid-k8s\")", receiver)
+
+    def test_the_forced_command_takes_nothing_but_a_versioned_bundle(self):
+        script = (self.DEPLOY / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        found = re.search(r"\$command =~ (\^upload-web.+?) \]\]", script)
+        self.assertTrue(found, "upload-web 를 받는 규칙이 없다")
+        pattern = re.compile(found.group(1))
+        good = "upload-web " + "a" * 40 + " " + "b" * 64
+        self.assertTrue(pattern.match(good))
+        for bad in (good + "; rm -rf /", good + " extra",
+                    good.replace("a" * 40, "A" * 40),
+                    good.replace("b" * 64, "b" * 63), "upload-web",
+                    "upload-web ../../etc/passwd " + "b" * 64):
+            with self.subTest(command=bad):
+                self.assertIsNone(pattern.match(bad))
+
+    def test_the_receiver_never_takes_a_path_from_the_caller(self):
+        """수신기가 파일 이름을 **전개 결과에서 스스로 만든다.** 클라이언트가
+        경로를 정하면 공개 URL 로 아무 파일이나 나가게 만들 수 있다."""
+        receiver = (self.DEPLOY / "receive-web.py").read_text(encoding="utf-8")
+        self.assertIn('RELEASE = re.compile(r"^[0-9a-f]{40}$")', receiver)
+        self.assertIn("if not RELEASE.match(release)", receiver)
+        # 이름은 builtAt 에서 나온다 — 요청이 준 이름이 아니다.
+        self.assertIn('target = DOWNLOADS / f"web-{built_at}.tar.gz"', receiver)
+        # 심볼릭 링크·..·절대경로를 거부한다(receive-front.py 가 정한 규칙).
+        self.assertIn("def safe_extract", receiver)
+        self.assertIn("not member.isfile() and not member.isdir()", receiver)
+        self.assertIn('".." in name.parts', receiver)
+
+    def test_the_manifest_is_written_last(self):
+        """게시 순서: 아카이브 먼저, 매니페스트 나중. 반대로 하면 앱이 아직 없는
+        파일을 가리키는 매니페스트를 읽는다."""
+        receiver = (self.DEPLOY / "receive-web.py").read_text(encoding="utf-8")
+        self.assertIn('"bundle": f"/download/web-{built_at}.tar.gz"', receiver)
+        self.assertLess(receiver.index("archive.replace(target)"),
+                        receiver.index('pending.replace(DOWNLOADS / "web.json")'))
+
+    def test_the_receiver_makes_the_manifest_from_what_it_unpacked(self):
+        """**매니페스트를 아카이브에서 만든다.** 스탬프가 세 곳(아카이브 이름 ·
+        `app/build.json` · `web.json`)에 흩어져 있으면 하나가 어긋나고, 그 증상은
+        "앱이 자기 번들을 계속 다시 받는다" 로만 보인다(설계 12장 10번).
+
+        클라이언트가 보낸 값이 아니라 **전개하면서 센 값**이어야 한다.
+        """
+        receiver = (self.DEPLOY / "receive-web.py").read_text(encoding="utf-8")
+        self.assertIn("def read_built_at", receiver)
+        self.assertIn('if not (tree / ENTRY).is_file()', receiver)
+        # files·expandedBytes 도 전개 결과에서 온다. 앱이 그 값과 대조한다.
+        self.assertIn("files, expanded = safe_extract(archive, tree)", receiver)
+
+    def test_the_receiver_limits_match_the_apps(self):
+        """수신기 상한이 앱보다 느슨하면 앱이 거부할 번들을 공개 URL 에 올려 두게
+        된다 — 증상은 "업데이트가 안 된다" 뿐이다. 좁으면 앱이 받을 수 있는 것을
+        못 올린다. 어느 쪽이든 어긋나면 안 된다.
+        """
+        receiver = (self.DEPLOY / "receive-web.py").read_text(encoding="utf-8")
+        rust = (ROOT / "app" / "src" / "update.rs").read_text(encoding="utf-8")
+        for constant, value in (
+            ("MAX_ARCHIVE_BYTES", "4 * 1024 * 1024"),
+            ("MAX_EXPANDED_BYTES", "24 * 1024 * 1024"),
+            ("MAX_FILES", "2048"),
+            ("MAX_MEMBER_BYTES", "8 * 1024 * 1024"),
+        ):
+            with self.subTest(constant=constant):
+                self.assertIn(f"{constant} = {value}", receiver,
+                              f"receive-web.py 의 {constant} 이 앱과 다르다")
+                self.assertIn(value, rust,
+                              f"app/src/update.rs 에 {constant} = {value} 가 없다")
+
+    def test_the_schema_matches_the_apps(self):
+        """모르는 스키마 값이면 앱이 손대지 않는다 — 아무 일도 일어나지 않는다."""
+        for name, path in (("receive-web.py", self.DEPLOY / "receive-web.py"),
+                           ("receive-apk.py", self.DEPLOY / "receive-apk.py")):
+            with self.subTest(receiver=name):
+                self.assertIn("SCHEMA = 1", path.read_text(encoding="utf-8"))
+        rust = (ROOT / "app" / "src" / "update.rs").read_text(encoding="utf-8")
+        self.assertIn("pub const SCHEMA: u32 = 1;", rust)
+
+    def test_the_uploader_checks_the_edge_before_it_reports_success(self):
+        """수신기가 성공했다고 해도 nginx location 이나 마운트가 어긋나 있으면
+        앱은 404 를 받는다. 그건 올린 사람이 먼저 겪어야 한다 — deploy-apk.sh 가
+        이미 그렇게 한다."""
+        uploader = (self.CI / "deploy-web.sh").read_text(encoding="utf-8")
+        self.assertIn("/download/web.json", uploader)
+        self.assertIn("exit 65", uploader)
+        # 아카이브 자체도 받아 본다 — 매니페스트만 맞고 파일이 404 인 경우가 있다.
+        self.assertIn('"$base$bundle"', uploader)
+        # 스탬프 셋(이름·builtAt·sha256)이 같은지 미리 본다.
+        self.assertIn('"web-$built_at.tar.gz"', uploader)
+        self.assertIn("web.json 의 sha256 과 아카이브가 다르다", uploader)
+
+    def test_the_uploader_is_reachable_from_the_pipeline_it_documents(self):
+        """문서화한 호출(`sh infra_k8s/ci/deploy-web.sh`)이 실제 파일과 맞는지."""
+        self.assertTrue((self.CI / "deploy-web.sh").is_file())
+        self.assertTrue(os.access(self.CI / "deploy-web.sh", os.R_OK))
 
 
 class AiServerDeployTest(unittest.TestCase):

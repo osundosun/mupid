@@ -156,6 +156,7 @@ export function TrackRow({
   // 여러 곡 고르기. onSelect가 오면 체크 박스가 붙고 나머지 버튼은 잠시 물러난다.
   selected = false,
   onSelect,
+  playingOverride,
   /*
    * 체크 박스를 줄 **안에** 그릴지. 재생 목록처럼 줄 앞에 이미 자리(끌기 손잡이
    * 칸)가 있는 곳에서는 끈다 — 그 칸에 체크를 넣으면 커버와 제목이 제자리를
@@ -173,8 +174,10 @@ export function TrackRow({
   selected?: boolean;
   onSelect?: () => void;
   showCheck?: boolean;
+  /** 곡 재생 상태와 별개인 전용 재생 버튼이 필요할 때 사용한다. */
+  playingOverride?: boolean;
 }) {
-  const playing = m.playing && m.active?.id === track.id;
+  const playing = playingOverride ?? (m.playing && m.active?.id === track.id);
   const picking = !!onSelect;
   return (
     <article
@@ -277,7 +280,9 @@ export function Waveform({
   return (
     <div className={`waveform ${compact ? 'compact' : ''}`} aria-hidden="true">
       {Array.from({ length: count }, (_, i) => {
-        const second = (i / count) * duration;
+        // 막대의 왼쪽 끝이 아니라 중앙 시각으로 색을 판정한다. 그래야 백분율로
+        // 그린 구간 오버레이의 양 끝과 분홍 막대 경계가 같은 눈금에 맞는다.
+        const second = ((i + 0.5) / count) * duration;
         // Smooth neighboring bars into an irregular envelope instead of repeating spikes.
         const noise = (index: number) => {
           const value = Math.sin(index * 127.1 + duration * 0.13) * 43758.5453;

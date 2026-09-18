@@ -1,6 +1,6 @@
 'use client';
 import { MupidMascot } from './mascot';
-import { ArrowUp, LoaderCircle, Sparkle, Sparkles, X } from 'lucide-react';
+import { ArrowUp, LoaderCircle, Sparkle, X } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { useKeyboardInset } from '@/hooks/use-keyboard-inset';
 import { chatSuggestions, formatTime } from '@/lib/mupid-data';
@@ -43,7 +43,7 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
     >
       <header className="chat-header">
         <span className="chat-symbol">
-          <Sparkles />
+          <Sparkle />
         </span>
         <div>
           <h2>

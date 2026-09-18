@@ -124,7 +124,7 @@
      to shrink and its play button was clipped by the card edge. */
   .mupid-shell .saved-moment { min-width:0; }
   .mupid-shell .saved-moment .track-row { gap:8px; }
-  .mupid-shell .saved-moment .track-info .moment-meta { white-space:normal; word-break:keep-all; font-size:14px; }
+  .mupid-shell .saved-moment-detail-section .moment-meta { font-size:15px; }
   /* The track-detail arrow on a result card drew at 30px; widen the hit area
      to 44px without moving the icon. */
   .mupid-shell .keyword-card-copy button::after { content:''; position:absolute; inset:-7px; }
@@ -374,6 +374,20 @@
 .mupid-shell .sky-tabs [role='tab'] {
   flex: 0 0 auto;
   white-space: nowrap;
+}
+@media (max-width: 1199px) {
+  .mupid-shell .collection-page .sky-tabs > [role='tablist'] {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    overflow: visible;
+  }
+  .mupid-shell .collection-page .sky-tabs [role='tab'] {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+    justify-content: center;
+  }
 }
 @media (max-width: 767px) {
   .mupid-shell .sky-tabs > [role='tablist'] { gap: 0; }
@@ -1777,16 +1791,84 @@
 .moment-wave-surface { position: relative; min-width: 0; padding: 16px 0; touch-action: pan-y; }
 .moment-wave-surface .waveform { width: 100%; margin: 0; }
 .moment-wave-selection { position: absolute; top: 8px; bottom: 8px; background: #e78bb817; border-inline: 1px dashed #dc82ad; pointer-events: none; }
+/* 함께 고른 나머지 구간. 손보는 구간(분홍)과 구별되게 옅고 손잡이가 없다. */
+.moment-wave-selection.is-secondary { background: #8fb0e01a; border-inline: 1px dotted #a9c3e6; pointer-events: none; }
 .moment-wave-handle { position: absolute; top: 0; bottom: 0; width: 32px; padding: 0; transform: translateX(-50%); background: transparent; border: 0; touch-action: none; cursor: ew-resize; z-index: 2; }
 .moment-wave-handle span { position: absolute; left: 14px; top: 8px; bottom: 8px; width: 4px; border-radius: 3px; background: #dd82ad; }
 .moment-wave-handle:focus-visible { outline: 2px solid #789aca; border-radius: 8px; }
 .moment-wave-help { font-size: 12px; line-height: 1.5; color: #899db8; text-align: center; margin: 8px 0; }
+
+/* 상단은 곡 정보와 조작, 하단은 선택한 순간명과 수정 동작으로 분리한다. */
+.mupid-shell .collection-page .track-list:has(> .saved-moment) { gap: 12px; }
+.mupid-shell .saved-moment > .track-row { padding-bottom: 8px; }
+.mupid-shell .saved-moment-detail-section { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 0 12px 10px; }
+.mupid-shell .saved-moment-detail-section .moment-meta { display: block; flex: 1; min-width: 0; color: #cb648f; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mupid-shell .saved-moment-detail-section .text-link { flex-shrink: 0; margin: 0; padding-right: 2px; }
+.mupid-shell .saved-moment:hover > .track-row,
+.mupid-shell .saved-moment:hover > .saved-moment-detail-section { background: var(--surface-hover); }
+@media (min-width: 1200px) {
+  .mupid-shell .saved-moment > .track-row {
+    padding-inline: 16px;
+  }
+  .mupid-shell .saved-moment > .saved-moment-detail-section {
+    padding-inline: 16px;
+  }
+  .mupid-shell .saved-moment:hover > .track-row {
+    border-radius: 16px 16px 0 0;
+  }
+  .mupid-shell .saved-moment:hover > .saved-moment-detail-section {
+    border-radius: 0 0 16px 16px;
+  }
+}
+@media (max-width: 1199px) {
+  .mupid-shell .saved-moment > .track-row {
+    align-items: center;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  .mupid-shell .saved-moment:hover > .track-row { background: #ffffffb8; }
+  .mupid-shell .saved-moment:hover > .saved-moment-detail-section { background: transparent; }
+}
+.mupid-shell .saved-moment-expand[aria-expanded='true'] { color: #fff; background: #628bd0; border-color: #628bd0; }
+.mupid-shell .saved-moment .track-row > .icon-button:hover { background: #dfeaff; border-color: #cadbf3; }
+.mupid-shell .saved-moment .track-row > .saved-moment-expand:hover { background: #d8e7ff; }
+.mupid-shell .saved-moment .track-row > .saved-moment-expand[aria-expanded='true']:hover { background: #4f78bd; border-color: #4f78bd; }
+.mupid-shell .saved-moment-composite-icon { position: relative; display: flex; align-items: center; justify-content: center; gap: 1px; width: 24px; height: 22px; color: currentColor; }
+.mupid-shell .saved-moment-bracket { display: block; font-family: ui-monospace, monospace !important; font-size: 17px; font-weight: 700; line-height: 1; transform: translateY(-1px); }
+.mupid-shell .saved-moment-mini-wave { display: flex; align-items: center; gap: 1px; height: 13px; }
+.mupid-shell .saved-moment-mini-wave > i { display: block; width: 1.5px; border-radius: 2px; background: currentColor; }
+.mupid-shell .saved-moment-mini-wave > i:nth-child(1),
+.mupid-shell .saved-moment-mini-wave > i:nth-child(5) { height: 5px; }
+.mupid-shell .saved-moment-mini-wave > i:nth-child(2),
+.mupid-shell .saved-moment-mini-wave > i:nth-child(4) { height: 9px; }
+.mupid-shell .saved-moment-mini-wave > i:nth-child(3) { height: 13px; }
+.mupid-shell .saved-moment-composite-icon > svg:last-child { position: absolute; right: -3px; bottom: -2px; width: 11px; height: 11px; padding: 2px; border-radius: 50%; background: #628bd0; color: #fff; box-shadow: 0 0 0 1.5px #f8fbff; }
+.mupid-shell .saved-moment-player { margin-top: 8px; padding: 16px; border: 1px solid #e3ebf7; border-radius: 16px; background: #f8fbff; box-shadow: 0 12px 34px #5b7eaa12; }
+.mupid-shell .saved-moment-parts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.mupid-shell .saved-moment-part { display: flex; align-items: stretch; overflow: hidden; border: 1px solid #dbe6f5; border-radius: 12px; background: #fff; }
+.mupid-shell .saved-moment-part > button:first-child { display: flex; align-items: center; gap: 7px; min-height: 42px; padding: 8px 10px; border: 0; background: transparent; color: #5676a8; }
+.mupid-shell .saved-moment-part > button:first-child:hover { background: #e7effc; }
+.mupid-shell .saved-moment-part > button:first-child.is-focused { color: #a94e7b; background: #fff0f7; }
+.mupid-shell .saved-moment-part > button:first-child.is-focused:hover { background: #ffe4f1; }
+.mupid-shell .saved-moment-part svg { width: 15px; height: 15px; }
+.mupid-shell .saved-moment-part small { color: #8497b3; font-size: 12px; font-variant-numeric: tabular-nums; }
+.mupid-shell .saved-moment-wave { position: relative; display: block; width: 100%; padding: 12px 0; border: 0; background: transparent; }
+.mupid-shell .saved-moment-wave .waveform { width: 100%; margin: 0; gap: .5px; overflow: hidden; pointer-events: none; }
+.mupid-shell .saved-moment-wave .waveform > i { flex: 1 1 0; min-width: 0; max-width: none; }
+.mupid-shell .saved-wave-hit { position: absolute; z-index: 3; inset: 0; width: 100%; border: 0; background: transparent; border-radius: 8px; }
+.mupid-shell .saved-wave-range { position: absolute; top: 7px; bottom: 7px; border-radius: 5px; background: #7da3dc1f; border: 1px solid #90add5; pointer-events: none; }
+.mupid-shell .saved-wave-range.is-focused { z-index: 1; background: #e487b53b; border-color: #d36c9e; }
+.mupid-shell .saved-wave-playhead { position: absolute; z-index: 2; top: 4px; bottom: 4px; width: 2px; border-radius: 2px; background: #355f9f; box-shadow: 0 0 0 2px #fff9; pointer-events: none; }
+.mupid-shell .saved-moment-time { display: flex; justify-content: space-between; color: #7c91af; font-size: 12px; font-variant-numeric: tabular-nums; }
 @media (max-width: 767px) {
   .mupid-shell .moment-page .moment-editor { padding: 12px 16px; }
   .moment-wave-surface .waveform { gap: .5px; height: 88px; }
   .moment-wave-surface .waveform > i { flex: 1 1 0; min-width: 0; max-width: none; }
   .mupid-shell .moment-page .moment-part-row { min-width: 0; }
   .mupid-shell .moment-page .moment-part-row > button:first-child { min-width: 0; flex-wrap: wrap; gap: 8px; }
+  .mupid-shell .saved-moment-player { padding: 14px 12px; }
+  .mupid-shell .saved-moment-part { width: 100%; }
+  .mupid-shell .saved-moment-part > button:first-child { flex: 1; justify-content: flex-start; }
 }
 
 .playlist-play-all { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 22px; border: 0; border-radius: 24px; font-size: 15px; font-weight: 600; }

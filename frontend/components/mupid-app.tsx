@@ -93,6 +93,10 @@ export function MupidApp() {
   // 시스템 바가 가리는 자리를 CSS 에 건넨다. 곡을 받기 전 화면도 상태바 밑으로
   // 들어가면 안 되므로 여기, 가장 바깥에서 한 번만 건다.
   useEffect(() => watchSafeArea(), []);
+  // 업데이트 확인은 **여기서 하지 않는다.** `UpdatePrompt`(`app/layout.tsx`)가
+  // 스스로 한다 — 그 컴포넌트는 로그인 전에도 떠야 하는데(`(music)` 밖) 이
+  // 훅은 인증 뒤에만 돌기 때문이다. 두 곳에 두면 매니페스트를 중복으로 받는다.
+  // 웹 갈래(번들 활성화)도 `checkForUpdates` 안에 있으므로 그대로 함께 돈다.
   useEffect(() => {
     // 같은 계정 몫을 이미 받아 뒀으면 그대로 쓴다. 화면을 옮길 때마다 카탈로그를
     // 다시 받으면 그동안 로딩 화면이 뜨고 재생이 끊긴다. 계정이 바뀌었을 때는
@@ -343,6 +347,8 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
       )}
       <AppDialogs model={m} />
       <ArtistInfo model={m} />
+      {/* 업데이트 안내는 여기 없다 — `app/layout.tsx`(root)로 옮겼다.
+          인증 뒤에만 도는 이 트리 안에 두면 로그인 전 사용자가 새 판을 못 본다. */}
       <DemoLoginDialog model={m} />
       {m.toast && <output className="app-toast">{m.toast}</output>}
     </div>

@@ -143,13 +143,13 @@ def test_seed_pipeline_end_to_end():
         # ── (d) 내보내기 → id_map
         tsv = workdir / "sections.tsv"
         export = se.mysql(
-            "SELECT SUBSTRING_INDEX(s.external_id,'|',-1) AS source_section_uid, "
-            "s.music_section_analysis_id AS music_section_id, "
+            "SELECT SUBSTRING_INDEX(s.external_id,'|',-1) AS external_id, "
+            "s.music_section_analysis_id, "
             "SUBSTRING_INDEX(SUBSTRING_INDEX(s.external_id,'|',-1),'#',1) AS source_track_id, "
             "m.music_id "
             "FROM music_section_analysis s JOIN music m ON m.music_id = s.music_id "
             f"WHERE s.external_id LIKE {se.sql_str(run_id + '|%')}")
-        header = "source_section_uid\tmusic_section_id\tsource_track_id\tmusic_id\n"
+        header = "external_id\tmusic_section_analysis_id\tsource_track_id\tmusic_id\n"
         tsv.write_text(header + export, encoding="utf-8")
         assert run_tool("ai_server.tools.build_id_map", str(tsv),
                         env=env).returncode == 0

@@ -68,10 +68,7 @@ public class EmailServiceImpl implements EmailService {
         }
         if (!mupidClientWebsite.isBlank()) {
             /* 메일 헤더 로고. 웹사이트 주소가 없으면 템플릿이 글자 워드마크로 대체합니다. */
-            variables.put("logoUrl", UriComponentsBuilder.fromUriString(mupidClientWebsite)
-                .path(MAIL_LOGO_PATH)
-                .encode()
-                .toUriString());
+            variables.put("logoUrl", buildMailLogoUrl(mupidClientWebsite));
         }
         String mailBody = templateService.buildHtml(purpose.getMailTemplate(), variables);
         String subject = "[뮤피드] %s".formatted(purpose.getMailTitle());
@@ -128,6 +125,15 @@ public class EmailServiceImpl implements EmailService {
             token_sequence[index] = RANDOM_CHAR_TABLE[pos];
         }
         return String.valueOf(token_sequence);
+    }
+
+    static String buildMailLogoUrl(String websiteUrl) {
+        return UriComponentsBuilder.fromUriString(websiteUrl)
+            .replacePath(MAIL_LOGO_PATH)
+            .replaceQuery(null)
+            .fragment(null)
+            .encode()
+            .toUriString();
     }
 
 }

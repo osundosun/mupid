@@ -46,6 +46,50 @@ ANDROID_KEYSTORE_BASE64=$(read_value ANDROID_KEYSTORE_BASE64)
 # 앱이 붙을 주소는 컴파일 시점에 박힌다(app/src/config.rs 의 option_env!).
 [ -n "$MUPID_API_ORIGIN" ] && export MUPID_API_ORIGIN
 
+# ── 빌드 타임스탬프가 곧 버전이다 ──────────────────────────────────
+# semver 를 쓰지 않는다(`tauri.conf.json` 의 version 은 0.1.0 그대로 둔다).
+# 두 소비자가 **같은 값**을 봐야 한다.
+#
+#   gradle  `build.gradle.kts` 가 `versionCode` 를 이 값에서 유도한다(/1000).
+#   Rust    `option_env!("MUPID_NATIVE_BUILD")` 로 읽어
+#           `local_version_code()` 와 `local_web_build()` 를 만든다.
+#
+# 한쪽만 새 값이면 "gradle 이 아는 버전" 과 "앱이 아는 버전" 이 어긋나고,
+# 증상은 "업데이트 안내가 안 뜬다" 뿐이다. 한 번 정해 양쪽에 넘긴다.
+#
+# 값을 만드는 규칙은 `build-stamp.sh` 한 곳에 있다 — 웹 번들 job 이 **같은
+# 스크립트**를 부른다. 두 곳에 복사해 두면 언젠가 어긋난다(설계 12장 10번).
+#
+# 두 변수를 **둘 다** export 한다. 웹 쪽(`web-archive.mjs` · `update.rs` 의
+# `embedded_web_build`)이 보는 이름이 `MUPID_WEB_BUILD` 이고, 값의 출처는
+# 하나여야 한다(설계 6.2).
+MUPID_NATIVE_BUILD=${MUPID_NATIVE_BUILD:-$(sh infra/ci/build-stamp.sh)}
+case "$MUPID_NATIVE_BUILD" in
+  ''|*[!0-9]*) echo "MUPID_NATIVE_BUILD 가 숫자가 아니다: $MUPID_NATIVE_BUILD" >&2; exit 64 ;;
+esac
+export MUPID_NATIVE_BUILD
+# 웹 갈래가 보는 이름. **같은 값**이다 — APK 에 임베드되는 번들의 나이가 곧
+# 이 APK 의 나이다. 다르면 새 APK 를 설치한 직후 그 앱이 자기 번들을 다시 받는다.
+MUPID_WEB_BUILD=$MUPID_NATIVE_BUILD
+export MUPID_WEB_BUILD
+
+# ── 값의 출처를 **파일로도** 남긴다 ────────────────────────────────
+# `export` 는 **이 스크립트의 자식**에게만 간다. 부모 셸(CI)에는 오지 않으므로,
+# 다음 줄에서 도는 `deploy-apk.sh` 는 이 값을 볼 수 없다.
+#
+# 이걸 두 번 밟았다.
+#   1) CI 가 두 줄로 나눠 돌려서 (5ee8c4 로 `&&` 연결)
+#   2) 그래도 안 됐다 — `sh build-apk.sh` 자체가 **자식 프로세스**라
+#      그 안의 export 가 부모로 올라오지 않는다. `&&` 는 두 번째 문제를 못 고쳤다.
+#
+# 그래서 CI 가 읽을 수 있는 자리에 파일로 남긴다. CI 줄은
+#   `MUPID_NATIVE_BUILD=$(cat .release/app/build-stamp)` 로 값을 얻는다.
+# 파일 이름을 바꾸면 `infra_k8s/tests` 의 `BuildStampHandoffTest` 가 깨진다.
+mkdir -p .release/app
+printf '%s\n' "$MUPID_NATIVE_BUILD" > .release/app/build-stamp
+printf '빌드 스탬프 %s (versionCode %s)\n' \
+  "$MUPID_NATIVE_BUILD" "$((MUPID_NATIVE_BUILD / 1000))"
+
 : "${ANDROID_KEYSTORE_BASE64:?MUPID_APP_ENV 에 ANDROID_KEYSTORE_BASE64 가 없다}"
 : "${ANDROID_KEYSTORE_PASSWORD:?MUPID_APP_ENV 에 ANDROID_KEYSTORE_PASSWORD 가 없다}"
 : "${ANDROID_KEY_ALIAS:?MUPID_APP_ENV 에 ANDROID_KEY_ALIAS 가 없다}"

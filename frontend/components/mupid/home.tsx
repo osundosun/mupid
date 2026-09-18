@@ -10,7 +10,7 @@ import {
   ChevronRight,
   Cloud,
   Heart,
-  Sparkles,
+  Sparkle,
 } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { Heading, TrackRow, Waveform, PlayerControls } from './primitives';
@@ -112,7 +112,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
               다음 음악을 함께 찾아요.
             </p>
             <button className="secondary-button wide" onClick={m.openChat}>
-              <Sparkles />
+              <Sparkle />
               Mupid AI와 대화하기
             </button>
           </section>

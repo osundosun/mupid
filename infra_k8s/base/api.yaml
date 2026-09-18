@@ -58,6 +58,8 @@ spec:
               valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_S3_ENDPOINT}}
             - name: MUPID_S3_BUCKET
               valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_S3_BUCKET}}
+            - name: MUPID_CLIENT_WEBSITE
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_CLIENT_WEBSITE}}
             - name: MUPID_GMAIL_SEND_ADDRESS
               valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_GMAIL_SEND_ADDRESS}}
             # LLM 게이트웨이 키. 이것이 비면 /api/v1/ai/chat 이 503 이다.

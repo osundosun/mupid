@@ -35,6 +35,203 @@ ssh -i <key> mupid-deploy-k8s@j15a204.p.ssafy.io \
   "deploy-k8s api $sha $checksum" < image.tar.gz
 ```
 
+## 앱과 웹 번들 내려주기
+
+컨테이너 이미지와 **다른 경로**다. 여기서는 클러스터를 건드리지 않고 파일 몇 개를
+`/srv/mupid-k8s/downloads` 에 놓기만 한다. 엣지 파드가 그것을 readOnly 로 마운트해
+nginx 가 `/download/` 로 내려준다.
+
+```
+deploy-apk.sh   →  upload-apk <커밋> <sha256> <versionCode>   →  receive-apk.py
+deploy-web.sh   →  upload-web <커밋> <sha256>                 →  receive-web.py
+```
+
+| 내려주는 것 | 주소 | 캐시 | 누가 읽나 |
+| --- | --- | --- | --- |
+| APK (심볼릭 링크) | `/download/mupid.apk` | `no-store` | 사용자 브라우저, 앱 |
+| APK 체크섬 | `/download/mupid.apk.sha256` | `no-store` | `deploy-apk.sh` 자신 |
+| **네이티브 매니페스트** | `/download/native.json` | `no-store` | 앱 — "새 APK 가 있나" |
+| **웹 매니페스트** | `/download/web.json` | `no-store` | 앱 — "새 번들이 있나" |
+| 웹 번들 (내용 주소) | `/download/web-<builtAt>.tar.gz` | `immutable` | 앱 |
+
+**매니페스트가 스위치다.** 아카이브와 APK 가 다 올라가고 체크섬까지 맞은 다음에야
+바뀐다. 그 순서가 뒤집히면 앱이 아직 없는 파일을 가리키는 매니페스트를 읽는다.
+반대로 번들 아카이브는 이름에 빌드 시각이 들어가 내용이 바뀌지 않으므로 오래
+캐시해도 된다 — 그래야 같은 판을 다시 받지 않는다.
+
+### 두 갈래가 무엇을 바꾸나
+
+앱은 **빌드 타임스탬프**를 버전으로 쓴다(semver 를 쓰지 않는다).
+
+| 갈래 | 판단 | 사용자가 하는 일 |
+| --- | --- | --- |
+| 웹 | `builtAt` 이 **다르면** 교체 | 없음 — 다음 콜드 스타트에 적용된다 |
+| 네이티브 | `versionCode` 가 **클 때만** 안내 | 설치 |
+
+웹 번들은 코드 자산만 담는다(이미지·폰트는 APK 안 임베드가 채운다). 그래서
+39MB 가 332KB 가 된다 — 실측. 그게 성립하는 근거는 **파일 이름이 고정**이라는
+것이고(내용 해시가 붙은 파일이 없다), 같은 사실이 캐시 위험도 만든다.
+
+두 값은 CI 가 `infra/ci/build-stamp.sh` 한 곳에서 만들어 넘긴다. **job 이 다르므로
+같은 출처를 써야 한다** — `date` 로 하면 웹과 APK 의 짝이 어긋나고, 증상은 "새 APK
+를 설치한 직후 그 앱이 자기 번들을 다시 받는다" 뿐이다.
+
+### 손으로 올릴 때
+
+```bash
+# 웹 번들. **순서를 바꾸면 안 된다** — 아래를 본다.
+export MUPID_WEB_BUILD=$(sh infra/ci/build-stamp.sh)
+npm --prefix frontend ci
+npm --prefix frontend run build:static
+npm --prefix frontend run build:archive
+sh infra_k8s/ci/deploy-web.sh
+
+# APK. 스크립트가 스탬프를 정하고 versionCode 까지 만들어 넘긴다.
+sh infra/ci/build-apk.sh          # MUPID_APP_ENV(키스토어)가 있어야 한다
+sh infra_k8s/ci/deploy-apk.sh
+```
+
+**`build:static` 을 `build:archive` 보다 먼저 돌려야 한다.** vinext 는 outDir
+(`frontend/dist`)를 통째로 `rmSync` 하고(`node_modules/vinext/dist/build/clean-output.js`),
+`dist/update` 가 그 안에 있다. 아카이브를 먼저 만들면 프론트를 굽는 순간 사라진다.
+그리고 아카이브는 `dist/client` 를 입력으로 읽으므로 프론트가 먼저 서 있어야 한다.
+
+**같은 이유로 `cd app && cargo test` 를 프론트 빌드보다 먼저 돌리면 안 된다.**
+`cargo tauri android build` 는 `beforeBuildCommand` 로 `build:static` 을 부르고,
+그것이 `dist/update` 를 지운다. 그러면 왕복 시험(`the_real_generated_archive_activates`)
+이 조용히 건너뛰어진다 — 겉으로는 초록인데 실제로는 아무것도 확인하지 않은 상태다.
+프론트를 굽고 아카이브까지 만든 **뒤에** `cargo test` 를 돌린다(CI 의
+`app-web-release` 가 그 순서다).
+
+두 스크립트 모두 **엣지에서 실제로 내려받히는지 확인한 뒤에** 성공을 보고한다.
+수신기가 성공했다고 해도 nginx location 이나 마운트가 어긋나 있으면 404 가 나고,
+그건 받는 사람이 아니라 올린 사람이 먼저 겪어야 한다.
+
+### 안 될 때
+
+| 증상 | 먼저 볼 곳 |
+| --- | --- |
+| `/download/web.json` 이 404 | nginx ConfigMap 이 갱신됐는지, `/srv/web/downloads` 마운트 |
+| 매니페스트는 맞는데 아카이브가 404 | 아카이브 location 의 이름 규칙(`web-<숫자>.tar.gz`) |
+| 앱이 업데이트를 못 본다 | 매니페스트가 `no-store` 인지 — 중간 캐시가 붙들면 영영 안 뜬다 |
+| 설치 안내만 뜨고 설치가 실패 | `versionCode` 가 뒤로 갔는지. 안드로이드가 다운그레이드를 거부한다 |
+| 업데이트가 반영 안 됨 | 앱은 **다음 콜드 스타트**에 적용한다 — 재생을 끊지 않으려고 일부러 그렇게 두었다 |
+
+수신기를 새로 설치할 때는 `infra_k8s/deploy/` 의 스크립트를 `/usr/local/sbin/` 에
+넣고(`mupid-receive-web` 이 새로 늘었다), `ssh-entrypoint-k8s.sh` 를 갱신한다.
+`upload-web` 갈래가 없으면 그 명령은 `Only versioned k8s deployment uploads are
+accepted` 로 거절된다 — 두 업로더가 그 경우를 `UPLOADER_UPGRADE_REQUIRED` 로 짚어 준다.
+
+### 노드에 수신기 설치하기 (사람이 한다)
+
+**설치하지 않으면 배포 job 이 실패한다.** 두 업로더가 노드에 없는 것/옛것을 부르기
+때문이다. 자동화할 수 없다 — `receive-manifests.py` 의 `ALLOWED` 가
+`infra_k8s/{base,overlays}` 뿐이라 `deploy/` 를 실어 보낼 통로가 없다. 그건 root 로
+도는 코드를 실어 보낼 통로를 여는 일이고, `receive-manifests.py` 자신이 그 이유를
+적어 두었다.
+
+`j15a204.p.ssafy.io` 에 **root 로** 들어갈 수 있는 사람이 한다. `sudo` 가 필요하다.
+
+```bash
+# 1. 파일을 노드로 보낸다 (임시 자리)
+scp infra_k8s/deploy/{ssh-entrypoint-k8s.sh,receive-apk.py,receive-web.py} \
+  <user>@j15a204.p.ssafy.io:/tmp/mupid-receivers/
+
+# 2. 노드에서 — 문법 확인 → 백업 → 설치
+ssh <user>@j15a204.p.ssafy.io
+sudo -i
+cd /tmp/mupid-receivers
+bash -n ssh-entrypoint-k8s.sh                     # 셸 문법
+python3 -m py_compile receive-apk.py receive-web.py   # 파이썬 문법
+
+# 되돌릴 수 있게 먼저 백업한다. DEPLOYMENT-CONTRACT.md 가 쓰는 방식과 같다.
+backup=$(mktemp -d /srv/mupid-k8s/receivers-before-$(date +%Y%m%d).XXXXXX)
+cp -a /usr/local/sbin/mupid-ssh-entrypoint-k8s /usr/local/sbin/mupid-receive-apk \
+      "$backup/" 2>/dev/null || true
+printf '백업: %s\n' "$backup"
+
+install -o root -g root -m 755 ssh-entrypoint-k8s.sh /usr/local/sbin/mupid-ssh-entrypoint-k8s
+install -o root -g root -m 755 receive-apk.py        /usr/local/sbin/mupid-receive-apk
+install -o root -g root -m 755 receive-web.py        /usr/local/sbin/mupid-receive-web
+ls -l /usr/local/sbin/mupid-ssh-entrypoint-k8s /usr/local/sbin/mupid-receive-*
+```
+
+#### sudo 권한도 함께 넣어야 한다 (파일만으로는 부족하다)
+
+**이것을 빠뜨리면 배포가 `sudo: a password is required` 로 죽는다.** 실제로 그렇게
+실패했다(master, 2026-09-18, `app-web-release`).
+
+수신기는 entrypoint 가 `sudo` 로 부르는데, 배포 계정은 셸도 비밀번호도 없다
+(`no-pty`). 그래서 **수신기마다 sudoers 규칙 한 줄**이 있어야 한다. 파일을
+`/usr/local/sbin/` 에 넣는 것과 그 계정이 그것을 실행하도록 허용하는 것은 **다른
+일**이다.
+
+`entrypoint` 가 `sudo` 로 부르는 수신기 전부에 규칙이 있어야 한다:
+
+```
+/usr/local/sbin/mupid-receive-k8s         ← /etc/sudoers.d/mupid-deploy-k8s
+/usr/local/sbin/mupid-receive-apk         ← /etc/sudoers.d/mupid-deploy-apk
+/usr/local/sbin/mupid-receive-web         ← /etc/sudoers.d/mupid-deploy-web   (이번에 늘었다)
+/usr/local/sbin/mupid-receive-env         ← /etc/sudoers.d/mupid-deploy-env
+/usr/local/sbin/mupid-receive-manifests   ← /etc/sudoers.d/mupid-deploy-manifests
+```
+
+`/usr/local/sbin/mupid-receive-index` 는 여기 없다 — 그 동사는 **다른 노드**(추천
+서버가 뜨는 node-b)로 가고 그쪽 sudoers 를 쓴다.
+
+없는 것만 넣는다. 새로 넣을 것은 이번의 `mupid-receive-web` 하나다:
+
+```bash
+# 노드에서, root 로
+printf '%s\n' \
+  'mupid-deploy-k8s ALL=(root) NOPASSWD: /usr/local/sbin/mupid-receive-web' \
+  | install -o root -g root -m 440 /dev/stdin /etc/sudoers.d/mupid-deploy-web
+
+# **반드시 문법을 검사한다.** sudoers 가 깨지면 sudo 자체가 막혀 배포가 전부
+# 멈춘다 — 이 검사가 그것을 막는다.
+visudo -c
+```
+
+기존 규칙의 모양과 권한을 그대로 따른다(`440`, 파일 이름이 곧 대상):
+
+```bash
+ls -l /etc/sudoers.d/
+grep -H . /etc/sudoers.d/*
+```
+
+#### 설치가 됐는지 확인
+
+**`upload-web` 이 강제 명령을 지나 수신기까지 닿는지**를 본다. 일부러 깨진
+체크섬을 보내면 된다 — 강제 명령이 거절하면 `Only versioned...`, 통과하면 수신기가
+`Empty upload` 로 답한다. 두 문구가 갈리므로 어느 쪽인지 분명해진다.
+
+```bash
+# CI 키로 (저장소가 있는 곳에서)
+ssh -i <배포키> mupid-deploy-k8s@j15a204.p.ssafy.io \
+  "upload-web $(git rev-parse HEAD) $(printf '0%.0s' {1..64})" < /dev/null
+```
+
+| 나오는 것 | 뜻 |
+| --- | --- |
+| `Only versioned k8s deployment uploads are accepted` | **설치가 안 됐다.** entrypoint 가 `upload-web` 자체를 모른다 |
+| 그 밖에 **수신기가 내는 문구** (`Empty upload` 등) | **설치됐다.** 강제 명령을 지나 수신기까지 닿았다 |
+
+판정 기준은 **entrypoint 의 거절 문구가 나오는지** 하나다. 수신기가 무엇을 답하든
+(빈 입력·체크섬 불일치·versionCode 역행) 그건 강제 명령을 통과했다는 뜻이고,
+우리가 확인하려는 것이 바로 그것이다. 같은 방법으로 `upload-apk` 의 3인자 모양도 본다.
+
+```bash
+ssh -i <배포키> mupid-deploy-k8s@j15a204.p.ssafy.io \
+  "upload-apk $(git rev-parse HEAD) $(printf '0%.0s' {1..64}) 1789704065" < /dev/null
+```
+
+여기서 `Empty upload` 가 아니라 `versionCode 가 뒤로 간다` 가 나온다면 **설치는 된
+것이다** — 그 문구는 수신기가 이미 게시본과 비교하고 있다는 뜻이다.
+
+되돌리려면 백업한 파일을 같은 자리에 `install` 한다. **옛 entrypoint 로 되돌리면
+새 업로더도 함께 되돌려야 한다** — 둘은 짝이다(옛 entrypoint 는 3인자 `upload-apk`
+과 `upload-web` 을 모른다).
+
 ## 매니페스트를 다시 적용할 때 — 이미지가 되돌아간다
 
 `base/` 의 이미지 태그는 `mupid-api:placeholder` · `mupid-web:placeholder` 다.

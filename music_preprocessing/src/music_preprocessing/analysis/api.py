@@ -329,18 +329,32 @@ class HttpRegistrar:
     def register(self, tracks: Sequence, new_dir: Path) -> dict:
         self.ensure_instrument_codes(tracks)
         rows = []
+        missing = []
         for t in tracks:
             mid = str(t.track_id)
+            # 요구 1 은 **숫자 music_id** 를 요구한다. `track_id` 는 로컬 파일명
+            # (`T000501`)일 수 있으므로 `registered.json` 에서 받은 값을 쓴다.
+            api_id = getattr(t, "music_id", None)
+            if api_id is None:
+                missing.append(mid)
+                continue
             payload = sections_payload(t)
-            d = self.client.replace_sections(int(mid), payload, self.analysis_version)
+            d = self.client.replace_sections(int(api_id), payload, self.analysis_version)
             got = d.get("sections") or []
             for s in got:
                 rows.append({"source_track_id": mid,
-                             "music_id": int(d.get("music_id") or mid),
-                             "source_section_uid": _uid_to_moment(str(s["external_id"])),
-                             "music_section_id": int(s["music_section_analysis_id"])})
+                             "music_id": int(d.get("music_id") or api_id),
+                             "external_id": _uid_to_moment(str(s["external_id"])),
+                             "music_section_analysis_id":
+                                 int(s["music_section_analysis_id"])})
             self.registered.append({"track_id": mid,
                                     "sections": int(d.get("replaced") or len(got))})
+        if missing:
+            # 숫자 ID 를 모르는 곡이 있으면 **여기서 멈춘다.** 지어낸 ID 로 등록하면
+            # 엉뚱한 곡에 구간이 붙고, 그 상태로 교체되면 되돌리기 어렵다.
+            raise ValueError(
+                f"music_id 를 모르는 곡이 {len(missing)}개다 (registered.json 에 없다) — "
+                f"예: {missing[:5]}")
         n = merge_id_map(Path(new_dir), rows)
         return {"tracks": len(self.registered), "sections": len(rows),
                 "id_map_rows": n, "codes_added": len(self.codes_added)}
@@ -397,16 +411,23 @@ def _uid_to_moment(external_id: str) -> str:
 
 
 def merge_id_map(new_dir: Path, rows: list[dict]) -> int:
-    """새 판의 `id_map.parquet` 에 **덧붙인다.** 기존 매핑을 지우지 않는다."""
+    """새 판의 `id_map.parquet` 에 **덧붙인다.** 기존 매핑을 지우지 않는다.
+
+    이전 산출물의 별칭은 읽을 때 실제 DB 컬럼명으로 한 번만 바꾼다.
+    """
     import pandas as pd
 
-    cols = ["source_track_id", "music_id", "source_section_uid", "music_section_id"]
+    cols = ["source_track_id", "music_id", "external_id", "music_section_analysis_id"]
     p = Path(new_dir) / "id_map.parquet"
     base = pd.read_parquet(p) if p.exists() else pd.DataFrame(columns=cols)
+    base = base.rename(columns={
+        "source_section_uid": "external_id",
+        "music_section_id": "music_section_analysis_id",
+    })
     add = pd.DataFrame(rows, columns=cols)
     if len(add):
         out = pd.concat([base[cols], add], ignore_index=True)
-        out = out.drop_duplicates("source_section_uid", keep="last")
+        out = out.drop_duplicates("external_id", keep="last")
     else:
         out = base[cols]
     out.to_parquet(p, index=False)

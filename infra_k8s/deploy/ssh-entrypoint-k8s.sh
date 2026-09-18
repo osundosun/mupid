@@ -21,13 +21,30 @@ if [[ $command =~ ^deploy-k8s\ (api|web|ai)\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]];
     "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
 fi
 
-# upload-apk <40-hex commit> <64-hex sha256>
+# upload-apk <40-hex commit> <64-hex sha256> <versionCode>
 # 안드로이드 APK 를 /srv/mupid-k8s/downloads 에 둔다. 이미지 경로와 **다른
 # 수신기**로 보낸다 — 저쪽은 컨테이너 이미지를 들여와 kubectl 로 태그를 바꾸고,
 # 이쪽은 파일 하나를 정해진 자리에 놓을 뿐이라 클러스터를 건드리지 않는다.
 # 합쳐 두면 감사해야 할 코드가 넓어진다.
-if [[ $command =~ ^upload-apk\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
+#
+# **versionCode 를 함께 받는다.** 앱은 "새 APK 가 있나" 를 `versionCode` 로만
+# 판단하는데(update.rs), 노드에는 aapt2 가 없고 APK 안 tauri.conf.json 의
+# version 은 `0.1.0` 그대로라 바이트에서 읽어 낼 수 없다(실측). 그래서 CI 가
+# 넘기고, 수신기는 범위·`builtAt == versionCode * 1000`·**단조 증가**를 확인한다.
+# 뒤로 가는 값은 안드로이드가 설치를 거부하므로 한 번 게시되면 받은 기기 전부가
+# "안내만 뜨고 설치가 실패" 하는 상태가 된다.
+if [[ $command =~ ^upload-apk\ ([0-9a-f]{40})\ ([0-9a-f]{64})\ ([0-9]{1,10})$ ]]; then
   exec sudo /usr/local/sbin/mupid-receive-apk \
+    "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+fi
+
+# upload-web <40-hex commit> <64-hex sha256>
+# 웹 번들(코드 자산만 담은 tar.gz)을 같은 downloads 디렉터리에 둔다. 클러스터를
+# 건드리지 않는다 — nginx 가 /download/web.json 과 /download/web-<시각>.tar.gz 로
+# 내려줄 뿐이다. 그 매니페스트가 **앱의 웹 갈래 스위치**이고, 수신기가 아카이브를
+# 전개한 결과에서 직접 만든다(스탬프가 어긋날 수 없게).
+if [[ $command =~ ^upload-web\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
+  exec sudo /usr/local/sbin/mupid-receive-web \
     "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 fi
 

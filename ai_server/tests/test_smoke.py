@@ -90,7 +90,8 @@ def test_item_fields(client):
         ref = it["ref_external_id"]
         assert ref is None or (isinstance(ref, str) and ref)
         assert not any(k in it for k in ("track_id", "moment_id", "source_track_id",
-                                         "music_id", "music_section_id", "reason",
+                                         "music_id", "music_section_id",
+                                         "music_section_analysis_id", "reason",
                                          "start_time_ms", "end_time_ms",
                                          "section_label"))
 

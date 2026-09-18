@@ -83,8 +83,8 @@ DB 와 어긋난 순간 엉뚱한 곡을 추천한다.
 MySQL 에서 이미 적재된 것을 내보내 만드는 길도 남아 있다(`build_id_map`). 2번을 다른
 경로로 밟았을 때 쓴다.
 
-    SELECT s.external_id AS source_section_uid,
-           s.music_section_analysis_id AS music_section_id,
+    SELECT s.external_id,
+           s.music_section_analysis_id,
            m.music_id
     FROM music_section_analysis s JOIN music m ON m.music_id = s.music_id
 
