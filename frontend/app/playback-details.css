@@ -149,7 +149,8 @@
   }
   .mini-player .like-button,
   .mini-player .volume-control,
-  .mini-player .queue-button {
+  .mini-player .queue-button,
+  .mini-player .ai-button {
     display: none;
   }
   .mupid-shell .chat-launcher {

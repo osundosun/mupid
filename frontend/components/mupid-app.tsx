@@ -8,7 +8,6 @@ import { useStore } from '@/lib/store';
 import { fetchCatalog } from '@/lib/stream-catalog';
 import { restoreSession, sessionStore } from '@/lib/api/session';
 import { watchSafeArea } from '@/lib/platform';
-import { watchDevToolsErrors } from '@/lib/devtools-error-filter';
 import { DEFAULT_PROFILE_PHOTO } from '@/components/mupid/profile-image';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
@@ -22,10 +21,10 @@ import {
   LogIn,
   MessageCircle,
   Search,
+  Sparkle,
   Volume2,
 } from 'lucide-react';
 import { useMupid } from '@/hooks/use-mupid';
-import { useDesktopPlayerDock } from '@/hooks/use-home-player-dock';
 import { MiniTimeline } from '@/components/mupid/mini-timeline';
 import { VolumeSlider } from '@/components/mupid/volume-slider';
 import { PlaybackStatus } from '@/components/mupid/playback-status';
@@ -98,7 +97,6 @@ export function MupidApp() {
   // 스스로 한다 — 그 컴포넌트는 로그인 전에도 떠야 하는데(`(music)` 밖) 이
   // 훅은 인증 뒤에만 돌기 때문이다. 두 곳에 두면 매니페스트를 중복으로 받는다.
   // 웹 갈래(번들 활성화)도 `checkForUpdates` 안에 있으므로 그대로 함께 돈다.
-  useEffect(() => watchDevToolsErrors(), []);
   useEffect(() => {
     // 같은 계정 몫을 이미 받아 뒀으면 그대로 쓴다. 화면을 옮길 때마다 카탈로그를
     // 다시 받으면 그동안 로딩 화면이 뜨고 재생이 끊긴다. 계정이 바뀌었을 때는
@@ -159,15 +157,15 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
     document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [accountOpen]);
-  const desktopDock = useDesktopPlayerDock();
   const hideMini =
     m.page === 'welcome' ||
     // 들을 곡이 없으면 띄울 것도 없다.
     !m.active ||
     // 가입 직후처럼 아직 한 곡도 듣지 않았다면 띄우지 않는다.
     !m.hasPlayed ||
-    // 플레이어 화면에는 큰 컨트롤이 있으니 미니 플레이어를 겹치지 않는다.
-    (!desktopDock && m.page === 'player');
+    // 플레이어 화면에는 큰 컨트롤이 있으니 미니 플레이어를 겹치지 않는다. PC 도
+    // 같다 — 전에는 PC 에서만 남겼는데, 같은 곡의 재생바와 컨트롤이 두 벌 보였다.
+    m.page === 'player';
   const desktopNavPage =
     m.page === 'moment' ? 'player' : m.page === 'similar' ? 'search' : m.page;
   const navPage = desktopNavPage;
@@ -311,6 +309,19 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
                 onClick={m.toggleQueue}
               >
                 <ListMusic />
+              </button>
+              {/*
+                Mupid AI 는 화면 구석에 떠 있던 버튼이었다. 재생 목록 버튼 옆으로
+                들여 컨트롤과 한 줄에 둔다. 떠 있던 런처는 이 버튼이 보이는 동안
+                감춘다 (`mupid.css`).
+              */}
+              <button
+                className="icon-button ai-button"
+                aria-label={m.chatOpen ? 'Mupid AI 닫기' : 'Mupid AI 열기'}
+                aria-expanded={m.chatOpen}
+                onClick={m.chatOpen ? m.closeChat : m.openChat}
+              >
+                <Sparkle />
               </button>
             </section>
           )}

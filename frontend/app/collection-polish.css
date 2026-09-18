@@ -36,6 +36,10 @@
 .playlist-tracks-heading { display: flex; justify-content: space-between; align-items: center; padding: 8px 0 18px; border-bottom: 1px solid #dce6f4; }
 .playlist-tracks-heading h3 { font-size: 18px; font-weight: 700; }
 .playlist-tracks-heading > span { color: #8195b5; font-size: 15px; }
+/* 곡이 없을 때의 안내. 수록곡 칸 가운데에 캐릭터와 문구를 놓는다. */
+.collection-page .empty-state .empty-state-action { display: inline-flex; align-items: center; gap: 6px; margin-top: 18px; }
+.collection-page .empty-state .empty-state-action svg { width: 18px; height: 18px; }
+.collection-page .playlist-tracks > .empty-state { margin: 0; padding: 56px 16px 40px; }
 .collection-page .playlist-tracks .track-row { padding: 20px 4px; gap: 14px; background: transparent; border-radius: 0; }
 .collection-page .playlist-tracks .album-art { width: 54px; height: 54px; flex-shrink: 0; border-radius: 12px; }
 .collection-page .playlist-tracks .moment-meta { color: #9b84a6; font-size: 13px; }

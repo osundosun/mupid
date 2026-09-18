@@ -29,12 +29,13 @@
      컨트롤 오른쪽에 재생 목록 버튼 자리를 하나 더 둔다. */
   .mupid-shell .mini-player {
     column-gap:6px; row-gap:0;
-    grid-template-columns:40px minmax(0,1fr) auto auto;
-    grid-template-areas:'cover track controls queue' 'timeline timeline timeline timeline';
+    grid-template-columns:40px minmax(0,1fr) auto auto auto;
+    grid-template-areas:'cover track controls queue ai' 'timeline timeline timeline timeline timeline';
   }
   .mupid-shell .mini-player .queue-button { display:inline-flex; grid-area:queue; }
+  .mupid-shell .mini-player .ai-button { display:inline-flex; grid-area:ai; }
   /* 버튼이 하나 늘어난 만큼 40px로 줄여 곡 제목 자리를 확보한다. */
-  .mupid-shell .mini-player :is(.player-controls .icon-button, .queue-button) {
+  .mupid-shell .mini-player :is(.player-controls .icon-button, .queue-button, .ai-button) {
     width:40px; min-width:40px; height:40px; padding:8px;
   }
   .mupid-shell .mini-player .mini-cover { width:40px; height:40px; }
@@ -80,7 +81,7 @@
   .mupid-shell .app-header .brand { width:46px; flex-basis:46px; }
   /* 이전·재생·다음은 한 벌이라 하나만 빠지면 고장난 것처럼 보인다.
      좁을 때는 전송 버튼을 지키고, 보관함 탭으로도 갈 수 있는 재생목록 버튼을 접는다. */
-  .mupid-shell .mini-player .queue-button { display:none; }
+  .mupid-shell .mini-player :is(.queue-button, .ai-button) { display:none; }
   .mupid-shell .page-title-mascot { display:none; }
 }
 /* Mobile gutters. The phone frame kept ~38px of dead space per side (22px of
@@ -819,10 +820,16 @@
 
 .mupid-shell .chat-launcher > svg { width: 25px; height: 25px; color: #fff; stroke-width: 1.8; }
 
-/* PC 고정 헤더의 모서리 틈으로 스크롤 본문이 비치지 않게 한다. */
+/*
+ * PC 고정 헤더의 위 모서리는 둥글리지 않는다.
+ *
+ * 전에는 30px 로 둥글리고, 스크롤해 헤더가 위에 붙었을 때 모서리 틈으로 본문이
+ * 비치지 않도록 `::before` 로 하늘 배경을 덧칠했다. 그런데 덧칠한 하늘은 반투명
+ * 그라데이션이 흰 헤더 위에 얹히는 것이라 셸의 진짜 하늘과 색이 어긋나, 양쪽
+ * 모서리에 삼각형이 도드라졌다. 모서리를 각지게 두면 덧칠할 것도 어긋날 것도 없다.
+ */
 @media (min-width: 768px) {
-  .mupid-shell:not(.page-welcome),
-  .mupid-shell .app-header::before {
+  .mupid-shell:not(.page-welcome) {
     background:
       radial-gradient(ellipse at 92% 3%, #fff1f88f, transparent 42%),
       linear-gradient(180deg, #e6f3ffd9, #f5faffed 68%),
@@ -830,20 +837,8 @@
     background-attachment: fixed;
   }
   .mupid-shell .app-header {
-    border-radius: 30px 30px 0 0;
+    border-radius: 0;
     background: #fbfdff;
-  }
-  .mupid-shell .app-header::before {
-    content: '';
-    position: absolute;
-    top: -1px;
-    left: -1px;
-    right: -1px;
-    height: 30px;
-    pointer-events: none;
-    mask:
-      radial-gradient(circle at 100% 100%, transparent 29px, #000 30px) left top / 30px 30px no-repeat,
-      radial-gradient(circle at 0 100%, transparent 29px, #000 30px) right top / 30px 30px no-repeat;
   }
 }
 
@@ -859,26 +854,42 @@
   background: #fbfdff; max-height: none; overflow: hidden;
   box-shadow: 0 6px 20px #7399bd14;
 }
-.mupid-shell .selected-moment-popover .wave-comment-popover-head { position: static; padding: 8px 2px; background: transparent; border-bottom: 1px solid #eaf1f8; }
-.mupid-shell .selected-moment-popover .wave-comment-popover-head > span { font-size: 13px; color: #6485ad; background: #edf5fc; padding: 6px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
-.mupid-shell .selected-moment-popover .wave-comment-popover-head .icon-button { margin: 0; width: 44px; height: 44px; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .wave-comment-popover-head { position: static; padding: 8px 2px; background: transparent; border-bottom: 1px solid #eaf1f8; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .wave-comment-popover-head > span { font-size: 13px; color: #6485ad; background: #edf5fc; padding: 6px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .wave-comment-popover-head .icon-button { margin: 0; width: 44px; height: 44px; }
 .selected-moment-messages { max-height: 220px; overflow-y: auto; padding-right: 8px; scrollbar-width: thin; scrollbar-color: #d4e3f1 transparent; }
-.mupid-shell .selected-moment-popover article { padding: 12px 2px; }
-.mupid-shell .selected-moment-popover article p { margin: 4px 0 0 38px; font-size: 14px; line-height: 1.65; color: #3d5270; }
-.mupid-shell .selected-moment-popover .wave-comment-line { gap: 8px; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover article { padding: 12px 2px; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover article p { margin: 4px 0 0 38px; font-size: 14px; line-height: 1.65; color: #3d5270; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .wave-comment-line { gap: 8px; }
 .moment-author-avatar { display: grid; place-items: center; width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%; background: #e8f2fc; color: #6389b6; font-size: 12px; }
-.mupid-shell .selected-moment-popover strong { font-size: 14px; color: #344c70; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover strong { font-size: 14px; color: #344c70; }
 .moment-comment-timestamp { font-size: 12px; color: #8b9db5; white-space: nowrap; }
-.mupid-shell .selected-moment-popover .moment-edit { margin-left: auto; min-height: 44px; padding-inline: 8px; font-size: 12px; color: #8196b2; }
-.mupid-shell .selected-moment-popover .moment-delete { min-height: 44px; padding-inline: 8px; font-size: 12px; color: #c07093; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .moment-edit { margin-left: auto; min-height: 44px; padding-inline: 8px; font-size: 12px; color: #8196b2; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .moment-delete { min-height: 44px; padding-inline: 8px; font-size: 12px; color: #c07093; }
 .player-quick-actions .moment-panel-toggle[aria-expanded='true'] { color: #527fba; }
 .moment-popup-write { display: flex; justify-content: center; align-items: center; gap: 8px; width: 100%; min-height: 44px; margin-top: 10px; border: 1px solid #dce9f7; border-radius: 12px; background: #edf5fd; color: #517aaf; font-size: 14px; font-weight: 500; }
 .moment-popup-write:hover { background: #e3effc; }
 .moment-popup-write[aria-pressed='true'] { border-color: #a9c6e8; background: #d7e7fa; color: #37629b; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-.mupid-shell .track-comments .selected-moment-popover form.wave-comment-composer {
+:is(.mupid-shell .track-comments, .moment-comment-dialog) .selected-moment-popover form.wave-comment-composer {
   margin: 0; padding: 12px 0 0; border: 0; border-radius: 0; background: none; box-shadow: none;
 }
-.mupid-shell .selected-moment-popover .moment-popup-empty { margin: 0; padding: 20px 8px; text-align: center; font-size: 14px; }
+/*
+ * 폰에서는 선택한 시점의 댓글 카드가 대화상자 안에 들어간다(`track-comments.tsx`).
+ * 카드 테두리와 머리말은 대화상자가 대신하므로 걷고, 파형 옆에 띄우던 작성창은
+ * 제자리에 흐르게 둔다. 대화상자는 `body` 에 붙어 `.mupid-shell` 밖이라 위 규칙들을
+ * `:is()` 로 함께 받는다.
+ */
+.moment-comment-dialog .selected-moment-popover { margin: 12px 0 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; animation: none; }
+.moment-comment-dialog .wave-comment-popover-head { display: none; }
+.moment-comment-dialog .selected-moment-messages { max-height: min(42dvh, 340px); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.moment-comment-dialog .selected-moment-popover form.wave-comment-composer { position: static; width: 100%; max-width: none; left: auto; top: auto; animation: none; }
+.moment-comment-dialog .selected-moment-popover form.wave-comment-composer::before { display: none; }
+.moment-comment-dialog .wave-comment-composer textarea { width: 100%; box-sizing: border-box; min-height: 64px; max-height: 120px; margin: 8px 0 10px; padding: 10px 12px; resize: none; line-height: 1.5; font-size: 15px; border: 1px solid #dce6f5; border-radius: 12px; }
+.moment-comment-dialog .wave-comment-composer label { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: #6a84ad; }
+.moment-comment-dialog .wave-comment-composer footer { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
+.moment-comment-dialog .wave-comment-composer footer > span { margin-right: auto; font-size: 13px; color: #9aa9c0; font-variant-numeric: tabular-nums; }
+.moment-comment-dialog .wave-comment-composer .primary-button { min-height: 38px; padding: 8px 16px; border-radius: 999px; font-size: 15px; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .moment-popup-empty { margin: 0; padding: 20px 8px; text-align: center; font-size: 14px; }
 .mupid-shell .wave-comment-avatar { border-radius: 50%; background: #9bbdde; box-shadow: 0 2px 6px #607ba61a; }
 .mupid-shell .wave-comment-avatar[aria-expanded='true'] { background: #759dcc; outline: 2px solid #d5e6f7; }
 
@@ -909,7 +920,7 @@
 .profile-password form p { font-size: 14px; color: #7185a7; }
 
 .comment-avatar-image { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
-.mupid-shell .selected-moment-messages { max-height: min(180px, 25dvh); overflow-y: auto; overscroll-behavior: contain; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-messages { max-height: min(180px, 25dvh); overflow-y: auto; overscroll-behavior: contain; }
 .mupid-shell .song-lyrics { max-height: 76px; overflow: hidden; }
 .mupid-shell .song-lyrics h3 { display: none; }
 .mupid-shell .song-lyrics > p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
@@ -1352,8 +1363,8 @@
   box-shadow: 0 4px 16px #6888b00a;
 }
 .mupid-shell .track-comments .selected-moment-popover { padding: 0 16px 14px; }
-.mupid-shell .selected-moment-popover .wave-comment-popover-head { padding: 8px 0; border-bottom: 1px solid #edf2f8; }
-.mupid-shell .selected-moment-popover .wave-comment-popover-head > span {
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .wave-comment-popover-head { padding: 8px 0; border-bottom: 1px solid #edf2f8; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .wave-comment-popover-head > span {
   padding: 4px 0;
   background: transparent;
   font-size: 13px;
@@ -1361,9 +1372,9 @@
   letter-spacing: .01em;
   color: #59799f;
 }
-.mupid-shell .selected-moment-popover .wave-comment-popover-head .icon-button { color: #95a6bb; background: transparent; border: 0; box-shadow: none; }
-.mupid-shell .selected-moment-popover .moment-popup-empty { padding: 22px 8px; font-size: 13px; color: #899ab1; line-height: 1.6; }
-.mupid-shell .selected-moment-popover .moment-popup-write {
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .wave-comment-popover-head .icon-button { color: #95a6bb; background: transparent; border: 0; box-shadow: none; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .moment-popup-empty { padding: 22px 8px; font-size: 13px; color: #899ab1; line-height: 1.6; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .moment-popup-write {
   min-height: 44px;
   margin-top: 4px;
   padding: 10px 14px;
@@ -1375,7 +1386,7 @@
   font-weight: 500;
   gap: 7px;
 }
-.mupid-shell .selected-moment-popover .moment-popup-write:hover { background: #e3eefb; }
+:is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .moment-popup-write:hover { background: #e3eefb; }
 .mupid-shell .track-comments form.wave-comment-composer { padding: 16px; }
 .mupid-shell .track-comments .wave-comment-composer label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: #587599; }
 .mupid-shell .track-comments .wave-comment-composer label svg { width: 15px; height: 15px; color: #88a6c9; }
@@ -1551,8 +1562,8 @@
 }
 .mupid-shell .report-grid { gap: 24px; }
 .mupid-shell .report-grid .report-details { gap: 0; }
-.mupid-shell .report-grid .keyword-card { padding-bottom: 24px; border-bottom: 1px solid #e3ebf5; }
-.mupid-shell .report-grid .listening-story { padding-top: 24px; }
+.mupid-shell .report-grid .listening-story { padding-bottom: 24px; border-bottom: 1px solid #e3ebf5; }
+.mupid-shell .report-grid .keyword-card { padding-top: 24px; }
 .mupid-shell .report-grid .report-card > h2 { margin-top: 0; margin-bottom: 10px; }
 .mupid-shell .report-grid .report-card p { font-size: 14px; line-height: 1.75; }
 .mupid-shell .report-grid .report-card .demo-note { font-size: 12px; color: #8b9db5; }
@@ -1562,6 +1573,23 @@
   .mupid-shell .report-grid .daily-album-report { border-bottom: 1px solid #e3ebf5; min-height: 0; }
   .mupid-shell .report-grid .daily-album-detail { margin: 18px 0 8px; padding: 0; min-height: 0; }
   .mupid-shell .report-grid .listening-story { background: radial-gradient(ellipse at 50% 60%, #eaf3fc80, transparent 72%); }
+}
+/*
+ * 내 취향 리포트는 MUBTI 가 먼저다.
+ *
+ * 한 줄로 쌓이는 너비(1199px 이하)에서는 `.report-details` 를 `display: contents` 로
+ * 풀어 안의 두 카드를 격자의 직접 자식으로 만들고, MUBTI 만 앨범 리포트 앞으로
+ * 보내고 앨범 리포트는 맨 뒤로 보낸다. 순서: MUBTI → 키워드 → 오늘 들은 음악.
+ * 두 칸(1200px~)에서는 MUBTI 가 든 칸을 왼쪽으로 옮기고, 칸 사이 선도 그쪽으로 옮긴다.
+ */
+@media (max-width: 1199px) {
+  .mupid-shell .report-grid .report-details { display: contents; }
+  .mupid-shell .report-grid .listening-story { order: -1; }
+  .mupid-shell .report-grid .daily-album-report { order: 1; border-bottom: 0; }
+  .mupid-shell .report-grid .keyword-card { padding-bottom: 24px; border-bottom: 1px solid #e3ebf5; }
+}
+@media (min-width: 1200px) {
+  .mupid-shell .report-grid .report-details { order: -1; border-left: 0; padding-left: 0; border-right: 1px solid #e3ebf5; padding-right: 32px; }
 }
 
 /* One clean seek line replaces both audio visualizations. */
@@ -1727,23 +1755,21 @@
   .mupid-shell .page-heading .page-title-mascot { width: 34px; height: 34px; flex-shrink: 0; }
 }
 
-.player-recommendation-toggle { margin: 12px 0 0; color: #657fa6; text-align: left; }
-.player-recommendation-toggle > summary { display: flex; align-items: center; gap: 7px; width: fit-content; min-height: 40px; margin: 0 auto; padding: 6px 12px; border-radius: 12px; font-size: 13px; cursor: pointer; list-style: none; }
-.player-recommendation-toggle > summary::-webkit-details-marker { display: none; }
-.player-recommendation-toggle > summary:hover { background: #edf3fc; }
-.player-recommendation-toggle > summary:focus-visible { outline: 2px solid #799bd0; outline-offset: 2px; }
-.player-recommendation-toggle[open] > summary > svg:last-child { transform: rotate(180deg); }
-.player-recommendation-toggle > p { margin: 8px 0 0; padding: 16px 20px; border-radius: 12px; background: #f0f5fc; color: #4e688e; font-size: 14px; line-height: 1.8; white-space: pre-line; word-break: keep-all; overflow-wrap: break-word; }
-
-@media (max-width: 767px) {
-  .player-recommendation-toggle[open] { margin-bottom: 64px; }
-}
+/* 추천 이유는 버튼 하나만 본문에 두고, 내용은 대화상자(`.player-reason-dialog`)로 띄운다. */
+.player-recommendation-toggle { display: flex; align-items: center; gap: 7px; width: fit-content; min-height: 40px; margin: 12px auto 0; padding: 6px 12px; border: 0; border-radius: 12px; background: transparent; color: #657fa6; font: inherit; font-size: 13px; cursor: pointer; }
+.player-recommendation-toggle:hover { background: #edf3fc; }
+.player-recommendation-toggle:focus-visible { outline: 2px solid #799bd0; outline-offset: 2px; }
+.player-reason-dialog [data-slot='dialog-title'] { display: flex; align-items: center; gap: 6px; }
+.player-reason-dialog [data-slot='dialog-title'] > svg { color: #5279b9; }
+.player-reason-dialog .player-reason-text { margin: 14px 0 0; padding: 16px 20px; border-radius: 12px; background: #f0f5fc; color: #4e688e; font-size: 14px; line-height: 1.8; white-space: pre-line; word-break: keep-all; overflow-wrap: break-word; max-height: min(50dvh, 420px); overflow-y: auto; overscroll-behavior: contain; }
+.player-reason-dialog .player-reason-section { display: flex; flex-direction: column; gap: 2px; margin: 12px 0 0; font-size: 12px; color: #657fa6; }
+.player-reason-dialog .player-reason-section strong { color: #35548c; font-size: 13px; }
 
 @media (max-width: 767px) {
   .mupid-shell:not(.no-mini) { --player-height: max(80px, calc(3.5rem + 24px)); }
   .mupid-shell .mini-player {
-    grid-template-columns: 40px minmax(0, 1fr) auto auto;
-    grid-template-areas: 'cover track controls queue' 'timeline timeline timeline timeline';
+    grid-template-columns: 40px minmax(0, 1fr) auto auto auto;
+    grid-template-areas: 'cover track controls queue ai' 'timeline timeline timeline timeline timeline';
     grid-template-rows: auto 14px;
     column-gap: 6px;
     row-gap: 0;
@@ -1893,5 +1919,23 @@
 .player-lyrics-dialog .song-lyrics { max-height: min(55dvh, 480px); overflow-y: auto; overscroll-behavior: contain; padding: 4px 12px; color: #4e688e; font-size: 15px; line-height: 1.6; text-align: center; word-break: keep-all; overflow-wrap: break-word; }
 .player-lyrics-dialog .song-lyrics { scrollbar-width: thin; scrollbar-color: #cfdded transparent; }
 .player-lyrics-dialog .song-lyrics h3 { display: none; }
+/*
+ * PC 플레이어의 가사. 오른쪽 칸에서 재생바 위의 자리를 채운다(`discovery.tsx`).
+ * 위의 `.mupid-shell .song-lyrics { max-height: 76px; overflow: hidden }` 은 예전
+ * 미리보기용이라 여기서는 풀고, 화면 높이에 맞춰 안에서만 스크롤한다.
+ */
+.mupid-shell.page-player .player-lyrics-inline { margin-bottom: 20px; }
+/*
+ * PC 플레이어에는 미니 플레이어가 없다(`mupid-app.tsx` 의 `hideMini`). 그 안에 있던
+ * Mupid AI 버튼도 함께 사라지므로, 떠 있는 런처를 오른쪽 아래에 그대로 띄운다.
+ * 미니 플레이어 몫으로 비워 두던 112px 도 여기서는 필요 없다.
+ */
+@media (min-width: 768px) {
+  .mupid-shell.page-player .chat-launcher { display: grid; bottom: 28px; }
+  .mupid-shell.page-player .chat-panel { bottom: 28px; }
+}
+.mupid-shell.page-player .player-lyrics-inline .song-lyrics { margin: 0 auto; max-width: 420px; max-height: min(30dvh, 300px); overflow-y: auto; overscroll-behavior: contain; padding: 4px 12px; color: #4e688e; font-size: 14px; line-height: 1.9; text-align: center; scrollbar-width: thin; scrollbar-color: #cfdded transparent; }
+.mupid-shell.page-player .player-lyrics-inline .song-lyrics h3 { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 0 10px; font-size: 14px; color: #6a84ad; }
+.mupid-shell.page-player .player-lyrics-inline .song-lyrics > p { display: block; margin: 0 0 2px; overflow: visible; -webkit-line-clamp: unset; }
 .player-lyrics-dialog .song-lyrics > p { display: block; margin: 0 0 5px; overflow: visible; -webkit-line-clamp: unset; }
 .track-menu-divider { width: 100%; margin: 8px 0; border: 0; border-top: 1px solid #e0e8f5; }

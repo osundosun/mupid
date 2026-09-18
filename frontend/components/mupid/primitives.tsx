@@ -222,7 +222,30 @@ export function TrackRow({
     </article>
   );
 }
+/**
+ * 서버 파형(0~1, 길이 `WAVEFORM_SAMPLES`)을 막대 수에 맞춰 다시 표본한다.
+ * 막대가 더 적으면 구간 평균, 더 많으면 선형 보간. 높이는 4~92% 로 펼친다.
+ */
+export function resampleWaveform(values: number[], count: number): number[] {
+  const n = values.length;
+  if (n === 0 || count <= 0) return [];
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) {
+    let v: number;
+    if (count <= n) {
+      const from = Math.floor(i * n / count), to = Math.max(from + 1, Math.floor((i + 1) * n / count));
+      let sum = 0; for (let k = from; k < to; k++) sum += values[k]; v = sum / (to - from);
+    } else {
+      const pos = i * (n - 1) / (count - 1), lo = Math.floor(pos), hi = Math.min(n - 1, lo + 1), t = pos - lo;
+      v = values[lo] * (1 - t) + values[hi] * t;
+    }
+    out.push(4 + 88 * Math.max(0, Math.min(1, v)));
+  }
+  return out;
+}
+
 export function Waveform({
+  samples,
   audioUrl,
   duration,
   start = 0,
@@ -231,6 +254,8 @@ export function Waveform({
   progress = 0,
   ranges = [],
 }: {
+  /** 서버가 미리 뽑아 둔 파형(0~1). 있으면 이것이 1순위다. → `Track.waveform` */
+  samples?: number[];
   audioUrl?: string;
   duration: number;
   start?: number;
@@ -249,7 +274,9 @@ export function Waveform({
     }).catch(() => { if (alive) setAnalysis(null); });
     return () => { alive = false; };
   }, [audioUrl, count]);
-  const amplitudes = analysis?.url === audioUrl && analysis?.values.length === count ? analysis.values : null;
+  // 1순위 서버 파형 → 2순위 로컬 음원 디코드 → 3순위 곡 길이로 만든 임시 무늬.
+  const served = samples && samples.length > 1 ? resampleWaveform(samples, count) : null;
+  const amplitudes = served ?? (analysis?.url === audioUrl && analysis?.values.length === count ? analysis.values : null);
   return (
     <div className={`waveform ${compact ? 'compact' : ''}`} aria-hidden="true">
       {Array.from({ length: count }, (_, i) => {
@@ -278,7 +305,7 @@ export function Waveform({
                   ? 'wave-played'
                   : ''
             }
-            style={{ height: `${audioUrl ? (amplitudes?.[i] ?? 4) : height}%` }}
+            style={{ height: `${served || audioUrl ? (amplitudes?.[i] ?? 4) : height}%` }}
             key={i}
           />
         );

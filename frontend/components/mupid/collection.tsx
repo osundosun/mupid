@@ -1,4 +1,5 @@
 'use client';
+import { WeeklyMubtiButton } from './listening-calendar';
 import { DailyAlbumTreemap } from './daily-album-treemap';
 
 import { PlaylistMenu } from './playlist-menu';
@@ -198,13 +199,14 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                   />
                 ))}
               </div>
-              </div>
+              {/* 빈 안내는 '수록곡' 자리 안에 둔다. 밖에 두면 PC 에서 왼쪽 카드 밑으로 내려가 오른쪽이 텅 빈다. */}
               {!selected.tracks.length && (
                 <EmptyState
                   title="첫 번째 음악을 담아볼까요?"
                   description="현재 듣는 곡부터 플레이리스트를 채워보세요."
                 />
               )}
+              </div>
               {/* 듣고 있는 곡이 없으면 담을 것도 없다. */}
               {m.active && <div className="add-current">
                 <span>현재 재생 중인 곡</span>
@@ -226,6 +228,20 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                 </button>
               </div>}
             </div>
+          ) : !m.playlists.length ? (
+            /*
+             * 플레이리스트가 하나도 없을 때. 격자에 '새 플레이리스트' 칸 하나만 떠 있고
+             * 안내는 그 아래 한가운데라 둘이 따로 놀았다. 안내 하나로 모으고 만들기
+             * 버튼을 그 안에 둔다. 폰도 PC 도 같다.
+             */
+            <EmptyState
+              title="나만의 첫 플레이리스트"
+              description="좋아하는 음악을 한곳에 모아두세요."
+            >
+              <button className="primary-button empty-state-action" onClick={() => m.setPlaylistDialog(true)}>
+                <Plus />새 플레이리스트 만들기
+              </button>
+            </EmptyState>
           ) : (
             <>
               <div className="playlist-grid">
@@ -551,7 +567,11 @@ export function ReportView({ model: m }: { model: MupidModel }) {
         <div className="report-details">
           <section className="report-card listening-story">
             {/* 유형 이름을 먼저 읽히게 두고, 그 아래 캐릭터로 분위기를 전한 뒤 설명을 잇는다. */}
-            <h2 className="mubti-heading">MUBTI{mubti ? ` · ${mubti.code}` : ''}</h2>
+            <div className="mubti-heading-row">
+              <h2 className="mubti-heading">MUBTI{mubti ? ` · ${mubti.code}` : ''}</h2>
+              {/* 지난 날들의 유형은 대화상자로 본다. 본문에 달력을 펼치면 자리를 너무 먹었다. */}
+              <WeeklyMubtiButton today={report} />
+            </div>
             {mubti ? (
               <>
                 <h2 className="report-story">

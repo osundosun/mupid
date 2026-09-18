@@ -1,0 +1,57 @@
+/* 이번 주 MUBTI (`components/mupid/listening-calendar.tsx`): 리포트 카드의 버튼과, 날짜별 카드를 넘기는 대화상자. */
+.weekly-mubti-button {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 36px; padding: 6px 12px;
+  border: 1px solid #d6e3f6; border-radius: 999px; background: #f7faff; color: #547dbd; font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer;
+}
+.weekly-mubti-button svg { width: 16px; height: 16px; }
+.weekly-mubti-button:hover { background: #edf3fc; }
+.weekly-mubti-button:focus-visible { outline: 2px solid #799bd0; outline-offset: 2px; }
+/* MUBTI 카드 제목 줄: 왼쪽 제목, 오른쪽 버튼. */
+.mubti-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.mupid-shell .listening-story > .mubti-heading-row > .mubti-heading { margin: 0; }
+
+.sky-dialog.weekly-mubti-dialog { width: min(560px, calc(100% - 32px)) !important; }
+.weekly-nav { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 6px; }
+.weekly-nav strong { min-width: 150px; text-align: center; font-size: 14px; color: #35548c; font-variant-numeric: tabular-nums; }
+.weekly-nav .icon-button { width: 34px; height: 34px; min-width: 34px; min-height: 34px; }
+.weekly-nav .icon-button:disabled { opacity: .35; cursor: default; }
+.weekly-rail-wrap { position: relative; margin: 12px -8px 0; }
+.weekly-rail {
+  display: flex; gap: 12px; padding: 8px 16px 12px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: 16px;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.weekly-rail::-webkit-scrollbar { display: none; }
+.weekly-card {
+  flex: 0 0 200px; scroll-snap-align: start; display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 16px 14px 18px; border-radius: 22px; border: 1px solid #e3ebf5; background: #ffffffcc; color: #46608a; text-align: center;
+}
+.weekly-card header { display: flex; align-items: baseline; gap: 6px; width: 100%; justify-content: center; }
+.weekly-weekday { font-size: 12px; color: #8b9db5; }
+.weekly-weekday.is-sun { color: #d07a95; }
+.weekly-weekday.is-sat { color: #6a8fd0; }
+.weekly-card header > strong { font-size: 16px; color: #35548c; font-variant-numeric: tabular-nums; }
+.weekly-card header > em { font-style: normal; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: #e3edfb; color: #4876c2; }
+.weekly-art { display: grid; place-items: center; width: 128px; height: 128px; border-radius: 50%; background: #f1f6fd; }
+.weekly-art img { width: 110px; height: 110px; object-fit: contain; }
+.weekly-code { font-size: 22px; font-weight: 800; letter-spacing: .04em; color: #4876c2; }
+.weekly-mascot { opacity: .55; }
+.weekly-card footer { display: flex; flex-direction: column; gap: 2px; min-height: 40px; font-size: 13px; color: #7d90ad; }
+.weekly-card footer strong { font-size: 18px; letter-spacing: .06em; color: #35548c; }
+/* 유형이 찍힌 날은 하늘빛으로 살짝 띄운다. */
+.weekly-card.is-typed { background: linear-gradient(165deg, #eaf2ff, #f8fbff); border-color: #d6e3f6; box-shadow: 0 8px 24px #4a6fa81a; }
+.weekly-card.is-typed .weekly-art { background: #ffffffe6; box-shadow: 0 3px 12px #4a6fa826; }
+.weekly-card.is-today { border-color: #a9c6e8; }
+.weekly-card.is-future { opacity: .55; }
+/* 양옆 화살표. 폰에서는 손가락으로 넘기므로 숨긴다. */
+.weekly-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; display: grid; place-items: center; width: 34px; height: 34px;
+  border-radius: 50%; border: 1px solid #d6e3f6; background: #ffffffee; color: #547dbd; box-shadow: 0 3px 10px #4a6fa826; cursor: pointer;
+}
+.weekly-arrow.is-prev { left: -4px; }
+.weekly-arrow.is-next { right: -4px; }
+.weekly-arrow:hover { background: #edf3fc; }
+@media (max-width: 767px) {
+  .weekly-arrow { display: none; }
+  .weekly-card { flex-basis: 78%; }
+  .weekly-nav strong { min-width: 0; font-size: 13px; }
+}

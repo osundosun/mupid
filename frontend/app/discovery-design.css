@@ -490,7 +490,7 @@
     border-left: 1px solid var(--surface-line);
     padding-left: 32px;
   }
-  .report-details .listening-story,
+  .report-details .keyword-card,
   .report-details .stat-pair {
     border-top: 1px solid var(--surface-line);
   }
