@@ -56,7 +56,7 @@ public class AiChatServiceImpl implements AiChatService {
      */
     private static final String DEVELOPER_PROMPT = """
         당신은 음악 감상 서비스 Mupid 의 AI 큐레이터입니다.
-        사용자가 "저장한 순간"(곡에서 마음에 남은 구간)에서 다음 음악으로 건너가도록 돕습니다.
+        사용자가 "저장한 순간"(곡에서 마음에 남은 순간)에서 다음 음악으로 건너가도록 돕습니다.
 
         규칙:
         - 한국어로, 다정하지만 담백하게 두세 문장 안에서 답합니다.
@@ -73,7 +73,7 @@ public class AiChatServiceImpl implements AiChatService {
 
     @Override
     public AiChatResponse chat(User user, AiChatRequest request) {
-        List<OpenAiTool> tools = List.of(recommendTool.declaration());
+        List<OpenAiTool> tools = declareTools();
 
         List<OpenAiMessage> messages = new ArrayList<>();
         messages.add(OpenAiMessage.developer(developerPrompt(request.musicId())));
@@ -105,6 +105,28 @@ public class AiChatServiceImpl implements AiChatService {
         log.warn("툴 호출이 {}회를 넘겨 대화를 끝내지 못했다 user_id={}",
             props.maxToolRounds(), user.getUserId());
         throw new BusinessException(AiErrorCode.AI_TOOL_ROUND_EXCEEDED);
+    }
+
+    /**
+     * 모델에게 알려 줄 툴 목록.
+     *
+     * <p><b>툴 선언은 대화의 첫 문장이자 LLM 호출의 전제다.</b> 여기서 예외가 나면 LLM 을
+     * 부르지도 못한 채 대화가 통째로 실패하는데, 사용자 눈에는 정확히 "도구 호출이 안 되는"
+     * 상태로 보인다. 추천 서버 장애는 추천이 안 되는 것으로 충분하고 대화까지 끊을 이유가
+     * 없으므로, 선언을 못 만들면 툴 없이 대화를 이어 간다 — 그때는 모델이 곡을 지어내지
+     * 않도록 프롬프트가 이미 막고 있다.
+     *
+     * <p>정상 경로에서 여기가 비는 일은 없다. {@code declaration()} 이 추천 서버 실패를
+     * 스스로 흡수하기 때문이다(어휘 없이 enum 만 빠진다). 이 catch 는 그 보장이 나중에
+     * 깨져도 대화가 죽지 않게 하는 마지막 그물이다.
+     */
+    private List<OpenAiTool> declareTools() {
+        try {
+            return List.of(recommendTool.declaration());
+        } catch (RuntimeException e) {
+            log.warn("툴 선언을 만들지 못했다 — 툴 없이 대화를 이어 간다", e);
+            return List.of();
+        }
     }
 
     /**
