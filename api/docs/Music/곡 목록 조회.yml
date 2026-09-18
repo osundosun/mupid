@@ -140,41 +140,35 @@ docs: |-
   | 이름 | 기본값 | 설명 |
   | --- | --- | --- |
   | `q` | 없음 | 제목·아티스트명·앨범명 통합 검색 (대소문자 무시). 비우면 전체 |
-  | `vocal` | 없음 | 보컬 필터. `female`·`male`·`instrumental`. 여러 개는 쉼표 또는 반복 |
+  | `vocal` | 없음 | 보컬 필터. `female`·`male`·`mixed`·`instrumental` |
+  | `mood` | 없음 | 분위기 `code_name`. 여러 개는 쉼표 또는 반복 |
+  | `genre` | 없음 | 장르 `code_name`. 여러 개는 쉼표 또는 반복 |
   | `page` | `0` | **0부터** 셉니다 |
   | `size` | `20` | 최대 100. 넘겨도 100으로 잘립니다 |
 
   검색어가 있으면 곡 제목 → 아티스트명 → 앨범명 순으로 가중한 관련도순이고,
-  검색어가 없으면 `music_id` 내림차순(최신 등록 순)입니다. 두 글자 이상은 ngram
+  검색어가 없으면 `music_id` 오름차순(첫 곡부터)입니다. 두 글자 이상은 ngram
   FULLTEXT 인덱스를, 한 글자는 B-Tree prefix 인덱스를 사용합니다.
 
   ## 보컬 필터 (`vocal`)
 
-  '탐색' 화면의 **보컬·악기** 탭에서 고른 값입니다. 세 값은 `music_analysis` 의
+  '탐색' 화면의 **보컬** 탭에서 고른 값입니다. 네 값은 `music_analysis` 의
   두 컬럼에 이렇게 대응합니다.
 
   | 값 | 뜻 | 실제 조건 |
   | --- | --- | --- |
   | `female` | 여성 보컬 | `has_vocal = true AND vocal_gender = 'F'` |
   | `male` | 남성 보컬 | `has_vocal = true AND vocal_gender = 'M'` |
+  | `mixed` | 혼성 보컬 | `has_vocal = true AND vocal_gender = 'MIX'` |
   | `instrumental` | 인스트루멘탈 | `has_vocal = false` |
 
-  여러 개를 고르면 **합집합**입니다 — 한 곡이 여성이면서 동시에 인스트루멘탈일 수
-  없어 교집합은 언제나 0 이기 때문입니다. 아래 두 주소는 같은 뜻입니다.
-
-  ```
-  GET /api/v1/music?vocal=female,male
-  GET /api/v1/music?vocal=female&vocal=male
-  ```
+  화면에서는 네 값 중 하나만 선택할 수 있습니다.
 
   ### 인스트루멘탈에 성별 값이 없는 이유
 
-  `vocal_gender` 는 `M`·`F`·`ETC` 뿐이고 **'보컬 없음' 을 나타내는 값이 없습니다.**
+  `vocal_gender` 는 `M`·`F`·`MIX` 뿐이고 **'보컬 없음' 을 나타내는 값이 없습니다.**
   보컬 유무는 성별이 아니라 `has_vocal` 이 들고 있으므로, 인스트루멘탈은 그 컬럼으로
   표현합니다. `vocal_gender` 에 값을 늘리면 이미 저장된 값과 어긋나므로 하지 않습니다.
-
-  **`ETC`(보컬은 있는데 성별을 못 가린 곡)는 세 값 어디에도 걸리지 않습니다** —
-  화면에 그런 항목이 없기 때문입니다. 필터를 안 걸면 다른 곡과 똑같이 나옵니다.
 
   ### 필터가 없으면 예전과 완전히 같습니다
 

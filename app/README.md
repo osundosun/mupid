@@ -368,17 +368,31 @@ lib/platform/update.ts
 웹 번들을 활성화했습니다: 1789721872000 (내려받기 152ms, 전개·검증 1180ms, 파일 53개)
 ```
 
-읽는 법:
+읽는 법 — `mupid-` 로 걸러낸다(로거가 붙이는 표식):
 
 ```sh
-adb logcat -d | grep "웹 번들을 활성화"
+adb logcat -d | grep "mupid-"
 ```
 
 **이 값이 1500ms 에 가깝거나 크면 임계값을 올려야 한다.** 그러지 않으면 정상
 업데이트에도 진행 화면이 떠서 "빠르면 안 띄운다" 는 의도가 깨진다. 지금 1500ms
 는 추정값이고, 폰 실측으로 확정한다.
 
-오류는 **로그만 남긴다**(`log::info!` / `console.warn`). Firebase Crashlytics 를
+### 진단 로그가 안 보이면 `logging::init()` 을 본다
+
+`log` 크레이트는 **파사드**다 — 등록된 로거가 없으면 `log::info!` 가 **조용히
+버려진다**(오류도 경고도 없다). 이 앱에는 한동안 로거가 없었고, 그래서
+**20곳의 진단이 전부 죽어 있었다**(`http.rs` 6 · `media.rs` 6 ·
+`update_net.rs` 4 · `lib.rs` 3 · `commands.rs` 1).
+
+실제로 이 때문에 헤맸다 — 계측을 넣고 기기에서 아무것도 안 찍혔는데,
+`assets.rs` 의 진단은 보였다. 그쪽은 `log` 가 아니라 `println!` 이었다.
+
+`src/logging.rs` 가 stdout 으로 내보내는 최소 로거를 등록한다(`run()` 의 맨 앞).
+`tauri-plugin-log` 를 쓰지 않은 이유는 파일 로테이션·웹뷰 전달까지 딸려 오기
+때문이다 — 필요한 것은 logcat 에 한 줄 나오는 것뿐이다.
+
+오류는 **로그만 남긴다**(`log::warn!` / `console.warn`). Firebase Crashlytics 를
 붙일 때의 기록 지점을 주석으로 표시해 뒀다 — `lib/platform/update.ts` 의 `catch`
 와 `src/commands.rs` 의 실패 분기다.
 

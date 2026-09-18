@@ -30,9 +30,9 @@ public class MusicAnalysisServiceImpl implements MusicAnalysisService {
      * 때 사라진 옛 판정이 함께 사라진다. 있는 행을 고치는 편이 짧고 안전하다.
      *
      * <p>{@code vocalGender} 가 {@code null} 이면 <b>비운 채로 둔다.</b>
-     * {@code ETC} 로 바꾸지 않는다 — {@code ETC} 는 "기타로 판정했다" 이고
+     * {@code MIX} 로 바꾸지 않는다 — {@code MIX} 는 "혼성으로 판정했다" 이고
      * {@code null} 은 "판정하지 못했다" 다. 재분석에서 성별을 못 냈다고 옛 판정을
-     * {@code ETC} 로 덮으면 화면이 판정 실패를 결과로 말하게 된다.
+     * {@code MIX} 로 덮으면 화면이 판정 실패를 혼성 보컬로 말하게 된다.
      */
     @Override
     @Transactional

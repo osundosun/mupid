@@ -13,6 +13,7 @@ mod config;
 mod db;
 mod http;
 mod image;
+mod logging;
 mod media;
 mod store;
 mod update;
@@ -156,6 +157,11 @@ fn serve_rsc<R: tauri::Runtime>(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // **가장 먼저 로거를 세운다.** `log` 는 파사드라 로거가 없으면 매크로가
+    // 조용히 버려진다 — 그러면 아래의 모든 진단이 사라진다(실제로 그랬다).
+    // 무엇보다 먼저 불러야 그 뒤의 실패도 남는다.
+    logging::init();
+
     // 자산 프로바이더를 갈아 끼운다 — 디스크에 활성화된 웹 번들이 있으면 거기서,
     // 없으면 임베드 번들에서 준다 (`assets.rs`).
     //

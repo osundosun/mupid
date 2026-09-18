@@ -13,7 +13,7 @@ import com.osundosun.mupid.api.music.enumerate.VocalFilter;
  *
  * 네이티브 쿼리(`searchIdsFullText`·`searchIdsByPrefix`)에 JPQL 처럼 컬렉션을 넘길
  * 수 없다. 파라미터는 스칼라여야 해서 {@code IN (:filters)} 대신 <b>값마다 참·거짓
- * 하나</b>를 둔다. 세 값뿐이라 이 편이 오히려 읽기 쉽다.
+ * 하나</b>를 둔다. 네 값뿐이라 이 편이 오히려 읽기 쉽다.
  *
  * <h2>{@code filtered} 를 따로 두는 이유</h2>
  *
@@ -25,12 +25,13 @@ public record VocalFilterQuery(
     boolean filtered,
     boolean wantFemale,
     boolean wantMale,
+    boolean wantMixed,
     boolean wantInstrumental
 ) {
 
     /** 고른 것이 없으면 필터 없는 조회다. */
     public static final VocalFilterQuery NONE =
-        new VocalFilterQuery(false, false, false, false);
+        new VocalFilterQuery(false, false, false, false, false);
 
     /**
      * 화면이 보낸 값들을 boolean 네 개로 옮긴다.
@@ -46,6 +47,7 @@ public record VocalFilterQuery(
             true,
             chosen.contains(VocalFilter.FEMALE),
             chosen.contains(VocalFilter.MALE),
+            chosen.contains(VocalFilter.MIXED),
             chosen.contains(VocalFilter.INSTRUMENTAL));
     }
 

@@ -16,6 +16,8 @@ import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.enumerate.VocalFilter;
 import com.osundosun.mupid.api.music.response.MusicAnalysisResponse;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
+import com.osundosun.mupid.api.music.response.ExploreFilterOptionResponse;
+import com.osundosun.mupid.api.music.service.ExploreFilterOptionService;
 import com.osundosun.mupid.api.music.service.MusicService;
 import com.osundosun.mupid.api.music.service.MusicServiceImpl;
 
@@ -34,26 +36,38 @@ import lombok.RequiredArgsConstructor;
 public class MusicQueryController {
 
     private final MusicService musicService;
+    private final ExploreFilterOptionService filterOptionService;
+
+    /** 탐색 사이드바의 분위기·장르·보컬 선택지. */
+    @GetMapping("/filter-option")
+    public ResponseEntity<BaseResponse<ExploreFilterOptionResponse>> getFilterOptions() {
+        return ResponseEntity.ok(BaseResponse.of(filterOptionService.getOptions()));
+    }
 
     /**
      * 곡 목록·검색.
      *
      * @param q       제목·아티스트명·앨범명 부분 일치. 비우면 전체
-     * @param vocal   보컬 필터. `female`·`male`·`instrumental` 중 고른 것들.
+     * @param vocal   보컬 필터. `female`·`male`·`mixed`·`instrumental` 중 고른 것들.
      *                반복해 여러 개를 보낼 수 있고(`vocal=female&vocal=male`),
      *                쉼표로 이어 보내도 된다(`vocal=female,male`). 비우면 걸지 않는다
+     * @param moodCodeNames  분위기 {@code codes.code_name}. 같은 축의 여러 값은 OR
+     * @param genreCodeNames 장르 {@code codes.code_name}. 같은 축의 여러 값은 OR
      * @param page    0부터 센다
-     * @param size    기본 20, 최대 100
+     * @param size    기본 20, 최대 100. 탐색 화면은 10개씩 요청한다
      */
     @GetMapping
     public ResponseEntity<BaseResponse<MusicPageResponse>> searchMusic(
         @RequestParam(required = false) String q,
         @RequestParam(name = "vocal", required = false) List<String> vocal,
+        @RequestParam(name = "mood", required = false) List<String> moodCodeNames,
+        @RequestParam(name = "genre", required = false) List<String> genreCodeNames,
         @RequestParam(defaultValue = "0") int page,
         @RequestParam(defaultValue = "" + MusicServiceImpl.DEFAULT_PAGE_SIZE) int size
     ) {
         return ResponseEntity.ok(BaseResponse.of(
-            musicService.searchMusic(q, parseVocalFilters(vocal), page, size)));
+            musicService.searchMusic(
+                q, parseVocalFilters(vocal), moodCodeNames, genreCodeNames, page, size)));
     }
 
     /**
