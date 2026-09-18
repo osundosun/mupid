@@ -19,7 +19,7 @@ import { useTrackWaveform } from '@/lib/track-waveform';
 export function HomeView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
   const forYou = forYouHeading(m.recommendationsReady);
-  // '지금 재생 중' 카드의 파형. 서버 값 → 캐시 → 청크 계산(`lib/track-waveform.ts`).
+  // '지금 재생 중' 카드의 파형은 현재 기기에서 음원 청크를 분석한다.
   // 듣고 있는 곡이라 청크는 어차피 받는 중이다.
   const wave = useTrackWaveform(m.active);
   return (

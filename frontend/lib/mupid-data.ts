@@ -63,12 +63,6 @@ export type Track = {
   image: string;
   tags: string[];
   sections: SongSection[];
-  /**
-   * 서버가 mp3 에서 미리 뽑아 둔 파형(0~1, 곡 안 최댓값 기준). `Waveform` 이 있으면
-   * 이것을 그리고, 없으면 곡 길이로 만든 임시 무늬로 물러난다.
-   * → `lib/api/endpoints.ts` 의 `MusicSummary[WAVEFORM_FIELD]`
-   */
-  waveform?: number[];
   /** 추천으로 온 곡일 때만 채워진다. 카탈로그에서 온 곡에는 없다. */
   recommended?: TrackRecommendation;
   recommendationReason?: string;
