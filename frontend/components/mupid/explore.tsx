@@ -7,6 +7,7 @@ import { vocalQueryValue } from '@/lib/explore-vocal';
 import { ExploreCategories } from './explore-categories';
 import { PageHeader, TrackRow } from './primitives';
 import { api } from '@/lib/api/session';
+import { expandPhraseSearch } from '@/lib/phrase-search';
 import { localDemoEnabled } from '@/lib/api/local-demo';
 import { toTrack } from '@/lib/stream-catalog';
 import type { Track } from '@/lib/mupid-data';
@@ -54,6 +55,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
     const controller = new AbortController();
     const requestKey = `${m.searchRevision}:${query}:${appliedVocal ?? ''}`;
     void api.music.search({ q: query, vocal: appliedVocal, size: 100 }, controller.signal)
+      .then(page => expandPhraseSearch(page, query, appliedVocal, controller.signal, api.music.search))
       .then(page => {
         if (controller.signal.aborted) return;
         setSearchResponse({

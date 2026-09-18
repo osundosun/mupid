@@ -1349,9 +1349,8 @@
 .mupid-shell .wave-comment-avatar .comment-avatar-image { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 
 .artist-profile-header { display: flex; align-items: center; gap: 16px; min-width: 0; }
-.artist-mock-photo { position: relative; flex: 0 0 72px; width: 72px; height: 72px; }
-.artist-mock-photo img { display: block; width: 72px; height: 72px; border-radius: 50%; object-fit: cover; border: 1px solid #e0eaf6; }
-.artist-mock-photo > span { position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%); padding: 2px 7px; border: 1px solid #e0eaf6; border-radius: 8px; background: #fff; color: #8293ad; font-size: 10px; white-space: nowrap; }
+.artist-profile-photo { display: grid; place-items: center; flex: 0 0 72px; width: 72px; height: 72px; border-radius: 50%; background: #edf3fc; color: #8293ad; }
+.artist-profile-photo img { display: block; width: 72px; height: 72px; border-radius: 50%; object-fit: cover; border: 1px solid #e0eaf6; }
 .artist-profile-header [data-slot=dialog-header] { min-width: 0; }
 
 /* Moment cards share a compact, quiet visual treatment. */
