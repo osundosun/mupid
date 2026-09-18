@@ -1,6 +1,6 @@
 LP displays share a softer tone without filtering text or changing the original artwork
 Main is explicit on desktop and mobile, with current-page state for subpages
-[파일 로드 실패] tests\playback-details.test.mjs
+[파일 로드 실패] tests/playback-details.test.mjs
 account preview keeps modal focus and remains reachable through profile
 album movement preserves controls, keyboard access and navigation boundaries
 album selection is separate from playback, with an accessible full-list alternative

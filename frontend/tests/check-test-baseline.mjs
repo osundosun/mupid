@@ -54,8 +54,13 @@ export function failingNames(output) {
     if (name === 'tests') continue;
     // 파일 단위 실패(`tests\x.test.mjs`) — 파일이 로드조차 안 되면 그건
     // **새 고장**이므로 따로 알린다.
+    //
+    // **경로 구분자를 슬래시로 정규화한다.** 그대로 쓰면 기준선에 Windows 의
+    // `tests\x.test.mjs` 가 적히고 CI(Linux)의 `tests/x.test.mjs` 와 매칭되지
+    // 않는다 — 실제로 그렇게 CI 가 이 항목 하나 때문에 빨간불이 됐다.
+    // 기준선은 플랫폼과 무관해야 한다.
     if (/^tests[\\/].+\.test\.mjs$/.test(name)) {
-      names.add(`[파일 로드 실패] ${name}`);
+      names.add(`[파일 로드 실패] ${name.replaceAll('\\', '/')}`);
       continue;
     }
     names.add(name);
