@@ -2,6 +2,7 @@ package com.osundosun.mupid.api.code.repository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -14,6 +15,9 @@ public interface CodeRepository extends JpaRepository<Code, Integer> {
     List<Code> findAllByCodeTypeOrderByCodeIdAsc(CodeType codeType);
 
     List<Code> findAllByCodeIdIn(List<Integer> codeIds);
+
+    /** 리포트 키워드의 코드명에 대응하는 화면 표시명을 한 번에 읽는다. */
+    List<Code> findAllByCodeTypeAndCodeNameIn(CodeType codeType, Set<String> codeNames);
 
     /**
      * 종류와 이름으로 하나.

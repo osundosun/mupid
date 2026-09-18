@@ -1,7 +1,7 @@
 'use client';
 import { VinylRecord } from './vinyl-record';
 import { Field } from '@base-ui/react/field';
-import { AudioWaveform, ListMusic, Sparkles } from 'lucide-react';
+import { AudioWaveform, ListMusic, Sparkle } from 'lucide-react';
 import { Slider } from '@/components/ui/slider';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { formatTime } from '@/lib/mupid-data';
@@ -75,7 +75,7 @@ export function MobileListening({ model: m }: { model: MupidModel }) {
             저장한 순간
           </button>
           <button onClick={m.openChat}>
-            <Sparkles aria-hidden="true" />
+            <Sparkle aria-hidden="true" />
             AI로 추천받기
           </button>
           <button

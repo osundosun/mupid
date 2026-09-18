@@ -56,7 +56,15 @@
   border: 1px solid #dfe9f9;
   box-shadow: 0 3px 28px #3059941a;
   border-radius: 16px;
-  backdrop-filter: blur(18px);
+  /*
+   * 뒤를 흐리지 않는다.
+   *
+   * `backdrop-filter: blur` 는 요소 모서리 바깥을 **거울처럼 반사해서** 샘플링한다
+   * (Chromium). 768~1023px 에서 이 서랍은 오른쪽에 붙는 패널이라 왼쪽 모서리가
+   * LP 와 곡 제목을 가로지르는데, 그 자리에 LP 와 제목이 좌우 반전된 채 한 번 더
+   * 비쳐 'LP 가 두 장' 처럼 보였다. 배경이 이미 95% 불투명해 흐림이 하는 일은
+   * 거의 없으므로 걷어낸다.
+   */
   overflow: hidden;
 }
 

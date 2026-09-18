@@ -100,7 +100,13 @@ def payload_from(voice: str, gender: str, *,
         return None, f"voice_label={voice or '(빈값)'}"
 
     vg = GENDER_BY_LABEL.get(gender)      # 모르면 None (비운다. ETC 로 뭉개지 않는다)
-    return {"hasVocal": has_vocal, "vocalGender": vg}, ""
+    # **와이어는 snake_case 다.** Spring 이
+    # `spring.jackson.property-naming-strategy: SNAKE_CASE` 로 돌아서 DTO 의
+    # `hasVocal`·`vocalGender` 는 JSON 에서 `has_vocal`·`vocal_gender` 다.
+    # camelCase 로 보내면 두 필드가 **매핑되지 않아** `has_vocal` 이 null 이 되고
+    # `@NotNull` 에 걸려 400 `MUPID_INVALID_REQUEST_BODY` 가 난다 — 실제로 그렇게
+    # 400 을 받고 찾았다. 형제 도구(`register_sections.py`)도 같은 철자를 쓴다.
+    return {"has_vocal": has_vocal, "vocal_gender": vg}, ""
 
 
 def put_analysis(base: str, token: str, music_id: int, body: dict) -> dict:
@@ -174,7 +180,7 @@ def main() -> int:
         if body is None:
             skipped.append({"track_id": tid, "why": why})
             continue
-        key = body["vocalGender"] or "(없음)"
+        key = body["vocal_gender"] or "(없음)"
         gender_seen[key] = gender_seen.get(key, 0) + 1
         if a.dry_run:
             sent += 1
