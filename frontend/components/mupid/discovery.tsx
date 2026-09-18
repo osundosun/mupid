@@ -34,6 +34,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
+import { useIsMobile } from '@/hooks/use-mobile';
 import type { Track } from '@/lib/mupid-data';
 import {
   EmptyState,
@@ -48,6 +49,8 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
   const [confirmUnsave, setConfirmUnsave] = useState(false);
   const [trackInfoOpen, setTrackInfoOpen] = useState(false);
   const [reasonOpen, setReasonOpen] = useState(false);
+  // 폰은 가사를 LP 를 눌러 대화상자로, PC 는 오른쪽 빈 자리에 바로 펼친다.
+  const isMobile = useIsMobile();
   const [lyricsOpen, setLyricsOpen] = useState(false);
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
@@ -59,6 +62,18 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
     (v) => v.track.id === active.id && v.start === part.start && v.end === part.end,
   );
   const momentSaved = !!savedMoment;
+  const vinyl = (
+    <VinylRecord
+      playing={m.playing}
+      track={active}
+      unoptimized
+      className="vinyl-record"
+      src="/sky-vinyl.webp"
+      alt="하늘을 담은 검은 LP 레코드"
+      width="440"
+      height="440"
+    />
+  );
   return (
     <div className="player-page">
       <div className="desktop-player-page-heading">
@@ -76,20 +91,21 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
       </header>
       <div className="player-body">
         <div className="player-art-area">
-          <button type="button" className="record-info-trigger" aria-label={`${active.title} 가사 보기`} aria-haspopup="dialog" onClick={() => setLyricsOpen(true)}>
-          <VinylRecord
-            playing={m.playing}
-            track={active}
-            unoptimized
-            className="vinyl-record"
-            src="/sky-vinyl.webp"
-            alt="하늘을 담은 검은 LP 레코드"
-            width="440"
-            height="440"
-          />
-          </button>
+          {/* PC 에서는 가사가 옆에 펼쳐져 있으므로 LP 는 누를 것이 아니다. */}
+          {isMobile
+            ? <button type="button" className="record-info-trigger" aria-label={`${active.title} 가사 보기`} aria-haspopup="dialog" onClick={() => setLyricsOpen(true)}>
+              {vinyl}
+            </button>
+            : <div className="record-info-trigger">{vinyl}</div>}
         </div>
         <div className="player-detail">
+          {/*
+            PC 는 오른쪽 위가 비어 있었다. 가사를 대화상자로 가릴 이유가 없으니 재생바
+            위에 펼친다. 지금 부르는 줄이 진하게 따라오고, 줄을 누르면 그 시점으로 간다.
+          */}
+          {!isMobile && <div className="player-lyrics-inline">
+            <Lyrics key={active.id} track={active} time={m.time} expanded onSeek={(seconds) => m.seek(seconds)} />
+          </div>}
           {/* 줄은 `TrackComments` 가 그린다 — 같은 줄에 설 댓글 토글이 그쪽 상태를 쓴다. */}
           <TrackComments key={active.id} model={m}>
             <button className="secondary-button quick-like" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
@@ -121,7 +137,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
           </button>}
         </div>
       </div>
-      <Dialog open={lyricsOpen} onOpenChange={setLyricsOpen}>
+      <Dialog open={lyricsOpen && isMobile} onOpenChange={setLyricsOpen}>
         <DialogContent className="sky-dialog player-lyrics-dialog">
           <DialogHeader>
             <DialogTitle>가사</DialogTitle>
