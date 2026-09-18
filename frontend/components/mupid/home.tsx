@@ -15,9 +15,13 @@ import {
 import type { MupidModel } from '@/hooks/use-mupid';
 import { Heading, TrackRow, Waveform, PlayerControls } from './primitives';
 import { forYouHeading, pickForYou } from '@/lib/recommendations';
+import { useTrackWaveform } from '@/lib/track-waveform';
 export function HomeView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
   const forYou = forYouHeading(m.recommendationsReady);
+  // '지금 재생 중' 카드의 파형. 서버 값 → 캐시 → 청크 계산(`lib/track-waveform.ts`).
+  // 듣고 있는 곡이라 청크는 어차피 받는 중이다.
+  const wave = useTrackWaveform(m.active);
   return (
     <>
       <DesktopHome model={m} />
@@ -81,7 +85,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
             <h2>{m.active.title}</h2>
             <button className="track-artist-link" onClick={() => m.setSelectedArtist(m.active!.artist)}>{m.active.artist}</button>
             <Waveform
-              samples={m.active.waveform}
+              samples={wave.values ?? undefined}
               duration={m.active.duration}
               start={m.active.moment}
               end={Math.min(m.active.moment + 20, m.active.duration)}
