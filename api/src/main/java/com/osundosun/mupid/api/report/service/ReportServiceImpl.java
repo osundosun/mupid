@@ -23,6 +23,9 @@ import com.osundosun.mupid.api.analytics.dto.TrackPlayCount;
 import com.osundosun.mupid.api.analytics.repository.ListenAnalyticsRepository;
 import com.osundosun.mupid.api.cache.enumerate.CacheKind;
 import com.osundosun.mupid.api.cache.service.CacheService;
+import com.osundosun.mupid.api.code.entity.Code;
+import com.osundosun.mupid.api.code.enumerate.CodeType;
+import com.osundosun.mupid.api.code.repository.CodeRepository;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.entity.MusicAnalysis;
@@ -81,6 +84,8 @@ public class ReportServiceImpl implements ReportService {
 
     /** 화면의 키워드 칩 개수. */
     private static final int MAX_KEYWORDS = 6;
+
+    private final CodeRepository codeRepository;
 
     /**
      * "최근에 들어본 곡" 을 어디까지 거슬러 볼 것인가.
@@ -397,14 +402,29 @@ public class ReportServiceImpl implements ReportService {
             for (String genre : music.genres()) genreMs.merge(genre, entry.getValue(), Long::sum);
         }
 
+        Map<String, String> moodDisplayNames = displayNames(CodeType.MOOD, moodMs.keySet());
+        Map<String, String> genreDisplayNames = displayNames(CodeType.GENRE, genreMs.keySet());
+
         List<ReportResponse.Keyword> all = new ArrayList<>();
         moodMs.forEach((name, ms) -> all.add(new ReportResponse.Keyword(
-            name, KeywordKind.MOOD, totalMs == 0 ? 0 : (double)ms / totalMs)));
+            name, moodDisplayNames.getOrDefault(name, name), KeywordKind.MOOD,
+            totalMs == 0 ? 0 : (double)ms / totalMs)));
         genreMs.forEach((name, ms) -> all.add(new ReportResponse.Keyword(
-            name, KeywordKind.GENRE, totalMs == 0 ? 0 : (double)ms / totalMs)));
+            name, genreDisplayNames.getOrDefault(name, name), KeywordKind.GENRE,
+            totalMs == 0 ? 0 : (double)ms / totalMs)));
 
         all.sort(Comparator.comparingDouble(ReportResponse.Keyword::weight).reversed());
         return all.size() <= MAX_KEYWORDS ? all : all.subList(0, MAX_KEYWORDS);
+    }
+
+    private Map<String, String> displayNames(CodeType type, Set<String> names) {
+        if (names.isEmpty()) return Map.of();
+        return codeRepository.findAllByCodeTypeAndCodeNameIn(type, names).stream()
+            .collect(java.util.stream.Collectors.toMap(
+                Code::getCodeName,
+                code -> code.getDisplayName() == null || code.getDisplayName().isBlank()
+                    ? code.getCodeName()
+                    : code.getDisplayName()));
     }
 
     private ReportResponse.Mubti toMubtiView(Mubti row, MubtiVerdict verdict) {

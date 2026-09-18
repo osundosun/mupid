@@ -70,7 +70,19 @@ public record ReportResponse(
 
     }
 
-    public record Keyword(String name, KeywordKind kind, double weight) {
+    public record Keyword(
+
+        /** AI 색인과 매칭하는 코드명. */
+        String name,
+
+        /** 화면에 보여줄 이름. */
+        String displayName,
+
+        KeywordKind kind,
+
+        double weight
+
+    ) {
 
     }
 
