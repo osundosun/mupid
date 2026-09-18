@@ -96,23 +96,28 @@ fn absolute(path: &str) -> String {
     }
 }
 
-/// 상한을 지키며 본문을 받는다.
+/// 선택적인 파일의 상태 코드를 **뜻으로 옮긴다. 순수 함수다.**
 ///
-/// `chunk()` 로 조각을 받으며 세므로, `Content-Length` 가 없거나 거짓이어도
-/// 상한이 지켜진다. 넘으면 **즉시** 오류로 끝낸다 — 다 받고 나서 자르면
-/// 그 사이에 메모리가 이미 부풀어 있다.
-async fn fetch_bounded(state: &HttpState, url: &str, limit: u64) -> Result<Vec<u8>, String> {
-    let client = state.client().clone();
-    let mut response = client
-        .get(&absolute(url))
-        .send()
-        .await
-        .map_err(|error| format!("요청 실패: {error}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("서버가 {} 를 돌려줬습니다", response.status()));
+/// 이 구분이 이 함수의 존재 이유다. 뭉치면 두 방향으로 틀린다 —
+/// `404` 를 오류로 보면 APK 를 아직 안 올린 **정상 상태**에서 앱이 오류를 겪고,
+/// `500` 을 "없음" 으로 보면 서버 고장을 삼켜 조용히 지나간다.
+///
+/// 돌려주는 값: `true` = 파일이 있다, `false` = 없다(404).
+fn classify_optional(status: u16) -> Result<bool, String> {
+    if status == reqwest::StatusCode::NOT_FOUND.as_u16() {
+        return Ok(false);
     }
+    if (200..300).contains(&status) {
+        return Ok(true);
+    }
+    Err(format!("서버가 {status} 를 돌려줬습니다"))
+}
 
+/// 이미 열린 응답에서 **상한을 지키며** 본문을 읽는다.
+///
+/// 상한 검사가 한 곳에 있어야 한다 — 부르는 쪽마다 루프를 쓰면 한쪽만
+/// 고쳐지는 날이 온다. 이 앱에서 상한은 안전 규칙이다.
+async fn read_bounded(response: &mut reqwest::Response, limit: u64) -> Result<Vec<u8>, String> {
     // 값싼 검사 — 헤더가 상한을 넘는다고 하면 본문을 받지 않는다.
     if let Some(length) = response.content_length() {
         if length > limit {
@@ -132,6 +137,55 @@ async fn fetch_bounded(state: &HttpState, url: &str, limit: u64) -> Result<Vec<u
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+/// 상한을 지키며 본문을 받는다.
+///
+/// `chunk()` 로 조각을 받으며 세므로, `Content-Length` 가 없거나 거짓이어도
+/// 상한이 지켜진다. 넘으면 **즉시** 오류로 끝낸다 — 다 받고 나서 자르면
+/// 그 사이에 메모리가 이미 부풀어 있다.
+async fn fetch_bounded(state: &HttpState, url: &str, limit: u64) -> Result<Vec<u8>, String> {
+    let client = state.client().clone();
+    let mut response = client
+        .get(&absolute(url))
+        .send()
+        .await
+        .map_err(|error| format!("요청 실패: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("서버가 {} 를 돌려줬습니다", response.status()));
+    }
+    read_bounded(&mut response, limit).await
+}
+
+/// 상한을 지키며 본문을 받되, **`404` 를 오류로 만들지 않는다** — `None` 이다.
+///
+/// ## 왜 한 번에 받는가
+///
+/// 예전에는 `404` 를 보려고 요청을 한 번 보내고, 본문을 받으려고 **또** 한 번
+/// 보냈다. 낭비가 두 가지다 — 요청 자체가 두 배이고, 파일이 **실제로 있는
+/// 동안** 본문을 두 번 내려받는다. 콜드 스타트마다 그 값이 곱해졌다
+/// (실측: 기동 1회에 `native.json` 6회 요청. 이제 2회다).
+///
+/// 상태와 본문을 함께 보면 그 구분을 잃지 않는다 — `classify_optional` 이
+/// 그 판단을 한 곳에서 한다.
+async fn fetch_bounded_optional(
+    state: &HttpState,
+    url: &str,
+    limit: u64,
+) -> Result<Option<Vec<u8>>, String> {
+    let client = state.client().clone();
+    let mut response = client
+        .get(&absolute(url))
+        .send()
+        .await
+        .map_err(|error| format!("요청 실패: {error}"))?;
+
+    if !classify_optional(response.status().as_u16())? {
+        // 없다. 본문을 읽지 않는다.
+        return Ok(None);
+    }
+    Ok(Some(read_bounded(&mut response, limit).await?))
 }
 
 /// 상한을 지키며 본문을 **파일로 흘려보낸다.**
@@ -240,18 +294,15 @@ pub async fn fetch_web_manifest(state: &HttpState) -> Result<WebManifest, String
 ///
 /// 없으면 `None` 이다 — APK 를 아직 올리지 않은 상태가 정상일 수 있다.
 /// 그 경우 "네이티브 업데이트가 있다" 고 잘못 말하면 안 된다.
+///
+/// **요청은 한 번이다.** 상태 확인과 본문 받기를 따로 하면 파일이 있는 동안
+/// 본문을 두 번 내려받는다(`fetch_bounded_optional` 참고).
 pub async fn fetch_native_manifest(state: &HttpState) -> Result<Option<NativeManifest>, String> {
-    let client = state.client().clone();
-    let response = client
-        .get(&absolute(NATIVE_MANIFEST_URL))
-        .send()
-        .await
-        .map_err(|error| format!("요청 실패: {error}"))?;
-
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
+    let Some(body) =
+        fetch_bounded_optional(state, NATIVE_MANIFEST_URL, MAX_MANIFEST_BYTES).await?
+    else {
         return Ok(None);
-    }
-    let body = fetch_bounded(state, NATIVE_MANIFEST_URL, MAX_MANIFEST_BYTES).await?;
+    };
     let text = String::from_utf8(body).map_err(|_| "매니페스트가 UTF-8 이 아닙니다".to_string())?;
     let manifest: NativeManifest =
         serde_json::from_str(&text).map_err(|error| format!("매니페스트를 읽지 못했습니다: {error}"))?;
@@ -260,13 +311,22 @@ pub async fn fetch_native_manifest(state: &HttpState) -> Result<Option<NativeMan
 
 /// 지금 상태를 모은다. **네트워크 실패를 오류로 올리지 않는다** — 있는 정보만
 /// 채워 돌려준다.
+///
+/// 두 매니페스트를 **동시에** 받는다. 순서대로 받으면 이 함수를 부르는 횟수만큼
+/// 왕복이 두 배가 되는데, 이 함수는 기동 한 번에 여러 번 불린다. 둘은 서로를
+/// 기다릴 이유가 없다 — 각자 독립된 파일이고, 하나가 실패해도 다른 하나는
+/// 그대로 쓴다(`.ok()` 가 실패를 흡수한다).
 pub async fn check(db: &Db, state: &HttpState) -> UpdateState {
     let local_web_build = update::local_web_build();
     let local_native_build = update::native_build_ms();
     let local_version_code = update::local_version_code();
 
-    let web = fetch_web_manifest(state).await.ok();
-    let native = fetch_native_manifest(state).await.ok().flatten();
+    let (web, native) = tokio::join!(
+        fetch_web_manifest(state),
+        fetch_native_manifest(state),
+    );
+    let web = web.ok();
+    let native = native.ok().flatten();
 
     let rejected = update::rejected(db);
     let rejected_now = web
@@ -446,6 +506,43 @@ pub fn should_prompt(db: &Db, now_ms: i64) -> bool {
 /// 지금 안내를 띄웠다고 기록한다 (24시간 창을 닫는다).
 pub fn note_prompted(db: &Db, now_ms: i64) {
     let _ = kv::put(db, PROMPTED_KEY, &now_ms.to_string());
+}
+
+#[cfg(test)]
+mod optional_tests {
+    use super::*;
+
+    /// `404` 와 그 밖의 실패를 **구분하는가.**
+    ///
+    /// 이것이 무너지면 두 방향으로 조용히 틀린다 — APK 를 아직 안 올린 정상
+    /// 상태에서 앱이 오류를 겪거나, 서버 고장(500)을 "없음" 으로 삼켜
+    /// 업데이트 확인이 영영 안 되는 것을 아무도 모른다.
+    #[test]
+    fn a_missing_file_is_not_an_error_but_a_server_fault_is() {
+        // 없다 — 오류가 아니라 `false`.
+        assert_eq!(classify_optional(404), Ok(false));
+        // 있다.
+        for ok in [200u16, 201, 204, 299] {
+            assert_eq!(classify_optional(ok), Ok(true), "{ok} 는 성공이다");
+        }
+        // 실패는 실패로 남는다. 조용히 None 이 되면 안 된다.
+        for bad in [400u16, 401, 403, 500, 503] {
+            let result = classify_optional(bad);
+            assert!(result.is_err(), "{bad} 를 '없음' 으로 삼키면 안 된다");
+            assert!(
+                result.unwrap_err().contains(&bad.to_string()),
+                "{bad} 가 메시지에 있어야 원인을 안다"
+            );
+        }
+    }
+
+    /// `not_found` 는 `reqwest` 가 정한 값이어야 한다. 숫자를 손으로 박으면
+    /// 라이브러리가 바뀌는 날 조용히 어긋난다 — 여기서 그 결합을 고정한다.
+    #[test]
+    fn the_missing_code_is_the_one_reqwest_calls_not_found() {
+        assert_eq!(reqwest::StatusCode::NOT_FOUND.as_u16(), 404);
+        assert_eq!(classify_optional(404), Ok(false));
+    }
 }
 
 #[cfg(test)]

@@ -93,10 +93,17 @@ export async function checkForUpdates(): Promise<UpdateState | null> {
     // `update_web` 이 스스로 판단하지만, 여기서 한 번 거르면 할 일이 없을 때
     // 커맨드를 부르지 않아도 되고 진단이 쉬워진다.
     const before = await invoke<UpdateState>('update_status');
-    if (before.webAvailable && !before.webRejected) {
-      // 내려받아 활성화한다. 화면은 건드리지 않는다.
-      await invoke<number | null>('update_web');
+    if (!before.webAvailable || before.webRejected) {
+      // **내려받지 않았으면 상태를 다시 읽지 않는다.** 다시 읽어도 같은 값이고,
+      // 그 한 번이 매 기동마다 두 배의 요청이 된다 — 이 함수는 콜드 스타트마다
+      // 불리고, 그 안의 `update_status` 는 매니페스트 두 개를 받는다
+      // (실측: 기동 1회에 매니페스트 6회 요청. 이제 4회다).
+      return before;
     }
+    // 내려받아 활성화한다. 화면은 건드리지 않는다.
+    await invoke<number | null>('update_web');
+    // 여기서는 **다시 읽는다.** 실제로 상태가 바뀌었을 수 있고(활성화된 빌드),
+    // 그 값을 안내 창과 로그가 쓴다.
     return await invoke<UpdateState>('update_status');
   } catch (error) {
     // 네트워크가 없거나 서버가 죽었을 수 있다. 사용자가 알 필요는 없다.
