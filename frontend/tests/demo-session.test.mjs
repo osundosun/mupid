@@ -56,10 +56,10 @@ void test('account UI passes credentials only to the service and resets the form
 void test('sign-in only changes UI state and sign-out clears the account', () => {
   const signIn = hook.slice(
     hook.indexOf('const signInDemo'),
-    hook.indexOf('const signOutDemo'),
+    hook.indexOf('const finishSignOut'),
   );
   const signOut = hook.slice(
-    hook.indexOf('const signOutDemo'),
+    hook.indexOf('const finishSignOut'),
     hook.indexOf('const loadTrack'),
   );
   assert.ok(signIn.includes('setDemoSession({') || signIn.includes('setDemoSession(session)'));
