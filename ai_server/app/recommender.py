@@ -268,9 +268,8 @@ class Catalog:
         c = self.content.loc[tid].to_dict() if tid in self.content.index else {}
         return {
             "track_id": tid, "title": m.get("title", tid),
-            "category": m.get("category", "unknown"),
-            "vocal_type": m.get("vocal_type", "unknown"),
-            "language": m.get("language", "unknown"),
+            "category": _text(m.get("category")),
+            "language": _text(m.get("language")),
             "bpm": round(float(c.get("bpm", 0.0)), 1),
             "bpm_requested": [m.get("bpm_lo"), m.get("bpm_hi")],
             "dur_sec": round(float(c.get("dur_sec", 0.0)), 1),
@@ -293,52 +292,95 @@ ENERGY_BUCKETS = [("calm", "차분 (하위 33%)", 0.0, 1 / 3),
                   ("intense", "강렬 (상위 33%)", 2 / 3, 1.01)]
 
 
+_MISSING_TEXT = {"", "unknown", "nan", "none", "null", "<na>", "nat"}
+_VOCAL_GENDER = {
+    "m": "M", "male": "M", "f": "F", "female": "F",
+    "etc": "ETC", "mixed": "ETC", "other": "ETC",
+}
+
+
+def _text(v) -> str:
+    """누락 표기를 실제 어휘로 노출하지 않는다."""
+    if v is None or (isinstance(v, float) and v != v):
+        return ""
+    value = str(v).strip()
+    return "" if value.lower() in _MISSING_TEXT else value
+
+
 def _tag_list(v) -> list:
     """flow_meta 의 쉼표 구분 태그 문자열을 리스트로."""
-    if not v or (isinstance(v, float) and v != v):
+    if isinstance(v, (list, tuple, set, np.ndarray)):
+        values = v
+    elif _text(v):
+        values = str(v).split(",")
+    else:
         return []
-    return [x.strip() for x in str(v).split(",") if x.strip()]
+    return [text for x in values if (text := _text(x))]
+
+
+def _instrument_list(v) -> list:
+    """구체적인 악기만 검색 근거로 쓴다."""
+    return list(dict.fromkeys(
+        x for x in _tag_list(v) if x.lower() != "unknown" and x != "그 외 악기"))
 
 
 def short_genre(g: str) -> str:
     """'Rock---Punk' -> 'Punk'."""
-    g = str(g or "").strip()
-    return g.split("---")[-1].strip() if g and g.lower() != "unknown" else ""
+    g = _text(g)
+    return g.split("---")[-1].strip() if g else ""
 
 
 def _catalog_tags(m: dict) -> dict:
-    """카탈로그(flow_meta)에 실린 Essentia 태그를 응답용으로 정리한다.
+    """카탈로그 메타를 서비스의 보컬·악기 자료형으로 정규화한다."""
+    voice = _text(m.get("voice_label")).lower()
+    raw_vocal = _text(m.get("vocal_type")).lower()
+    raw_has_vocal = m.get("has_vocal")
+    if isinstance(raw_has_vocal, (bool, np.bool_)):
+        has_vocal = bool(raw_has_vocal)
+    elif str(raw_has_vocal).strip().lower() in ("1", "true"):
+        has_vocal = True
+    elif str(raw_has_vocal).strip().lower() in ("0", "false"):
+        has_vocal = False
+    elif voice == "instrumental" or raw_vocal == "instrumental":
+        has_vocal = False
+    elif voice == "voice" or raw_vocal in ("voice", "male", "female", "mixed", "other"):
+        has_vocal = True
+    else:
+        has_vocal = None
 
-    보컬 표기를 한 어휘로 모은다. 자체 음원은 생성 메타의 female/male/mixed 를 쓰고,
-    Jamendo 는 voice/instrumental 만 있어 성별 판정이 있으면 그걸로 대체한다.
-    그래야 조사 선택지에서 두 출처가 같은 항목으로 묶인다.
-    """
-    voice = str(m.get("voice_label") or "")
-    gender = str(m.get("gender_label") or "")
-    vt = str(m.get("vocal_type") or "unknown")
-    if vt in ("", "unknown", "voice"):
-        if gender in ("male", "female"):
-            vt = gender
-        elif voice == "instrumental":
-            vt = "instrumental"
+    raw_gender = next((_text(v).lower() for v in
+                       (m.get("vocal_gender"), m.get("gender_label"), raw_vocal)
+                       if _text(v)), "")
+    vocal_gender = None if has_vocal is not True else _VOCAL_GENDER.get(raw_gender)
     return {
         "genre": short_genre(m.get("genre_top1")),
-        "genre_full": str(m.get("genre_top1") or ""),
+        "genre_full": _text(m.get("genre_top1")),
         "moods": _tag_list(m.get("mood_tags")),
-        "instruments": _tag_list(m.get("instrument_tags")),
-        "voice": voice, "gender": gender,
-        "vocal_type": vt,                      # 위에서 통일한 값으로 덮어쓴다
+        "instruments": _instrument_list(m.get("instruments", m.get("instrument_tags"))),
+        "has_vocal": has_vocal,
+        "vocal_gender": vocal_gender,
     }
 
 
-def parse_style(cat: str, vocal: str, lang: str) -> str:
+def _vocal_values(has_vocal, vocal_gender) -> list[str]:
+    """실제 두 컬럼을 자연어 검색 어휘로 투영한다."""
+    if has_vocal is None:
+        return []
+    if not has_vocal:
+        return ["instrumental"]
+    gender = {"M": "male", "F": "female", "ETC": "other"}.get(vocal_gender)
+    return ["voice"] + ([gender] if gender else [])
+
+
+def parse_style(cat: str, vocal_values: list[str], lang: str) -> str:
     """category 문자열에서 보컬·언어 접두어를 떼어 스타일만 남긴다."""
     parts = [x for x in str(cat).split("_") if x]
-    if parts and parts[0] == str(vocal):
+    prefixes = set(vocal_values) | ({"mixed"} if "other" in vocal_values else set())
+    if parts and parts[0] in prefixes:
         parts = parts[1:]
     if parts and parts[0] == str(lang):
         parts = parts[1:]
-    return "_".join(parts) or "unknown"
+    return "_".join(parts)
 
 
 def catalog_facets() -> dict:
@@ -352,6 +394,13 @@ def catalog_facets() -> dict:
     hit = getattr(c, "_facets_cache", None)
     if hit is not None:
         return hit
+    moment_instruments = {}
+    if "instruments" in c.mom.columns:
+        for track_id, group in c.mom.groupby("track_id", sort=False):
+            moment_instruments[track_id] = list(dict.fromkeys(
+                instrument
+                for value in group.instruments
+                for instrument in _instrument_list(value)))
     rows = []
     for t in sorted(c.by_track):
         ti = c.track_info(t)
@@ -362,11 +411,15 @@ def catalog_facets() -> dict:
         else:
             bpm_use, bpm_src = float(ti["bpm"] or 0.0), "measured"
         rows.append({
-            "track_id": t, "vocal_type": ti["vocal_type"], "language": ti["language"],
-            "style": parse_style(ti["category"], ti["vocal_type"], ti["language"]),
+            "track_id": t, "has_vocal": ti["has_vocal"],
+            "vocal_gender": ti["vocal_gender"],
+            "language": ti["language"],
+            "style": parse_style(ti["category"],
+                                 _vocal_values(ti["has_vocal"], ti["vocal_gender"]),
+                                 ti["language"]),
             "genre": ti.get("genre") or "",
             "moods": ti.get("moods") or [],
-            "instruments": ti.get("instruments") or [],
+            "instruments": moment_instruments.get(t) or ti.get("instruments") or [],
             "bpm": bpm_use, "bpm_source": bpm_src, "bpm_measured": float(ti["bpm"] or 0.0),
         })
     df = pd.DataFrame(rows)
@@ -391,7 +444,13 @@ def catalog_facets() -> dict:
             for k, v in c.pool.section_label.value_counts().items()]
     # 에너지(rms 백분위)는 선택지에서 뺐다 — 체감과 어긋나 부정확했다.
     # 대신 모델이 뽑은 장르·무드·악기를 선택지로 쓴다.
-    out = {"language": cnt("language"), "vocal_type": cnt("vocal_type"),
+    vocal_counts: dict[str, int] = {}
+    for row in df.itertuples(index=False):
+        for value in _vocal_values(row.has_vocal, row.vocal_gender):
+            vocal_counts[value] = vocal_counts.get(value, 0) + 1
+    vocal = [{"value": k, "label": k, "tracks": v}
+             for k, v in sorted(vocal_counts.items(), key=lambda kv: -kv[1])]
+    out = {"language": cnt("language"), "vocal": vocal,
            "style": cnt("style"), "genre": cnt("genre"),
            "mood": cnt_multi("moods"), "instrument": cnt_multi("instruments"),
            "tempo": tempo, "section_label": secs, "_df": df}
@@ -478,7 +537,8 @@ def onboarding_seeds(user: str,
         want_inst = ans.get("instrument") or []
         if relax < 3 and want_lang and r.language not in want_lang:
             return False
-        if relax < 3 and want_voc and r.vocal_type not in want_voc:
+        if relax < 3 and want_voc and not (
+                set(_vocal_values(r.has_vocal, r.vocal_gender)) & set(want_voc)):
             return False
         if relax < 2 and want_sty and r.style not in want_sty:
             return False
@@ -1512,7 +1572,8 @@ def _canonicalize_query_tags(data: dict, fac: pd.DataFrame,
         "language": collect("language"),
         "mood": collect("moods"),
         "instrument": collect("instruments"),
-        "vocal": collect("vocal_type"),
+        "vocal": {value for row in fac.itertuples()
+                  for value in _vocal_values(row.has_vocal, row.vocal_gender)},
         "flow": set(_qvals(pool["section_label"].tolist())),
     }
     for name, vocab in allowed.items():
@@ -1543,8 +1604,8 @@ def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional
     ex = _canonicalize_query_tags(plan.get("exclude") or {}, fac, pool)
     available = {
         "instrument": any(_qvals(v) for v in fac.instruments),
-        "vocal": any(x not in ("unknown", "voice")
-                     for v in fac.vocal_type for x in _qvals(v)),
+        "vocal": any(_vocal_values(r.has_vocal, r.vocal_gender)
+                     for r in fac.itertuples()),
     }
     ignored = []
     for name, ok in available.items():
@@ -1573,21 +1634,28 @@ def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional
         wanted = (ex if negate else f).get(name)
         if not _qvals(wanted):
             return
-        hit = np.asarray([_qmatch(values(t), wanted) for t in pool.track_id])
+        rows = (values(t) for t in pool.track_id) if callable(values) else values
+        hit = np.asarray([_qmatch(value, wanted) for value in rows])
         keep &= ~hit if negate else hit
         applied.append(("exclude." if negate else "filters.") + name)
 
     _m = lambda t: meta.get(t) or {}          # noqa: E731  (fac.loc[t] 과 같은 값)
     gate("genre", lambda t: [_m(t).get("genre", ""), _m(t).get("style", "")])
     gate("language", lambda t: _m(t).get("language", ""))
-    gate("instrument", lambda t: _m(t).get("instruments", []))
-    gate("vocal", lambda t: _m(t).get("vocal_type", ""))
+    instruments = ([_instrument_list(value) or _m(track_id).get("instruments", [])
+                    for track_id, value in zip(pool.track_id, pool.instruments)]
+                   if "instruments" in pool.columns
+                   else [_m(t).get("instruments", []) for t in pool.track_id])
+    gate("instrument", instruments)
+    gate("vocal", lambda t: _vocal_values(_m(t).get("has_vocal"),
+                                           _m(t).get("vocal_gender")))
     # mood/activity/goal은 추론 가능성이 커서 CLAP 점수로만 반영한다.
     gate("genre", lambda t: [_m(t).get("genre", ""), _m(t).get("style", "")], True)
     gate("language", lambda t: _m(t).get("language", ""), True)
     gate("mood", lambda t: _m(t).get("moods", []), True)
-    gate("instrument", lambda t: _m(t).get("instruments", []), True)
-    gate("vocal", lambda t: _m(t).get("vocal_type", ""), True)
+    gate("instrument", instruments, True)
+    gate("vocal", lambda t: _vocal_values(_m(t).get("has_vocal"),
+                                           _m(t).get("vocal_gender")), True)
 
     flow = f.get("flow")
     if _qvals(flow):
@@ -1834,7 +1902,8 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
                     continue
                 r = fac.loc[t]
                 okm.append((not wl or r.language in wl)
-                           and (not wv or r.vocal_type in wv)
+                           and (not wv or set(_vocal_values(
+                               r.has_vocal, r.vocal_gender)) & set(wv))
                            and (not xs or r.style not in xs))
             okm = np.asarray(okm)
             diag["dropped_onboarding_filter"] = int((keep & ~okm).sum())

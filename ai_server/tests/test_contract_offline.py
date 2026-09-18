@@ -230,7 +230,7 @@ def _fake_facets_svc():
     df = pd.DataFrame([{"track_id": "T1", "bpm": 90.0}, {"track_id": "T2", "bpm": 140.0}])
     fac = {
         "language": [{"value": "ko", "label": "ko", "tracks": 2}],
-        "vocal_type": [{"value": "female", "label": "female", "tracks": 1}],
+        "vocal": [{"value": "female", "label": "female", "tracks": 1}],
         "style": [{"value": "ko_ballad", "label": "ko_ballad", "tracks": 1}],
         "genre": [{"value": "pop", "label": "pop", "tracks": 2}],
         "mood": [{"value": "relaxing", "label": "relaxing", "tracks": 2}],
@@ -283,6 +283,43 @@ def test_facets_payload_is_json_safe(facets_payload):
 
     json.dumps(facets_payload)
     assert "_df" not in json.dumps(facets_payload)
+
+
+def test_catalog_tags_match_service_vocal_fields_and_hide_missing_values():
+    from ai_server.app import recommender
+
+    instrumental = recommender._catalog_tags({
+        "has_vocal": False, "vocal_gender": "F",
+        "genre_top1": "unknown", "mood_tags": "unknown,relaxing",
+        "instrument_tags": ["그 외 악기", "드럼", "unknown", "드럼"],
+    })
+    assert instrumental == {
+        "genre": "", "genre_full": "", "moods": ["relaxing"],
+        "instruments": ["드럼"], "has_vocal": False, "vocal_gender": None,
+    }
+    assert recommender._vocal_values(False, None) == ["instrumental"]
+
+    vocal = recommender._catalog_tags({"has_vocal": True, "vocal_gender": "F"})
+    assert vocal["has_vocal"] is True and vocal["vocal_gender"] == "F"
+    assert recommender._vocal_values(True, "F") == ["voice", "female"]
+
+    missing = recommender._catalog_tags({
+        "has_vocal": "unknown", "vocal_gender": "unknown",
+        "mood_tags": "<NA>", "instrument_tags": "unknown",
+    })
+    assert missing["has_vocal"] is None and missing["vocal_gender"] is None
+    assert missing["moods"] == [] and missing["instruments"] == []
+
+
+def test_register_analysis_never_stores_gender_for_instrumental():
+    from ai_server.tools import register_analysis
+
+    assert register_analysis.payload_from("instrumental", "female") == (
+        {"has_vocal": False, "vocal_gender": None}, "")
+    assert register_analysis.payload_from("voice", "female") == (
+        {"has_vocal": True, "vocal_gender": "F"}, "")
+    body, why = register_analysis.payload_from("unknown", "unknown")
+    assert body is None and "unknown" in why
 
 
 # ------------------------------------------------------------------ 순위 불변
@@ -590,7 +627,8 @@ def test_similar_returns_string_ids(similar_client):
     assert [i["rank_order"] for i in body["items"]] == [1, 2]
     assert body["external_id"] == "A#0", "기준 구간을 그대로 돌려준다"
     assert body["embedding_version"]
-    for gone in ("music_id", "music_section_id", "start_time_ms", "section_label"):
+    for gone in ("music_id", "music_section_id", "music_section_analysis_id",
+                 "start_time_ms", "section_label"):
         assert gone not in body["items"][0], gone
 
 
@@ -1134,7 +1172,8 @@ def test_spring_tolerates_fields_we_added():
 
 # ------------------------------------------------------------------ 매핑표 생성
 def _tsv(tmp_path, rows, header=None):
-    header = header or "source_track_id\tmusic_id\tsource_section_uid\tmusic_section_id"
+    header = header or (
+        "source_track_id\tmusic_id\texternal_id\tmusic_section_analysis_id")
     p = tmp_path / "t.tsv"
     p.write_text(header + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
     return p
@@ -1182,12 +1221,13 @@ def test_build_id_map_derives_track_id_but_never_music_id(tmp_path):
     반대로 숫자 music_id 는 Spring 이 발급하므로 지어내지 않고 멈춘다."""
     from ai_server.tools import build_id_map as b
 
-    src = _tsv(tmp_path, ["A#0\t10"], header="source_section_uid\tmusic_section_id")
+    src = _tsv(tmp_path, ["A#0\t10"],
+               header="external_id\tmusic_section_analysis_id")
     with pytest.raises(SystemExit):        # music_id 가 없다
         b.build(b.read_table(src))
 
     ok = _tsv(tmp_path, ["A#0\t10\t1"],
-              header="source_section_uid\tmusic_section_id\tmusic_id")
+              header="external_id\tmusic_section_analysis_id\tmusic_id")
     got = b.build(b.read_table(ok))
     assert got.source_track_id.iloc[0] == "A"        # 파생이 기본 동작이다
 
@@ -1200,9 +1240,23 @@ def test_build_id_map_reads_csv_too(tmp_path):
     from ai_server.tools import build_id_map as b
 
     p = tmp_path / "t.csv"
-    p.write_text("source_track_id,music_id,source_section_uid,music_section_id\n"
+    p.write_text("source_track_id,music_id,external_id,music_section_analysis_id\n"
                  "A,1,A#0,10\n", encoding="utf-8")
     assert len(b.build(b.read_table(p))) == 1
+
+
+def test_id_map_reads_legacy_preprocessing_columns(tmp_path):
+    """외부 전처리 산출물은 AI 입력 경계에서 실제 DB 이름으로 정규화한다."""
+    import pandas as pd
+
+    p = tmp_path / "legacy.parquet"
+    pd.DataFrame([{
+        "source_track_id": "A", "music_id": 1,
+        "source_section_uid": "A#0", "music_section_id": 10,
+    }]).to_parquet(p, index=False)
+    im = ids.IdMap(path=p, strict=True)
+    assert im.external_id(10) == "A#0"
+    assert im.music_section_analysis_id("A#0") == 10
 
 
 # ------------------------------------------------------------------ 온보딩 수신
@@ -1869,9 +1923,9 @@ def test_register_sections_writes_id_map_from_issued_numbers(tmp_path):
 
     pairs = [
         {"source_track_id": "T000001", "music_id": 1001,
-         "source_section_uid": "T000001#0", "music_section_id": 4101},
+         "external_id": "T000001#0", "music_section_analysis_id": 4101},
         {"source_track_id": "T000001", "music_id": 1001,
-         "source_section_uid": "T000001#1", "music_section_id": 4102},
+         "external_id": "T000001#1", "music_section_analysis_id": 4102},
     ]
     dst = tmp_path / "id_map.parquet"
     tracks, sections = build_id_map.write_map(
@@ -1880,8 +1934,8 @@ def test_register_sections_writes_id_map_from_issued_numbers(tmp_path):
 
     im = ids.IdMap(path=dst, strict=True)
     assert im.music_id("T000001") == 1001
-    assert im.music_section_id("T000001#1") == 4102
-    assert im.source_section_uid(4101) == "T000001#0"
+    assert im.music_section_analysis_id("T000001#1") == 4102
+    assert im.external_id(4101) == "T000001#0"
 
 
 def test_register_sections_id_map_rejects_two_songs_sharing_a_number(tmp_path):
@@ -1893,9 +1947,9 @@ def test_register_sections_id_map_rejects_two_songs_sharing_a_number(tmp_path):
 
     pairs = [
         {"source_track_id": "T1", "music_id": 7,
-         "source_section_uid": "T1#0", "music_section_id": 1},
+         "external_id": "T1#0", "music_section_analysis_id": 1},
         {"source_track_id": "T2", "music_id": 7,
-         "source_section_uid": "T2#0", "music_section_id": 2},
+         "external_id": "T2#0", "music_section_analysis_id": 2},
     ]
     dst = tmp_path / "id_map.parquet"
     with pytest.raises(SystemExit):

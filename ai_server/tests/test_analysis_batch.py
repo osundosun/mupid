@@ -85,12 +85,13 @@ def write_id_map(data: Path, extra: list | None = None,
     uids = list(dict.fromkeys(uids))
 
     df = pd.DataFrame({
-        "source_section_uid": uids,
-        "music_section_id": np.arange(1, len(uids) + 1, dtype="int64"),
+        "external_id": uids,
+        "music_section_analysis_id": np.arange(1, len(uids) + 1, dtype="int64"),
     })
-    df["source_track_id"] = df.source_section_uid.str.split("#").str[0]
+    df["source_track_id"] = df.external_id.str.split("#").str[0]
     df["music_id"] = df.source_track_id.map(num).astype("int64")
-    df = df[["source_track_id", "music_id", "source_section_uid", "music_section_id"]]
+    df = df[["source_track_id", "music_id", "external_id",
+             "music_section_analysis_id"]]
     if exclude:
         # 등록되지 않은 곡. 색인에는 있는데 숫자가 없는 상태를 만든다.
         df = df[~df.source_track_id.isin({str(x) for x in exclude})]
