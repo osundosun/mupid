@@ -170,7 +170,23 @@ export type MusicSummary = {
   };
   genres: string[];
   moods: string[];
+  /**
+   * 파형. 곡을 160 칸으로 균등히 나눠 칸마다 RMS 를 재고, 그 곡 안의 최댓값이 1.0 이
+   * 되게 맞춘 0~1 배열이다(`flow_music_automation` 이 mp3 에서 뽑는다). 칸 번호가
+   * 재생 위치에 선형으로 대응한다 — 0 이 곡 시작, 159 가 끝.
+   *
+   * **곡끼리 크기를 비교할 수 없다.** 조용한 곡도 자기 안에서 가장 큰 칸이 1.0 이다.
+   * 모양만 믿는다. 아직 파형이 없는 곡은 필드가 빠지거나 null 이다.
+   *
+   * 필드 이름은 백엔드가 정하는 대로 `WAVEFORM_FIELD` 한 곳에서 바꾼다.
+   */
+  [WAVEFORM_FIELD]?: number[] | null;
 };
+
+/** 서버 응답에서 파형 배열이 담기는 필드 이름. 백엔드 컨벤션이 정해지면 여기만 바꾼다. */
+export const WAVEFORM_FIELD = 'waveform' as const;
+/** 서버 파형 배열의 길이. `Waveform` 이 그리는 막대 수와 다르면 다시 표본한다. */
+export const WAVEFORM_SAMPLES = 160;
 
 export type MusicPage = {
   items: MusicSummary[];
@@ -658,6 +674,17 @@ export function createEndpoints(client: ApiClient) {
         client.request<void>({
           method: 'DELETE',
           path: '/api/v1/user/history/search/all',
+          responseType: 'none',
+        }),
+    },
+
+    inquiry: {
+      /** 문의 보내기. 내용만 받는다. 답변은 가입한 메일로 서버가 보낸다. */
+      send: (content: string) =>
+        client.request<void>({
+          method: 'POST',
+          path: '/api/v1/inquiries',
+          json: { content },
           responseType: 'none',
         }),
     },

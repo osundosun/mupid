@@ -13,7 +13,6 @@ import {
   ListMusic,
   Bookmark,
   BookmarkMinus,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ThumbsDown,
@@ -35,6 +34,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
+import { useIsMobile } from '@/hooks/use-mobile';
 import type { Track } from '@/lib/mupid-data';
 import {
   EmptyState,
@@ -45,9 +45,30 @@ import {
   Waveform,
 } from './primitives';
 
+/**
+ * 구간 이름의 짧은 설명. 칩에 마우스를 올리면(툴팁) 보인다. '벌스 2'·'코러스 1' 처럼
+ * 번호가 붙은 서버 라벨도 앞 글자로 찾는다.
+ */
+const SECTION_HINTS: Record<string, string> = {
+  '인트로': '곡의 시작. 분위기를 여는 도입부예요.',
+  '벌스': '이야기를 풀어가는 절. 코러스 앞에 와요.',
+  '프리코러스': '코러스로 이어지는 다리. 긴장이 차오르는 부분이에요.',
+  '코러스': '가장 기억에 남는 후렴. 곡의 핵심이에요.',
+  '브리지': '분위기를 한 번 바꾸는 전환부. 보통 후반에 와요.',
+  '파이널 코러스': '마지막 후렴. 가장 크게 터지는 자리예요.',
+  '아웃트로': '곡의 마무리. 여운을 남기며 끝나요.',
+};
+const sectionHint = (label: string): string | undefined => {
+  const key = Object.keys(SECTION_HINTS).sort((a, b) => b.length - a.length).find(k => label.startsWith(k));
+  return key ? SECTION_HINTS[key] : undefined;
+};
+
 export function PlayerView({ model: m }: { model: MupidModel }) {
   const [confirmUnsave, setConfirmUnsave] = useState(false);
   const [trackInfoOpen, setTrackInfoOpen] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
+  // 폰은 가사를 LP 를 눌러 대화상자로, PC 는 오른쪽 빈 자리에 바로 펼친다.
+  const isMobile = useIsMobile();
   const [lyricsOpen, setLyricsOpen] = useState(false);
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
@@ -59,6 +80,18 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
     (v) => v.track.id === active.id && v.start === part.start && v.end === part.end,
   );
   const momentSaved = !!savedMoment;
+  const vinyl = (
+    <VinylRecord
+      playing={m.playing}
+      track={active}
+      unoptimized
+      className="vinyl-record"
+      src="/sky-vinyl.webp"
+      alt="하늘을 담은 검은 LP 레코드"
+      width="440"
+      height="440"
+    />
+  );
   return (
     <div className="player-page">
       <div className="desktop-player-page-heading">
@@ -76,20 +109,21 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
       </header>
       <div className="player-body">
         <div className="player-art-area">
-          <button type="button" className="record-info-trigger" aria-label={`${active.title} 가사 보기`} aria-haspopup="dialog" onClick={() => setLyricsOpen(true)}>
-          <VinylRecord
-            playing={m.playing}
-            track={active}
-            unoptimized
-            className="vinyl-record"
-            src="/sky-vinyl.webp"
-            alt="하늘을 담은 검은 LP 레코드"
-            width="440"
-            height="440"
-          />
-          </button>
+          {/* PC 에서는 가사가 옆에 펼쳐져 있으므로 LP 는 누를 것이 아니다. */}
+          {isMobile
+            ? <button type="button" className="record-info-trigger" aria-label={`${active.title} 가사 보기`} aria-haspopup="dialog" onClick={() => setLyricsOpen(true)}>
+              {vinyl}
+            </button>
+            : <div className="record-info-trigger">{vinyl}</div>}
         </div>
         <div className="player-detail">
+          {/*
+            PC 는 오른쪽 위가 비어 있었다. 가사를 대화상자로 가릴 이유가 없으니 재생바
+            위에 펼친다. 지금 부르는 줄이 진하게 따라오고, 줄을 누르면 그 시점으로 간다.
+          */}
+          {!isMobile && <div className="player-lyrics-inline">
+            <Lyrics key={active.id} track={active} time={m.time} expanded onSeek={(seconds) => m.seek(seconds)} />
+          </div>}
           {/* 줄은 `TrackComments` 가 그린다 — 같은 줄에 설 댓글 토글이 그쪽 상태를 쓴다. */}
           <TrackComments key={active.id} model={m}>
             <button className="secondary-button quick-like" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
@@ -106,13 +140,22 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             </button>
             <button className="secondary-button" aria-expanded={m.queueOpen} aria-controls="queue-dock" onClick={m.toggleQueue}><ListMusic />재생목록</button>
           </TrackComments>
-          {recommendationReason && <details className="player-recommendation-toggle" key={`${active.id}:${recommendationReason}`}>
-            <summary><Sparkles size={15} /><span>추천 이유</span><ChevronDown size={16} /></summary>
-            <p>{recommendationReason}</p>
-          </details>}
+          {/*
+            추천 이유는 본문에 펼치지 않고 가사·곡 정보처럼 대화상자로 띄운다.
+            본문에 펼치면 그 높이만큼 플레이어가 한 화면을 넘겨 스크롤이 생겼다.
+          */}
+          {recommendationReason && <button
+            type="button"
+            className="player-recommendation-toggle"
+            aria-haspopup="dialog"
+            aria-expanded={reasonOpen}
+            onClick={() => setReasonOpen(true)}
+          >
+            <Sparkles size={15} /><span>추천 이유</span><ChevronRight size={16} />
+          </button>}
         </div>
       </div>
-      <Dialog open={lyricsOpen} onOpenChange={setLyricsOpen}>
+      <Dialog open={lyricsOpen && isMobile} onOpenChange={setLyricsOpen}>
         <DialogContent className="sky-dialog player-lyrics-dialog">
           <DialogHeader>
             <DialogTitle>가사</DialogTitle>
@@ -122,6 +165,21 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
         </DialogContent>
       </Dialog>
       <TrackInfoDialog track={active} open={trackInfoOpen} onOpenChange={setTrackInfoOpen} onArtist={m.setSelectedArtist} />
+      <Dialog open={reasonOpen && !!recommendationReason} onOpenChange={setReasonOpen}>
+        <DialogContent className="sky-dialog player-reason-dialog">
+          <DialogHeader>
+            <DialogTitle><Sparkles size={16} aria-hidden="true" />추천 이유</DialogTitle>
+            <DialogDescription>{active.title} · {active.artist}</DialogDescription>
+          </DialogHeader>
+          <p className="player-reason-text">{recommendationReason}</p>
+          {active.recommended && (
+            <p className="player-reason-section">
+              <span>추천한 구간</span>
+              <strong>{active.recommended.sectionLabel} · {formatTime(active.recommended.start)} – {formatTime(active.recommended.end)}</strong>
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
       {/* 저장은 한 번 더 물어보고 푼다. 보관함의 순간 삭제와 같은 규칙. */}
       <AlertDialog open={confirmUnsave} onOpenChange={(open) => { if (!open) setConfirmUnsave(false); }}>
         <AlertDialogContent className="sky-dialog">
@@ -158,7 +216,7 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
   const editing = m.editingMomentId !== null;
   // Keep preview sections local to the editor; never send them as AI analysis.
   const previewSections = active.sections.length === 0;
-  const labels = ['인트로', '벌스 1', '프리코러스', '코러스 1', '벌스 2', '브리지', '파이널 코러스', '아웃트로'];
+  const labels = ['인트로', '벌스', '프리코러스', '코러스', '브리지', '파이널 코러스', '아웃트로'];
   const sections = previewSections
     ? labels.map((label, i) => ({ label, start: Math.round(active.duration * i / labels.length), end: Math.round(active.duration * (i + 1) / labels.length) })).filter(part => part.end > part.start)
     : active.sections;
@@ -175,6 +233,9 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
     return [];
   });
   const [saved, setSaved] = useState(false);
+  // 마지막에 만진 구간. 폰은 마우스를 올릴 수 없어 툴팁이 뜨지 않으니, 그 구간의
+  // 설명을 칩 아래 한 줄로 보여 준다. 처음에는 고른 것이 있으면 그것.
+  const [hinted, setHinted] = useState<number | null>(() => selected.at(-1) ?? null);
   const [trimmed, setTrimmed] = useState<Record<number, { start: number; end: number }>>(() => {
     if (!editing) return {};
     return Object.fromEntries(editingMoments.flatMap((moment) => {
@@ -182,8 +243,44 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
       return index >= 0 ? [[index, { start: moment.start, end: moment.end }]] : [];
     }));
   });
-  const parts = selected.map(i => ({ ...sections[i], ...trimmed[i] }));
+  /*
+   * 분홍 양 끝을 끌어 범위를 다른 구간까지 늘리거나 옮기면, 위 칩과 이름도 따라간다.
+   * 범위가 걸치는 구간이 하나면 그 구간 이름을, 여럿이면 '벌스 2 – 브리지' 처럼
+   * 처음과 끝을 잇는다. 범위에 걸친 칩은 모두 같은 분홍으로 켜진다 — 켜진 칩이 곧 저장될 범위다.
+   */
+  const covering = (start: number, end: number) => sections.map((s, i) => ({ s, i })).filter(({ s }) => s.start < end && s.end > start);
+  const parts = selected.map(i => {
+    const range = { ...sections[i], ...trimmed[i] };
+    const cover = covering(range.start, range.end);
+    const label = cover.length === 0 ? range.label : cover.length === 1 ? cover[0].s.label : `${cover[0].s.label} – ${cover[cover.length - 1].s.label}`;
+    return { ...range, label };
+  });
+  const covered = new Set(parts.flatMap(p => covering(p.start, p.end).map(c => c.i)));
   const focusedPart = parts.at(-1);
+  /** 이 시점이 든 순간(선택 목록의 자리). 없으면 -1. */
+  const partAt = (time: number) => parts.findIndex(p => time >= p.start && time < p.end);
+  /** 이미 고른 순간을 맨 뒤로 보내 손보는 대상으로 삼는다. 새로 더하지 않는다. */
+  const focus = (partIndex: number) => setSelected(ids => [...ids.filter((_, k) => k !== partIndex), ids[partIndex]]);
+  /**
+   * 순간들은 서로 겹치지 않는다. 범위를 끌다가 옆 순간의 경계에 닿으면 거기서 멈춘다.
+   * 겹치게 두면 '인트로 – 벌스 2 · 인트로 · 벌스 1' 처럼 같은 자리가 목록에 두세 번
+   * 쌓였고, 삼킨 것을 조용히 지우면 왜 사라졌는지 알 수 없다. 막는 쪽이 읽기 쉽다.
+   */
+  const trimFocused = (start: number, end: number) => {
+    const focused = selected[selected.length - 1];
+    if (focused === undefined) return;
+    const mine = { ...sections[focused], ...trimmed[focused] };
+    let lo = 0, hi = active.duration;
+    for (const id of selected) {
+      if (id === focused) continue;
+      const r = { ...sections[id], ...trimmed[id] };
+      if (r.end <= mine.start) lo = Math.max(lo, r.end);
+      if (r.start >= mine.end) hi = Math.min(hi, r.start);
+    }
+    const nextStart = Math.max(lo, Math.min(start, hi - 1));
+    const nextEnd = Math.min(hi, Math.max(end, nextStart + 1));
+    setTrimmed(value => ({ ...value, [focused]: { start: nextStart, end: nextEnd } }));
+  };
   return <div className="content-page moment-page">
     <PageHeader
       title={editing ? '순간 수정' : '이 순간 저장'}
@@ -200,17 +297,27 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
         <div className="moment-editor">
           {previewSections && <p className="moment-wave-help">AI 연결 전 미리보기 · 곡 길이를 임시로 나눈 순간이에요.</p>}
           <div className="song-parts" aria-label="저장할 순간 다중 선택">
-            {sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) ? 'selected' : ''} onClick={() => {
+            {sections.map((part, i) => <button key={i} title={sectionHint(part.label)} aria-pressed={selected.includes(i)} className={selected.includes(i) || covered.has(i) ? 'selected' : ''} onClick={() => {
+              // 다른 순간의 범위에 이미 걸린 구간을 누르면 새로 더하지 않고 그 순간을 손보는 대상으로 삼는다.
+              setHinted(i);
+              const within = !selected.includes(i) ? partAt(part.start + (part.end - part.start) / 2) : -1;
+              if (within >= 0) { focus(within); return; }
               setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : [...ids, i]);
               setSaved(false);
             }}>{part.label}</button>)}
           </div>
+          {hinted !== null && sections[hinted] && sectionHint(sections[hinted].label) && (
+            <p className="song-parts-hint" role="status"><strong>{sections[hinted].label}</strong> {sectionHint(sections[hinted].label)}</p>
+          )}
           <MomentWaveEditor track={active} range={focusedPart} others={parts.slice(0, -1)} onSelect={time => {
-              const index = sections.findIndex(part => time >= part.start && time < part.end);
-              if (index >= 0) setSelected(ids => [...ids.filter(id => id !== index), index]);
+            // 이미 고른 순간 안을 누르면 그 순간을 손보는 대상으로. 바깥이면 그 구간을 새로 고른다.
+            const within = partAt(time);
+            if (within >= 0) { focus(within); return; }
+            const index = sections.findIndex(part => time >= part.start && time < part.end);
+            if (index >= 0) { setHinted(index); setSelected(ids => [...ids.filter(id => id !== index), index]); }
             setSaved(false);
           }} onTrim={(start, end) => {
-            if (selected.length) setTrimmed(value => ({ ...value, [selected[selected.length - 1]]: { start, end } }));
+            trimFocused(start, end);
             setSaved(false);
           }} />
           <div className="time-labels"><span>00:00</span><span>{formatTime(active.duration)}</span></div>

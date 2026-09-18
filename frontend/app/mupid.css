@@ -1364,6 +1364,9 @@ h1 {
   font-size: 13px;
   border-radius: 8px;
 }
+/* 마지막에 만진 구간의 한 줄 설명. 폰에서는 툴팁 대신 이것이 보인다. */
+.song-parts-hint { margin: 6px 0 0; text-align: center; font-size: 12.5px; line-height: 1.6; color: #7d90ad; }
+.song-parts-hint strong { margin-right: 4px; color: #ce6c96; font-weight: 600; }
 .song-parts button.selected {
   color: #ce6c96;
   background: #fbe8f2;
@@ -1712,8 +1715,9 @@ h1 {
   gap: 14px;
   min-width: 0;
 }
+/* MUBTI(`.listening-story`)가 먼저, 키워드가 그 다음이다. 전에는 `order: -1` 로
+   키워드를 앞세웠다. */
 .report-details .keyword-card {
-  order: -1;
   margin-top: 0;
 }
 .report-details .stat-pair {
@@ -2091,6 +2095,20 @@ img.report-cupid {
   background: #d6e8ff;
   border-radius: 50%;
 }
+/* Mupid AI 버튼이 미니 플레이어의 재생 목록 버튼 옆으로 들어갔다. 그 버튼이 보이는
+   너비 — 데스크톱(901px~)과 폰(360~767px) — 에서는 구석에 떠 있던 런처를 감춘다.
+   768~900px 과 359px 이하는 미니 플레이어에 그 자리가 없어 런처를 그대로 둔다. */
+@media (min-width: 901px), (min-width: 360px) and (max-width: 767px) {
+  .mupid-shell:not(.no-mini) .chat-launcher {
+    display: none;
+  }
+}
+.mini-player .ai-button {
+  color: #547dbd;
+}
+.mini-player .ai-button[aria-expanded='true'] {
+  background: #e8f0fc;
+}
 .chat-panel {
   position: fixed;
   right: 26px;
@@ -2410,7 +2428,8 @@ img.report-cupid {
 }
 @media (max-width: 900px) {
   .mini-timeline,
-  .queue-button {
+  .queue-button,
+  .ai-button {
     display: none;
   }
   .player-body {
@@ -2470,9 +2489,18 @@ img.report-cupid {
     /* 상태바 몫은 셸 바깥 여백이 비운다 (`responsive-polish.css`). */
     padding-top: 24px;
   }
-  .page-player .app-header,
-  .page-moment .app-header,
-  .page-similar .app-header {
+  /*
+   * 플레이어·순간·비슷한 곡 화면은 곡에만 집중하는 전용 화면이라 검색 헤더를
+   * 걷는다. 뒤로 가기와 아래 탭 바가 남아 길을 잃지 않는다.
+   *
+   * `.mupid-shell.page-player` 로 쓴다. `.page-player .app-header` 만으로는
+   * 뒤에 읽히는 `nav-account.css` 의 `.mupid-shell .app-header { display: flex }`
+   * 와 우선순위가 같아 그쪽이 이겼고, 헤더가 그대로 남아 플레이어가 한 화면을
+   * 넘겨 스크롤이 생겼다.
+   */
+  .mupid-shell.page-player .app-header,
+  .mupid-shell.page-moment .app-header,
+  .mupid-shell.page-similar .app-header {
     display: none;
   }
   .page-player .main-content,
@@ -2771,6 +2799,14 @@ img.report-cupid {
     margin-inline: auto;
     height: min(570px, calc(100dvh - var(--dock-height) - 42px));
     border-radius: 21px;
+  }
+  /* 입력 중에는 화면 위에서 키보드 바로 위까지 펼친다. 독 위에 떠 있던 자리
+     그대로면 키보드가 패널을 덮어 치는 글자가 보이지 않는다(`chat.tsx`). */
+  .mupid-shell .chat-panel.composing {
+    top: calc(var(--safe-area-inset-top, 0px) + 12px);
+    bottom: calc(var(--keyboard-inset, 0px) + 12px);
+    height: auto;
+    max-height: none;
   }
   .chat-header {
     padding: 12px;
