@@ -275,7 +275,10 @@ export type ReportTrack = {
 };
 
 export type ReportKeyword = {
+  /** AI 색인과 매칭하는 코드명. */
   name: string;
+  /** 화면 표시명. 구버전 API 응답에서는 없을 수 있다. */
+  display_name?: string;
   kind: 'MOOD' | 'GENRE';
   /** 청취 시간 가중 비중 (0~1). */
   weight: number;

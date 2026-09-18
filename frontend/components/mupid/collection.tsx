@@ -527,7 +527,9 @@ export function ReportView({ model: m }: { model: MupidModel }) {
               <div className="tags">
                 {report.keywords.map((keyword) => (
                   <span key={`${keyword.kind}:${keyword.name}`}>
-                    {keyword.name.startsWith('#') ? keyword.name : `#${keyword.name}`}
+                    {(keyword.display_name || keyword.name).startsWith('#')
+                      ? keyword.display_name || keyword.name
+                      : `#${keyword.display_name || keyword.name}`}
                   </span>
                 ))}
               </div>
