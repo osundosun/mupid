@@ -35,6 +35,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { type MupidModel } from '@/hooks/use-mupid';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH, normalizeNickname } from '@/lib/profile';
 import { useDailyReport } from '@/lib/report';
 import { formatTime, genreOptions, moodOptions } from '@/lib/mupid-data';
@@ -63,6 +64,7 @@ const LIBRARY_TAB_TITLES: Record<string, string> = {
 };
 export function LibraryView({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
+  const isMobile = useIsMobile();
   const selected = m.playlists.find((p) => p.id === m.selectedPlaylist);
   /*
    * 지금 울리는 곡이 이 목록의 곡인가.
@@ -223,6 +225,20 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                 </button>
               </div>}
             </div>
+          ) : !m.playlists.length && !isMobile ? (
+            /*
+             * PC 에서 플레이리스트가 하나도 없을 때. 격자에 '새 플레이리스트' 칸 하나만
+             * 왼쪽 위에 떠 있고 안내는 그 아래 한가운데라 둘이 따로 놀았다. 안내 하나로
+             * 모으고 만들기 버튼을 그 안에 둔다. 폰은 격자 한 칸이 곧 만들기 자리라 전과 같다.
+             */
+            <EmptyState
+              title="나만의 첫 플레이리스트"
+              description="좋아하는 음악을 한곳에 모아두세요."
+            >
+              <button className="primary-button empty-state-action" onClick={() => m.setPlaylistDialog(true)}>
+                <Plus />새 플레이리스트 만들기
+              </button>
+            </EmptyState>
           ) : (
             <>
               <div className="playlist-grid">
