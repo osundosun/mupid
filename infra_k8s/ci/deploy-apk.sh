@@ -37,7 +37,10 @@ umask 077
 key=$(mktemp)
 known=$(mktemp)
 served_file=$(mktemp)
-trap 'rm -f "$key" "$known" "$served_file"' EXIT
+# 원격의 stderr 를 잡아 둔다. **실패 이유가 거기에만 있다** — 그대로 흘리면
+# job 로그에 `exit code 2` 만 남고, 원인은 이미 지나간 뒤다.
+err=$(mktemp)
+trap 'rm -f "$key" "$known" "$served_file" "$err"' EXIT
 
 # JSON 에서 값을 하나 꺼낸다. 셸로 긁으면 형식이 조금만 달라져도 조용히 빈 값을
 # 집어 가는데, 그 실패는 "업데이트 안내가 안 뜬다" 로만 보인다.
@@ -74,16 +77,26 @@ printf 'APK %s 바이트, sha256 %s, versionCode %s\n' "$size" "$checksum" "$ver
 ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
   -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" \
   -i "$key" mupid-deploy-k8s@j15a204.p.ssafy.io \
-  "upload-apk $CI_COMMIT_SHA $checksum $version_code" < "$apk" || {
-  # 64 는 강제 명령이 모양을 거절했다는 뜻이다. 원인이 거의 하나뿐이라
-  # (노드의 entrypoint 가 아직 옛것) 짚어 준다 — 그러지 않으면 "ssh 가 64 로
-  # 끝났다" 만 남고, 배포한 사람은 키나 권한을 의심하며 시간을 쓴다.
-  # Compose 경로가 같은 상황을 RECEIVER_UPGRADE_REQUIRED 로 안내한다.
+  "upload-apk $CI_COMMIT_SHA $checksum $version_code" < "$apk" 2>"$err" || {
   status=$?
+  # 원격의 말을 먼저 그대로 보여준다. 이것이 없으면 job 로그에 `exit code 2`
+  # 만 남고, 그 숫자는 어느 고장인지 말해 주지 않는다 — 실제로 그렇게 실패했다.
+  cat "$err" >&2
+  # 64 는 강제 명령이 모양을 거절했다는 뜻이다. 원인이 거의 하나뿐이라
+  # (노드의 entrypoint 가 아직 옛것) 짚어 준다.
+  # Compose 경로가 같은 상황을 RECEIVER_UPGRADE_REQUIRED 로 안내한다.
   if [ "$status" -eq 64 ]; then
     echo 'UPLOADER_UPGRADE_REQUIRED: 노드의 /usr/local/sbin/mupid-ssh-entrypoint-k8s 가' >&2
     echo '옛것이다. upload-apk 이 versionCode 를 받는 새 모양을 모른다.' >&2
     echo 'ssh-entrypoint-k8s.sh 와 receive-apk.py 를 노드에 설치한 뒤 다시 돌린다.' >&2
+  fi
+  # sudo 가 비밀번호를 요구했다 = 수신기는 설치돼 있는데 **sudoers 규칙이 없다.**
+  # 파일을 넣는 것과 sudo 를 허용하는 것은 다른 일이다. 그 사실을 짚어 준다.
+  if grep -q 'a terminal is required\|a password is required' "$err"; then
+    echo 'RECEIVER_NOT_PERMITTED: 노드에 수신기는 있으나 mupid-deploy-k8s 가 sudo 로' >&2
+    echo '그것을 실행할 수 없다. /etc/sudoers.d/ 에 규칙이 필요하다:' >&2
+    echo '  mupid-deploy-k8s ALL=(root) NOPASSWD: /usr/local/sbin/mupid-receive-apk' >&2
+    echo '받는 쪽(또는 저장소의 infra_k8s/OPERATIONS-K8S.md)을 본다.' >&2
   fi
   exit "$status"
 }

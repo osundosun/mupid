@@ -156,6 +156,49 @@ install -o root -g root -m 755 receive-web.py        /usr/local/sbin/mupid-recei
 ls -l /usr/local/sbin/mupid-ssh-entrypoint-k8s /usr/local/sbin/mupid-receive-*
 ```
 
+#### sudo 권한도 함께 넣어야 한다 (파일만으로는 부족하다)
+
+**이것을 빠뜨리면 배포가 `sudo: a password is required` 로 죽는다.** 실제로 그렇게
+실패했다(master, 2026-09-18, `app-web-release`).
+
+수신기는 entrypoint 가 `sudo` 로 부르는데, 배포 계정은 셸도 비밀번호도 없다
+(`no-pty`). 그래서 **수신기마다 sudoers 규칙 한 줄**이 있어야 한다. 파일을
+`/usr/local/sbin/` 에 넣는 것과 그 계정이 그것을 실행하도록 허용하는 것은 **다른
+일**이다.
+
+`entrypoint` 가 `sudo` 로 부르는 수신기 전부에 규칙이 있어야 한다:
+
+```
+/usr/local/sbin/mupid-receive-k8s         ← /etc/sudoers.d/mupid-deploy-k8s
+/usr/local/sbin/mupid-receive-apk         ← /etc/sudoers.d/mupid-deploy-apk
+/usr/local/sbin/mupid-receive-web         ← /etc/sudoers.d/mupid-deploy-web   (이번에 늘었다)
+/usr/local/sbin/mupid-receive-env         ← /etc/sudoers.d/mupid-deploy-env
+/usr/local/sbin/mupid-receive-manifests   ← /etc/sudoers.d/mupid-deploy-manifests
+```
+
+`/usr/local/sbin/mupid-receive-index` 는 여기 없다 — 그 동사는 **다른 노드**(추천
+서버가 뜨는 node-b)로 가고 그쪽 sudoers 를 쓴다.
+
+없는 것만 넣는다. 새로 넣을 것은 이번의 `mupid-receive-web` 하나다:
+
+```bash
+# 노드에서, root 로
+printf '%s\n' \
+  'mupid-deploy-k8s ALL=(root) NOPASSWD: /usr/local/sbin/mupid-receive-web' \
+  | install -o root -g root -m 440 /dev/stdin /etc/sudoers.d/mupid-deploy-web
+
+# **반드시 문법을 검사한다.** sudoers 가 깨지면 sudo 자체가 막혀 배포가 전부
+# 멈춘다 — 이 검사가 그것을 막는다.
+visudo -c
+```
+
+기존 규칙의 모양과 권한을 그대로 따른다(`440`, 파일 이름이 곧 대상):
+
+```bash
+ls -l /etc/sudoers.d/
+grep -H . /etc/sudoers.d/*
+```
+
 #### 설치가 됐는지 확인
 
 **`upload-web` 이 강제 명령을 지나 수신기까지 닿는지**를 본다. 일부러 깨진
