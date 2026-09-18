@@ -79,7 +79,7 @@ deploy-web.sh   →  upload-web <커밋> <sha256>                 →  receive-w
 ### 손으로 올릴 때
 
 ```bash
-# 웹 번들. 프론트를 app 타깃으로 굽고 아카이브를 만든 뒤 올린다.
+# 웹 번들. **순서를 바꾸면 안 된다** — 아래를 본다.
 export MUPID_WEB_BUILD=$(sh infra/ci/build-stamp.sh)
 npm --prefix frontend ci
 npm --prefix frontend run build:static
@@ -90,6 +90,18 @@ sh infra_k8s/ci/deploy-web.sh
 sh infra/ci/build-apk.sh          # MUPID_APP_ENV(키스토어)가 있어야 한다
 sh infra_k8s/ci/deploy-apk.sh
 ```
+
+**`build:static` 을 `build:archive` 보다 먼저 돌려야 한다.** vinext 는 outDir
+(`frontend/dist`)를 통째로 `rmSync` 하고(`node_modules/vinext/dist/build/clean-output.js`),
+`dist/update` 가 그 안에 있다. 아카이브를 먼저 만들면 프론트를 굽는 순간 사라진다.
+그리고 아카이브는 `dist/client` 를 입력으로 읽으므로 프론트가 먼저 서 있어야 한다.
+
+**같은 이유로 `cd app && cargo test` 를 프론트 빌드보다 먼저 돌리면 안 된다.**
+`cargo tauri android build` 는 `beforeBuildCommand` 로 `build:static` 을 부르고,
+그것이 `dist/update` 를 지운다. 그러면 왕복 시험(`the_real_generated_archive_activates`)
+이 조용히 건너뛰어진다 — 겉으로는 초록인데 실제로는 아무것도 확인하지 않은 상태다.
+프론트를 굽고 아카이브까지 만든 **뒤에** `cargo test` 를 돌린다(CI 의
+`app-web-release` 가 그 순서다).
 
 두 스크립트 모두 **엣지에서 실제로 내려받히는지 확인한 뒤에** 성공을 보고한다.
 수신기가 성공했다고 해도 nginx location 이나 마운트가 어긋나 있으면 404 가 나고,

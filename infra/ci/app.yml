@@ -176,6 +176,10 @@ app-web-release:
     # 잘못된 쪽을 내려보내면 앱에서 화면을 옮길 때마다 전체가 다시 로딩된다.
     - npm --prefix frontend ci --prefer-offline --no-audit --no-fund
     - npm --prefix frontend run build:static
+    # **순서가 중요하다. `build:static` 뒤여야 한다.** vinext 는 outDir
+    # (`frontend/dist`)를 통째로 rmSync 하고, `dist/update` 가 그 안에 있다 —
+    # 아카이브를 먼저 만들면 프론트를 굽는 순간 사라진다. 그리고 아카이브는
+    # `dist/client` 를 입력으로 읽으므로 프론트가 먼저 서 있어야 한다.
     - npm --prefix frontend run build:archive
     # 왕복 시험을 **실제 산출물로** 돌린다. 위에서 skip 을 없애려고 여기 있다.
     - cd app && cargo test --locked && cd ..

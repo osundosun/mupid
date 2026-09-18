@@ -281,6 +281,35 @@ WindowInsets ─▸ SafeArea.kt ─▸ window.__mupidSafeArea (기기 픽셀)
 이름이 어긋나면 앱이 자기 번들을 계속 다시 받는다. CI 가 프론트 빌드와 APK
 빌드에 **같은** `MUPID_WEB_BUILD`/`MUPID_NATIVE_BUILD` 를 넣는다.
 
+스탬프를 만드는 규칙은 `infra/ci/build-stamp.sh` 한 곳에 있다. 값은 **커밋
+시각**에서 온다 — `date` 로 하면 job 마다·재시도마다 값이 달라져 웹 아카이브와
+APK 의 짝이 어긋나고, 같은 파이프라인을 다시 돌릴 때마다 사용자 전원에게
+재설치 안내가 새로 뜬다.
+
+로컬에서 APK 를 구워 이 배선을 확인하는 법(실측 2026-09-18):
+
+```bash
+export MUPID_NATIVE_BUILD=$(sh infra/ci/build-stamp.sh)
+export MUPID_WEB_BUILD=$MUPID_NATIVE_BUILD
+cd app && cargo tauri android build --debug --features custom-protocol --apk --target aarch64
+aapt2 dump badging <apk> | grep ^package      # versionCode 가 스탬프/1000 과 같은가
+```
+
+`aapt2 dump badging` 실측: `versionCode='1789704065'` — 스탬프 `1789704065000`
+을 1000 으로 나눈 값이 그대로 박혔다. `libmupid_app_lib.so` 안에도 같은 값이
+들어 있어 gradle 과 Rust 가 어긋나지 않는다.
+
+### 매니페스트와 체크섬 파일을 함께 본다
+
+`native.json` 의 `sha256` 만 믿지 않는다. APK 옆의 `mupid.apk.sha256` 과
+**맞대어 보고**(`update.rs` 의 `verify_native_checksum`), 어긋나면 설치하지
+않는다. 둘은 서로 다른 통로로 놓이므로 어긋난다는 것 자체가 한쪽이 틀렸다는
+신호다. 해시뿐 아니라 파일 이름(`mupid-<커밋>.apk`)까지 본다.
+
+**체크섬 파일이 없으면 막지 않는다** — `404` 는 "그 통로를 아직 안 열었다" 일
+수 있고, 그때까지 네이티브 갈래를 죽이면 안 된다. 내려받은 바이트는 매니페스트
+해시로 그대로 검증한다.
+
 ### Tauri 를 올릴 때 확인할 것
 
 `src/assets.rs` 는 `Context.assets` 를 `generate_context!()` 결과에서 꺼내
