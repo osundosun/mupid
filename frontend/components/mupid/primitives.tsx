@@ -1,4 +1,5 @@
 'use client';
+import { resampleWaveform } from '@/lib/waveform-display';
 import Image from 'next/image';
 import { MascotAccent, MupidMascot } from './mascot';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -222,7 +223,9 @@ export function TrackRow({
     </article>
   );
 }
+export { resampleWaveform } from '@/lib/waveform-display';
 export function Waveform({
+  samples,
   audioUrl,
   duration,
   start = 0,
@@ -231,6 +234,8 @@ export function Waveform({
   progress = 0,
   ranges = [],
 }: {
+  /** 서버가 미리 뽑아 둔 파형(0~1). 있으면 이것이 1순위다. → `Track.waveform` */
+  samples?: number[];
   audioUrl?: string;
   duration: number;
   start?: number;
@@ -249,26 +254,15 @@ export function Waveform({
     }).catch(() => { if (alive) setAnalysis(null); });
     return () => { alive = false; };
   }, [audioUrl, count]);
-  const amplitudes = analysis?.url === audioUrl && analysis?.values.length === count ? analysis.values : null;
+  // 기기에서 계산한 파형 → 로컬 음원 디코드 → 데이터가 없으면 중립적인 기준선.
+  const served = samples && samples.length > 1 ? resampleWaveform(samples, count) : null;
+  const amplitudes = served ?? (analysis?.url === audioUrl && analysis?.values.length === count ? analysis.values : null);
   return (
     <div className={`waveform ${compact ? 'compact' : ''}`} aria-hidden="true">
       {Array.from({ length: count }, (_, i) => {
         // 막대의 왼쪽 끝이 아니라 중앙 시각으로 색을 판정한다. 그래야 백분율로
         // 그린 구간 오버레이의 양 끝과 분홍 막대 경계가 같은 눈금에 맞는다.
         const second = ((i + 0.5) / count) * duration;
-        // Smooth neighboring bars into an irregular envelope instead of repeating spikes.
-        const noise = (index: number) => {
-          const value = Math.sin(index * 127.1 + duration * 0.13) * 43758.5453;
-          return value - Math.floor(value);
-        };
-        const position = i / (count - 1);
-        const anchor = position * 19;
-        const blend = anchor - Math.floor(anchor);
-        const smooth = blend * blend * (3 - 2 * blend);
-        const envelope = noise(Math.floor(anchor)) * (1 - smooth) + noise(Math.floor(anchor) + 1) * smooth;
-        const detail = 0.45 + noise(i + 41) * 0.55;
-        const taper = Math.pow(Math.sin(position * Math.PI), 0.65);
-        const height = 4 + (12 + envelope * 74) * detail * taper;
         return (
           <i
             className={
@@ -278,7 +272,7 @@ export function Waveform({
                   ? 'wave-played'
                   : ''
             }
-            style={{ height: `${audioUrl ? (amplitudes?.[i] ?? 4) : height}%` }}
+            style={{ height: `${amplitudes?.[i] ?? 4}%` }}
             key={i}
           />
         );

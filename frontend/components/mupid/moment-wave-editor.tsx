@@ -2,6 +2,7 @@
 import { useRef, type PointerEvent } from 'react';
 import { formatTime, type SongSection, type Track } from '@/lib/mupid-data';
 import { Waveform } from './primitives';
+import { useTrackWaveform } from '@/lib/track-waveform';
 
 export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }: {
   track: Track;
@@ -18,6 +19,9 @@ export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }
   onTrim: (start: number, end: number) => void;
 }) {
   const drag = useRef<'start' | 'end' | null>(null);
+  // 현재 기기에서 음원 청크를 받아 파형을 계산한다(`lib/track-waveform.ts`).
+  // 받는 동안은 받은 데까지 그려지고, 아래 안내에 진행률이 보인다.
+  const wave = useTrackWaveform(track);
   const press = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const seconds = (event: PointerEvent<HTMLDivElement>) => {
     const box = event.currentTarget.getBoundingClientRect();
@@ -48,7 +52,7 @@ export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }
         else if (press.current && !press.current.moved) onSelect(seconds(event));
         press.current = null;
       }} onPointerCancel={() => { drag.current = null; press.current = null; }}>
-      <Waveform duration={track.duration} ranges={[...(range ? [range] : []), ...others]} />
+      <Waveform samples={wave.values ?? undefined} duration={track.duration} ranges={[...(range ? [range] : []), ...others]} />
       {track.duration > 0 && others.map(part => <span key={`${part.start}-${part.end}`} className="moment-wave-selection is-secondary" aria-hidden="true" style={{ left: `${part.start / track.duration * 100}%`, width: `${(part.end - part.start) / track.duration * 100}%` }} />)}
       {range && track.duration > 0 && <>
         <span className="moment-wave-selection" style={{ left: `${range.start / track.duration * 100}%`, width: `${(range.end - range.start) / track.duration * 100}%` }} />
@@ -64,6 +68,10 @@ export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }
           }}><span /></button>)}
       </>}
     </div>
-    <p className="moment-wave-help">순간을 누른 뒤 분홍색 양 끝을 끌어 조절하세요.</p>
+    <p className="moment-wave-help">
+      {wave.progress < 1 && !wave.failed
+        ? `이 기기에서 파형을 분석하고 있어요 … ${Math.round(wave.progress * 100)}%`
+        : wave.failed ? '이 기기에서 파형을 분석하지 못했어요. 시간 범위는 선택할 수 있어요.' : '순간을 누른 뒤 분홍색 양 끝을 끌어 조절하세요.'}
+    </p>
   </div>;
 }

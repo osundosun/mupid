@@ -178,6 +178,9 @@ export type MusicSummary = {
   moods: string[];
 };
 
+/** 기기에서 계산하는 파형 배열의 길이. `Waveform` 이 그리는 막대 수와 다르면 다시 표본한다. */
+export const WAVEFORM_SAMPLES = 160;
+
 export type MusicPage = {
   items: MusicSummary[];
   page: number;
@@ -664,6 +667,17 @@ export function createEndpoints(client: ApiClient) {
         client.request<void>({
           method: 'DELETE',
           path: '/api/v1/user/history/search/all',
+          responseType: 'none',
+        }),
+    },
+
+    inquiry: {
+      /** 문의 보내기. 내용만 받는다. 답변은 가입한 메일로 서버가 보낸다. */
+      send: (content: string) =>
+        client.request<void>({
+          method: 'POST',
+          path: '/api/v1/inquiries',
+          json: { content },
           responseType: 'none',
         }),
     },

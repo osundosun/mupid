@@ -2,7 +2,8 @@
 
 이 저장소의 곡 식별자는 출처마다 생김새가 다르다 — FMA 는 `000614`, Jamendo 는
 `JAMENDO_1083659`, 자체 음원은 곡 제목 그 자체다. 구간은 `<track_id>#<section_idx>` 이다.
-실서비스(MySQL)는 `music.music_id` 와 `music_section_analysis.music_section_id` 라는
+실서비스(MySQL)는 `music.music_id` 와
+`music_section_analysis.music_section_analysis_id` 라는
 정수를 쓴다.
 
 **둘을 잇는 유일한 근거는 MySQL 에서 내보낸 매핑표뿐이다.** 문자열을 해시하거나 순번을
@@ -13,10 +14,10 @@
 매핑표 파일: `data/proc/mupid/id_map.parquet`
     source_track_id   문자열 곡 ID (예: JAMENDO_1083659)
     music_id          MySQL music.music_id
-    source_section_uid 문자열 구간 ID (예: JAMENDO_1083659#3)
-    music_section_id  MySQL music_section_analysis.music_section_id
+    external_id       문자열 순간 ID (예: JAMENDO_1083659#3)
+    music_section_analysis_id  MySQL music_section_analysis.music_section_analysis_id
 
-`music_section_id` 가 비어 있는 행은 "곡은 적재됐지만 구간은 아직" 인 상태로 본다.
+`music_section_analysis_id` 가 비어 있는 행은 "곡은 적재됐지만 순간은 아직" 인 상태로 본다.
 """
 from __future__ import annotations
 
@@ -31,7 +32,11 @@ from . import paths
 # 경로는 paths 가 유일한 기준이다. 여기서 따로 계산하면 recommender 와 다른 곳을 보게
 # 되고, 그 상태에서도 서비스는 정상처럼 뜬다 → app/paths.py
 
-COLS = ("source_track_id", "music_id", "source_section_uid", "music_section_id")
+COLS = ("source_track_id", "music_id", "external_id", "music_section_analysis_id")
+LEGACY_COLS = {
+    "source_section_uid": "external_id",
+    "music_section_id": "music_section_analysis_id",
+}
 
 
 class MapIntegrityError(Exception):
@@ -75,6 +80,10 @@ class IdMap:
         except Exception as e:                       # 조용히 비우면 전부 매핑 없음으로 보인다
             self.error = f"{type(e).__name__}: {e}"
             return
+        # music_preprocessing 이 만든 이전 산출물도 입력 경계에서 한 번만 정규화한다.
+        # 이후 AI 내부에서는 실제 DB 이름만 사용한다.
+        df = df.rename(columns={old: new for old, new in LEGACY_COLS.items()
+                                if new not in df.columns})
         missing = [c for c in COLS if c not in df.columns]
         if missing:
             self.error = f"매핑표에 컬럼이 없다: {missing}"
@@ -123,21 +132,21 @@ class IdMap:
                         self.track_to_num[tid] = mid
                         self.num_to_track[mid] = tid
 
-            uid, sid = r.source_section_uid, r.music_section_id
+            uid, sid = r.external_id, r.music_section_analysis_id
             if pd.isna(uid) or pd.isna(sid):
                 continue                       # 구간 미적재는 정상 상태로 본다
             uid = str(uid)
             try:
                 sid = int(sid)
             except (TypeError, ValueError):
-                note("music_section_id 가 정수가 아님", f"{n}행 {uid} -> {sid!r}")
+                note("music_section_analysis_id 가 정수가 아님", f"{n}행 {uid} -> {sid!r}")
                 continue
             if sid <= 0:
-                note("music_section_id 가 0 이하", f"{n}행 {uid} -> {sid}")
+                note("music_section_analysis_id 가 0 이하", f"{n}행 {uid} -> {sid}")
             elif self.sec_to_num.get(uid, sid) != sid:
                 note("원본 구간 1개가 id 2개", f"{uid} -> {self.sec_to_num[uid]}, {sid}")
             elif self.num_to_sec.get(sid, uid) != uid:
-                note("music_section_id 1개가 원본 2개",
+                note("music_section_analysis_id 1개가 external_id 2개",
                      f"{sid} <- {self.num_to_sec[sid]}, {uid}")
             else:
                 self.sec_to_num[uid] = sid
@@ -156,11 +165,11 @@ class IdMap:
                                "숫자 music_id 매핑을 찾을 수 없습니다.")
         return v
 
-    def music_section_id(self, source_section_uid: str) -> int:
-        v = self.sec_to_num.get(str(source_section_uid))
+    def music_section_analysis_id(self, external_id: str) -> int:
+        v = self.sec_to_num.get(str(external_id))
         if v is None:
             raise MappingError("SECTION_ID_MAPPING_NOT_FOUND",
-                               "숫자 music_section_id 매핑을 찾을 수 없습니다.")
+                               "숫자 music_section_analysis_id 매핑을 찾을 수 없습니다.")
         return v
 
     # ------------------------------------------------------------ 숫자 → 문자열
@@ -171,11 +180,11 @@ class IdMap:
                                "숫자 music_id 매핑을 찾을 수 없습니다.")
         return v
 
-    def source_section_uid(self, music_section_id: int) -> str:
-        v = self.num_to_sec.get(int(music_section_id))
+    def external_id(self, music_section_analysis_id: int) -> str:
+        v = self.num_to_sec.get(int(music_section_analysis_id))
         if v is None:
             raise MappingError("SECTION_ID_MAPPING_NOT_FOUND",
-                               "숫자 music_section_id 매핑을 찾을 수 없습니다.")
+                               "external_id 매핑을 찾을 수 없습니다.")
         return v
 
     def stats(self) -> dict:

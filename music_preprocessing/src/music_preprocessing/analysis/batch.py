@@ -169,8 +169,12 @@ def verify_mapping(new_dir: Path, tracks: Sequence[ix.NewTrack]) -> tuple[bool, 
         det["error"] = "새 판에 id_map.parquet 이 없다"
         return False, det
     df = pd.read_parquet(p)
+    df = df.rename(columns={
+        "source_section_uid": "external_id",
+        "music_section_id": "music_section_analysis_id",
+    })
     have_t = set(df.loc[df.music_id.notna(), "source_track_id"].astype(str))
-    have_s = set(df.loc[df.music_section_id.notna(), "source_section_uid"].astype(str))
+    have_s = set(df.loc[df.music_section_analysis_id.notna(), "external_id"].astype(str))
 
     want_t = {str(t.track_id) for t in tracks}
     want_s = {str(s["moment_id"]) for t in tracks for s in t.sections}

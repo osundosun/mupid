@@ -78,16 +78,77 @@ export const UNKNOWN: UpdateState = {
 };
 
 /**
+ * 조용한 교체가 **얼마나 오래 걸리면** 진행 화면을 띄울 것인가 (ms).
+ *
+ * ## 왜 임계값이 필요한가
+ *
+ * 정상은 아카이브 337KB 를 0.16초에 받고 전개가 1초 안쪽이라 **사용자가
+ * 아무것도 못 본다.** 그런데 느린 회선(3G 등)에서는 수십 초가 걸릴 수 있고,
+ * 그때는 화면이 멈춘 것처럼 보인다 — 그래서 대비책이 필요하다.
+ *
+ * ## 왜 "띄웠다 숨기기" 가 아니라 지연 게이트인가
+ *
+ * 먼저 띄우고 빨리 끝나면 숨기면 **깜빡임**이 된다. 정상 경로가 대부분인데
+ * 매 기동마다 화면이 번쩍이면 그게 더 나쁘다. 그래서 **타이머가 먼저 끝나야**
+ * 그린다 — 빨리 끝나면 DOM 에 아예 나타나지 않는다.
+ *
+ * ## 이 값의 근거
+ *
+ * 정상(0.16초 + 전개)과 느린 회선(수 초~수십 초) **사이**면 된다.
+ * 1500ms 로 시작하고, 실기기 실측(`[mupid-assets] 활성화` 로그의 `elapsed`
+ * 값)을 보고 조정한다 — 폰에서의 실제 전개 시간을 아직 못 쟀고, 이 값이
+ * 실제 시간보다 낮으면 **정상 업데이트에도 화면이 떠서** 원래 의도와 어긋난다.
+ */
+export const UPDATE_PROGRESS_DELAY_MS = 1500;
+
+/**
+ * 지연 게이트. `run` 을 시작하되, **`delayMs` 안에 끝나면 아무것도 알리지 않는다.**
+ *
+ * 반환값은 `run` 의 결과이고, `onSlow` 는 임계값을 넘겼을 때 한 번 불린다.
+ * 화면을 그리는 일은 부르는 쪽이 한다 — 이 함수는 "느린가" 만 판단한다.
+ *
+ * **순수하게 시간만 본다.** 타이머 두 개(임계값·작업)의 경주이고, 어느 쪽이
+ * 이겼는지에 따라 `onSlow` 를 부를 뿐이다. 그래서 시험에서 가짜 타이머로
+ * 두 경우를 모두 만들 수 있다.
+ */
+export async function withSlowNotice<T>(
+  run: () => Promise<T>,
+  onSlow: () => void,
+  delayMs: number = UPDATE_PROGRESS_DELAY_MS,
+): Promise<T> {
+  let slow = false;
+  // 임계값 타이머. 작업이 먼저 끝나면 아래에서 지운다 — 지우지 않으면
+  // 화면이 이미 사라진 뒤에 `onSlow` 가 불려 진행 화면이 되살아난다.
+  const timer = setTimeout(() => {
+    slow = true;
+    onSlow();
+  }, delayMs);
+  try {
+    return await run();
+  } finally {
+    if (!slow) clearTimeout(timer);
+  }
+}
+
+/**
  * 기동 뒤 한 번 확인하고, 새 웹 번들이 있으면 조용히 활성화한다.
  *
  * **화면이 뜨는 것을 막지 않는다.** 이 함수는 첫 화면이 뜬 뒤에 불러야 하고,
  * 부른 쪽은 결과를 기다릴 필요가 없다. 내려받는 동안에도 화면은 옛 번들로
  * 계속 돈다.
  *
+ * **느리면 알린다.** `onSlow` 를 주면 임계값(`UPDATE_PROGRESS_DELAY_MS`)을
+ * 넘겼을 때 한 번 불린다 — 정상 속도에서는 한 번도 안 불리므로 화면이
+ * 깜빡이지 않는다. 끝나면 반드시 `onDone` 이 불려 진행 화면을 걷는다.
+ *
  * 실패해도 던지지 않는다 — `null` 을 준다.
  */
-export async function checkForUpdates(): Promise<UpdateState | null> {
+export async function checkForUpdates(options?: {
+  onSlow?: () => void;
+  onDone?: () => void;
+}): Promise<UpdateState | null> {
   if (!isTauri()) return null;
+  const { onSlow, onDone } = options ?? {};
   try {
     // 순서가 있다. 상태를 먼저 읽어 **새 것이 있을 때만** 내려받는다.
     // `update_web` 이 스스로 판단하지만, 여기서 한 번 거르면 할 일이 없을 때
@@ -100,13 +161,23 @@ export async function checkForUpdates(): Promise<UpdateState | null> {
       // (실측: 기동 1회에 매니페스트 6회 요청. 이제 4회다).
       return before;
     }
-    // 내려받아 활성화한다. 화면은 건드리지 않는다.
-    await invoke<number | null>('update_web');
+    // 내려받아 활성화한다. 화면은 건드리지 않는다 — **느릴 때만** 알린다.
+    try {
+      await withSlowNotice(
+        () => invoke<number | null>('update_web'),
+        () => onSlow?.(),
+      );
+    } finally {
+      // 느렸든 빨랐든 진행 화면을 걷는다. 여기서 걷지 않으면 느린 경우에
+      // 화면이 남는다 — 성공·실패 어느 쪽이든 끝났으면 사라져야 한다.
+      onDone?.();
+    }
     // 여기서는 **다시 읽는다.** 실제로 상태가 바뀌었을 수 있고(활성화된 빌드),
     // 그 값을 안내 창과 로그가 쓴다.
     return await invoke<UpdateState>('update_status');
   } catch (error) {
     // 네트워크가 없거나 서버가 죽었을 수 있다. 사용자가 알 필요는 없다.
+    // **Firebase Crashlytics 를 붙일 때 여기가 기록 지점이다.**
     console.warn('[update]', error);
     return null;
   }
@@ -168,11 +239,13 @@ export function shouldPromptUpdate(input: {
 /**
  * 상태만 읽는다 — **내려받지 않는다.**
  *
- * `checkForUpdates` 와 다른 점이 이것이다. 안내 화면은 "새 APK 가 있나" 만
- * 알면 되는데, 기동 훅이 이미 확인과 내려받기를 끝냈다. 여기서 또 부르면
- * 같은 순간에 두 번 내려받아 느린 회선에서 서로를 방해한다.
+ * **지금은 아무도 부르지 않는다.** `UpdatePrompt` 가 확인까지 스스로 하게
+ * 되면서(`checkForUpdates`) 필요 없어졌다 — 매니페스트 두 개는 한 번의
+ * 확인에서 함께 읽히므로 따로 상태를 읽을 이유가 없었다.
  *
- * 실패하면 `null` — 그러면 창이 뜨지 않는다.
+ * 지우지 않고 남기는 이유는 안내 창 말고 상태만 필요한 자리(진단 화면·설정)가
+ * 생길 수 있어서다. 다만 **업데이트 안내 경로에서는 쓰지 않는다** — 그 경로는
+ * `checkForUpdates` 하나로 모아야 매니페스트를 중복으로 받지 않는다.
  */
 export async function readUpdateState(): Promise<UpdateState | null> {
   if (!isTauri()) return null;

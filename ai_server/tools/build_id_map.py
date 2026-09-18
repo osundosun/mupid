@@ -5,14 +5,14 @@
 어긋난 순간 엉뚱한 곡을 추천한다 — 이 프로젝트가 색인 불일치로 두 번 겪은 실패다.
 
     mysql ... -e "
-      SELECT s.external_id AS source_section_uid,
-             s.music_section_analysis_id AS music_section_id,
+      SELECT s.external_id,
+             s.music_section_analysis_id,
              m.music_id
       FROM music_section_analysis s JOIN music m ON m.music_id = s.music_id
     " --batch > sections.tsv
 
-구간 PK 는 **`music_section_analysis_id`** 다(JPA 기준으로 확정, `erd.sql` 반영 완료).
-이 도구는 별칭 `music_section_id` 만 보므로 DB 컬럼명이 또 바뀌어도 SELECT 만 고치면 된다.
+순간 PK 는 **`music_section_analysis_id`** 다. 내보낸 표와 매핑 파일도 실제 컬럼명을
+그대로 써서 같은 값에 이름을 두 개 만들지 않는다.
 
     MUPID_AI_ARTIFACT_DIR=/경로 python -m ai_server.tools.build_id_map sections.tsv
 
@@ -39,7 +39,7 @@ import pandas as pd
 
 from ai_server.app import ids, paths
 
-REQUIRED = ("source_section_uid", "music_section_id")
+REQUIRED = ("external_id", "music_section_analysis_id")
 # Q2 로 `external_id VARCHAR(64)` 를 권고했다. 넘으면 MySQL 이 조용히 잘라 저장하고,
 # 잘린 값끼리는 1:1 검사도 통과할 수 있어 매핑이 어긋난 채 서비스가 올라온다.
 UID_MAX = 64
@@ -60,13 +60,13 @@ def build(df: pd.DataFrame, derive_track_id: bool = True) -> pd.DataFrame:
         if not derive_track_id:
             raise SystemExit("source_track_id 컬럼이 없고 파생도 막혀 있다.")
         # Q3: MySQL 에 곡 문자열 ID 자리를 두지 않기로 했다. 구간 UID 의 `#` 앞이 곧 곡 ID 다.
-        out["source_track_id"] = out.source_section_uid.str.split("#").str[0]
+        out["source_track_id"] = out.external_id.str.split("#").str[0]
     if "music_id" not in out.columns:
         # 숫자 ID 는 Spring 이 발급한다(Q4). 없으면 만들어내지 않고 멈춘다.
         raise SystemExit("music_id 컬럼이 없다. Spring 이 발급한 값을 함께 내보내야 한다.")
 
     out = out[list(ids.COLS)]
-    for c in ("music_id", "music_section_id"):
+    for c in ("music_id", "music_section_analysis_id"):
         out[c] = pd.to_numeric(out[c], errors="coerce").astype("Int64")
     return out
 
@@ -74,14 +74,14 @@ def build(df: pd.DataFrame, derive_track_id: bool = True) -> pd.DataFrame:
 def check(out: pd.DataFrame) -> list[str]:
     """쓰기 전에 보는 것들. 여기서 걸러야 기동 뒤에 안 터진다."""
     problems = []
-    long_uid = out[out.source_section_uid.str.len() > UID_MAX]
+    long_uid = out[out.external_id.str.len() > UID_MAX]
     if len(long_uid):
         # MySQL 이 조용히 잘라 저장했으면 매핑이 어긋난 채 1:1 검사를 통과할 수도 있다.
         problems.append(
             f"구간 UID 가 {UID_MAX}자를 넘는 행 {len(long_uid)}건 — 컬럼 길이를 늘려야 한다. "
-            f"최댓값 {int(out.source_section_uid.str.len().max())}자, "
-            f"예: {long_uid.source_section_uid.iloc[0]}")
-    for c in ("music_id", "music_section_id"):
+            f"최댓값 {int(out.external_id.str.len().max())}자, "
+            f"예: {long_uid.external_id.iloc[0]}")
+    for c in ("music_id", "music_section_analysis_id"):
         n = int(out[c].isna().sum())
         if n:
             problems.append(f"{c} 가 정수가 아닌 행 {n}건")

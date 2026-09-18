@@ -187,9 +187,6 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
           )}
         </section>
       </div>
-      <footer className="desktop-home-footer">
-        <span>Music for your sky.</span>
-      </footer>
     </div>
   );
 }
