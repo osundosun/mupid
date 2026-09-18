@@ -33,8 +33,7 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
      *
      * {@code has_vocal = false} 로 표현한다. {@code VocalGender} 에 '보컬 없음' 값이
      * 없기 때문이다(자세한 근거는 {@code VocalFilter} 주석). {@code has_vocal = true}
-     * 이면서 성별이 {@code ETC} 인 곡은 세 값 어디에도 걸리지 않는다 — 화면에 그런
-     * 항목이 없기 때문이다.
+     * 혼성 보컬은 {@code vocal_gender = MIX} 로 별도 선택한다.
      *
      * <h2>여러 개를 고르면 OR 다</h2>
      *
@@ -44,7 +43,19 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
           AND (:filtered = false
                OR (:wantFemale = true AND ma.hasVocal = true AND ma.vocalGender = com.osundosun.mupid.api.music.enumerate.VocalGender.F)
                OR (:wantMale = true AND ma.hasVocal = true AND ma.vocalGender = com.osundosun.mupid.api.music.enumerate.VocalGender.M)
+               OR (:wantMixed = true AND ma.hasVocal = true AND ma.vocalGender = com.osundosun.mupid.api.music.enumerate.VocalGender.MIX)
                OR (:wantInstrumental = true AND ma.hasVocal = false))
+        """;
+
+    String TAXONOMY_FILTER = """
+          AND (:moodFiltered = false OR EXISTS (
+              SELECT mm.musicMoodId.musicId FROM MusicMood mm
+              WHERE mm.musicMoodId.musicId = m.musicId
+                AND mm.moodCode.codeName IN :moodNames))
+          AND (:genreFiltered = false OR EXISTS (
+              SELECT mg.musicGenreId.musicId FROM MusicGenre mg
+              WHERE mg.musicGenreId.musicId = m.musicId
+                AND mg.genreCode.codeName IN :genreNames))
         """;
 
     /** 전체 목록. 검색어가 있을 때는 아래 인덱스 검색으로 ID를 먼저 찾는다. */
@@ -57,13 +68,31 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         LEFT JOIN FETCH m.imageFile
         LEFT JOIN MusicAnalysis ma ON ma.musicId = m.musicId
         WHERE m.isDeleted = false
-        """ + VOCAL_FILTER)
-    Page<Music> findPage(
+        """ + VOCAL_FILTER + TAXONOMY_FILTER)
+    Page<Music> findPageFiltered(
         @Param("filtered") boolean filtered,
         @Param("wantFemale") boolean wantFemale,
         @Param("wantMale") boolean wantMale,
+        @Param("wantMixed") boolean wantMixed,
         @Param("wantInstrumental") boolean wantInstrumental,
+        @Param("moodFiltered") boolean moodFiltered,
+        @Param("moodNames") List<String> moodNames,
+        @Param("genreFiltered") boolean genreFiltered,
+        @Param("genreNames") List<String> genreNames,
         Pageable pageable);
+
+    /** 기존 호출부가 쓰는 필터 없는 목록 계약. */
+    default Page<Music> findPage(
+        boolean filtered,
+        boolean wantFemale,
+        boolean wantMale,
+        boolean wantInstrumental,
+        Pageable pageable
+    ) {
+        return findPageFiltered(
+            filtered, wantFemale, wantMale, false, wantInstrumental,
+            false, List.of("__NO_FILTER__"), false, List.of("__NO_FILTER__"), pageable);
+    }
 
     /**
      * 곡 제목·아티스트명·앨범명을 각 ngram FULLTEXT 인덱스에서 찾고 관련도순으로
@@ -106,7 +135,16 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         WHERE (:filtered = false
                OR (:wantFemale = true AND ma.has_vocal = true AND ma.vocal_gender = 'F')
                OR (:wantMale = true AND ma.has_vocal = true AND ma.vocal_gender = 'M')
+               OR (:wantMixed = true AND ma.has_vocal = true AND ma.vocal_gender = 'MIX')
                OR (:wantInstrumental = true AND ma.has_vocal = false))
+          AND (:moodFiltered = false OR EXISTS (
+              SELECT 1 FROM music_moods mm
+              JOIN codes mood_code ON mood_code.code_id = mm.mood_code_id
+              WHERE mm.music_id = ranked.music_id AND mood_code.code_name IN (:moodNames)))
+          AND (:genreFiltered = false OR EXISTS (
+              SELECT 1 FROM music_genres mg
+              JOIN codes genre_code ON genre_code.code_id = mg.genre_code_id
+              WHERE mg.music_id = ranked.music_id AND genre_code.code_name IN (:genreNames)))
         GROUP BY ranked.music_id
         ORDER BY MAX(ranked.score) DESC, ranked.music_id DESC
         """,
@@ -131,7 +169,16 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         WHERE (:filtered = false
                OR (:wantFemale = true AND ma.has_vocal = true AND ma.vocal_gender = 'F')
                OR (:wantMale = true AND ma.has_vocal = true AND ma.vocal_gender = 'M')
+               OR (:wantMixed = true AND ma.has_vocal = true AND ma.vocal_gender = 'MIX')
                OR (:wantInstrumental = true AND ma.has_vocal = false))
+          AND (:moodFiltered = false OR EXISTS (
+              SELECT 1 FROM music_moods mm
+              JOIN codes mood_code ON mood_code.code_id = mm.mood_code_id
+              WHERE mm.music_id = ranked.music_id AND mood_code.code_name IN (:moodNames)))
+          AND (:genreFiltered = false OR EXISTS (
+              SELECT 1 FROM music_genres mg
+              JOIN codes genre_code ON genre_code.code_id = mg.genre_code_id
+              WHERE mg.music_id = ranked.music_id AND genre_code.code_name IN (:genreNames)))
         """,
         nativeQuery = true)
     Page<Integer> searchIdsFullText(
@@ -139,7 +186,12 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         @Param("filtered") boolean filtered,
         @Param("wantFemale") boolean wantFemale,
         @Param("wantMale") boolean wantMale,
+        @Param("wantMixed") boolean wantMixed,
         @Param("wantInstrumental") boolean wantInstrumental,
+        @Param("moodFiltered") boolean moodFiltered,
+        @Param("moodNames") List<String> moodNames,
+        @Param("genreFiltered") boolean genreFiltered,
+        @Param("genreNames") List<String> genreNames,
         Pageable pageable);
 
     /** ngram 최소 토큰보다 짧은 한 글자는 B-Tree prefix 검색으로 처리한다. */
@@ -164,7 +216,16 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         WHERE (:filtered = false
                OR (:wantFemale = true AND ma.has_vocal = true AND ma.vocal_gender = 'F')
                OR (:wantMale = true AND ma.has_vocal = true AND ma.vocal_gender = 'M')
+               OR (:wantMixed = true AND ma.has_vocal = true AND ma.vocal_gender = 'MIX')
                OR (:wantInstrumental = true AND ma.has_vocal = false))
+          AND (:moodFiltered = false OR EXISTS (
+              SELECT 1 FROM music_moods mm
+              JOIN codes mood_code ON mood_code.code_id = mm.mood_code_id
+              WHERE mm.music_id = ranked.music_id AND mood_code.code_name IN (:moodNames)))
+          AND (:genreFiltered = false OR EXISTS (
+              SELECT 1 FROM music_genres mg
+              JOIN codes genre_code ON genre_code.code_id = mg.genre_code_id
+              WHERE mg.music_id = ranked.music_id AND genre_code.code_name IN (:genreNames)))
         GROUP BY ranked.music_id
         ORDER BY MAX(ranked.weight) DESC, ranked.music_id DESC
         """,
@@ -189,7 +250,16 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         WHERE (:filtered = false
                OR (:wantFemale = true AND ma.has_vocal = true AND ma.vocal_gender = 'F')
                OR (:wantMale = true AND ma.has_vocal = true AND ma.vocal_gender = 'M')
+               OR (:wantMixed = true AND ma.has_vocal = true AND ma.vocal_gender = 'MIX')
                OR (:wantInstrumental = true AND ma.has_vocal = false))
+          AND (:moodFiltered = false OR EXISTS (
+              SELECT 1 FROM music_moods mm
+              JOIN codes mood_code ON mood_code.code_id = mm.mood_code_id
+              WHERE mm.music_id = ranked.music_id AND mood_code.code_name IN (:moodNames)))
+          AND (:genreFiltered = false OR EXISTS (
+              SELECT 1 FROM music_genres mg
+              JOIN codes genre_code ON genre_code.code_id = mg.genre_code_id
+              WHERE mg.music_id = ranked.music_id AND genre_code.code_name IN (:genreNames)))
         """,
         nativeQuery = true)
     Page<Integer> searchIdsByPrefix(
@@ -197,7 +267,12 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         @Param("filtered") boolean filtered,
         @Param("wantFemale") boolean wantFemale,
         @Param("wantMale") boolean wantMale,
+        @Param("wantMixed") boolean wantMixed,
         @Param("wantInstrumental") boolean wantInstrumental,
+        @Param("moodFiltered") boolean moodFiltered,
+        @Param("moodNames") List<String> moodNames,
+        @Param("genreFiltered") boolean genreFiltered,
+        @Param("genreNames") List<String> genreNames,
         Pageable pageable);
 
     @Query("""

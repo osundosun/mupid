@@ -4,8 +4,8 @@ const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\s+
 
 /** 구문 검색 결과가 없는 API에서는 한 단어로 후보를 받고 프론트에서 전체 구문을 확인한다. */
 export async function expandPhraseSearch(
-  initial: MusicPage, query: string, vocal: string | undefined, signal: AbortSignal,
-  search: (options: { q?: string; vocal?: string; page?: number; size?: number }, signal?: AbortSignal) => Promise<MusicPage>,
+  initial: MusicPage, query: string, filters: { vocal?: string; mood?: string; genre?: string }, signal: AbortSignal,
+  search: (options: { q?: string; vocal?: string; mood?: string; genre?: string; page?: number; size?: number }, signal?: AbortSignal) => Promise<MusicPage>,
 ): Promise<MusicPage> {
   const phrase = normalize(query);
   const words = phrase.split(' ');
@@ -15,7 +15,7 @@ export async function expandPhraseSearch(
   let pages = 1;
   for (let page = 0; page < pages; page++) {
     if (signal.aborted) throw new DOMException('aborted', 'AbortError');
-    const result = await search({ q: seed, vocal, page, size: 100 }, signal);
+    const result = await search({ ...filters, q: seed, page, size: 100 }, signal);
     pages = result.total_pages;
     for (const music of result.items) {
       if ([music.title, music.artist.name, music.album.title].some(value => normalize(value).includes(phrase))) {

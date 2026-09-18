@@ -115,7 +115,7 @@ export type MusicAnalysis = {
   /** 분석 결과가 있는가. 없으면 아래는 전부 비어 있다. */
   analyzed: boolean;
   has_vocal: boolean | null;
-  vocal_gender: 'M' | 'F' | 'ETC' | null;
+  vocal_gender: 'M' | 'F' | 'MIX' | null;
   sections: MusicSection[];
 };
 
@@ -142,6 +142,12 @@ export type CodeOption = { code_id: number; name: string; display_name?: string 
 export type OnboardingOptions = {
   moods: CodeOption[];
   genres: CodeOption[];
+};
+
+export type ExploreFilterOptions = {
+  moods: CodeOption[];
+  genres: CodeOption[];
+  vocals: { value: string; display_name: string }[];
 };
 
 export type OnboardingBody = {
@@ -745,6 +751,12 @@ export function createEndpoints(client: ApiClient) {
     },
 
     music: {
+      /** 탐색 사이드바 선택지. 분위기·장르는 codes, 보컬은 서버 enum에서 온다. */
+      filterOptions: (signal?: AbortSignal) =>
+        client.request<ExploreFilterOptions>({
+          path: '/api/v1/music/filter-option',
+          signal,
+        }),
       /**
        * 곡 목록·검색. 로그인 없이도 부를 수 있다.
        *
@@ -752,9 +764,11 @@ export function createEndpoints(client: ApiClient) {
        * @param vocal 보컬 필터. 쉼표로 이어 보낸다(`vocal=female,male`).
        *              서버는 반복 파라미터도 받는다(`vocal=female&vocal=male`).
        *              비우면 걸지 않고 예전과 같은 결과가 나온다
+       * @param mood  분위기 code_name 목록
+       * @param genre 장르 code_name 목록
        */
       search: (
-        options: { q?: string; vocal?: string; page?: number; size?: number } = {},
+        options: { q?: string; vocal?: string; mood?: string; genre?: string; page?: number; size?: number } = {},
         signal?: AbortSignal,
       ) =>
         client.request<MusicPage>({
@@ -764,6 +778,8 @@ export function createEndpoints(client: ApiClient) {
             // 빈 문자열은 보내지 않는다. 서버는 빈 값을 '고르지 않음' 으로 보지만,
             // 주소에 `vocal=` 이 남으면 캐시 키와 로그만 더러워진다.
             vocal: options.vocal || undefined,
+            mood: options.mood || undefined,
+            genre: options.genre || undefined,
             page: options.page,
             size: options.size,
           },

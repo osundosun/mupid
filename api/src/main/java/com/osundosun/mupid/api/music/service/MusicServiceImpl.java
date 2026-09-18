@@ -96,18 +96,34 @@ public class MusicServiceImpl implements MusicService {
     @Transactional(readOnly = true)
     public MusicPageResponse searchMusic(
         String keyword, Collection<VocalFilter> vocalFilters, int page, int size) {
+        return searchMusic(keyword, vocalFilters, List.of(), List.of(), page, size);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MusicPageResponse searchMusic(
+        String keyword,
+        Collection<VocalFilter> vocalFilters,
+        Collection<String> moodCodeNames,
+        Collection<String> genreCodeNames,
+        int page,
+        int size) {
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
         int safePage = Math.max(0, page);
         String trimmed = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
         VocalFilterQuery vocal = VocalFilterQuery.of(vocalFilters);
+        List<String> moods = normalizedNames(moodCodeNames);
+        List<String> genres = normalizedNames(genreCodeNames);
 
         if (trimmed != null) {
-            return searchIndexed(trimmed, vocal, safePage, safeSize);
+            return searchIndexed(trimmed, vocal, moods, genres, safePage, safeSize);
         }
 
-        Page<Music> found = repository.findPage(
-            vocal.filtered(), vocal.wantFemale(), vocal.wantMale(), vocal.wantInstrumental(),
-            PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "musicId")));
+        Page<Music> found = repository.findPageFiltered(
+            vocal.filtered(), vocal.wantFemale(), vocal.wantMale(), vocal.wantMixed(),
+            vocal.wantInstrumental(), !moods.isEmpty(), queryNames(moods),
+            !genres.isEmpty(), queryNames(genres),
+            PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.ASC, "musicId")));
 
         List<MusicSummary> items = assembler.assemble(found.getContent());
         return new MusicPageResponse(
@@ -119,15 +135,22 @@ public class MusicServiceImpl implements MusicService {
     }
 
     private MusicPageResponse searchIndexed(
-        String keyword, VocalFilterQuery vocal, int page, int size) {
+        String keyword,
+        VocalFilterQuery vocal,
+        List<String> moods,
+        List<String> genres,
+        int page,
+        int size) {
         PageRequest pageable = PageRequest.of(page, size);
         Page<Integer> ids = keyword.codePointCount(0, keyword.length()) < 2
             ? repository.searchIdsByPrefix(
                 keyword, vocal.filtered(), vocal.wantFemale(), vocal.wantMale(),
-                vocal.wantInstrumental(), pageable)
+                vocal.wantMixed(), vocal.wantInstrumental(), !moods.isEmpty(), queryNames(moods),
+                !genres.isEmpty(), queryNames(genres), pageable)
             : repository.searchIdsFullText(
                 toBooleanPrefixQuery(keyword), vocal.filtered(), vocal.wantFemale(),
-                vocal.wantMale(), vocal.wantInstrumental(), pageable);
+                vocal.wantMale(), vocal.wantMixed(), vocal.wantInstrumental(),
+                !moods.isEmpty(), queryNames(moods), !genres.isEmpty(), queryNames(genres), pageable);
 
         if (ids.isEmpty()) {
             return new MusicPageResponse(
@@ -147,6 +170,24 @@ public class MusicServiceImpl implements MusicService {
             ids.getSize(),
             ids.getTotalElements(),
             ids.getTotalPages());
+    }
+
+    private static List<String> normalizedNames(Collection<String> names) {
+        if (names == null || names.isEmpty()) {
+            return List.of();
+        }
+        return names.stream()
+            .filter(java.util.Objects::nonNull)
+            .flatMap(name -> java.util.Arrays.stream(name.split(",")))
+            .map(String::trim)
+            .filter(name -> !name.isEmpty())
+            .distinct()
+            .toList();
+    }
+
+    /** 빈 IN 절은 DB마다 문법이 달라, 필터가 꺼졌을 때는 도달 불가능한 값을 넣는다. */
+    private static List<String> queryNames(List<String> names) {
+        return names.isEmpty() ? List.of("__NO_FILTER__") : names;
     }
 
     /** Boolean 연산자는 버리고 모든 단어를 prefix 필수어로 만든다. */

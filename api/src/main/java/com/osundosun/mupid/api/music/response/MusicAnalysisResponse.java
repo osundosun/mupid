@@ -16,7 +16,7 @@ public record MusicAnalysisResponse(
     /** 분석 결과가 있는가. 없으면 아래 값은 전부 비어 있다. */
     boolean analyzed,
     Boolean hasVocal,
-    /** M · F · ETC. 보컬이 없거나 판정하지 못하면 null. */
+    /** M · F · MIX. 보컬이 없거나 판정하지 못하면 null. */
     String vocalGender,
     List<MusicSectionSummary> sections
 ) {

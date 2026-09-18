@@ -924,7 +924,7 @@
 .mupid-shell .song-lyrics { max-height: 76px; overflow: hidden; }
 .mupid-shell .song-lyrics h3 { display: none; }
 .mupid-shell .song-lyrics > p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
-.explore-result-column, .explore-filter-sidebar { min-width: 0; }
+.explore-result-column, .explore-filter-slot, .explore-filter-sidebar { min-width: 0; }
 @media (min-width: 1024px) {
   .explore-search-layout { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 28px; align-items: start; }
   .explore-filter-sidebar { position: sticky; top: 110px; max-height: calc(100dvh - 220px); overflow-y: auto; scrollbar-width: thin; }
@@ -1249,6 +1249,25 @@
     scrollbar-gutter: auto;
     padding-right: 0;
     padding-bottom: 12px;
+  }
+}
+
+/* The tablet layout above is intentionally static, but the desktop filter card
+   follows the page scroll so its controls remain available beside long results. */
+@media (min-width: 1024px) {
+  .mupid-shell .explore-filter-slot { align-self: start; }
+  .mupid-shell .explore-filter-sidebar {
+    position: sticky;
+    top: 110px;
+    align-self: start;
+    max-height: calc(100dvh - 132px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+  .mupid-shell .explore-filter-sidebar.is-desktop-floating {
+    position: fixed;
+    z-index: 5;
   }
 }
 
@@ -1938,6 +1957,63 @@
 .mupid-shell.page-player .player-lyrics-inline .song-lyrics > p { display: block; margin: 0 0 2px; overflow: visible; -webkit-line-clamp: unset; }
 .player-lyrics-dialog .song-lyrics > p { display: block; margin: 0 0 5px; overflow: visible; -webkit-line-clamp: unset; }
 .track-menu-divider { width: 100%; margin: 8px 0; border: 0; border-top: 1px solid #e0e8f5; }
+
+/* Keep the floating card 20px above the visible app-layout bottom. Only
+   the div immediately below the fieldset legend scrolls. */
+@media (min-width: 1024px) {
+  .mupid-shell .explore-filter-sidebar.is-desktop-floating {
+    overflow: visible;
+  }
+  .mupid-shell .explore-filter-sidebar #explore-keyword-panel {
+    max-height: inherit;
+    min-height: 0;
+  }
+  .mupid-shell .explore-filter-sidebar .explore-category-card {
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    max-height: inherit;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .mupid-shell .explore-filter-sidebar .category-options-scroll {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    max-height: none;
+    overflow: hidden;
+  }
+  .mupid-shell .explore-filter-sidebar .category-description,
+  .mupid-shell .explore-filter-sidebar .category-selected {
+    flex-shrink: 0;
+  }
+  .mupid-shell .explore-filter-sidebar .category-groups {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .mupid-shell .explore-filter-sidebar .category-groups fieldset {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .mupid-shell .explore-filter-sidebar .category-groups fieldset > div {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #bdcfe5 transparent;
+    scrollbar-gutter: stable;
+  }
+  .mupid-shell .explore-filter-sidebar .category-search-action {
+    position: static;
+    flex-shrink: 0;
+  }
+}
 
 /* PC LP는 오른쪽 콘텐츠 높이가 달라져도 위쪽 기준을 유지한다. */
 @media (min-width: 768px) {

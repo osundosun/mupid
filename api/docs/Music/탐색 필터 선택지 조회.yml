@@ -1,0 +1,29 @@
+info:
+  name: 탐색 필터 선택지 조회
+  type: http
+  seq: 2
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/music/filter-option"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  # 탐색 필터 선택지 조회
+
+  탐색 사이드바의 선택지를 반환합니다. `moods`와 `genres`는 `codes` 테이블을
+  `code_type`으로 나눈 결과이며 `code_id` 순서로 정렬됩니다. 화면에는
+  `display_name`을 표시하고 검색 요청에는 `name`(`code_name`)을 사용합니다.
+
+  `vocals`는 서버 enum에서 생성되며 `female`, `male`, `mixed`, `instrumental`을
+  반환합니다. 인스트루멘탈은 성별 값이 아니라 `has_vocal = false` 조건입니다.
