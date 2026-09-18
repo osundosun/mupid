@@ -6,6 +6,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "waveforms": "node scripts/build-waveforms.mjs",
     "dev": "vinext dev",
     "dev:app": "node scripts/static-target.mjs dev app",
     "build": "vinext build",
@@ -38,6 +39,7 @@
     "vinext": "1.0.0-beta.5"
   },
   "devDependencies": {
+    "opusscript": "0.1.1",
     "@cloudflare/vite-plugin": "1.37.1",
     "@cloudflare/workers-types": "4.20260515.1",
     "@openai/sites-vite-plugin": "0.2.0",

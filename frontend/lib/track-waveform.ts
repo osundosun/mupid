@@ -3,13 +3,16 @@
  *
  * 우선순위:
  *   1. 서버가 곡 정보에 실어 준 배열(`Track.waveform`) — 있으면 그대로.
- *   2. 이 기기에서 전에 계산해 둔 것(IndexedDB, 메모리).
- *   3. 청크를 받아 여기서 계산한다. 재생과 같은 경로(`/api/v1/chunk/...`)로 청크를
+ *   2. 배포에 실어 둔 정적 파일 `public/waveforms/{musicId}.json` —
+ *      `scripts/build-waveforms.mjs` 가 카탈로그 전곡을 미리 계산해 둔 것. 이것이
+ *      평소의 경로다. 곡당 1.3KB 라 즉시 뜬다.
+ *   3. 이 기기에서 전에 계산해 둔 것(IndexedDB, 메모리).
+ *   4. 청크를 받아 여기서 계산한다. 재생과 같은 경로(`/api/v1/chunk/...`)로 청크를
  *      받고, 같은 디코더(`decodeOpusFrames`)로 PCM 을 풀어 칸마다 RMS 를 재고, 곡 안의
  *      최댓값이 1.0 이 되게 맞춘다. 백엔드가 나중에 같은 형식으로 내려주면 1 이 이긴다.
- *   4. 로컬 데모 곡(`localAudio`)은 파일을 통째로 디코드한다(`loadAudioWaveform`).
+ *   5. 로컬 데모 곡(`localAudio`)은 파일을 통째로 디코드한다(`loadAudioWaveform`).
  *
- * 3 은 곡을 처음부터 끝까지 받아야 한다(6초·128kbps 청크, 3분 곡 ≈ 30개 ≈ 3MB).
+ * 4 는 곡을 처음부터 끝까지 받아야 한다(6초·128kbps 청크, 3분 곡 ≈ 30개 ≈ 3MB).
  * 그래서 진행률을 흘려 화면이 받은 데까지 먼저 그리게 하고, 끝나면 IndexedDB 에
  * 남겨 다음부터는 받지 않는다. 계산은 순간 저장 화면처럼 파형이 필요한 곳에서만
  * 시작한다 — 목록을 훑는 것만으로 곡마다 3MB 를 받게 하지 않는다.
@@ -36,6 +39,8 @@ export type WaveformProgress = {
 const PRE_ROLL_FRAMES = 24;
 /** 한 번에 받아 두는 청크 수. 디코드는 순서대로 하지만 다운로드는 조금 앞서 간다. */
 const AHEAD = 2;
+/** 정적 파형 파일 자리. `scripts/build-waveforms.mjs` 의 --out 과 같아야 한다. */
+const STATIC_BASE = '/waveforms';
 const DB_NAME = 'mupid-waveform';
 const STORE = 'waveform';
 
@@ -70,6 +75,32 @@ async function readStored(key: string): Promise<number[] | null> {
 async function writeStored(key: string, values: number[]): Promise<void> {
   const db = await openDb(); if (!db) return;
   try { db.transaction(STORE, 'readwrite').objectStore(STORE).put(values, key); } catch { /* 저장은 못 해도 파형은 보인다. */ }
+}
+
+// ── 배포에 실어 둔 정적 파형 ──────────────────────────────────────────────────
+let staticIndex: Promise<Set<number> | null> | null = null;
+/** 어떤 곡의 파형이 실려 있는지. 한 번만 받는다. 없거나 깨졌으면 null — 그때는 곡마다 직접 찾아본다. */
+function staticIds(): Promise<Set<number> | null> {
+  if (!staticIndex) {
+    staticIndex = fetch(`${STATIC_BASE}/index.json`, { cache: 'force-cache' })
+      .then(r => (r.ok ? (r.json() as Promise<{ music_ids?: unknown }>) : null))
+      .then(body => {
+        const ids = body?.music_ids;
+        return Array.isArray(ids) ? new Set<number>(ids.filter((v): v is number => typeof v === 'number')) : null;
+      })
+      .catch(() => null);
+  }
+  return staticIndex;
+}
+async function readStatic(musicId: number): Promise<number[] | null> {
+  const ids = await staticIds();
+  if (ids && !ids.has(musicId)) return null;
+  try {
+    const r = await fetch(`${STATIC_BASE}/${musicId}.json`, { cache: 'force-cache' });
+    if (!r.ok) return null;
+    const v = await r.json();
+    return Array.isArray(v) && v.length > 1 && v.every(x => typeof x === 'number') ? v : null;
+  } catch { return null; }
 }
 
 // ── 계산 ────────────────────────────────────────────────────────────────────
@@ -144,6 +175,10 @@ export function loadTrackWaveform(track: Track, signal: AbortSignal): Promise<nu
   const running = inflight.get(key);
   if (running) return running;
   const job = (async () => {
+    if (track.musicId !== undefined) {
+      const bundled = await readStatic(track.musicId);
+      if (bundled) { memory.set(key, bundled); return bundled; }
+    }
     const stored = await readStored(key);
     if (stored) { memory.set(key, stored); return stored; }
     const values = track.musicId !== undefined
