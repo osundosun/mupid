@@ -24,7 +24,8 @@
 .inquiry-dialog input:focus-visible, .inquiry-dialog textarea:focus-visible { outline: 2px solid #9dc0f5; outline-offset: 1px; }
 .inquiry-count { align-self: flex-end; font-size: 12px; color: #9aa9c0; font-variant-numeric: tabular-nums; }
 .inquiry-error { margin: 0; font-size: 13px; color: #c0504d; }
-.inquiry-note { margin: 2px 0 0; font-size: 13px; color: #7185a7; }
+.inquiry-note { display: flex; align-items: center; gap: 6px; margin: 2px 0 0; font-size: 13px; color: #7185a7; }
+.inquiry-note svg { width: 14px; height: 14px; flex-shrink: 0; color: #8fa8d0; }
 /* 취소 · 전송 순서로, 오른쪽 정렬. `.sky-dialog` 푸터의 row-reverse(`responsive-polish.css`)는 여기서 되돌린다. */
 .inquiry-dialog .inquiry-actions[data-slot='dialog-footer'] { margin-top: 8px; gap: 8px; flex-direction: row; justify-content: flex-end; }
 /* 두 버튼은 같은 높이·같은 폭·같은 모서리로 나란히. 기본 `.primary-button`·`.secondary-button` 은 높이와 모서리가 달라 어긋나 보였다. */

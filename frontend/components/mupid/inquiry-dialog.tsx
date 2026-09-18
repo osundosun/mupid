@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { MessageSquareText } from 'lucide-react';
+import { Mail, MessageSquareText } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { api } from '@/lib/api/session';
 import type { MupidModel } from '@/hooks/use-mupid';
@@ -59,7 +59,7 @@ export function InquiryButton({ model: m }: { model: MupidModel }) {
             required
           />
           <span className="inquiry-count">{body.length}/{BODY_MAX}</span>
-          <p className="inquiry-note">답변은 가입한 메일로 발송돼요.</p>
+          <p className="inquiry-note"><Mail aria-hidden="true" />답변은 가입한 메일로 발송돼요.</p>
           {error && <p className="inquiry-error" role="alert">{error}</p>}
           <DialogFooter className="inquiry-actions">
             <button type="button" className="secondary-button" onClick={close} disabled={busy}>취소</button>
