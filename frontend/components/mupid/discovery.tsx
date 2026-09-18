@@ -45,6 +45,24 @@ import {
   Waveform,
 } from './primitives';
 
+/**
+ * 구간 이름의 짧은 설명. 칩에 마우스를 올리면(툴팁) 보인다. '벌스 2'·'코러스 1' 처럼
+ * 번호가 붙은 서버 라벨도 앞 글자로 찾는다.
+ */
+const SECTION_HINTS: Record<string, string> = {
+  '인트로': '곡의 시작. 분위기를 여는 도입부예요.',
+  '벌스': '이야기를 풀어가는 절. 코러스 앞에 와요.',
+  '프리코러스': '코러스로 이어지는 다리. 긴장이 차오르는 부분이에요.',
+  '코러스': '가장 기억에 남는 후렴. 곡의 핵심이에요.',
+  '브리지': '분위기를 한 번 바꾸는 전환부. 보통 후반에 와요.',
+  '파이널 코러스': '마지막 후렴. 가장 크게 터지는 자리예요.',
+  '아웃트로': '곡의 마무리. 여운을 남기며 끝나요.',
+};
+const sectionHint = (label: string): string | undefined => {
+  const key = Object.keys(SECTION_HINTS).sort((a, b) => b.length - a.length).find(k => label.startsWith(k));
+  return key ? SECTION_HINTS[key] : undefined;
+};
+
 export function PlayerView({ model: m }: { model: MupidModel }) {
   const [confirmUnsave, setConfirmUnsave] = useState(false);
   const [trackInfoOpen, setTrackInfoOpen] = useState(false);
@@ -198,7 +216,7 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
   const editing = m.editingMomentId !== null;
   // Keep preview sections local to the editor; never send them as AI analysis.
   const previewSections = active.sections.length === 0;
-  const labels = ['인트로', '벌스 1', '프리코러스', '코러스 1', '벌스 2', '브리지', '파이널 코러스', '아웃트로'];
+  const labels = ['인트로', '벌스', '프리코러스', '코러스', '브리지', '파이널 코러스', '아웃트로'];
   const sections = previewSections
     ? labels.map((label, i) => ({ label, start: Math.round(active.duration * i / labels.length), end: Math.round(active.duration * (i + 1) / labels.length) })).filter(part => part.end > part.start)
     : active.sections;
@@ -215,6 +233,9 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
     return [];
   });
   const [saved, setSaved] = useState(false);
+  // 마지막에 만진 구간. 폰은 마우스를 올릴 수 없어 툴팁이 뜨지 않으니, 그 구간의
+  // 설명을 칩 아래 한 줄로 보여 준다. 처음에는 고른 것이 있으면 그것.
+  const [hinted, setHinted] = useState<number | null>(() => selected.at(-1) ?? null);
   const [trimmed, setTrimmed] = useState<Record<number, { start: number; end: number }>>(() => editing && selected.length ? { [selected[0]]: { start: m.momentRange[0], end: m.momentRange[1] } } : {});
   /*
    * 분홍 양 끝을 끌어 범위를 다른 구간까지 늘리거나 옮기면, 위 칩과 이름도 따라간다.
@@ -270,20 +291,24 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
         <div className="moment-editor">
           {previewSections && <p className="moment-wave-help">AI 연결 전 미리보기 · 곡 길이를 임시로 나눈 구간이에요.</p>}
           <div className="song-parts" aria-label="저장할 순간 다중 선택">
-            {sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) || covered.has(i) ? 'selected' : ''} onClick={() => {
+            {sections.map((part, i) => <button key={i} title={sectionHint(part.label)} aria-pressed={selected.includes(i)} className={selected.includes(i) || covered.has(i) ? 'selected' : ''} onClick={() => {
               // 다른 순간의 범위에 이미 걸린 구간을 누르면 새로 더하지 않고 그 순간을 손보는 대상으로 삼는다.
+              setHinted(i);
               const within = !selected.includes(i) ? partAt(part.start + (part.end - part.start) / 2) : -1;
               if (within >= 0) { focus(within); return; }
               setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : editing ? [i] : [...ids, i]);
               setSaved(false);
             }}>{part.label}</button>)}
           </div>
+          {hinted !== null && sections[hinted] && sectionHint(sections[hinted].label) && (
+            <p className="song-parts-hint" role="status"><strong>{sections[hinted].label}</strong> {sectionHint(sections[hinted].label)}</p>
+          )}
           <MomentWaveEditor track={active} range={focusedPart} onSelect={time => {
             // 이미 고른 순간 안을 누르면 그 순간을 손보는 대상으로. 바깥이면 그 구간을 새로 고른다.
             const within = partAt(time);
             if (within >= 0) { focus(within); return; }
             const index = sections.findIndex(part => time >= part.start && time < part.end);
-            if (index >= 0) setSelected(ids => editing ? [index] : [...ids.filter(id => id !== index), index]);
+            if (index >= 0) { setHinted(index); setSelected(ids => editing ? [index] : [...ids.filter(id => id !== index), index]); }
             setSaved(false);
           }} onTrim={(start, end) => {
             trimFocused(start, end);
