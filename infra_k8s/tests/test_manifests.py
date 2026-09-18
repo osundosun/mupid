@@ -1463,6 +1463,118 @@ class AiEndpointNamesTest(unittest.TestCase):
                       "추천 서버 쪽 짝 이름이 적혀 있지 않다")
 
 
+class CiShellScopeTest(unittest.TestCase):
+    """GitLab 은 `script:` 의 **각 줄을 별도 셸**로 돌린다.
+
+    그래서 한 줄에서 `export` 한 변수는 다음 줄에 오지 않는다. 이걸 모르면
+    스탬프 배선이 조용히 끊긴다 — 실제로 그렇게 실패했다(master, 2026-09-18,
+    job 575976). 증상이 나쁜 이유는 **실패 지점이 늦다**는 것이다: APK 를 다
+    굽고 서명까지 확인한 뒤(60MB·6분) 업로드 직전 한 줄에서 죽고, job 로그에는
+    `exit code 2` 만 남는다.
+
+    여기서는 그 모양을 **구조로** 고정한다: 생성 스크립트와 업로더 스크립트가
+    같은 줄에 있어야 한다.
+    """
+
+    CI = ROOT / "infra" / "ci"
+    K8S_CI = K8S / "ci"
+
+    def _job_script(self, job):
+        """job 의 script 줄 목록. GitLab 의 YAML 은 `script` 를 리스트로 준다."""
+        config = yaml.safe_load((self.CI / "app.yml").read_text(encoding="utf-8"))
+        return config[job]["script"]
+
+    def _lines_with(self, script, needle):
+        return [line for line in script if needle in line]
+
+    def test_the_apk_build_and_upload_share_one_shell(self):
+        # `build-apk.sh` 가 `export MUPID_NATIVE_BUILD` 하고 `deploy-apk.sh` 가
+        # 그 값을 요구한다. 다른 줄이면 export 가 죽는다.
+        script = self._job_script("app-build")
+        build = self._lines_with(script, "build-apk.sh")
+        upload = self._lines_with(script, "deploy-apk.sh")
+        self.assertEqual(1, len(build), f"build-apk.sh 호출이 정확히 하나여야 한다: {build}")
+        self.assertEqual(1, len(upload), f"deploy-apk.sh 호출이 정확히 하나여야 한다: {upload}")
+        self.assertIn(
+            "&&", build[0],
+            "build-apk.sh 와 deploy-apk.sh 가 **한 줄**에 있어야 한다 — GitLab 은 "
+            "script 의 각 줄을 별도 셸로 돌리므로, export 한 MUPID_NATIVE_BUILD 가 "
+            f"다음 줄로 가지 않는다: {build[0]!r} / {upload[0]!r}",
+        )
+        self.assertEqual(build[0], upload[0])
+
+    def test_the_stamp_really_crosses_that_boundary(self):
+        """경계를 넘어야 하는 값이 무엇인지 실제 파일에서 확인한다.
+
+        시험이 '&& 가 있다' 만 보면, 나중에 스크립트가 export 를 그만둬도 통과한다.
+        한쪽이 export 하고 다른 쪽이 요구하는지를 함께 본다.
+        """
+        build = (self.CI / "build-apk.sh").read_text(encoding="utf-8")
+        upload = (self.K8S_CI / "deploy-apk.sh").read_text(encoding="utf-8")
+        # 왼쪽이 넘기고
+        self.assertIn("export MUPID_NATIVE_BUILD", build)
+        # 오른쪽이 요구한다
+        self.assertIn("${MUPID_NATIVE_BUILD:?", upload)
+
+    def test_the_web_job_does_not_depend_on_a_previous_line(self):
+        """웹 갈래는 스탬프를 **그 줄에서** 만들어 넘기므로 이 함정이 없다.
+
+        같은 이유로 이 job 은 나눠도 안전하다 — 그래서 `deploy-web.sh` 는
+        스탬프를 환경변수로 받지 않고 아카이브와 `web.json` 에서 읽는다.
+        """
+        script = self._job_script("app-web-release")
+        stamp_line = self._lines_with(script, "build-stamp.sh")
+        self.assertEqual(1, len(stamp_line), f"스탬프를 찍는 줄이 하나여야 한다: {stamp_line}")
+        self.assertIn("export", stamp_line[0], "찍은 값을 같은 줄에서 export 해야 한다")
+
+    def test_the_uploaders_do_not_hide_the_remote_reason(self):
+        """업로더는 원격 stderr 를 그대로 보여주고, 알려진 고장은 이름을 붙인다.
+
+        이것이 없으면 job 로그에 `exit code 1` 만 남는다 — 그 숫자는 어느
+        고장인지 말해 주지 않아, 키나 권한을 의심하며 시간을 쓴다. 실제로 그랬다.
+        """
+        for name, receiver in (("deploy-apk.sh", "mupid-receive-apk"),
+                               ("deploy-web.sh", "mupid-receive-web")):
+            with self.subTest(uploader=name):
+                text = (self.K8S_CI / name).read_text(encoding="utf-8")
+                # 원격의 말을 그대로 보여준다.
+                self.assertIn('2>"$err"', text)
+                self.assertIn('cat "$err" >&2', text)
+                # sudoers 누락을 짚어 준다.
+                self.assertIn("RECEIVER_NOT_PERMITTED", text)
+                self.assertIn("a terminal is required", text)
+                self.assertIn(receiver, text)
+
+    def test_the_documented_sudoers_rule_matches_what_the_entrypoint_sudoes(self):
+        """수신기를 부르는 곳은 entrypoint 의 `sudo` 뿐이다. 그 목록과 운영 문서가
+        적은 sudoers 규칙이 어긋나면, 파일만 넣고 권한을 빠뜨린다 — 그것이 이번에
+        라이브에서 실패한 원인이다(`sudo: a password is required`).
+
+        `mupid-receive-index` 는 뺀다. 그 동사는 **다른 노드**로 가고(추천 서버는
+        nodeSelector 로 node-b 에 뜬다) 그쪽 sudoers 를 쓴다. 이 저장소의 k8s
+        노드 문서에 그 규칙을 요구하면 거짓 실패가 된다.
+        """
+        entrypoint = (K8S / "deploy" / "ssh-entrypoint-k8s.sh").read_text(encoding="utf-8")
+        # `[a-z0-9-]` 여야 한다. `k8s` 의 `8` 을 빼면 `mupid-receive-k` 로 잘려
+        # 엉뚱한 이름을 찾는다.
+        sudoed = sorted(set(re.findall(r"exec sudo (/usr/local/sbin/mupid-receive-[a-z0-9-]+)",
+                                       entrypoint)))
+        self.assertTrue(sudoed, "entrypoint 에서 sudo 호출을 찾지 못했다")
+        self.assertIn("/usr/local/sbin/mupid-receive-web", sudoed,
+                      "upload-web 이 sudo 로 mupid-receive-web 을 부르지 않는다")
+        doc = (K8S / "OPERATIONS-K8S.md").read_text(encoding="utf-8")
+        self.assertIn("NOPASSWD", doc, "운영 문서에 sudoers 등록 절이 없다")
+        for receiver in sudoed:
+            if receiver.endswith("mupid-receive-index"):
+                continue
+            with self.subTest(receiver=receiver):
+                self.assertIn(
+                    receiver, doc,
+                    f"{receiver} 가 운영 문서의 sudoers 절에 없다 — 파일만 넣으면 "
+                    "sudo 가 비밀번호를 요구하며 배포가 실패한다",
+                )
+
+
 class ApkDownloadTest(unittest.TestCase):
     """APK 는 웹 이미지에 굽지 않고 노드의 디렉터리에 두고 nginx 가 읽는다.
     그 사이에 맞아야 하는 것이 넷이고, 하나라도 어긋나면 받는 사람이 404 를
