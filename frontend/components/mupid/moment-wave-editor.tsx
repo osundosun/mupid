@@ -29,7 +29,7 @@ export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }
       edge === 'end' ? Math.min(track.duration, Math.max(value, range.start + 1)) : range.end);
   };
   return <div className="moment-wave-editor">
-    <p className="moment-wave-caption">{range ? `${range.label} · ${formatTime(range.start)} – ${formatTime(range.end)}${others.length ? ` · 선택 ${others.length + 1}개` : ''}` : '파형에서 저장할 구간을 눌러 주세요'}</p>
+    <p className="moment-wave-caption">{range ? `${range.label} · ${formatTime(range.start)} – ${formatTime(range.end)}${others.length ? ` · 선택 ${others.length + 1}개` : ''}` : '파형에서 저장할 순간을 눌러 주세요'}</p>
     <div className="moment-wave-surface" onPointerDown={event => {
       if (!event.isPrimary || event.button !== 0) return;
       press.current = { x: event.clientX, y: event.clientY, moved: false };
@@ -53,7 +53,7 @@ export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }
       {range && track.duration > 0 && <>
         <span className="moment-wave-selection" style={{ left: `${range.start / track.duration * 100}%`, width: `${(range.end - range.start) / track.duration * 100}%` }} />
         {(['start', 'end'] as const).map(edge => <button key={edge} type="button" role="slider" data-edge={edge}
-          className="moment-wave-handle" aria-label={edge === 'start' ? '저장 구간 시작' : '저장 구간 끝'}
+          className="moment-wave-handle" aria-label={edge === 'start' ? '저장 순간 시작' : '저장 순간 끝'}
           aria-valuemin={edge === 'start' ? 0 : range.start + 1} aria-valuemax={edge === 'start' ? range.end - 1 : track.duration}
           aria-valuenow={range[edge]} aria-valuetext={formatTime(range[edge])}
           style={{ left: `${range[edge] / track.duration * 100}%` }}
@@ -64,6 +64,6 @@ export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }
           }}><span /></button>)}
       </>}
     </div>
-    <p className="moment-wave-help">구간을 누른 뒤 분홍색 양 끝을 끌어 조절하세요.</p>
+    <p className="moment-wave-help">순간을 누른 뒤 분홍색 양 끝을 끌어 조절하세요.</p>
   </div>;
 }

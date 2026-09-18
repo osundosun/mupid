@@ -188,11 +188,11 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
       <div>
         <div className="intro-copy">
           <h2>{editing ? '어느 순간으로 바꿀까요?' : '마음에 드는 순간을 저장하세요.'}</h2>
-          <p>파형에서 구간을 누르고, 양 끝을 끌어 원하는 부분만 저장하세요.</p>
+          <p>파형에서 순간을 누르고, 양 끝을 끌어 원하는 부분만 저장하세요.</p>
         </div>
         <TrackRow track={active} model={m} detail={parts.length ? parts.map(p => p.label).join(' · ') : '저장할 순간을 선택해 주세요'} />
         <div className="moment-editor">
-          {previewSections && <p className="moment-wave-help">AI 연결 전 미리보기 · 곡 길이를 임시로 나눈 구간이에요.</p>}
+          {previewSections && <p className="moment-wave-help">AI 연결 전 미리보기 · 곡 길이를 임시로 나눈 순간이에요.</p>}
           <div className="song-parts" aria-label="저장할 순간 다중 선택">
             {sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) ? 'selected' : ''} onClick={() => {
               setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : editing ? [i] : [...ids, i]);
