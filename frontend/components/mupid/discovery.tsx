@@ -13,7 +13,6 @@ import {
   ListMusic,
   Bookmark,
   BookmarkMinus,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ThumbsDown,
@@ -48,6 +47,7 @@ import {
 export function PlayerView({ model: m }: { model: MupidModel }) {
   const [confirmUnsave, setConfirmUnsave] = useState(false);
   const [trackInfoOpen, setTrackInfoOpen] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
   const [lyricsOpen, setLyricsOpen] = useState(false);
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
@@ -106,10 +106,19 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             </button>
             <button className="secondary-button" aria-expanded={m.queueOpen} aria-controls="queue-dock" onClick={m.toggleQueue}><ListMusic />재생목록</button>
           </TrackComments>
-          {recommendationReason && <details className="player-recommendation-toggle" key={`${active.id}:${recommendationReason}`}>
-            <summary><Sparkles size={15} /><span>추천 이유</span><ChevronDown size={16} /></summary>
-            <p>{recommendationReason}</p>
-          </details>}
+          {/*
+            추천 이유는 본문에 펼치지 않고 가사·곡 정보처럼 대화상자로 띄운다.
+            본문에 펼치면 그 높이만큼 플레이어가 한 화면을 넘겨 스크롤이 생겼다.
+          */}
+          {recommendationReason && <button
+            type="button"
+            className="player-recommendation-toggle"
+            aria-haspopup="dialog"
+            aria-expanded={reasonOpen}
+            onClick={() => setReasonOpen(true)}
+          >
+            <Sparkles size={15} /><span>추천 이유</span><ChevronRight size={16} />
+          </button>}
         </div>
       </div>
       <Dialog open={lyricsOpen} onOpenChange={setLyricsOpen}>
@@ -122,6 +131,21 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
         </DialogContent>
       </Dialog>
       <TrackInfoDialog track={active} open={trackInfoOpen} onOpenChange={setTrackInfoOpen} onArtist={m.setSelectedArtist} />
+      <Dialog open={reasonOpen && !!recommendationReason} onOpenChange={setReasonOpen}>
+        <DialogContent className="sky-dialog player-reason-dialog">
+          <DialogHeader>
+            <DialogTitle><Sparkles size={16} aria-hidden="true" />추천 이유</DialogTitle>
+            <DialogDescription>{active.title} · {active.artist}</DialogDescription>
+          </DialogHeader>
+          <p className="player-reason-text">{recommendationReason}</p>
+          {active.recommended && (
+            <p className="player-reason-section">
+              <span>추천한 구간</span>
+              <strong>{active.recommended.sectionLabel} · {formatTime(active.recommended.start)} – {formatTime(active.recommended.end)}</strong>
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
       {/* 저장은 한 번 더 물어보고 푼다. 보관함의 순간 삭제와 같은 규칙. */}
       <AlertDialog open={confirmUnsave} onOpenChange={(open) => { if (!open) setConfirmUnsave(false); }}>
         <AlertDialogContent className="sky-dialog">
