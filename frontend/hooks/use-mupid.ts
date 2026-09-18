@@ -32,6 +32,7 @@ import * as queueApi from '@/lib/play-queue';
 import { analytics, bindPlayer, type EntryPath } from '@/lib/analytics';
 import { fetchSections } from '@/lib/music-analysis';
 import { chatErrorMessage, requestChat } from '@/lib/ai-chat';
+import { momentPlaybackRanges } from '@/lib/saved-moments';
 import { useMediaSession } from './use-media-session';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
@@ -233,6 +234,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const activeRef = useRef(active);
   const mountedRef = useRef(true);
   const previewEnd = useRef<number | null>(null);
+  const momentSequence = useRef<{ trackId: number; ranges: SavedMoment[]; index: number; mode: 'all' | 'single' } | null>(null);
+  const [savedMomentPlayback, setSavedMomentPlayback] = useState<{ trackId: number; mode: 'all' | 'single' } | null>(null);
   /** 종료를 처리한 곡. 한 곡의 종료로 두 번 넘어가지 않게 한다. */
   const endedFor = useRef<number | null>(null);
   /** 마지막으로 알린 재생 오류. 같은 사정을 반복해서 띄우지 않는다. */
@@ -750,7 +753,9 @@ export function useMupid(bootstrap: Bootstrap) {
       if (track.localAudio) await player.loadLocal(track.id, track.localAudio, track.duration);
       else await player.load(track.musicId!, { autoplay: true });
       if (id !== requestId.current) return;
-      if (start !== undefined && start > 0) await player.seek(start);
+      // 같은 곡의 뒤쪽 순간에서 도입(0초)으로 돌아가는 경우에도 반드시 이동한다.
+      // 0초를 생략하면 player.load가 같은 음원을 유지할 때 기존 위치에서 계속 재생된다.
+      if (start !== undefined) await player.seek(start);
     } catch {
       if (id === requestId.current && mountedRef.current) {
         setToast('음원을 불러오지 못했어요. 다시 재생해 주세요.');
@@ -822,6 +827,13 @@ export function useMupid(bootstrap: Bootstrap) {
       sameTrack &&
       (status === 'playing' || status === 'buffering' || status === 'paused');
 
+    // 하단 플레이어에서 일시정지·재개할 때는 저장 순간 시퀀스를 보존한다.
+    // 새 재생을 시작할 때만 기존 전체/순간별 재생 모드를 끝낸다.
+    if (!willToggle) {
+      momentSequence.current = null;
+      setSavedMomentPlayback(null);
+    }
+
     let picked: string | undefined = queueUid;
     if (!queueUid && (!willToggle || !inQueue)) {
       // 큐 갱신은 다음 렌더에나 보이므로 이번 재생의 자리는 여기서 직접 넘긴다.
@@ -865,6 +877,8 @@ export function useMupid(bootstrap: Bootstrap) {
   };
   const next = (direction = 1) => {
     previewEnd.current = null;
+    momentSequence.current = null;
+    setSavedMomentPlayback(null);
     // 화면에 보이는 목록과 같은 순서로 넘긴다. 끌어 바꾼 순서가 그대로 다음 곡이다.
     const pool = queueTracks;
     if (!pool.length) return;
@@ -902,6 +916,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const seekByUser = (value: number) => {
     if (!Number.isFinite(value)) return;
     previewEnd.current = null;
+    momentSequence.current = null;
+    setSavedMomentPlayback(null);
     const track = activeRef.current;
     if (!track) return;
     const target = Math.max(0, Math.min(value, track.duration));
@@ -979,6 +995,38 @@ export function useMupid(bootstrap: Bootstrap) {
 
       // 구간 미리듣기는 끝 지점에서 멈춘다. 곡이 끝난 것이 아니므로
       // 다음 곡으로 넘어가지 않는다.
+      const sequence = momentSequence.current;
+      if (sequence && activeRef.current?.id === sequence.trackId && state.status === 'ended') {
+        const finalRange = sequence.ranges.at(-1);
+        momentSequence.current = null;
+        setSavedMomentPlayback(null);
+        setTime(finalRange?.end ?? state.positionSec);
+        return;
+      }
+      if (
+        sequence &&
+        activeRef.current?.id === sequence.trackId &&
+        state.status === 'playing'
+      ) {
+        const currentRange = sequence.ranges[sequence.index];
+        if (currentRange && state.positionSec >= currentRange.end) {
+          const nextRange = sequence.ranges[sequence.index + 1];
+          if (!nextRange) {
+            momentSequence.current = null;
+            setSavedMomentPlayback(null);
+            player.pause();
+            setTime(currentRange.end);
+            return;
+          }
+          sequence.index += 1;
+          // 맞닿은 구간은 엔진을 그대로 흘려 보내고, 사이가 빈 구간만 건너뛴다.
+          if (nextRange.start > currentRange.end) {
+            setTime(nextRange.start);
+            void player.seek(nextRange.start);
+          }
+          return;
+        }
+      }
       const stopAt = previewEnd.current;
       if (stopAt !== null && state.status === 'playing' && state.positionSec >= stopAt) {
         previewEnd.current = null;
@@ -1139,6 +1187,8 @@ export function useMupid(bootstrap: Bootstrap) {
     playedInCycle.current = new Set(firstUid ? [firstUid] : []);
     setQueue(entries);
     previewEnd.current = null;
+    momentSequence.current = null;
+    setSavedMomentPlayback(null);
     void startPlayback(first, 0);
   };
   /**
@@ -1179,6 +1229,8 @@ export function useMupid(bootstrap: Bootstrap) {
   onEndedRef.current = onEnded;
   const openTrack = (track: Track) => {
     previewEnd.current = null;
+    momentSequence.current = null;
+    setSavedMomentPlayback(null);
     loadTrack(track);
     go('player');
   };
@@ -1192,6 +1244,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const openMoment = (track: Track | null = activeRef.current, editing: SavedMoment | null = null) => {
     if (!track) return;
     previewEnd.current = null;
+    momentSequence.current = null;
+    setSavedMomentPlayback(null);
     setEditingMomentId(editing?.id ?? null);
     loadTrack(track);
     if (editing) {
@@ -1210,28 +1264,52 @@ export function useMupid(bootstrap: Bootstrap) {
   };
   const previewMoment = () => {
     if (!activeRef.current) return;
+    momentSequence.current = null;
+    setSavedMomentPlayback(null);
     previewEnd.current = momentRange[1];
     void startPlayback(activeRef.current, momentRange[0]);
   };
   const playSavedMoment = (moment: SavedMoment) => {
+    playSavedMoments([moment], moment);
+  };
+  const playSavedMoments = (momentsToPlay: SavedMoment[], startAt?: SavedMoment) => {
+    if (!momentsToPlay.length) return;
+    const mode = startAt ? 'single' : 'all';
+    const ranges = momentPlaybackRanges(momentsToPlay, startAt);
+    const first = ranges[0];
     const player = getPlayer();
-    // 듣고 있던 그 구간을 다시 누르면 멈춘다.
+    // 같은 곡의 같은 구간 묶음을 다시 누르면 멈춘다.
     if (
-      activeRef.current?.id === moment.track.id &&
-      previewEnd.current === moment.end &&
+      activeRef.current?.id === first.track.id &&
+      momentSequence.current?.trackId === first.track.id &&
+      momentSequence.current.mode === mode &&
+      momentSequence.current.ranges[momentSequence.current.index]?.start === first.start &&
       player?.store.get().status === 'playing'
     ) {
-      previewEnd.current = null;
+      momentSequence.current = null;
+      setSavedMomentPlayback(null);
       player.pause();
       return;
     }
-    previewEnd.current = moment.end;
+    previewEnd.current = null;
+    momentSequence.current = { trackId: first.track.id, ranges, index: 0, mode };
+    setSavedMomentPlayback({ trackId: first.track.id, mode });
+    // 같은 곡의 다른 순간을 누른 경우 기존 구간의 소리를 즉시 끊는다. 이후
+    // startPlayback이 클릭한 시작점(0초 포함)으로 옮기고 다시 재생한다.
+    if (activeRef.current?.id === first.track.id && player) player.pause();
     /*
      * 순간 재생도 **곡을 트는 것**이다. 오늘의 Moment·저장한 순간에서 누른 곡이
      * 재생 목록에 남지 않아 방금 들은 곡을 목록에서 찾을 수 없었다. 목록 밖에서
      * 튼 것과 같게 맨 위에 놓는다.
      */
-    void startPlayback(moment.track, moment.start, liftToQueueTop(moment.track).uid);
+    void startPlayback(first.track, first.start, liftToQueueTop(first.track).uid);
+  };
+  const stopSavedMomentPlayback = (trackId: number, mode?: 'all' | 'single') => {
+    const sequence = momentSequence.current;
+    if (!sequence || sequence.trackId !== trackId || (mode && sequence.mode !== mode)) return;
+    momentSequence.current = null;
+    setSavedMomentPlayback(null);
+    getPlayer()?.pause();
   };
   const saveMoment = () => {
     const current = activeRef.current;
@@ -1307,6 +1385,14 @@ export function useMupid(bootstrap: Bootstrap) {
     setMoments((list) => list.filter((v) => v.id !== id));
   };
 
+  /** 화면에서는 곡 단위로 지우되 저장과 해제 이벤트는 각 순간별로 처리한다. */
+  const removeMoments = (ids: number[]) => {
+    const gone = moments.filter((moment) => ids.includes(moment.id));
+    if (!gone.length) return;
+    unmarkMoments(gone);
+    setMoments((list) => list.filter((moment) => !ids.includes(moment.id)));
+  };
+
   /** 저장한 순간의 범위를 바꾼다. 옛 구간을 해제하고 새 구간을 찍는 것과 같다. */
   const replaceMoment = (id: number, part: { start: number; end: number; section: string }) => {
     const previous = moments.find((v) => v.id === id);
@@ -1314,6 +1400,15 @@ export function useMupid(bootstrap: Bootstrap) {
     unmarkMoments([previous]);
     markMoments([{ ...previous, ...part }]);
     setMoments((list) => list.map((v) => (v.id === id ? { ...v, ...part } : v)));
+  };
+
+  /** 곡의 순간 묶음을 고친 뒤에도 저장·이벤트는 구간별 행으로 유지한다. */
+  const replaceMoments = (ids: number[], entries: SavedMoment[]) => {
+    const previous = moments.filter((moment) => ids.includes(moment.id));
+    if (!previous.length) return;
+    unmarkMoments(previous);
+    markMoments(entries);
+    setMoments((list) => [...entries, ...list.filter((moment) => !ids.includes(moment.id))]);
   };
 
   /**
@@ -1622,7 +1717,9 @@ export function useMupid(bootstrap: Bootstrap) {
     // 화면에서 직접 부르면 구간 신호(SECTION_* · PLAYLIST_*)가 남지 않는다.
     addMoments,
     removeMoment,
+    removeMoments,
     replaceMoment,
+    replaceMoments,
     playlists,
     setPlaylists,
     addToPlaylist,
@@ -1781,6 +1878,9 @@ export function useMupid(bootstrap: Bootstrap) {
     openMoment,
     previewMoment,
     playSavedMoment,
+    playSavedMoments,
+    stopSavedMomentPlayback,
+    savedMomentPlayback,
     saveMoment,
     toggleLike,
     openChat,
