@@ -1712,8 +1712,9 @@ h1 {
   gap: 14px;
   min-width: 0;
 }
+/* MUBTI(`.listening-story`)가 먼저, 키워드가 그 다음이다. 전에는 `order: -1` 로
+   키워드를 앞세웠다. */
 .report-details .keyword-card {
-  order: -1;
   margin-top: 0;
 }
 .report-details .stat-pair {
