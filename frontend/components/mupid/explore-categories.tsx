@@ -11,7 +11,7 @@ const categories = [
   { title: '장르', icon: Music2, description: '익숙한 취향부터 새로운 장르까지', groups: [
     { title: '장르', options: ['Pop', 'Electronic', 'R&B / Soul', 'Rock', 'Folk', 'Classical'] },
   ] },
-  { title: '보컬·악기', icon: Mic2, description: '좋아하는 목소리와 소리를 찾아서', groups: [
+  { title: '보컬', icon: Mic2, description: '좋아하는 목소리와 소리를 찾아서', groups: [
     { title: '보컬', options: ['여성 보컬', '남성 보컬', '인스트루멘탈'] },
   ] },
 ];
