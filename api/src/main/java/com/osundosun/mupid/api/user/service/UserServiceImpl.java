@@ -34,6 +34,20 @@ public class UserServiceImpl implements UserService {
      */
     public static final int SYSTEM_USER_PASSWORD_LENGTH = 32;
 
+    /**
+     * 탈퇴한 계정의 `password` 자리에 남기는 값.
+     *
+     * <p>BCrypt 해시가 아니라 **해시로도 읽히지 않는 문자열**이다. 탈퇴 계정은
+     * `findByEmailAndStatusNot(email, WITHDRAW)` 가 로그인 입구에서 이미 걸러내므로
+     * 이 값이 인증에 쓰일 일은 없다. 그런데도 유효한 해시(`$2a$10$…`)를 남겨 두면
+     * 언젠가 이메일 중복 검사나 조회 경로가 하나 풀리는 순간 그 계정이 다시
+     * 로그인 가능해진다 — 자격증명은 인증되지 않는 자리에 남겨 두지 않는다.
+     *
+     * <p>평문이 아닌 고정 문자열인 것은 의도다. 무작위 값을 넣으면 "원래 비밀번호가
+     * 무엇이었는지" 를 되돌릴 여지가 남지만, 애초에 되돌릴 것이 없어야 한다.
+     */
+    public static final String WITHDRAWN_PASSWORD_PLACEHOLDER = "WITHDRAWN";
+
     private final PasswordEncoder passwordEncoder;
     private final UserRepository repository;
     private final EmailService emailService;
@@ -134,7 +148,35 @@ public class UserServiceImpl implements UserService {
     @Override
     public void deleteUser(int userId) {
         User user = getUser(userId).orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
-        repository.delete(user);
+        user.setStatus(UserStatus.WITHDRAW);
+        /*
+         * 행은 남기고 **자격증명은 버린다** — 무력화 판단의 근거.
+         *
+         * 남기는 쪽 근거: `users.user_id` 를 참조하는 테이블이 11개인데 그중 10개가
+         * `NO ACTION` 이라 하드 삭제는 FK 에 막혀 실패하고, 유일하게 `CASCADE` 인
+         * `ai_chat_sessions` 는 조용히 함께 지워진다. 어느 쪽도 의도가 아니고, 탈퇴
+         * 뒤에도 `user_id` 참조가 살아 있어야 청취 이벤트 등 분석 데이터가 고아가 되지
+         * 않는다 (knowledge/decision/0013-soft-delete-policy.md).
+         *
+         * 버리는 쪽 근거: 그 결정 문서도 "soft delete 는 파기가 아니다. 개인정보 파기
+         * 요구가 있으면 별도 처리가 필요하다" 라고 적어 두었다. 그 별도 처리가 여기다.
+         * `password` 는 프로필 값이 아니라 **자격증명**이고, 탈퇴한 계정이 인증할 일은
+         * 없다. 보존할 이유가 없는 값을 DB 유출 시 오프라인 대입 공격의 재료로 남겨 둘
+         * 이유도 없다 — 비밀번호만 무력화하고 이메일·프로필은 분석 참조를 위해 남긴다.
+         * 남길 값(이메일·닉네임·출생연도·성별)과 버릴 값(비밀번호)을 가르는 기준은
+         * "그 값이 인증에 쓰이는가" 하나다.
+         *
+         * 닉네임 등 프로필 값을 함께 지우지 않는 것은, 그 값이 조회 경로
+         * (`findByUserIdAndStatusNot`)에서 이미 전부 빠지고 어떤 FK·분석에도 남지 않아
+         * 이 티켓에서 다룰 대상이 아니기 때문이다. 탈퇴 행을 어떤 모습으로 남길지는
+         * 팀 합의가 필요한 별도 사안이다.
+         *
+         * ⚠ `users.password` 의 ERD 컬럼 주석은 "암호화된 비밀번호(BCrypt)" 인데
+         * `WITHDRAWN_PASSWORD_PLACEHOLDER` 는 해시가 아니다. 컬럼 주석을 고치려면 DDL
+         * (ERD 재산출)이 필요해 이 티켓 범위 밖이므로, 어긋난 사실을 여기와 커밋
+         * 메시지에 남긴다. 이 행의 권위 있는 신호는 `status` 다.
+         */
+        user.setPassword(WITHDRAWN_PASSWORD_PLACEHOLDER);
     }
 
     @Override

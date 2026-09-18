@@ -37,6 +37,22 @@ public interface UserService {
      */
     User activateUser(int userId);
 
+    /**
+     * 회원 탈퇴. **행을 지우지 않는다.**
+     *
+     * <p>`users.user_id` 를 참조하는 테이블이 11개라 하드 삭제는 FK 에 막혀 실패하고
+     * (`ai_chat_sessions` 만 `ON DELETE CASCADE` 라 조용히 함께 지워진다), 탈퇴 뒤에도
+     * 참조가 살아 있어야 청취 이벤트 등 분석 데이터가 고아가 되지 않는다 —
+     * `knowledge/decision/0013-soft-delete-policy.md`.
+     *
+     * <p>그래서 상태만 `WITHDRAW` 로 옮기고, 자격증명인 비밀번호는 함께 무력화한다
+     * ({@link UserServiceImpl#WITHDRAWN_PASSWORD_PLACEHOLDER}). 조회·로그인·토큰
+     * 재발급은 이미 `findByUserIdAndStatusNot(..., WITHDRAW)` 로 탈퇴 계정을 걸러내므로
+     * 이 전이 하나로 세 입구가 동시에 닫힌다.
+     *
+     * <p>이미 탈퇴한 계정은 {@link #getUser(int)} 가 내주지 않아 `USER_NOT_FOUND` 다.
+     * 두 번 탈퇴는 오류다.
+     */
     void deleteUser(int userId);
 
     boolean isAdminUserExists();
