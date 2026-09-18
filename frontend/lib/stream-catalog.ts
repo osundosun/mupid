@@ -11,6 +11,7 @@
 import { api } from './api/session';
 import { localDemoEnabled } from './api/local-demo';
 import type { MusicSummary } from './api/endpoints';
+import { WAVEFORM_FIELD } from './api/endpoints';
 import { DEFAULT_ALBUM_COVER, type Track } from './mupid-data';
 import { toImageSource, withCache } from './platform';
 
@@ -70,6 +71,10 @@ export const toTrack = (music: MusicSummary): Track => {
     // `onError` 가 받아 낸다.
     image: toImageSource(cover) || DEFAULT_ALBUM_COVER,
     tags: tags.length ? tags : ['스트리밍'],
+    // 파형은 서버가 준 것만 믿는다. 비었거나 숫자가 아니면 없는 것으로 친다.
+    waveform: Array.isArray(music[WAVEFORM_FIELD]) && music[WAVEFORM_FIELD]!.length > 1 && music[WAVEFORM_FIELD]!.every(v => typeof v === 'number' && Number.isFinite(v))
+      ? music[WAVEFORM_FIELD]!
+      : undefined,
     // 구간은 `GET /api/v1/music/{id}/analysis` 가 준다. 다만 분석 파이프라인이
     // 아직 돌지 않아 대부분 비어 있어서, 여기서는 곡을 둘로 나눠 둔다.
     // 재생 대상이 되면 `use-mupid` 가 분석 결과로 갈아 끼운다.

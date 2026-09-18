@@ -2,6 +2,7 @@
 import { useRef, type PointerEvent } from 'react';
 import { formatTime, type SongSection, type Track } from '@/lib/mupid-data';
 import { Waveform } from './primitives';
+import { useTrackWaveform } from '@/lib/track-waveform';
 
 export function MomentWaveEditor({ track, range, onSelect, onTrim }: {
   track: Track;
@@ -10,6 +11,9 @@ export function MomentWaveEditor({ track, range, onSelect, onTrim }: {
   onTrim: (start: number, end: number) => void;
 }) {
   const drag = useRef<'start' | 'end' | null>(null);
+  // 진짜 파형. 서버 값이 있으면 그것, 없으면 청크를 받아 여기서 계산한다(`lib/track-waveform.ts`).
+  // 받는 동안은 받은 데까지 그려지고, 아래 안내에 진행률이 보인다.
+  const wave = useTrackWaveform(track);
   const press = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const seconds = (event: PointerEvent<HTMLDivElement>) => {
     const box = event.currentTarget.getBoundingClientRect();
@@ -40,7 +44,7 @@ export function MomentWaveEditor({ track, range, onSelect, onTrim }: {
         else if (press.current && !press.current.moved) onSelect(seconds(event));
         press.current = null;
       }} onPointerCancel={() => { drag.current = null; press.current = null; }}>
-      <Waveform duration={track.duration} ranges={range ? [range] : []} />
+      <Waveform samples={wave.values ?? undefined} duration={track.duration} ranges={range ? [range] : []} />
       {range && track.duration > 0 && <>
         <span className="moment-wave-selection" style={{ left: `${range.start / track.duration * 100}%`, width: `${(range.end - range.start) / track.duration * 100}%` }} />
         {(['start', 'end'] as const).map(edge => <button key={edge} type="button" role="slider" data-edge={edge}
@@ -55,6 +59,10 @@ export function MomentWaveEditor({ track, range, onSelect, onTrim }: {
           }}><span /></button>)}
       </>}
     </div>
-    <p className="moment-wave-help">구간을 누른 뒤 분홍색 양 끝을 끌어 조절하세요.</p>
+    <p className="moment-wave-help">
+      {wave.progress < 1 && !wave.failed
+        ? `파형을 읽고 있어요 … ${Math.round(wave.progress * 100)}%`
+        : '구간을 누른 뒤 분홍색 양 끝을 끌어 조절하세요.'}
+    </p>
   </div>;
 }

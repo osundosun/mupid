@@ -81,6 +81,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
             <h2>{m.active.title}</h2>
             <button className="track-artist-link" onClick={() => m.setSelectedArtist(m.active!.artist)}>{m.active.artist}</button>
             <Waveform
+              samples={m.active.waveform}
               duration={m.active.duration}
               start={m.active.moment}
               end={Math.min(m.active.moment + 20, m.active.duration)}
