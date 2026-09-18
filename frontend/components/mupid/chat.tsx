@@ -1,6 +1,6 @@
 'use client';
 import { MupidMascot } from './mascot';
-import { ArrowUp, LoaderCircle, Sparkle, Sparkles, X } from 'lucide-react';
+import { ArrowUp, LoaderCircle, Sparkle, X } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { chatSuggestions, formatTime } from '@/lib/mupid-data';
 import { AlbumArt, TrackRow } from './primitives';
@@ -22,7 +22,7 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
     <aside className="chat-panel" aria-label="Mupid AI 음악 탐색">
       <header className="chat-header">
         <span className="chat-symbol">
-          <Sparkles />
+          <Sparkle />
         </span>
         <div>
           <h2>
