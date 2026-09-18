@@ -26,6 +26,17 @@ export {
   type NowPlaying,
 } from './media-session';
 export { watchSafeArea, type SafeArea } from './safe-area';
+export {
+  checkForUpdates,
+  checkForUpdatesNow,
+  installNativeUpdate,
+  noteUpdatePrompted,
+  readUpdateState,
+  shouldPromptUpdate,
+  shouldSuggestNativeUpdate,
+  UNKNOWN as UNKNOWN_UPDATE_STATE,
+  type UpdateState,
+} from './update';
 
 /**
  * 이 환경에 맞는 전송 계층.

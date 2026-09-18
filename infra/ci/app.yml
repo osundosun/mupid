@@ -1,8 +1,20 @@
 # app 영역 — Tauri 안드로이드 앱.
 #
 # APK 는 `frontend/dist/client` 를 그 안에 담는다(tauri.conf.json 의
-# frontendDist). 그래서 프론트엔드가 바뀌면 APK 도 낡는다 — 트리거에
-# frontend/** 가 들어가 있는 이유다.
+# frontendDist). 그래서 프론트엔드가 바뀌면 APK 도 낡는다.
+#
+# **그러나 검증과 배포의 트리거가 다르다.** 이것이 아래에 두 목록을 둔 이유다.
+#
+#   .app-changes      검증용. 넓다 — 프론트가 바뀌어도 APK 의 내용이 달라지므로
+#                     Rust 시험과 왕복 시험을 돌릴 값이 있다.
+#   .native-changes   APK **배포**용. 좁다 — `app/` 이 바뀔 때만.
+#
+# 왜 좁히나. APK 를 다시 굽는다는 것은 `versionCode` 가 올라간다는 뜻이고,
+# 그러면 **사용자 전원에게 재설치 안내가 뜬다.** 화면 코드만 바뀐 커밋에서
+# 그 창을 띄우는 것은 쓸데없는 일이고, 그런 창은 삭제로 이어진다.
+# 프론트만 바뀌었으면 웹 갈래(`app-web-release`)가 조용히 번들만 갈아 끼운다 —
+# 사용자가 할 일이 없다. APK 안의 임베드 번들이 낡게 되는 것은 문제가 아니다.
+# 그 임베드는 **안전망**이고, 평소에는 디스크 번들이 쓰인다(`assets.rs`).
 #
 # **master 푸시에는 라벨이 없다.** GitLab 이 CI_MERGE_REQUEST_LABELS 를
 # merge_request_event 에서만 채우므로, 다른 배포 job 과 같이 경로로 건다.
@@ -12,6 +24,30 @@
   - app/**/*
   - frontend/**/*
   - infra/ci/app.yml
+  - infra/ci/build-apk.sh
+  - infra_k8s/ci/deploy-apk.sh
+  - infra_k8s/ci/deploy-web.sh
+  - .gitlab-ci.yml
+
+# APK 를 새로 굽는 조건. `frontend/**` 가 **없다** — 위의 설명을 본다.
+.native-changes: &native_changes
+  - app/**/*
+  - infra/ci/app.yml
+  - infra/ci/build-apk.sh
+  - infra_k8s/ci/deploy-apk.sh
+  - .gitlab-ci.yml
+
+# 웹 번들을 새로 굽는 조건. 프론트와 앱 **둘 다** 필요하다.
+#
+# 프론트가 바뀌면 번들의 내용이 바뀐다. 앱이 바뀌면 임베드 번들의 나이가
+# 바뀌므로(`MUPID_WEB_BUILD`) 디스크 번들도 같은 나이로 다시 구워야 한다 —
+# 다르면 새 APK 를 설치한 직후 그 앱이 자기 번들을 다시 내려받는다(설계 6.2).
+.web-bundle-changes: &web_bundle_changes
+  - frontend/**/*
+  - app/**/*
+  - infra/ci/app.yml
+  - infra/ci/build-stamp.sh
+  - infra_k8s/ci/deploy-web.sh
   - infra_k8s/ci/deploy-apk.sh
   - .gitlab-ci.yml
 
@@ -56,7 +92,8 @@ app-build:
       artifacts: false
       optional: true
   # 한 번에 하나만. 같은 자리(/srv/mupid-k8s/downloads)에 쓴다.
-  resource_group: mupid-apk
+  # **웹 번들 job 과 같은 그룹이어야 한다** — 그쪽도 APK 를 지우는 정리를 한다.
+  resource_group: mupid-downloads
   interruptible: false
   # Rust 를 4개 ABI 로 컴파일한다. 캐시가 비어 있으면 오래 걸린다.
   timeout: 2h
@@ -70,11 +107,80 @@ app-build:
     GRADLE_USER_HOME: /cache/gradle-android
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true" && $MUPID_APP_ENV'
-      changes: *app_changes
+      changes: *native_changes
     - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_APP_ENV'
       when: manual
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends openssh-client curl
   script:
+    # `build-apk.sh` 가 `build-stamp.sh` 로 스탬프를 찍어 gradle 과 Rust 에
+    # **같은 값**을 넘기고, `deploy-apk.sh` 가 그 값에서 versionCode 를 만들어
+    # 수신기에 넘긴다(수신기는 그 값으로 native.json 을 만든다 — 앱이 읽는다).
     - sh infra/ci/build-apk.sh
     - sh infra_k8s/ci/deploy-apk.sh
+
+# 웹 번들(코드 자산만)을 굽고 노드로 보낸다.
+#
+# **APK 와 다른 갈래다.** 화면 코드만 바뀌었을 때 사용자가 앱을 다시 설치하지
+# 않아도 되게 하는 쪽이고, 그래서 별도 job 이다 — 굽는 파이프라인도 끝나는
+# 시각도 배포 주기도 다르다. 한 job 에 묶으면 "웹은 새것인데 네이티브는 옛것"
+# 이라는 중간 상태가 생기고, 그 상태를 누가 언제 쓰는지가 조용히 어긋난다.
+#
+# 이 job 이 `frontend/dist/update/` 를 만든다. 그 안의 아카이브·`app/build.json`·
+# `web.json` 셋이 **같은 스탬프**를 들어야 하고, 다르면 앱이 자기 번들을 영영
+# 다시 받는다. 스탬프를 `build-stamp.sh` 한 곳에서 만들고 `deploy-web.sh` 가
+# 셋을 맞대어 보는 이유가 그것이다.
+#
+# `cargo test` 를 여기서 한 번 더 도는 것은 **왕복 시험** 때문이다. 실제 산출물
+# (`web.json` + 아카이브)을 앱의 `activate()` 에 통과시키는 시험이 있고, 그것은
+# 산출물이 없으면 조용히 건너뛴다 — 생성기와 앱이 어긋나도 양쪽 시험이 각각
+# 통과한다(실제로 `expandedBytes` 를 tar 길이로 계산하던 어긋남을 이 방식으로
+# 잡았다). 그 skip 을 CI 에서 없애려면 산출물을 만든 **뒤에** 돌려야 한다.
+app-web-release:
+  stage: deploy
+  image:
+    name: mupid-ci-android:1
+    pull_policy: if-not-present
+  tags: [mupid-ci]
+  needs:
+    - job: app-verify
+      artifacts: false
+      optional: true
+  # APK 와 같은 디렉터리에 쓴다. 동시에 돌면 서로의 정리(오래된 것 지우기)가
+  # 상대의 최신 파일을 지울 수 있다.
+  resource_group: mupid-downloads
+  interruptible: false
+  timeout: 1h
+  environment:
+    name: demo
+    url: https://j15a204.p.ssafy.io/download/web.json
+  variables:
+    CARGO_HOME: /cache/cargo
+    CARGO_TARGET_DIR: /cache/app-target
+    npm_config_cache: /cache/npm
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
+      changes: *web_bundle_changes
+    - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends openssh-client curl
+  script:
+    # 스탬프는 **한 번** 찍어 아래 세 곳에 같은 값으로 넘긴다.
+    # `MUPID_WEB_BUILD` 는 `web-archive.mjs` 가, `MUPID_BUILD_STAMP` 는 그
+    # 스크립트가 없을 때를 위해 쓴다(둘 다 `build-stamp.sh` 로 수렴한다).
+    - MUPID_WEB_BUILD=$(sh infra/ci/build-stamp.sh) && export MUPID_WEB_BUILD
+    - printf '빌드 스탬프 %s\n' "$MUPID_WEB_BUILD"
+    # 프론트를 `app` 타깃으로 굽는다. 이 타깃만 RSC 호환성 식별자를 박고
+    # (`vite.config.ts` 의 pinRscCompatibilityId), `ec2` 는 빈 값을 박는다 —
+    # 잘못된 쪽을 내려보내면 앱에서 화면을 옮길 때마다 전체가 다시 로딩된다.
+    - npm --prefix frontend ci --prefer-offline --no-audit --no-fund
+    - npm --prefix frontend run build:static
+    # **순서가 중요하다. `build:static` 뒤여야 한다.** vinext 는 outDir
+    # (`frontend/dist`)를 통째로 rmSync 하고, `dist/update` 가 그 안에 있다 —
+    # 아카이브를 먼저 만들면 프론트를 굽는 순간 사라진다. 그리고 아카이브는
+    # `dist/client` 를 입력으로 읽으므로 프론트가 먼저 서 있어야 한다.
+    - npm --prefix frontend run build:archive
+    # 왕복 시험을 **실제 산출물로** 돌린다. 위에서 skip 을 없애려고 여기 있다.
+    - cd app && cargo test --locked && cd ..
+    - sh infra_k8s/ci/deploy-web.sh

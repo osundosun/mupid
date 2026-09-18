@@ -11,6 +11,17 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      앱 스스로 APK 를 설치하려면 필요하다 (Android 8+). 이 권한이 있어도
+      **사용자가 "이 출처의 앱 설치" 를 허용해야** 실제로 설치된다 —
+      앱이 조용히 제 패키지를 갈아 끼울 수는 없다.
+
+      이 선언이 없으면 인텐트를 띄우는 순간 SecurityException 으로 죽는다.
+      증상이 "업데이트 버튼을 누르면 앱이 꺼진다" 라서 원인을 찾기 어렵다.
+      그래서 여기 남긴다: `AppUpdatePlugin.kt` 가 이 권한을 전제로 짜여 있다.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 

@@ -26,6 +26,7 @@
 @import './readability.css';
 @import './responsive-polish.css';
 @import './dialog-viewport.css';
+@import './update-prompt.css';
 @import './queue-dock.css';
 @custom-variant dark (&:is(.dark *));
 /*
