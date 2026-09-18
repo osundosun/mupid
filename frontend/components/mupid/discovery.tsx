@@ -216,7 +216,19 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
   });
   const [saved, setSaved] = useState(false);
   const [trimmed, setTrimmed] = useState<Record<number, { start: number; end: number }>>(() => editing && selected.length ? { [selected[0]]: { start: m.momentRange[0], end: m.momentRange[1] } } : {});
-  const parts = selected.map(i => ({ ...sections[i], ...trimmed[i] }));
+  /*
+   * 분홍 양 끝을 끌어 범위를 다른 구간까지 늘리거나 옮기면, 위 칩과 이름도 따라간다.
+   * 범위가 걸치는 구간이 하나면 그 구간 이름을, 여럿이면 '벌스 2 – 브리지' 처럼
+   * 처음과 끝을 잇는다. 걸친 칩은 옅게, 처음 고른 칩은 진하게 표시한다.
+   */
+  const covering = (start: number, end: number) => sections.map((s, i) => ({ s, i })).filter(({ s }) => s.start < end && s.end > start);
+  const parts = selected.map(i => {
+    const range = { ...sections[i], ...trimmed[i] };
+    const cover = covering(range.start, range.end);
+    const label = cover.length === 0 ? range.label : cover.length === 1 ? cover[0].s.label : `${cover[0].s.label} – ${cover[cover.length - 1].s.label}`;
+    return { ...range, label };
+  });
+  const covered = new Set(parts.flatMap(p => covering(p.start, p.end).map(c => c.i)));
   const focusedPart = parts.at(-1);
   return <div className="content-page moment-page">
     <PageHeader
@@ -234,7 +246,7 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
         <div className="moment-editor">
           {previewSections && <p className="moment-wave-help">AI 연결 전 미리보기 · 곡 길이를 임시로 나눈 구간이에요.</p>}
           <div className="song-parts" aria-label="저장할 순간 다중 선택">
-            {sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) ? 'selected' : ''} onClick={() => {
+            {sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) ? 'selected' : covered.has(i) ? 'covered' : ''} onClick={() => {
               setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : editing ? [i] : [...ids, i]);
               setSaved(false);
             }}>{part.label}</button>)}
