@@ -9,7 +9,7 @@ public enum VocalGender {
 
     M("남성"),
     F("여성"),
-    ETC("기타");
+    MIX("혼성");
 
     private final String displayName;
     

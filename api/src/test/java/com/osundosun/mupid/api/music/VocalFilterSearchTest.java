@@ -149,7 +149,7 @@ class VocalFilterSearchTest {
         analyze(female, true, VocalGender.F);
         analyze(male, true, VocalGender.M);
         analyze(instrumental, false, null);
-        analyze(etc, true, VocalGender.ETC);
+        analyze(etc, true, VocalGender.MIX);
 
         imageFileId = image.getFileId();
         fixture = new Fixture(female, male, instrumental, etc);
@@ -238,11 +238,9 @@ class VocalFilterSearchTest {
     }
 
     @Test
-    @DisplayName("보컬은 있는데 성별이 ETC 인 곡은 세 값 어디에도 걸리지 않는다")
+    @DisplayName("혼성 보컬은 혼성 필터로 선택한다")
     void etcIsNotSelectable() {
-        assertThat(idsOf(VocalFilter.FEMALE)).doesNotContain(fixture.etc());
-        assertThat(idsOf(VocalFilter.MALE)).doesNotContain(fixture.etc());
-        assertThat(idsOf(VocalFilter.INSTRUMENTAL)).doesNotContain(fixture.etc());
+        assertThat(idsOf(VocalFilter.MIXED)).containsExactly(fixture.etc());
     }
 
     @Test

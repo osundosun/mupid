@@ -39,7 +39,14 @@ class VocalFilterQueryTest {
         assertThat(female.filtered()).isTrue();
         assertThat(female.wantFemale()).isTrue();
         assertThat(female.wantMale()).isFalse();
+        assertThat(female.wantMixed()).isFalse();
         assertThat(female.wantInstrumental()).isFalse();
+
+        VocalFilterQuery mixed = VocalFilterQuery.of(List.of(VocalFilter.MIXED));
+        assertThat(mixed.wantMixed()).isTrue();
+        assertThat(mixed.wantFemale()).isFalse();
+        assertThat(mixed.wantMale()).isFalse();
+        assertThat(mixed.wantInstrumental()).isFalse();
 
         VocalFilterQuery instrumental = VocalFilterQuery.of(List.of(VocalFilter.INSTRUMENTAL));
         assertThat(instrumental.wantInstrumental()).isTrue();
