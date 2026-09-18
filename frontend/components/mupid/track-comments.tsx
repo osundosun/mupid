@@ -205,7 +205,7 @@ export function TrackComments({ model: m, children }: { model: MupidModel; child
       </div>
       <div className="moment-heart-scroll" aria-label="시간별 댓글">
         <div ref={markerRail} className="moment-heart-rail" style={{ height: clusters.length ? MARKER_WIDTH : 0 }}>
-          {clusters.map(({ at, comments, left }) => <button key={at} className="moment-heart-marker" style={{ left: left + '%', top: 0 }} aria-expanded={selectedTime === at} aria-label={formatTime(at) + ' 댓글 ' + comments.length + '개'} onClick={() => { setSelectedTime(at); setPoint(at); m.seek(at); }}>
+          {clusters.map(({ at, comments, left }) => <button key={at} className="moment-heart-marker" style={{ left: left + '%', top: 0 }} aria-expanded={selectedTime === at} aria-label={formatTime(at) + ' 댓글 ' + comments.length + '개'} onClick={() => { setSelectedTime(at); setPoint(at); }}>
             <span className="moment-author-avatar" aria-hidden="true"><CommentAvatar comment={comments[0]} /></span>
             {comments.length > 1 && <small>{comments.length}</small>}
           </button>)}

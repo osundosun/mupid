@@ -817,9 +817,10 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
                 </g>
                 <path d="M14 16C19 29 38 44 55 49" stroke="white" strokeWidth="5" strokeLinecap="round" opacity=".8" filter={`url(#wing-soft-${right})`} />
               </svg>)}
-              <div className="welcome-qr-image"><img src="/mupid-qr.png" width={132} height={132} alt="뮤피드 접속 QR 코드" /></div>
+              <div className="welcome-qr-image welcome-qr-desktop"><img src="/mupid-qr.png" width={132} height={132} alt="뮤피드 접속 QR 코드" /></div>
+              <a className="welcome-qr-image welcome-qr-mobile" href="https://j15a204.p.ssafy.io/download/mupid.apk" download="mupid.apk" aria-label="뮤피드 Android 앱 다운로드"><img src="/mupid-qr.png" width={132} height={132} alt="" /></a>
             </div>
-            <figcaption>음악을 모바일로 이어가세요<span>카메라로 QR 스캔</span></figcaption>
+            <figcaption>음악을 모바일로 이어가세요<span className="welcome-qr-desktop">카메라로 QR 스캔</span><span className="welcome-qr-mobile">QR을 눌러 Android 앱 다운로드</span></figcaption>
           </figure>
           </div>
           </div>

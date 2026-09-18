@@ -1,4 +1,5 @@
 'use client';
+import { resampleWaveform } from '@/lib/waveform-display';
 import Image from 'next/image';
 import { MascotAccent, MupidMascot } from './mascot';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -222,28 +223,7 @@ export function TrackRow({
     </article>
   );
 }
-/**
- * 서버 파형(0~1, 길이 `WAVEFORM_SAMPLES`)을 막대 수에 맞춰 다시 표본한다.
- * 막대가 더 적으면 구간 평균, 더 많으면 선형 보간. 높이는 4~92% 로 펼친다.
- */
-export function resampleWaveform(values: number[], count: number): number[] {
-  const n = values.length;
-  if (n === 0 || count <= 0) return [];
-  const out: number[] = [];
-  for (let i = 0; i < count; i++) {
-    let v: number;
-    if (count <= n) {
-      const from = Math.floor(i * n / count), to = Math.max(from + 1, Math.floor((i + 1) * n / count));
-      let sum = 0; for (let k = from; k < to; k++) sum += values[k]; v = sum / (to - from);
-    } else {
-      const pos = i * (n - 1) / (count - 1), lo = Math.floor(pos), hi = Math.min(n - 1, lo + 1), t = pos - lo;
-      v = values[lo] * (1 - t) + values[hi] * t;
-    }
-    out.push(4 + 88 * Math.max(0, Math.min(1, v)));
-  }
-  return out;
-}
-
+export { resampleWaveform } from '@/lib/waveform-display';
 export function Waveform({
   samples,
   audioUrl,
@@ -274,7 +254,7 @@ export function Waveform({
     }).catch(() => { if (alive) setAnalysis(null); });
     return () => { alive = false; };
   }, [audioUrl, count]);
-  // 1순위 서버 파형 → 2순위 로컬 음원 디코드 → 3순위 곡 길이로 만든 임시 무늬.
+  // 1순위 서버 파형 → 2순위 로컬 음원 디코드 → 데이터가 없으면 중립적인 기준선.
   const served = samples && samples.length > 1 ? resampleWaveform(samples, count) : null;
   const amplitudes = served ?? (analysis?.url === audioUrl && analysis?.values.length === count ? analysis.values : null);
   return (
@@ -283,19 +263,6 @@ export function Waveform({
         // 막대의 왼쪽 끝이 아니라 중앙 시각으로 색을 판정한다. 그래야 백분율로
         // 그린 구간 오버레이의 양 끝과 분홍 막대 경계가 같은 눈금에 맞는다.
         const second = ((i + 0.5) / count) * duration;
-        // Smooth neighboring bars into an irregular envelope instead of repeating spikes.
-        const noise = (index: number) => {
-          const value = Math.sin(index * 127.1 + duration * 0.13) * 43758.5453;
-          return value - Math.floor(value);
-        };
-        const position = i / (count - 1);
-        const anchor = position * 19;
-        const blend = anchor - Math.floor(anchor);
-        const smooth = blend * blend * (3 - 2 * blend);
-        const envelope = noise(Math.floor(anchor)) * (1 - smooth) + noise(Math.floor(anchor) + 1) * smooth;
-        const detail = 0.45 + noise(i + 41) * 0.55;
-        const taper = Math.pow(Math.sin(position * Math.PI), 0.65);
-        const height = 4 + (12 + envelope * 74) * detail * taper;
         return (
           <i
             className={
@@ -305,7 +272,7 @@ export function Waveform({
                   ? 'wave-played'
                   : ''
             }
-            style={{ height: `${served || audioUrl ? (amplitudes?.[i] ?? 4) : height}%` }}
+            style={{ height: `${amplitudes?.[i] ?? 4}%` }}
             key={i}
           />
         );
