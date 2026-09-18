@@ -5,29 +5,27 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { api } from '@/lib/api/session';
 import type { MupidModel } from '@/hooks/use-mupid';
 
-const TITLE_MAX = 60;
 const BODY_MAX = 1000;
 
 /**
  * 문의하기. 홈 인사말 오른쪽의 버튼과, 누르면 뜨는 대화상자.
  *
- * 제목·내용을 받아 `POST /api/v1/inquiries` 로 보낸다. 보내는 동안은 버튼을 잠그고,
+ * 내용만 받아 `POST /api/v1/inquiries` 로 보낸다. 답변은 가입한 메일로 간다. 보내는 동안은 버튼을 잠그고,
  * 성공하면 닫고 토스트로 알린다. 실패하면 쓴 글을 지우지 않고 대화상자 안에서 알린다.
  */
 export function InquiryButton({ model: m }: { model: MupidModel }) {
   const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const ready = title.trim().length > 0 && body.trim().length > 0;
+  const ready = body.trim().length > 0;
 
-  const close = () => { setOpen(false); setTitle(''); setBody(''); setError(''); };
+  const close = () => { setOpen(false); setBody(''); setError(''); };
   const submit = async () => {
     if (!ready || busy) return;
     setBusy(true); setError('');
     try {
-      await api.inquiry.send(title.trim(), body.trim());
+      await api.inquiry.send(body.trim());
       close();
       m.setToast('문의를 보냈어요. 확인하고 답변드릴게요.');
     } catch (e) {
@@ -49,16 +47,6 @@ export function InquiryButton({ model: m }: { model: MupidModel }) {
           <DialogDescription>불편한 점이나 바라는 점을 알려주세요.</DialogDescription>
         </DialogHeader>
         <form onSubmit={e => { e.preventDefault(); void submit(); }}>
-          <label className="field-label" htmlFor="inquiry-title">제목</label>
-          <input
-            id="inquiry-title"
-            maxLength={TITLE_MAX}
-            placeholder="예: 재생이 자꾸 멈춰요"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            disabled={busy}
-            required
-          />
           <label className="field-label" htmlFor="inquiry-body">내용</label>
           <textarea
             id="inquiry-body"
@@ -71,6 +59,7 @@ export function InquiryButton({ model: m }: { model: MupidModel }) {
             required
           />
           <span className="inquiry-count">{body.length}/{BODY_MAX}</span>
+          <p className="inquiry-note">답변은 가입한 메일로 발송돼요.</p>
           {error && <p className="inquiry-error" role="alert">{error}</p>}
           <DialogFooter className="inquiry-actions">
             <button type="button" className="secondary-button" onClick={close} disabled={busy}>취소</button>
