@@ -80,7 +80,10 @@ umask 077
 key=$(mktemp)
 known=$(mktemp)
 served_file=$(mktemp)
-trap 'rm -f "$key" "$known" "$served_file"' EXIT
+# 원격의 stderr 를 잡아 둔다. **실패 이유가 거기에만 있다** — 그대로 흘리면
+# job 로그에 `exit code 1` 만 남고, 원인은 이미 지나간 뒤다.
+err=$(mktemp)
+trap 'rm -f "$key" "$known" "$served_file" "$err"' EXIT
 
 # GitLab 의 File 변수는 경로를, 일반 Variable 은 값을 준다. 둘 다 받는다.
 # 구분하지 않고 `< "$VAR"` 로 열면 Variable 로 등록돼 있을 때 셸이 열기 실패
@@ -102,15 +105,23 @@ ssh-keygen -y -P '' -f "$key" >/dev/null 2>&1 || {
 ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
   -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" \
   -i "$key" mupid-deploy-k8s@j15a204.p.ssafy.io \
-  "upload-web $CI_COMMIT_SHA $checksum" < "$directory/$name" || {
-  # 64 는 강제 명령이 모양을 거절했다는 뜻이다. 이 동사는 **새로 늘었으므로**
-  # 노드의 entrypoint 가 옛것이면 그대로 거절된다. 그 사실을 짚어 준다 —
-  # 그러지 않으면 "ssh 가 64 로 끝났다" 만 남는다.
+  "upload-web $CI_COMMIT_SHA $checksum" < "$directory/$name" 2>"$err" || {
   status=$?
+  # 원격의 말을 그대로 보여준다. 없으면 `exit code 1` 만 남는다.
+  cat "$err" >&2
+  # 64 는 강제 명령이 모양을 거절했다는 뜻이다. 이 동사는 **새로 늘었으므로**
+  # 노드의 entrypoint 가 옛것이면 그대로 거절된다.
   if [ "$status" -eq 64 ]; then
     echo 'UPLOADER_UPGRADE_REQUIRED: 노드의 /usr/local/sbin/mupid-ssh-entrypoint-k8s 에' >&2
     echo 'upload-web 갈래가 없다. 이 동사는 이번에 늘었다.' >&2
     echo 'ssh-entrypoint-k8s.sh 와 receive-web.py 를 노드에 설치한 뒤 다시 돌린다.' >&2
+  fi
+  # sudoers 규칙 누락. 파일을 넣는 것과 sudo 를 허용하는 것은 다른 일이다.
+  if grep -q 'a terminal is required\|a password is required' "$err"; then
+    echo 'RECEIVER_NOT_PERMITTED: 노드에 수신기는 있으나 mupid-deploy-k8s 가 sudo 로' >&2
+    echo '그것을 실행할 수 없다. /etc/sudoers.d/ 에 규칙이 필요하다:' >&2
+    echo '  mupid-deploy-k8s ALL=(root) NOPASSWD: /usr/local/sbin/mupid-receive-web' >&2
+    echo '받는 쪽(또는 저장소의 infra_k8s/OPERATIONS-K8S.md)을 본다.' >&2
   fi
   exit "$status"
 }

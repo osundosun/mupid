@@ -116,8 +116,19 @@ app-build:
     # `build-apk.sh` 가 `build-stamp.sh` 로 스탬프를 찍어 gradle 과 Rust 에
     # **같은 값**을 넘기고, `deploy-apk.sh` 가 그 값에서 versionCode 를 만들어
     # 수신기에 넘긴다(수신기는 그 값으로 native.json 을 만든다 — 앱이 읽는다).
-    - sh infra/ci/build-apk.sh
-    - sh infra_k8s/ci/deploy-apk.sh
+    #
+    # **두 스크립트를 한 줄에서 `&&` 로 잇는다.** GitLab 은 `script:` 의 각 줄을
+    # **별도 셸**로 돌린다. 그래서 `build-apk.sh` 안의 `export MUPID_NATIVE_BUILD`
+    # 는 그 줄의 프로세스에서만 살아 있고, 다음 줄의 `deploy-apk.sh` 에는 오지
+    # 않는다 — 업로더가 `MUPID_NATIVE_BUILD 가 없다` 로 죽는다.
+    #
+    # 실제로 그렇게 실패했다(master, 2026-09-18, job 575976). 값싼 실수지만
+    # 증상이 나쁘다: APK 를 다 굽고 서명까지 확인한 뒤(60MB·6분) 업로드 직전
+    # 한 줄로 죽고, 남는 것은 `exit code 2` 뿐이다. 웹 갈래(`app-web-release`)는
+    # 스탬프를 그 줄에서 `$(...)` 로 만들어 넘기므로 이 함정이 없었다.
+    #
+    # `infra_k8s/tests` 의 `CiShellScopeTest` 가 이 모양을 고정한다.
+    - sh infra/ci/build-apk.sh && sh infra_k8s/ci/deploy-apk.sh
 
 # 웹 번들(코드 자산만)을 굽고 노드로 보낸다.
 #
