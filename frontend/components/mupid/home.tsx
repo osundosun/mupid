@@ -5,6 +5,7 @@ import { DesktopHome } from './desktop-home';
 import { TodayMoment } from './today-moment';
 import { AlbumDeck } from './album-deck';
 import { MobileListening } from './mobile-listening';
+import { InquiryButton } from './inquiry-dialog';
 import {
   ChevronRight,
   Cloud,
@@ -29,6 +30,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
                 오늘의 음악을 만나보세요 :D
               </p>
             </div>
+            <InquiryButton model={m} />
           </div>
           <MobileListening model={m} />
           {/* 상단 헤더에 검색창이 이미 있어 홈에서는 중복이라 뺐다. */}

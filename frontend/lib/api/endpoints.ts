@@ -659,6 +659,17 @@ export function createEndpoints(client: ApiClient) {
         }),
     },
 
+    inquiry: {
+      /** 문의 보내기. 제목·내용만 받는다. 답변은 서버가 따로 처리한다. */
+      send: (title: string, content: string) =>
+        client.request<void>({
+          method: 'POST',
+          path: '/api/v1/inquiries',
+          json: { title, content },
+          responseType: 'none',
+        }),
+    },
+
     report: {
       /**
        * 하루치 취향 리포트. `date` 를 생략하면 서버 기준(Asia/Seoul) 오늘이다.
