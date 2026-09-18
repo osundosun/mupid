@@ -50,6 +50,7 @@ import {
 } from '@/components/mupid/collection';
 import { QueueDock } from '@/components/mupid/queue-dock';
 import { FloatingChat } from '@/components/mupid/chat';
+import { InquiryButton } from '@/components/mupid/inquiry-dialog';
 import { AppDialogs } from '@/components/mupid/dialogs';
 import { DemoLoginDialog } from '@/components/mupid/demo-login';
 
@@ -207,6 +208,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
                 </button>
               ))}
             </nav>
+            <div className="header-inquiry"><InquiryButton model={m} /></div>
             <HeaderSearch model={m} />
             <div className="nav-account" ref={accountRef}>
               <button ref={accountButton} className="nav-avatar" aria-label={m.demoSession ? '내 계정 메뉴' : '로그인'} aria-expanded={accountOpen} aria-controls="nav-account-panel" disabled={!m.authReady} onClick={() => m.demoSession ? setAccountOpen(value => !value) : m.openLogin()}>
