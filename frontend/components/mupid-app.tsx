@@ -25,7 +25,6 @@ import {
   Volume2,
 } from 'lucide-react';
 import { useMupid } from '@/hooks/use-mupid';
-import { useDesktopPlayerDock } from '@/hooks/use-home-player-dock';
 import { MiniTimeline } from '@/components/mupid/mini-timeline';
 import { VolumeSlider } from '@/components/mupid/volume-slider';
 import { PlaybackStatus } from '@/components/mupid/playback-status';
@@ -154,15 +153,15 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
     document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [accountOpen]);
-  const desktopDock = useDesktopPlayerDock();
   const hideMini =
     m.page === 'welcome' ||
     // 들을 곡이 없으면 띄울 것도 없다.
     !m.active ||
     // 가입 직후처럼 아직 한 곡도 듣지 않았다면 띄우지 않는다.
     !m.hasPlayed ||
-    // 플레이어 화면에는 큰 컨트롤이 있으니 미니 플레이어를 겹치지 않는다.
-    (!desktopDock && m.page === 'player');
+    // 플레이어 화면에는 큰 컨트롤이 있으니 미니 플레이어를 겹치지 않는다. PC 도
+    // 같다 — 전에는 PC 에서만 남겼는데, 같은 곡의 재생바와 컨트롤이 두 벌 보였다.
+    m.page === 'player';
   const desktopNavPage =
     m.page === 'moment' ? 'player' : m.page === 'similar' ? 'search' : m.page;
   const navPage = desktopNavPage;
