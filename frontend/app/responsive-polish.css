@@ -1848,7 +1848,7 @@
  * 위의 `.mupid-shell .song-lyrics { max-height: 76px; overflow: hidden }` 은 예전
  * 미리보기용이라 여기서는 풀고, 화면 높이에 맞춰 안에서만 스크롤한다.
  */
-.mupid-shell.page-player .player-lyrics-inline { margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid #e3ebf5; }
+.mupid-shell.page-player .player-lyrics-inline { margin-bottom: 20px; }
 .mupid-shell.page-player .player-lyrics-inline .song-lyrics { margin: 0 auto; max-width: 420px; max-height: min(30dvh, 300px); overflow-y: auto; overscroll-behavior: contain; padding: 4px 12px; color: #4e688e; font-size: 14px; line-height: 1.9; text-align: center; scrollbar-width: thin; scrollbar-color: #cfdded transparent; }
 .mupid-shell.page-player .player-lyrics-inline .song-lyrics h3 { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 0 10px; font-size: 14px; color: #6a84ad; }
 .mupid-shell.page-player .player-lyrics-inline .song-lyrics > p { display: block; margin: 0 0 2px; overflow: visible; -webkit-line-clamp: unset; }
