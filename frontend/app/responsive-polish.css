@@ -1751,6 +1751,8 @@
 .moment-wave-surface { position: relative; min-width: 0; padding: 16px 0; touch-action: pan-y; }
 .moment-wave-surface .waveform { width: 100%; margin: 0; }
 .moment-wave-selection { position: absolute; top: 8px; bottom: 8px; background: #e78bb817; border-inline: 1px dashed #dc82ad; pointer-events: none; }
+/* 함께 고른 나머지 구간. 손보는 구간(분홍)과 구별되게 옅고 손잡이가 없다. */
+.moment-wave-selection.is-secondary { background: #8fb0e01a; border-inline: 1px dotted #a9c3e6; pointer-events: none; }
 .moment-wave-handle { position: absolute; top: 0; bottom: 0; width: 32px; padding: 0; transform: translateX(-50%); background: transparent; border: 0; touch-action: none; cursor: ew-resize; z-index: 2; }
 .moment-wave-handle span { position: absolute; left: 14px; top: 8px; bottom: 8px; width: 4px; border-radius: 3px; background: #dd82ad; }
 .moment-wave-handle:focus-visible { outline: 2px solid #789aca; border-radius: 8px; }
