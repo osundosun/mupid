@@ -3,9 +3,17 @@ import { useRef, type PointerEvent } from 'react';
 import { formatTime, type SongSection, type Track } from '@/lib/mupid-data';
 import { Waveform } from './primitives';
 
-export function MomentWaveEditor({ track, range, onSelect, onTrim }: {
+export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }: {
   track: Track;
+  /** 지금 손보는 구간. 분홍 양 끝을 끌어 조절한다. */
   range?: SongSection;
+  /**
+   * 함께 고른 나머지 구간. 연한 띠로만 그린다.
+   *
+   * 저장은 고른 구간을 모두 하는데 파형에는 마지막 것만 보였다. 칩은 여러 개가
+   * 켜져 있는데 파형은 하나라, 하나만 저장되는 것처럼 읽혔다.
+   */
+  others?: SongSection[];
   onSelect: (time: number) => void;
   onTrim: (start: number, end: number) => void;
 }) {
@@ -21,7 +29,7 @@ export function MomentWaveEditor({ track, range, onSelect, onTrim }: {
       edge === 'end' ? Math.min(track.duration, Math.max(value, range.start + 1)) : range.end);
   };
   return <div className="moment-wave-editor">
-    <p className="moment-wave-caption">{range ? `${range.label} · ${formatTime(range.start)} – ${formatTime(range.end)}` : '파형에서 저장할 구간을 눌러 주세요'}</p>
+    <p className="moment-wave-caption">{range ? `${range.label} · ${formatTime(range.start)} – ${formatTime(range.end)}${others.length ? ` · 선택 ${others.length + 1}개` : ''}` : '파형에서 저장할 구간을 눌러 주세요'}</p>
     <div className="moment-wave-surface" onPointerDown={event => {
       if (!event.isPrimary || event.button !== 0) return;
       press.current = { x: event.clientX, y: event.clientY, moved: false };
@@ -40,7 +48,8 @@ export function MomentWaveEditor({ track, range, onSelect, onTrim }: {
         else if (press.current && !press.current.moved) onSelect(seconds(event));
         press.current = null;
       }} onPointerCancel={() => { drag.current = null; press.current = null; }}>
-      <Waveform duration={track.duration} ranges={range ? [range] : []} />
+      <Waveform duration={track.duration} ranges={[...(range ? [range] : []), ...others]} />
+      {track.duration > 0 && others.map(part => <span key={`${part.start}-${part.end}`} className="moment-wave-selection is-secondary" aria-hidden="true" style={{ left: `${part.start / track.duration * 100}%`, width: `${(part.end - part.start) / track.duration * 100}%` }} />)}
       {range && track.duration > 0 && <>
         <span className="moment-wave-selection" style={{ left: `${range.start / track.duration * 100}%`, width: `${(range.end - range.start) / track.duration * 100}%` }} />
         {(['start', 'end'] as const).map(edge => <button key={edge} type="button" role="slider" data-edge={edge}

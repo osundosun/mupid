@@ -199,7 +199,7 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
               setSaved(false);
             }}>{part.label}</button>)}
           </div>
-          <MomentWaveEditor track={active} range={focusedPart} onSelect={time => {
+          <MomentWaveEditor track={active} range={focusedPart} others={parts.slice(0, -1)} onSelect={time => {
               const index = sections.findIndex(part => time >= part.start && time < part.end);
               if (index >= 0) setSelected(ids => editing ? [index] : [...ids.filter(id => id !== index), index]);
             setSaved(false);
