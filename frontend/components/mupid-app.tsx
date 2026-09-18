@@ -8,7 +8,6 @@ import { useStore } from '@/lib/store';
 import { fetchCatalog } from '@/lib/stream-catalog';
 import { restoreSession, sessionStore } from '@/lib/api/session';
 import { watchSafeArea } from '@/lib/platform';
-import { checkForUpdates } from '@/lib/platform/update';
 import { watchDevToolsErrors } from '@/lib/devtools-error-filter';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
@@ -53,7 +52,6 @@ import {
 import { QueueDock } from '@/components/mupid/queue-dock';
 import { FloatingChat } from '@/components/mupid/chat';
 import { AppDialogs } from '@/components/mupid/dialogs';
-import { UpdatePrompt } from '@/components/mupid/update-prompt';
 import { DemoLoginDialog } from '@/components/mupid/demo-login';
 
 const navigation = [
@@ -96,14 +94,10 @@ export function MupidApp() {
   // 시스템 바가 가리는 자리를 CSS 에 건넨다. 곡을 받기 전 화면도 상태바 밑으로
   // 들어가면 안 되므로 여기, 가장 바깥에서 한 번만 건다.
   useEffect(() => watchSafeArea(), []);
-  // 기동 뒤 조용히 업데이트를 확인한다. **첫 화면을 막지 않는다** — 결과를
-  // 기다리지 않고 던져 두기만 한다. 새 웹 번들이 있으면 디스크에만 활성화되고
-  // 화면은 옛 번들로 계속 돈다(다음 콜드 스타트에 교체된다). 그래야 듣던 곡이
-  // 끊기지 않는다. 실패해도 아무 일도 일어나지 않는다 — 업데이트 확인이 안
-  // 되는 것은 사용자가 알 필요가 없는 일이다(`lib/platform/update.ts`).
-  useEffect(() => {
-    void checkForUpdates();
-  }, []);
+  // 업데이트 확인은 **여기서 하지 않는다.** `UpdatePrompt`(`app/layout.tsx`)가
+  // 스스로 한다 — 그 컴포넌트는 로그인 전에도 떠야 하는데(`(music)` 밖) 이
+  // 훅은 인증 뒤에만 돌기 때문이다. 두 곳에 두면 매니페스트를 중복으로 받는다.
+  // 웹 갈래(번들 활성화)도 `checkForUpdates` 안에 있으므로 그대로 함께 돈다.
   useEffect(() => watchDevToolsErrors(), []);
   useEffect(() => {
     // 같은 계정 몫을 이미 받아 뒀으면 그대로 쓴다. 화면을 옮길 때마다 카탈로그를
@@ -340,9 +334,8 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
       )}
       <AppDialogs model={m} />
       <ArtistInfo model={m} />
-      {/* 새 APK 가 있으면 폰에서만 뜬다. 자리 판단은 컴포넌트가 한다 —
-          데스크톱 폭이거나 안드로이드가 아니면 스스로 아무것도 그리지 않는다. */}
-      <UpdatePrompt />
+      {/* 업데이트 안내는 여기 없다 — `app/layout.tsx`(root)로 옮겼다.
+          인증 뒤에만 도는 이 트리 안에 두면 로그인 전 사용자가 새 판을 못 본다. */}
       <DemoLoginDialog model={m} />
       {m.toast && <output className="app-toast">{m.toast}</output>}
     </div>
