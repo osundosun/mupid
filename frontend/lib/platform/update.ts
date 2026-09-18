@@ -168,11 +168,13 @@ export function shouldPromptUpdate(input: {
 /**
  * 상태만 읽는다 — **내려받지 않는다.**
  *
- * `checkForUpdates` 와 다른 점이 이것이다. 안내 화면은 "새 APK 가 있나" 만
- * 알면 되는데, 기동 훅이 이미 확인과 내려받기를 끝냈다. 여기서 또 부르면
- * 같은 순간에 두 번 내려받아 느린 회선에서 서로를 방해한다.
+ * **지금은 아무도 부르지 않는다.** `UpdatePrompt` 가 확인까지 스스로 하게
+ * 되면서(`checkForUpdates`) 필요 없어졌다 — 매니페스트 두 개는 한 번의
+ * 확인에서 함께 읽히므로 따로 상태를 읽을 이유가 없었다.
  *
- * 실패하면 `null` — 그러면 창이 뜨지 않는다.
+ * 지우지 않고 남기는 이유는 안내 창 말고 상태만 필요한 자리(진단 화면·설정)가
+ * 생길 수 있어서다. 다만 **업데이트 안내 경로에서는 쓰지 않는다** — 그 경로는
+ * `checkForUpdates` 하나로 모아야 매니페스트를 중복으로 받지 않는다.
  */
 export async function readUpdateState(): Promise<UpdateState | null> {
   if (!isTauri()) return null;

@@ -1,7 +1,8 @@
 """실서비스(Spring) 가 호출하는 내부 API. `/internal` 아래에만 둔다.
 
 **이 서버는 숫자 ID 를 다루지 않는다.** 요청도 응답도 AI 문자열 ID(`T000901#2`)를 쓰고,
-`music_id`·`music_section_id` 로의 번역은 Spring 이 `music_section_analysis.external_id`
+`music_id`·`music_section_analysis_id` 로의 번역은 Spring 이
+`music_section_analysis.external_id`
 로 한다 — 제목·아티스트·이미지를 붙이려고 어차피 하는 조회라 비용이 같다.
 
 예외는 `user_id` 하나다. ClickHouse `listen_events` 의 조회 키가 숫자라 번역 없이 쓴다.
@@ -488,7 +489,7 @@ def _facets_payload(svc) -> dict:
     # 장르 게이트는 genre 와 style 양쪽에 맞춰 본다. 둘 다 골라도 된다.
     fields["genre"]["style_values"] = vals("style")
     fields["language"]["values"] = vals("language")
-    fields["vocal"]["values"] = vals("vocal_type")
+    fields["vocal"]["values"] = vals("vocal")
     fields["instrument"]["values"] = vals("instrument")
     fields["mood"]["values"] = vals("mood")
     fields["flow"]["values"] = [{"value": x["value"], "moments": x.get("moments", 0)}

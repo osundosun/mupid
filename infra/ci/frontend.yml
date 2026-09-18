@@ -32,6 +32,27 @@ frontend-verify:
     - npm ci --prefer-offline --no-audit --no-fund
     - npm run build
     - test -f dist/client/index.html
+    # 프론트엔드 시험. **없던 동안 40여 개가 로컬에서만 돌았다.**
+    #
+    # 그래서 실제로 놓쳤다 — `checkForUpdates` 가 상태를 두 번 읽는 것을 아무도
+    # 몰랐고(기동마다 매니페스트 왕복이 배로 늘었다), 매니페스트 중복 요청도
+    # 실기기 로그를 보고서야 찾았다. 시험이 있으면 그 자리에서 잡혔을 것들이다.
+    #
+    # **여기(빌드 job)에 얹는다.** 별도 job 으로 두려 했는데 `AreaRoutingTest`
+    # 가 "영역당 job 하나" 를 강제한다 — `area-gate` 는 영역 job 이 남긴 marker
+    # 를 세고, 그 관계가 1:1 이라는 것이 게이트의 근거다. 계약을 깨는 것보다
+    # 빌드 뒤에 한 줄 더 도는 편이 낫다.
+    #
+    # **기준선 검사를 거친다.** 이 시험들은 오래 CI 에서 빠져 있었고 그 사이
+    # `origin/develop` 에 39개 실패가 쌓였다(CSS 값·레이아웃 단언 드리프트).
+    # 그대로 걸면 모든 MR 이 빨간불이 되고, 그러면 결국 job 을 끄게 된다.
+    # `tests/failures-baseline.txt` 에 이미 깨진 시험 이름을 적어 두고
+    # **그 목록에 없는 실패만** 막는다 — 즉 이번 변경이 깨뜨린 것만 잡는다.
+    #
+    # **NODE_ENV 를 비운다.** 이 러너 셸에는 상시 production 이 걸려 있을 수
+    # 있고, 그러면 devDependencies 가 빠져 시험이 못 돈다.
+    - unset NODE_ENV
+    - node tests/check-test-baseline.mjs
     # 이 영역을 실제로 검증했다는 증거. area-gate 가 이것을 읽는다.
     - cd .. && mkdir -p .areas && printf '%s\n' Frontend > .areas/Frontend
   artifacts:

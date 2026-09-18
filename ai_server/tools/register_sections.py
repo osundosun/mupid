@@ -390,8 +390,8 @@ def main() -> int:
                 pairs.append({
                     "source_track_id": tid,
                     "music_id": int(music_id),
-                    "source_section_uid": str(row["external_id"]),
-                    "music_section_id": int(row["music_section_analysis_id"]),
+                    "external_id": str(row["external_id"]),
+                    "music_section_analysis_id": int(row["music_section_analysis_id"]),
                 })
         # 진행률. 악기 계산이 곡당 수 초라 1,060곡이면 몇 시간이다 — 로그가 없으면
         # 도는지 멈췄는지 알 수 없다. 50곡마다 한 줄.

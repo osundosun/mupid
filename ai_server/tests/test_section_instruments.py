@@ -493,7 +493,25 @@ def test_register_sends_codes_then_sections_over_real_http(spring, tmp_path):
 
     # `id_map` 이 실제로 채워져야 추천 결과가 곡으로 이어진다.
     saved = pd.read_parquet(tmp_path / "id_map.parquet")
-    assert sorted(saved["source_section_uid"]) == ["1234#0", "1234#1"]
+    assert sorted(saved["external_id"]) == ["1234#0", "1234#1"]
+
+
+def test_merge_id_map_migrates_legacy_columns(tmp_path):
+    pd.DataFrame([{
+        "source_track_id": "old", "music_id": 1,
+        "source_section_uid": "old#0", "music_section_id": 10,
+    }]).to_parquet(tmp_path / "id_map.parquet", index=False)
+
+    ap.merge_id_map(tmp_path, [{
+        "source_track_id": "new", "music_id": 2,
+        "external_id": "new#0", "music_section_analysis_id": 20,
+    }])
+
+    saved = pd.read_parquet(tmp_path / "id_map.parquet")
+    assert list(saved.columns) == [
+        "source_track_id", "music_id", "external_id", "music_section_analysis_id"]
+    assert dict(zip(saved.external_id, saved.music_section_analysis_id)) == {
+        "old#0": 10, "new#0": 20}
 
 
 def test_every_call_carries_the_bearer_token(spring, tmp_path):

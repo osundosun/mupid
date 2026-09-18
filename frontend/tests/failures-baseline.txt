@@ -1,0 +1,34 @@
+LP displays share a softer tone without filtering text or changing the original artwork
+Main is explicit on desktop and mobile, with current-page state for subpages
+[파일 로드 실패] tests/playback-details.test.mjs
+account preview keeps modal focus and remains reachable through profile
+album movement preserves controls, keyboard access and navigation boundaries
+album selection is separate from playback, with an accessible full-list alternative
+arc geometry leaves clear space between labels, covers and the selected row
+browser and Apple favicon exports have the requested square dimensions
+chat handwriting uses compact sizes without shrinking input below 16px
+compact arc tilts bounded labels instead of whole rows and retains full track names
+decorative companions reuse the transparent asset and do not intercept controls
+desktop home uses the existing LP asset in a three-part listening layout
+desktop home uses the shared menu while replacing its duplicate dock at its breakpoint
+desktop removes repeated card shells while mobile retains its listening entry
+favicon uses the character portrait and connects the app icon manifest
+home and AI retain companions while LP artwork stays free of characters
+main playback keeps transport, seek, volume, likes, moments and queue access
+mascot uses an image, not a cropped sheet or soft background mask
+mobile filters wrap instead of clipping or horizontally scrolling
+mobile home opens with a functional LP before search and recommendation shelves
+mobile home shortcuts are hidden without removing the bottom navigation
+mobile menu labels preserve full accessible names and wrap enlarged text
+mobile reuses five desktop destinations and moves profile to the shared header
+mobile uses one compact menu with the desktop line-icon style
+motion preferences apply to both carousel physics and CSS while touch scrolling remains available
+page titles retain heading semantics, back buttons and optional actions
+phone and tablet listening layouts bound the LP, wrap large text and avoid record rotation
+player keeps shared navigation without duplicating the mini player
+player keeps the title, seeking and actions while secondary information is expandable
+playlist highlights represent the current queue and keep details and play separate
+search, recommendations, history and AI remain available on the new home
+the character AI button preserves its accessible name, focus target and mobile touch area
+the dock follows control visibility, retains keyboard focus and cleans up observation
+빈 플레이리스트만 음표로 남는다

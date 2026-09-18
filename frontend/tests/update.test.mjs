@@ -332,14 +332,44 @@ test('기록에 실패해도 던지지 않는다', async () => {
 // 화면이 실제로 붙어 있는가
 // ─────────────────────────────────────────────────────────────
 
-test('안내 컴포넌트가 앱에 붙어 있다', async () => {
-  const app = await readFile(new URL('../components/mupid-app.tsx', import.meta.url), 'utf8');
-  assert.match(app, /<UpdatePrompt\s*\/>/, 'UpdatePrompt 가 렌더되지 않는다');
+test('안내 컴포넌트가 root 레이아웃에 붙어 있다', async () => {
+  // **root 여야 한다.** 인증이 필요한 `(music)` 그룹 안에 두면 로그인 전에는
+  // 새 판이 있어도 알 수 없다 — 실기기에서 확인했다(랜딩 화면에 머무는 동안
+  // 앱의 매니페스트 요청이 0건이었다).
+  const layout = await readFile(new URL('../app/layout.tsx', import.meta.url), 'utf8');
+  assert.match(layout, /<UpdatePrompt\s*\/>/, 'UpdatePrompt 가 root 에 렌더되지 않는다');
   assert.match(
-    app,
+    layout,
     /import \{ UpdatePrompt \} from '@\/components\/mupid\/update-prompt'/,
     'import 가 없다',
   );
+});
+
+test('안내 컴포넌트가 인증 트리 밖에 있다', async () => {
+  // `mupid-app.tsx` 는 `(music)` 그룹에서만 렌더된다. 거기 남아 있으면
+  // 로그인 전 사용자가 업데이트를 못 본다.
+  const app = await readFile(new URL('../components/mupid-app.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /<UpdatePrompt\s*\/>/, 'UpdatePrompt 가 인증 트리에 남아 있다');
+  // **호출을 본다 — 주석의 언급이 아니다.** 이 컴포넌트에는 "확인은 여기서 하지
+  // 않는다" 는 주석이 `checkForUpdates` 를 이름으로 언급하고 있어, 식별자만
+  // 찾으면 그 주석에 걸린다(실제로 걸렸다).
+  assert.doesNotMatch(
+    app,
+    /void\s+checkForUpdates\(\)/,
+    '확인 훅도 인증 트리에 있으면 로그인 전에는 안 돈다',
+  );
+});
+
+test('안내 컴포넌트가 스스로 확인한다', async () => {
+  // 확인을 따로 두면 두 곳이 어긋나거나(창은 뜨는데 상태가 없거나) 매니페스트를
+  // 중복으로 받는다.
+  const prompt = await readFile(
+    new URL('../components/mupid/update-prompt.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(prompt, /checkForUpdates\(\)/, '확인이 컴포넌트 안에 없다');
+  // 상태만 읽는 함수에 기대면 네이티브 정보가 갱신되지 않아 창이 안 뜬다.
+  assert.doesNotMatch(prompt, /readUpdateState/, '상태만 읽는 경로에 기대고 있다');
 });
 
 test('안내 컴포넌트가 폭과 플랫폼을 모두 본다', async () => {
