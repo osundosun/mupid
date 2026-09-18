@@ -1364,12 +1364,6 @@ h1 {
   font-size: 13px;
   border-radius: 8px;
 }
-/* 고른 범위가 걸쳐 있는 구간. 끌어서 늘리면 따라 켜진다. */
-.song-parts button.covered {
-  background: #fdf0f5;
-  color: #b86a8a;
-  border-color: #f3d3e0;
-}
 .song-parts button.selected {
   color: #ce6c96;
   background: #fbe8f2;

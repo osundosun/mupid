@@ -219,7 +219,7 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
   /*
    * 분홍 양 끝을 끌어 범위를 다른 구간까지 늘리거나 옮기면, 위 칩과 이름도 따라간다.
    * 범위가 걸치는 구간이 하나면 그 구간 이름을, 여럿이면 '벌스 2 – 브리지' 처럼
-   * 처음과 끝을 잇는다. 걸친 칩은 옅게, 처음 고른 칩은 진하게 표시한다.
+   * 처음과 끝을 잇는다. 범위에 걸친 칩은 모두 같은 분홍으로 켜진다 — 켜진 칩이 곧 저장될 범위다.
    */
   const covering = (start: number, end: number) => sections.map((s, i) => ({ s, i })).filter(({ s }) => s.start < end && s.end > start);
   const parts = selected.map(i => {
@@ -230,6 +230,30 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
   });
   const covered = new Set(parts.flatMap(p => covering(p.start, p.end).map(c => c.i)));
   const focusedPart = parts.at(-1);
+  /** 이 시점이 든 순간(선택 목록의 자리). 없으면 -1. */
+  const partAt = (time: number) => parts.findIndex(p => time >= p.start && time < p.end);
+  /** 이미 고른 순간을 맨 뒤로 보내 손보는 대상으로 삼는다. 새로 더하지 않는다. */
+  const focus = (partIndex: number) => setSelected(ids => [...ids.filter((_, k) => k !== partIndex), ids[partIndex]]);
+  /**
+   * 순간들은 서로 겹치지 않는다. 범위를 끌다가 옆 순간의 경계에 닿으면 거기서 멈춘다.
+   * 겹치게 두면 '인트로 – 벌스 2 · 인트로 · 벌스 1' 처럼 같은 자리가 목록에 두세 번
+   * 쌓였고, 삼킨 것을 조용히 지우면 왜 사라졌는지 알 수 없다. 막는 쪽이 읽기 쉽다.
+   */
+  const trimFocused = (start: number, end: number) => {
+    const focused = selected[selected.length - 1];
+    if (focused === undefined) return;
+    const mine = { ...sections[focused], ...trimmed[focused] };
+    let lo = 0, hi = active.duration;
+    for (const id of selected) {
+      if (id === focused) continue;
+      const r = { ...sections[id], ...trimmed[id] };
+      if (r.end <= mine.start) lo = Math.max(lo, r.end);
+      if (r.start >= mine.end) hi = Math.min(hi, r.start);
+    }
+    const nextStart = Math.max(lo, Math.min(start, hi - 1));
+    const nextEnd = Math.min(hi, Math.max(end, nextStart + 1));
+    setTrimmed(value => ({ ...value, [focused]: { start: nextStart, end: nextEnd } }));
+  };
   return <div className="content-page moment-page">
     <PageHeader
       title={editing ? '순간 수정' : '이 순간 저장'}
@@ -246,17 +270,23 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
         <div className="moment-editor">
           {previewSections && <p className="moment-wave-help">AI 연결 전 미리보기 · 곡 길이를 임시로 나눈 구간이에요.</p>}
           <div className="song-parts" aria-label="저장할 순간 다중 선택">
-            {sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) ? 'selected' : covered.has(i) ? 'covered' : ''} onClick={() => {
+            {sections.map((part, i) => <button key={i} aria-pressed={selected.includes(i)} className={selected.includes(i) || covered.has(i) ? 'selected' : ''} onClick={() => {
+              // 다른 순간의 범위에 이미 걸린 구간을 누르면 새로 더하지 않고 그 순간을 손보는 대상으로 삼는다.
+              const within = !selected.includes(i) ? partAt(part.start + (part.end - part.start) / 2) : -1;
+              if (within >= 0) { focus(within); return; }
               setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : editing ? [i] : [...ids, i]);
               setSaved(false);
             }}>{part.label}</button>)}
           </div>
           <MomentWaveEditor track={active} range={focusedPart} onSelect={time => {
-              const index = sections.findIndex(part => time >= part.start && time < part.end);
-              if (index >= 0) setSelected(ids => editing ? [index] : [...ids.filter(id => id !== index), index]);
+            // 이미 고른 순간 안을 누르면 그 순간을 손보는 대상으로. 바깥이면 그 구간을 새로 고른다.
+            const within = partAt(time);
+            if (within >= 0) { focus(within); return; }
+            const index = sections.findIndex(part => time >= part.start && time < part.end);
+            if (index >= 0) setSelected(ids => editing ? [index] : [...ids.filter(id => id !== index), index]);
             setSaved(false);
           }} onTrim={(start, end) => {
-            if (selected.length) setTrimmed(value => ({ ...value, [selected[selected.length - 1]]: { start, end } }));
+            trimFocused(start, end);
             setSaved(false);
           }} />
           <div className="time-labels"><span>00:00</span><span>{formatTime(active.duration)}</span></div>
