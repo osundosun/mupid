@@ -14,6 +14,39 @@ import com.osundosun.mupid.api.music.entity.Music;
 
 public interface MusicRepository extends JpaRepository<Music, Integer> {
 
+    /**
+     * 검색·목록이 함께 쓰는 보컬 필터 조각.
+     *
+     * <h2>왜 LEFT JOIN 인가</h2>
+     *
+     * {@code music_analysis} 는 <b>분석이 끝난 곡에만</b> 행이 있다. INNER JOIN 으로
+     * 붙이면 필터를 안 걸었을 때조차 분석 행이 없는 곡이 전부 사라진다 — 개발 DB 는
+     * 분석 행이 0 이라 전곡이 사라진다. 그래서 항상 LEFT JOIN 이다.
+     *
+     * <h2>왜 {@code NOT :filtered} 가드가 필요한가</h2>
+     *
+     * 필터를 안 걸었을 때(모든 값이 false) 첫 항이 참이 되어 나머지 가지가 통째로
+     * 무시된다. 별도 쿼리를 두지 않고도 "필터가 없으면 예전과 완전히 같은 결과" 를
+     * 보장한다.
+     *
+     * <h2>'인스트루멘탈' 은 성별이 아니라 유무다</h2>
+     *
+     * {@code has_vocal = false} 로 표현한다. {@code VocalGender} 에 '보컬 없음' 값이
+     * 없기 때문이다(자세한 근거는 {@code VocalFilter} 주석). {@code has_vocal = true}
+     * 이면서 성별이 {@code ETC} 인 곡은 세 값 어디에도 걸리지 않는다 — 화면에 그런
+     * 항목이 없기 때문이다.
+     *
+     * <h2>여러 개를 고르면 OR 다</h2>
+     *
+     * 한 곡이 여성이면서 동시에 인스트루멘탈일 수 없어 교집합(AND)은 언제나 0 이다.
+     */
+    String VOCAL_FILTER = """
+          AND (:filtered = false
+               OR (:wantFemale = true AND ma.hasVocal = true AND ma.vocalGender = com.osundosun.mupid.api.music.enumerate.VocalGender.F)
+               OR (:wantMale = true AND ma.hasVocal = true AND ma.vocalGender = com.osundosun.mupid.api.music.enumerate.VocalGender.M)
+               OR (:wantInstrumental = true AND ma.hasVocal = false))
+        """;
+
     /** 전체 목록. 검색어가 있을 때는 아래 인덱스 검색으로 ID를 먼저 찾는다. */
     @Query("""
         SELECT m FROM Music m
@@ -22,13 +55,32 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         JOIN FETCH m.album al
         JOIN FETCH al.imageFile
         LEFT JOIN FETCH m.imageFile
+        LEFT JOIN MusicAnalysis ma ON ma.musicId = m.musicId
         WHERE m.isDeleted = false
-        """)
-    Page<Music> findPage(Pageable pageable);
+        """ + VOCAL_FILTER)
+    Page<Music> findPage(
+        @Param("filtered") boolean filtered,
+        @Param("wantFemale") boolean wantFemale,
+        @Param("wantMale") boolean wantMale,
+        @Param("wantInstrumental") boolean wantInstrumental,
+        Pageable pageable);
 
     /**
      * 곡 제목·아티스트명·앨범명을 각 ngram FULLTEXT 인덱스에서 찾고 관련도순으로
      * 합친다. 테이블별 UNION 은 서로 다른 전문 인덱스를 확실히 타게 하기 위함이다.
+     *
+     * <h2>보컬 필터는 UNION 바깥에서 건다</h2>
+     *
+     * 각 UNION 가지 안에서 조인하면 <b>인덱스가 세 번 조인된다</b>. 곡 번호가 이미
+     * 좁혀진 뒤에 한 번만 붙이는 편이 낫다. {@code ranked} 는 곡 번호당 여러 행일 수
+     * 있으므로 LEFT JOIN 은 <b>집계 전에</b> 걸고, 필터도 WHERE 에서 함께 건다.
+     *
+     * <h2>countQuery 를 같이 고쳐야 한다</h2>
+     * 둘 중 하나만 고치면 페이지 수와 실제 결과 수가 어긋난다. 아래 countQuery 도
+     * 같은 LEFT JOIN 과 같은 필터를 갖는다 — <b>이 지점이 빠뜨리기 가장 쉽다.</b>
+     *
+     * <h2>필터가 없으면</h2>
+     * `:filtered = false` 가 참이 되어 예전과 완전히 같은 결과가 나온다.
      */
     @Query(value = """
         SELECT ranked.music_id
@@ -50,6 +102,11 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
             WHERE al.is_deleted = false
               AND MATCH(al.title) AGAINST (:query IN BOOLEAN MODE)
         ) ranked
+        LEFT JOIN music_analysis ma ON ma.music_id = ranked.music_id
+        WHERE (:filtered = false
+               OR (:wantFemale = true AND ma.has_vocal = true AND ma.vocal_gender = 'F')
+               OR (:wantMale = true AND ma.has_vocal = true AND ma.vocal_gender = 'M')
+               OR (:wantInstrumental = true AND ma.has_vocal = false))
         GROUP BY ranked.music_id
         ORDER BY MAX(ranked.score) DESC, ranked.music_id DESC
         """,
@@ -70,9 +127,20 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
             WHERE al.is_deleted = false
               AND MATCH(al.title) AGAINST (:query IN BOOLEAN MODE)
         ) ranked
+        LEFT JOIN music_analysis ma ON ma.music_id = ranked.music_id
+        WHERE (:filtered = false
+               OR (:wantFemale = true AND ma.has_vocal = true AND ma.vocal_gender = 'F')
+               OR (:wantMale = true AND ma.has_vocal = true AND ma.vocal_gender = 'M')
+               OR (:wantInstrumental = true AND ma.has_vocal = false))
         """,
         nativeQuery = true)
-    Page<Integer> searchIdsFullText(@Param("query") String query, Pageable pageable);
+    Page<Integer> searchIdsFullText(
+        @Param("query") String query,
+        @Param("filtered") boolean filtered,
+        @Param("wantFemale") boolean wantFemale,
+        @Param("wantMale") boolean wantMale,
+        @Param("wantInstrumental") boolean wantInstrumental,
+        Pageable pageable);
 
     /** ngram 최소 토큰보다 짧은 한 글자는 B-Tree prefix 검색으로 처리한다. */
     @Query(value = """
@@ -92,6 +160,11 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
             WHERE al.is_deleted = false
               AND al.title LIKE CONCAT(:prefix, '%')
         ) ranked
+        LEFT JOIN music_analysis ma ON ma.music_id = ranked.music_id
+        WHERE (:filtered = false
+               OR (:wantFemale = true AND ma.has_vocal = true AND ma.vocal_gender = 'F')
+               OR (:wantMale = true AND ma.has_vocal = true AND ma.vocal_gender = 'M')
+               OR (:wantInstrumental = true AND ma.has_vocal = false))
         GROUP BY ranked.music_id
         ORDER BY MAX(ranked.weight) DESC, ranked.music_id DESC
         """,
@@ -112,9 +185,20 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
             WHERE al.is_deleted = false
               AND al.title LIKE CONCAT(:prefix, '%')
         ) ranked
+        LEFT JOIN music_analysis ma ON ma.music_id = ranked.music_id
+        WHERE (:filtered = false
+               OR (:wantFemale = true AND ma.has_vocal = true AND ma.vocal_gender = 'F')
+               OR (:wantMale = true AND ma.has_vocal = true AND ma.vocal_gender = 'M')
+               OR (:wantInstrumental = true AND ma.has_vocal = false))
         """,
         nativeQuery = true)
-    Page<Integer> searchIdsByPrefix(@Param("prefix") String prefix, Pageable pageable);
+    Page<Integer> searchIdsByPrefix(
+        @Param("prefix") String prefix,
+        @Param("filtered") boolean filtered,
+        @Param("wantFemale") boolean wantFemale,
+        @Param("wantMale") boolean wantMale,
+        @Param("wantInstrumental") boolean wantInstrumental,
+        Pageable pageable);
 
     @Query("""
         SELECT m FROM Music m
