@@ -186,13 +186,33 @@ class PreflightCliTest(unittest.TestCase):
 
     def test_a_real_merge_commit_is_judged_without_network(self):
         """18b464c9 는 develop 에 병합된 실제 커밋이다. 그 부모 대비 변경은
-        frontend/ 뿐이므로 Infra 라벨 없이도 통과해야 한다."""
+        frontend/ 뿐이므로 Infra 라벨 없이도 통과해야 한다.
+
+        **git 이 있는데 그 커밋이 없으면 실패한다 — 건너뛰지 않는다.** 얕은
+        체크아웃이면 이 시험이 조용히 사라지고, 그러면 이 시험이 막으려는 것
+        (경로 매핑과 라벨 목록의 어긋남)이 그대로 새어 나간다. 실제로 그렇게
+        깨졌다 — `infra-verify` 에 `GIT_DEPTH` 가 없어 릴리스 MR 이 실패했는데,
+        같은 job 이 master 에서는 통과했다(러너가 작업디렉터리를 공유해 이력이
+        남아 있을 때가 있었다). 타이밍에 따라 갈리는 것 자체가 고장이다.
+        """
         if not GIT:
             self.skipTest("git 이 없다 — 저장소 이력을 읽을 수 없다")
-        head = subprocess.run([GIT, "rev-parse", "18b464c9"], cwd=ROOT,
-                              capture_output=True, text=True).stdout.strip()
-        if not head:
-            self.skipTest("18b464c9 가 없다")
+        # **`--verify` 를 쓴다.** 맨 `git rev-parse 18b464c9` 는 못 찾는 인자를
+        # **stdout 으로 그대로 되돌려준다**(스크립트가 인자를 그대로 넘길 수 있게
+        # 하려는 성질이다). 그래서 빈 값 검사만으로는 얕은 체크아웃을 못 잡는다 —
+        # 실제로 그렇게 통과해 버려 이 가드가 무용했다.
+        # `--verify` 는 해석에 실패하면 빈 stdout 과 0 아닌 종료 코드를 준다.
+        probed = subprocess.run([GIT, "rev-parse", "--verify", "18b464c9^{commit}"],
+                                cwd=ROOT, capture_output=True, text=True)
+        head = probed.stdout.strip()
+        self.assertRegex(
+            head, r"^[0-9a-f]{40}$",
+            "18b464c9 가 저장소에 없다. 이 시험은 실제 이력을 근거로 삼는다 — "
+            "git 은 있는데 이 커밋이 없다면 **얕은 체크아웃**이다. "
+            "infra_k8s/tests 를 돌리는 job 에 `GIT_DEPTH: \"0\"` 을 넣는다 "
+            f"(infra/ci/infra.yml 의 infra-verify 참고). stdout={head!r} "
+            f"stderr={probed.stderr.strip()!r}",
+        )
         result = self.run_cli("preflight", "--base", head + "^1", "--head", head,
                               "--labels", "Frontend")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
