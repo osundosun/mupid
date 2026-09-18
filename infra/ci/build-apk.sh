@@ -72,6 +72,21 @@ export MUPID_NATIVE_BUILD
 # 이 APK 의 나이다. 다르면 새 APK 를 설치한 직후 그 앱이 자기 번들을 다시 받는다.
 MUPID_WEB_BUILD=$MUPID_NATIVE_BUILD
 export MUPID_WEB_BUILD
+
+# ── 값의 출처를 **파일로도** 남긴다 ────────────────────────────────
+# `export` 는 **이 스크립트의 자식**에게만 간다. 부모 셸(CI)에는 오지 않으므로,
+# 다음 줄에서 도는 `deploy-apk.sh` 는 이 값을 볼 수 없다.
+#
+# 이걸 두 번 밟았다.
+#   1) CI 가 두 줄로 나눠 돌려서 (5ee8c4 로 `&&` 연결)
+#   2) 그래도 안 됐다 — `sh build-apk.sh` 자체가 **자식 프로세스**라
+#      그 안의 export 가 부모로 올라오지 않는다. `&&` 는 두 번째 문제를 못 고쳤다.
+#
+# 그래서 CI 가 읽을 수 있는 자리에 파일로 남긴다. CI 줄은
+#   `MUPID_NATIVE_BUILD=$(cat .release/app/build-stamp)` 로 값을 얻는다.
+# 파일 이름을 바꾸면 `infra_k8s/tests` 의 `BuildStampHandoffTest` 가 깨진다.
+mkdir -p .release/app
+printf '%s\n' "$MUPID_NATIVE_BUILD" > .release/app/build-stamp
 printf '빌드 스탬프 %s (versionCode %s)\n' \
   "$MUPID_NATIVE_BUILD" "$((MUPID_NATIVE_BUILD / 1000))"
 
