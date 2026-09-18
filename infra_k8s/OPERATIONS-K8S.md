@@ -35,6 +35,81 @@ ssh -i <key> mupid-deploy-k8s@j15a204.p.ssafy.io \
   "deploy-k8s api $sha $checksum" < image.tar.gz
 ```
 
+## 앱과 웹 번들 내려주기
+
+컨테이너 이미지와 **다른 경로**다. 여기서는 클러스터를 건드리지 않고 파일 몇 개를
+`/srv/mupid-k8s/downloads` 에 놓기만 한다. 엣지 파드가 그것을 readOnly 로 마운트해
+nginx 가 `/download/` 로 내려준다.
+
+```
+deploy-apk.sh   →  upload-apk <커밋> <sha256> <versionCode>   →  receive-apk.py
+deploy-web.sh   →  upload-web <커밋> <sha256>                 →  receive-web.py
+```
+
+| 내려주는 것 | 주소 | 캐시 | 누가 읽나 |
+| --- | --- | --- | --- |
+| APK (심볼릭 링크) | `/download/mupid.apk` | `no-store` | 사용자 브라우저, 앱 |
+| APK 체크섬 | `/download/mupid.apk.sha256` | `no-store` | `deploy-apk.sh` 자신 |
+| **네이티브 매니페스트** | `/download/native.json` | `no-store` | 앱 — "새 APK 가 있나" |
+| **웹 매니페스트** | `/download/web.json` | `no-store` | 앱 — "새 번들이 있나" |
+| 웹 번들 (내용 주소) | `/download/web-<builtAt>.tar.gz` | `immutable` | 앱 |
+
+**매니페스트가 스위치다.** 아카이브와 APK 가 다 올라가고 체크섬까지 맞은 다음에야
+바뀐다. 그 순서가 뒤집히면 앱이 아직 없는 파일을 가리키는 매니페스트를 읽는다.
+반대로 번들 아카이브는 이름에 빌드 시각이 들어가 내용이 바뀌지 않으므로 오래
+캐시해도 된다 — 그래야 같은 판을 다시 받지 않는다.
+
+### 두 갈래가 무엇을 바꾸나
+
+앱은 **빌드 타임스탬프**를 버전으로 쓴다(semver 를 쓰지 않는다).
+
+| 갈래 | 판단 | 사용자가 하는 일 |
+| --- | --- | --- |
+| 웹 | `builtAt` 이 **다르면** 교체 | 없음 — 다음 콜드 스타트에 적용된다 |
+| 네이티브 | `versionCode` 가 **클 때만** 안내 | 설치 |
+
+웹 번들은 코드 자산만 담는다(이미지·폰트는 APK 안 임베드가 채운다). 그래서
+39MB 가 332KB 가 된다 — 실측. 그게 성립하는 근거는 **파일 이름이 고정**이라는
+것이고(내용 해시가 붙은 파일이 없다), 같은 사실이 캐시 위험도 만든다.
+
+두 값은 CI 가 `infra/ci/build-stamp.sh` 한 곳에서 만들어 넘긴다. **job 이 다르므로
+같은 출처를 써야 한다** — `date` 로 하면 웹과 APK 의 짝이 어긋나고, 증상은 "새 APK
+를 설치한 직후 그 앱이 자기 번들을 다시 받는다" 뿐이다.
+
+### 손으로 올릴 때
+
+```bash
+# 웹 번들. 프론트를 app 타깃으로 굽고 아카이브를 만든 뒤 올린다.
+export MUPID_WEB_BUILD=$(sh infra/ci/build-stamp.sh)
+npm --prefix frontend ci
+npm --prefix frontend run build:static
+npm --prefix frontend run build:archive
+sh infra_k8s/ci/deploy-web.sh
+
+# APK. 스크립트가 스탬프를 정하고 versionCode 까지 만들어 넘긴다.
+sh infra/ci/build-apk.sh          # MUPID_APP_ENV(키스토어)가 있어야 한다
+sh infra_k8s/ci/deploy-apk.sh
+```
+
+두 스크립트 모두 **엣지에서 실제로 내려받히는지 확인한 뒤에** 성공을 보고한다.
+수신기가 성공했다고 해도 nginx location 이나 마운트가 어긋나 있으면 404 가 나고,
+그건 받는 사람이 아니라 올린 사람이 먼저 겪어야 한다.
+
+### 안 될 때
+
+| 증상 | 먼저 볼 곳 |
+| --- | --- |
+| `/download/web.json` 이 404 | nginx ConfigMap 이 갱신됐는지, `/srv/web/downloads` 마운트 |
+| 매니페스트는 맞는데 아카이브가 404 | 아카이브 location 의 이름 규칙(`web-<숫자>.tar.gz`) |
+| 앱이 업데이트를 못 본다 | 매니페스트가 `no-store` 인지 — 중간 캐시가 붙들면 영영 안 뜬다 |
+| 설치 안내만 뜨고 설치가 실패 | `versionCode` 가 뒤로 갔는지. 안드로이드가 다운그레이드를 거부한다 |
+| 업데이트가 반영 안 됨 | 앱은 **다음 콜드 스타트**에 적용한다 — 재생을 끊지 않으려고 일부러 그렇게 두었다 |
+
+수신기를 새로 설치할 때는 `infra_k8s/deploy/` 의 스크립트를 `/usr/local/sbin/` 에
+넣고(`mupid-receive-web` 이 새로 늘었다), `ssh-entrypoint-k8s.sh` 를 갱신한다.
+`upload-web` 갈래가 없으면 그 명령은 `Only versioned k8s deployment uploads are
+accepted` 로 거절된다.
+
 ## 매니페스트를 다시 적용할 때 — 이미지가 되돌아간다
 
 `base/` 의 이미지 태그는 `mupid-api:placeholder` · `mupid-web:placeholder` 다.
