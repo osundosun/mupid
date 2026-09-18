@@ -258,6 +258,8 @@ def main() -> int:
                     help=f"analysis_version (기본 {ANALYSIS_VERSION})")
     ap.add_argument("--all-sources", action="store_true",
                     help="추천 풀 밖(fma 등)까지 적재한다")
+    ap.add_argument("--source", default=None,
+                    help="이 출처만 적재한다 (예: flow). 비우면 추천 풀 전량")
     ap.add_argument("--limit", type=int, default=0, help="곡 수 상한 (시험용)")
     ap.add_argument("--dry-run", action="store_true",
                     help="보내지 않고 무엇을 보낼지만 센다")
@@ -270,7 +272,7 @@ def main() -> int:
     ap.add_argument("--audio-dir", default=None,
                     help="기본: <ARTIFACT_DIR>/flow_music_data/audio")
     ap.add_argument("--mix-rel", type=float, default=None,
-                    help=f"스템 판정 문턱(믹스 대비). 기본 {instruments.MIX_REL}")
+                    help="스템 판정 문턱(믹스 대비). 기본 0.1 (-20 dB)")
     a = ap.parse_args()
 
     src = Path(a.moments) if a.moments else paths.moments_path()
@@ -284,6 +286,11 @@ def main() -> int:
         # `/internal/ready` 는 **추천 풀** 전량이 매핑됐는지 본다. 풀 밖의 곡까지
         # 넣을 이유가 없고, 넣으면 MySQL 만 커진다.
         mom = mom[mom.source.isin(recommender.POOL_SOURCES)]
+    if a.source:
+        # 한 출처만. `--limit` 과 함께 쓰면 **시험용으로 flow 곡만** 집을 수 있다 —
+        # 풀에는 jamendo 가 앞서 있어(`JAMENDO_*` 가 사전순으로 앞) 그냥 자르면
+        # 미매핑 곡만 잡힌다.
+        mom = mom[mom.source.astype(str) == a.source]
     if mom.empty:
         print(f"적재할 구간이 없다 (풀 출처 {sorted(recommender.POOL_SOURCES)})",
               file=sys.stderr)
@@ -308,7 +315,11 @@ def main() -> int:
     # 악기 자리. `--no-instruments` 면 계산하지 않는다.
     use_ins = not a.no_instruments
     root = paths.artifact_root()
-    audio_dir = Path(a.audio_dir) if a.audio_dir else (root / "flow_music_data" / "audio")
+    # 음원은 **홈 직하** `~/flow_music_data/audio` 다. `<artifact>/flow_music_data`
+    # 가 아니다 — 실측으로 확인했다(1,060곡). `--audio-dir` 로 덮어쓸 수 있다.
+    default_audio = Path.home() / "flow_music_data" / "audio"
+    audio_dir = Path(a.audio_dir) if a.audio_dir else (
+        default_audio if default_audio.is_dir() else root / "flow_music_data" / "audio")
     demix_root = Path(a.demix_root) if a.demix_root else (root / "work" / "demix")
     ins_cache: dict = {}
     ins_missing: list[dict] = []
@@ -328,17 +339,22 @@ def main() -> int:
     #    순서가 뒤집히면 오류 없이 악기만 조용히 빈다.
     if use_ins:
         wanted: set[str] = set()
-        for tid, group in groups:
+        # 이 단계도 곡당 수 초라 1,059곡이면 30분 넘게 걸린다. 진행률이 없으면
+        # 도는지 멈췄는지 알 수 없다(`ps` 의 CPU 시간을 봐야 알았다).
+        total = len(groups)
+        for i, (tid, group) in enumerate(groups, 1):
             got, why = instruments_of(group, audio_dir=audio_dir, demix_root=demix_root,
                                       mix_rel=a.mix_rel, cache=ins_cache)
             if got:
                 for names in got:
                     wanted.update(names)
+            if i % 100 == 0 or i == total:
+                log(f"  악기 계산 [{i}/{total}] · 코드 {len(wanted)}종")
         added = add_instrument_codes(wanted, dry_run=a.dry_run)
         log(f"악기 코드 {len(wanted)}종 확인 · 새로 넣음 {len(added)}개"
             + (f" (--dry-run 이라 안 보냄)" if a.dry_run else ""))
 
-    for tid, group in groups:
+    for n, (tid, group) in enumerate(groups, 1):
         tid = str(tid)
         music_id = tmap.get(tid)
         if music_id is None:
@@ -361,22 +377,27 @@ def main() -> int:
             continue
         if a.dry_run:
             sent += 1
-            continue
-        try:
-            got = put_sections(base, token, music_id, sections, a.version)
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode(errors="replace")[:300]
-            log(f"적재 실패 {tid} (music_id={music_id}) {e.code}: {detail}")
-            failed.append(tid)
-            continue
-        sent += 1
-        for row in got:
-            pairs.append({
-                "source_track_id": tid,
-                "music_id": int(music_id),
-                "source_section_uid": str(row["external_id"]),
-                "music_section_id": int(row["music_section_analysis_id"]),
-            })
+        else:
+            try:
+                got = put_sections(base, token, music_id, sections, a.version)
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode(errors="replace")[:300]
+                log(f"적재 실패 {tid} (music_id={music_id}) {e.code}: {detail}")
+                failed.append(tid)
+                continue
+            sent += 1
+            for row in got:
+                pairs.append({
+                    "source_track_id": tid,
+                    "music_id": int(music_id),
+                    "source_section_uid": str(row["external_id"]),
+                    "music_section_id": int(row["music_section_analysis_id"]),
+                })
+        # 진행률. 악기 계산이 곡당 수 초라 1,060곡이면 몇 시간이다 — 로그가 없으면
+        # 도는지 멈췄는지 알 수 없다. 50곡마다 한 줄.
+        if n % 50 == 0 or n == len(groups):
+            log(f"  [{n}/{len(groups)}] 적재 {sent} · 구간 {len(pairs)} "
+                f"· 악기 {ins_hits} · 실패 {len(failed)}")
 
     with_mood = sum(1 for t, _ in groups if mood_of.get(str(t)))
     log(f"곡 {len(groups)}개 중 {sent}개 적재 · 구간 {len(pairs)}개 "
