@@ -27,4 +27,12 @@ public interface MusicCommentRepository extends JpaRepository<MusicComment, Inte
 
     Optional<MusicComment> findByMusicCommentIdAndIsDeletedFalse(Integer musicCommentId);
 
+    /**
+     * <b>삭제된 댓글도</b> 찾는다. 살아 있는지 아닌지는 부르는 쪽이 판단한다.
+     *
+     * <p>"없다"(404)와 "지워졌다"(410)를 나누려면 행 자체가 있는지 먼저 봐야 한다.
+     * 위 `…AndIsDeletedFalse` 는 삭제된 댓글을 걸러서 둘 다 {@code empty} 다.
+     */
+    Optional<MusicComment> findByMusicCommentId(Integer musicCommentId);
+
 }

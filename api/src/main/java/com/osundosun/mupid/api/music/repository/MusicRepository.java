@@ -211,6 +211,17 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         """)
     Optional<Music> findDetail(@Param("musicId") int musicId);
 
+    Optional<Music> findByMusicIdAndIsDeletedFalse(int musicId);
+
+    /**
+     * <b>삭제된 곡도</b> 찾는다. 살아 있는지 아닌지는 부르는 쪽이 판단한다.
+     *
+     * <p>"없다"(404)와 "지워졌다"(410)를 나누려면 행 자체가 있는지 먼저 봐야 한다.
+     * {@code findDetail}·{@code existsByMusicIdAndIsDeletedFalse} 는 삭제된 행을
+     * 걸러서 둘 다 {@code empty}/{@code false} 가 되므로 구분되지 않는다.
+     */
+    Optional<Music> findByMusicId(int musicId);
+
     List<Music> findByMusicIdInAndIsDeletedFalse(List<Integer> musicIds);
 
     /** 목록 표현에 필요한 연관까지 한 번에 끌어온다. 순서는 호출 쪽이 다시 잡는다. */

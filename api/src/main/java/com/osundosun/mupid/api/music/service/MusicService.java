@@ -19,6 +19,17 @@ public interface MusicService {
     Optional<Music> getMusic(int musicId);
 
     /**
+     * 곡을 찾되 <b>왜 없는지</b>까지 가른다. 없으면 `MUSIC_NOT_FOUND`(404),
+     * 삭제됐으면 `MUSIC_GONE`(410).
+     *
+     * <p>곡을 참조하는 쓰기·조회 경로가 전부 이걸 쓴다. `getMusic` 은 둘 다
+     * `Optional.empty()` 라 구분할 수 없어서, 그대로 쓰면 삭제된 곡이 "없는 곡" 으로
+     * 보고된다. 한 곳(`MusicServiceImpl.requireAlive`)에 판정을 모아 두는 이유는
+     * 서비스마다 베끼면 한쪽만 고쳐졌을 때 조용히 갈리기 때문이다.
+     */
+    Music requireAlive(int musicId);
+
+    /**
      * 곡 목록. 검색어가 비면 전체다.
      * 화면이 어떤 곡을 재생할지 고르는 유일한 경로다.
      *

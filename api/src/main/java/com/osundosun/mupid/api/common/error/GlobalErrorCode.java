@@ -17,7 +17,19 @@ public enum GlobalErrorCode implements ErrorCode {
     /**
      * 요청 데이터 파싱에 실패했습니다.
      */
-    NOT_READABLE_MESSAGE(HttpStatus.NOT_FOUND, "요청 데이터 파싱에 실패했습니다."),
+    /**
+     * 요청 본문을 읽을 수 없습니다. **400** 이다.
+     *
+     * <p><b>404 였다 (2026-09-18 정정).</b> 잘못된 JSON 을 보내면 "요청 데이터
+     * 파싱에 실패했습니다" 가 404 로 나갔다 — 보낸 쪽은 그 주소가 없다고 읽고
+     * 경로를 고치려 든다. 실은 본문이 잘못된 것이라 400 이 맞다.
+     *
+     * <p>이 오류만 404 인 이유는 코드·주석·커밋 어디에도 없었다. [decision/0003]
+     * (../decision/0003-error-code-enum-owns-http-status.md) 이 "enum 에 잘못 박힌
+     * 상태가 조용히 계약이 된다" 며 이 항목을 예로 들었고, Bruno 문서에도 404 로
+     * 기록돼 있었다 — 그 문서도 함께 고쳤다.
+     */
+    NOT_READABLE_MESSAGE(HttpStatus.BAD_REQUEST, "요청 데이터 파싱에 실패했습니다."),
 
     /**
      * 데이터가 잘못 입력되었습니다.

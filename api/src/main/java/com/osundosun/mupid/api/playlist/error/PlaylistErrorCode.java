@@ -49,7 +49,20 @@ public enum PlaylistErrorCode implements ErrorCode {
      * 빼기는 멱등이 아니다 — 화면이 이미 사라진 곡을 또 빼려 하면 그건 화면과
      * 서버가 어긋났다는 뜻이라 조용히 성공시키지 않는다.
      */
-    PLAYLIST_TRACK_NOT_FOUND(HttpStatus.NOT_FOUND, "플레이리스트에 담겨 있지 않은 곡입니다.");
+    PLAYLIST_TRACK_NOT_FOUND(HttpStatus.NOT_FOUND, "플레이리스트에 담겨 있지 않은 곡입니다."),
+
+    /**
+     * 요청한 플레이리스트가 <b>삭제</b>되었습니다. <b>410</b> 이다.
+     *
+     * <p>삭제는 `deleted_at` 을 세우는 소프트 삭제다(`deletePlaylist`). 조회가
+     * `DeletedAtIsNull` 로 거르므로 둘 다 `Optional.empty()` 가 되어 그대로는
+     * 구분되지 않는다 — `DeletedAtIsNotNull` 로 한 번 더 본다.
+     *
+     * <p><b>`PLAYLIST_ACCESS_DENIED`(403) 와는 다른 뜻이다.</b> 남의 플레이리스트는
+     * 403 이고, 삭제된 것은 410 이다. 403 을 410 으로 바꾸면 "없는 남의 목록" 을
+     * 캐내는 통로가 된다.
+     */
+    PLAYLIST_GONE(HttpStatus.GONE, "요청한 플레이리스트는 삭제되었습니다.");
 
     private final HttpStatus status;
     private final String message;

@@ -59,8 +59,10 @@ public class StreamServiceImpl implements StreamService {
     public Stream getStream(int streamId) {
         Stream stream = streamRepository.findById(streamId)
             .orElseThrow(() -> new BusinessException(StreamErrorCode.STREAM_NOT_FOUND));
+        // 부모 곡이 삭제됐으면 스트림도 Gone 이다. "그런 스트림이 없다" 와
+        // "딸린 곡이 지워졌다" 는 보낸 쪽이 할 일이 다르다.
         if (stream.getMusic().getIsDeleted()) {
-            throw new BusinessException(StreamErrorCode.STREAM_NOT_FOUND);
+            throw new BusinessException(MusicErrorCode.MUSIC_GONE);
         }
         return stream;
     }
@@ -68,9 +70,8 @@ public class StreamServiceImpl implements StreamService {
     @Override
     @Transactional(readOnly = true)
     public List<Stream> getStreamByMusicId(int musicId) {
-        if (!musicService.isExists(musicId)) {
-            throw new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND);
-        }
+        // 곡이 없으면 404, 삭제됐으면 410 이다. `isExists` 는 false 하나로만 답한다.
+        musicService.requireAlive(musicId);
         return streamRepository.findAllByMusicId(musicId)
                 .stream()
                 .filter(it -> it.getStatus().equals(StreamStatus.DONE))

@@ -29,7 +29,19 @@ public enum UserErrorCode implements ErrorCode {
     /**
      * 요청한 유저를 찾을 수 없습니다.
      */
-    USER_NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 유저를 찾을 수 없습니다.");
+    USER_NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 유저를 찾을 수 없습니다."),
+
+    /**
+     * 요청한 유저가 <b>탈퇴</b>했습니다. <b>410</b> 이다.
+     *
+     * <p>탈퇴는 행을 지우지 않고 `status` 를 `WITHDRAW` 로 옮긴다
+     * (`deleteUser`, [decision/0013](../../knowledge/decision/0013-soft-delete-policy.md)).
+     * 그래서 "그런 회원이 없다" 와 "탈퇴했다" 를 나눌 수 있다.
+     *
+     * <p>보낸 쪽이 할 일이 다르다 — 앞은 번호를 고쳐야 하고, 뒤는 그 계정을
+     * 포기해야 한다. 배치·AI 도구가 탈퇴 회원 번호를 들고 있으면 여기서 멈춘다.
+     */
+    USER_GONE(HttpStatus.GONE, "요청한 유저는 탈퇴했습니다.");
 
     private final HttpStatus status;
     private final String message;

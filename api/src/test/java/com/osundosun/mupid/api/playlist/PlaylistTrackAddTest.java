@@ -146,7 +146,7 @@ class PlaylistTrackAddTest {
     }
 
     @Test
-    @DisplayName("삭제된 플레이리스트는 없는 것으로 본다")
+    @DisplayName("삭제된 플레이리스트는 410 이다 — 없는 것(404)과 구분한다")
     void rejectsDeletedPlaylist() {
         playlist.setDeletedAt(LocalDateTime.now());
         em.flush();
@@ -154,7 +154,8 @@ class PlaylistTrackAddTest {
         BusinessException e = assertThrows(BusinessException.class,
             () -> addTrack(owner, playlist, music));
 
-        assertEquals(PlaylistErrorCode.PLAYLIST_NOT_FOUND, e.getErrorCode());
+        /* 2026-09-18 변경: `deleted_at` 이 찍힌 행은 남아 있으므로 Gone 이다. */
+        assertEquals(PlaylistErrorCode.PLAYLIST_GONE, e.getErrorCode());
     }
 
     @Test

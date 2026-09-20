@@ -186,16 +186,28 @@ public class PlaylistServiceImpl implements PlaylistService {
     }
 
     /**
-     * 내 플레이리스트를 꺼낸다. 없거나 이미 지웠으면 404, 남의 것이거나 소유자가
-     * 없는 시스템/추천 플레이리스트면 403 이다.
+     * <b>내</b> 플레이리스트를 꺼낸다. 남의 것이거나 소유자가 없는 시스템/추천
+     * 플레이리스트면 403(`PLAYLIST_ACCESS_DENIED`)이다.
+     *
+     * <p><b>없으면 404, 삭제됐으면 410 이다.</b> 삭제는 `deleted_at` 을 세우는 소프트
+     * 삭제라 행이 남지만, 조회(`…AndDeletedAtIsNull`)가 걸러서 그대로는 둘 다 비어
+     * 있다. 403 을 410 으로 바꾸지 않는 이유: 그러면 "존재하는 남의 목록" 을 캐내는
+     * 통로가 된다. 소유자 판정은 살아 있는 목록에만 한다.
      */
     private Playlist getMyPlaylist(int userId, int playlistId) {
         User user = userService.getUser(userId)
             .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
 
         Playlist playlist = repository.findByPlaylistIdAndDeletedAtIsNull(playlistId)
-            .orElseThrow(() -> new BusinessException(PlaylistErrorCode.PLAYLIST_NOT_FOUND));
+            .orElseGet(() -> {
+                // 살아 있는 목록이 없다. 삭제된 것인지 아예 없는 것인지 가른다.
+                if (repository.findByPlaylistId(playlistId).isPresent()) {
+                    throw new BusinessException(PlaylistErrorCode.PLAYLIST_GONE);
+                }
+                throw new BusinessException(PlaylistErrorCode.PLAYLIST_NOT_FOUND);
+            });
 
+        // 남의 목록은 **403** 이다 — 410 으로 바꾸면 존재 여부가 새어 나간다.
         if (playlist.getUser() == null || !playlist.getUser().getUserId().equals(user.getUserId())) {
             throw new BusinessException(PlaylistErrorCode.PLAYLIST_ACCESS_DENIED);
         }

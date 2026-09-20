@@ -48,8 +48,7 @@ public class MusicSectionServiceImpl implements MusicSectionService {
 
     @Override
     public MusicSectionBulkResponse replaceSections(int musicId, MusicSectionBulkRequest request) {
-        Music music = musicService.getMusic(musicId)
-            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+        Music music = musicService.requireAlive(musicId);
 
         // 검증 애너테이션이 먼저 걸러 주지만, 서비스를 직접 부르는 길(시험·배치
         // 코드)에서도 상한이 지켜져야 한다 (`LyricServiceImpl` 과 같은 이유).
