@@ -64,6 +64,16 @@ public enum CacheKind {
 
     /** 오늘의 모먼트 생성 배치 선점. 스케줄러는 인스턴스마다 돈다. */
     DailyRecommendationBatch("recommendation:daily:batch"),
+
+    /**
+     * 재생수 집계 배치 선점. 스케줄러는 인스턴스마다 돈다.
+     *
+     * <p>이 배치가 {@code music.play_count} 를 채우고, 그 값이 목록 조회의 <b>기본 정렬</b>
+     * (조회순)이 된다. 즉 선점이 뚫려 여러 인스턴스가 동시에 돌면 같은 곡의 값을 서로
+     * 다른 시점의 집계로 덮어써 <b>화면 순서가 흔들린다</b> — 다른 배치들과 달리
+     * 중복 실행의 결과가 "더 오래 걸린다" 로 끝나지 않는다.
+     */
+    PlayCountBatch("music:playcount:batch"),
     /**
      * 사용자별 재생 큐. `queue:user:{userId}` 한 자리에 큐 한 벌이 통째로 들어간다.
      *

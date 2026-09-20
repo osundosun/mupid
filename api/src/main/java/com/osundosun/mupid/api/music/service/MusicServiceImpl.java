@@ -8,6 +8,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.osundosun.mupid.api.common.exception.BusinessException;
@@ -18,7 +19,6 @@ import com.osundosun.mupid.api.music.dto.MusicSectionSummary;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicAnalysis;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
-import com.osundosun.mupid.api.music.enumerate.MusicSort;
 import com.osundosun.mupid.api.music.enumerate.VocalFilter;
 import com.osundosun.mupid.api.music.error.AlbumErrorCode;
 import com.osundosun.mupid.api.music.error.ArtistErrorCode;
@@ -26,7 +26,6 @@ import com.osundosun.mupid.api.music.error.MusicErrorCode;
 import com.osundosun.mupid.api.music.request.MusicSortRequest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 
 import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.mapping.repository.MusicGenreRepository;
@@ -178,7 +177,7 @@ public class MusicServiceImpl implements MusicService {
             vocal.filtered(), vocal.wantFemale(), vocal.wantMale(), vocal.wantMixed(),
             vocal.wantInstrumental(), !moods.isEmpty(), queryNames(moods),
             !genres.isEmpty(), queryNames(genres),
-            PageRequest.of(safePage, safeSize, pageableSortOf(sort)));
+            PageRequest.of(safePage, safeSize, sort.toSort()));
 
         List<MusicSummary> items = assembler.assemble(found.getContent());
         return new MusicPageResponse(
@@ -190,17 +189,14 @@ public class MusicServiceImpl implements MusicService {
     }
 
     /**
-     * 정렬 절을 만든다. <b>파라미터가 없었으면 붙이지 않는다.</b>
+     * 정렬 절을 만든다. {@link MusicSortRequest} 가 이미 답을 들고 있다.
      *
-     * <p>이 한 줄이 하위 호환의 전부다. {@code sort} 를 보내지 않은 호출은 지금까지와
-     * 같은 쿼리(정렬 절 없음 → {@code music_id} 오름차순)를 타야 한다. 기본값을
-     * 명시적으로 붙이면 결과는 같겠지만 "예전과 완전히 같다" 는 보장이 쿼리 수준에서
-     * 사라진다 — 나중에 기본값을 바꾸는 순간 옛 클라이언트의 순서가 함께 움직인다.
+     * <p>예전에는 여기서 "요청됐으면 정렬, 아니면 {@code Sort.unsorted()}" 를 판단했다.
+     * 그 판단이 {@code MusicSortRequest#toSort()} 로 옮겨졌고, 이유는 <b>판단 근거가
+     * 두 곳으로 갈리지 않게</b> 하기 위해서다 — 기본 정렬이 '조회순' 으로 바뀌면서
+     * "파라미터 없음" 이 정렬을 걸 수도, 안 걸 수도 있게 됐다(각각 {@code ABSENT} 와
+     * 빈 값). 그 구분을 아는 곳은 {@link MusicSortRequest} 하나뿐이다.
      */
-    private static Sort pageableSortOf(MusicSortRequest sort) {
-        return sort.isRequested() ? sort.sort().toSort() : Sort.unsorted();
-    }
-
     private MusicPageResponse searchIndexed(
         String keyword,
         VocalFilterQuery vocal,
@@ -384,6 +380,19 @@ public class MusicServiceImpl implements MusicService {
     public void deleteMusic(int musicId) {
         Music music = requireAlive(musicId);
         music.setIsDeleted(true);
+    }
+
+    /**
+     * 한 곡의 누적 재생수를 ClickHouse 집계값으로 덮어쓴다. {@code PlayCountBatch} 전용이다.
+     *
+     * <p>계약(트랜잭션 경계를 왜 여기 두는지, 반환값의 뜻)은
+     * {@link MusicService#updatePlayCount(int, long)} 에 있다.
+     */
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean updatePlayCount(int musicId, long plays) {
+        int safe = (int)Math.min(Math.max(0L, plays), Integer.MAX_VALUE);
+        return repository.updatePlayCount(musicId, safe) > 0;
     }
 
 }
