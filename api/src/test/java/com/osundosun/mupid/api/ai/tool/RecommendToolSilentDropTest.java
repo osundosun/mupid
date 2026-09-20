@@ -25,6 +25,7 @@ import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.enumerate.SectionLabel;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.service.MusicSectionService;
+import com.osundosun.mupid.api.recommendation.service.RecommendationReasonCache;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -77,7 +78,8 @@ class RecommendToolSilentDropTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(catalog);
 
         AiRecommendToolImpl tool =
-            new AiRecommendToolImpl(recommender, musicRepository, sectionService, null);
+            new AiRecommendToolImpl(recommender, musicRepository, sectionService, null,
+                mock(RecommendationReasonCache.class));
         // 현재 곡이 없으면 조건 없는 next 경로다. userId 는 온보딩 조회에만 쓰이는데
         // 온보딩 서비스가 null 이므로 추천 요청 자체는 대역으로 바로 간다.
         return tool.recommend(15, null,

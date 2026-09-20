@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import com.osundosun.mupid.api.ai.client.AiJson;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
+import com.osundosun.mupid.api.recommendation.service.RecommendationReasonCache;
 
 /**
  * {@code userId} 가 null 인 추천 요청이 **NPE 로 죽지 않는지** 본다.
@@ -43,7 +44,8 @@ class AiRecommendToolNullUserTest {
 
     /** 조건이 없으면 {@code next} 경로다. 지금 곡도 없으면 협력자를 하나도 건드리지 않는다. */
     private AiRecommendToolImpl tool(RecommenderClient recommender) {
-        return new AiRecommendToolImpl(recommender, null, null, null);
+        return new AiRecommendToolImpl(recommender, null, null, null,
+            mock(RecommendationReasonCache.class));
     }
 
     private AiRecommendTool.Arguments arguments(Map<String, Object> filters) {

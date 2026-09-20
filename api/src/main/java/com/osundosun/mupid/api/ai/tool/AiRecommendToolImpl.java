@@ -17,6 +17,7 @@ import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.service.MusicSectionService;
+import com.osundosun.mupid.api.recommendation.service.RecommendationReasonCache;
 import com.osundosun.mupid.api.onboarding.dto.CodeOption;
 import com.osundosun.mupid.api.onboarding.response.OnboardingResultResponse;
 import com.osundosun.mupid.api.onboarding.service.OnboardingService;
@@ -63,6 +64,7 @@ public class AiRecommendToolImpl implements AiRecommendTool {
     private final MusicRepository musicRepository;
     private final MusicSectionService musicSectionService;
     private final OnboardingService onboardingService;
+    private final RecommendationReasonCache reasonCache;
 
     @Override
     public OpenAiTool declaration() {
@@ -211,7 +213,13 @@ public class AiRecommendToolImpl implements AiRecommendTool {
             log.info("조건에 맞는 곡이 없다 user_id={} 조건={}", userId, filters);
             return Result.empty();
         }
-        return new Result(recommendationId, withMusicDetails(items));
+        List<AiRecommendedTrack> tracks = withMusicDetails(items);
+        // 사유 문장이 나가는 유일한 자리다. 재생 이벤트에는 실리지 않으므로 화면이
+        // 되돌려줄 때까지 적어 둔다 ({@link RecommendationReasonCache}).
+        for (AiRecommendedTrack track : tracks) {
+            reasonCache.remember(recommendationId, track.musicId(), track.reason());
+        }
+        return new Result(recommendationId, tracks);
     }
 
     /**

@@ -18,7 +18,7 @@
 | [windows-gitbash.md](windows-gitbash.md) | 7 | 경로 자동 변환, 포트 점유, `NODE_ENV` 때문에 devDependency 가 빠지는 경우 |
 | [cicd-and-ops.md](cicd-and-ops.md) | 21 | GitLab CI, 배포·롤백, 백업, 러너 |
 | [git-and-convention.md](git-and-convention.md) | 11 | husky 훅, linked worktree 훅 사망, 브랜치·커밋 규약 위반, 라벨 없이 만든 MR |
-| [frontend.md](frontend.md) | 29 | vinext·RSC 빌드와 자산 파이프라인, 재생기(이어듣기·seek·볼륨), 세션·로그인 상태, 큐 저장 유실, 끌어서 순서 바꾸기, 개발 서버 캐시, 앱에서만 깨지는 서버 이미지 |
+| [frontend.md](frontend.md) | 30 | vinext·RSC 빌드와 자산 파이프라인, 재생기(이어듣기·seek·볼륨), 세션·로그인 상태, 큐 저장 유실, 끌어서 순서 바꾸기, 개발 서버 캐시, 앱에서만 깨지는 서버 이미지, 추천 사유가 기록에 안 남는 이유 |
 | [doc-drift.md](doc-drift.md) | 12 | **문서가 코드와 어긋난 곳.** 문서를 계약으로 믿기 전에 본다 |
 
 ## 추가하는 법

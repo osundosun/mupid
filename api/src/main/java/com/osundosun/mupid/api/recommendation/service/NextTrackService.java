@@ -26,6 +26,7 @@ import com.osundosun.mupid.api.onboarding.service.OnboardingService;
 import com.osundosun.mupid.api.recommendation.request.NextTrackRequest;
 import com.osundosun.mupid.api.recommendation.response.NextTrackResponse;
 import com.osundosun.mupid.api.recommendation.response.NextTrack;
+import com.osundosun.mupid.api.recommendation.service.RecommendationReasonCache;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,10 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>행동 이력은 추천 서버가 ClickHouse 에서 직접 읽는다. 우리가 넘기는 것은 누구인지
  * (`userId`)와 지금 듣던 곡뿐이다.
+ *
+ * <p><b>사유 문장은 여기서 만들어지고, 여기서만 볼 수 있다.</b> 화면은 재생을 시작할 때
+ * 사유를 이벤트에 싣지 않고 진입 경로와 상관 키(`rec_id`)만 되돌려주므로, 사유를 남기려면
+ * 응답을 내보내는 이 자리에서 적어 둬야 한다 ({@link RecommendationReasonCache}).
  */
 @Slf4j
 @Service
@@ -66,6 +71,7 @@ public class NextTrackService {
     private final MusicSectionService musicSectionService;
     private final MusicSummaryAssembler assembler;
     private final OnboardingService onboardingService;
+    private final RecommendationReasonCache reasonCache;
 
     public NextTrackResponse next(int userId, NextTrackRequest request) {
         int limit = request.limit() == null
@@ -92,6 +98,11 @@ public class NextTrackService {
             currentTrack, currentSection, onboardingOf(userId)));
 
         List<NextTrack> tracks = withMusic(items);
+        // 사유를 화면이 되돌려줄 때까지 들고 있는다. 이 응답에는 사유 문장이 있지만
+        // 재생 이벤트에는 없으므로, 여기서 적어 두지 않으면 재생 기록에 남길 값이 없다.
+        for (NextTrack track : tracks) {
+            reasonCache.remember(recommendationId, track.music().musicId(), track.reason());
+        }
         // 후보가 모자라면 억지로 채우지 않는다. 몇 개 모자란지 적어 둔다.
         return new NextTrackResponse(recommendationId, tracks,
             Math.max(0, limit - tracks.size()));

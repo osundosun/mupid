@@ -35,6 +35,7 @@ import com.osundosun.mupid.api.music.enumerate.SectionLabel;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.service.MusicSectionService;
 import com.osundosun.mupid.api.onboarding.service.OnboardingService;
+import com.osundosun.mupid.api.recommendation.service.RecommendationReasonCache;
 import com.osundosun.mupid.api.user.entity.User;
 import com.sun.net.httpserver.HttpServer;
 
@@ -236,7 +237,8 @@ class ChatRecommendationEndToEndTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(List.of(first, second));
 
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
-            client, musicRepository, sectionService, onboardingService);
+            client, musicRepository, sectionService, onboardingService,
+            mock(RecommendationReasonCache.class));
         return new AiChatServiceImpl(gateway(toolArguments), tool, musicRepository,
             new AiProperties("x", "test-key", "gpt-5-mini",
                 Duration.ofSeconds(2), Duration.ofSeconds(2), 3, 20),

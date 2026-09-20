@@ -32,6 +32,7 @@ import com.osundosun.mupid.api.event.request.EventItemRequest;
 import com.osundosun.mupid.api.event.response.EventCollectResponse;
 import com.osundosun.mupid.api.event.service.EventServiceImpl;
 import com.osundosun.mupid.api.history.service.HistoryService;
+import com.osundosun.mupid.api.recommendation.service.RecommendationReasonCache;
 
 import tools.jackson.databind.json.JsonMapper;
 
@@ -131,7 +132,8 @@ class EventCollectBatchTest {
             Duration.ofSeconds(3)
         );
 
-        service = new EventServiceImpl(props, cache, kafka, history);
+        service = new EventServiceImpl(props, cache, kafka, history,
+            mock(RecommendationReasonCache.class));
     }
 
     private EventItemRequest heartbeat(String eventId, long positionMs) {
