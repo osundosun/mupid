@@ -191,7 +191,7 @@ public class MusicServiceImpl implements MusicService {
                 .stream()
                 .collect(Collectors.groupingBy(
                     it -> it.getMusicSectionAnalysisMoodId().getMusicSectionAnalysisId(),
-                    Collectors.mapping(it -> it.getMoodCodeId().getCodeName(), Collectors.toList())));
+                    Collectors.mapping(it -> it.getMoodCode().getCodeName(), Collectors.toList())));
 
         Map<Integer, List<String>> instruments = sectionIds.isEmpty() ? Map.of()
             : instrumentRepository

@@ -212,6 +212,7 @@ public class AdminResourceRegistry {
                         continue;
                     }
                     AdminAttribute built = buildAttribute(metamodel, names, part, partAttribute, true, true);
+                    rejectNameCollision(javaType, attributes, built.name());
                     attributes.put(built.name(), built);
                     idFieldNames.add(built.name());
                 }
@@ -219,6 +220,7 @@ public class AdminResourceRegistry {
             }
 
             AdminAttribute built = buildAttribute(metamodel, names, field, attribute, isId, false);
+            rejectNameCollision(javaType, attributes, built.name());
             attributes.put(built.name(), built);
             if (isId) {
                 idFieldNames.add(built.name());
@@ -238,6 +240,37 @@ public class AdminResourceRegistry {
             .idFieldNames(List.copyOf(idFieldNames))
             .attributes(Collections.unmodifiableMap(attributes))
             .build();
+    }
+
+    /**
+     * 속성 이름이 겹치면 **기동할 때 터진다.**
+     *
+     * 화면에 나가는 컬럼은 `attributes` 라는 `Map` 인데 키가 **필드 이름**이다. 그래서
+     * 엔티티의 연관 필드 이름이 임베디드 식별자의 구성 요소 이름과 같으면, 나중에 담는
+     * 쪽이 먼저 담은 것을 조용히 덮어쓴다. 덮어써진 쪽의 리플렉션 통로(`member`)가
+     * 사라지는데, 식별자 구성 요소는 URL 의 `{id}` 를 조립하는 `encodeId()` 가 그 통로로
+     * 읽으므로 **그 자원의 조회가 통째로 500** 이 된다.
+     *
+     * 실측이 이랬다 — `MusicSectionAnalysisMood` 의 연관 필드가 `moodCodeId` 였고 복합키
+     * 구성 요소도 `moodCodeId` 라, `관리자 → 구간-분위기` 가
+     * `IllegalArgumentException: Can not get ...Code field ...moodCodeId on ...MoodId`
+     * 로 죽어 있었다 (S15P21A204-387). 목록 조회뿐 아니라 단건·수정·삭제까지 전부다.
+     *
+     * 조용히 잘못 그리는 것보다 **기동할 때 이름을 대고 터지는 편이 낫다.** 같은 부류가
+     * 다시 들어오면 개발자가 알아채지 못한 채 배포되어 500 으로만 드러난다.
+     *
+     * <p>패키지 사설인 것은 테스트가 직접 부를 수 있게 하기 위해서다 — 실제로 터뜨리려면
+     * 이름이 겹치는 엔티티를 새로 만들어야 하는데, 그건 이 검사가 막으려는 바로 그 짓이다.
+     */
+    static void rejectNameCollision(Class<?> javaType, Map<String, AdminAttribute> attributes, String name) {
+        if (attributes.containsKey(name)) {
+            // 괄호가 필요하다 — 없으면 `.formatted` 가 앞 문자열이 아니라 **뒤 문자열에만**
+            // 붙어 `%s` 가 그대로 남는다.
+            throw new IllegalStateException((
+                "%s 의 '%s' 가 두 번 매핑되었습니다(임베디드 식별자 구성 요소와 필드 이름 충돌). "
+                    + "관리자 화면은 필드 이름을 키로 쓰므로 한쪽이 조용히 사라지고 조회가 500 이 됩니다."
+            ).formatted(javaType.getName(), name));
+        }
     }
 
     private AdminAttribute buildAttribute(
