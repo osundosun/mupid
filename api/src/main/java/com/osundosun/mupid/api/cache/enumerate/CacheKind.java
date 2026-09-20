@@ -15,6 +15,19 @@ public enum CacheKind {
     EventId("event:id"),
 
     /**
+     * 추천 묶음 번호 → 그 추천이 화면에 건 사유 문장.
+     *
+     * **재생 이벤트에는 사유가 실리지 않는다.** 진입 경로(`entry_path`)만 실리고, 사유는
+     * 사용자가 곡을 누르기 **전에** 본 추천 응답에만 있다
+     * (`knowledge/domain/listening-events.md` 의 `PLAY_START` 고유 필드). 그래서 응답을
+     * 내보내는 자리에서 여기 적어 두고, 재생이 들어올 때 `rec_id` 로 되짚는다.
+     *
+     * 상관 키가 있어 가능한 일이다 — `NextTrackService` 가 화면에 `recommendation_id` 를
+     * 주고 화면이 `rec_id` 로 되돌려 준다. 그 왕복이 곧 조회 키다.
+     */
+    RecommendationReason("recommendation:reason"),
+
+    /**
      * 관리자 ClickHouse 콘솔의 열람권. 값은 연 사람의 이메일이다.
      *
      * JWT 로 만들지 않는다. iframe 은 로그아웃했다고 알려 주지 않으므로, 서버가

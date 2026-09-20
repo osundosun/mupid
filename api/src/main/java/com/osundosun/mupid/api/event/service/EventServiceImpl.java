@@ -34,6 +34,7 @@ import com.osundosun.mupid.api.event.request.EventCollectRequest;
 import com.osundosun.mupid.api.event.request.EventItemRequest;
 import com.osundosun.mupid.api.event.response.EventCollectResponse;
 import com.osundosun.mupid.api.history.service.HistoryService;
+import com.osundosun.mupid.api.recommendation.service.RecommendationReasonCache;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -89,6 +90,7 @@ public class EventServiceImpl implements EventService {
     private final CacheService cacheService;
     private final KafkaTemplate<String, String> eventKafkaTemplate;
     private final HistoryService historyService;
+    private final RecommendationReasonCache reasonCache;
 
     @Override
     public EventCollectResponse collectEvents(Integer userId, EventCollectRequest dto) {
@@ -175,7 +177,8 @@ public class EventServiceImpl implements EventService {
                 Selector selector = EntryPath.RECOMMEND.name().equals(message.entryPath())
                     ? Selector.AI
                     : Selector.USER;
-                historyService.recordPlay(userId, message.trackId(), selector, item.reason());
+                historyService.recordPlay(
+                    userId, message.trackId(), selector, reasonOf(message));
             } else if (EventType.SEARCH.name().equals(message.eventType())) {
                 historyService.recordSearch(userId, message.searchQuery());
             }
@@ -183,6 +186,24 @@ public class EventServiceImpl implements EventService {
             log.warn("기록 사본 저장 실패 event_id={} event_type={}",
                 message.eventId(), message.eventType(), e);
         }
+    }
+
+    /**
+     * 재생에 실을 추천 사유를 찾는다. **추천 진입이 아니면 찾지 않는다.**
+     *
+     * <p>사유는 재생 이벤트에 실려 오지 않는다. 화면은 진입 경로(`entry_path`)와 상관 키
+     * (`rec_id`)만 되돌려주고, 사유는 추천 응답에만 있다. 그래서 추천을 내보낸 자리에서
+     * 적어 둔 것을 `rec_id` 로 되짚는다 — 키 구성과 배경은
+     * {@link RecommendationReasonCache} 에 있다.
+     *
+     * <p>`rec_id` 가 없으면 추천 묶음 번호가 없으니 되짚을 열쇠도 없다. 조회 자체를 하지
+     * 않는다.
+     */
+    private String reasonOf(ListenEventMessage message) {
+        if (!EntryPath.RECOMMEND.name().equals(message.entryPath())) {
+            return null;
+        }
+        return reasonCache.find(message.recId(), message.trackId());
     }
 
     /**

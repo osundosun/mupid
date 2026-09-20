@@ -1,6 +1,6 @@
 # 프론트엔드
 
-29건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+30건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -225,3 +225,15 @@
 - **해결**: 타일 아트를 `TileArt` 로 떼어 내고 `toImageSource()` 를 거치게 한다. 주소가 없거나 못 읽으면 목록 커버와 같은 규칙으로 `resolveAlbumCover()` 가 기본 커버로 내린다. 웹에서도 화면과 API 의 출처가 갈리는 배포를 위해 `toImageSource()` 가 `/api/` 경로에 `VITE_MUPID_API_BASE` 를 붙인다 — `fetch` 는 `ApiClient` 가 붙여 주지만 `<img src>` 는 아무도 붙여 주지 않는다. 주소를 읽는 자리는 `lib/api/base-url.ts` 하나로 모았다(`session.ts` 에 두면 `platform → api/session → platform` 순환이 된다).
 - **되풀이를 막는 규칙**: **서버가 준 이미지 주소는 `<img src>` 에 걸기 전에 반드시 `toImageSource()` 를 지난다.** 한 자리만 빠뜨려도 그 자리만 앱에서 조용히 깨진다. 같은 사고가 MuBTI 캐릭터에서 한 번 있었고(`ReportMubtiArt`), 이번이 두 번째다. `frontend/tests/report-treemap-art.test.mjs` 가 트리맵이 다시 날것 경로로 돌아가지 못하게 막는다.
 - **근거**: `frontend/components/mupid/daily-album-treemap.tsx`, `frontend/lib/platform/image.ts`, `frontend/lib/api/base-url.ts`, `frontend/docs/app-shell.md`
+
+### 추천으로 튼 곡인데 play_histories.recommendation_reason 이 늘 NULL 이다
+
+- **증상**: `selector = 'AI'` 인 재생 기록이 쌓이는데 `recommendation_reason` 만 전부 비어 있다. 실측(2026-09-20 개발 스택) — `AI` 38행 / 38행 NULL, `USER` 5행 / 5행 NULL.
+- **원인**: **저장 로직은 처음부터 있었다.** `HistoryServiceImpl.recordPlay` 가 사유를 받아 `:71` 에서 컬럼에 넣고 있었고, 유일한 호출부(`EventServiceImpl:178`)도 사유를 넘기고 있었다. 비는 진짜 이유는 **넘길 값이 없기 때문**이다 — 청취 이벤트에 사유가 실리지 않는다. `PLAY_START` 의 고유 필드는 `position_ms` · `rec_id` · `rec_type` · `rec_rank` 뿐이고, `reason` 은 `PLAY_ERROR`(`MEDIA_ERR_NETWORK` 같은 코드 이름) 전용 칸이다(`domain/listening-events.md`). 그래서 `item.reason()` 이 **PLAY_START 에서는 구조적으로 항상 null** 이다. ClickHouse 실측이 이를 확정한다 — `PLAY_START` 607행 중 `reason` 비어있지 않은 것 0행, `rec_id` 비어있지 않은 것 0행. `reason` 이 채워진 이벤트는 `PLAY_ERROR`(11행) 하나뿐이었다.
+- **해결**: 사유를 이벤트에 **싣지 않는 대신**, 화면이 이미 되돌려주는 상관 키 `rec_id`(+`track_id`)로 되짚는다. 사유 문장이 만들어져 나가는 자리 — `NextTrackService.next`(`withMusic` 직후)와 `AiRecommendToolImpl.recommend`(`withMusicDetails` 직후) — 에서 `RecommendationReasonCache.remember(recId, musicId, reason)` 로 적어 두고, `EventServiceImpl.reasonOf` 가 `entry_path = RECOMMEND` 일 때만 `find(recId, trackId)` 로 읽는다. 키는 `recommendation:reason:{rec_id}:{music_id}` — 추천 하나가 같은 곡을 두 줄로 줄 수 있어(순위가 다르면 다른 구간) 곡까지 키에 넣는다.
+- **주의 1**: **"넣는 코드가 없다" 를 먼저 의심하지 않는다.** 이 티켓의 전제가 정확히 그것이었고 틀렸다. 증상이 "컬럼이 NULL" 일 때는 저장 코드를 고치기 전에 **값이 도착하는지**를 실측한다. ClickHouse 원본에서 `countIf(reason != '')` 를 세면 한 줄로 갈린다.
+- **주의 2**: `api/` 만 고쳐서 풀 수 있다. 사유는 `frontend/lib/analytics/tracker.ts` 의 `startPlay` 가 **의도적으로** 보내지 않는 값이라(그 이벤트의 `reason` 은 `PLAY_ERROR` 용), 클라이언트를 고치는 대신 서버가 들고 있는 편이 맞다. 계약을 바꾸지 않는다.
+- **주의 3**: 사유 조회는 **어떤 실패도 올려보내지 않는다.** 부가 정보라 Redis 가 죽었다고 재생 기록 자체를 잃으면 안 된다. 선곡 주체(`selector`)는 진입 경로만으로 정해지므로 사유와 무관하다.
+- **주의 4**: Redis 키에 **TTL 을 반드시 둔다.** `maxmemory-policy` 가 설정돼 있지 않아 가득 차면 키가 밀려나는 것이 아니라 컨테이너가 죽는다(`PlayQueueRepository` 와 같은 지적). 7일로 잡았다 — 수집기가 받아 주는 과거 한도(`event.occurred-at-max-past`, 기본 72시간)보다 넉넉해야 늦게 도착한 재생도 사유를 찾는다.
+- **확인**: `PlayHistoryReasonWriteTest` 가 실제 MySQL 에서 컬럼 값을 읽어 판정한다(추천 재생 → 사유 채워짐 / 직접 고른 재생 → 비어 있음 / 250자 → 100자로 잘림). `PlayHistoryReasonFromEventTest` 가 수집기가 사유를 넘기는지와 Redis 장애 시에도 수집이 계속되는지를 본다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/recommendation/service/RecommendationReasonCache.java`, `RecommendationReasonCacheImpl.java`, `api/src/main/java/com/osundosun/mupid/api/event/service/EventServiceImpl.java`, `api/src/main/java/com/osundosun/mupid/api/ai/tool/AiRecommendToolImpl.java`, `api/src/main/java/com/osundosun/mupid/api/recommendation/service/NextTrackService.java`
