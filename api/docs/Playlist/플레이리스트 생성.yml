@@ -116,7 +116,7 @@ docs: |-
   | 코드 | 상태 | 설명 |
   | --- | --- | --- |
   | `MUPID_INVALID_REQUEST_BODY` | 400 | 제목이 비었거나 100자를 넘음 |
-  | `MUPID_NOT_READABLE_MESSAGE` | 404 | 요청 본문 누락/파싱 실패 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 400 | 요청 본문 누락/파싱 실패 |
   | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
   | `MUPID_USER_NOT_FOUND` | 404 | 토큰의 사용자가 없거나 이미 탈퇴 |
 

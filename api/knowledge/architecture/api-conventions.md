@@ -90,7 +90,33 @@ public interface ErrorCode {
 | enum | 상수 | 응답 `code` | HttpStatus |
 |---|---|---|---|
 | `GlobalErrorCode` | `NOT_FOUND` | `MUPID_NOT_FOUND` | `NOT_FOUND` (404) |
-| `GlobalErrorCode` | `NOT_READABLE_MESSAGE` | `MUPID_NOT_READABLE_MESSAGE` | **`NOT_FOUND` (404)** |
+| `GlobalErrorCode` | `NOT_READABLE_MESSAGE` | `MUPID_NOT_READABLE_MESSAGE` | `BAD_REQUEST` (400) |
+| `MusicErrorCode` | `MUSIC_GONE` | `MUPID_MUSIC_GONE` | `GONE` (410) |
+| `ArtistErrorCode` | `ARTIST_GONE` | `MUPID_ARTIST_GONE` | `GONE` (410) |
+| `AlbumErrorCode` | `ALBUM_GONE` | `MUPID_ALBUM_GONE` | `GONE` (410) |
+| `MusicCommentErrorCode` | `COMMENT_GONE` | `MUPID_COMMENT_GONE` | `GONE` (410) |
+| `PlaylistErrorCode` | `PLAYLIST_GONE` | `MUPID_PLAYLIST_GONE` | `GONE` (410) |
+| `UserErrorCode` | `USER_GONE` | `MUPID_USER_GONE` | `GONE` (410) |
+
+### 404 와 410 을 나눈다 (2026-09-18)
+
+**"그런 자원이 없다" 는 `404`, "있었는데 삭제됐다" 는 `410` 이다.** 이 서비스는
+삭제를 소프트 삭제로 하므로(→ [decision/0013](../decision/0013-soft-delete-policy.md))
+행이 남아 있고, 그래서 둘을 구분할 수 있다. 보낸 쪽이 할 일이 다르기 때문이다 —
+앞은 번호를 고쳐야 하고, 뒤는 그 자원을 포기해야 한다.
+
+- 곡 `is_deleted` · 아티스트 · 앨범 · 댓글 · 플레이리스트 `deleted_at` · 회원 `WITHDRAW`
+- **판정을 한 곳에 모은다.** 곡은 `MusicService.requireAlive(int)` 하나를 곡을
+  참조하는 모든 경로(가사·구간·분류·분석·댓글·반응·큐·스트림)가 쓴다. 서비스마다
+  베끼면 한쪽만 고쳐졌을 때 조용히 갈린다. 아티스트·앨범도 같은 모양이다.
+- **권한 거절은 410 으로 바꾸지 않는다.** `PLAYLIST_ACCESS_DENIED`(403) 을 410 으로
+  옮기면 "존재하는 남의 플레이리스트" 를 캐내는 통로가 된다. 소유자 판정은 살아 있는
+  자원에만 한다.
+- 조회가 `isDeleted = false` 로 걸러 버리면 그대로는 둘 다 `empty` 다. 행 자체를 보는
+  조회(`findByMusicId` 등)를 따로 둔 이유다.
+- **응답에 캐시 지시자를 붙이지 않는다.** `410` 은 보통 영구 캐시 대상인데 이 자원들은
+  되살아날 수 있다(서버 행과 배치 서버 원본이 남아 있다).
+
 | `GlobalErrorCode` | `INVALID_REQUEST_BODY` | `MUPID_INVALID_REQUEST_BODY` | `BAD_REQUEST` (400) |
 | `GlobalErrorCode` | `INTERNAL_SERVER_ERROR` | `MUPID_INTERNAL_SERVER_ERROR` | `INTERNAL_SERVER_ERROR` (500) |
 | `GlobalErrorCode` | `METHOD_NOT_ALLOWED` | `MUPID_METHOD_NOT_ALLOWED` | `METHOD_NOT_ALLOWED` (405) |
@@ -113,7 +139,7 @@ public interface ErrorCode {
 | `StorageImageErrorCode` | `STORAGE_KEY_MISMATCH` | `MUPID_STORAGE_KEY_MISMATCH` | `FORBIDDEN` (403) |
 | `StorageImageErrorCode` | `STORAGE_WRITE_FORBIDDEN` | `MUPID_STORAGE_WRITE_FORBIDDEN` | `FORBIDDEN` (403) |
 
-`NOT_READABLE_MESSAGE` 가 400 이 아니라 404 인 것은 실수처럼 보이지만 이미 문서화된 동작이다 — [함정과 실패 사례](../failure/auth-and-api.md) 참고.
+`NOT_READABLE_MESSAGE` 는 **2026-09-18 에 400 으로 고쳤다.** 그전까지 404 였고 Bruno 문서에도 404 로 적혀 있었다 — 잘못된 JSON 을 보낸 쪽이 "그 주소가 없다" 로 읽어 경로를 고치려 든다. [함정과 실패 사례](../failure/auth-and-api.md) 참고.
 
 메시지 문구는 각 enum 파일에서 확인한다. 여기 옮겨 적으면 곧 어긋난다.
 
@@ -251,7 +277,7 @@ public enum <Domain>ErrorCode implements ErrorCode {
 
 - 401/403 응답만 `error_details` 가 아니라 `errorDetails` 로 나간다 (자체 `ObjectMapper`).
 - `error_details` 의 **키**는 snake_case 로 변환되지 않는다 (Jackson 의 Map 키 동작).
-- `NOT_READABLE_MESSAGE` 가 400 이 아니라 404 로 매핑돼 있다.
+- `NOT_READABLE_MESSAGE` 가 404 로 매핑돼 있었다 (**해소됨 2026-09-18**, 400 으로 정정).
 - permitAll 이 아닌 경로는 존재하지 않아도 404 가 아니라 401 이 먼저 온다.
 - `BusinessException` 이 아닌 예외는 전부 500 이 된다 (`valueOf` 실패, 만료 토큰 파싱 등).
 - 프로필 이미지 413 은 애플리케이션 검사만 있고 multipart 제한 설정이 없다.
