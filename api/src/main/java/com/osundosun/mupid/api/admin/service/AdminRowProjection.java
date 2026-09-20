@@ -147,7 +147,16 @@ final class AdminRowProjection {
         Map<String, Object> thumbnails = new LinkedHashMap<>();
 
         for (Slice slice : slices) {
-            String label = text(tuple.get(slice.labelOffset()));
+            // 대표값 자리가 없으면(-1) 읽지 않는다. `field.representativeField()` 가 null 인
+            // 연관이 그렇다 — 대표 컬럼이 정해지지 않은 자원(`REPRESENTATIVE_FIELDS` 에 없음)
+            // 이거나 대상이 관리 대상이 아닐 때다. **이것은 오류가 아니라 정상 상태다**:
+            // 그때 화면은 번호만 그린다(387 때 합의된 동작).
+            //
+            // 예전에는 이 검사 없이 그대로 `tuple.get(-1)` 을 불렀고, Hibernate 의
+            // `TupleImpl.get` 이 배열을 그대로 인덱싱해
+            // `ArrayIndexOutOfBoundsException: Index -1 out of bounds` 로 **목록 조회 자체가
+            // 500** 이 됐다. 대표 필드가 없는 자원(구간-분위기 등 복합키 자원)이 전부 탔다.
+            String label = text(at(tuple, slice.labelOffset()));
             if (label != null) {
                 labels.put(slice.fieldName(), label);
             }
@@ -274,18 +283,18 @@ final class AdminRowProjection {
             return null;
         }
 
-        Object fileId = tuple.get(slice.thumbFileIdOffset());
+        Object fileId = at(tuple, slice.thumbFileIdOffset());
         if (fileId == null) {
             return null;
         }
-        if (!(tuple.get(slice.thumbTypeOffset()) instanceof FileType type) || type != FileType.IMG) {
+        if (!(at(tuple, slice.thumbTypeOffset()) instanceof FileType type) || type != FileType.IMG) {
             return null;
         }
-        if (Boolean.TRUE.equals(tuple.get(slice.thumbDeletedOffset()))) {
+        if (Boolean.TRUE.equals(at(tuple, slice.thumbDeletedOffset()))) {
             return null;
         }
 
-        FileCategory category = tuple.get(slice.thumbCategoryOffset()) instanceof FileCategory value
+        FileCategory category = at(tuple, slice.thumbCategoryOffset()) instanceof FileCategory value
             ? value
             : null;
 
@@ -293,6 +302,22 @@ final class AdminRowProjection {
             StorageImageService.imageUrl(((Number) fileId).intValue()),
             category == null || !category.getAccessPolicy().isPubliclyReadable()
         );
+    }
+
+    /**
+     * 자리 하나를 읽는다. **자리가 없으면(-1) 읽지 않고 null 을 준다.**
+     *
+     * <p>`-1` 은 {@link Slice} 에서 "이 값은 투영하지 않았다" 는 뜻이고, 화면이 그 필드의
+     * 부가값을 안 그리면 그만인 <b>정상 상태</b>다. 그런데 Hibernate 의 `TupleImpl.get` 은
+     * 자리를 검사하지 않고 배열을 그대로 인덱싱해서, `-1` 을 넘기면
+     * `ArrayIndexOutOfBoundsException: Index -1 out of bounds` 로 **조회 자체가 죽는다**.
+     *
+     * <p>그래서 `tuple.get(...)` 을 직접 부르지 않고 전부 이 문을 지나게 한다. 자리 계산이
+     * 늘어나도 같은 부류가 다시 나지 않는다 — 실제로 `attach()` 가 `labelOffset` 을 이 검사
+     * 없이 읽어 대표 필드가 없는 자원(구간-분위기 등)의 목록 조회가 500 이 났다(380-A 회귀).
+     */
+    private static Object at(Tuple tuple, int offset) {
+        return offset < 0 ? null : tuple.get(offset);
     }
 
     private static String text(Object value) {
