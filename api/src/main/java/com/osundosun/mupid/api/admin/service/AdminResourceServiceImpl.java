@@ -64,6 +64,19 @@ public class AdminResourceServiceImpl implements AdminResourceService {
     private static final String NULL_FILTER = "__null__";
 
     /**
+     * 필터 값이 이 접두사로 시작하면 쉼표로 이은 **목록 중 하나**(`IN`)로 본다 (S15P21A204-380-B).
+     *
+     * <p>타임라인의 구간-분위기 밴드가 이것을 쓴다. 분위기는 구간에 달려 있어서 곡 하나의
+     * 분위기를 고르려면 **그 곡의 구간 번호 여러 개**를 한 번에 걸어야 한다. 구간마다 한 번씩
+     * 부르면 구간 수만큼 질의가 붙어 그대로 N+1 이 된다.
+     *
+     * <p>`__null__` 과 같은 성격의 약속이다 — 값을 타입에 맞춰 바꾸기 전에 해석하므로,
+     * 문자열 컬럼에 이 접두사를 값으로 넣으려 하면 걸린다. 그런 값은 관리자 화면에서 쓰지
+     * 않는다는 판단이 `__null__` 과 같다.
+     */
+    private static final String IN_FILTER = "__in__:";
+
+    /**
      * `count(*)` 에 테이블 이름을 끼워 넣기 전에 확인하는 모양.
      */
     private static final Pattern SAFE_TABLE_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_$]*");
@@ -108,7 +121,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
             meta.isComposite(),
             meta.getIdFieldNames(),
             meta.fields(),
-            meta.getChildLinks()
+            meta.getChildLinks(),
+            meta.getTimelineAxes()
         );
     }
 
@@ -349,6 +363,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
                 Path<?> path = path(root, joins, meta, attribute);
                 if (NULL_FILTER.equals(filter.getValue())) {
                     predicates.add(builder.isNull(path));
+                } else if (filter.getValue() != null && filter.getValue().startsWith(IN_FILTER)) {
+                    predicates.add(inPredicate(builder, path, attribute, filter.getValue()));
                 } else {
                     predicates.add(builder.equal(path, AdminValueCodec.coerce(filter.getValue(), attribute.getValueType())));
                 }
@@ -360,6 +376,34 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         }
 
         return predicates.toArray(Predicate[]::new);
+    }
+
+    /**
+     * `IN` 필터 하나. 값은 `__in__:5,7,9` 처럼 **쉼표로 이은 목록**이다.
+     *
+     * <p>값이 하나도 없으면 **거짓 조건**을 만든다. 빈 `IN ()` 은 SQL 문법 오류라 질의 자체가
+     * 죽고, 조건을 빼면 "아무것도 안 걸린 곡의 전부" 가 나와 화면이 다른 곡의 데이터를 그린다.
+     * 둘 다 거짓말이므로 `disjunction()`(항상 거짓) 이 정직하다.
+     */
+    private Predicate inPredicate(
+        CriteriaBuilder builder,
+        Path<?> path,
+        AdminAttribute attribute,
+        String raw
+    ) {
+        List<Object> values = new ArrayList<>();
+        for (String part : raw.substring(IN_FILTER.length()).split(",")) {
+            if (part.isBlank()) {
+                continue;
+            }
+            values.add(AdminValueCodec.coerce(part, attribute.getValueType()));
+        }
+        if (values.isEmpty()) {
+            return builder.disjunction();
+        }
+        CriteriaBuilder.In<Object> in = builder.in(path);
+        values.forEach(in::value);
+        return in;
     }
 
     /**

@@ -4,6 +4,9 @@ import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 
+import com.osundosun.mupid.api.admin.dto.AdminChildLink;
+import com.osundosun.mupid.api.admin.dto.AdminTimelineAxis;
+
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
@@ -81,6 +84,17 @@ public class AdminResourceMeta {
     @Setter
     @Builder.Default
     private List<AdminChildLink> childLinks = List.of();
+
+    /**
+     * 이 자원의 행을 **시간축 위에 가로로** 그릴 때 쓸 밴드들 ("이 곡의 가사·구간").
+     * 없으면 빈 목록이다 (S15P21A204-380-B).
+     *
+     * <p>{@link #childLinks} 와 같은 방식으로 채워진다 — 기동할 때 빈 목록으로 만들고,
+     * 모든 자원이 준비된 **뒤에** `AdminResourceRegistry` 가 선언을 검증해 채운다.
+     */
+    @Setter
+    @Builder.Default
+    private List<AdminTimelineAxis> timelineAxes = List.of();
 
     public AdminAttribute attribute(String fieldName) {
         return attributes.get(fieldName);

@@ -25,6 +25,8 @@ import com.osundosun.mupid.api.admin.dto.AdminAttribute;
 import com.osundosun.mupid.api.admin.dto.AdminChildLink;
 import com.osundosun.mupid.api.admin.dto.AdminField;
 import com.osundosun.mupid.api.admin.dto.AdminResourceMeta;
+import com.osundosun.mupid.api.admin.dto.AdminTimelineAxis;
+import com.osundosun.mupid.api.admin.dto.AdminTimelineKind;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
 
 import jakarta.persistence.Column;
@@ -110,6 +112,66 @@ public class AdminResourceRegistry {
         // 걸러 여는 링크다.
         "Album", List.of(new ChildDeclaration("음악", "music", "album"))
     );
+
+    /**
+     * **시간축 위에 가로로 늘어놓을 자원.** 곡 하나를 고르면 그 곡의 가사와 구간이 함께
+     * 보이는 화면이 이 표를 읽는다 (S15P21A204-380-B).
+     *
+     * <p>{@link #CHILD_LINKS} 와 같은 성격이다 — 관계를 메타모델에서 유도해 다 그리면 표가
+     * 못 읽게 되므로 **보여 줄 것만** 적는다. 다른 점은 자식 목록을 걸러 여는 대신
+     * **시간 필드를 축으로** 쓴다는 것이다.
+     *
+     * <p>왜 화면에 자원 이름을 박지 않는가. 화면이 `lyric` 이라는 이름과 `timeMs` 컬럼을
+     * 알고 있으면 자원이 하나 늘 때마다 템플릿을 고쳐야 한다. 축을 여기 적으면 화면은
+     * 선언만 보고 점(가사)·막대(구간)를 그린다.
+     *
+     * <p>세 축이 다 필요한 이유: 가사·구간 분석·구간-분위기는 **각각 별도 자원**으로
+     * 등록돼 있고, 구간-분위기는 자기 시간 컬럼이 없어 부모 구간의 시간을 빌린다
+     * (`parentFilter`·`startField` 의 점 표기가 그 관계다).
+     */
+    private static final Map<String, List<TimelineDeclaration>> TIMELINES = Map.of(
+        "Music", List.of(
+            // 가사 한 줄은 한 시점(점)이다. 이름은 `text` 다.
+            new TimelineDeclaration("가사", "lyric", AdminTimelineKind.POINT,
+                null, "timeMs", null, null, List.of("text")),
+            // 구간은 시작~끝 범위다. `index` 와 `sectionLabel` 을 이름에 함께 보여 준다.
+            new TimelineDeclaration("구간 분석", "musicSectionAnalysis", AdminTimelineKind.RANGE,
+                null, null, "startTimeMs", "endTimeMs", List.of("sectionLabel", "index")),
+            // 구간-분위기는 구간에 달린 연결이라 **시간 컬럼이 자기 것에 없다.** 부모 구간의
+            // 시간을 빌려 같은 축 위에 놓는다 — 그래야 "어느 구간의 분위기인가" 가 보인다.
+            new TimelineDeclaration("구간-분위기", "musicSectionAnalysisMood", AdminTimelineKind.RANGE,
+                "musicSectionAnalysis", null, "startTimeMs", "endTimeMs", List.of("moodCode"))
+        )
+    );
+
+    /**
+     * 타임라인 축 하나의 선언. {@link AdminTimelineAxis} 로 나가기 전의 모양이다.
+     *
+     * <p><b>시간 필드는 언제나 "시간을 가진 자원"의 필드다.</b> 밴드가 자기 시간 컬럼을
+     * 갖고 있으면 그대로 읽고, 없으면({@code viaField} 가 있으면) 부모 자원의 것을 빌린다.
+     * 점 표기(`a.b`)를 쓰지 않는 이유는, 필터·정렬이 단일 필드 이름만 받는 기존 목록
+     * 규약과 어긋나기 때문이다 — 대신 관계를 이름 하나로 적고 서비스가 조인으로 푼다.
+     *
+     * @param label       밴드에 보일 이름 ("가사")
+     * @param resource    밴드에 늘어놓을 자식 자원 이름 (`lyric`)
+     * @param kind        점이냐 구간이냐
+     * @param viaField    시간을 빌려올 부모 관계 필드. 자기 시간이 있으면 null
+     * @param timeField   `POINT` 의 시점 필드. 아니면 null
+     * @param startField  `RANGE` 의 시작 필드. 아니면 null
+     * @param endField    `RANGE` 의 끝 필드. 아니면 null
+     * @param titleFields 항목에 보일 한 줄을 만들 필드들. 순서대로 이어 붙인다
+     */
+    private record TimelineDeclaration(
+        String label,
+        String resource,
+        AdminTimelineKind kind,
+        String viaField,
+        String timeField,
+        String startField,
+        String endField,
+        List<String> titleFields
+    ) {
+    }
 
     /**
      * 자식 링크 하나의 선언. {@link AdminChildLink} 로 나가기 전의 모양이다.
@@ -218,6 +280,7 @@ public class AdminResourceRegistry {
         // 선언한 자식 링크가 실제 관계와 맞는지 여기서 본다. 화면이 링크를 그렸는데 필터가
         // 400 으로 떨어지는 것보다, 기동할 때 로그를 남기고 링크를 안 그리는 편이 정직하다.
         validateChildLinks();
+        validateTimelines();
     }
 
     /**
@@ -233,6 +296,20 @@ public class AdminResourceRegistry {
 
     public AdminResourceMeta findByType(Class<?> javaType) {
         return byType.get(javaType);
+    }
+
+    /**
+     * 타임라인 선언에 쓰인 자식 자원 이름들. 서비스가 "무엇을 조회해야 하는가" 를 미리 알기
+     * 위한 것이 아니라, 선언과 실제 응답이 어긋나지 않는지 검사하는 데 쓴다.
+     */
+    public Map<String, List<AdminTimelineAxis>> timelines() {
+        Map<String, List<AdminTimelineAxis>> out = new LinkedHashMap<>();
+        for (AdminResourceMeta meta : byName.values()) {
+            if (!meta.getTimelineAxes().isEmpty()) {
+                out.put(meta.getName(), meta.getTimelineAxes());
+            }
+        }
+        return Collections.unmodifiableMap(out);
     }
 
     // ------------------------------------------------------------------ 만들기
@@ -279,6 +356,125 @@ public class AdminResourceRegistry {
 
             parent.setChildLinks(valid);
         }
+    }
+
+    /**
+     * 타임라인 선언이 실제 메타모델과 맞는지 확인하고, 맞는 것만 골라 둔다.
+     *
+     * <p>{@link #validateChildLinks} 와 같은 판단이다 — 어긋난 선언은 **그것만** 뺀다.
+     * 화면이 축을 그렸는데 조회가 400 으로 떨어지는 것보다, 축이 안 나오고 서버 로그에
+     * 이유가 남는 편이 정직하다.
+     *
+     * <p>세 가지를 본다.
+     *
+     * <ol>
+     *   <li>자식 자원이 실제로 관리 대상인가 (`lyric`·`musicSectionAnalysis`…).</li>
+     *   <li>자식 자원이 **이 부모를 가리키는 연관 필드**를 갖고 있는가 (`Lyric.music`).
+     *       없으면 "이 곡의 가사" 를 고를 방법이 없다.</li>
+     *   <li>시간 필드가 실제로 그 자원(또는 {@code viaField} 가 가리키는 부모)에 있는가.
+     *       없는 컬럼을 정렬에 넘기면 목록 조회가 `UNKNOWN_FIELD` 400 이 된다.</li>
+     * </ol>
+     */
+    private void validateTimelines() {
+        for (Map.Entry<String, List<TimelineDeclaration>> entry : TIMELINES.entrySet()) {
+            AdminResourceMeta parent = byName.get(resourceName(entry.getKey()));
+            if (parent == null) {
+                log.error("관리자 화면: 타임라인의 부모 자원이 없습니다 — {}", entry.getKey());
+                continue;
+            }
+
+            List<AdminTimelineAxis> valid = new ArrayList<>();
+            for (TimelineDeclaration declaration : entry.getValue()) {
+                AdminResourceMeta child = byName.get(declaration.resource());
+                if (child == null) {
+                    log.error("관리자 화면: {} 의 타임라인 밴드 자원이 없습니다 — {}",
+                        entry.getKey(), declaration.resource());
+                    continue;
+                }
+
+                // 시간을 빌려올 부모 자원. 자기 시간이 있으면 자식 자신이다.
+                AdminResourceMeta timeOwner = child;
+                AdminResourceMeta rowOwner = parent;
+                if (declaration.viaField() != null) {
+                    AdminAttribute via = child.attribute(declaration.viaField());
+                    timeOwner = via == null || via.getRelationType() == null
+                        ? null
+                        : byName.get(resourceName(via.getRelationType().getSimpleName()));
+                    if (timeOwner == null) {
+                        log.error("관리자 화면: {} 의 밴드 {} 가 시간을 빌릴 {} 를 찾지 못했습니다",
+                            entry.getKey(), declaration.resource(), declaration.viaField());
+                        continue;
+                    }
+                    // **시간을 빌리는 밴드는 부모(곡)가 아니라 그 중간 자원을 가리킨다.**
+                    // 구간-분위기는 `music` 이 없고 `musicSectionAnalysis` 만 있다 —
+                    // 여기서 곡을 요구하면 그 밴드가 조용히 사라진다(실제로 그렇게 만들었다가
+                    // 이 검증에 걸렸다).
+                    rowOwner = timeOwner;
+                }
+
+                if (!hasTimeFields(timeOwner, declaration)) {
+                    log.error("관리자 화면: {} 의 밴드 {} 에 시간 필드({}·{})가 없습니다",
+                        entry.getKey(), declaration.resource(),
+                        declaration.timeField(), declaration.startField());
+                    continue;
+                }
+
+                // 이 밴드가 자기 행을 고를 수 있어야 한다. 자식이 **가리키는 대상**을 알아야
+                // 필터를 걸 수 있다 — 없으면 밴드가 곡 전체를 훑게 된다.
+                AdminAttribute filterAttribute = childRelationTo(child, rowOwner);
+                if (filterAttribute == null) {
+                    log.error("관리자 화면: {} 의 밴드 {} 가 {} 를 가리키는 연관을 갖고 있지 않습니다",
+                        entry.getKey(), declaration.resource(), rowOwner.getName());
+                    continue;
+                }
+
+                valid.add(AdminTimelineAxis.of(
+                    declaration.label(),
+                    declaration.resource(),
+                    declaration.kind(),
+                    filterAttribute.name(),
+                    declaration.viaField(),
+                    declaration.timeField(),
+                    declaration.startField(),
+                    declaration.endField(),
+                    declaration.titleFields()));
+            }
+
+            parent.setTimelineAxes(valid);
+        }
+    }
+
+    /**
+     * 자식 자원에서 **부모 자원을 가리키는 연관 필드**를 찾는다.
+     *
+     * <p>여럿이면 이름이 부모 자원 이름과 같은 것을 고른다 (`MusicSectionAnalysisMood` 는
+     * `musicSectionAnalysis` 와 `moodCode` 둘 다 연관이라, 이름으로 가려야 한다).
+     */
+    private static AdminAttribute childRelationTo(AdminResourceMeta child, AdminResourceMeta parent) {
+        AdminAttribute fallback = null;
+        for (AdminAttribute candidate : child.getAttributes().values()) {
+            if (!parent.getJavaType().equals(candidate.getRelationType())) {
+                continue;
+            }
+            if (candidate.name().equals(parent.getName())) {
+                return candidate;
+            }
+            if (fallback == null) {
+                fallback = candidate;
+            }
+        }
+        return fallback;
+    }
+
+    /**
+     * 선언한 시간 필드가 그 자원에 실제로 있는가. `POINT` 면 하나, `RANGE` 면 둘 다 본다.
+     */
+    private static boolean hasTimeFields(AdminResourceMeta meta, TimelineDeclaration declaration) {
+        if (declaration.kind() == AdminTimelineKind.POINT) {
+            return declaration.timeField() != null && meta.attribute(declaration.timeField()) != null;
+        }
+        return declaration.startField() != null && meta.attribute(declaration.startField()) != null
+            && declaration.endField() != null && meta.attribute(declaration.endField()) != null;
     }
 
     private AdminResourceMeta build(

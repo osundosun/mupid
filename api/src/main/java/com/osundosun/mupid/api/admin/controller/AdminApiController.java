@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.osundosun.mupid.api.admin.dto.AdminConsoleTicket;
 import com.osundosun.mupid.api.admin.response.AdminClickHouseConsoleResponse;
 import com.osundosun.mupid.api.admin.response.AdminDashboardResponse;
+import com.osundosun.mupid.api.admin.response.AdminMusicTimelineResponse;
 import com.osundosun.mupid.api.admin.response.AdminResourceSummary;
 import com.osundosun.mupid.api.admin.response.AdminRowPageResponse;
 import com.osundosun.mupid.api.admin.response.AdminSchemaResponse;
@@ -29,6 +30,7 @@ import com.osundosun.mupid.api.admin.service.AdminClickHouseConsoleService;
 import com.osundosun.mupid.api.admin.service.AdminClickHouseConsoleServiceImpl;
 import com.osundosun.mupid.api.admin.service.AdminDashboardService;
 import com.osundosun.mupid.api.admin.service.AdminResourceService;
+import com.osundosun.mupid.api.admin.service.AdminTimelineService;
 import com.osundosun.mupid.api.common.annotation.AdminRole;
 import com.osundosun.mupid.api.common.response.BaseResponse;
 
@@ -61,6 +63,7 @@ public class AdminApiController {
     private final AdminResourceService adminResourceService;
     private final AdminDashboardService adminDashboardService;
     private final AdminClickHouseConsoleService consoleService;
+    private final AdminTimelineService adminTimelineService;
 
     @GetMapping("/dashboard")
     public ResponseEntity<BaseResponse<AdminDashboardResponse>> dashboard() {
@@ -153,6 +156,26 @@ public class AdminApiController {
     ) {
         return ResponseEntity.ok(
             BaseResponse.of(adminResourceService.schema(resource))
+        );
+    }
+
+    /**
+     * 곡 하나의 **가사·구간 타임라인** (S15P21A204-380-B).
+     *
+     * <p>왜 자원 목록 조회로는 안 되는가. 요구는 "가사·구간·구간-분위기를 한 화면에서
+     * 함께 보고 가로로 시간순 배치" 인데 셋이 **각각 별도 자원**이라 목록 조회를 세 번
+     * 부르면 화면이 세 번 갈라지고, 가로축의 기준(최대 시간)도 밴드마다 달라진다.
+     *
+     * <p>그래도 조회 자체는 목록 조회를 그대로 쓴다 — 행의 모양(`_id`·`_labels`·
+     * `_thumbnails`)이 같아야 화면이 **같은 편집기**로 수정할 수 있다. 그래서 이
+     * 엔드포인트는 조회 전용이고, 저장은 기존 `PATCH /resource/{resource}/{id}` 다.
+     */
+    @GetMapping("/resource/music/{id}/timeline")
+    public ResponseEntity<BaseResponse<AdminMusicTimelineResponse>> timeline(
+        @PathVariable int id
+    ) {
+        return ResponseEntity.ok(
+            BaseResponse.of(adminTimelineService.timeline(id))
         );
     }
 
