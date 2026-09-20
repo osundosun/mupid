@@ -11,16 +11,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.osundosun.mupid.api.common.exception.BusinessException;
+import com.osundosun.mupid.api.common.error.GlobalErrorCode;
 import com.osundosun.mupid.api.music.entity.Album;
 import com.osundosun.mupid.api.music.entity.Artist;
 import com.osundosun.mupid.api.music.dto.MusicSectionSummary;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicAnalysis;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
+import com.osundosun.mupid.api.music.enumerate.MusicSort;
 import com.osundosun.mupid.api.music.enumerate.VocalFilter;
 import com.osundosun.mupid.api.music.error.AlbumErrorCode;
 import com.osundosun.mupid.api.music.error.ArtistErrorCode;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
+import com.osundosun.mupid.api.music.request.MusicSortRequest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -133,14 +136,41 @@ public class MusicServiceImpl implements MusicService {
         Collection<String> genreCodeNames,
         int page,
         int size) {
+        return searchMusic(
+            keyword, vocalFilters, moodCodeNames, genreCodeNames, null, page, size);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MusicPageResponse searchMusic(
+        String keyword,
+        Collection<VocalFilter> vocalFilters,
+        Collection<String> moodCodeNames,
+        Collection<String> genreCodeNames,
+        MusicSortRequest sortRequest,
+        int page,
+        int size) {
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
         int safePage = Math.max(0, page);
         String trimmed = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
         VocalFilterQuery vocal = VocalFilterQuery.of(vocalFilters);
         List<String> moods = normalizedNames(moodCodeNames);
         List<String> genres = normalizedNames(genreCodeNames);
+        MusicSortRequest sort = MusicSortRequest.orDefault(sortRequest);
 
+        /*
+         * 검색어가 있으면 정렬 기준을 보지 않는다.
+         *
+         * 관련도순은 이 경로의 결과 자체를 만드는 규칙이라, 기준을 갈아끼우면 "무엇을
+         * 찾았는가" 가 "어떻게 줄 세웠는가" 에 밀린다. 더 나쁜 것은 `q` 와 함께 온
+         * `sort` 가 조용히 무시된다는 점인데, 그건 지금 고르지 않기로 한 것이므로
+         * 요청을 되돌려 사용자가 알게 한다(모르는 `vocal` 값을 400 으로 돌리는 것과
+         * 같은 판단).
+         */
         if (trimmed != null) {
+            if (sort.explicitlyRequested()) {
+                throw new BusinessException(GlobalErrorCode.INVALID_REQUEST_BODY);
+            }
             return searchIndexed(trimmed, vocal, moods, genres, safePage, safeSize);
         }
 
@@ -148,7 +178,7 @@ public class MusicServiceImpl implements MusicService {
             vocal.filtered(), vocal.wantFemale(), vocal.wantMale(), vocal.wantMixed(),
             vocal.wantInstrumental(), !moods.isEmpty(), queryNames(moods),
             !genres.isEmpty(), queryNames(genres),
-            PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.ASC, "musicId")));
+            PageRequest.of(safePage, safeSize, pageableSortOf(sort)));
 
         List<MusicSummary> items = assembler.assemble(found.getContent());
         return new MusicPageResponse(
@@ -157,6 +187,18 @@ public class MusicServiceImpl implements MusicService {
             found.getSize(),
             found.getTotalElements(),
             found.getTotalPages());
+    }
+
+    /**
+     * 정렬 절을 만든다. <b>파라미터가 없었으면 붙이지 않는다.</b>
+     *
+     * <p>이 한 줄이 하위 호환의 전부다. {@code sort} 를 보내지 않은 호출은 지금까지와
+     * 같은 쿼리(정렬 절 없음 → {@code music_id} 오름차순)를 타야 한다. 기본값을
+     * 명시적으로 붙이면 결과는 같겠지만 "예전과 완전히 같다" 는 보장이 쿼리 수준에서
+     * 사라진다 — 나중에 기본값을 바꾸는 순간 옛 클라이언트의 순서가 함께 움직인다.
+     */
+    private static Sort pageableSortOf(MusicSortRequest sort) {
+        return sort.isRequested() ? sort.sort().toSort() : Sort.unsorted();
     }
 
     private MusicPageResponse searchIndexed(

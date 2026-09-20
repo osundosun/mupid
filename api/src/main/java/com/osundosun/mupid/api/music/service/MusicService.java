@@ -2,15 +2,17 @@ package com.osundosun.mupid.api.music.service;
 
 import java.util.Optional;
 
+import java.util.Collection;
+import java.util.List;
+
 import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.enumerate.VocalFilter;
+import com.osundosun.mupid.api.music.request.MusicSortRequest;
 import com.osundosun.mupid.api.music.response.MusicAnalysisResponse;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
 import com.osundosun.mupid.api.music.request.MusicAddRequest;
 import com.osundosun.mupid.api.music.request.MusicUpdateRequest;
-
-import java.util.Collection;
 
 public interface MusicService {
 
@@ -43,6 +45,25 @@ public interface MusicService {
         Collection<VocalFilter> vocalFilters,
         Collection<String> moodCodeNames,
         Collection<String> genreCodeNames,
+        int page,
+        int size);
+
+    /**
+     * 위와 같되 <b>정렬 기준을 함께 받는다.</b>
+     *
+     * <p>정렬을 붙이면서 시그니처를 늘리지 않고 고친 이유는, 기존 호출부(테스트 포함)가
+     * "정렬을 모르는 호출" 이라는 사실 자체를 그대로 보존하기 위해서다. 그쪽은
+     * {@code sortRequest} 가 null 로 들어와 {@link MusicSortRequest#ABSENT} 를 타므로
+     * <b>정렬 절이 붙지 않은 현행 쿼리</b>를 그대로 돈다.
+     *
+     * @param sortRequest 정렬 기준. null 이면 '파라미터 없음' 과 같다
+     */
+    MusicPageResponse searchMusic(
+        String keyword,
+        Collection<VocalFilter> vocalFilters,
+        Collection<String> moodCodeNames,
+        Collection<String> genreCodeNames,
+        MusicSortRequest sortRequest,
         int page,
         int size);
 
