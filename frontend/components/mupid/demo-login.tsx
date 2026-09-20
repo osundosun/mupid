@@ -146,7 +146,7 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
                 setVerificationId(result.verification_id);
                 setCode('');
                 setVerified(false);
-                setMessage('메일로 보낸 인증 번호를 입력해 주세요. 15분 안에 입력해야 해요.');
+                setMessage('메일로 보낸 인증 번호를 입력해 주세요. 15분 안에 입력해야 해요. 메일이 안 보이면 스팸 메일함도 확인해 주세요.');
               }
               catch (error) { setMessage(describe(error, '인증 메일을 요청하지 못했어요.')); }
               finally { setBusy(false); }
