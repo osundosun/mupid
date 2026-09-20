@@ -111,6 +111,15 @@ object NowPlayingSession {
     override fun onSeekTo(pos: Long) = emit("seek", pos)
   }
 
+  /**
+   * 화면에 재생 제어를 보낸다. 알림·잠금화면 버튼과 **같은 통로**다.
+   *
+   * 오디오 포커스를 잃어 멈출 때와 되찾아 이어 들을 때(`AudioFocus`) 쓴다. 재생
+   * 제어를 만들어 내보내는 자리가 여기 하나뿐이라, 앱 밖에서 온 정지와 알림 버튼의
+   * 정지가 화면에서는 구분되지 않는다 — 둘 다 같은 자리를 지나 실제로 재생을 멈춘다.
+   */
+  fun control(action: String) = emit(action)
+
   private fun emit(action: String, positionMs: Long = -1) {
     val handler = onControl
     if (handler == null) {
