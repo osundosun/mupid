@@ -22,8 +22,10 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.stereotype.Component;
 
 import com.osundosun.mupid.api.admin.dto.AdminAttribute;
+import com.osundosun.mupid.api.admin.dto.AdminChildLink;
 import com.osundosun.mupid.api.admin.dto.AdminField;
 import com.osundosun.mupid.api.admin.dto.AdminResourceMeta;
+import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.EntityManagerFactory;
@@ -37,6 +39,8 @@ import jakarta.persistence.metamodel.Metamodel;
 import jakarta.persistence.metamodel.SingularAttribute;
 import jakarta.persistence.metamodel.Type;
 
+import lombok.extern.slf4j.Slf4j;
+
 /**
  * 관리자 화면이 다룰 자원 목록을 **JPA 메타모델에서** 만들어 둔다.
  *
@@ -47,6 +51,7 @@ import jakarta.persistence.metamodel.Type;
  * 한글 이름과 분류만 손으로 유지한다 — 그건 코드에서 유도할 수 없다. 표에 없는 엔티티도
  * 동작에는 지장이 없고, 클래스 이름과 "기타" 로 나온다.
  */
+@Slf4j
 @Component
 public class AdminResourceRegistry {
 
@@ -61,6 +66,60 @@ public class AdminResourceRegistry {
     public static final List<String> CATEGORY_ORDER = List.of(
         "회원", "음악", "소셜", "재생", "스트리밍", "추천·분석", "AI", "시스템", "기타"
     );
+
+    /**
+     * FK 를 **대표 컬럼 값과 함께** 보여 주기 위해, 자원마다 "그 개체를 한 마디로 알아볼 값"
+     * 하나를 손으로 정한 표다.
+     *
+     * <p><b>메타모델에서 유도할 수 없어서 표로 둔다.</b> `title`·`name`·`displayName`·`email`
+     * 중 무엇이 그 자원을 알아보게 하는 값인지는 도메인 판단이지 구조가 아니다. "이름이
+     * String 인 첫 컬럼" 같은 규칙으로 유도하면 조용히 틀린다 — `User` 는 `email` 앞에
+     * `password` 가 있지 않지만 `Code` 는 `codeName` 이 `displayName` 보다 먼저고,
+     * `ObjectStorageFile` 은 `originalFileName` 이 맞지만 그건 우연이다. 틀려도 화면은
+     * 멀쩡히 그려지고 값만 엉뚱해지므로, 눈에 보이게 적어 두고 리뷰에서 걸리는 편이 낫다.
+     *
+     * <p>표에 없는 자원은 <b>지금처럼 번호만</b> 보인다. 동작에 지장이 없고, 그 자원의 FK
+     * 자리는 대표값 없이 번호만 남는다([{@link #LABELS}]·[{@link #CATEGORIES}] 와 같은 성격).
+     */
+    private static final Map<String, String> REPRESENTATIVE_FIELDS = Map.ofEntries(
+        Map.entry("User", "email"),
+        Map.entry("Artist", "name"),
+        Map.entry("Album", "title"),
+        Map.entry("Music", "title"),
+        Map.entry("Playlist", "title"),
+        Map.entry("Mubti", "title"),
+        Map.entry("DailyRecommendation", "title"),
+        Map.entry("AiChatSession", "title"),
+        Map.entry("Code", "displayName"),
+        Map.entry("ObjectStorageFile", "originalFileName")
+    );
+
+    /**
+     * 자식 자원으로 건너가는 링크. "이 행에 속한 것들 보기" 다.
+     *
+     * <p>왜 자동으로 붙이지 않는가. 자식 관계는 메타모델에서 유도할 수 있지만
+     * <b>유도한 것을 다 그리면 표가 못 읽게 된다</b> — `user` 를 가리키는 자식이 열 개가
+     * 넘어서 회원 행마다 링크가 열 줄씩 붙는다. 그래서 유도하지 않고 <b>보여 줄 것만</b>
+     * 적는다. 표에 없는 자원은 링크가 안 나올 뿐 화면 동작에는 지장이 없다.
+     *
+     * <p>선언한 관계가 실제로 없으면 기동할 때 로그를 남기고 그 링크만 버린다
+     * ({@link #validateChildLinks}).
+     */
+    private static final Map<String, List<ChildDeclaration>> CHILD_LINKS = Map.of(
+        // 앨범 행에서 "이 앨범의 음악들" 을 볼 수 있게 한다. `music` 자원을 `album` 필드로
+        // 걸러 여는 링크다.
+        "Album", List.of(new ChildDeclaration("음악", "music", "album"))
+    );
+
+    /**
+     * 자식 링크 하나의 선언. {@link AdminChildLink} 로 나가기 전의 모양이다.
+     *
+     * @param label         링크에 쓸 한글 이름
+     * @param childResource 자식 자원 이름 (URL 조각)
+     * @param filterField   자식 자원에서 부모를 가리키는 필드 이름 (필터 파라미터로 나간다)
+     */
+    private record ChildDeclaration(String label, String childResource, String filterField) {
+    }
 
     private static final Map<String, String> LABELS = Map.ofEntries(
         Map.entry("User", "회원"),
@@ -155,6 +214,10 @@ public class AdminResourceRegistry {
 
         this.byName = Collections.unmodifiableMap(ordered);
         this.byType = Collections.unmodifiableMap(types);
+
+        // 선언한 자식 링크가 실제 관계와 맞는지 여기서 본다. 화면이 링크를 그렸는데 필터가
+        // 400 으로 떨어지는 것보다, 기동할 때 로그를 남기고 링크를 안 그리는 편이 정직하다.
+        validateChildLinks();
     }
 
     /**
@@ -173,6 +236,50 @@ public class AdminResourceRegistry {
     }
 
     // ------------------------------------------------------------------ 만들기
+
+    /**
+     * 자식 링크 선언이 실제 메타모델과 맞는지 확인한다.
+     *
+     * <p>맞지 않으면 그 자원의 링크를 통째로 버리지 않고 **어긋난 것만** 뺀다. 관계 이름을
+     * 잘못 적었을 때 화면에는 링크가 사라지고 서버 로그에만 이유가 남는다 — 조용히 400 을
+     * 돌려주는 것보다 낫다.
+     *
+     * <p>표의 키는 **엔티티 이름**(`Album`)이다. 자원 이름(`album`)은 첫 글자를 내린
+     * 것이라 여기서 만들어 찾는다. 이 둘을 헷갈리면 링크가 조용히 안 붙는다 — 실제로
+     * 자원 이름으로 찾았다가 아무 링크도 안 나왔다.
+     */
+    private void validateChildLinks() {
+        for (Map.Entry<String, List<ChildDeclaration>> entry : CHILD_LINKS.entrySet()) {
+            AdminResourceMeta parent = byName.get(resourceName(entry.getKey()));
+            if (parent == null) {
+                log.error("관리자 화면: 자식 링크의 부모 자원이 없습니다 — {}", entry.getKey());
+                continue;
+            }
+
+            List<AdminChildLink> valid = new ArrayList<>();
+            for (ChildDeclaration declaration : entry.getValue()) {
+                AdminResourceMeta child = byName.get(declaration.childResource());
+                if (child == null) {
+                    log.error("관리자 화면: {} 의 자식 링크가 가리키는 자원이 없습니다 — {}",
+                        entry.getKey(), declaration.childResource());
+                    continue;
+                }
+                AdminAttribute filter = child.attribute(declaration.filterField());
+                // 자식 쪽 필터는 부모의 **식별자**와 비교한다. 연관 필드(프록시)면 목록 조회가
+                // LEFT JOIN 으로 대상의 식별자까지 가므로 FK 번호로 거를 수 있다.
+                if (filter == null
+                    || (filter.getRelationType() == null && !filter.getField().id())) {
+                    log.error("관리자 화면: {} 의 자식 링크 필터가 {}.{} 에 없습니다",
+                        entry.getKey(), declaration.childResource(), declaration.filterField());
+                    continue;
+                }
+                valid.add(new AdminChildLink(
+                    declaration.label(), declaration.childResource(), declaration.filterField()));
+            }
+
+            parent.setChildLinks(valid);
+        }
+    }
 
     private AdminResourceMeta build(
         Metamodel metamodel,
@@ -323,7 +430,9 @@ public class AdminResourceRegistry {
             generated,
             SENSITIVE_FIELDS.contains(field.getName()),
             valueType.isEnum() ? enumOptions(valueType) : null,
-            association ? names.get(relationType) : null
+            association ? names.get(relationType) : null,
+            representativeFieldOf(relationType),
+            thumbnailableOf(relationType)
         );
 
         return AdminAttribute.builder()
@@ -384,6 +493,57 @@ public class AdminResourceRegistry {
             return joinColumn.name();
         }
         return null;
+    }
+
+    /**
+     * 연관 대상 자원에서 "그 개체를 알아보게 하는 컬럼" 을 고른다.
+     *
+     * <p>표에 없으면 null 이고 화면은 번호만 그린다. 표에 이름을 적어 두었는데 그 자원에
+     * 그런 필드가 없으면 그것도 null 이다 — 기동할 때 로그만 남긴다. 화면이 링크를 못
+     * 그리는 것보다 터지는 편이 나쁘다.
+     *
+     * @param relationType 연관 필드가 가리키는 엔티티 클래스. 연관이 아니면 null.
+     */
+    private String representativeFieldOf(Class<?> relationType) {
+        if (relationType == null) {
+            return null;
+        }
+        String entityName = relationType.getSimpleName();
+        String fieldName = REPRESENTATIVE_FIELDS.get(entityName);
+        if (fieldName == null) {
+            return null;
+        }
+        for (Field field : declaredFieldsInOrder(relationType)) {
+            if (field.getName().equals(fieldName)) {
+                return fieldName;
+            }
+        }
+        log.error("관리자 화면: {} 의 대표 컬럼으로 적은 {} 이 없습니다 — 번호만 표시합니다",
+            entityName, fieldName);
+        return null;
+    }
+
+    /**
+     * 연관 대상이 작은 이미지를 가질 수 있는 자원인가.
+     *
+     * <p>둘 중 하나면 참이다 — 대상이 이미지 파일 자체(`User.imageFile` 처럼)이거나,
+     * 대상이 이미지 필드를 들고 있다(`Album` 의 `Artist` — 앨범 행에 아티스트 사진을
+     * 그리는 자리). 판단 기준은 {@link AdminRowProjection} 과 같아야 한다. 여기서 참이라
+     * 보낸 필드에 값이 안 오면 화면은 "이미지 없음" 을 그리고, 거짓이면 아예 안 그린다.
+     */
+    private static boolean thumbnailableOf(Class<?> relationType) {
+        if (relationType == null) {
+            return false;
+        }
+        if (ObjectStorageFile.class.equals(relationType)) {
+            return true;
+        }
+        for (Field field : declaredFieldsInOrder(relationType)) {
+            if (ObjectStorageFile.class.equals(field.getType())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static List<String> enumOptions(Class<?> enumType) {

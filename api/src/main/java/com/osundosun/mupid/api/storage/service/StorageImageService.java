@@ -63,6 +63,21 @@ public interface StorageImageService {
     }
 
     /**
+     * 이미지 조회 주소. **번호로 만든다.**
+     *
+     * <p>이 자리가 조회 URL 을 만드는 유일한 곳이다 — 저장 키를 되짚던 때는 키 모양이
+     * 어긋나면 예외도 로그도 없이 null 이 되어 화면이 조용히 빈 자리를 그렸다.
+     *
+     * <p>관리자 화면은 파일 **행**이 아니라 그 행이 가리키는 **번호**만 들고 있다
+     * (목록 조회가 프록시를 깨우지 않으려고 식별자만 꺼내기 때문이다). 그래서 번호를
+     * 받는 이 오버로드가 필요하다. 두 자리가 갈라지지 않게 아래
+     * {@link #imageUrl(ObjectStorageFile)} 이 이 메서드를 부른다.
+     */
+    static String imageUrl(int fileId) {
+        return "/api/v1/storage/image/%d".formatted(fileId);
+    }
+
+    /**
      * 행 하나의 조회 URL. 이미지가 아니거나 지워졌으면 {@code null} 이다.
      *
      * <p><b>번호로 만든다.</b> 저장 키를 되짚던 때는 키 모양이 어긋나면 예외도 로그도 없이
@@ -76,7 +91,7 @@ public interface StorageImageService {
         if (file == null || file.getFileId() == null) return null;
         if (Boolean.TRUE.equals(file.getIsDeleted())) return null;
         if (file.getFileType() != FileType.IMG) return null;
-        return "/api/v1/storage/image/%d".formatted(file.getFileId());
+        return imageUrl(file.getFileId());
     }
 
     /**
