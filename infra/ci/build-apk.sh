@@ -12,6 +12,16 @@
 #   ANDROID_KEY_ALIAS=mupid
 #   ANDROID_KEYSTORE_PASSWORD=...
 #   ANDROID_KEYSTORE_BASE64=...        # keytool 로 만든 .jks 를 base64 로
+#
+# 아래 둘은 선택이다. 넣지 않으면 예외 보고만 조용히 꺼지고 앱은 정상 동작한다
+# (app/src/crash.rs). 값이 **컴파일 시점에 박히므로**(option_env!) 나중에 바꾸려면
+# APK 를 다시 구워야 한다 — 런타임 환경변수로는 바뀌지 않는다.
+#
+#   MUPID_CRASHLYTICS_ENDPOINT=...     # 수집기 HTTPS 엔드포인트
+#   MUPID_CRASHLYTICS_API_KEY=...      # 그 엔드포인트의 인증 키
+#
+# ⚠️ SDK 경로(google-services.json + Crashlytics Gradle 플러그인)로 가면 이 둘은
+#    필요 없다. 그 길은 app/gen/android/** 와 Android 빌드를 건드린다.
 set -eu
 : "${MUPID_APP_ENV:?GitLab file variable required}"
 : "${ANDROID_HOME:?안드로이드 이미지 안에서 돌려야 한다}"
@@ -45,6 +55,27 @@ ANDROID_KEYSTORE_PASSWORD=$(read_value ANDROID_KEYSTORE_PASSWORD)
 ANDROID_KEYSTORE_BASE64=$(read_value ANDROID_KEYSTORE_BASE64)
 # 앱이 붙을 주소는 컴파일 시점에 박힌다(app/src/config.rs 의 option_env!).
 [ -n "$MUPID_API_ORIGIN" ] && export MUPID_API_ORIGIN
+
+# 예외 보고(Firebase Crashlytics, S15P21A204-383). 위와 같은 이유로 **컴파일 시점에**
+# 박힌다(app/src/crash.rs 가 option_env! 로 읽는다).
+#
+# **export 를 빠뜨리면 조용히 꺼진 채로 구워진다.** crash.rs 는 키가 없으면 큐에
+# 아무것도 쌓지 않고 정상 기동하도록 설계돼 있어(그게 의도다) 실패가 드러나지
+# 않는다 — APK 를 풀어 문자열을 찾기 전까지는 알 수 없다.
+#
+# **둘 다 있어야 켜진다.** 하나만 있으면 crash.rs 가 꺼진 상태로 남는다. 그래서
+# 한쪽만 온 경우를 여기서 경고한다 — 그 상태는 앱에서도 구분되지 않는다.
+MUPID_CRASHLYTICS_ENDPOINT=$(read_value MUPID_CRASHLYTICS_ENDPOINT)
+MUPID_CRASHLYTICS_API_KEY=$(read_value MUPID_CRASHLYTICS_API_KEY)
+if [ -n "$MUPID_CRASHLYTICS_ENDPOINT" ] && [ -n "$MUPID_CRASHLYTICS_API_KEY" ]; then
+  export MUPID_CRASHLYTICS_ENDPOINT MUPID_CRASHLYTICS_API_KEY
+  printf '예외 보고를 켜고 굽는다 (MUPID_CRASHLYTICS_* 둘 다 있음)\n'
+elif [ -n "$MUPID_CRASHLYTICS_ENDPOINT" ] || [ -n "$MUPID_CRASHLYTICS_API_KEY" ]; then
+  printf '경고: MUPID_CRASHLYTICS_* 가 한쪽만 있다 — 예외 보고는 꺼진 채로 구워진다\n' >&2
+  printf '      (둘 다 있어야 켜진다. app/src/crash.rs 참고)\n' >&2
+else
+  printf 'MUPID_CRASHLYTICS_* 가 없다 — 예외 보고 없이 굽는다(비활성이 기본이다)\n'
+fi
 
 # ── 빌드 타임스탬프가 곧 버전이다 ──────────────────────────────────
 # semver 를 쓰지 않는다(`tauri.conf.json` 의 version 은 0.1.0 그대로 둔다).

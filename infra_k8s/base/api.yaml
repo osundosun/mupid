@@ -101,6 +101,17 @@ spec:
             - name: MUPID_RECOMMENDER_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef: {name: mupid-secrets, key: MUPID_RECOMMENDER_INTERNAL_TOKEN, optional: true}
+            # Mattermost 알림 (S15P21A204-384). 피드백 접수 시 관리자 채널로 보낸다.
+            #
+            # **비밀도 아니고 공개 값도 아니다.** MUPID_S3_ENDPOINT 과 같은 취급이다 —
+            # 웹훅 URL 은 그 자체가 자격증명이라(아는 쪽이 아무 메시지나 보낼 수 있다)
+            # ConfigMap 에 두지 않고 Secret 으로 간다. 주소가 비밀번호처럼 동작한다.
+            #
+            # optional: true 다. 키가 없으면 알림만 조용히 꺼지고 피드백 접수는 그대로
+            # 동작한다 — 없다고 파드가 못 뜨면 안 된다.
+            - name: MUPID_MATTERMOST_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef: {name: mupid-secrets, key: MUPID_MATTERMOST_WEBHOOK_URL, optional: true}
           resources:
             requests: {cpu: 500m, memory: 700Mi}
             limits: {memory: 2Gi}
