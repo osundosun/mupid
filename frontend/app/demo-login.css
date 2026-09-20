@@ -70,7 +70,30 @@
   display: flex;
   justify-content: center;
 }
-.demo-login-dialog [data-slot='dialog-header'] {
+/*
+ * 정렬 — 로고·제목을 다이얼로그 가운데로 모은다.
+ *
+ * `dialog-viewport.css` 가 `.sky-dialog [data-slot='dialog-header']` 에 오른쪽
+ * `padding-right: 52px` 를 준다 — 닫기 버튼 자리를 비우는 규칙이다. 그런데 이
+ * 화면은 내용을 가운데로 모으므로, **한쪽만 비우면 남은 폭의 중심이 그 절반만큼
+ * 왼쪽으로 간다**(실측 430px 화면에서 26px). 로고는 `justify-content: center` 로
+ * 제 컨테이너 안에서 가운데여서 멀쩡했고, 제목만 `text-align: center` 가 좁아진
+ * 상자 안에서 가운데가 되어 왼쪽으로 밀렸다 — 그래서 "로고·제목이 왼쪽으로
+ * 치우쳤다" 로 보였다. 로고 위치를 손대는 대신 **원인인 비대칭 여백을 되돌린다.**
+ *
+ * 예약을 없애도 제목은 닫기 버튼을 피한다. 제목은 한 줄에 156~239px 이고
+ * 닫기 버튼은 우상단 40px 이라, 좁은 화면(320px)까지 재어 봐도 겹치지 않았다.
+ * 좌우를 52px 씩 비우는 대안은 320px 에서 로그인 제목이 2줄로 접혀 더 나빴다.
+ *
+ * `padding-inline` 만으로는 되돌리지 못한다. `dialog-viewport.css` 의 규칙도
+ * 클래스 + 속성(`.sky-dialog [data-slot='dialog-header']` = 0,2,0)이라 특이도가
+ * 같고, `globals.css` 에서 그 파일이 이 파일보다 **뒤에** import 되어 나중에
+ * 오는 쪽이 이긴다. 그래서 클래스를 하나 더 붙여 올린다(0,3,0 > 0,2,0).
+ * (실측: `.demo-login-dialog` 만 붙였을 때는 계산된 값이 `0px / 52px` 로 남아
+ * 제목이 그대로 26px 밀렸다.)
+ */
+.sky-dialog.demo-login-dialog [data-slot='dialog-header'] {
+  padding-inline: 0;
   align-items: center;
   text-align: center;
 }
