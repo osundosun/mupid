@@ -63,7 +63,7 @@
 
 - **원인**: husky 의 러너 `.husky/_/` 는 `npm install` 의 `prepare: husky` 가 만드는 **로컬 산출물**이고, husky 가 스스로 만들어 둔 `.husky/_/.gitignore`(`*`) 때문에 저장소에 들어가지 않는다. 그래서 러너는 **worktree 마다 따로** 필요하다. 그런데 `core.hooksPath` 는 `.husky/_` 라는 **상대 경로**로 공유 `.git/config` 에 한 번만 저장된다 — linked worktree 전부가 같은 값을 본다. 그래서 러너가 없는 worktree 에서도 설정 조회 결과는 멀쩡하고, 확인해 보기 전까지 아무도 이상하다고 느끼지 못한다.
 - **증상**: `git config --get core.hooksPath` 가 `.husky/_` 를 정상적으로 돌려주는데 커밋은 **전혀 검증되지 않는다.** `<type>(<scope>)` 도 티켓 번호도 없는 제목이 그대로 커밋된다. **git 은 존재하지 않는 hooksPath 를 오류로 알려주지 않는다** — 훅 파일이 없으면 그냥 건너뛴다.
-- **실측**(2026-09-20, 티켓 S15P21A204-376): worktree 6개 중 **4개에 러너가 없었다**(`big_data_pjt` develop, `big_data_pjt_bug_fix_3`, `big_data_gen_music_pipeline`, `big_data_recommendation`). 러너가 있던 것은 `npm install` 을 돌린 2개뿐이었다. 러너가 없는 worktree 에서 규약 위반 제목으로 커밋을 시도해 **exit 0 으로 그대로 커밋됐다**(`f329ef7 훅 재현용 잘못된 메시지`).
+- **실측**(2026-09-20, 티켓 S15P21A204-376): worktree 6개 중 **4개에 러너가 없었다**(`big_data_pjt` develop, `big_data_pjt_bug_fix_3`, `big_data_gen_music_pipeline`, `big_data_recommendation`). 러너가 있던 것은 `npm install` 을 돌린 2개뿐이었다. 러너가 없는 worktree 에서 규약 위반 제목(`훅 재현용 잘못된 메시지`)으로 커밋을 시도해 **exit 0 으로 그대로 커밋됐다**(확인용 브랜치와 커밋은 실증 후 제거했다).
 - **해결**: 의심되면 먼저 한 줄로 확인하고, 실패하면 **그 worktree 의 루트에서** `npm install` 을 돌린다(`prepare: husky` 가 `.husky/_` 를 다시 만든다). 저장소 본체가 아니라 **지금 작업 중인 worktree 의 루트**다.
 
   ```bash
@@ -103,9 +103,9 @@
 
 ### 커밋 타입(`feat:` 등)이 검증되지 않는다
 
-- **원인**: `.gitlab/merge_request_templates/`, `CODEOWNERS`, `.editorconfig`, commitlint/lint-staged 설정이 저장소에 하나도 없다. `.husky/commit-msg` 는 티켓 번호만 본다 — `아무말:` 로 시작하는 제목도 통과한다.
-- **해결**: Conventional Commits 준수는 전적으로 사람 합의다.
-- **근거**: `.husky/commit-msg`, `git ls-files`
+- **원인**: `.gitlab/merge_request_templates/`, `CODEOWNERS`, `.editorconfig`, commitlint/lint-staged 설정이 저장소에 하나도 없다. 검증은 `.husky/commit-msg` **5단계**(`6c2d2ce`, S15P21A204-231 에서 추가)가 한다 — `feat|fix|docs|chore|refactor|test|ci` 7종 밖의 제목은 거부된다. 다만 이 훅은 `npm install` 을 돌린 로컬에서만 돌아 CI 에는 같은 검사가 없다.
+- **해결**: 훅이 있는 로컬에서는 기계가 막지만, **CI 나 훅이 죽은 worktree 에서는 여전히 사람 합의뿐이다.** 그래서 커밋 타입 어휘의 최종 방어선은 [convention/git.md](../convention/git.md) 의 "허용 타입" 표다.
+- **근거**: `.husky/commit-msg:43-58`, `git ls-files`
 
 ### 브랜치 type 으로 CI rule 을 걸면 누락된다
 

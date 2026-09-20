@@ -117,7 +117,7 @@ git 이 추적하는 husky 파일은 `.husky/commit-msg` **하나뿐**이다. �
 
 이 훅 자체가 회고에서 나왔다. `회고/2026-09-04.md` 정예준 항목의 Try 가 "Git 커밋 후 자동으로 지라 티켓 연결해주는 자동화 시도"이고, 3일 뒤 `f205ec5 chore: husky JIRA 티켓 설정 추가 [S15P21A204-44]` (2026-09-07) 가 들어왔다.
 
-### 훅의 5단계
+### 훅의 6단계
 
 `.husky/commit-msg` 를 위에서부터.
 
@@ -125,7 +125,17 @@ git 이 추적하는 husky 파일은 `.husky/commit-msg` **하나뿐**이다. �
 2. 저자가 `"A204 회고 봇 <"*` 또는 `*"<a204-retro-bot@"*` 이면 `exit 0` — 회고 취합 자동 커밋 20건을 위한 예외. 이름과 이메일 두 패턴으로 이중 검사한다.
 3. `$(git rev-parse --git-dir)` 아래 `rebase-merge`/`rebase-apply` 디렉터리, `CHERRY_PICK_HEAD`/`REVERT_HEAD`/`MERGE_HEAD` 파일이 하나라도 있으면 `exit 0` — merge 커밋이 실제로 예외 처리되는 것은 1단계가 아니라 이 `MERGE_HEAD` 검사 덕분이다. **훅을 고칠 때 1단계를 믿고 3단계를 지우면 merge 커밋 메시지가 오염된다.**
 4. `git symbolic-ref --quiet --short HEAD` 로 브랜치명을 얻어 `grep -oE 'S15P21A204-[0-9]+' | head -n 1`. 비어 있으면 안내 4줄을 출력하고 `exit 1`.
-5. awk 로 주석(`^[[:space:]]*#`)·빈 줄을 건너뛴 첫 줄에, 티켓이 아직 없으면 뒤쪽 공백을 지우고 ` (<티켓>)` 을 덧붙인다.
+5. **제목 형식을 검증한다** — 주석·빈 줄을 건너뛴 첫 줄을 `TYPES='feat|fix|docs|chore|refactor|test|ci'` 로
+   `^(type)(\(scope\))?: .+` 에 맞춰 보고, 아니면 `✖ 커밋 실패: 제목 형식이 규약과 다릅니다.` 를
+   출력하고 `exit 1`. `scope` 는 선택이며 소문자 영문·숫자·하이픈만 받는다. 이 단계는
+   `6c2d2ce (S15P21A204-231)` 에서 추가됐다.
+6. awk 로 주석(`^[[:space:]]*#`)·빈 줄을 건너뛴 첫 줄에, 티켓이 아직 없으면 뒤쪽 공백을 지우고 ` (<티켓>)` 을 덧붙인다.
+
+> **5단계의 type 어휘(7종)는 위 "허용 타입 (10종)" 표와 다르다.** 훅에 `perf` 가 없어서
+> `perf: …` 는 **거부된다**(실측 2026-09-20). 스코프는 값이 아니라 형태(`[a-z0-9-]+`)만 보므로
+> `chore(ci)`·`docs(retro)` 처럼 표에 없는 스코프도 통과한다 — 즉 위 표의 스코프 제한
+> ("`chore` 의 스코프는 `deps` 와 `conf` 둘뿐")은 **훅이 강제하지 않는다.** 문서와 훅이
+> 어긋나 있고, 어느 쪽을 고칠지는 팀 결정이다 — 훅 로직은 이 티켓(S15P21A204-376)의 범위가 아니다.
 
 ### 괄호 형태의 변천
 
@@ -150,6 +160,7 @@ fix: 회원 정보 수정 시 비밀번호가 평문으로 저장되는 문제 �
 ### 훅이 커밋을 거부하는 경우
 
 - 브랜치명에 티켓 번호가 없을 때 — `study/안규리`, `common/docs/…`, `ci/…`, `front/…`, `infra/…`, `develop`, `master` 전부 해당
+- 제목이 `<type>(<scope>): <설명>` 형식이 아닐 때 — `type` 은 `feat`·`fix`·`docs`·`chore`·`refactor`·`test`·`ci` 7종뿐이라 위 표의 `perf: …` 는 거부된다. 스코프 값은 검사하지 않으므로 `chore(ci): …` 는 통과한다(실측 2026-09-20)
 - detached HEAD (태그 체크아웃, `git bisect` 등) — 4단계가 `git symbolic-ref` 로만 브랜치명을 얻기 때문
 
 우회는 `git commit --no-verify` 또는 `HUSKY=0 git commit …`. `git merge --squash` 도 예외가 아니다 — 상세는 [함정과 실패 사례](../failure/git-and-convention.md).
