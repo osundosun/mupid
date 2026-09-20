@@ -13,6 +13,12 @@ public interface ArtistService {
 
     Optional<Artist> getArtist(int artistId);
 
+    /**
+     * 아티스트를 찾되 <b>왜 없는지</b>까지 가른다. 없으면 `ARTIST_NOT_FOUND`(404),
+     * 삭제됐으면 `ARTIST_GONE`(410).
+     */
+    Artist requireAlive(int artistId);
+
     /** 목록·검색. 검색어가 비면 전체다. */
     ArtistPageResponse searchArtists(String keyword, int page, int size);
 

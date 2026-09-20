@@ -23,8 +23,15 @@ import urllib.request
 import uuid
 from http.cookies import SimpleCookie
 from pathlib import Path
+from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
+
+#: 소프트 삭제된 자원의 상태코드. 서버가 404(없음)와 나눠 쓴다.
+GONE_STATUS = 410
+
+#: 소프트 삭제된 곡의 오류 코드. 상태코드가 프록시에 접혀도 이 값은 헤더로 온다.
+GONE_CODE = "MUPID_MUSIC_GONE"
 
 # 액세스 토큰이 이 시간 안에 만료되면 미리 갱신한다.
 # 업로드 한 번이 오래 걸려도 도중에 만료되지 않도록 넉넉히 잡는다.
@@ -278,11 +285,84 @@ class MupidClient:
         )
         return body["data"]["music_id"]
 
+    def get_music(self, music_id: int) -> dict | None:
+        """곡 하나를 읽는다. **삭제된 곡이면 `None`**, 그런 번호가 없으면 예외다.
+
+        `GET /api/v1/music/{id}` 는 소프트 삭제된 곡에 **410 Gone** 을 준다
+        (2026-09-18 변경, 그전엔 404). 그래서 상태코드로 "삭제됨" 과 "등록 기록이
+        낡음" 을 가를 수 있다 — 곡 목록(`GET /api/v1/music`)은 삭제분을 걸러 주므로
+        그 목록만으로는 둘이 구분되지 않는다(`audit.py` 참고).
+
+        곡마다 부르면 1060회라 비싸다. 그래서 목록에 없던 곡만 골라 부른다.
+
+        Returns:
+            곡 행(`music_id`·`title`). 삭제된 곡이면 `None`.
+
+        Raises:
+            MupidApiError: 번호가 잘못됐거나 인증이 안 됐을 때(404·401 등).
+        """
+        try:
+            body = self._request("GET", f"/api/v1/music/{music_id}")
+        except MupidApiError as e:
+            # 상태코드가 일차 기준이지만 코드로도 본다 — nginx `auth_request` 를
+            # 거치는 배포에서는 4xx 가 500 으로 접히고 사유가 헤더에만 온다.
+            if e.status == GONE_STATUS or e.code == GONE_CODE:
+                return None
+            raise
+        return body.get("data") or {}
+
+    def music_rows(self, page_size: int = 100) -> list[dict]:
+        """서버가 보여 주는 살아 있는 곡을 전부 훑는다.
+
+        `GET /api/v1/music` 은 **삭제된 곡을 걸러서** 준다(`findPage` 의
+        `m.isDeleted = false`). 그래서 여기 없는 곡은 소프트 삭제됐거나
+        `registered.json` 이 낡은 것이고, 이 목록만으로는 구분되지 않는다
+        (`audit.py` 의 "비율로 가르지 않는다" 참고). 단건 조회는 410 으로
+        구분해 주지만, 곡마다 부르면 1060회라 훑는 쪽을 쓴다.
+
+        응답 키는 snake_case 다(`total_elements`·`total_pages`). 서버의
+        `spring.jackson.property-naming-strategy: SNAKE_CASE` 가 여기에도 걸린다.
+
+        여러 곳이 같은 것을 부르므로 클라이언트에 둔다 — 등록 대조(`audit`)와
+        장르·무드 등록(`genre_mood`)이 이 목록을 함께 쓴다.
+        """
+        rows: list[dict] = []
+        seen: set[int] = set()
+        page, total = 0, None
+        while True:
+            params = urlencode({"page": page, "size": page_size})
+            data = self._request("GET", f"/api/v1/music?{params}")["data"]
+
+            # 조회 중에 서버 목록이 바뀌면 페이지 경계가 어긋나 곡을 건너뛴다.
+            if total is not None and total != data["total_elements"]:
+                raise ValueError("조회 중 곡 수가 바뀜; 재실행 필요")
+            total = data["total_elements"]
+
+            for row in data["items"]:
+                music_id = row.get("music_id")
+                if music_id in seen:
+                    raise ValueError(f"곡 목록에 같은 번호가 두 번: {music_id}")
+                seen.add(music_id)
+                rows.append(row)
+
+            page += 1
+            if page >= data["total_pages"]:
+                break
+            if not data["items"]:
+                raise ValueError("빈 페이지")
+
+        if len(rows) != total:
+            raise ValueError("조회 개수 불일치")
+        return rows
+
     def update_music(self, music_id: int, **fields) -> None:
         """곡 정보를 고친다. 준 필드만 바뀐다 (`PATCH` 규약).
 
         받는 이름: `album_id` · `artist_id` · `title` · `release_date` ·
         `image_file_id`.
+
+        **삭제된 곡은 410 Gone 이다** (2026-09-18 변경, 그전엔 404). 없는 곡은 404 다.
+        그래서 이 호출의 상태코드로 "없다" 와 "삭제됐다" 를 가릴 수 있다.
         """
         self._request("PATCH", f"/api/v1/music/{music_id}", json_body=fields)
 

@@ -34,9 +34,8 @@ public class LyricServiceImpl implements LyricService {
     @Override
     @Transactional(readOnly = true)
     public LyricResponse getLyrics(int musicId) {
-        if (!musicRepository.existsByMusicIdAndIsDeletedFalse(musicId)) {
-            throw new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND);
-        }
+        // 곡이 없으면 404, 삭제됐으면 410 이다 (`requireAlive` 가 가른다).
+        musicService.requireAlive(musicId);
         // 가사가 없는 곡이 많다. 빈 목록으로 돌려준다 — 곡은 있는데 가사만 없는
         // 것은 오류가 아니다.
         return new LyricResponse(musicId, repository
@@ -48,8 +47,7 @@ public class LyricServiceImpl implements LyricService {
 
     @Override
     public int addLyric(LyricAddRequest request) {
-        Music music = musicService.getMusic(request.musicId())
-            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+        Music music = musicService.requireAlive(request.musicId());
         Lyric lyric = Lyric.builder()
             .music(music)
             .text(request.text())
@@ -60,8 +58,7 @@ public class LyricServiceImpl implements LyricService {
 
     @Override
     public LyricBulkResponse replaceLyrics(int musicId, LyricBulkRequest request) {
-        Music music = musicService.getMusic(musicId)
-            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+        Music music = musicService.requireAlive(musicId);
 
         // 검증 애너테이션이 먼저 걸러 주지만, 서비스를 직접 부르는 길(시험·배치
         // 코드)에서도 상한이 지켜져야 한다.

@@ -113,4 +113,4 @@ docs: |-
   | `MUPID_DUPLICATE_EMAIL` | 400 | 이미 가입된 이메일 |
   | `MUPID_INVALID_REQUEST_BODY` | 400 | 검증 규칙 위반 |
   | `MUPID_INVALID_VERIFICATION_ID` | 404 | 인증 ID 없음 |
-  | `MUPID_NOT_READABLE_MESSAGE` | 404 | 요청 본문 누락/파싱 실패 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 400 | 요청 본문 누락/파싱 실패 |

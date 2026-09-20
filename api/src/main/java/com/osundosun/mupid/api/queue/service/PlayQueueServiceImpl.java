@@ -84,8 +84,7 @@ public class PlayQueueServiceImpl implements PlayQueueService {
     public PlayQueueChange add(int userId, int musicId) {
         // 없는 곡은 담기 전에 막는다. Redis 에는 제약조건이 없어 한번 들어가면
         // 조회할 때마다 조용히 걸러질 뿐 계속 남는다.
-        musicService.getMusic(musicId)
-            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+        musicService.requireAlive(musicId);
 
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             PlayQueueDocument document = repository.load(userId);

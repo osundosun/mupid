@@ -13,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.osundosun.mupid.api.code.entity.Code;
@@ -177,6 +178,51 @@ class MusicClassificationReplaceTest {
                 new MusicClassificationRequest(List.of(), List.of())));
 
         assertEquals(MusicErrorCode.MUSIC_NOT_FOUND, thrown.getErrorCode());
+    }
+
+    /**
+     * 소프트 삭제된 곡에 분류를 쓰지 못하게 막는다.
+     *
+     * <p>실제로 새던 구멍이다. 이 서비스는 {@code musicRepository.findById} 를 써서
+     * 곡의 {@code isDeleted} 를 보지 않았고, {@code deleteMusic} 은 행을 지우지 않고
+     * 플래그만 세우므로 <b>서버에서 사라진 곡의 분류가 조용히 바뀌었다.</b> 조회
+     * 경로는 전부 삭제된 곡을 걸러서 주므로 화면에는 아무 흔적도 남지 않는다.
+     *
+     * <p>응답 코드만 보면 부족하다. <b>쓰기가 일어나지 않았는지</b>를 봐야 한다 —
+     * 가드가 INSERT 뒤에 있으면 404 를 돌려주면서도 행은 남기 때문이다.
+     * ({@code spring-api-contract-testing} 의 "거절된 업로드가 자리를 차지하면
+     * 안 된다" 와 같은 이유.)
+     */
+    @Test
+    @DisplayName("소프트 삭제된 곡의 분류는 바꾸지 않는다 — 행이 남아 있어도 없는 곡이다")
+    void rejectsSoftDeletedMusicAndLeavesNoRow() {
+        // 살아 있는 동안 분류를 넣어 둔다. 삭제돼도 이 행들은 남는다.
+        replace(List.of(rock.getCodeId()), List.of(calm.getCodeId()));
+        assertEquals(1, storedGenres().size());
+
+        // `replace` 가 `em.clear()` 를 하므로 위 `music` 은 이제 detach 상태다.
+        // 그 객체에 플래그를 걸면 flush 가 안 나간다 — 영속성 컨텍스트에서 다시
+        // 가져와야 실제로 UPDATE 가 나간다.
+        Music target = em.find(Music.class, music.getMusicId());
+        target.setIsDeleted(true);
+        em.flush();
+        em.clear();
+
+        BusinessException thrown = assertThrows(BusinessException.class,
+            () -> classificationService.replaceClassification(music.getMusicId(),
+                new MusicClassificationRequest(List.of(jazz.getCodeId()), List.of())));
+
+        /*
+         * **410 이다, 404 가 아니다.** 삭제된 곡은 행이 남으므로 "그런 곡이 없다" 와
+         * "지워졌다" 를 나눌 수 있다 — 예전에는 둘 다 `MUSIC_NOT_FOUND` 였다.
+         */
+        assertEquals(MusicErrorCode.MUSIC_GONE, thrown.getErrorCode());
+        assertEquals(HttpStatus.GONE, MusicErrorCode.MUSIC_GONE.getStatus());
+        // 지우기·넣기 어느 쪽도 일어나지 않았다. 삭제 전의 행이 그대로다.
+        assertEquals(1, storedGenres().size(), "삭제된 곡의 분류를 지우면 안 된다");
+        assertEquals(rock.getCodeId(),
+            storedGenres().get(0).getMusicGenreId().getGenreCodeId());
+        assertEquals(1, storedMoods().size());
     }
 
     @Test

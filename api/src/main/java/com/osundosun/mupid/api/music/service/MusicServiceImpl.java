@@ -85,11 +85,36 @@ public class MusicServiceImpl implements MusicService {
     @Override
     @Transactional(readOnly = true)
     public Optional<Music> getMusic(int musicId) {
-        Music music = repository.findById(musicId).orElse(null);
+        Music music = repository.findByMusicId(musicId).orElse(null);
         if (music == null || music.getIsDeleted()) {
             return Optional.empty();
         }
         return Optional.of(music);
+    }
+
+    /**
+     * 곡을 찾되 <b>왜 없는지</b>까지 가른다. **없으면 404, 삭제됐으면 410.**
+     *
+     * <p>`getMusic` 은 둘 다 `Optional.empty()` 라 부르는 쪽이 구분할 수 없다.
+     * 서버는 곡을 지우지 않고 `is_deleted` 만 세우므로 행은 남아 있고, 그래서
+     * "그런 곡이 없다" 와 "있었는데 지금은 없다" 를 나눌 수 있다. 보낸 쪽이 할 일이
+     * 다르기 때문이다 — 앞은 번호를 고쳐야 하고, 뒤는 그 곡을 포기해야 한다.
+     * 배치는 이 구분이 없어서 삭제된 곡을 전부 404 로만 알았다
+     * (S15P21A204-399).
+     *
+     * <p>곡을 참조하는 다른 서비스도 이걸 쓴다(`MusicService` 인터페이스에 있다).
+     * 판정을 여기 한 곳에 두는 이유는 서비스마다 베끼면 한쪽만 고쳐졌을 때
+     * 조용히 갈리기 때문이다.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Music requireAlive(int musicId) {
+        Music music = repository.findByMusicId(musicId)
+            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+        if (music.getIsDeleted()) {
+            throw new BusinessException(MusicErrorCode.MUSIC_GONE);
+        }
+        return music;
     }
 
     @Override
@@ -202,6 +227,10 @@ public class MusicServiceImpl implements MusicService {
     @Override
     @Transactional(readOnly = true)
     public MusicSummary getMusicSummary(int musicId) {
+        // 없으면 404, 삭제됐으면 410 이다. 판정을 먼저 하고, 살아 있는 것이
+        // 확인된 뒤에 원래 쓰던 `findDetail`(JOIN FETCH)로 읽는다 — 이 경로는
+        // 연관을 한 번에 끌어오는 것이 계약이라 조회 방식을 바꾸지 않는다.
+        requireAlive(musicId);
         Music music = repository.findDetail(musicId)
             .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
         return assembler.assemble(List.of(music)).get(0);
@@ -210,9 +239,10 @@ public class MusicServiceImpl implements MusicService {
     @Override
     @Transactional(readOnly = true)
     public MusicAnalysisResponse getAnalysis(int musicId) {
-        if (!repository.existsByMusicIdAndIsDeletedFalse(musicId)) {
-            throw new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND);
-        }
+        // 곡이 없으면 404, 삭제됐으면 410 이다. `existsByMusicIdAndIsDeletedFalse` 는
+        // 둘 다 false 라 구분되지 않는다.
+        requireAlive(musicId);
+
         MusicAnalysis analysis = analysisRepository.findById(musicId).orElse(null);
         List<MusicSectionAnalysis> sections =
             sectionRepository.findByMusic_MusicIdOrderByIndexAsc(musicId);
@@ -271,8 +301,7 @@ public class MusicServiceImpl implements MusicService {
 
     @Override
     public void updateMusic(int musicId, MusicUpdateRequest request) {
-        Music music = getMusic(musicId)
-            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+        Music music = requireAlive(musicId);
         if (request.albumId() != null) {
             Album album = albumServce.getAlbum(request.albumId())
                 .orElseThrow(() -> new BusinessException(AlbumErrorCode.ALBUM_NOT_FOUND));
@@ -311,8 +340,7 @@ public class MusicServiceImpl implements MusicService {
 
     @Override
     public void deleteMusic(int musicId) {
-        Music music = getMusic(musicId)
-            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+        Music music = requireAlive(musicId);
         music.setIsDeleted(true);
     }
 

@@ -117,9 +117,25 @@ public class UserServiceImpl implements UserService {
         return repository.findByImageFileId(imageFileId);
     }
 
+    /**
+     * 탈퇴한 회원이면 410, 그런 회원이 없으면 404 다.
+     *
+     * <p>탈퇴는 `status` 를 `WITHDRAW` 로 옮기는 소프트 삭제라 행이 남는다
+     * (`deleteUser`). 조회(`getUser`)가 `StatusNot(WITHDRAW)` 로 걸러서 그대로는
+     * 둘 다 비어 있으므로, 행 자체를 한 번 더 본다.
+     */
+    private User requireUser(int userId) {
+        return getUser(userId).orElseGet(() -> {
+            if (repository.findByUserId(userId).isPresent()) {
+                throw new BusinessException(UserErrorCode.USER_GONE);
+            }
+            throw new BusinessException(UserErrorCode.USER_NOT_FOUND);
+        });
+    }
+
     @Override
     public User updateUser(int userId, UserUpdateRequest dto) {
-        User user = getUser(userId).orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+        User user = requireUser(userId);
         if (dto.password() != null) user.setPassword(passwordEncoder.encode(dto.password()));
         if (dto.nickname() != null) {
             // 앞뒤 공백은 이름의 일부가 아니다. 온보딩 제출도 같게 다룬다.
@@ -147,7 +163,7 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public void deleteUser(int userId) {
-        User user = getUser(userId).orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+        User user = requireUser(userId);
         user.setStatus(UserStatus.WITHDRAW);
         /*
          * 행은 남기고 **자격증명은 버린다** — 무력화 판단의 근거.

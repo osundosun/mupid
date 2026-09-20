@@ -180,7 +180,7 @@ class LyricReplaceTest {
     }
 
     @Test
-    @DisplayName("삭제된 곡에는 가사를 넣을 수 없다")
+    @DisplayName("삭제된 곡에는 가사를 넣을 수 없다 — 404 가 아니라 410 이다")
     void rejectsDeletedMusic() {
         music.setIsDeleted(true);
         em.flush();
@@ -188,7 +188,8 @@ class LyricReplaceTest {
         BusinessException e = assertThrows(BusinessException.class,
             () -> replace(music, line(0, "줄")));
 
-        assertEquals(MusicErrorCode.MUSIC_NOT_FOUND, e.getErrorCode());
+        /* 행이 남으므로 "없는 곡" 과 "지워진 곡" 을 가른다 (2026-09-18 변경). */
+        assertEquals(MusicErrorCode.MUSIC_GONE, e.getErrorCode());
     }
 
     // ─────────────────────────────────────────────────────────────

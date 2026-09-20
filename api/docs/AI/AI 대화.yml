@@ -172,7 +172,7 @@ docs: |-
   프롬프트에 들어가고, 넘치면 **최근 것부터** 남깁니다.
 
   > `role` 은 대문자입니다. `user` 처럼 소문자로 보내면 400 이 아니라
-  > **404 `MUPID_NOT_READABLE_MESSAGE`** 가 옵니다 (enum 파싱 실패가
+  > **400 `MUPID_NOT_READABLE_MESSAGE`** 가 옵니다 (enum 파싱 실패가
   > `HttpMessageNotReadableException` 으로 올라가고, 그 코드가 404 로 매핑돼
   > 있습니다 — `api/knowledge/failure/auth-and-api.md`).
 
@@ -223,7 +223,7 @@ docs: |-
   | 코드 | 상태 | 설명 |
   | --- | --- | --- |
   | `MUPID_INVALID_REQUEST_BODY` | 400 | `message` 가 비었거나 길이를 넘음 |
-  | `MUPID_NOT_READABLE_MESSAGE` | 404 | `role` 값이 `USER`/`AI`/`SYSTEM`/`ETC` 밖 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 400 | `role` 값이 `USER`/`AI`/`SYSTEM`/`ETC` 밖 |
   | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
   | `MUPID_AI_REQUEST_FAILED` | 502 | 게이트웨이가 오류를 냈거나 붙지 못함(타임아웃 포함) |
   | `MUPID_AI_EMPTY_RESPONSE` | 502 | 응답에 본문이 없음 |
