@@ -112,8 +112,37 @@ docs: |-
   **대상의 식별자**이며(`"imageFile": 7`), 민감 필드는 언제나 `null` 입니다.
   `_id` 는 이 행을 가리키는 URL 조각입니다.
 
-  키가 camelCase 인 것은 `Map` 의 키가 `SNAKE_CASE` 전략의 적용 대상이 아니기
-  때문입니다. 같은 응답의 `content`·`page`·`total` 같은 record 필드와 표기가 섞입니다.
+  ### FK 대표값과 썸네일이 함께 옵니다
+
+  번호만 보면 어느 행을 가리키는지 알 수 없으므로, 연관 필드가 있으면 행에 두 키가 더
+  붙습니다. 둘 다 **행을 가져오는 그 질의 안에서** LEFT JOIN 을 타고 오므로 질의 수가
+  늘지 않습니다 (목록 1 + `COUNT` 1).
+
+  ```json
+  {
+    "albumId": 1, "artist": 1, "imageFile": 2,
+    "_id": "1",
+    "_labels":     { "artist": "J. S. Bach", "imageFile": "1-Prelude-in-C-Major" },
+    "_thumbnails": { "imageFile": { "url": "/api/v1/storage/image/2",
+                                    "requires_authorization": false } }
+  }
+  ```
+
+  | 키 | 설명 |
+  | --- | --- |
+  | `_labels` | `필드 → 대상의 대표 컬럼 값`. 무엇을 대표값으로 쓸지는 **서버가 정합니다** |
+  | `_thumbnails` | `필드 → { url, requires_authorization }`. 이미지가 없으면 그 필드만 빠집니다 |
+
+  자세한 규칙(무엇이 대표값인가, 왜 인증 여부를 서버가 주는가, 이미지가 아닌 파일은 왜
+  안 나가는가)은 **자원 스키마 조회** 문서를 보세요.
+
+  `_labels`·`_thumbnails` 의 **키는 필드 이름(엔티티 기준 camelCase)이고, 그 안의 키는
+  `requires_authorization` 처럼 snake_case** 입니다. 둘을 바꿔 읽으면 오류 없이 값이
+  `undefined` 가 되어 화면이 **조용히 빈칸**을 그립니다 — 실제로 화면이 그렇게 만들었다가
+  브라우저 확인에서 드러났습니다.
+
+  같은 응답의 `content`·`page`·`total` 같은 record 필드도 `SNAKE_CASE` 전략을 타므로
+  snake_case 입니다. `_id`·`_labels` 같은 밑줄 키는 화면용으로 따로 넣은 것입니다.
 
   연관 컬럼으로 정렬·필터하면 `LEFT JOIN` 이 붙습니다. `INNER` 로 붙이면 FK 가 `null`
   인 행이 조용히 사라집니다.
