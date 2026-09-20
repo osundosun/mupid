@@ -59,6 +59,24 @@
 - **해결**: 클론 직후 **저장소 루트에서 `npm install` 을 최초 1회** 실행한다.
 - **근거**: `package.json`, `.husky/commit-msg`, `README.md`
 
+### linked worktree 마다 husky 훅이 죽어 있는데 `core.hooksPath` 는 정상으로 보인다
+
+- **원인**: husky 의 러너 `.husky/_/` 는 `npm install` 의 `prepare: husky` 가 만드는 **로컬 산출물**이고, husky 가 스스로 만들어 둔 `.husky/_/.gitignore`(`*`) 때문에 저장소에 들어가지 않는다. 그래서 러너는 **worktree 마다 따로** 필요하다. 그런데 `core.hooksPath` 는 `.husky/_` 라는 **상대 경로**로 공유 `.git/config` 에 한 번만 저장된다 — linked worktree 전부가 같은 값을 본다. 그래서 러너가 없는 worktree 에서도 설정 조회 결과는 멀쩡하고, 확인해 보기 전까지 아무도 이상하다고 느끼지 못한다.
+- **증상**: `git config --get core.hooksPath` 가 `.husky/_` 를 정상적으로 돌려주는데 커밋은 **전혀 검증되지 않는다.** `<type>(<scope>)` 도 티켓 번호도 없는 제목이 그대로 커밋된다. **git 은 존재하지 않는 hooksPath 를 오류로 알려주지 않는다** — 훅 파일이 없으면 그냥 건너뛴다.
+- **실측**(2026-09-20, 티켓 S15P21A204-376): worktree 6개 중 **4개에 러너가 없었다**(`big_data_pjt` develop, `big_data_pjt_bug_fix_3`, `big_data_gen_music_pipeline`, `big_data_recommendation`). 러너가 있던 것은 `npm install` 을 돌린 2개뿐이었다. 러너가 없는 worktree 에서 규약 위반 제목으로 커밋을 시도해 **exit 0 으로 그대로 커밋됐다**(`f329ef7 훅 재현용 잘못된 메시지`).
+- **해결**: 의심되면 먼저 한 줄로 확인하고, 실패하면 **그 worktree 의 루트에서** `npm install` 을 돌린다(`prepare: husky` 가 `.husky/_` 를 다시 만든다). 저장소 본체가 아니라 **지금 작업 중인 worktree 의 루트**다.
+
+  ```bash
+  # 훅 러너 생존 확인 (지금 작업 중인 worktree 루트에서)
+  hp="$(git config --get core.hooksPath)"
+  [ -n "$hp" ] && [ -f "$hp/commit-msg" ] \
+    && echo "OK: 훅 러너 살아 있음 ($hp)" \
+    || echo "NG: 훅이 죽어 있음 → 루트에서 npm install"
+  ```
+
+- **주의 — husky 버전 확인에 `husky --version` 을 쓰지 마라.** husky 9 의 `bin.js` 는 `argv[2]` 를 **훅 디렉터리 이름**으로 해석한다(`let a = p.argv[2]` → `git config core.hooksPath \`${a}/_\``). 그래서 `./node_modules/.bin/husky --version` 은 버전을 찍는 대신 **공유 `.git/config` 의 `core.hooksPath` 를 `--version/_` 로 덮어쓴다.** 그러면 git 이 `--version/_/pre-commit` 을 실행하려다 `env: unknown option -- version/_/pre-commit` 으로 실패해, 훅이 규약 메시지(`✖ 커밋 실패: …`)가 아니라 **엉뚱한 오류로** 커밋을 막는다. 버전은 `node_modules/husky/package.json` 의 `version` 필드로 본다. 값을 망쳤다면 러너가 있는 worktree 에서 `npm install` 을 다시 돌리면 된다(`prepare: husky` 가 값을 `.husky/_` 로 되돌린다).
+- **근거**: `package.json`(`prepare: husky`), `node_modules/husky/bin.js`(`argv[2]` → `index.js` 의 `git config core.hooksPath`), `.husky/_/.gitignore`, `git config --show-origin core.hooksPath`, `git worktree list --porcelain`
+
 ### detached HEAD 나 `develop` 에서 커밋이 거부된다
 
 - **원인**: 훅 4단계가 `git symbolic-ref --quiet --short HEAD` 로만 브랜치명을 얻는다. detached HEAD(태그 체크아웃, `git bisect`, CI 체크아웃)에서는 `BRANCH` 가 비고 `TICKET` 도 비어 `exit 1` 이 난다. `study/안규리`, `common/docs/…`, `ci/…`, `develop`, `master` 같은 티켓 없는 브랜치도 마찬가지다. 3단계가 rebase 진행 중은 봐주지만 detached HEAD 그 자체는 봐주지 않는다.
