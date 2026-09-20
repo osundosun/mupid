@@ -215,6 +215,99 @@
 
         .child-links { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 
+        /* ------------------------------------------------- 가사·구간 타임라인 */
+
+        /* 시간축 위에 **가로로** 늘어놓는 자리. 표로만 나열하면 요구가 아니다 —
+           시간 위치가 눈에 보여야 한다(S15P21A204-380-B). 각 항목은 트랙 안에서
+           `left` 로 위치가 정해지고, 그 값을 `data-time-ms` 등에 그대로 남긴다.
+           380-C 의 드래그가 그 자리를 읽는다. */
+        .timeline { display: flex; flex-direction: column; gap: 14px; }
+
+        .band { padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+        .band-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+        .band-head strong { font-size: 13px; }
+        .band-head .muted { font-size: 11px; }
+
+        /* 트랙은 시간축 그 자체다. 눈금을 배경으로 깔아 항목 위치가 읽히게 한다. */
+        .track {
+            position: relative;
+            height: 54px;
+            background: var(--panel-2);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        /* 눈금은 10% 마다. 값이 아니라 **비율**이라 축 최대값이 바뀌어도 그대로다. */
+        .track .grid-line {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 1px;
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        /* 항목 하나. `left`·`width` 가 시간에서 나온다. */
+        .item {
+            position: absolute;
+            top: 5px;
+            bottom: 5px;
+            padding: 3px 6px;
+            border-radius: 6px;
+            font-size: 11px;
+            line-height: 1.35;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            cursor: pointer;
+            border: 1px solid transparent;
+            color: var(--text);
+            background: rgba(122, 162, 255, 0.18);
+            z-index: 1;
+        }
+
+        /* 구간은 폭을 가진 막대다. */
+        .item.range { background: rgba(122, 162, 255, 0.16); border-color: rgba(122, 162, 255, 0.45); }
+
+        /* 가사 한 줄은 시점(점)이다. 세로 눈금으로 그리고 글자는 옆에 붙인다 —
+           폭을 시간 차이로 잡을 수 없기 때문이다(점에는 길이가 없다). */
+        .item.point {
+            top: 3px;
+            bottom: 3px;
+            width: auto;
+            padding: 3px 6px 3px 8px;
+            background: rgba(86, 211, 100, 0.14);
+            border-left: 2px solid var(--ok);
+        }
+
+        /* 겹쳐도 읽히게 — 마우스를 올린 항목이 앞으로 나온다. */
+        .item:hover, .item:focus-visible {
+            z-index: 5;
+            background: var(--panel);
+            border-color: var(--accent);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+        }
+
+        .item .at { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 5px; }
+        .item.missing { background: rgba(227, 179, 65, 0.14); border-color: rgba(227, 179, 65, 0.4); }
+
+        /* 부모의 시간을 빌린 항목(구간-분위기). 자기 시간이 없다는 사실을 색으로 말한다. */
+        .item .borrowed { color: var(--warn); font-size: 10px; margin-left: 4px; }
+
+        .axis-label {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* 시간 정보가 하나도 없을 때. 트랙을 그대로 두면 모든 항목이 0 위치에 겹쳐
+           "시간이 있다" 는 거짓말이 된다. 눈금 없이 세로로 나열한다. */
+        .track.no-axis { height: auto; padding: 8px; }
+        .track.no-axis .item { position: static; display: block; margin-bottom: 4px; }
+
         .pager { display: flex; align-items: center; gap: 10px; justify-content: flex-end; margin-top: 12px; color: var(--muted); }
 
         /* ------------------------------------------------------------------ 모달 */
@@ -339,6 +432,9 @@
         consoleTimer: null,
         resource: null,
         schema: null,
+        /** 가사·구간 타임라인 응답과 그 곡 번호 (S15P21A204-380-B). */
+        timeline: null,
+        timelineMusicId: null,
         page: 0,
         size: 25,
         sort: null,
@@ -478,6 +574,23 @@
             return hours + '시간 ' + minutes + '분';
         }
         return minutes + '분';
+    }
+
+    /**
+     * 곡 내 시점(ms)을 사람이 읽는 표기로. `m:ss.t`.
+     *
+     * 타임라인의 항목과 축 눈금에 쓴다. 380-C 가 드래그로 값을 바꾸면 이 표기도 함께
+     * 움직여야 하므로 한 곳에 둔다.
+     */
+    function formatMs(value) {
+        var total = Number(value);
+        if (!isFinite(total) || total < 0) {
+            return '';
+        }
+        var minutes = Math.floor(total / 60000);
+        var seconds = Math.floor((total % 60000) / 1000);
+        var tenths = Math.floor((total % 1000) / 100);
+        return minutes + ':' + (seconds < 10 ? '0' : '') + seconds + '.' + tenths;
     }
 
     function toast(message, bad) {
@@ -766,7 +879,10 @@
                 html += '<td>' + cell(field, row[field.name], row) + '</td>';
             });
             // 자식 자원으로 건너가는 링크(앨범 행의 "음악")와 편집·삭제가 한 칸에 모인다.
+            // 타임라인 버튼은 스키마가 밴드를 선언한 자원(곡)에만 나온다 — 화면이 자원
+            // 이름을 보고 판단하지 않는다 (`schema.timeline_axes`).
             html += '<td class="actions">'
+                + timelineButton(row)
                 + childLinks(row)
                 + ' <button class="btn ghost small" data-edit="' + escape(row._id) + '">편집</button> '
                 + '<button class="btn ghost small" data-delete="' + escape(row._id) + '">삭제</button>'
@@ -793,6 +909,245 @@
         // 표를 그린 **뒤에** 토큰이 필요한 이미지를 받는다. 목록 자체는 이미 그려졌으므로
         // 이미지가 느리거나 실패해도 표를 읽는 데 지장이 없다.
         loadPrivateThumbnails();
+    }
+
+    // ------------------------------------------------- 가사·구간 타임라인 (380-B)
+
+    /**
+     * 곡 하나의 가사·구간을 **시간축 위에 가로로** 그린다.
+     *
+     * <p>표로만 나열하면 요구가 아니다 — 시간 위치가 눈에 보여야 한다. 밴드(가사·구간
+     * 분석·구간-분위기)를 위에서 아래로 쌓고, 각 밴드 안에서 항목을 **왼쪽에서 오른쪽으로
+     * 시간 위치에 맞춰** 놓는다.
+     *
+     * <h2>화면이 자원 이름을 모른다</h2>
+     *
+     * 어떤 밴드가 있고 무엇으로 정렬하는지는 **서버가 준 `axis`** 가 정한다
+     * (`AdminTimelineAxis`). 여기에 `lyric`·`timeMs` 같은 이름을 적지 않는다 — 자원이
+     * 늘어도 이 함수는 그대로다.
+     *
+     * <h2>380-C 가 붙을 자리</h2>
+     *
+     * 모든 항목에 **`data-time-ms`** 가 들어간다(구간은 `data-start-ms`·
+     * `data-end-ms` 도). 380-C 의 드래그가 그 속성을 읽어 새 시각을 계산한다. 지금은
+     * **배치까지만**이고 마우스 이벤트는 붙이지 않는다.
+     */
+    function renderTimeline() {
+        var data = state.timeline;
+        if (!data) {
+            el('content').innerHTML = '<div class="empty">불러오는 중…</div>';
+            return;
+        }
+
+        var html = '<h2>가사 · 구간 타임라인</h2>'
+            + '<p class="sub">' + escape(data.title) + ' · 곡 #' + escape(data.music_id)
+            + ' · 가로축 ' + (data.has_time ? formatMs(data.axis_max_ms) : '없음')
+            + '</p>';
+
+        html += '<div class="toolbar">'
+            + '<button class="btn ghost small" data-timeline-back="true">← 목록으로</button>'
+            + '<button class="btn ghost small" data-timeline-refresh="true">새로고침</button>'
+            + '</div>';
+
+        if (!data.has_time) {
+            // 0 을 축으로 나누면 모든 항목이 0% 에 뭉쳐 "시간이 있다" 는 거짓말이 된다.
+            html += '<p class="sub">이 곡에는 아직 시간 정보가 없습니다. 아래는 시간 순서 없이'
+                + ' 나열한 것입니다 — 분석이 끝나면 시간축 위에 배치됩니다.</p>';
+        }
+
+        html += '<div class="timeline">';
+        (data.bands || []).forEach(function (band) {
+            html += bandHtml(band, data.axis_max_ms, data.has_time);
+        });
+        html += '</div>';
+
+        el('content').innerHTML = html;
+    }
+
+    /**
+     * 밴드 하나 = 자원 하나의 항목 줄.
+     */
+    function bandHtml(band, axisMax, hasTime) {
+        var axis = band.axis || {};
+        var rows = band.rows || [];
+        var range = axis.kind === 'RANGE';
+
+        var html = '<div class="band"><div class="band-head">'
+            + '<strong>' + escape(axis.label) + '</strong>'
+            + '<span class="muted">' + escape(axis.resource) + ' · ' + rows.length + '개</span>';
+
+        if (band.truncated) {
+            // 조용히 자르면 "이 곡에는 이것뿐" 이라는 거짓말이 된다.
+            html += ' <span class="pill down">앞 ' + rows.length + '개만 표시 (전체 '
+                + number(band.total) + '개)</span>';
+        }
+        if (!axis.owns_time) {
+            // 구간-분위기는 자기 시간 컬럼이 없다. 부모 구간의 시간을 빌려 온다 —
+            // 말해 두지 않으면 "왜 분위기에 시간이 있지" 로 보인다.
+            html += ' <span class="muted">시간은 부모 구간(' + escape(axis.via_field) + ')에서</span>';
+        }
+        html += '</div>';
+
+        if (rows.length === 0) {
+            return html + '<p class="empty">항목이 없습니다.</p></div>';
+        }
+
+        if (!hasTime) {
+            // 축이 없으면 위치를 만들 수 없다. 겹쳐 그리는 대신 세로로 나열한다.
+            html += '<div class="track no-axis">';
+            rows.forEach(function (row) {
+                html += itemHtml(row, axis, range, null, null);
+            });
+            return html + '</div></div>';
+        }
+
+        html += '<div class="track" data-edit-resource="' + attr(axis.resource) + '">';
+        for (var line = 1; line < 10; line++) {
+            html += '<div class="grid-line" style="left:' + (line * 10) + '%"></div>';
+        }
+        rows.forEach(function (row) {
+            // 시작 시각. 점이면 `_time_ms`, 구간이면 `_start_ms` 다 — 서버가 맞춰 보낸다.
+            var start = Number(range ? row._start_ms : row._time_ms);
+            if (!isFinite(start)) {
+                start = null;
+            }
+            var end = range ? Number(row._end_ms) : null;
+            if (!isFinite(end)) {
+                end = null;
+            }
+            html += itemHtml(row, axis, range, start, end);
+        });
+        html += '</div>';
+
+        html += '<div class="axis-label"><span>0:00.0</span>'
+            + '<span>' + formatMs(axisMax) + '</span></div>';
+        return html + '</div>';
+    }
+
+    /**
+     * 항목 하나.
+     *
+     * **`data-time-ms` 는 언제나 들어간다** — 구간은 시작 시각이 그 값이다. 380-C 의 드래그가
+     * 이 속성 위에 붙고, 없으면 붙을 자리가 없다.
+     *
+     * 시작 시각을 모르면(**시간 컬럼은 있는데 값이 비었다**) 0 으로 그리지 않는다. 0 은
+     * "곡 맨 앞" 이라는 거짓 위치가 되므로 노란 항목(`missing`)으로 표시하고 `data-time-ms`
+     * 를 붙이지 않는다 — 붙이면 드래그가 없는 시간을 편집하게 된다.
+     */
+    function itemHtml(row, axis, range, start, end) {
+        var hasStart = start !== null && start !== undefined;
+        var percent = 0;
+        var width = 0;
+
+        if (hasStart && state.timeline && state.timeline.axis_max_ms > 0) {
+            var axisMax = state.timeline.axis_max_ms;
+            percent = Math.min(100, Math.max(0, (start / axisMax) * 100));
+            if (range && end !== null && end !== undefined) {
+                // 구간은 폭이 길이다. 최소 폭을 둬서 아주 짧은 구간도 보이게 한다.
+                width = Math.max(1.2, ((end - start) / axisMax) * 100);
+            }
+        }
+
+        var style = '';
+        // 위치는 **시작 시각을 알 때만** 준다. 모르는데 `left:0%` 를 주면 항목이 곡 맨 앞에
+        // 있는 것처럼 그려진다 — 0 은 "맨 앞" 이라는 거짓 위치다(`missing` 색만으로는
+        // 위치가 거짓인 것을 가릴 수 없다). 380-C 의 드래그도 이 자리를 집으면 안 된다.
+        if (hasStart && state.timeline && state.timeline.has_time) {
+            style = ' style="left:' + percent.toFixed(3) + '%';
+            if (range) {
+                // 오른쪽 끝이 트랙을 넘지 않게 자른다. 넘치면 잘려 보여 길이를 잘못 읽는다.
+                style += ';width:' + Math.min(width, 100 - percent).toFixed(3) + '%';
+            }
+            style += '"';
+        }
+
+        var attrs = ' class="item ' + (range ? 'range' : 'point')
+            + (hasStart ? '' : ' missing') + '"'
+            + style;
+
+        // 380-C 가 읽을 시간. 없으면 붙이지 않는다(위 주석 참고).
+        if (hasStart) {
+            attrs += ' data-time-ms="' + Number(start) + '"';
+        }
+        if (range) {
+            if (hasStart) {
+                attrs += ' data-start-ms="' + Number(start) + '"';
+            }
+            if (end !== null && end !== undefined) {
+                attrs += ' data-end-ms="' + Number(end) + '"';
+            }
+        }
+
+        // 어느 행을 고칠 것인가. 행의 모양이 목록 조회와 같아서 `_id` 가 그대로 있다.
+        // 자원 이름은 **밴드 머리**(`bandHtml`)에 한 번만 둔다 — 항목마다 되풀이하면
+        // 응답이 커지고, 같은 문자열이 항목 수만큼 DOM 에 중복된다.
+        attrs += ' data-edit-id="' + attr(row._id) + '"'
+            + ' tabindex="0"';
+        if (hasStart) {
+            // 380-C 의 드래그가 새 시각을 계산할 때 쓸 **지금 값**. `data-time-ms`(위치)와
+            // 같은 값이지만 의미가 다르다 — 이쪽은 편집 대상의 현재 값이다.
+            attrs += ' data-edit-time="' + Number(start) + '"';
+        }
+        if (range && end !== null && end !== undefined) {
+            attrs += ' data-edit-end="' + Number(end) + '"';
+        }
+
+        var label = itemLabel(row, axis);
+        var title = label + (hasStart ? ' @ ' + formatMs(start) : ' (시간 없음)');
+        var html = '<div' + attrs + ' title="' + attr(title) + '">';
+        if (hasStart) {
+            html += '<span class="at">' + formatMs(start) + '</span>';
+        }
+        html += escape(label);
+        if (!hasStart) {
+            html += ' <span class="borrowed">시간 없음</span>';
+        }
+        return html + '</div>';
+    }
+
+    /**
+     * 항목에 보일 한 줄. 무엇을 이어 붙일지는 **서버가 준 `title_fields`** 가 정한다 —
+     * 화면에 자원별 컬럼 이름을 적지 않는다.
+     *
+     * FK 필드(`moodCode`)는 번호 대신 `_labels` 의 대표값을 쓴다. 번호만 보이면 어느
+     * 분위기인지 알 수 없다(380-A 와 같은 규칙).
+     */
+    function itemLabel(row, axis) {
+        var labels = row._labels || {};
+        var parts = [];
+        (axis.title_fields || []).forEach(function (name) {
+            var value = row[name];
+            if (value === null || value === undefined || value === '') {
+                return;
+            }
+            if (labels[name] !== undefined && labels[name] !== null) {
+                parts.push(String(labels[name]));
+                return;
+            }
+            parts.push(String(value));
+        });
+        if (parts.length === 0) {
+            return '#' + (row._id === null || row._id === undefined ? '?' : String(row._id));
+        }
+        return parts.join(' ');
+    }
+
+    /**
+     * HTML 텍스트로 escape. 기존 `escape()` 와 같은 일이지만 이름을 따로 둔다 —
+     * 이 화면의 값은 자원 `Map` 에서 온 것이라 무엇을 escape 하는지 코드에 드러내는 편이 낫다.
+     */
+    function escapeHtml(value) {
+        return escape(value);
+    }
+
+    /**
+     * **HTML 속성값**으로 escape. 기존 `escape()` 는 따옴표로 큰 속성에 그대로 쓰면 위험하다 —
+     * `&quot;` 만 처리하고 `'` 를 남기는데, 이 화면의 JS 는 속성을 `'` 로 두는 곳이 많다.
+     * 값은 대부분 서버에서 오지만 `text` 처럼 **사람이 넣은 문자열**도 섞여 있다.
+     */
+    function attr(value) {
+        return escapeHtml(value)
+            .replace(/'/g, '&#39;');
     }
 
     function filterInput(field) {
@@ -920,6 +1275,101 @@
     }
 
     /**
+     * 이 행의 가사·구간 타임라인으로 가는 버튼.
+     *
+     * 스키마가 밴드를 선언한 자원에만 나온다(`schema.timeline_axes`). 화면이 "곡이면
+     * 타임라인" 이라고 판단하지 않는다 — 그 판단은 서버의 `TIMELINES` 선언에 있다.
+     */
+    function timelineButton(row) {
+        var axes = state.schema.timeline_axes || [];
+        if (!axes.length) {
+            return '';
+        }
+        return '<button class="btn ghost small" data-timeline-id="' + attr(row._id) + '">'
+            + '가사·구간</button> ';
+    }
+
+    /**
+     * 곡 하나의 타임라인을 연다 (S15P21A204-380-B).
+     *
+     * 표를 그리지 않고 **별도 보기**다. 표로만 나열하면 "가로로 시간순 배치" 라는 요구가
+     * 사라진다. 다만 항목을 고칠 때는 목록 화면과 **같은 편집기**를 쓴다 — 행의 모양이
+     * 같기 때문이다(`_id`·`_labels`).
+     */
+    function openTimeline(musicId) {
+        state.view = 'timeline';
+        state.timelineMusicId = musicId;
+        renderNav();
+        el('content').innerHTML = '<div class="empty">타임라인을 불러오는 중…</div>';
+
+        return loadTimeline(musicId);
+    }
+
+    /**
+     * 타임라인을 (다시) 불러온다. 저장 뒤에도 **이것을 부른다** — 저장했는데 화면이 옛
+     * 값을 보여주면 사용자는 저장 실패로 읽는다.
+     */
+    function loadTimeline(musicId) {
+        var asked = musicId;
+
+        return request('/resource/music/' + encodeURIComponent(asked) + '/timeline')
+            .then(function (timeline) {
+                // 늦게 온 응답이 다른 화면을 덮어쓰지 않게 막는다.
+                if (state.view !== 'timeline' || state.timelineMusicId !== asked) {
+                    return;
+                }
+                state.timeline = timeline;
+                renderTimeline();
+            })
+            .catch(function (error) {
+                fail(error);
+                if (state.view !== 'timeline' || state.timelineMusicId !== asked) {
+                    return;
+                }
+                el('content').innerHTML = '<div class="empty">'
+                    + escape((error && error.message) || '타임라인을 불러오지 못했습니다.')
+                    + '</div>';
+            });
+    }
+
+    /**
+     * 타임라인 항목 하나를 편집한다.
+     *
+     * **목록 화면의 편집기를 그대로 쓴다.** 타임라인 응답의 행은 자원 목록의 행과 같은
+     * 모양(`_id`·필드 이름)이라 같은 폼이 그대로 맞는다. 저장 경로도 같다 —
+     * `PATCH /api/v1/admin/resource/{resource}/{id}`. 그래서 "저장 후 화면 갱신" 은
+     * 목록을 다시 부르는 대신 **타임라인을 다시 부른다**: 목록이 아니라 타임라인을 보고
+     * 있기 때문이다. 저장했는데 옛 값이 보이면 사용자는 저장 실패로 읽는다.
+     */
+    function openTimelineItem(resource, id) {
+        var band = null;
+        (state.timeline.bands || []).forEach(function (candidate) {
+            if (candidate.axis && candidate.axis.resource === resource) {
+                band = candidate;
+            }
+        });
+        var row = null;
+        if (band) {
+            (band.rows || []).forEach(function (candidate) {
+                if (String(candidate._id) === String(id)) {
+                    row = candidate;
+                }
+            });
+        }
+        if (!row) {
+            fail(new Error('항목을 찾지 못했습니다. 새로고침해 주세요.'));
+            return;
+        }
+
+        // 이 자원의 스키마가 필요하다. 타임라인 항목은 목록 화면과 **같은 편집기**를 쓴다.
+        request('/resource/' + resource + '/schema').then(function (schema) {
+            schemaEditor(schema, resource, row, function () {
+                return loadTimeline(state.timelineMusicId);
+            });
+        }).catch(fail);
+    }
+
+    /**
      * 이 행에서 건너갈 수 있는 자식 자원들 (앨범 행의 "음악").
      *
      * 링크는 자식 자원 목록을 **부모를 가리키는 필터로 걸어서** 연다. 자식 목록 API 가
@@ -963,7 +1413,25 @@
     // ------------------------------------------------------------------ 편집 폼
 
     function openEditor(row) {
-        var schema = state.schema;
+        var resource = state.resource;
+        schemaEditor(state.schema, resource, row, function () {
+            loadRows();
+            loadResources();
+        });
+    }
+
+    /**
+     * 자원 하나의 행을 폼으로 고친다.
+     *
+     * <p>목록 화면(`openEditor`)과 타임라인 항목이 **같은 함수를 쓴다.** 타임라인 응답의
+     * 행은 자원 목록의 행과 같은 모양(`_id`·필드 이름)이라 같은 폼이 그대로 맞기 때문이다.
+     * 편집기를 둘로 나누면 한쪽만 고쳐지는 일이 생긴다.
+     *
+     * @param onSaved 저장이 끝난 뒤 할 일. 화면마다 다시 불러올 대상이 다르다 —
+     *                목록은 `loadRows()`, 타임라인은 `loadTimeline()`. 저장했는데 화면이
+     *                옛 값을 보여주면 사용자는 저장 실패로 읽으므로 **반드시** 다시 부른다.
+     */
+    function schemaEditor(schema, resource, row, onSaved) {
         var creating = !row;
         var title = escape(schema.label) + (creating ? ' 추가' : ' 편집');
 
@@ -1012,15 +1480,16 @@
             });
 
             var promise = creating
-                ? request('/resource/' + state.resource, { method: 'POST', body: JSON.stringify(payload) })
-                : request('/resource/' + state.resource + '/' + encodeURIComponent(row._id),
+                ? request('/resource/' + resource, { method: 'POST', body: JSON.stringify(payload) })
+                : request('/resource/' + resource + '/' + encodeURIComponent(row._id),
                     { method: 'PATCH', body: JSON.stringify(payload) });
 
             return promise.then(function () {
                 close();
                 toast(creating ? '추가했습니다.' : '수정했습니다.');
-                loadRows();
-                loadResources();
+                if (onSaved) {
+                    onSaved();
+                }
             });
         });
     }
@@ -1249,7 +1718,9 @@
         }
         var target = event.target.closest('[data-view], [data-resource], [data-relation],'
             + ' [data-edit], [data-delete], [data-sort], [data-console-tab],'
-            + ' [data-child-resource], #prev, #next, #create, #clear-filters, #console-reopen');
+            + ' [data-child-resource], [data-timeline-id], [data-timeline-back],'
+            + ' [data-timeline-refresh], [data-edit-time],'
+            + ' #prev, #next, #create, #clear-filters, #console-reopen');
         if (!target) {
             return;
         }
@@ -1295,6 +1766,43 @@
             event.preventDefault();
             openChild(target.dataset.childResource, target.dataset.childField,
                 target.dataset.childId);
+            return;
+        }
+        if (target.dataset.timelineId) {
+            // 곡 행의 "가사·구간" — 그 곡의 타임라인으로 간다 (S15P21A204-380-B).
+            event.preventDefault();
+            openTimeline(target.dataset.timelineId);
+            return;
+        }
+        if (target.dataset.timelineBack) {
+            // 목록으로 돌아간다. 열었던 자원이 그대로 남아 있으므로 다시 부르지 않는다 —
+            // 표를 새로 그리면 스크롤과 필터가 날아간다.
+            state.view = 'resource';
+            state.timeline = null;
+            renderNav();
+            renderTable();
+            return;
+        }
+        if (target.dataset.timelineRefresh) {
+            loadTimeline(state.timelineMusicId);
+            return;
+        }
+        if (target.dataset.editTime !== undefined && target.dataset.editId !== undefined) {
+            // 타임라인 항목 클릭 (S15P21A204-380-B). 자원 이름은 항목마다 두지 않고
+            // **트랙**(밴드)에 있다 — 항목 DOM 에 되풀이하면 응답과 DOM 이 함께 커진다.
+            //
+            // ⚠ 이 갈래가 **먼저** 와야 한다. 아래 `dataset.edit` 검사가 있고, 두 갈래 모두
+            // `[data-edit*]` 속성을 쓰므로 위임 선택자에 `[data-edit-time]` 이 없으면
+            // `closest()` 가 `null` 을 돌려주어 **클릭이 아무 일도 안 일으킨다** — 오류도
+            // 로그도 없이 조용하다. 실제로 그렇게 만들었다가 브라우저 확인에서 드러났다.
+            event.preventDefault();
+            var track = target.closest('.track');
+            var resource = track && track.dataset ? track.dataset.editResource : null;
+            if (!resource) {
+                fail(new Error('어느 자원인지 알 수 없습니다. 새로고침해 주세요.'));
+                return;
+            }
+            openTimelineItem(resource, target.dataset.editId);
             return;
         }
         if (target.dataset.edit) {

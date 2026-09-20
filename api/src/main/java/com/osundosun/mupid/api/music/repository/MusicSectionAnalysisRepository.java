@@ -4,6 +4,8 @@ import java.util.Collection;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 
@@ -29,5 +31,15 @@ public interface MusicSectionAnalysisRepository extends JpaRepository<
      * 알려 주기 위한 것이다.
      */
     List<MusicSectionAnalysis> findByExternalIdIn(Collection<String> externalIds);
+
+    /**
+     * 한 곡의 구간에서 **가장 늦은 끝 시각**(ms). 구간이 없으면 null.
+     *
+     * <p>타임라인의 가로축 최대값. {@code LyricRepository.maxTimeMsOfMusic} 과 같은 이유로
+     * DB 에서 집계한다 — 행을 잘라 오면서 그 잘린 행들로 축을 정하면 밴드마다 눈금이
+     * 달라진다.
+     */
+    @Query("SELECT MAX(s.endTimeMs) FROM MusicSectionAnalysis s WHERE s.music.musicId = :musicId")
+    Integer maxEndTimeMsOfMusic(@Param("musicId") Integer musicId);
 
 }

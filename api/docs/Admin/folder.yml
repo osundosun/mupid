@@ -21,6 +21,7 @@ docs:
     | `GET /api/v1/admin/resource/{resource}/schema` | 자원 하나의 컬럼 구성 |
     | `GET /api/v1/admin/resource/{resource}` | 목록 조회 (페이징·정렬·검색·필터) |
     | `GET /api/v1/admin/resource/{resource}/{id}` | 단건 조회 |
+    | `GET /api/v1/admin/resource/music/{id}/timeline` | 곡의 가사·구간 타임라인 (조회 전용) |
     | `POST /api/v1/admin/resource/{resource}` | 생성 |
     | `PATCH /api/v1/admin/resource/{resource}/{id}` | 수정 |
     | `DELETE /api/v1/admin/resource/{resource}/{id}` | 삭제 |
@@ -63,6 +64,25 @@ docs:
     스키마 응답에도 **`child_links`** 가 있습니다 ("이 앨범의 음악들" 처럼 자식 자원으로
     건너가는 링크). 화면은 그 링크를 `filter.<filter_field>=<이 행의 식별자>` 로 열어
     자식 목록을 보여 줍니다 — 새 엔드포인트가 필요 없습니다.
+
+    **`timeline_axes`** 도 있습니다 (S15P21A204-380-B). 곡(`music`) 자원에만 비어 있지
+    않고, 화면은 이것이 있으면 행마다 **가사·구간** 버튼을 그립니다. 밴드가 무엇을 시간으로
+    보고 무엇으로 정렬하는지가 이 목록에 담겨 있어 **화면에 자원 이름이 없습니다** —
+    자원이 늘어도 템플릿을 고칠 필요가 없습니다. 자세한 규칙은 **곡 가사·구간 타임라인**
+    문서를 보세요.
+
+    ## 목록 필터의 `IN`
+
+    `filter.<필드>` 는 기본이 **완전 일치 하나**입니다. 값이 `__in__:` 로 시작하면 쉼표로
+    이은 **목록 중 하나**(`IN`)로 봅니다 — `filter.lyricId=__in__:91,92`.
+
+    타임라인의 구간-분위기 밴드가 이걸 씁니다. 분위기는 **구간에** 달려서 곡 하나의 분위기를
+    고르려면 그 곡의 구간 번호 여러 개를 한 번에 걸어야 하고, 구간마다 부르면 그대로
+    N+1 입니다.
+
+    값이 하나도 없으면(`__in__:`) **빈 결과**입니다. 빈 `IN ()` 은 SQL 문법 오류라 질의가
+    죽고, 조건을 빼면 전부 나와 화면이 남의 곡 데이터를 그립니다 — 둘 다 거짓말이라
+    거짓 조건이 맞습니다.
 
     밑줄 키(`_id`·`_labels`·`_thumbnails`)는 화면용으로 서버가 따로 넣은 것이고, 그 **안의
     키도 snake_case** 입니다 (`requires_authorization`). 표기가 섞여 있으니 키를 읽을 때
