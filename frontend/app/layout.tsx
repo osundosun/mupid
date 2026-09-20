@@ -10,7 +10,27 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  interactiveWidget: 'resizes-content',
+  /*
+   * 키보드가 올라올 때 **레이아웃 뷰포트를 줄이지 않는다** (S15P21A204-389).
+   *
+   * 기본값(`resizes-content`)이면 브라우저가 레이아웃 뷰포트까지 줄여 준다.
+   * 크롬 안드로이드에서는 그게 곧 `100dvh` 가 키보드 위까지 줄어든다는 뜻이라
+   * 편해 보이지만, **안드로이드 웹뷰에서는 실제로 그렇게 되지 않는다** — 이 앱의
+   * 재생 표시가 그 차이를 이미 기록해 두었다(`hooks/use-keyboard-inset.ts`,
+   * `components/mupid/chat.tsx`): 페이지 높이는 그대로인데 키보드가 위에 덮여
+   * `--keyboard-inset` 이 양수로 잡혔다.
+   *
+   * 그 상태에서는 `dvh` 기반 자리 계산이 하나도 줄지 않아, 로그인·회원가입
+   * 대화상자가 `max-height: calc(100dvh - 32px)` 로 그대로 서고 아래쪽 입력란이
+   * 키보드 뒤로 들어갔다.
+   *
+   * 그래서 '덮이되 줄지 않는' 쪽을 **명시한다.** 그러면 키보드 높이가
+   * `visualViewport` 로 일관되게 드러나고, 그 값을 `--keyboard-inset` 으로 받아
+   * 대화상자가 스스로 줄어든다 (`dialog-viewport.css`, `demo-login.css`).
+   * 네이티브 쪽은 `AndroidManifest.xml` 의 `windowSoftInputMode="adjustResize"` 가
+   * 창 자체를 줄여 그 몫을 인셋으로 넘긴다 — 두 경로가 같은 순간에 울린다.
+   */
+  interactiveWidget: 'overlays-content',
   themeColor: '#f3f7fe',
 };
 

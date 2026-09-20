@@ -17,6 +17,30 @@ const genderOf = (value: string): 'M' | 'F' | 'ETC' =>
   value === 'MALE' ? 'M' : value === 'FEMALE' ? 'F' : 'ETC';
 
 /**
+ * 키보드가 올라온 뒤 입력란을 다시 보이게 한다 (S15P21A204-389).
+ *
+ * 브라우저는 **포커스를 받은 순간** 입력란을 보이려고 하지만, 그 시점에는 아직
+ * 키보드가 올라오지 않았다. 키보드는 몇백 ms 뒤에 뜨고, 그때는 이미 스크롤이
+ * 끝나 있다 — 그래서 대화상자의 아래쪽 입력란(「비밀번호 확인」·「출생 연도」)이
+ * 키보드 뒤로 들어가 보이지 않았다.
+ *
+ * 대화상자 높이는 `--keyboard-inset` 만큼 이미 줄어 있으므로
+ * (`dialog-viewport.css`) 그 아래 끝으로 한 번 더 내려 주기만 하면 된다.
+ * `block: 'nearest'` 라 이미 보이는 입력란에서는 아무 일도 일어나지 않는다 —
+ * 키보드가 없는 안드로이드 밖 환경이나 위쪽 입력란에서 화면이 튀지 않는다.
+ *
+ * 지연을 두는 이유는 `visualViewport` 의 `resize` 가 기기마다 다른 순간에
+ * 오기 때문이다. 두 번 부르면 늦게 줄어든 높이까지 따라잡는다.
+ */
+const revealFocused = (target: EventTarget | null) => {
+  const field = target as HTMLElement | null;
+  if (!field?.scrollIntoView) return;
+  const down = () => field.scrollIntoView({ block: 'nearest' });
+  down();
+  window.setTimeout(down, 260);
+};
+
+/**
  * 서버가 준 메시지를 그대로 보여준다.
  *
  * 필드 검증 오류는 하나만 고르지 않고 전부 보여준다. 서버가 Map 으로 주기
@@ -80,6 +104,11 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
         </DialogHeader>
         <form
           ref={form}
+          // 어느 입력란에 커서가 가든 그 자리를 다시 보이게 한다 (S15P21A204-389).
+          // 입력란마다 `onFocus` 를 다는 대신 폼 하나에서 받는다 — 회원가입으로
+          // 넘어가면 입력란이 한꺼번에 생기는데, 그때마다 손으로 붙이면 하나를
+          // 빠뜨리기 쉽고 빠뜨린 자리만 조용히 키보드 뒤로 들어간다.
+          onFocusCapture={(event) => revealFocused(event.target)}
           onSubmit={async (event) => {
             event.preventDefault();
             if (busy) return;

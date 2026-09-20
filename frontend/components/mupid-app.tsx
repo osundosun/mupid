@@ -8,6 +8,7 @@ import { useStore } from '@/lib/store';
 import { fetchCatalog } from '@/lib/stream-catalog';
 import { restoreSession, sessionStore } from '@/lib/api/session';
 import { watchSafeArea } from '@/lib/platform';
+import { watchKeyboardInset } from '@/hooks/use-keyboard-inset';
 import { DEFAULT_PROFILE_PHOTO } from '@/components/mupid/profile-image';
 import type { Bootstrap } from '@/lib/services/contracts';
 import { MupidMascot } from '@/components/mupid/mascot';
@@ -94,6 +95,14 @@ export function MupidApp() {
   // 시스템 바가 가리는 자리를 CSS 에 건넨다. 곡을 받기 전 화면도 상태바 밑으로
   // 들어가면 안 되므로 여기, 가장 바깥에서 한 번만 건다.
   useEffect(() => watchSafeArea(), []);
+  /*
+   * 키보드가 가린 높이도 같은 자리에서 한 번 붙인다 (S15P21A204-389).
+   *
+   * 로그인·회원가입 대화상자는 포털로 `body` 아래에 붙어 이 나무 밖이다. 각자
+   * 재게 하면 같은 값을 두세 번 재게 되고, 재는 것을 빠뜨린 자리는 조용히
+   * 가려진다. 한 곳에서 재어 `--keyboard-inset` 으로 뿌리에 적고 CSS 가 읽는다.
+   */
+  useEffect(() => watchKeyboardInset(), []);
   // 업데이트 확인은 **여기서 하지 않는다.** `UpdatePrompt`(`app/layout.tsx`)가
   // 스스로 한다 — 그 컴포넌트는 로그인 전에도 떠야 하는데(`(music)` 밖) 이
   // 훅은 인증 뒤에만 돌기 때문이다. 두 곳에 두면 매니페스트를 중복으로 받는다.
