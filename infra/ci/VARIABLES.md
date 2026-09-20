@@ -21,15 +21,36 @@
 | `MUPID_WEB_BUILD` | Variable | 같음. 같은 스탬프를 `MUPID_WEB_BUILD` 로 다시 export 한다 | `build:archive` 가 웹 번들의 `builtAt` 을 정하고, APK 빌드가 **같은 값**을 `option_env!` 로 박아 임베드 번들의 나이로 쓴다. 두 값이 다르면 새 APK 를 설치한 직후 앱이 자기 번들을 다시 받는다 |
 | `MUPID_BUILD_STAMP` | Variable | `sh infra/ci/build-stamp.sh` 가 값의 출처를 찾을 때 **가장 먼저** 본다 | 위 두 값의 유일한 출처다. 사람이 수동 배포하거나 값을 고정하고 싶을 때 여기에 넣는다. 없으면 `CI_COMMIT_TIMESTAMP` → `git show` → 현재 시각 순으로 내려간다 |
 | `MUPID_DATA_ENV` | **File** | `music_preprocessing/deploy.env.example` 를 채운 것 | `data-deploy`·`data-batch`·`data-check` (JupyterHub). 접속 정보·배치 설정·토큰이 **전부 이 파일 하나** 안에 있다 |
+| `MUPID_API_ENV` | **File** | **GitLab CI/CD 변수**에 넣은 운영 환경변수 내용. 노드의 `/srv/mupid-k8s/.env` 는 **수신기가 쓰는 결과물**이지 사람이 넣는 입력이 아니다 | `k8s-deploy-env` (`infra_k8s/ci/deploy-env.sh`). 내용을 그대로 노드로 보내면 **노드의 root 수신기(`receive-env.py`)가 Secret `mupid-secrets` 를 갈아 끼우고 api 를 재시작**한다. CI 는 Secret 을 직접 만들지 않는다 — 배포 계정의 RBAC 이 `secrets` 를 막고 있다(`rbac.yaml`). 열면 CI 키를 훔친 쪽이 DB 비밀번호·JWT 서명키·S3 키를 전부 읽게 된다 |
 
-## 아직 배선하지 않은 것
+> **MUPID_API_ENV 는 이미 배선돼 있다.** 2026-09-16 `6363c35`(S15P21A204-341)에서 들어왔다.
+> 이 표는 한동안 *"아직 배선하지 않은 것"* 이라고 적고 있었는데 **사실이 아니었다** — 실제로는
+> master 파이프라인마다 `k8s-deploy-env` 가 돌고 있었다(207409·207390 success, job 로그에
+> `보내는 항목 19개` → `UNCHANGED …`). 문서가 그 커밋 이전 서술을 들고 있었던 것이다.
+>
+> **표를 먼저 의심하라.** job 이 안 뜨면 코드보다 이 문서를 먼저 의심하라.
+>
+> **내용이 예전과 같으면 수신기가 `UNCHANGED` 를 돌려주고 아무것도 하지 않는다.** 그래서 master
+> 푸시마다 돌려도 api 가 매번 재시작하지 않는다. 대신 **값을 노드에만 수동으로 넣고 CI 변수를
+> 갱신하지 않으면**, 이 job 이 옛 내용을 `UNCHANGED` 로 판정해 그 키가 조용히 반영되지 않는다.
 
-값은 뽑아 두었지만 CI 가 아직 읽지 않는다. 배선할 때 이 이름으로 맞춘다.
+#### 키를 더할 때 — **세 곳을 같이 고친다**
+
+| # | 고칠 곳 | 빠뜨리면 |
+|---|---|---|
+| ① | `MUPID_API_ENV` (GitLab CI/CD **File** 변수, Protected) | 노드에 안 내려간다 |
+| ② | `infra_k8s/base/api.yaml` 의 `secretKeyRef` | Secret 에는 들어가는데 **파드가 안 읽어 조용히 빈다**(`SecretKeyTest` 가 잡는다) |
+| ③ | `infra/deploy/.env.example` 선언 | `SecretKeyTest` 가 실패한다 |
+
+②가 필요한 이유: Secret 을 `envFrom` 으로 통째로 주입하지 않는다. 그 안에 api 가 쓸 일 없는
+`MUPID_MYSQL_ROOT_PASSWORD` 같은 것도 있어서다.
+
+선택 키(`MUPID_MATTERMOST_WEBHOOK_URL` 등)는 `receive-env.py` 의 경고 목록에 넣으면 비어 있을 때
+배포 로그에 남는다 — 조용한 비활성은 *"왜 알림이 안 오지"* 로 한참 뒤에 드러난다.
 
 | 변수 | Type | 값이 오는 곳 | 배선하려면 |
 |---|---|---|---|
-| `MUPID_API_ENV` | **File** | 운영 노드의 `/srv/mupid-k8s/.env` (14개 — `MUPID_MATTERMOST_WEBHOOK_URL` 이 2026-09-20 에 늘었다) | 지금은 사람이 서버에서 `kubectl create secret --from-env-file` 로 만든다. 키를 더하면 **`infra_k8s/base/api.yaml` 에 `secretKeyRef` 도 같이 넣어야 한다** — Secret 을 `envFrom` 으로 통째로 주입하지 않으므로 매니페스트에 이름이 없으면 그 설정이 조용히 빈다 |
-| `MUPID_FRONTEND_ENV` | **File** | `MUPID_DEPLOY_TARGET`·`MUPID_API_ORIGIN` | 지금은 `frontend.yml` 의 `variables:` 에 `ec2` 가 박혀 있다 |
+| `MUPID_FRONTEND_ENV` | **File** | `MUPID_DEPLOY_TARGET`·`MUPID_API_ORIGIN` | **아직 이름만 있다.** `frontend.yml` 의 `variables:` 에 `MUPID_DEPLOY_TARGET: ec2` 가 박혀 있고, `MUPID_FRONTEND_ENV` 는 이 문서에만 있으며 코드가 읽지 않는다. 배선할지 폐기할지 정해야 한다 |
 
 ## 정리해도 되는 것
 
