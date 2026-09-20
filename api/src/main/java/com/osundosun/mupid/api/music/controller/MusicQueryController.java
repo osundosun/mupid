@@ -13,7 +13,9 @@ import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.common.error.GlobalErrorCode;
 import com.osundosun.mupid.api.common.response.BaseResponse;
 import com.osundosun.mupid.api.music.dto.MusicSummary;
+import com.osundosun.mupid.api.music.enumerate.MusicSort;
 import com.osundosun.mupid.api.music.enumerate.VocalFilter;
+import com.osundosun.mupid.api.music.request.MusicSortRequest;
 import com.osundosun.mupid.api.music.response.MusicAnalysisResponse;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
 import com.osundosun.mupid.api.music.response.ExploreFilterOptionResponse;
@@ -53,6 +55,11 @@ public class MusicQueryController {
      *                쉼표로 이어 보내도 된다(`vocal=female,male`). 비우면 걸지 않는다
      * @param moodCodeNames  분위기 {@code codes.code_name}. 같은 축의 여러 값은 OR
      * @param genreCodeNames 장르 {@code codes.code_name}. 같은 축의 여러 값은 OR
+     * @param sort    정렬 기준. `recent`(최신순)·`likes`(좋아요순)·`title`(제목순).
+     *                대소문자는 가리지 않는다. **비우면 지금까지와 완전히 같은 순서**이고
+     *                (등록순 오름차순), 값을 준 호출에만 정렬이 걸린다.
+     *                검색어(`q`)와 함께 보내면 400 이다 — 관련도순이 결과 자체를 만드는
+     *                규칙이라 정렬로 덮을 수 없다
      * @param page    0부터 센다
      * @param size    기본 20, 최대 100. 탐색 화면은 10개씩 요청한다
      */
@@ -62,12 +69,14 @@ public class MusicQueryController {
         @RequestParam(name = "vocal", required = false) List<String> vocal,
         @RequestParam(name = "mood", required = false) List<String> moodCodeNames,
         @RequestParam(name = "genre", required = false) List<String> genreCodeNames,
+        @RequestParam(required = false) String sort,
         @RequestParam(defaultValue = "0") int page,
         @RequestParam(defaultValue = "" + MusicServiceImpl.DEFAULT_PAGE_SIZE) int size
     ) {
         return ResponseEntity.ok(BaseResponse.of(
             musicService.searchMusic(
-                q, parseVocalFilters(vocal), moodCodeNames, genreCodeNames, page, size)));
+                q, parseVocalFilters(vocal), moodCodeNames, genreCodeNames,
+                parseSort(sort), page, size)));
     }
 
     /**
@@ -99,6 +108,21 @@ public class MusicQueryController {
             .filter(filter -> filter.name().equalsIgnoreCase(value))
             .findFirst()
             .orElseThrow(() -> new BusinessException(GlobalErrorCode.INVALID_REQUEST_BODY));
+    }
+
+    /**
+     * 쿼리로 온 정렬 값을 {@link MusicSortRequest} 로 옮긴다.
+     *
+     * <p>{@code parseVocalFilters} 와 같은 판단을 따른다 — <b>모르는 값은 조용히
+     * 버리지 않는다.</b> 버리면 '최신순' 을 고른 사람이 등록순 목록을 보게 되고,
+     * 무엇이 잘못됐는지 알 방법이 없다. 빈 값({@code sort=})만 '고르지 않음' 으로 본다.
+     */
+    private static MusicSortRequest parseSort(String sort) {
+        if (sort == null || sort.isBlank()) {
+            return MusicSortRequest.ABSENT;
+        }
+        return MusicSortRequest.of(MusicSort.parse(sort)
+            .orElseThrow(() -> new BusinessException(GlobalErrorCode.INVALID_REQUEST_BODY)));
     }
 
     @GetMapping("/{musicId}")
