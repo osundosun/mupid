@@ -144,4 +144,15 @@
 .demo-login-dialog .auth-mode-switch { margin-top: 18px; }
 @media (max-width: 767px) {
   .sky-dialog.demo-login-dialog { max-height: calc(100dvh - 40px); width: calc(100% - 32px); padding: 32px 24px; }
+  /*
+   * 키보드가 올라오면 위아래 여백도 함께 줄인다 (S15P21A204-389).
+   *
+   * 대화상자의 높이만 줄이면(`dialog-viewport.css`) 32px 짜리 위아래 여백이 그대로
+   * 남아 정작 입력란이 설 자리가 좁아진다. 여기서 먼저 줄여 그 자리를 내준다.
+   * 12px 아래로는 내리지 않는다 — 너무 붙으면 입력란이 화면 테두리에 닿는다.
+   * 키보드가 없을 때는 `max(12px, 32px)` = 32px 이라 예전 모습 그대로다.
+   */
+  .sky-dialog.demo-login-dialog {
+    padding-block: max(12px, calc(32px - var(--keyboard-inset, 0px)));
+  }
 }

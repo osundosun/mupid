@@ -30,11 +30,37 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.mupid_app"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <!--
+          화상 키보드가 입력란을 가리던 문제 (S15P21A204-389).
+
+          이 선언이 없으면 안드로이드의 기본값은 `adjustUnspecified` 다. 그 값이면
+          시스템이 창 크기를 줄일지 화면을 밀어 올릴지 스스로 정하는데, 실제로는
+          **줄이지 않고 키보드를 위에 덮었다** — 로그인·회원가입 대화상자의 아래쪽
+          입력란(비밀번호 확인·출생 연도)이 키보드 뒤로 들어가 보이지 않았다.
+
+          `adjustResize` 는 키보드 높이만큼 창(과 그 안의 웹뷰)을 줄이고, 그 몫을
+          인셋으로 넘긴다. 줄어든 것을 아는 순간의 처리는 두 갈래다.
+
+          - 화면 쪽: `layout.tsx` 의 `interactiveWidget: 'overlays-content'` 와
+            `useKeyboardInset` 이 `visualViewport` 로 잰 가림 높이
+            (CSS 변수 `keyboard-inset`) — 대화상자가 그만큼 짧아진다.
+          - 네이티브 쪽: `SafeArea.install` 의 인셋 리스너가 같은 순간 울리고,
+            CSS 변수 `safe-area-inset-*` 로 건너간다.
+
+          **`adjustPan` 을 쓰면 안 된다.** 화면을 통째로 밀어 올리는 방식이라
+          시스템 바 여백(`safe-area-inset-top`)과 어긋나고 스크롤 컨테이너 기준이
+          흔들린다.
+
+          주의: 이 주석 안에는 붙임표를 둘 연달아 쓰지 않는다. XML 주석은 그
+          연속을 허용하지 않아 매니페스트 병합 자체가 실패한다. 그래서 CSS 변수
+          이름을 붙임표 없이 적었다.
+        -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
