@@ -13,6 +13,21 @@ const bridgeStub =
      export const invoke = (command, args) => globalThis.__invoke(command, args);`,
   ).toString('base64');
 
+// `./crash` 도 같은 이유로 스텁을 세운다. `update.ts` 가 `checkForUpdates` 의
+// catch 에서 `reportCrash`·`describe` 를 부르기 때문이다(S15P21A204-383).
+// **여기서 진짜 모듈을 부르면 안 된다** — 그 모듈은 `./bridge` 를 확장자 없이
+// import 하므로 `node --test` 가 해석하지 못하고, 그 실패가 "새로 깨진 시험"
+// 으로 잡힌다(실제로 그렇게 잡혔다). 스텁의 `reportCrash` 는 호출을 기록만
+// 한다 — 이 시험은 업데이트 흐름을 보는 것이지 예외 보고를 보는 게 아니다.
+// 예외 보고 자체는 `tests/crash-report.test.mjs` 가 본다.
+const crashStub =
+  'data:text/javascript;base64,' +
+  Buffer.from(
+    `export const reportCrash = (payload) => globalThis.__reportCrash?.(payload);
+     export const describe = (value) =>
+       typeof value === 'string' ? value : (value?.message ?? String(value));`,
+  ).toString('base64');
+
 const source = await readFile(
   new URL('../lib/platform/update.ts', import.meta.url),
   'utf8',
@@ -24,7 +39,8 @@ const js = ts
       module: ts.ModuleKind.ESNext,
     },
   })
-  .outputText.replace(/'\.\/bridge'/g, JSON.stringify(bridgeStub));
+  .outputText.replace(/['"]\.\/bridge['"]/g, JSON.stringify(bridgeStub))
+  .replace(/['"]\.\/crash['"]/g, JSON.stringify(crashStub));
 
 const {
   checkForUpdates,
