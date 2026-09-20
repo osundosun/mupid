@@ -36,6 +36,7 @@ import com.osundosun.mupid.api.music.service.MusicSummaryAssembler;
 import com.osundosun.mupid.api.playlist.repository.PlaylistTrackRepository;
 import com.osundosun.mupid.api.report.dto.MubtiInput;
 import com.osundosun.mupid.api.report.dto.MubtiVerdict;
+import com.osundosun.mupid.api.report.dto.ReportRange;
 import com.osundosun.mupid.api.report.entity.Listening;
 import com.osundosun.mupid.api.report.entity.Mubti;
 import com.osundosun.mupid.api.report.entity.Report;
@@ -45,6 +46,7 @@ import com.osundosun.mupid.api.report.error.ReportErrorCode;
 import com.osundosun.mupid.api.report.repository.ListeningRepository;
 import com.osundosun.mupid.api.report.repository.MubtiRepository;
 import com.osundosun.mupid.api.report.repository.ReportRepository;
+import com.osundosun.mupid.api.report.response.ReportDailyRangeResponse;
 import com.osundosun.mupid.api.report.response.ReportResponse;
 import com.osundosun.mupid.api.storage.service.StorageImageService;
 
@@ -149,6 +151,40 @@ public class ReportServiceImpl implements ReportService {
         }
 
         return computed.response();
+    }
+
+    /**
+     * 여러 날의 리포트를 한 번에. 주간 달력이 쓴다.
+     *
+     * <h2>왜 하루치를 그대로 돌려 쓰는가</h2>
+     *
+     * 달력과 본문이 <b>다른 값</b>을 보여 주면 어느 쪽이 맞는지 알 수 없다. 그래서
+     * 여기서 계산을 다시 하지 않고 {@link #getDailyReport} 를 날마다 부른다 — 유형
+     * 판정·스냅샷 적재·이력 현상이 전부 그 한 경로의 규칙을 그대로 탄다.
+     *
+     * <h2>적재는 날마다 그대로 일어난다</h2>
+     *
+     * 지난 날짜는 스냅샷이 없으면 그 자리에서 계산해 저장한다(backfill-on-read).
+     * 여기서 그 적재를 끄지 않는다 — 끄면 이 경로로만 들어온 날짜가 영원히 저장되지
+     * 않아, 나중에 자정 배치가 돌아도 그날은 다시 계산된다. 대신 한 번의 요청이
+     * 최대 31일치까지 쓰기를 유발하므로 창을 좁게 잡아 둔다
+     * ({@code ReportRange.MAX_DAYS}).
+     *
+     * <h2>실패를 격리하지 않는다</h2>
+     *
+     * 한 날짜가 실패하면 요청 전체가 실패한다. 부분 응답을 주면 화면이 <b>빈 날짜와
+     * 실패한 날짜를 구분할 수 없다</b> — 둘 다 "기록 없음"으로 그려진다. 하루치 조회가
+     * 집계 실패에 503 을 내는 것과 같은 판단이다
+     * ({@code REPORT_ANALYTICS_UNAVAILABLE}).
+     */
+    @Override
+    public ReportDailyRangeResponse getDailyReportRange(int userId, ReportRange range) {
+        List<ReportDailyRangeResponse.Day> days = range.days().stream()
+            .map(date -> ReportDailyRangeResponse.Day.from(getDailyReport(userId, date)))
+            .toList();
+
+        return new ReportDailyRangeResponse(
+            range.from(), range.to(), ZONE.getId(), days);
     }
 
     @Override

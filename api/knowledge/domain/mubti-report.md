@@ -7,6 +7,10 @@
 > 1. **적재는 자정 배치까지 넣는다** — backfill-on-read + 5분 throttle 스냅샷 + 00:05 배치.
 > 2. **V/I 축은 `has_vocal` 만 쓴다** — 구간 편향은 넣지 않는다.
 > 3. **일간 전용** — `GET /api/v1/report?date=YYYY-MM-DD`. `period` 는 두지 않는다.
+>
+> 2026-09-20 (S15P21A204-379): 여러 날을 한 번에 받는
+> `GET /api/v1/report/daily?from=&to=` 가 더해졌다(§2-A). 3번의 뜻은 그대로다 —
+> **집계 단위는 여전히 하루**이고, 늘어난 것은 묶음이지 단위가 아니다.
 
 '내 취향' 화면 한 장에 들어가는 세 가지 — **곡별 청취량 트리맵 · 음악 키워드 ·
 MuBTI 판정** — 을 **하루 단위로, 조회할 때마다 다시 집계해서** 내려준다.
@@ -133,6 +137,105 @@ WHERE user_id = ?
 ```
 
 **이 결과는 오늘 안에 변하지 않는다.** 그래서 캐시 수명이 다른 두 쿼리와 다르다(§5).
+
+---
+
+## 2-A. 여러 날 한 번에 — `GET /api/v1/report/daily`
+
+S15P21A204-379 에서 더해졌다. **집계를 바꾼 것이 아니라 묶음을 만든 것이다** —
+날짜마다 도는 계산은 §2 의 Q1~Q3 그대로다.
+
+### 왜 필요했나
+
+주간 MUBTI 대화상자가 일요일부터 토요일까지 **일곱 장**을 그린다. 그때까지는 요청을
+날마다 따로 보냈다 — `frontend/components/mupid/listening-calendar.tsx` 의
+`CONCURRENCY = 3` 이 셋씩 동시에 쏘았다. 스냅샷이 없는 지난 날짜는 조회할 때 계산해
+저장하므로(backfill-on-read, [decision/0019](../decision/0019-report-reads-clickhouse-directly.md)),
+창을 열 때마다 ClickHouse 집계가 날 수만큼 돌았다. 한 요청으로 묶으면 클라이언트
+왕복이 한 번이 된다.
+
+### 파라미터·규칙
+
+| | 값 |
+| --- | --- |
+| 경로 | `GET /api/v1/report/daily` |
+| 파라미터 | `from` · `to` — **둘 다 필수**, `YYYY-MM-DD`, **양끝 포함** |
+| 시간대 | `Asia/Seoul` (`ReportServiceImpl.ZONE`). 응답의 `time_zone` 이 그 값을 말한다 |
+| 상한 | 31일 (`ReportRange.MAX_DAYS`) |
+| 빈 날짜 | **빼지 않고** 0/`null` 로 채운다 |
+
+**시간대를 응답에 싣는 이유.** `date` 가 어느 시간대의 날짜인지 클라이언트는 되짚을
+수 없다. 기기 시간대로 해석하면 자정 근처의 기록이 하루씩 어긋나는데, 그 오류는
+화면에서 "그날 안 들은 것"과 구별되지 않는다. 응답이 자기 기준을 스스로 말하게 둔다.
+
+**빈 날짜를 빼지 않는 이유.** 화면이 카드 일곱 장을 **항상** 그리면서 `state` 를
+`typed / listened / empty / future / loading` 으로 가른다. 날짜를 빼면 그 자리가
+"불러오는 중"이 되어 **기록이 없는 것과 아직 안 온 것을 구분할 수 없다.**
+하루치 조회가 기록 없는 날에 빈 리포트를 주는 것과 같은 판단이다(§2 의 `empty`).
+
+**상한이 31일인 근거.** 둘이다.
+
+1. 화면이 실제로 쓰는 창은 **7일**이다. 31일은 그 네 배가 넘는 여유다.
+2. 스냅샷 없는 날짜는 요청 시점에 재집계하므로 걸리는 시간이 날짜 수에 비례한다.
+   운영 nginx 의 `/api/` 는 `proxy_read_timeout 60s` 이고(`application.yaml` 의
+   `clickhouse.console-timeout` 주석이 같은 값을 근거로 든다), 31일은 그 안에 들어온다.
+
+**넘치면 자르지 않고 거절한다.** 1년을 요청했는데 31일치를 돌려주면 클라이언트는
+그것을 1년치로 읽는다 — "이 기간에는 기록이 없다"로 보이는데 실제로는 잘린 것이라,
+**틀린 답이 맞는 답처럼 보인다.** 페이지 크기(`size`)를 범위 안으로 당기는 것과 다른
+이유가 이것이다. 그쪽은 "그만큼만 보여 준다"가 파라미터의 뜻이라 당겨도 뜻이 남는다.
+
+### 응답 — 왜 하루치를 그대로 묶지 않는가
+
+하루치는 트리맵 타일 40곡과 키워드 6개를 담는다. 달력이 그 날짜에서 실제로 쓰는 것은
+**유형 코드·이름·캐릭터 그림과 그날 들은 시간**뿐이다. 일곱 날을 묶으면 40곡 목록이
+일곱 벌 중복되어 응답만 커지고 화면은 아무것도 더 쓰지 않는다.
+
+| 필드 | 뜻 |
+| --- | --- |
+| `from` · `to` | 요청한 기간 그대로 |
+| `time_zone` | `Asia/Seoul` |
+| `days[].date` | 오름차순 |
+| `days[].total_listening_ms` | 그날 실제로 들은 시간. 기록이 없으면 0 |
+| `days[].mubti` | `code` · `title` · `image_url` 만. 표본이 모자라면 `null` |
+| `days[].sample.sufficient` | 판정 하한을 넘겼는가 |
+
+**값은 하루치와 같다.** `ReportDailyRangeResponse.Day.from(ReportResponse)` 가
+하루치 응답 하나만 받아 줄인다 — 계산은 `getDailyReport` **한 곳**에서만 일어난다.
+두 경로가 각자 계산하면 같은 날 유형이 달력과 본문에서 달라질 수 있고, 그러면
+어느 쪽이 맞는지 알 길이 없다. `ReportDailyRangeTest.bothPathsAgreeOnTheSameDay` 가
+그 동일성을 못 박는다.
+
+### 오류
+
+| 코드 | 상태 | 언제 |
+| --- | --- | --- |
+| `REPORT_INVALID_DATE` | 400 | 값이 없거나, `from > to` 이거나, 미래를 포함할 때 |
+| `REPORT_RANGE_TOO_LONG` | 400 | 창이 31일을 넘을 때 |
+| `REPORT_ANALYTICS_UNAVAILABLE` | 503 | ClickHouse 를 읽지 못할 때 |
+
+**미래이면서 너무 긴 요청은 날짜 오류로 답한다.** 무엇이 잘못됐는지 더 근본적인
+쪽을 먼저 말하는 편이 고치기 쉽다.
+
+**실패를 날짜별로 격리하지 않는다.** 한 날짜가 실패하면 요청 전체가 실패한다 —
+부분 응답을 주면 화면이 **빈 날짜와 실패한 날짜를 구분할 수 없다**(둘 다 "기록 없음").
+하루치가 집계 실패에 503 을 내는 것과 같은 판단이다.
+
+### 하위 호환
+
+`GET /api/v1/report?date=` 는 **바뀌지 않았다.** 필드도 의미도 그대로다.
+새 경로만 더했다. `ReportDailyRangeTest.legacySingleDayEndpointUnchanged` 가
+옛 계약의 필드가 하나도 줄지 않았음을 확인한다.
+
+### 남은 것 — 이 티켓 범위 밖
+
+- **stale 스냅샷 재집계 정책.** 지금은 지난 날짜에 `reports` 행이 있으면 그 행을
+  그대로 믿는다. 그 행이 오래됐거나 잘못됐을 때 다시 계산할 길은 자정 배치뿐이다.
+  `/report/daily` 로 창을 넓게 열면 이 문제가 더 자주 드러나지만, **정책 변경은
+  이 티켓에서 하지 않았다** (S15P21A204-379 지시).
+- **자정 배치의 일괄 처리.** 배치는 하루치를 사용자마다 한 번 계산한다
+  (`ReportDailyBatch`). 여러 날을 한 번에 저장하는 길은 없다 — 필요해지면 배치 쪽
+  작업이다.
 
 ---
 
@@ -462,15 +565,16 @@ public class Listening {
 ```
 api/report/
   controller/ReportController.java          GET /api/v1/report?date=
+                                           GET /api/v1/report/daily?from=&to=   (S15P21A204-379)
   service/ReportService.java · ReportServiceImpl.java
   service/MubtiScorer.java                  판정 규칙 전부. 계수는 여기 상수로만
   service/CatalogBaseline.java              카탈로그 기준선 (보컬 비중 · 재생수 백분위)
   service/ReportSnapshotWriter.java         RDB 적재
   service/ReportDailyBatch.java             00:05 KST · Redis 선점
-  dto/ MubtiInput · MubtiVerdict
-  response/ReportResponse.java
+  dto/ MubtiInput · MubtiVerdict · ReportRange   (ReportRange = 기간 검증, 인프라 없이 테스트)
+  response/ ReportResponse · ReportDailyRangeResponse
   enumerate/ ReportSource · KeywordKind · MubtiClass(Axis 인터페이스 추가)
-  error/ReportErrorCode.java
+  error/ReportErrorCode.java                + REPORT_RANGE_TOO_LONG
   repository/  (있던 3개에 조회 메서드 추가)
   entity/Listening.java                     ← §5 의 매핑 결함 수정
 
@@ -511,6 +615,8 @@ frontend/app/readability.css                       MuBTI 축 막대 + 죽은 균
 
 ```
 api/src/test/.../report/MubtiScorerTest.java   판정 방향 · 표본 하한 · 이력 현상 11건
+api/src/test/.../report/ReportRangeTest.java   기간 규칙 — 양끝 포함 · 상한 31/32 · 미래 · 뒤집힘 11건 (379)
+api/src/test/.../report/ReportDailyRangeTest.java  HTTP 계약 — 빈 날짜 채움 · 경계 400 · 하위 호환 19건 (379)
 frontend/tests/treemap.test.mjs                면적 비례 · 겹침 · 종횡비 7건
 ```
 
