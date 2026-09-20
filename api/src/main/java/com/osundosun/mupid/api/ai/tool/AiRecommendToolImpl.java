@@ -196,6 +196,10 @@ public class AiRecommendToolImpl implements AiRecommendTool {
             if (!exclude.isEmpty()) {
                 plan.put("exclude", exclude);
             }
+            // userId 는 Integer 다. 여기서 primitive 로 언박싱하면 null 에서 NPE 가 나고
+            // 대화 한 번이 통째로 500 이 된다 (S15P21A204-377). null 이면 요청 본문에서
+            // 빠지고 추천 서버가 "필수 칸 없음" 으로 400 을 낸다 — 계약 위반이 계약대로
+            // 드러나는 편이, 우리 코드가 터지는 것보다 낫다.
             items = recommender.search(new RecommenderDto.SearchRequest(
                 recommendationId, userId, limit, excludeTracks, null, plan, onboarding));
         } else {
