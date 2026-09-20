@@ -62,6 +62,29 @@ flow_music_data/
 
 된다. 등록 결과는 `registered.json` 의 `catalog` 아래에 남고, 이미 있는 것은
 건너뛴다. 메타데이터나 커버의 SHA-256 이 바뀐 것만 다시 올린다.
+
+## 서버에서 지워진 곡 (ticket S15P21A204-399)
+
+지문이 같으면 위의 "건너뛴다" 때문에 **서버를 아예 부르지 않는다.** 그래서 서버에서
+곡이 소프트 삭제돼도 이 명령은 영원히 모르고, 그 사실은 뒤 단계(`lyrics` 는 404,
+`classify` 는 "서버 곡 누락")가 엉뚱한 곳에서 터져서야 드러났다.
+
+**서버는 이제 삭제된 곡에 410 Gone 을 준다**(2026-09-18). 그래도 이 대조를 두는
+이유는 비용이다 — 곡마다 단건 조회를 하면 1060회지만, 목록을 훑으면 11회다.
+
+지금은 `run` 전에 `audit` 이 돈다. `GET /api/v1/music` 한 번으로 등록 기록의 곡이
+서버에 있는지 전부 대조하고, 없는 곡은 `registered.json` 에 **예외 항목**으로
+남긴 뒤 건너뛴다 → `audit.py`.
+
+- 삭제된 곡은 `PATCH` 410 을 맞지 않고 조용히 지나간다. 로그·보고서에는 남는다.
+- 몇 곡이든 예외가 될 수 있다. **개수에 상한을 두지 않는다** — 곡은 몇 개든
+  삭제될 수 있고, 비율로 "삭제"와 "기록 노후화"를 가르는 것은 성립하지 않는다.
+- 서버에 다시 나타나면 표식을 지우고 평소대로 동기화한다.
+- **원본 오디오·메타데이터는 건드리지 않는다.** 서버 곡을 되살릴지 주피터의
+  원본을 지울지는 사람이 정한다.
+
+곡명이 어긋난 곡이 하나라도 있으면 **한 건도 쓰기 전에 멈춘다.** 그 상태의
+`registered.json` 은 다른 곡을 가리키고 있어 `PATCH` 가 남의 곡을 고친다.
 """
 
 from __future__ import annotations
@@ -74,6 +97,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .api_client import MupidApiError, MupidClient
+from .audit import (
+    EXEMPT_KEY,
+    AuditResult,
+    ServerAuditError,
+    apply_exemptions,
+    audit_registry,
+    exempt_track_ids,
+    index_server_music,
+    report_findings,
+)
 from .hasher import compute_sha256
 from .registrar import RegistrationError, Registry
 
@@ -318,7 +351,56 @@ class CatalogRegistrar:
 
     # ── 전체 ──
 
-    def run(self, tracks: list[TrackMeta]) -> dict:
+    def audit(self) -> AuditResult | None:
+        """서버에 없는 곡을 미리 찾아 등록 기록에 예외로 남긴다.
+
+        등록보다 **먼저** 돈다. 지문(`fields_sha256`)이 같으면 `_sync` 가 서버를
+        아예 부르지 않으므로, 이 단계가 없으면 서버에서 삭제된 곡을 영원히 모른다
+        (`ticket S15P21A204-399`).
+
+        찾은 곡은 `registered.json` 에 표식을 남기고 이후 단계가 건너뛴다.
+        **원본 파일은 건드리지 않는다** — 서버에서 곡을 되살릴지 원본을 지울지는
+        사람이 정한다.
+
+        Returns:
+            대조 결과. dry-run 이라 서버에 붙을 수 없으면 None.
+
+        Raises:
+            CatalogError: 곡명이 어긋난 곡이 있을 때. 한 건도 쓰기 전에 멈춘다 —
+                `registered.json` 이 다른 곡을 가리키는 채로 두면 `PATCH` 가
+                엉뚱한 곡을 고친다.
+        """
+        if self.client is None:
+            return None
+
+        self.progress.phase("서버 대조", 1)
+        try:
+            server = index_server_music(self.client)
+        except ServerAuditError as e:
+            # 목록을 못 읽었으면 무엇이 삭제됐는지 알 수 없다. 등록을 강행하지 않는다.
+            raise CatalogError(f"서버 곡 목록을 읽지 못했습니다: {e}") from e
+        finally:
+            self.progress.advance("서버 대조")
+
+        # `client` 를 넘겨 **목록에 없던 곡만** 단건 조회로 판정한다
+        # (410=삭제 / 404=등록 기록 낡음). 곡마다 부르지 않으므로 요청은 몇 번뿐이다.
+        result = audit_registry(
+            self.registry, server, exempt_now=not self.dry_run, client=self.client
+        )
+        if apply_exemptions(result, self.registry)[0] or result.recovered:
+            self._save()
+        report_findings(result)
+
+        if not result.ok:
+            raise CatalogError(
+                f"곡명이 어긋난 곡이 {len(result.title_mismatch)}개입니다 "
+                f"(예: {result.title_mismatch[0]['track_id']}). "
+                "등록 기록이 다른 곡을 가리키고 있어 한 건도 쓰지 않았습니다 — "
+                "`music-preprocessing repair-track` 으로 확인하세요."
+            )
+        return result
+
+    def run(self, tracks: list[TrackMeta], audit: AuditResult | None = None) -> dict:
         grouping = Grouping(tracks)
         summary = {
             "artists_total": len(grouping.artist_tracks),
@@ -332,8 +414,12 @@ class CatalogRegistrar:
             "tracks_updated": 0,
             "covers_uploaded": 0,
             "covers_missing": 0,
+            "tracks_exempt": 0,
             "errors": [],
         }
+        # 서버에 없는 곡은 만들지도 고치지도 않는다. 표식은 `audit` 이 이미 남겼다.
+        exempt = exempt_track_ids(self.registry)
+        summary["tracks_exempt"] = sum(1 for t in tracks if t.track_id in exempt)
 
         self.progress.phase("아티스트", len(grouping.artist_tracks))
         for artist_key in sorted(grouping.artist_tracks):
@@ -355,6 +441,11 @@ class CatalogRegistrar:
 
         self.progress.phase("곡", len(tracks))
         for index, track in enumerate(tracks, start=1):
+            # 서버에서 사라진 곡은 `PATCH` 가 410 이다. 서버를 부르지 않고 지나간다.
+            # 사유는 `audit` 이 이미 로그와 보고서에 남겼다.
+            if track.track_id in exempt:
+                self.progress.advance("곡")
+                continue
             self._guard(
                 summary,
                 track.track_id,
@@ -397,6 +488,9 @@ class CatalogRegistrar:
         지문이 아예 없는 항목(이 기능 이전에 등록된 것)은 서버가 파일과 같은지
         알 길이 없어 **한 번 고치고 지문을 남긴다.** 파일이 기준이므로 고치는
         쪽이 맞고, 다음 실행부터는 조용해진다.
+
+        **여기서 서버에 아직 있는지는 보지 않는다.** 지문이 같으면 그대로 돌아가기
+        때문이다. 서버에서 지워진 곡을 걸러 내는 것은 호출 전의 `audit` 단계다.
         """
         previous = entry.get("fields_sha256")
         if previous == digest:
@@ -595,6 +689,7 @@ class CatalogRegistrar:
             force: SHA-256 이 같아도 다시 올린다
         """
         grouping = Grouping(tracks)
+        exempt = exempt_track_ids(self.registry)
         summary = {
             "artists_refreshed": 0,
             "albums_refreshed": 0,
@@ -602,6 +697,7 @@ class CatalogRegistrar:
             "covers_uploaded": 0,
             "covers_missing": 0,
             "skipped_unregistered": 0,
+            "skipped_exempt": 0,
             "errors": [],
         }
 
@@ -623,6 +719,11 @@ class CatalogRegistrar:
 
         self.progress.phase("곡 커버", len(tracks))
         for track in tracks:
+            # 서버에서 사라진 곡은 커버를 올려도 붙일 곳이 없다. 곡 행이 없으면
+            # `PATCH` 가 410 이므로 오브젝트만 고아로 남는다.
+            if track.track_id in exempt:
+                self.progress.advance("곡 커버")
+                continue
             self._guard(
                 summary,
                 track.track_id,
@@ -673,6 +774,10 @@ class CatalogRegistrar:
         entry = self.registry.catalog_entry("tracks", track.track_id)
         if not entry:
             summary["skipped_unregistered"] += 1
+            return
+        # 서버에 없는 곡이다. 아래 `PATCH` 가 410 이라 오브젝트만 고아로 남는다.
+        if entry.get(EXEMPT_KEY):
+            summary["skipped_exempt"] += 1
             return
 
         cover = find_cover(self.covers_dir, track.track_id)
