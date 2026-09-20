@@ -98,6 +98,16 @@ export const INSERT_POSITION_LABEL: Record<QueueInsertPosition, string> = {
   afterCurrent: '재생 중인 곡 다음',
 };
 
+/**
+ * 대화를 열 때 보이는 첫 인사. **새 대화도 이 자리에서 시작한다.**
+ *
+ * 모듈 수준에 두는 이유는 초기 상태(`useState`)와 새 대화(`startNewChat`)가 같은 문장을
+ * 써야 하기 때문이다. 훅 안에 두면 초기 상태가 선언보다 먼저 평가돼 `TS2448`
+ * (used before its declaration)이 난다.
+ */
+const CHAT_GREETING =
+  '지금 듣는 곡의 저장한 순간에서 새로운 음악을 찾아볼까요? 원하는 느낌을 들려주세요.';
+
 /** 고른 삽입 위치를 이 기기에 기억해 둔다. 계정이 아니라 기기의 취향이다. */
 const QUEUE_INSERT_KEY = 'mupid.queue.insert-position';
 
@@ -220,9 +230,18 @@ export function useMupid(bootstrap: Bootstrap) {
     {
       id: 1,
       role: 'assistant',
-      text: '지금 듣는 곡의 저장한 순간에서 새로운 음악을 찾아볼까요? 원하는 느낌을 들려주세요.',
+      text: CHAT_GREETING,
     },
   ]);
+  /**
+   * 이어 가는 대화 세션 번호. 서버가 발급하고 응답으로 돌려준다.
+   *
+   * **`null` 이면 새 대화다** — 첫 턴이거나 사용자가 대화를 지운 뒤다. 번호를 여기서
+   * 만들어 내지 않는다(그건 서버 몫이다). 이 값을 다음 요청에 그대로 실어야 한 대화가
+   * `ai_chat_sessions` 한 행으로 남는다 — 안 실으면 매 턴 새 세션이 열린다
+   * (S15P21A204-375).
+   */
+  const chatSessionRef = useRef<number | null>(null);
   const [momentRange, setMomentRange] = useState<number[]>([70, 92]);
   // 저장한 순간을 열어 고치는 중이면 그 id를 담는다. 새로 만들 때는 null.
   const [editingMomentId, setEditingMomentId] = useState<number | null>(null);
@@ -1607,12 +1626,35 @@ export function useMupid(bootstrap: Bootstrap) {
     setChatOpen(false);
     requestAnimationFrame(() => chatButtonRef.current?.focus());
   };
+
+  /**
+   * 대화를 지우고 새로 시작한다.
+   *
+   * 세션 번호를 비우는 것이 핵심이다 — 남겨 두면 다음 턴이 지운 대화에 이어 붙는다.
+   * 번호를 지우면 서버가 다음 턴에 새 세션을 연다. 서버의 `history` 기반 맥락도 같이
+   * 끊기도록 대화 목록을 인사 한 마디로 되돌린다.
+   *
+   * 진행 중인 요청은 끊는다. 안 끊으면 지운 뒤 도착한 답이 새 대화에 섞인다.
+   */
+  const startNewChat = () => {
+    chatAbort.current?.abort();
+    chatAbort.current = null;
+    chatSessionRef.current = null;
+    setMessages([{ id: Date.now(), role: 'assistant', text: CHAT_GREETING }]);
+    setChatInput('');
+    setChatLoading(false);
+  };
+
   /**
    * AI 에게 한 마디 보낸다.
    *
    * 답은 서버가 만든다 (`POST /api/v1/ai/chat`). 예전의 인위적인 지연(650ms)은
    * 없앴다 — 실제로 수 초에서 수십 초가 걸리고, 그동안 패널이 "찾고 있어요" 를
    * 그린다. 화면을 떠나면 요청을 끊는다.
+   *
+   * **세션을 이어서 보낸다.** `chatSessionRef` 에 들고 있는 번호를 그대로 실으면 한
+   * 대화가 `ai_chat_sessions` 한 행으로 남는다. 응답이 준 번호로 다시 채워 다음 턴에
+   * 쓴다 (S15P21A204-375).
    */
   const sendMessage = (prompt = chatInput) => {
     if (!prompt.trim() || chatLoading) return;
@@ -1634,9 +1676,14 @@ export function useMupid(bootstrap: Bootstrap) {
           // 숨긴 곡은 추천에서 빼고 보여 준다. 서버는 아직 제외 목록을 받지 않는다.
           catalog: tracks.filter((t) => !ignored.includes(t.id)),
           history: previous,
+          // 이어 갈 세션. null 이면 서버가 새로 연다.
+          sessionId: chatSessionRef.current,
           signal: controller.signal,
         });
         if (!mountedRef.current || controller.signal.aborted) return;
+        // 다음 턴이 같은 세션으로 이어지도록 받은 번호를 들고 있는다.
+        // 저장에 실패했으면 null 이고, 그때는 다음 턴에 새 세션이 열린다.
+        chatSessionRef.current = answer.sessionId;
         setMessages((list) => [
           ...list,
           {
@@ -1894,6 +1941,7 @@ export function useMupid(bootstrap: Bootstrap) {
     toggleLike,
     openChat,
     closeChat,
+    startNewChat,
     sendMessage,
     createPlaylist,
   };

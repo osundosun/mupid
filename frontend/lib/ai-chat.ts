@@ -22,7 +22,7 @@ const CONTENT_LIMIT = 2000;
 
 const MESSAGE_LIMIT = 500;
 
-export type ChatAnswer = { text: string; tracks: Track[] };
+export type ChatAnswer = { text: string; tracks: Track[]; sessionId: number | null };
 
 export type ChatRequest = {
   prompt: string;
@@ -32,6 +32,13 @@ export type ChatRequest = {
   catalog: Track[];
   /** 지금까지 오간 말. 이번에 보낼 말은 포함하지 않는다. */
   history: ChatMessage[];
+  /**
+   * 이어 갈 대화 세션. 직전 응답의 `sessionId` 를 그대로 넘긴다.
+   *
+   * **`null` 이면 서버가 새 세션을 연다** — 화면에 세션이 없거나(첫 턴) 사용자가
+   * 대화를 지운 경우다. 여기서 값을 만들어 내지 않는다. 번호를 발급하는 것은 서버다.
+   */
+  sessionId?: number | null;
   signal?: AbortSignal;
 };
 
@@ -102,6 +109,7 @@ export async function requestChat({
   current,
   catalog,
   history,
+  sessionId,
   signal,
 }: ChatRequest): Promise<ChatAnswer> {
   const result = await api.ai.chat(
@@ -110,12 +118,18 @@ export async function requestChat({
       history: toTurns(history),
       // undefined 는 JSON 에서 빠진다. 서버는 없는 값으로 읽는다.
       music_id: current?.musicId,
+      // 첫 턴이거나 대화를 막 지운 뒤면 null 이다. 그때도 키를 넣지 않는다 —
+      // `null` 을 보내면 서버 검증에 걸릴 수 있고, 뜻은 "없음" 하나뿐이다.
+      session_id: sessionId ?? undefined,
     },
     signal,
   );
   return {
     text: result?.reply ?? '',
     tracks: resolve(result?.tracks ?? [], catalog, result?.recommendation_id ?? null),
+    // 서버가 발급(또는 재사용)한 세션 번호. 화면이 들고 있다가 다음 턴에 되돌려 보낸다.
+    // 저장에 실패했으면 null 이고, 그러면 다음 턴에 새 세션이 열린다 — 답변은 정상이다.
+    sessionId: result?.session_id ?? null,
   };
 }
 

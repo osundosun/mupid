@@ -1,6 +1,6 @@
 'use client';
 import { MupidMascot } from './mascot';
-import { ArrowUp, LoaderCircle, Sparkle, X } from 'lucide-react';
+import { ArrowUp, LoaderCircle, Sparkle, SquarePen, X } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { useKeyboardInset } from '@/hooks/use-keyboard-inset';
 import { chatSuggestions, formatTime } from '@/lib/mupid-data';
@@ -51,6 +51,17 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
           </h2>
           <p>저장한 순간에서, 다음 음악으로</p>
         </div>
+        {/* 지금까지의 말을 지우고 새 대화를 연다. 서버 세션도 함께 끊는다
+            (`startNewChat`) — 안 끊으면 지운 대화에 다음 턴이 이어 붙는다. */}
+        <button
+          className="icon-button"
+          aria-label="새 대화 시작"
+          title="새 대화"
+          onClick={m.startNewChat}
+          disabled={m.chatLoading}
+        >
+          <SquarePen />
+        </button>
         <button
           className="icon-button"
           aria-label="AI 음악 탐색 닫기"

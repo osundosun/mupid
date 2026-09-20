@@ -372,6 +372,15 @@ export type AiChatBody = {
   history?: AiChatTurn[];
   /** 지금 듣고 있는 곡. 서버가 이 번호로 곡 문맥을 만든다. */
   music_id?: number;
+  /**
+   * 이어 갈 대화 세션 번호. **없으면 서버가 새 세션을 연다** (본문에서 빠진다 —
+   * `undefined` 키는 `JSON.stringify` 가 지운다).
+   *
+   * <p>서버가 대화를 `ai_chat_sessions`·`ai_chat_messages` 에 남기므로, 두 번째 턴부터는
+   * 직전 응답의 `session_id` 를 그대로 실어 보낸다. 이 값을 빼먹으면 매 턴 새 세션이
+   * 열려 한 대화가 여러 세션으로 갈라진다 (S15P21A204-375).
+   */
+  session_id?: number;
 };
 
 /**
@@ -450,6 +459,13 @@ export type DailyRecommendationResult = {
 /** 추천을 하지 않았으면 `tracks` 는 빈 배열이다 (null 이 아니다). */
 export type AiChatResult = {
   reply: string;
+  /**
+   * 이 답변이 남긴 대화 세션의 번호. 다음 턴에 `session_id` 로 되돌려 보낸다.
+   *
+   * **기록을 저장하지 못했으면 `null` 이다.** 답변 자체는 정상이라는 뜻이라 화면은
+   * 대화를 이어 가면 되고, 세션 번호가 없으면 서버가 다음 턴에 새 세션을 연다.
+   */
+  session_id: number | null;
   /**
    * 이 답변이 만든 추천 묶음의 번호. 추천이 없었으면 `null` 이다.
    *
