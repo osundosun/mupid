@@ -29,6 +29,8 @@
  */
 
 import { invoke, isTauri } from './bridge';
+// 예외를 화면에서 셸로 넘기는 통로. 웹 배포에서는 아무 일도 하지 않는다.
+import { describe, reportCrash } from './crash';
 
 /** Rust 가 알려주는 지금 상태. `app/src/update_net.rs` 의 `UpdateState` 와 같아야 한다. */
 export type UpdateState = {
@@ -178,6 +180,11 @@ export async function checkForUpdates(options?: {
   } catch (error) {
     // 네트워크가 없거나 서버가 죽었을 수 있다. 사용자가 알 필요는 없다.
     // **Firebase Crashlytics 를 붙일 때 여기가 기록 지점이다.**
+    //
+    // S15P21A204-383 에서 붙였다 — `reportCrash` 가 앱 셸이면 Rust 의
+    // `crash_report` 커맨드로 넘기고, 웹 배포면 아무 일도 하지 않는다.
+    // 이 경로는 "서버가 죽었다" 를 알려 주는 자리라 기록할 값이 있다.
+    reportCrash({ message: describe(error), context: 'checkForUpdates' });
     console.warn('[update]', error);
     return null;
   }

@@ -7,7 +7,7 @@ import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
 import { useStore } from '@/lib/store';
 import { fetchCatalog } from '@/lib/stream-catalog';
 import { restoreSession, sessionStore } from '@/lib/api/session';
-import { watchSafeArea } from '@/lib/platform';
+import { watchSafeArea, watchCrashReports } from '@/lib/platform';
 import { watchKeyboardInset } from '@/hooks/use-keyboard-inset';
 import { DEFAULT_PROFILE_PHOTO } from '@/components/mupid/profile-image';
 import type { Bootstrap } from '@/lib/services/contracts';
@@ -103,6 +103,10 @@ export function MupidApp() {
    * 가려진다. 한 곳에서 재어 `--keyboard-inset` 으로 뿌리에 적고 CSS 가 읽는다.
    */
   useEffect(() => watchKeyboardInset(), []);
+  // 예외 처리기도 여기, 가장 바깥에서 한 번만 건다 — 화면 안쪽에 두면
+  // 그 화면이 죽는 순간 예외를 잡을 사람도 함께 사라진다. 웹에서는
+  // `reportCrash` 가 `isTauri()` 를 보고 아무 일도 하지 않는다.
+  useEffect(() => watchCrashReports(), []);
   // 업데이트 확인은 **여기서 하지 않는다.** `UpdatePrompt`(`app/layout.tsx`)가
   // 스스로 한다 — 그 컴포넌트는 로그인 전에도 떠야 하는데(`(music)` 밖) 이
   // 훅은 인증 뒤에만 돌기 때문이다. 두 곳에 두면 매니페스트를 중복으로 받는다.
