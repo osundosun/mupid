@@ -50,6 +50,8 @@ export const toTrack = (music: MusicSummary): Track => {
     musicId: music.music_id,
     title: music.title,
     artist: music.artist.name,
+    artistId: music.artist.artist_id,
+    artistImage: toImageSource(music.artist.image_url?.trim()),
     album: music.album.title,
     genre: music.genres[0] ?? '',
     mood: music.moods[0] ?? '',

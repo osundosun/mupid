@@ -38,6 +38,14 @@ public interface MusicService {
     MusicPageResponse searchMusic(
         String keyword, Collection<VocalFilter> vocalFilters, int page, int size);
 
+    MusicPageResponse searchMusic(
+        String keyword,
+        Collection<VocalFilter> vocalFilters,
+        Collection<String> moodCodeNames,
+        Collection<String> genreCodeNames,
+        int page,
+        int size);
+
     /**
      * 필터 없는 곡 목록. {@code searchMusic(keyword, null, page, size)} 와 같다.
      *

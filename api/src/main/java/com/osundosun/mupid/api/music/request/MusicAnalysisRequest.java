@@ -15,9 +15,9 @@ import jakarta.validation.constraints.NotNull;
  * <p><b>{@code vocalGender} 는 비워 보낼 수 있다.</b> 보컬이 없거나
  * ({@code hasVocal=false}) 판정하지 못한 곡이 실제로 있다 — 학습 코퍼스
  * 1,060곡 중 성별을 판정하지 못한 것이 256곡(24%)이다. 그래서 ERD 의
- * {@code ENUM('M','F','ETC')} 를 {@code NOT NULL} 로 조이지 않았고, 여기서도
+ * {@code ENUM('M','F','MIX')} 를 {@code NOT NULL} 로 조이지 않았고, 여기서도
  * 필수로 받지 않는다. {@code null} 은 "모른다" 이지 "기타" 가 아니다 —
- * {@code ETC} 로 뭉개면 화면이 판정 실패를 판정 결과로 말하게 된다.
+ * {@code MIX} 로 뭉개면 화면이 판정 실패를 혼성 보컬로 말하게 된다.
  */
 public record MusicAnalysisRequest(
 
@@ -28,7 +28,7 @@ public record MusicAnalysisRequest(
     Boolean hasVocal,
 
     /**
-     * 보컬 성별. {@code M} · {@code F} · {@code ETC}. 모르면 비운다.
+     * 보컬 성별. {@code M} · {@code F} · {@code MIX}. 모르면 비운다.
      *
      * <p>문자열로 받는 이유: 조회 응답이 {@code vocalGender.name()} 을 그대로
      * 내보내므로 배치가 이미 같은 철자를 쓴다. {@code null} 이면 저장하지 않는다.

@@ -53,6 +53,8 @@ export type Track = {
   musicId?: number;
   title: string;
   artist: string;
+  artistId?: number;
+  artistImage?: string;
   album: string;
   genre: string;
   mood: string;

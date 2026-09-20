@@ -13,6 +13,7 @@ mod config;
 mod db;
 mod http;
 mod image;
+mod logging;
 mod media;
 mod store;
 mod update;
@@ -156,6 +157,24 @@ fn serve_rsc<R: tauri::Runtime>(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // **가장 먼저 로거를 세운다.** `log` 는 파사드라 로거가 없으면 매크로가
+    // 조용히 버려진다 — 그러면 아래의 모든 진단이 사라진다(실제로 그랬다).
+    // 무엇보다 먼저 불러야 그 뒤의 실패도 남는다.
+    logging::init();
+
+    // 기동을 한 줄 남긴다. **이 줄이 로거가 살아 있다는 증거다.**
+    //
+    // 다른 진단은 전부 실패 경로에 있어서 정상 기동에서는 아무것도 안 나온다 —
+    // 그러면 "로거가 죽어 있는 것" 과 "실패가 없는 것" 을 구별할 수 없다.
+    // 실제로 그 구별이 안 돼서 한참 헤맸다. 버전을 함께 남겨 로그만 보고도
+    // 어느 판이 도는지 알 수 있게 한다.
+    log::info!(
+        "앱을 시작합니다: versionCode {}, 웹 번들 {}, 네이티브 빌드 {}",
+        update::local_version_code(),
+        update::local_web_build(),
+        update::native_build_ms(),
+    );
+
     // 자산 프로바이더를 갈아 끼운다 — 디스크에 활성화된 웹 번들이 있으면 거기서,
     // 없으면 임베드 번들에서 준다 (`assets.rs`).
     //

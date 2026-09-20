@@ -10,7 +10,9 @@ import { ProfilePhoto } from './profile-photo';
 import { DEFAULT_PROFILE_PHOTO } from './profile-image';
 import { PasswordForm } from './password-form';
 import { WithdrawAccount } from './withdraw-account';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ComponentProps } from 'react';
+import { useTrackWaveform } from '@/lib/track-waveform';
+import type { Track } from '@/lib/mupid-data';
 import { DemoAccount } from './demo-login';
 import {
   Check,
@@ -56,6 +58,16 @@ import {
   TrackRow,
   Waveform,
 } from './primitives';
+
+function SavedMomentWaveform({ track, ...props }: { track: Track } & ComponentProps<typeof Waveform>) {
+  const waveform = useTrackWaveform(track);
+  return <>
+    <Waveform {...props} samples={waveform.values ?? undefined} />
+    {waveform.failed
+      ? <span role="status">파형을 분석하지 못했어요.</span>
+      : waveform.progress < 1 && <span role="status">파형 분석 중 {Math.round(waveform.progress * 100)}%</span>}
+  </>;
+}
 
 // 탭 이름을 그대로 화면 제목으로 쓴다. 어느 탭에 있는지 제목만 봐도 알 수 있게.
 const LIBRARY_TAB_TITLES: Record<string, string> = {
@@ -361,7 +373,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                     })}
                   </div>
                   <div className="saved-moment-wave">
-                    <Waveform duration={track.duration} ranges={moments} progress={isActive ? m.time : 0} />
+                    <SavedMomentWaveform track={track} duration={track.duration} ranges={moments} progress={isActive ? m.time : 0} />
                     {moments.map((moment) => <span key={moment.id} className={`saved-wave-range ${focused.id === moment.id ? 'is-focused' : ''}`} style={{ left: `${moment.start / track.duration * 100}%`, width: `${(moment.end - moment.start) / track.duration * 100}%` }} />)}
                     {isActive && <span className="saved-wave-playhead" style={{ left: `${Math.min(100, m.time / track.duration * 100)}%` }} />}
                     <button

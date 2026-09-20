@@ -149,7 +149,7 @@ class MusicAnalysisReplaceTest {
     }
 
     @Test
-    @DisplayName("세 성별 값이 모두 저장된다 — ENUM('M','F','ETC')")
+    @DisplayName("세 성별 값이 모두 저장된다 — ENUM('M','F','MIX')")
     void storesEveryGender() {
         for (VocalGender g : VocalGender.values()) {
             replace(true, g);
