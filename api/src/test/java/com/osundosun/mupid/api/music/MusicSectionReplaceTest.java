@@ -318,7 +318,7 @@ class MusicSectionReplaceTest {
             .findByMusicSectionAnalysisMoodId_MusicSectionAnalysisIdIn(
                 List.of(result.sections().getFirst().musicSectionAnalysisId()));
         assertEquals(1, links.size());
-        assertEquals(mood, links.getFirst().getMoodCodeId().getCodeName());
+        assertEquals(mood, links.getFirst().getMoodCode().getCodeName());
     }
 
     @Test
