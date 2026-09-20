@@ -1,7 +1,6 @@
 package com.osundosun.mupid.api.ai.service;
 
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.osundosun.mupid.api.ai.entity.AiChatMessage;
@@ -32,7 +31,16 @@ import lombok.extern.slf4j.Slf4j;
  * 세션에 이미 쌓인 최댓값을 읽어 +1 한다. 그 조회와 INSERT 가 같은 트랜잭션 안이라
  * 한 세션 안에서 순서가 겹치지 않는다.
  *
- * <h2>제목</h2>
+ * <h2>`REQUIRES_NEW` 를 쓰지 않는다</h2>
+ *
+ * <p>한때 `append` 에 `REQUIRES_NEW` 를 걸었다. "호출자의 트랜잭션에 휩쓸리지 않게 한다"
+ * 는 뜻이었는데, 그 선택이 <b>`open` 직후 `append` 를 불가능하게</b> 만들었다 — 안쪽
+ * 트랜잭션이 바깥 트랜잭션을 중단시키므로 아직 커밋되지 않은 세션 행이 보이지 않아
+ * "대화 세션이 없다" 로 죽는다. 실제로 `AiChatHistoryPersistTest` 에서 그렇게 걸렸다.
+ *
+ * <p>평범한 `REQUIRED` 면 충분하다. `AiChatServiceImpl` 에 트랜잭션이 없으므로 각 호출이
+ * 각자 짧은 트랜잭션을 열어 <b>원래 의도(LLM 왕복 동안 커넥션을 쥐지 않는다)가 그대로
+ * 지켜지고</b>, 바깥 트랜잭션이 있는 호출자에게는 그 안에서 이어져 두 호출이 서로를 본다.
  *
  * <p>`ai_chat_sessions.title` 은 `VARCHAR(50)` 이다. 넘치면 MySQL 이 조용히 자르거나
  * (strict mode 에서는) 거부한다. 첫 사용자 메시지를 잘라 쓴다.
@@ -69,7 +77,7 @@ public class AiChatHistoryServiceImpl implements AiChatHistoryService {
     }
 
     @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public AiChatMessage append(Integer sessionId, AiMessageType messageType, String text,
         Integer musicId) {
         if (sessionId == null) {
