@@ -21,6 +21,7 @@ import org.springframework.web.client.RestClient;
 
 import com.osundosun.mupid.api.ai.client.OpenAiClient;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
+import com.osundosun.mupid.api.ai.entity.AiChatSession;
 import com.osundosun.mupid.api.ai.properties.AiProperties;
 import com.osundosun.mupid.api.ai.properties.RecommenderProperties;
 import com.osundosun.mupid.api.ai.request.AiChatRequest;
@@ -209,6 +210,17 @@ class ChatRecommendationEndToEndTest {
             .build();
     }
 
+    /**
+     * 대화 저장 대역. 이 테스트의 관심사는 **추천 경로**라 저장은 곁가지다 — 세션 번호만
+     * 발급한다. 저장 자체는 {@code AiChatHistoryPersistTest} 가 실 DB 로 본다.
+     */
+    private AiChatHistoryService history() {
+        AiChatHistoryService stub = mock(AiChatHistoryService.class);
+        AiChatSession session = AiChatSession.builder().aiChatSessionId(1).build();
+        when(stub.open(any(), any())).thenReturn(session);
+        return stub;
+    }
+
     /** 추천 서버가 살아 있고 DB 에도 그 구간이 있는 상태의 서비스. */
     private AiChatServiceImpl service(String toolArguments) throws IOException {
         RecommenderClient client = recommender();
@@ -227,7 +239,8 @@ class ChatRecommendationEndToEndTest {
             client, musicRepository, sectionService, onboardingService);
         return new AiChatServiceImpl(gateway(toolArguments), tool, musicRepository,
             new AiProperties("x", "test-key", "gpt-5-mini",
-                Duration.ofSeconds(2), Duration.ofSeconds(2), 3, 20));
+                Duration.ofSeconds(2), Duration.ofSeconds(2), 3, 20),
+            history());
     }
 
     // ------------------------------------------------------------ 재현 시도
@@ -241,7 +254,7 @@ class ChatRecommendationEndToEndTest {
                 + "\"filters\":{\"genre\":[\"poprock\"],\"instrument\":[\"piano\"]}}");
 
         AiChatResponse response = service.chat(User.builder().userId(15).build(),
-            new AiChatRequest("잔잔한 곡 추천해줘", List.of(), null));
+            new AiChatRequest("잔잔한 곡 추천해줘", List.of(), null, null));
 
         // 1) 답변이 온다 — 도구 호출 라운드가 정상 종료됐다는 뜻이다.
         assertThat(response.reply()).isNotBlank();
@@ -265,7 +278,7 @@ class ChatRecommendationEndToEndTest {
         AiChatServiceImpl service = service("{\"query\":\"잔잔한 곡\"}");
 
         service.chat(User.builder().userId(15).build(),
-            new AiChatRequest("추천해줘", List.of(), null));
+            new AiChatRequest("추천해줘", List.of(), null, null));
 
         String first = gatewayRequests.getFirst();
         assertThat(first).contains("\"tools\"");
@@ -296,7 +309,7 @@ class ChatRecommendationEndToEndTest {
             "{\"query\":\"아무거나\",\"filters\":{\"genre\":[]},\"exclude\":{\"mood\":[]}}");
 
         AiChatResponse response = service.chat(User.builder().userId(15).build(),
-            new AiChatRequest("추천", List.of(), null));
+            new AiChatRequest("추천", List.of(), null, null));
 
         assertThat(response.reply()).isNotBlank();
         assertThat(response.tracks()).hasSize(2);
@@ -310,7 +323,7 @@ class ChatRecommendationEndToEndTest {
         AiChatServiceImpl service = service("{\"query\":\"아무거나\"}");
 
         AiChatResponse response = service.chat(User.builder().userId(15).build(),
-            new AiChatRequest("추천", List.of(), null));
+            new AiChatRequest("추천", List.of(), null, null));
 
         assertThat(response.reply()).isNotBlank();
         // 도구가 돌았으므로 곡이 있다. 이 값이 0 이면 그것이 곧 378 이다.
