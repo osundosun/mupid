@@ -31,13 +31,23 @@ public final class RecommenderDto {
     /**
      * 이어 듣기·오늘의 추천 요청.
      *
+     * <p><b>{@code userId} 만 primitive 가 아니다.</b> 추천 서버 계약은 {@code user_id} 를
+     * 필수(`ge=1`)로 받으므로 값이 없으면 요청 자체가 400 이다 — 그 판정은
+     * {@link RecommenderClient} 가 하고, 계약 위반과 「우리 코드가 null 을 흘려보낸 것」을
+     * 구분할 수 있어야 한다. primitive 로 두면 {@code Integer → int} 언박싱이
+     * **컴파일러가 보기에 정상 변환**이라 경고 없이 지나가고, null 이 들어오는 순간
+     * {@link NullPointerException} 이 난다 (S15P21A204-377). 대화 한 번이 통째로 500 이
+     * 되는 자리인데 타입은 그것을 허용한다고 선언하고 있었다.
+     *
      * @param recommendationId Spring 이 발급하는 BIGINT. 추천 한 묶음을 가리킨다
+     * @param userId           추천 대상. **null 이면 보내지 않는다**(JSON 에서 빠진다) —
+     *                         추천 서버가 {@code missing} 으로 판정한다
      * @param excludeTracks    이미 보여 준 곡의 문자열 ID. 지금 듣는 곡도 여기 넣는다
      * @param onboarding       이력이 없는 사용자의 첫 추천 근거. 없으면 콜드스타트다
      */
     public record NextRequest(
         long recommendationId,
-        int userId,
+        Integer userId,
         int limit,
         List<String> excludeTracks,
         String currentTrack,
@@ -69,10 +79,13 @@ public final class RecommenderDto {
      * </ul>
      *
      * <p>우리는 {@code queryPlan} 만 쓴다. 대화 모델이 조건을 뽑아 주기 때문이다.
+     *
+     * @param userId 호출자의 사용자 번호. **null 을 허용하는 것은 `NextRequest` 와 같은
+     *               이유다** — 언박싱 지점을 만들지 않는다 (S15P21A204-377)
      */
     public record SearchRequest(
         long recommendationId,
-        int userId,
+        Integer userId,
         int limit,
         List<String> excludeTracks,
         String query,
@@ -86,10 +99,14 @@ public final class RecommenderDto {
      *
      * <p>이어 듣기와 달리 기준 곡이 없다 — 그날 무엇을 들려줄지는 행동 이력과 온보딩만
      * 보고 정한다.
+     *
+     * @param userId 배치는 사용자마다 도므로 값이 반드시 있다. 그래도 타입은 다른 두
+     *               요청과 맞춘다 — 같은 자리에서 한 곳만 primitive 면 다음 호출자가
+     *               같은 함정을 다시 밟는다 (S15P21A204-377)
      */
     public record DailyRequest(
         long recommendationId,
-        int userId,
+        Integer userId,
         int limit,
         List<String> excludeTracks,
         Onboarding onboarding
