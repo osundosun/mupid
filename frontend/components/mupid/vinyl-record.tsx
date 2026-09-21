@@ -5,7 +5,7 @@ import type { Track } from '@/lib/mupid-data';
 import { AlbumArt } from './primitives';
 
 /** The supplied photograph's spindle is at (607, 601), not its canvas centre.
- * Keep its tonearm and printed label stationary; rotate the separate black disc.
+ * Keep the complete photograph intact; rotate only the album label.
  * A permanently mounted animation preserves its angle across pause/resume.
  */
 export function VinylRecord({ playing, track, className = '', ...imageProps }: ImageProps & { playing: boolean; track: Track | null }) {
@@ -44,11 +44,9 @@ export function VinylRecord({ playing, track, className = '', ...imageProps }: I
   return (
     <span className={`record-motion ${className}`} data-playing={playing}>
       <Image {...imageProps} className="record-photo" />
-      <span ref={label} className="record-disc-rotation" aria-hidden="true" />
-      <span className="record-label-window" aria-hidden="true">
+      <span ref={label} className="record-label-window" aria-hidden="true">
         <AlbumArt track={track} />
       </span>
-      <span className="record-tonearm" aria-hidden="true" />
       <span className="record-spindle" aria-hidden="true" />
     </span>
   );

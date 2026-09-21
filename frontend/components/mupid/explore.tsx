@@ -190,6 +190,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
     if (!slot) return;
     const desktop = window.matchMedia('(min-width: 1024px)');
     const appLayout = slot.closest('.app-layout');
+    const miniPlayer = slot.closest('.mupid-shell')?.querySelector('.mini-player');
     let frame = 0;
     const sync = () => {
       window.cancelAnimationFrame(frame);
@@ -201,7 +202,11 @@ export function SearchView({ model: m }: { model: MupidModel }) {
         const bounds = slot.getBoundingClientRect();
         const appLayoutBottom = appLayout?.getBoundingClientRect().bottom ?? window.innerHeight;
         const top = Math.max(110, bounds.top);
-        const maxHeight = Math.max(0, Math.min(window.innerHeight, appLayoutBottom) - top - 20);
+        const playerBounds = miniPlayer?.getBoundingClientRect();
+        const visibleBottom = playerBounds && playerBounds.height > 0
+          ? Math.min(window.innerHeight, playerBounds.top)
+          : window.innerHeight;
+        const maxHeight = Math.max(0, Math.min(visibleBottom, appLayoutBottom) - top - 20);
         setDesktopSidebarStyle((current) =>
           current?.left === bounds.left && current.width === bounds.width && current.top === top && current.maxHeight === maxHeight
             ? current
@@ -211,6 +216,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
     const resize = new ResizeObserver(sync);
     resize.observe(slot);
     if (appLayout) resize.observe(appLayout);
+    if (miniPlayer) resize.observe(miniPlayer);
     desktop.addEventListener('change', sync);
     window.addEventListener('resize', sync);
     window.addEventListener('scroll', sync, { passive: true });

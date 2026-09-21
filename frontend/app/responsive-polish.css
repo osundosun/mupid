@@ -2019,3 +2019,34 @@
 @media (min-width: 768px) {
   .mupid-shell.page-player .player-body { align-items: start; }
 }
+
+/* PC에서는 남은 화면 높이를 장르 목록에 할당하고 16px 본문 크기를 유지한다. */
+@media (min-width: 1024px) {
+  .mupid-shell .explore-filter-sidebar .explore-category-card {
+    height: min(760px, calc(100dvh - 140px));
+    margin-block: 0;
+  }
+  .mupid-shell .explore-filter-sidebar .category-groups legend {
+    font-size: 17px;
+    line-height: 1.5;
+    margin-bottom: 12px;
+  }
+  .mupid-shell .explore-filter-sidebar .category-groups fieldset > div {
+    align-content: flex-start;
+    gap: 10px;
+    padding: 2px 6px 12px 0;
+  }
+  .mupid-shell .explore-filter-sidebar .category-groups button {
+    min-height: 44px;
+    padding: 9px 14px;
+    font-size: 16px;
+    line-height: 1.5;
+    color: #4e688f;
+  }
+  .mupid-shell .explore-filter-sidebar .category-groups button[aria-pressed=true] {
+    color: #365d9b;
+  }
+  .mupid-shell .explore-filter-sidebar .category-description {
+    font-size: 14px;
+  }
+}

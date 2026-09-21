@@ -158,6 +158,15 @@
   .collection-page .playlist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; }
   .collection-page .playlist-card strong { font-size: 15px; }
 }
+.profile-withdraw {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+.profile-withdraw > button {
+  flex: 0 0 auto;
+  width: auto;
+}
 .profile-photo-editor {
   display: flex; flex-direction: column; align-items: center; gap: 12px;
   flex-shrink: 0; max-width: 260px; padding: 20px 18px; text-align: center;
@@ -169,7 +178,7 @@
 }
 .profile-photo-frame {
   display: grid; place-items: center; width: 124px; height: 124px; overflow: hidden;
-  border: 2px dashed #bdd3f2; border-radius: 50%; background: #f4f8ff;
+  border: 1px dashed #bdd3f2; border-radius: 50%; background: #f4f8ff;
   transition: border-color .15s ease, background .15s ease;
 }
 .profile-photo-editor.has-photo .profile-photo-frame { border-style: solid; border-color: #dbe7f9; background: #fff; }

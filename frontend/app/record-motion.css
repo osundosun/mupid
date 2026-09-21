@@ -9,23 +9,6 @@
   width: 100%;
   height: auto;
 }
-.record-disc-rotation {
-  position: absolute;
-  left: 0;
-  top: -0.4784689%;
-  width: 96.8102073%;
-  height: 96.8102073%;
-  background: url('/mupid-rotating-disc.png') center / 110% 110% no-repeat;
-  clip-path: circle(49% at 50% 50%);
-  pointer-events: none;
-}
-.record-tonearm {
-  position: absolute;
-  inset: 0;
-  background: url('/sky-vinyl.webp') center / contain no-repeat;
-  clip-path: polygon(90% 0%, 100% 0%, 100% 14%, 94% 24%, 90% 29%, 93% 45%, 94% 54%, 90% 64%, 84% 76%, 76% 81%, 70% 77%, 75% 70%, 81% 61%, 86% 54%, 88% 48%, 86% 38%, 84% 30%, 84% 26%, 82% 22%, 82% 15%, 88% 11%);
-  pointer-events: none;
-}
 /* Source-preserving crops from the 1254px supplied photograph. The 380px
    label fits inside its printed rim; the stationary pin hides its own crop. */
 .record-label-window {
