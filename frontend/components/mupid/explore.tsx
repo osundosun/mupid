@@ -201,14 +201,16 @@ export function SearchView({ model: m }: { model: MupidModel }) {
           return;
         }
         const bounds = slot.getBoundingClientRect();
-        const appLayoutBottom = appLayout?.getBoundingClientRect().bottom ?? window.innerHeight;
         const headerBottom = header?.getBoundingClientRect().bottom ?? 90;
         const top = Math.max(headerBottom + 20, bounds.top);
         const playerBounds = miniPlayer?.getBoundingClientRect();
         const visibleBottom = playerBounds && playerBounds.height > 0
           ? Math.min(window.innerHeight, playerBounds.top)
           : window.innerHeight;
-        const maxHeight = Math.max(0, Math.min(visibleBottom, appLayoutBottom) - top - 20);
+        // Reserve the page heading even after it scrolls away. Result count and
+        // document scroll must not resize the filter's internal viewport.
+        const reservedTop = Math.max(headerBottom + 100, bounds.top + window.scrollY);
+        const maxHeight = Math.max(0, visibleBottom - reservedTop - 20);
         const height = Math.min(600, maxHeight);
         setDesktopSidebarStyle((current) =>
           current?.left === bounds.left && current.width === bounds.width && current.top === top && current.maxHeight === maxHeight

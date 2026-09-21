@@ -2208,3 +2208,7 @@
   .mupid-shell .player-controls-row .full-controls { flex: 1 1 260px; min-width: 0; max-width: 360px; margin: 0; }
   .mupid-shell .player-controls-row .player-desktop-volume { flex: 0 1 120px; width: 120px; margin: 0; gap: 8px; }
 }
+/* Chat must cover the lyrics beneath it, including in the light theme. */
+.mupid-shell .chat-panel { background: #f7faff; }
+.mupid-shell .chat-panel .chat-messages { background: #f7faff; }
+html.dark .mupid-shell .chat-panel .chat-messages { background: #171717; }

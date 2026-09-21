@@ -51,7 +51,7 @@ test('explore sends all sidebar filters and keeps them in its request key', asyn
   assert.match(explore, /const top = Math\.max\(headerBottom \+ 20, bounds\.top\)/);
   // 하단 재생바 위에서 패널이 끝나야 검색 버튼이 가려지지 않는다.
   assert.match(explore, /Math\.min\(window\.innerHeight, playerBounds\.top\)/);
-  assert.match(explore, /Math\.min\(visibleBottom, appLayoutBottom\) - top - 20/);
+  assert.match(explore, /visibleBottom - reservedTop - 20/);
   assert.match(explore, /if \(miniPlayer\) resize\.observe\(miniPlayer\)/);
   assert.match(explore, /if \(appLayout\) resize\.observe\(appLayout\)/);
   assert.match(explore, /document\.addEventListener\('scroll', handleScroll/);
