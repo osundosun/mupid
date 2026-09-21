@@ -293,9 +293,17 @@ ENERGY_BUCKETS = [("calm", "차분 (하위 33%)", 0.0, 1 / 3),
 
 
 _MISSING_TEXT = {"", "unknown", "nan", "none", "null", "<na>", "nat"}
+# 값은 `VocalGender`(`M`·`F`·`MIX`)와 `music_analysis.vocal_gender
+# ENUM('M','F','MIX')` 를 그대로 쓴다. 이 표는 DB 로 나가지 않고 카탈로그 안에만
+# 머물지만(밖으로 나가는 것은 `_vocal_values` 가 만드는 검색 어휘다), 어휘를 서버와
+# 어긋나게 두면 같은 곡을 두 이름으로 부르게 된다.
+# **`etc`·`other` 는 넣지 않는다.** 예전 `ETC` 자리는 S15P21A204-402 에서 `MIX` 로
+# 바뀌었고, `other`("남/여로 판정 못 함")를 `MIX`("혼성으로 판정함")로 옮기는 것은
+# 모르는 것을 판정으로 만드는 일이다 — `register_analysis` 가 `unknown` 을 비우는
+# 것과 같은 원칙이다. 받지 않은 라벨은 `None`("모른다")으로 남는다.
 _VOCAL_GENDER = {
     "m": "M", "male": "M", "f": "F", "female": "F",
-    "etc": "ETC", "mixed": "ETC", "other": "ETC",
+    "mix": "MIX", "mixed": "MIX",
 }
 
 
@@ -368,14 +376,17 @@ def _vocal_values(has_vocal, vocal_gender) -> list[str]:
         return []
     if not has_vocal:
         return ["instrumental"]
-    gender = {"M": "male", "F": "female", "ETC": "other"}.get(vocal_gender)
+    gender = {"M": "male", "F": "female", "MIX": "mixed"}.get(vocal_gender)
     return ["voice"] + ([gender] if gender else [])
 
 
 def parse_style(cat: str, vocal_values: list[str], lang: str) -> str:
     """category 문자열에서 보컬·언어 접두어를 떼어 스타일만 남긴다."""
     parts = [x for x in str(cat).split("_") if x]
-    prefixes = set(vocal_values) | ({"mixed"} if "other" in vocal_values else set())
+    # 예전에는 혼성이 `other` 로 투영돼서 `mixed_korean_…` 의 접두어를 떼지 못했고,
+    # 그래서 `other` 일 때만 `mixed` 를 덧붙였다. 이제 `_vocal_values` 가 `mixed` 를
+    # 그대로 내므로 category 의 접두어와 어휘가 같다 — 보정이 필요 없다.
+    prefixes = set(vocal_values)
     if parts and parts[0] in prefixes:
         parts = parts[1:]
     if parts and parts[0] == str(lang):
