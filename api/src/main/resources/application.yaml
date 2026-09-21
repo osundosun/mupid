@@ -46,6 +46,13 @@ gmail:
   token: ${MUPID_GMAIL_TOKEN}
   send-address: ${MUPID_GMAIL_SEND_ADDRESS}
 
+# Mattermost 알림 (S15P21A204-384 문의). Incoming Webhook 이라 **URL 자체가 자격증명**이다.
+# 기본값을 빈 문자열로 두는 것이 정상 동작이다 — 키가 없으면 알림만 조용히 꺼지고 문의
+# 접수는 그대로 된다 (infra/deploy/.env.example, infra_k8s/base/api.yaml 의 optional: true).
+# 로그에 URL 을 찍지 않는다 (MattermostNotifier 가 실패 로그에서도 가린다).
+mupid-mattermost:
+  webhook-url: ${MUPID_MATTERMOST_WEBHOOK_URL:}
+
 aws:
   s3:
     endpoint: ${MUPID_S3_ENDPOINT}

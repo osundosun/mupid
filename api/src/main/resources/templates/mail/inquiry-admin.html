@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{mail/fragments/layout :: base('새 문의가 도착했습니다', ~{::content})}">
+<body>
+
+<!--
+  관리자 알림 메일 (S15P21A204-384).
+
+  모델 변수
+    contentHtml : 문의 내용 (필수). InquiryNotifier.toHtmlBody 가 **escape 를 끝낸**
+                  HTML 조각이다 — 그래서 아래에서 th:utext 로 그린다.
+    senderEmail : 문의자 이메일 (필수)
+    senderName  : 문의자 닉네임
+    receivedAt  : 접수 시각 (yyyy-MM-dd HH:mm)
+-->
+<th:block th:fragment="content">
+
+    <p style="font-size: 15px; color: #4a6ea8; line-height: 1.7; margin: 0; text-align: center; word-break: keep-all;">
+        사용자가 문의를 남겼습니다.<br />
+        아래 내용을 확인해 주세요.
+    </p>
+
+    <!-- 보낸 사람. 답장은 이 주소로 보내야 한다 — 이 메일의 수신자는 발신 계정 자신이다. -->
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+           style="margin: 26px 0 0 0; background-color: #ffffff; border: 1px solid #e2ecfa; border-radius: 16px;">
+        <tr>
+            <td style="padding: 18px 20px;">
+                <p style="margin: 0; font-size: 12px; letter-spacing: 0.04em; color: #8ba2c4;">보낸 사람</p>
+                <p style="margin: 8px 0 0 0; font-size: 15px; font-weight: bold; color: #2f4f85; word-break: break-all;">
+                    <span th:text="${senderName} ?: '이름 없음'">닉네임</span>
+                    <span style="font-weight: normal; color: #4a6ea8;">&lt;<span th:text="${senderEmail}">user@example.com</span>&gt;</span>
+                </p>
+                <p th:if="${!#strings.isEmpty(receivedAt)}"
+                   style="margin: 10px 0 0 0; font-size: 12px; color: #8ba2c4;">
+                    접수 시각 <span th:text="${receivedAt}">2026-09-21 11:30</span>
+                </p>
+            </td>
+        </tr>
+    </table>
+
+    <!-- 문의 내용. contentHtml 은 이미 escape 된 조각이라 utext 로 그린다. -->
+    <p style="margin: 26px 0 10px 0; font-size: 12px; letter-spacing: 0.04em; color: #8ba2c4;">문의 내용</p>
+    <div style="background-color: #ffffff; border: 1px solid #e2ecfa; border-radius: 16px; padding: 20px; font-size: 15px; color: #33507f; line-height: 1.75; word-break: break-word;"
+         th:utext="${contentHtml}">문의 내용</div>
+
+    <p style="font-size: 13px; color: #8ba2c4; line-height: 1.6; margin: 22px 0 0 0;">
+        답장은 위 보낸 사람 주소로 보내 주세요. 이 메일의 수신자는 서비스 발신 계정 자신이라
+        그대로 답장하면 문의자에게 닿지 않습니다.
+    </p>
+
+</th:block>
+
+</body>
+</html>

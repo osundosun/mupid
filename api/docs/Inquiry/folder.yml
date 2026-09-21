@@ -1,0 +1,61 @@
+info:
+  name: Inquiry
+  type: folder
+  seq: 16
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Inquiry
+
+    사용자 피드백(문의) 접수. 화면의 `문의하기` 버튼
+    (`frontend/components/mupid/inquiry-dialog.tsx`)이 씁니다. **인증이 필요**합니다.
+
+    | 엔드포인트 | 동작 | 인증 |
+    | --- | --- | --- |
+    | `POST /api/v1/inquiries` | 문의 접수 + 관리자·문의자 메일 + Mattermost 알림 | 필요 |
+
+    ## 한 요청이 세 갈래로 나갑니다
+
+    ```
+    POST /api/v1/inquiries     내용 검증 · 인증 주체 확정
+      ├→ 관리자 메일            GmailProvider.sendEmail(MUPID_GMAIL_SEND_ADDRESS, …)
+      ├→ 문의자 통보 메일        GmailProvider.sendEmail(토큰의 이메일, …)
+      └→ Mattermost 알림         POST MUPID_MATTERMOST_WEBHOOK_URL  {"text": "…"}
+    ```
+
+    **접수는 세 갈래 중 어느 것에도 의존하지 않습니다.** 응답은 발송을 기다리지 않고
+    바로 200 이며, 세 갈래는 `@Async` 실행기(`inquiryNotifierExecutor`)에서 각각 따로
+    돌고 각자 실패를 삼킵니다. 그래서:
+
+    - Gmail 자격증명이 죽어 있어도 **200** 입니다 (실패는 서버 로그에 남습니다).
+    - `MUPID_MATTERMOST_WEBHOOK_URL` 이 비어 있어도 **200** 입니다 (건너뛴 로그만 남습니다).
+    - Mattermost 가 죽어 있어도 **200** 입니다.
+
+    이건 합의된 계약입니다 — `infra/deploy/.env.example`:
+    > 비어 있으면 알림만 조용히 꺼지고 피드백 접수는 정상 동작한다(메일과 독립)
+
+    ## DB 에 저장하지 않습니다
+
+    요구는 "관리자에게 메일 + 문의자에게 통보" 이고 보관은 명시되지 않았습니다. 문의를
+    담을 기존 테이블도 없어(`knowledge/domain/erd.sql` 의 30개 표) 새 테이블·DDL 을
+    만들지 않았습니다 — ERD 변경은 팀 승인 사항입니다. **문의의 기록은 관리자 메일함과
+    Mattermost 채널 두 곳에 남습니다.** 서버 쪽에는 길이·보낸 사람만 남는 INFO 로그가
+    전부이고 **문의 내용은 로그에 남기지 않습니다.**
+
+    ## 보낸 사람 주소는 서버가 정합니다
+
+    요청 본문에 이메일을 넣을 자리가 **없습니다**. UI 에 이메일 입력란이 아예 없고
+    문구도 "답변은 **가입한** 메일로 발송돼요" 이기 때문입니다. 서버가 액세스 토큰의
+    주체에서 이메일을 꺼내므로, 클라이언트가 아무 주소나 넣어 관리자 메일을 스팸
+    발송기로 만들 수 없습니다.
+
+    ## Mattermost 웹훅 URL 은 자격증명입니다
+
+    Incoming Webhook 이라 URL 을 아는 쪽이 그 채널에 아무 메시지나 보낼 수 있습니다.
+    그래서 서버는 **로그에 URL 을 남기지 않습니다** — 연결 실패 예외 문자열에도 URL 이
+    들어 있어(`I/O error on POST request for "https://…/hooks/…"`) `MattermostNotifier`
+    가 그것까지 가립니다. 이 컬렉션·`.env.example` 어디에도 실제 URL 을 적지 마세요.
