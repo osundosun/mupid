@@ -37,7 +37,9 @@ public class DailyRecommendationController {
 
     /**
      * @param date 기준일(`YYYY-MM-DD`). 비우면 오늘. 그날 추천이 없으면 가장
-     *             최근 추천이 있는 날로 되돌아가고, 응답의 `date` 가 그 날짜다
+     *             최근 추천이 있는 날로 되돌아가고, 응답의 `date` 가 그 날짜다.
+     *             저장된 추천이 하나도 없으면 온보딩 취향으로 그 자리에서 고른
+     *             묶음을 돌려준다 — 저장하지 않으므로 `recommendation_id` 는 0 이다
      */
     @GetMapping("/daily")
     public ResponseEntity<BaseResponse<DailyRecommendationResponse>> getDaily(

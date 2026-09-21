@@ -64,7 +64,52 @@ examples:
               ]
             }
           }
-  - name: 200 아직 추천 없음
+  - name: 200 아직 배치가 안 돈 사용자 (폴백)
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "date": "2026-09-14",
+              "groups": [
+                {
+                  "recommendation_id": 0,
+                  "title": "첫 모먼트",
+                  "reason": "처음 고른 취향에 맞는 곡들이에요.",
+                  "mood": "잔잔한",
+                  "music_count": 4,
+                  "tracks": [
+                    {
+                      "rank": 1,
+                      "reason": "처음 고른 취향에 맞는 곡이에요.",
+                      "music": {
+                        "music_id": 2,
+                        "title": "첫 번째 곡",
+                        "release_date": "2026-09-14T00:00:00",
+                        "duration_ms": 13020,
+                        "playable": true,
+                        "play_count": 296,
+                        "like_count": 0,
+                        "image_url": "/api/v1/storage/image/14",
+                        "artist": { "artist_id": 1, "name": "무피드 테스트 아티스트", "image_url": "/api/v1/storage/image/13" },
+                        "album": { "album_id": 1, "title": "무피드 테스트 앨범", "image_url": "/api/v1/storage/image/12", "release_date": "2026-09-14T00:00:00" },
+                        "genres": [],
+                        "moods": []
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+  - name: 200 카탈로그가 비어 추천이 없음
     response:
       status: 200
       statusText: OK
@@ -96,10 +141,31 @@ docs: |-
   ## 응답의 `date` 를 보세요
 
   요청한 날짜에 추천이 없으면 **가장 최근 추천이 있는 날**을 돌려줍니다.
-  그래서 `date` 는 요청한 값과 다를 수 있습니다. 아예 추천이 하나도 없으면
-  요청한 날짜를 그대로 돌려주고 `groups` 는 빈 배열입니다.
+  그래서 `date` 는 요청한 값과 다를 수 있습니다.
 
-  ## 아직 비어 있습니다
+  ## 저장된 추천이 하나도 없으면 그 자리에서 골라 줍니다
 
-  추천 파이프라인이 없어 `daily_recommendations` 가 비어 있습니다. 계약은
-  정해져 있으니 화면은 미리 붙여도 됩니다.
+  방금 가입해 배치를 한 번도 타지 않은 사용자에게는 되돌아갈 날짜가 없습니다.
+  예전에는 그대로 빈 배열이 나가 홈이 비었습니다. 지금은 **온보딩에서 고른
+  장르·분위기에 해당하는 곡 중 조회수 상위 4곡**을 그 자리에서 골라 내려줍니다.
+  요청한 날짜를 그대로 돌려줍니다.
+
+  구분하는 방법은 둘입니다.
+
+  | | 배치가 만든 것 | 폴백 |
+  | --- | --- | --- |
+  | `recommendation_id` | 1 이상 (저장된 묶음 번호) | **0** (저장하지 않음) |
+  | `title` | `오늘의 모먼트` | `첫 모먼트` |
+
+  `reason` 은 취향으로 좁혔으면 "처음 고른 취향에 맞는 곡들이에요.",
+  카탈로그 인기순으로 넓혔으면 "많이 듣는 곡부터 골랐어요." 입니다.
+
+  넓히는 순서는 (1) 장르 ∧ 분위기 → (2) 장르 ∨ 분위기 → (3) 카탈로그 전체
+  조회수 상위입니다. **한 곡이라도 나오면 거기서 멈춥니다** — 네 곡이 안 되어도
+  모자란 대로 내려갑니다. 온보딩을 아직 하지 않았으면 바로 (3) 입니다.
+
+  `mood` 는 정하지 못하면 빈 문자열입니다.
+
+  ## `groups` 가 비는 경우
+
+  카탈로그에 살아 있는 곡이 하나도 없을 때뿐입니다. 이때도 **404 가 아닙니다.**
