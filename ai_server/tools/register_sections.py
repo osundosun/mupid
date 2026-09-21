@@ -68,15 +68,16 @@ def _instruments_module():
             f"(pip install -e music_preprocessing). 원인: {e}") from None
     return mod
 
-# AI 태그 → Spring 코드표 이름. `MOOD_MAP` 을 뒤집은 것이다.
+# AI 태그 → Spring 코드표 이름(`code_name`, 영문 내부 코드 — `serene`·`melancholic`).
+# `MOOD_MAP` 을 뒤집은 것이다.
 #
 # **번호는 보내지 않는다.** 코드 번호는 MySQL 이 발급하고 이 서버는 모른다 — 이름으로
 # 보내면 Spring 이 붙인다. 카탈로그 1,063곡 중 918곡(86%)이 이 표로 옮겨진다. 나머지는
 # 분위기 없이 들어가고, 그 자체는 오류가 아니다.
 MOOD_BY_TAG: dict[str, str] = {}
-for _ko, _tags in onboarding.MOOD_MAP.items():
+for _code, _tags in onboarding.MOOD_MAP.items():
     for _tag in _tags:
-        MOOD_BY_TAG.setdefault(_tag, _ko)
+        MOOD_BY_TAG.setdefault(_tag, _code)
 
 
 def _tag_list(value) -> list[str]:
@@ -233,13 +234,20 @@ def add_instrument_codes(names: set[str], *, dry_run: bool = False) -> list[dict
     """
     if dry_run or not names:
         return []
+    # 코드 이름은 영문 스템 이름(`vocals`…), 표시명은 한국어다 — 분위기·장르와
+    # 같은 방향이다 (2026-09-21). 표시명을 빼면 서버가 코드 이름을 그대로
+    # 표시명으로 써서 화면에 영문이 뜬다.
+    display = _instruments_module().DISPLAY_NAMES
     added = []
     for name in sorted(names):
+        body = {"code_type": "INSTRUMENT", "code_name": name}
+        korean = display.get(name)
+        if korean:
+            body["display_name"] = korean
         row = _api_auth.request_json(f"{_api_auth.base()}/api/v1/code",
                                      method="POST", token=_api_auth.access_token(),
                                      timeout=TIMEOUT,
-                                     body={"code_type": "INSTRUMENT",
-                                           "code_name": name})
+                                     body=body)
         d = row.get("data") or row
         if d.get("created"):
             added.append({"code_id": d.get("code_id"), "name": d.get("code_name")})

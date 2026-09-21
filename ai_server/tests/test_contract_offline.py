@@ -1330,8 +1330,14 @@ chamber_classical
 _TAXONOMY_MOOD = ["melancholic", "warm", "dreamy", "bright", "hopeful",
                   "powerful", "dark", "calm", "exciting"]
 
-_SPRING_MOOD = ["잔잔한", "벅찬", "몽환적인", "신나는", "집중되는", "감성적인", "강렬한", "설레는",
-                "애상적인", "따뜻한", "몽글한", "화사한", "희망찬", "웅장한", "어두운", "고요한", "짜릿한"]
+# Spring `codes(MOOD).code_name` 17종 — 영문 내부 코드다 (2026-09-21 정리).
+_SPRING_MOOD = ["serene", "uplifting", "ethereal", "energetic", "focused", "emotional",
+                "intense", "romantic",
+                "melancholic", "warm", "dreamy", "bright", "hopeful", "powerful", "dark",
+                "calm", "exciting"]
+# 같은 17종의 화면용 한국어. 정리 전 요청·기록에 남아 있을 수 있어 별칭으로도 받는다.
+_SPRING_MOOD_KO = ["잔잔한", "벅찬", "몽환적인", "신나는", "집중되는", "감성적인", "강렬한", "설레는",
+                   "애상적인", "따뜻한", "몽글한", "화사한", "희망찬", "웅장한", "어두운", "고요한", "짜릿한"]
 _SPRING_GENRE = ["Electronic", "Indie", "R&B", "Rock", "Pop", "Hip-hop", "Jazz", "Classical"]
 
 # `flow_meta.mood_tags` 의 실제 태그 어휘 **38종**(2026-09-17 실측). `MOOD_MAP` 이
@@ -1378,6 +1384,9 @@ def test_every_spring_code_reaches_the_catalog():
     from ai_server.app import onboarding as f
 
     dead_mood = [m for m in _SPRING_MOOD if not f.map_mood([m])]
+    dead_alias = [m for m in _SPRING_MOOD_KO if not f.map_mood([m])]
+    assert not dead_alias, f"한국어 별칭이 변환되지 않는다: {dead_alias}"
+    assert [f.mood_code(ko) for ko in _SPRING_MOOD_KO] == _SPRING_MOOD, "별칭 표가 코드 차례와 어긋난다"
     dead_genre = [g for g in _SPRING_GENRE if not f.map_genre([g], _CATALOG)]
     assert not dead_mood, f"변환되지 않는 mood: {dead_mood}"
     assert not dead_genre, f"변환되지 않는 genre: {dead_genre}"
@@ -1440,9 +1449,12 @@ def test_taxonomy_mood_names_are_the_last_nine_entries():
     """
     from ai_server.app import onboarding as f
 
-    assert list(f.MOOD_MAP)[-9:] == list(f.TAXONOMY_MOOD_NAMES.values()), (
+    assert list(f.MOOD_MAP)[-9:] == list(f.TAXONOMY_MOOD_NAMES), (
         f"MOOD_MAP 뒷 9줄과 TAXONOMY_MOOD_NAMES 가 다르다: "
-        f"{list(f.MOOD_MAP)[-9:]} vs {list(f.TAXONOMY_MOOD_NAMES.values())}")
+        f"{list(f.MOOD_MAP)[-9:]} vs {list(f.TAXONOMY_MOOD_NAMES)}")
+    assert list(f.MOOD_MAP)[:8] == list(f.BASE_MOOD_NAMES)
+    assert list(f.MOOD_MAP) == list(f.MOOD_NAMES) == _SPRING_MOOD
+    assert list(f.MOOD_NAMES.values()) == _SPRING_MOOD_KO
     # 원문이 그대로 **선택지**가 되면 안 된다 — 그 이름들은 `mood` 필드 27종에
     # 없다(`melancholic`·`dark` 는 태그 어휘 38종에는 있지만 추천풀에 곡이 0이라
     # 선택지에서 빠진다). 그래서 화면에는 한국어 이름을 쓴다.
@@ -1465,10 +1477,10 @@ def test_existing_mood_tags_still_map_to_the_same_korean_name():
     assert len(reverse) == 27, f"역방향 표가 {len(reverse)}개로 바뀌었다"
     assert set(reverse) <= set(_AI_MOOD_TAGS)
     # 대표값 몇 개를 못 박는다. 여기가 흔들리면 기존 사용자 화면이 바뀐다.
-    assert reverse["relaxing"] == "잔잔한"
-    assert reverse["sad"] == "감성적인"
-    assert reverse["dark"] == "강렬한"
-    assert reverse["party"] == "신나는"
+    assert reverse["relaxing"] == "serene"        # 잔잔한
+    assert reverse["sad"] == "emotional"          # 감성적인
+    assert reverse["dark"] == "intense"           # 강렬한
+    assert reverse["party"] == "energetic"        # 신나는
 
 
 def test_raw_answer_is_kept_for_tracing():
@@ -2194,8 +2206,9 @@ def test_register_sections_maps_ai_mood_tags_to_code_names():
     """
     from ai_server.tools import register_sections as rs
 
-    assert rs.moods_of("relaxing, meditative") == ["잔잔한"]
-    assert rs.moods_of(["energetic", "sad"]) == ["신나는", "감성적인"]
+    # Spring `code_name`(영문)으로 보낸다. Spring 은 표시명(한국어)도 받지만 코드명이 기준이다.
+    assert rs.moods_of("relaxing, meditative") == ["serene"]
+    assert rs.moods_of(["energetic", "sad"]) == ["energetic", "emotional"]
     assert rs.moods_of("없는태그") == []
     assert rs.moods_of(None) == []
 
@@ -2204,9 +2217,9 @@ def test_register_sections_attaches_track_moods_to_every_section():
     """AI 카탈로그는 구간별 무드를 갖고 있지 않다. 곡의 것을 그 곡의 모든 구간에 붙인다."""
     from ai_server.tools import register_sections as rs
 
-    rows, _ = rs.build_payload(_moments_frame(), ["잔잔한"])
+    rows, _ = rs.build_payload(_moments_frame(), ["serene"])
     assert rows, "구간이 비었다"
-    assert all(r["moods"] == ["잔잔한"] for r in rows)
+    assert all(r["moods"] == ["serene"] for r in rows)
 # ── pull_signals 의 시각 규약 ────────────────────────────────────────────────
 
 class _BackMap:
