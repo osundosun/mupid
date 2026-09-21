@@ -1,16 +1,19 @@
-/* Native CSS cursor: no pointer-following overlay, no touch interception. */
+.sky-cursor-overlay { display: none; }
 @media (hover: hover) and (pointer: fine) {
-  .mupid-shell,
-  .mupid-shell :where(div, section, article, header, main, nav, p, span, img, h1, h2, h3) {
-    cursor: url('/mupid-cursor-64.png') 14 8, auto;
+  html, body, body *, body *::before, body *::after {
+    cursor: url('/mupid-cursor-64.png') 14 8, auto !important;
   }
-  .mupid-shell :where(button, a, [role='button']),
-  .mupid-shell :where(button, a, [role='button']) * {
-    cursor: url('/mupid-cursor-64.png') 14 8, pointer;
+  html.sky-cursor-active, html.sky-cursor-active *,
+  html.sky-cursor-active *::before, html.sky-cursor-active *::after { cursor: none !important; }
+  .sky-cursor-overlay {
+    display: block; position: fixed; left: 0; top: 0;
+    width: 64px; height: 64px; margin-left: -14px; margin-top: -8px;
+    background: url('/mupid-cursor-master.png') center / contain no-repeat;
+    pointer-events: none; visibility: hidden; z-index: 2147483647;
   }
-  .mupid-shell :where(input, textarea, [contenteditable='true']) {
-    cursor: text;
+  .sky-cursor-overlay[data-hover='true'] {
+    /* 투명 여백을 고려해 실제 손 크기와 손끝 위치를 화살표에 맞춘다. */
+    width: 60px; height: 60px; margin-left: -22px; margin-top: -4px;
+    background-image: url('/mupid-cursor-hand-blue-border.png');
   }
-  .mupid-shell :where(input[type='range'], [role='slider']) { cursor: ew-resize; }
-  .mupid-shell :where(button:disabled, [aria-disabled='true']) { cursor: not-allowed; }
 }

@@ -1,4 +1,25 @@
 /* Keep native scrolling and interaction, with the shared sky palette. */
+.page-scrollbar { display: none; }
+.inner-scrollbar { position: fixed; z-index: 2147483645; background: #edf4fc; touch-action: none; user-select: none; }
+@media (hover: hover) and (pointer: fine) and (forced-colors: none) {
+  .custom-inner-scroll { scrollbar-width: none !important; }
+  .custom-inner-scroll::-webkit-scrollbar { display: none !important; }
+}
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) and (forced-colors: none) {
+  html.custom-page-scrollbar { scrollbar-width: none; }
+  html.custom-page-scrollbar::-webkit-scrollbar { display: none; }
+  .custom-page-scrollbar .page-scrollbar {
+    display: block; position: fixed; inset: 0 0 0 auto; width: 12px;
+    background: #edf4fc; z-index: 2147483646; touch-action: none;
+    user-select: none;
+  }
+  .page-scrollbar-thumb {
+    width: 8px; margin-inline: 2px; border-radius: 999px;
+    background: #8daee0; min-height: 36px;
+  }
+  .page-scrollbar-thumb:hover, .page-scrollbar-thumb:focus-visible { background: #6a93d9; }
+  .page-scrollbar-thumb:focus-visible { outline: 2px solid #5277b5; outline-offset: -2px; }
+}
 html,
 body * {
   scrollbar-color: #8daee0 #edf4fc;

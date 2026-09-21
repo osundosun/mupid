@@ -47,12 +47,13 @@ test('shared desktop shell removes the sidebar and centers the player without to
   assert.match(css, /bottom: calc\(var\(--player-height\) \+ 40px\)/);
 });
 
-test('sky and pink accents reuse existing art without replacing fonts or logos', () => {
+test('sky and pink gradients preserve fonts and logos without cloud background art', () => {
   assert.ok(globals.includes("@import './sky-shell.css'"));
   assert.ok(globals.includes('--sky-pink:'));
   assert.ok(globals.includes("'Pretendard'"));
   assert.ok(globals.includes('--font-chat: var(--font-mupid)'));
-  assert.ok(css.includes("url('/sky-background.webp')"));
+  assert.ok(!css.includes("url('/sky-background.webp')"));
+  assert.ok(css.includes('linear-gradient('));
   assert.ok(css.includes('var(--sky-pink)'));
   assert.ok(!css.includes('mupid-logo'));
   assert.ok(!css.includes('font-family'));

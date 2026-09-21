@@ -1,7 +1,6 @@
 'use client';
 import { VinylRecord } from './vinyl-record';
 import {
-  ArrowUpRight,
   AudioWaveform,
   ChevronRight,
   Bookmark,
@@ -124,7 +123,6 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
         <aside className="desktop-playlists today-moments" aria-label="오늘의 Moment 추천">
           <header>
             <div><span className="eyebrow">오늘, 마음에 남을 음악의 순간</span><h2>오늘의 Moment</h2></div>
-            <button className="icon-button" aria-label="추천 음악 더 둘러보기" onClick={() => m.go('search')}><ArrowUpRight /></button>
           </header>
           <p className="today-moment-note">{todayMomentNote(m)}</p>
           <div className="desktop-playlist-list">

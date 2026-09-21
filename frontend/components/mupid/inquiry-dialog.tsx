@@ -27,9 +27,9 @@ export function InquiryButton({ model: m }: { model: MupidModel }) {
     try {
       await api.inquiry.send(body.trim());
       close();
-      m.setToast('문의를 보냈어요. 확인하고 답변드릴게요.');
+      m.setToast('문의가 접수되었습니다. 확인 후 답변드리겠습니다.');
     } catch (e) {
-      setError(e instanceof Error && e.message ? e.message : '문의를 보내지 못했어요. 잠시 뒤 다시 시도해 주세요.');
+      setError(e instanceof Error && e.message ? e.message : '문의를 전송하지 못했습니다. 잠시 후 다시 시도해 주시기 바랍니다.');
     } finally {
       setBusy(false);
     }
@@ -44,7 +44,7 @@ export function InquiryButton({ model: m }: { model: MupidModel }) {
       <DialogContent className="sky-dialog inquiry-dialog">
         <DialogHeader>
           <DialogTitle>문의하기</DialogTitle>
-          <DialogDescription>좋았던 점이나 칭찬, 불편했던 점을 자유롭게 남겨주세요.</DialogDescription>
+          <DialogDescription>좋았던 점이나 칭찬, 불편했던 점 등 자유로운 의견을 부탁드립니다.</DialogDescription>
         </DialogHeader>
         <form onSubmit={e => { e.preventDefault(); void submit(); }}>
           <label className="field-label" htmlFor="inquiry-body">내용</label>
@@ -52,14 +52,14 @@ export function InquiryButton({ model: m }: { model: MupidModel }) {
             id="inquiry-body"
             rows={5}
             maxLength={BODY_MAX}
-            placeholder="마음에 들었던 기능이나 불편했던 경험, 바라는 점을 편하게 적어주세요. 어떤 화면에서 느끼셨는지도 함께 알려주시면 도움이 돼요."
+            placeholder="마음에 들었던 기능이나 불편했던 경험, 바라는 점을 작성해 주시기 바랍니다. 어떤 화면에서 느끼셨는지도 함께 알려주시면 도움이 됩니다."
             value={body}
             onChange={e => setBody(e.target.value)}
             disabled={busy}
             required
           />
           <span className="inquiry-count">{body.length}/{BODY_MAX}</span>
-          <p className="inquiry-note"><Mail aria-hidden="true" />답변은 가입한 메일로 발송돼요.</p>
+          <p className="inquiry-note"><Mail aria-hidden="true" />답변은 가입한 메일로 발송됩니다.</p>
           {error && <p className="inquiry-error" role="alert">{error}</p>}
           <DialogFooter className="inquiry-actions">
             <button type="button" className="secondary-button" onClick={close} disabled={busy}>취소</button>

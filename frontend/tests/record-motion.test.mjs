@@ -23,14 +23,16 @@ void test('all LP placements follow actual playback state without remounting the
   assert.doesNotMatch(component.slice(component.indexOf('  return (')), /key=|playing &&/);
 });
 
-void test('only the cropped label rotates at 33⅓ rpm, with paused angle and reduced-motion support', () => {
+void test('only the black disc rotates, with gentle coast-down and reduced-motion support', () => {
   const css = read('app/record-motion.css');
   const component = read('components/mupid/vinyl-record.tsx');
-  assert.match(component, /playing \? 30 : 0/);
+  assert.match(component, /playing \? 20 : 0/);
+  assert.match(component, /disc.current.style.transform = `rotate/);
+  assert.doesNotMatch(component, /label.current|ref=\{label\}/);
   assert.match(component, /Math.exp/);
   assert.match(component, /prefers-reduced-motion: reduce/);
   assert.match(component, /cancelAnimationFrame/);
-  assert.match(component, /state.speed < 0.5/);
+  assert.match(component, /state.speed < 0.08/);
   assert.doesNotMatch(css.match(/\.record-motion > \.record-photo \{([^}]+)\}/)[1], /animation|transform/);
   // Source crop geometry: the label and stationary pin share the spindle.
   assert.equal(417 + 380 / 2, 581 + 52 / 2);
