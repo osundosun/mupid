@@ -298,11 +298,11 @@ def test_catalog_tags_match_service_vocal_fields_and_hide_missing_values():
 
     instrumental = recommender._catalog_tags({
         "has_vocal": False, "vocal_gender": "F",
-        "genre_top1": "unknown", "mood_tags": "unknown,relaxing",
+        "genre_code": "unknown", "mood_codes": "unknown,calm",
         "instrument_tags": ["그 외 악기", "드럼", "unknown", "드럼"],
     })
     assert instrumental == {
-        "genre": "", "genre_full": "", "moods": ["relaxing"],
+        "genre": "", "genre_full": "", "moods": ["calm"],
         "instruments": ["드럼"], "has_vocal": False, "vocal_gender": None,
     }
     assert recommender._vocal_values(False, None) == ["instrumental"]
@@ -684,6 +684,60 @@ def test_mood_codes_cover_every_code_in_the_db_table():
     assert set(MOOD_BY_TAG.values()) <= set(onboarding.MOOD_MAP)
 
 
+# ------------------------------------ 온보딩: 못 옮긴 축을 세어 둔다
+
+def _onboarding_probe(catalog: list, moods: list, genres: list) -> dict:
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ai_server.app import metrics
+
+    metrics.reset()
+    app = FastAPI()
+    internal_api.install(app, SimpleNamespace(
+        NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]),
+        recommend=lambda *a, **k: {"results": [], "diagnostics": {"shortfall": 0}},
+        catalog_facets=lambda: {"genre": [{"value": v} for v in catalog],
+                                "style": []}))
+    TestClient(app).post("/internal/recommendations/daily",
+                         json={"recommendation_id": 1, "user_id": 1,
+                               "onboarding": {"moods": moods, "genres": genres}})
+    return metrics.snapshot()["onboarding_unmapped"]
+
+
+def test_genre_axis_alone_failing_is_counted():
+    """무드는 되는데 장르만 안 되는 경우. 전환 뒤에는 **대분류**가 여기 든다.
+
+    대분류 8종(code_id 9~16)은 `music_genres` 에 곡이 0개라 카탈로그에 없다.
+    그 축만 빈 채 추천은 정상으로 나가므로 응답으로는 찾을 수 없다. 둘 다 비었을
+    때만 보던 예전 판은 이 경우를 놓쳤다.
+    """
+    got = _onboarding_probe(["alternative_rock"],
+                            moods=["고요한"], genres=["Rock"])
+    assert got == {"genre": 1}, got
+
+
+def test_a_genre_that_does_match_is_not_counted():
+    got = _onboarding_probe(["ambient", "indie_rock"],
+                            moods=["고요한"], genres=["ambient"])
+    assert got == {}, got
+
+
+def test_both_axes_failing_are_counted_separately():
+    got = _onboarding_probe([], moods=["없는무드"], genres=["없는장르"])
+    # 두 축이 함께 죽은 경우는 `both` 로 한 번 더 센다 — 축별 셈만으로는 같은
+    # 사용자인지 서로 다른 두 사용자인지 알 수 없고, 같은 사용자면 씨앗이 통째로 없다.
+    assert got == {"mood": 1, "genre": 1, "both": 1}, got
+
+
+def test_an_axis_that_was_not_asked_for_is_not_counted():
+    """안 고른 축은 실패가 아니다. 세면 지표가 늘 켜져 있어 쓸모가 없어진다."""
+    got = _onboarding_probe(["ambient"], moods=[], genres=["ambient"])
+    assert got == {}, got
+
+
 # ------------------------------------------- 행동 출처 네 상태 (합성 응답)
 
 @pytest.fixture
@@ -700,6 +754,48 @@ def _source(metrics) -> str:
     got = metrics.snapshot()["behavior_source"]
     assert sum(got.values()) == 1, got
     return next(iter(got))
+
+
+@pytest.mark.parametrize("broken", ["unavailable", "mapping_empty"])
+def test_behavior_failure_falls_back_to_dna_not_to_the_stale_file(behavior_env, broken):
+    """행동을 못 읽어도 **추천은 나간다.** 최근 행동만 빠지고 DNA 는 그대로다.
+
+    두 가지를 함께 본다.
+
+    · `None` 이 아니라 `[]` 를 넘긴다 — `None` 이면 추천기가 **옛 파일 로그**를 읽어
+      ClickHouse 가 죽은 날에 몇 달 전 행동으로 개인화한다. 그쪽이 더 나쁘다.
+      비어 있으면 라벨(DNA)·온보딩만으로 계산한다.
+    · 그래도 `recommend` 를 부른다 — 여기서 빠져나가면 장애가 곧 추천 중단이 된다.
+    """
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    mp, metrics, ch = behavior_env
+    if broken == "unavailable":
+        mp.setattr(ch, "behavior_events",
+                   lambda u, s: (_ for _ in ()).throw(ConnectionError("죽었다")))
+    else:
+        mp.setattr(ch, "behavior_events", lambda u, s: [])
+        mp.setattr(ch, "raw_event_count", lambda u, s: 5)
+
+    seen: dict = {}
+
+    def _recommend(user, n, exclude, explore, plan, ct, cm, **kw):
+        seen.update(kw)
+        return {"results": [], "diagnostics": {"shortfall": 0}}
+
+    app = FastAPI()
+    internal_api.install(app, SimpleNamespace(
+        NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]), recommend=_recommend))
+    TestClient(app).post("/internal/recommendations/daily",
+                         json={"recommendation_id": 1, "user_id": 1})
+
+    assert "beh_events" in seen, "추천을 아예 부르지 않았다"
+    assert seen["beh_events"] == [], \
+        f"{broken} 인데 {seen['beh_events']!r} 을 넘겼다 — None 이면 옛 파일을 읽는다"
+    assert _source(metrics) == broken
 
 
 def test_behavior_source_file_when_clickhouse_is_not_configured(behavior_env):
@@ -1724,93 +1820,82 @@ _TAXONOMY_GENRE_NOT_IN_INDEX = [
 ]
 
 
-def test_every_spring_code_reaches_the_catalog():
-    """Spring 코드표와 AI 어휘는 **한 건도 그대로 겹치지 않는다**(2026-09-15 실측).
-    변환이 하나라도 비면 그 답변은 추천에 전혀 반영되지 않는다.
+# 어휘 전환(2026-09-21) 뒤의 카탈로그. `flow_meta.genre_code` 는 DB 코드 이름이다.
+_CODE_CATALOG = _TAXONOMY_GENRE            # 세분류 45종이 곧 카탈로그 값이다
 
-    Spring 코드표 **전량**을 본다 — 무드 17종(대분류 8 + taxonomy 9)과 장르 8종이다.
-    taxonomy 9종이 들어오면서 무드 쪽이 8에서 17로 늘었고, 장르 쪽은 45종
-    세분류가 아직 코드표에 없지만 **변환은 전부 이어져야 한다** — 화면이
-    `displayName` 으로 세분류를 보여 주게 되면 그때 바로 쓰인다.
+
+# 곡 무드 9종(code_id 40~48). 온보딩이 받는 유일한 무드 축이다.
+_TRACK_MOOD = ["melancholic", "warm", "dreamy", "bright", "hopeful", "powerful",
+               "dark", "calm", "exciting"]
+_TRACK_MOOD_KO = ["애상적인", "따뜻한", "몽글한", "화사한", "희망찬", "웅장한",
+                  "어두운", "고요한", "짜릿한"]
+# 1세대 8종(32~39). 순간 무드 축이고 **온보딩에서 내렸다**(2026-09-21 BE 합의).
+_LEGACY_MOOD = ["serene", "uplifting", "ethereal", "energetic", "focused",
+                "emotional", "intense", "romantic"]
+
+
+def test_every_code_genre_reaches_the_catalog():
+    """세분류 45종이 **전부** 걸린다.
+
+    전환 전에는 0/45 였다. 카탈로그가 `Rock---Punk` 꼴이고 코드가
+    `alternative_rock` 이라 부분일치가 하나도 안 걸렸고, 그 축은 조용히 비었다.
     """
     from ai_server.app import onboarding as f
 
-    dead_mood = [m for m in _SPRING_MOOD if not f.map_mood([m])]
-    dead_alias = [m for m in _SPRING_MOOD_KO if not f.map_mood([m])]
-    assert not dead_alias, f"한국어 별칭이 변환되지 않는다: {dead_alias}"
-    assert [f.mood_code(ko) for ko in _SPRING_MOOD_KO] == _SPRING_MOOD, "별칭 표가 코드 차례와 어긋난다"
-    dead_genre = [g for g in _SPRING_GENRE if not f.map_genre([g], _CATALOG)]
-    assert not dead_mood, f"변환되지 않는 mood: {dead_mood}"
-    assert not dead_genre, f"변환되지 않는 genre: {dead_genre}"
-
-    # taxonomy 45종은 **전부 변환되지는 않는다.** 색인에 그 style 의 곡이 없으면
-    # 변환할 대상 자체가 없다 — 실패가 아니라 아직 곡이 없다는 뜻이다.
-    # 그래서 "전부 변환" 이 아니라 **어느 것이 안 되는지 정확히 아는 것**을 고정한다.
-    dead_taxonomy = {g for g in _TAXONOMY_GENRE if not f.map_genre([g], _CATALOG)}
-    known = set(_TAXONOMY_GENRE_NOT_IN_INDEX)
-    assert dead_taxonomy == known, (
-        f"변환 안 되는 taxonomy 장르가 바뀌었다: "
-        f"새로 생김={sorted(dead_taxonomy - known)}, 해소됨={sorted(known - dead_taxonomy)}")
+    dead = [g for g in _TAXONOMY_GENRE if not f.map_genre([g], _TAXONOMY_GENRE)]
+    assert not dead, f"카탈로그에 있는데 안 걸리는 장르: {dead}"
+    assert len(_TAXONOMY_GENRE) == 45
 
 
-def test_mapped_values_exist_in_the_catalog():
-    """지어낸 값을 넣으면 필터가 아무것도 고르지 못한다."""
-    from ai_server.app import onboarding as f
+def test_broad_genres_never_map():
+    """대분류 8종(9~16)은 온보딩에서 내렸다. 하나도 걸리면 안 된다.
 
-    for g in _SPRING_GENRE + _TAXONOMY_GENRE:
-        for v in f.map_genre([g], _CATALOG):
-            assert v in _CATALOG_SET, v
-    for m in _SPRING_MOOD:
-        for v in f.map_mood([m]):
-            assert v in set(_AI_MOOD_TAGS), f"{m} → {v} 는 색인 태그가 아니다"
-
-
-def test_taxonomy_moods_do_not_invent_new_index_tags():
-    """taxonomy 9종을 뜻으로 이어도 **새 색인 태그를 만들지 않는다.**
-
-    이 성질이 깨지면 `tools/register_sections.py` 의 `MOOD_BY_TAG` 가 27종에서
-    늘어나고, `setdefault` 로 기존 8종이 우선하던 곡들의 무드 라벨이 바뀐다.
-    9종은 색인에 곡이 거의 없어서(추천풀 763곡 기준 `dark` 조차 0곡) 새 태그를
-    만들어도 얻는 것이 없고 잃는 것만 있다.
+    `music_genres` 에 그 8종을 쓰는 곡이 0개다. 억지로 세분류에 이어 붙이면
+    근거 없는 매핑표가 하나 더 생긴다 — 그 연결은 코드표가 정할 일이다.
     """
     from ai_server.app import onboarding as f
 
-    index = set(_AI_MOOD_FIELD)
-    first8 = dict(list(f.MOOD_MAP.items())[:8])
-    base = {t for tags in first8.values() for t in tags}
-    added = {v for m in _TAXONOMY_MOOD for v in f.map_mood([m])} - base
-    assert not added, f"9종이 새 태그를 만들었다: {sorted(added)}"
-    # 대분류 8종이 쓰는 태그가 곧 색인 태그의 전부다 (27개). 여기가 늘면
-    # 역방향 표가 커진 것이고 기존 곡의 라벨이 바뀔 수 있다.
-    assert len(base) == 27, f"대분류 8종의 태그 수가 바뀌었다: {len(base)}"
-    # 9종이 쓰는 태그는 27종 안이면서 38종 태그 어휘 안이다.
-    assert base <= set(_AI_MOOD_TAGS)
-    assert index <= set(_AI_MOOD_TAGS), "선택지 27종은 태그 38종의 부분집합이어야 한다"
-    assert set(_AI_MOOD_TAGS) - index == {"slow", "party", "sad", "dark",
-                                          "dream", "dramatic", "funny",
-                                          "soundscape", "documentary",
-                                          "melancholic", "sport"}, (
-        "선택지에서 빠지는 태그 11종이 바뀌었다 — `cnt_multi` 기준을 확인한다")
+    assert not hasattr(f, "GENRE_EXTRA"), "손으로 이어 두던 표가 되살아났다"
+    alive = [g for g in _SPRING_GENRE if f.map_genre([g], _TAXONOMY_GENRE)]
+    assert alive == [], f"대분류가 매핑됐다: {alive}"
 
 
-def test_taxonomy_mood_names_are_the_last_nine_entries():
-    """`TAXONOMY_MOOD_NAMES` 와 `MOOD_MAP` 뒷 9줄이 같은 말을 해야 한다.
+def test_track_moods_map_by_code_name_and_by_display_name():
+    """곡 무드 9종은 영문 코드로도, 한국어 표시명으로도 들어온다.
 
-    둘이 갈라지면 `music_preprocessing` 이 심는 `display_name` 이 엉뚱한 이름이
-    되고, 화면에는 taxonomy 원문이 뜬다 — 오류 없이 조용히.
+    한국어를 받는 것이 중요하다 — **운영의 중복 무드 124~132 는 `code_name` 자체가
+    한국어**(`고요한`)라, 이름으로 오면 이 표가 40~48 의 영문 코드로 되돌린다.
+    그래서 AI 쪽은 그 중복에 영향을 받지 않는다.
     """
     from ai_server.app import onboarding as f
 
-    assert list(f.MOOD_MAP)[-9:] == list(f.TAXONOMY_MOOD_NAMES), (
-        f"MOOD_MAP 뒷 9줄과 TAXONOMY_MOOD_NAMES 가 다르다: "
-        f"{list(f.MOOD_MAP)[-9:]} vs {list(f.TAXONOMY_MOOD_NAMES)}")
-    assert list(f.MOOD_MAP)[:8] == list(f.BASE_MOOD_NAMES)
-    assert list(f.MOOD_MAP) == list(f.MOOD_NAMES) == _SPRING_MOOD
-    assert list(f.MOOD_NAMES.values()) == _SPRING_MOOD_KO
-    # 원문이 그대로 **선택지**가 되면 안 된다 — 그 이름들은 `mood` 필드 27종에
-    # 없다(`melancholic`·`dark` 는 태그 어휘 38종에는 있지만 추천풀에 곡이 0이라
-    # 선택지에서 빠진다). 그래서 화면에는 한국어 이름을 쓴다.
-    assert not set(f.TAXONOMY_MOOD_NAMES) & set(_AI_MOOD_FIELD)
+    assert f.map_mood(_TRACK_MOOD) == _TRACK_MOOD                 # 9/9 그대로
+    assert f.map_mood(_TRACK_MOOD_KO) == _TRACK_MOOD              # 9/9 되돌림
+    assert f.map_mood(["몽글몽글한", "차분한"]) == ["dreamy", "calm"]   # 정리 전 철자
+
+
+def test_legacy_moods_never_map():
+    """1세대 8종(32~39)은 순간 무드 축이다. 온보딩으로 들어오면 버린다.
+
+    통과시키면 `flow_meta.mood_codes` 에 없는 값으로 곡을 거르게 되어 **조건이
+    아무 곡도 고르지 못한다.** `MOOD_MAP` 은 17종을 그대로 들고 있지만 그쪽은
+    `register_sections` 가 순간 무드를 붙일 때 쓰는 표라 건드리지 않는다.
+    """
+    from ai_server.app import onboarding as f
+
+    alive = [m for m in _LEGACY_MOOD if f.map_mood([m])]
+    assert alive == [], f"1세대 무드가 매핑됐다: {alive}"
+    assert [m for m in _SPRING_MOOD_KO[:8] if f.map_mood([m])] == [], "한국어로도 막아야 한다"
+    # 순간 무드 표는 그대로여야 한다 — 이쪽을 같이 줄이면 순간 무드가 통째로 빈다.
+    assert set(_LEGACY_MOOD) <= set(f.MOOD_MAP)
+
+
+def test_values_outside_the_catalog_do_not_pass():
+    """지어낸 값을 넣으면 필터가 아무것도 고르지 못한다. 그래서 통과시키지 않는다."""
+    from ai_server.app import onboarding as f
+
+    assert f.map_genre(["없는장르", "Rock---Punk"], _TAXONOMY_GENRE) == []
+    assert f.map_mood(["없는무드"]) == []
 
 
 def test_existing_mood_tags_still_map_to_the_same_korean_name():
@@ -1839,18 +1924,18 @@ def test_raw_answer_is_kept_for_tracing():
     """변환이 어긋났을 때 되짚을 근거가 없으면 원인을 못 찾는다."""
     from ai_server.app import onboarding as f
 
-    # `_CATALOG` 를 넘긴다 — `_AI_GENRE` 는 genre 축 57종뿐이라 `Jazz` 가
-    # `Jazzy Hip-Hop` 의 앞부분에만 걸려 결과가 달라진다. 실제 서빙 경로
-    # (`_genre_catalog`)는 genre·style 두 축을 함께 넘긴다.
-    ans = f.from_request({"moods": ["잔잔한", "몽환적인"], "genres": ["Jazz"]}, _CATALOG)
-    assert ans["mood_raw"] == ["잔잔한", "몽환적인"]
-    assert ans["genre_raw"] == ["Jazz"]
-    # 기대값을 **실제 운영 어휘**로 맞춘다. 예전 기대값은 `Contemporary Jazz` 였는데
-    # 그 이름은 현재 genre 축 57종에 없다 — 낡은 어휘(91종) 기준이었다.
-    # 운영 색인으로 `Jazz` 를 돌리면 `Jazzy Hip-Hop`·`Smooth Jazz` 두 개가 나오고,
-    # 이는 계획 문서의 "Jazz → 씨앗 2개" 실측과 같다.
-    assert ans["genre"] == ["Jazzy Hip-Hop", "Smooth Jazz"]
-    assert "relaxing" in ans["mood"]
+    # 원문은 사용자가 고른 그대로다 — 한국어든 코드 이름이든 손대지 않는다.
+    ans = f.from_request({"moods": ["애상적인", "고요한"], "genres": ["modern_jazz"]},
+                         _CODE_CATALOG)
+    assert ans["mood_raw"] == ["애상적인", "고요한"]
+    assert ans["genre_raw"] == ["modern_jazz"]
+    # 통과한 값은 코드 이름이다. 옮기지 않으므로 원문과 철자만 다르다.
+    assert ans["genre"] == ["modern_jazz"]
+    assert ans["mood"] == ["melancholic", "calm"]
+
+    # 카탈로그에 없는 대분류는 걸리지 않고, 그 사실이 원문에 남는다.
+    broad = f.from_request({"moods": [], "genres": ["Jazz"]}, _CODE_CATALOG)
+    assert broad["genre"] == [] and broad["genre_raw"] == ["Jazz"]
 
 
 # ------------------------------------------------------------------ 구간 적재
@@ -2134,10 +2219,10 @@ def test_missing_genre_catalog_does_not_kill_the_request():
     internal_api.install(app, fake)
     r = TestClient(app).post("/internal/recommendations/daily",
                              json={"recommendation_id": 1, "user_id": 1,
-                                   "onboarding": {"moods": ["잔잔한"],
+                                   "onboarding": {"moods": ["고요한"],
                                                   "genres": ["Jazz"]}})
     assert r.status_code == 404, r.text          # 후보 0 → NO_CANDIDATES (500 아님)
-    assert "relaxing" in seen["onboarding"]["mood"], "mood 까지 잃으면 안 된다"
+    assert "calm" in seen["onboarding"]["mood"], "mood 까지 잃으면 안 된다"
     assert seen["onboarding"]["genre"] == []
     assert seen["onboarding"]["genre_raw"] == ["Jazz"], "원문은 되짚을 수 있어야 한다"
 
@@ -2146,7 +2231,7 @@ def test_empty_genre_is_reported_and_raw_answer_survives():
     """어휘가 안 맞아 비더라도 사람이 고른 원문은 남아야 되짚을 수 있다."""
     from ai_server.app import onboarding as onb
 
-    ans = onb.from_request({"moods": ["잔잔한"], "genres": ["Jazz"]}, [])
+    ans = onb.from_request({"moods": ["고요한"], "genres": ["Jazz"]}, [])
     assert ans["genre"] == [] and ans["genre_raw"] == ["Jazz"]
 
 
@@ -2464,16 +2549,19 @@ def test_behavior_injection_skips_the_file_entirely(tmp_path, monkeypatch):
 
 
 # ------------------------------------------------ 온보딩을 요청으로 받기
-def test_onboarding_from_request_maps_spring_vocabulary():
-    """Spring 코드표와 AI 태그는 한 건도 겹치지 않는다. 옮기지 않으면 씨앗이 빈다."""
+def test_onboarding_passes_code_names_through_unchanged():
+    """Spring 코드표와 카탈로그가 **같은 어휘**가 됐다. 옮길 것이 없다.
+
+    전환 전에는 둘이 한 건도 겹치지 않아 변환표가 필요했고, 그 표가 세분류 45종을
+    하나도 잇지 못해 장르 축이 조용히 비었다.
+    """
     from ai_server.app import onboarding as onb
 
-    ans = onb.from_request({"moods": ["잔잔한"], "genres": ["Jazz"]},
-                           ["Contemporary Jazz", "Rock"])
-    assert "relaxing" in ans["mood"]
-    assert ans["genre"] == ["Contemporary Jazz"]
-    # 원문은 남긴다 — 변환이 어긋났을 때 되짚을 근거다.
-    assert ans["mood_raw"] == ["잔잔한"] and ans["genre_raw"] == ["Jazz"]
+    ans = onb.from_request({"moods": ["고요한"], "genres": ["modern_jazz"]},
+                           ["modern_jazz", "indie_rock"])
+    assert ans["mood"] == ["calm"]              # 한국어 표시명 → 코드 이름
+    assert ans["genre"] == ["modern_jazz"]      # 코드 이름 그대로
+    assert ans["mood_raw"] == ["고요한"] and ans["genre_raw"] == ["modern_jazz"]
 
 
 def test_onboarding_from_request_fills_every_axis_the_recommender_reads():
@@ -2481,7 +2569,7 @@ def test_onboarding_from_request_fills_every_axis_the_recommender_reads():
     from ai_server.app import onboarding as onb
     from ai_server.app import recommender
 
-    ans = onb.from_request({"moods": ["잔잔한"], "genres": []}, [])
+    ans = onb.from_request({"moods": ["고요한"], "genres": []}, [])
     for axis in recommender.ONB_LIST_FIELDS:
         assert axis in ans, axis
         assert isinstance(ans[axis], list)
@@ -2526,15 +2614,17 @@ def test_request_carries_onboarding_into_recommend():
 
     fake = SimpleNamespace(
         NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]), recommend=_recommend,
-        catalog_facets=lambda: {"genre": [{"value": "Contemporary Jazz"}]})
+        catalog_facets=lambda: {"genre": [{"value": "modern_jazz"}]})
     app = FastAPI()
     internal_api.install(app, fake)
     TestClient(app).post("/internal/recommendations/daily",
                          json={"recommendation_id": 1, "user_id": 1,
-                               "onboarding": {"moods": ["잔잔한"], "genres": ["Jazz"]}})
+                               "onboarding": {"moods": ["고요한"],
+                                              "genres": ["modern_jazz"]}})
     assert seen["onboarding"] is not None, "온보딩이 추천기까지 닿지 않았다"
-    assert "relaxing" in seen["onboarding"]["mood"]
-    assert seen["onboarding"]["genre"] == ["Contemporary Jazz"]
+    # 한국어 표시명은 코드 이름으로, 코드 이름은 그대로 — 어휘가 하나다.
+    assert seen["onboarding"]["mood"] == ["calm"]
+    assert seen["onboarding"]["genre"] == ["modern_jazz"]
 
 
 # ------------------------------------------------------------------ 로컬 실행 CLI

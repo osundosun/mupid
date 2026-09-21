@@ -503,6 +503,11 @@ def catalog_facet_rows() -> dict:
 
 ONB_LIST_FIELDS = ("language", "vocal_type", "style", "genre", "mood", "instrument",
                    "tempo", "energy", "section_label", "exclude_style")
+# `track_ok` 가 **실제로 후보를 거르는** 축. 이 중 하나라도 차 있어야 씨앗에 근거가
+# 있다. `energy` 와 `exclude_style` 은 여기 없다 — 앞엣것은 `track_ok` 가 읽지 않고,
+# 뒤엣것은 빼는 조건이라 그것만으로는 "무엇을 좋아하는가" 가 되지 않는다.
+ONB_FILTER_AXES = ("language", "vocal_type", "style", "tempo", "genre", "mood",
+                   "instrument", "section_label")
 
 
 def _onb_list(v) -> list:
@@ -549,6 +554,23 @@ def onboarding_seeds(user: str,
     ans = onboarding_of(user, injected)
     if not ans:
         return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
+    # ── 필터 축이 **전부** 비면 씨앗을 만들지 않는다.
+    #
+    # `track_ok` 의 조건은 하나같이 `want_X and …` 라, 빈 축은 그냥 건너뛴다.
+    # 모든 축이 비면 조건이 하나도 없어 **전곡이 통과하고 씨앗이 풀 전체의
+    # 구간별 평균**이 된다. 그런데도 호출부는 `query_source="onboarding"` ·
+    # `reason_code="ONBOARDING_MATCH"` 를 붙인다 — 실측으로 기존 회원 8명 중
+    # 6명이 이 상태였다. 모두 같은 풀 중심값을 받으면서 응답은 "온보딩 일치"
+    # 라고 말한다. 콜드스타트보다 나쁘다: 틀린 근거를 자신 있게 말한다.
+    #
+    # 원문이 왔다는 것만으로는 근거가 아니다. **어휘로 옮겨진 것이 있어야** 근거다.
+    if not any(ans.get(axis) for axis in ONB_FILTER_AXES):
+        return (np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0),
+                [{"onboarding_source": "empty_after_mapping",
+                  "note": "원문은 왔지만 어휘로 옮겨진 축이 하나도 없다 — "
+                          "씨앗을 만들지 않는다",
+                  "mood_raw": list(ans.get("mood_raw") or []),
+                  "genre_raw": list(ans.get("genre_raw") or [])}])
     fac = catalog_facets()
     df = fac["_df"].set_index("track_id")
 
@@ -1786,10 +1808,16 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     c = CAT
     C, W, dna_meta = build_dna(user, query_plan, current_track_id, current_moment_id)
     query_source = "labels" if len(C) else "none"
+    onb_empty = ""
     if query_plan is None and not len(C):
         C, W, dna_meta = onboarding_seeds(user, onboarding)
         if len(C):
             query_source = "onboarding"
+        elif dna_meta and dna_meta[0].get("onboarding_source") == "empty_after_mapping":
+            # 답변은 왔는데 어휘로 옮겨진 축이 하나도 없다. 씨앗이 없으므로
+            # `query_source` 는 `none`(콜드스타트)이고, **왜** 그런지는 여기 남긴다.
+            onb_empty = "empty_after_mapping"
+            dna_meta = []
     zu = model_user_vec(user) if query_plan is None else None
     if query_plan is None:
         _t_beh = time.perf_counter()
@@ -1807,8 +1835,10 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
                             "query_source": query_source,
                             "behavior_source": ("disabled_for_query" if query_plan is not None else
                                                 "clickhouse" if beh_events is not None else "file"),
-                            "onboarding_source": ("disabled_for_query" if query_plan is not None else
-                                                  "request" if onboarding is not None else "file"),
+                            "onboarding_source": (
+                                "disabled_for_query" if query_plan is not None else
+                                onb_empty if onb_empty else
+                                "request" if onboarding is not None else "file"),
                             "behavior_events": beh["events"],
                             "dropped_bpm": 0, "dropped_short": 0, "excluded": len(hard),
                             "excluded_session": len(set(exclude)),

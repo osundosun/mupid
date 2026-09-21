@@ -418,9 +418,23 @@ def _onboarding(req: "_Base", svc) -> Optional[dict]:
     if req.onboarding is None:
         return None
     ans = onb.from_request(req.onboarding.model_dump(), _genre_catalog(svc))
-    if ans is not None and not ans["mood"] and not ans["genre"]:
-        # 답변은 왔는데 하나도 못 옮겼다. 조용히 넘기면 "연결은 됐는데 개인화가 0" 이다.
-        log(f"온보딩 변환 결과가 비었다 — mood={ans['mood_raw']} genre={ans['genre_raw']}")
+    if ans is None:
+        return ans
+    # 축을 **따로** 본다. 둘 다 비었을 때만 보면, 무드는 되고 장르만 안 되는
+    # 경우가 안 보인다 — 코드표 세분류 장르 45종(49~93)이 지금 그 상태다
+    # (`alternative_rock` 대 `Rock---Alternative Rock`). 그 축만 조용히 빠진 채
+    # 추천은 정상으로 나가므로 응답으로는 찾을 수 없다.
+    failed = [axis for axis in ("mood", "genre")
+              if ans[f"{axis}_raw"] and not ans[axis]]
+    for axis in failed:
+        metrics.observe_onboarding_unmapped(axis)
+        log(f"온보딩 {axis} 를 하나도 옮기지 못했다 — {ans[f'{axis}_raw']}")
+    if len(failed) == 2:
+        # **두 축 모두** 실패했다. 축별 셈만 보면 "mood 1건, genre 1건" 이 서로 다른
+        # 사용자인지 같은 사용자인지 알 수 없는데, 같은 사용자면 그 사람은 씨앗이
+        # 통째로 없다(`recommender.onboarding_seeds` 가 빈 씨앗을 돌려준다).
+        # 실측으로 기존 회원 8명 중 6명이 이쪽이었다.
+        metrics.observe_onboarding_unmapped("both")
     return ans
 
 

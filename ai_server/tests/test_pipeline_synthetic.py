@@ -313,6 +313,49 @@ def test_mood_filter_reranks_without_dropping(svc):
     assert moody["diagnostics"]["candidates"] == plain["diagnostics"]["candidates"]
 
 
+def test_onboarding_with_nothing_mapped_makes_no_seed(svc):
+    """원문은 왔는데 어휘로 옮겨진 축이 하나도 없으면 **씨앗을 만들지 않는다.**
+
+    `track_ok` 의 조건은 전부 `want_X and …` 라 빈 축은 건너뛴다. 모든 축이 비면
+    조건이 하나도 없어 전곡이 통과하고 씨앗이 **풀 전체의 구간별 평균**이 되는데,
+    그런데도 응답은 `ONBOARDING_MATCH` 라고 말한다. 실측으로 기존 회원 8명 중
+    6명이 그 상태였다 — 모두 같은 값을 받으면서 근거는 "온보딩 일치" 였다.
+    콜드스타트보다 나쁘다: 틀린 근거를 자신 있게 말한다.
+    """
+    from ai_server.app import onboarding as onb
+
+    # 대분류 장르 + 1세대 무드. 둘 다 온보딩 축에서 내려간 값이다.
+    ans = onb.from_request({"moods": ["잔잔한"], "genres": ["Rock"]}, GENRES)
+    assert ans["mood"] == [] and ans["genre"] == []
+    assert ans["mood_raw"] == ["잔잔한"], "원문은 남아야 되짚을 수 있다"
+
+    out = svc.recommend("internal:404", 4, set(), False, None, None, None,
+                        beh_events=[], onboarding=ans)
+    d = out["diagnostics"]
+    assert d["query_source"] == "none", "씨앗이 없는데 온보딩이라고 했다"
+    assert d["onboarding_source"] == "empty_after_mapping"
+    assert d.get("cold_start") is True
+    assert out["results"], "근거가 없어도 추천은 나가야 한다"
+    for r in out["results"]:
+        assert not r.get("matched_dna"), "씨앗이 없는데 근거 구간이 붙었다"
+
+
+def test_one_axis_left_still_makes_a_seed(svc):
+    """한 축이라도 남으면 종전 그대로다. 9번 회원이 이쪽이다.
+
+    실제 응답: 장르 `9·12·13·14 · 53·57` 중 세분류 `53·57` 만 남는다.
+    """
+    from ai_server.app import onboarding as onb
+
+    ans = onb.from_request({"moods": ["잔잔한"], "genres": ["Rock", GENRES[0]]}, GENRES)
+    assert ans["mood"] == [] and ans["genre"] == [GENRES[0]], "세분류만 남아야 한다"
+
+    out = svc.recommend("internal:405", 4, set(), False, None, None, None,
+                        beh_events=[], onboarding=ans)
+    assert out["diagnostics"]["query_source"] == "onboarding"
+    assert out["diagnostics"]["onboarding_source"] == "request"
+
+
 def test_a_value_already_in_the_vocabulary_is_not_rewritten_by_an_alias(svc):
     """별칭표가 **어휘에 있는 값**을 덮으면 조건이 통째로 사라진다.
 

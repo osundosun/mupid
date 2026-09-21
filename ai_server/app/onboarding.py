@@ -100,23 +100,43 @@ MOOD_MAP = {
     "exciting": ["energetic", "action", "happy"],                        # 짜릿한
 }
 
+# 온보딩이 받는 것은 **곡 무드 9종(code_id 40~48)뿐이다** (2026-09-21 BE 합의).
+#
+# 1세대 8종(32~39)은 순간 무드 축이고 온보딩에서 내렸다. `MOOD_MAP` 은 17종을 그대로
+# 들고 있는데, 그쪽은 `register_sections` 가 **순간** 무드를 붙일 때 쓰는 표라
+# 건드리지 않는다. 두 축을 한 함수가 받아 주면 온보딩이 순간 무드로 곡을 거르게 되고,
+# `flow_meta.mood_codes` 에는 그 값이 없어 **조건이 아무 곡도 못 고른다.**
+TRACK_MOOD_NAMES = TAXONOMY_MOOD_NAMES
+
 # 한국어 표시명 → 영문 코드. 코드표 정리 전에 저장된 요청·기록에는 한국어가 남아
 # 있을 수 있어(`mood_raw` 등) 둘 다 받는다. 정리 전 운영 표시명이던
 # `몽글몽글한`·`차분한` 도 같은 무드로 읽는다.
+#
+# **운영의 중복 무드 124~132 는 `code_name` 자체가 한국어다**(`고요한`). 이름으로
+# 오면 이 표가 40~48 의 영문 코드로 되돌리므로 AI 쪽은 그 중복에 영향을 받지 않는다.
+TRACK_MOOD_ALIASES = {ko: en for en, ko in TRACK_MOOD_NAMES.items()}
+TRACK_MOOD_ALIASES.update({"몽글몽글한": "dreamy", "차분한": "calm"})
+
+# 17종 전체 표. `mood_code()` 는 쓰지 않는다 — 진단·대조용으로 남긴다.
 MOOD_ALIASES = {ko: en for en, ko in MOOD_NAMES.items()}
 MOOD_ALIASES.update({"몽글몽글한": "dreamy", "차분한": "calm"})
 
 
 def mood_code(name) -> str | None:
-    """받은 이름을 Spring 영문 코드로. 한국어·대소문자 차이를 받아 준다."""
+    """받은 이름을 **곡 무드(40~48)** 의 영문 코드로. 아니면 `None`.
+
+    한국어 표시명과 대소문자 차이는 받아 준다. 1세대 8종(32~39)은 받지 않는다 —
+    온보딩 축이 아니고, 통과시키면 `flow_meta.mood_codes` 에 없는 값으로 곡을
+    거르게 되어 조건이 아무것도 못 고른다.
+    """
     if not isinstance(name, str):
         return None
     key = name.strip()
-    if key in MOOD_MAP:
+    if key in TRACK_MOOD_NAMES:
         return key
-    if key.casefold() in MOOD_MAP:
+    if key.casefold() in TRACK_MOOD_NAMES:
         return key.casefold()
-    return MOOD_ALIASES.get(key)
+    return TRACK_MOOD_ALIASES.get(key)
 
 
 # `GENRE_EXTRA` 를 걷어냈다 (2026-09-21).

@@ -26,6 +26,7 @@ _reasons: Counter = Counter()         # reason_code -> 건수
 _query_source: Counter = Counter()    # labels | onboarding | none
 _behavior: deque = deque(maxlen=_KEEP)
 _behavior_source: Counter = Counter()   # clickhouse|file|unavailable|mapping_empty
+_onb_unmapped: Counter = Counter()    # mood | genre — 답변은 왔는데 하나도 못 옮긴 축
 
 
 def observe_request(path: str, seconds: float, error_code: str | None = None) -> None:
@@ -68,6 +69,18 @@ def observe_behavior_source(source: str) -> None:
         _behavior_source[source or "unknown"] += 1
 
 
+def observe_onboarding_unmapped(axis: str) -> None:
+    """온보딩 한 축을 **하나도** 카탈로그 어휘로 옮기지 못했다.
+
+    무드는 되는데 장르만 안 되는 경우가 지금 실제로 있다 — 코드표의 세분류
+    장르 45종(`49~93`)은 카탈로그 태그(`Electronic---Ambient` 꼴)와 철자가 달라
+    부분일치가 걸리지 않는다. 그 축만 조용히 빈 채 추천은 정상으로 나가기 때문에
+    응답만 보아서는 못 찾는다. 세어 두어야 계약이 필요하다는 것을 알 수 있다.
+    """
+    with _LOCK:
+        _onb_unmapped[axis] += 1
+
+
 def observe_behavior(seconds: float) -> None:
     """행동 로그 조회에 걸린 시간. 개인화 사용자가 느린 원인을 분리해 본다."""
     with _LOCK:
@@ -105,6 +118,8 @@ def snapshot() -> dict:
             "latency_seconds": {p: _lat_block(list(d)) for p, d in _lat.items()},
             "behavior_lookup_seconds": _lat_block(list(_behavior)),
             "behavior_source": dict(_behavior_source),
+            # 답변은 왔는데 그 축을 하나도 못 옮긴 건수. 응답에는 드러나지 않는다.
+            "onboarding_unmapped": dict(_onb_unmapped),
             "reason_codes": dict(_reasons),
             "query_source": qs,
             # 콜드스타트 비율: 이력도 온보딩도 없어 근거 없이 나간 추천의 몫.
@@ -116,6 +131,7 @@ def snapshot() -> dict:
 def reset() -> None:
     """테스트 전용. 운영 중에 부르면 추세가 끊긴다."""
     with _LOCK:
+        _onb_unmapped.clear()
         _lat.clear()
         _calls.clear()
         _errors.clear()
