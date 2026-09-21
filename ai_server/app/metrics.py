@@ -25,7 +25,7 @@ _errors: Counter = Counter()          # error_code -> 건수
 _reasons: Counter = Counter()         # reason_code -> 건수
 _query_source: Counter = Counter()    # labels | onboarding | none
 _behavior: deque = deque(maxlen=_KEEP)
-_behavior_source: Counter = Counter()   # clickhouse | file | unavailable
+_behavior_source: Counter = Counter()   # clickhouse|file|unavailable|mapping_empty
 
 
 def observe_request(path: str, seconds: float, error_code: str | None = None) -> None:
@@ -48,10 +48,21 @@ def observe_query_source(source: str) -> None:
 
 
 def observe_behavior_source(source: str) -> None:
-    """행동을 어디서 읽었나 — `clickhouse` / `file` / `unavailable`.
+    """행동을 어디서 읽었나.
+
+    | 값 | 뜻 |
+    |---|---|
+    | `clickhouse` | 정상 조회 (0행이었고 원본도 없었으면 여기 든다 — 안 들은 것이다) |
+    | `file` | 주소가 없어 파일로 물러났다 (개발·오프라인) |
+    | `unavailable` | 조회 자체가 실패했다 |
+    | `mapping_empty` | **원본 이벤트는 있는데 곡 매핑 결과가 0건이다** |
 
     `unavailable` 이 쌓이면 ClickHouse 조회가 실패하고 있다는 뜻이다. 추천은 계속
     나가지만 **개인화가 빠진 채**라 실패율만 봐서는 드러나지 않는다.
+
+    `mapping_empty` 는 그보다 찾기 어렵다 — 조회는 성공했고 결과만 비어 있어서
+    "이 사람은 안 들었다" 와 구분되지 않는다. 실제로는 `v_track_sections_current`
+    가 그 곡을 되돌리지 못한 것이고, 한 사람이 아니라 전 사용자에게 걸린다.
     """
     with _LOCK:
         _behavior_source[source or "unknown"] += 1

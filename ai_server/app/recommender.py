@@ -34,22 +34,16 @@ from .log import log
 
 warnings.filterwarnings("ignore")
 
-# 모델·색인 경로는 MUPID_AI_ARTIFACT_DIR 하나로 통일한다. 계산은 paths 한 곳에서만 한다
-# — 값은 종전과 같다(미설정 시 ai_server/artifacts).
-ROOT = paths.artifact_root()
-# 라벨러는 **코드와 함께** 배포된다(app/labeler.py). 산출물 디렉터리에는 없다 — 예전
-# 데모의 <저장소>/src 배치를 그대로 들고 오면 subprocess 가 조용히 실패한다.
-OUT_DIR = ROOT / "data" / "proc" / "mupid"
-# 배치가 **쓰는** 자리. 색인 마운트가 읽기 전용이라 나눠 두었다 — 나누지
-# 않으면 기본값이 OUT_DIR 이라 종전과 같다(`paths.state_dir`).
-STATE_DIR = paths.state_dir()
-SERVE = STATE_DIR / "serve"
-EVENTS = STATE_DIR / "logs" / "events_service.jsonl"
-# 라벨의 정본은 ClickHouse 다(`app/labels_store.py`). 이 파일은 ClickHouse 가
-# 없는 개발·오프라인에서만 쓰이고, 배치가 만든 중간 산출물이기도 하다.
-LABELS = STATE_DIR / "labels_service.parquet"
-PREFS = SERVE / "prefs.parquet"
-ONBOARD = SERVE / "onboarding.parquet"
+# 모델·색인 경로는 MUPID_AI_ARTIFACT_DIR 하나로 통일한다. 계산은 `paths` 한 곳에서만 한다.
+#
+# **상수로 굳히지 않는다.** 예전에는 여기서 `ROOT = paths.artifact_root()` 로 받아
+# 두었는데, 그러면 import 시점의 환경변수가 그대로 박힌다. 이 모듈은 다른 모듈이
+# 먼저 끌어올 수 있어서 "누가 먼저 import 했는가" 가 경로를 정하게 되고, 값이
+# 어긋나도 서비스는 정상처럼 뜬다. 그래서 읽는 시점에 부른다 — 라벨러는 **코드와
+# 함께** 배포되므로(`app/labeler.py`) 산출물 디렉터리에는 없다는 점도 그대로다.
+#
+# 배치가 쓰는 자리(`serve`·`logs`·`labels_service.parquet`)는 `paths.state_dir()`
+# 에 붙는다. 나누지 않은 환경에서는 기본값이 색인 디렉터리라 종전과 같다.
 # 음원·표지 경로는 두지 않는다. 이 서비스는 스트리밍을 하지 않고(main.py), 그 값을 읽는
 # 곳도 없었다. 개발자 홈 디렉터리(Path.home())를 가리키고 있어 컨테이너에서는 존재하지도
 # 않는 경로였고, 추천 결과 딕셔너리에 실려 로그로 새어 나갈 수 있었다.
@@ -147,14 +141,14 @@ class Catalog:
     def __init__(self) -> None:
         from . import features as feat
 
-        self.mom = pd.read_parquet(OUT_DIR / "moments.parquet")
+        self.mom = pd.read_parquet(paths.data_dir() / "moments.parquet")
         if "source" not in self.mom.columns:
             self.mom["source"] = "fma"
-        self.Z = np.load(OUT_DIR / "moments_emb.npy", mmap_mode="r")
+        self.Z = np.load(paths.data_dir() / "moments_emb.npy", mmap_mode="r")
         self.X, self.idx, self.info = feat.load()
-        self.content = pd.read_parquet(OUT_DIR / "content.parquet").set_index("track_id")
-        self.meta = (pd.read_parquet(OUT_DIR / "flow_meta.parquet").set_index("track_id")
-                     if (OUT_DIR / "flow_meta.parquet").exists() else pd.DataFrame())
+        self.content = pd.read_parquet(paths.data_dir() / "content.parquet").set_index("track_id")
+        self.meta = (pd.read_parquet(paths.data_dir() / "flow_meta.parquet").set_index("track_id")
+                     if (paths.data_dir() / "flow_meta.parquet").exists() else pd.DataFrame())
         self.pool = self.mom[self.mom.source.isin(POOL_SOURCES)].reset_index(drop=True)
         # 출처별 구간 수. 설정했는데 0건인 출처는 오타이거나 아직 안 실린 것이다.
         counts = self.pool.source.value_counts().to_dict()
@@ -167,7 +161,7 @@ class Catalog:
         self.pool_x = np.asarray([self.idx.get(m, -1) for m in self.pool.moment_id])
         self.by_track = {t: g for t, g in self.pool.groupby("track_id", sort=False)}
         self.clap_idx, self.clap_emb = {}, None
-        clap_path = OUT_DIR / "clap_moments.npz"
+        clap_path = paths.data_dir() / "clap_moments.npz"
         if clap_path.exists():
             d = np.load(clap_path)
             self.clap_emb = np.asarray(d["embeddings"], dtype=np.float32)
@@ -177,11 +171,11 @@ class Catalog:
         self.model = None          # torch 판 (있을 때만)
         self.user_enc = None       # NumPy 판 (stage1_weights.npz 가 있을 때)
         self.model_backend = None
-        p = OUT_DIR / "stage1_section.npy"
+        p = paths.data_dir() / "stage1_section.npy"
 
         # NumPy 가중치가 있으면 그쪽을 먼저 쓴다. 서빙에서 torch 가 하는 일은 enc_user
         # 한 번뿐이라 이것만 있으면 이미지에서 torch 를 걷어낼 수 있다.
-        npz = OUT_DIR / "stage1_weights.npz"
+        npz = paths.data_dir() / "stage1_weights.npz"
         if p.exists() and npz.exists():
             try:
                 enc = stage1_np.load(npz)
@@ -201,7 +195,7 @@ class Catalog:
             except Exception as e:
                 self.model_error = f"npz 적재 실패: {type(e).__name__}: {e}"
 
-        if self.model is None and p.exists() and (OUT_DIR / "stage1.pt").exists():
+        if self.model is None and p.exists() and (paths.data_dir() / "stage1.pt").exists():
             try:
                 import torch
 
@@ -211,7 +205,7 @@ class Catalog:
                 # 임의 코드를 실행할 수 있다. 먼저 안전 모드로 열고, 그 파일이 텐서·
                 # 기본형만 담고 있지 않을 때만 예전 방식으로 물러난다 — 그때는 조용히
                 # 넘어가지 않고 로그를 남긴다.
-                ckpt_path = OUT_DIR / "stage1.pt"
+                ckpt_path = paths.data_dir() / "stage1.pt"
                 try:
                     ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
                 except Exception as _e:
@@ -247,9 +241,9 @@ class Catalog:
         self.comb = None
         import os as _os
         _name = _os.environ.get("MUPID_COMBINER", "logistic_flow_stage1.json")
-        cp = OUT_DIR / _name
+        cp = paths.data_dir() / _name
         if not cp.exists():
-            cp = OUT_DIR / "logistic_combiner.json"
+            cp = paths.data_dir() / "logistic_combiner.json"
         if cp.exists():
             d = json.loads(cp.read_text(encoding="utf-8"))
             self.comb = {"features": d["features"],
@@ -305,6 +299,17 @@ _VOCAL_GENDER = {
     "m": "M", "male": "M", "f": "F", "female": "F",
     "mix": "MIX", "mixed": "MIX",
 }
+# 검색 근거로 쓰지 않는 악기 이름. demucs 스템 넷 중 `other` 한 종이다
+# (`music_preprocessing/.../instruments.py` 의 `STEMS` 가 정본).
+#
+# **`code_name` 과 `display_name` 을 둘 다 적는다.** 코드표 정리로 이 행의
+# `code_name` 이 `그 외 악기` → `other` 로 바뀌는 중인데, 한쪽만 보면 마이그레이션
+# 전후 어느 한쪽에서 필터가 통째로 풀린다 — 실측 9,292행(`music_analysis_instruments`
+# 의 31%)이 "구체적인 악기" 로 검색에 노출된다. 오류는 나지 않고 결과만 나빠진다.
+#
+# 이름이 같은 `_VOCAL_GENDER["other"]` 와는 **다른 축이다.** 저쪽은 보컬 성별이고
+# 값이 `ETC` 다. 한 집합으로 합치면 성별 `other` 까지 같이 지워진다.
+_NONSPECIFIC_INSTRUMENTS = {"other", "그 외 악기", "그외 악기"}
 
 
 def _text(v) -> str:
@@ -327,9 +332,14 @@ def _tag_list(v) -> list:
 
 
 def _instrument_list(v) -> list:
-    """구체적인 악기만 검색 근거로 쓴다."""
+    """구체적인 악기만 검색 근거로 쓴다.
+
+    `unknown`·`nan`·`null` 같은 누락 표기는 `_tag_list` 가 이미 떨군다(`_MISSING_TEXT`).
+    여기서 더 거르는 것은 **뜻이 없는 악기 이름** 하나뿐이다.
+    """
     return list(dict.fromkeys(
-        x for x in _tag_list(v) if x.lower() != "unknown" and x != "그 외 악기"))
+        x for x in _tag_list(v)
+        if x.casefold() not in _NONSPECIFIC_INSTRUMENTS))
 
 
 def short_genre(g: str) -> str:
@@ -515,9 +525,9 @@ def onboarding_of(user: str, injected: dict | None = None) -> dict | None:
     """
     if injected is not None:
         return injected
-    if not ONBOARD.exists():
+    if not paths.onboarding_path().exists():
         return None
-    d = pd.read_parquet(ONBOARD)
+    d = pd.read_parquet(paths.onboarding_path())
     m = d[d.user_ref == user]
     if m.empty:
         return None
@@ -598,10 +608,10 @@ def onboarding_seeds(user: str,
 
 # --------------------------------------------------------------- 이벤트/라벨
 def append_event(ev: dict) -> None:
-    EVENTS.parent.mkdir(parents=True, exist_ok=True)
+    paths.events_path().parent.mkdir(parents=True, exist_ok=True)
     ev.setdefault("event_id", f"evt_{uuid.uuid4().hex[:22]}")
     ev.setdefault("occurred_at", now_iso())
-    with EVENTS.open("a", encoding="utf-8") as f:
+    with paths.events_path().open("a", encoding="utf-8") as f:
         f.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
 
@@ -611,10 +621,10 @@ def normalized_events() -> Path:
     LIKE/DISLIKE 는 토글이라 **최종 상태가 활성인 것만** TRACK_LIKE/DISLIKE 로 넘긴다.
     (UNLIKE/UNDISLIKE 로 취소된 것은 라벨에 남지 않아야 한다.)
     """
-    out = EVENTS.parent / "events_service_normalized.jsonl"
-    if not EVENTS.exists():
-        return EVENTS
-    raw = [ln for ln in EVENTS.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    out = paths.events_path().parent / "events_service_normalized.jsonl"
+    if not paths.events_path().exists():
+        return paths.events_path()
+    raw = [ln for ln in paths.events_path().read_text(encoding="utf-8").splitlines() if ln.strip()]
     state: dict = {}                       # (user, track) -> {"like": bool, "dislike": bool}
     for ln in raw:
         try:
@@ -686,7 +696,7 @@ def normalized_events() -> Path:
 
 
 def run_labeler() -> dict:
-    if not EVENTS.exists():
+    if not paths.events_path().exists():
         return {"ok": False, "reason": "이벤트 로그가 없다"}
     src_events = normalized_events()
     # 출력 인코딩을 못 박는다. 지정하지 않으면 파이썬이 **콘솔 기본 인코딩**으로
@@ -695,10 +705,10 @@ def run_labeler() -> dict:
     # "라벨 생성 실패" 로만 보여 원인이 인코딩이라는 것이 드러나지 않는다.
     r = subprocess.run(
         [sys.executable, "-m", "ai_server.app.labeler", "--events", str(src_events),
-         "--out", str(LABELS), "--pool", "service"],
+         "--out", str(paths.labels_path()), "--pool", "service"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         cwd=paths.PKG_ROOT.parent)
-    out = {"ok": r.returncode == 0 and LABELS.exists(),
+    out = {"ok": r.returncode == 0 and paths.labels_path().exists(),
            "stdout": r.stdout[-1500:], "stderr": r.stderr[-800:]}
     if out["ok"] and labels_store.configured():
         # 라벨러는 parquet 으로 내놓는다(중간 산출물). 서빙이 읽는 정본은
@@ -708,7 +718,7 @@ def run_labeler() -> dict:
         # 서빙은 어제 라벨을 계속 보게 되고, 그 차이는 아무 데도 드러나지 않는다.
         run_id = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         try:
-            out["loaded"] = labels_store.write(pd.read_parquet(LABELS), run_id)
+            out["loaded"] = labels_store.write(pd.read_parquet(paths.labels_path()), run_id)
             out["run_id"] = run_id
         except Exception as e:
             out["ok"] = False
@@ -718,7 +728,7 @@ def run_labeler() -> dict:
 
 
 # ------------------------- 라벨 읽기 (ClickHouse / 파일) -------------------------
-# 다섯 곳이 각자 `pd.read_parquet(LABELS)` 를 부르고 있었다. 저장소가 둘이 되면
+# 다섯 곳이 각자 `pd.read_parquet(paths.labels_path())` 를 부르고 있었다. 저장소가 둘이 되면
 # 그 다섯 곳이 따로 갈라지므로 여기 하나로 모은다. **판단 기준은 하나다** —
 # `labels_store.configured()`. 읽기와 쓰기가 서로 다른 곳을 보는 상태를 만들지
 # 않기 위해서다.
@@ -730,7 +740,7 @@ def labels_available() -> bool:
             # 추천을 죽이지 않는다. 개인화만 빠지고 그 사실이 로그에 남는다.
             log(f"라벨 저장소 조회 실패 — {type(e).__name__}: {e}")
             return False
-    return LABELS.exists()
+    return paths.labels_path().exists()
 
 
 def labels_for(user: str) -> pd.DataFrame:
@@ -741,9 +751,9 @@ def labels_for(user: str) -> pd.DataFrame:
         except Exception as e:
             log(f"라벨 조회 실패 ({user}) — {type(e).__name__}: {e}")
             return pd.DataFrame()
-    if not LABELS.exists():
+    if not paths.labels_path().exists():
         return pd.DataFrame()
-    lab = pd.read_parquet(LABELS)
+    lab = pd.read_parquet(paths.labels_path())
     return lab[lab.user_ref == user]
 
 
@@ -751,7 +761,7 @@ def labels_all() -> pd.DataFrame:
     """전체. 배치(`learn`)만 쓴다 — 요청 경로에서 부르지 않는다."""
     if labels_store.configured():
         return labels_store.all_labels()
-    return pd.read_parquet(LABELS) if LABELS.exists() else pd.DataFrame()
+    return pd.read_parquet(paths.labels_path()) if paths.labels_path().exists() else pd.DataFrame()
 
 
 def other_positives(user: str) -> pd.DataFrame:
@@ -762,9 +772,9 @@ def other_positives(user: str) -> pd.DataFrame:
         except Exception as e:
             log(f"타 사용자 라벨 조회 실패 — {type(e).__name__}: {e}")
             return pd.DataFrame()
-    if not LABELS.exists():
+    if not paths.labels_path().exists():
         return pd.DataFrame()
-    lab = pd.read_parquet(LABELS)
+    lab = pd.read_parquet(paths.labels_path())
     return lab[(lab.user_ref != user) & (lab.grade == "L1")]
 
 
@@ -783,22 +793,19 @@ def decay_weights(df: pd.DataFrame) -> np.ndarray:
 
 # --------------------------- §16 선호 구간 (조회/수정/삭제) ---------------------------
 # 사용자 수정·삭제는 원본 라벨을 덮어쓰지 않고 override 로그에만 쌓는다.
-TEST_OUT = ROOT / "data" / "test_pipeline"
-OVERRIDES = TEST_OUT / "preference_overrides.jsonl"
-CHECKPOINT = TEST_OUT / "learn_checkpoint.json"
-JAMENDO_CATALOG = TEST_OUT / "jamendo_catalog.parquet"
+# override 로그·체크포인트·Jamendo 카탈로그의 자리도 `paths` 가 정한다.
 JAMENDO_PREFIX = "JAMENDO_"
 _JAM_CACHE: dict = {"mtime": None, "rows": {}}
 
 
 def jamendo_row(track_id: str) -> dict:
     """Jamendo 카탈로그 1행. 파일이 없으면 항상 빈 dict (기존 동작과 동일)."""
-    if not str(track_id).startswith(JAMENDO_PREFIX) or not JAMENDO_CATALOG.exists():
+    if not str(track_id).startswith(JAMENDO_PREFIX) or not paths.jamendo_catalog_path().exists():
         return {}
-    mt = JAMENDO_CATALOG.stat().st_mtime
+    mt = paths.jamendo_catalog_path().stat().st_mtime
     if _JAM_CACHE["mtime"] != mt:
         try:
-            df = pd.read_parquet(JAMENDO_CATALOG)
+            df = pd.read_parquet(paths.jamendo_catalog_path())
             _JAM_CACHE["rows"] = {str(r.track_id): {k: ("" if pd.isna(v) else v)
                                                     for k, v in r._asdict().items()
                                                     if k != "Index"}
@@ -816,9 +823,9 @@ REACTION_EVENTS = {"LIKE": "LIKED", "UNLIKE": "NEUTRAL",
 
 
 def load_checkpoint() -> dict:
-    if CHECKPOINT.exists():
+    if paths.checkpoint_path().exists():
         try:
-            return json.loads(CHECKPOINT.read_text(encoding="utf-8"))
+            return json.loads(paths.checkpoint_path().read_text(encoding="utf-8"))
         except Exception:
             return {}
     return {}
@@ -826,17 +833,17 @@ def load_checkpoint() -> dict:
 
 def save_checkpoint(ck: dict) -> None:
     """원자적으로 쓴다. 중간에 죽어도 checkpoint 가 깨지지 않는다."""
-    TEST_OUT.mkdir(parents=True, exist_ok=True)
-    tmp = CHECKPOINT.with_suffix(".json.tmp")
+    paths.test_pipeline_dir().mkdir(parents=True, exist_ok=True)
+    tmp = paths.checkpoint_path().with_suffix(".json.tmp")
     tmp.write_text(json.dumps(ck, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(CHECKPOINT)
+    tmp.replace(paths.checkpoint_path())
 
 
 def user_event_state(user: str) -> dict:
     """사용자 로그를 한 번 훑어 현재 상태를 만든다 (건수 + 마지막 event_id/시각)."""
     n, last_id, last_at = 0, "", ""
-    if EVENTS.exists():
-        for ln in EVENTS.open(encoding="utf-8"):
+    if paths.events_path().exists():
+        for ln in paths.events_path().open(encoding="utf-8"):
             try:
                 e = json.loads(ln)
             except Exception:
@@ -882,16 +889,16 @@ def learn(req: "LearnReq") -> dict:
                 "dna_clusters": len(C), "created_at": now_iso(),
                 "source": "auto",
             })
-    SERVE.mkdir(parents=True, exist_ok=True)
+    paths.serve_dir().mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(rows)
-    if PREFS.exists() and len(df):
-        old = pd.read_parquet(PREFS)
+    if paths.prefs_path().exists() and len(df):
+        old = pd.read_parquet(paths.prefs_path())
         old = old[~old.user_ref.isin(df.user_ref.unique())]
         df = pd.concat([old, df], ignore_index=True)
     if len(df):
-        df.to_parquet(PREFS, index=False)
+        df.to_parquet(paths.prefs_path(), index=False)
     return {"ok": True, "users": users, "labels": int(len(lab)),
-            "preferences_saved": int(len(rows)), "path": str(PREFS)}
+            "preferences_saved": int(len(rows)), "path": str(paths.prefs_path())}
 
 
 def learn_incremental(user: str, force: bool = False) -> dict:
@@ -923,9 +930,9 @@ def pref_id(user: str, section_key: str) -> str:
 def load_overrides() -> dict:
     """preference_overrides.jsonl 을 순서대로 접어 현재 상태를 만든다 (마지막이 이긴다)."""
     out: dict = {}
-    if not OVERRIDES.exists():
+    if not paths.overrides_path().exists():
         return out
-    for ln in OVERRIDES.open(encoding="utf-8"):
+    for ln in paths.overrides_path().open(encoding="utf-8"):
         ln = ln.strip()
         if not ln:
             continue
@@ -951,18 +958,18 @@ def load_overrides() -> dict:
 
 
 def append_override(rec: dict) -> None:
-    OVERRIDES.parent.mkdir(parents=True, exist_ok=True)
+    paths.overrides_path().parent.mkdir(parents=True, exist_ok=True)
     rec.setdefault("occurred_at", now_iso())
-    with OVERRIDES.open("a", encoding="utf-8") as f:
+    with paths.overrides_path().open("a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
 def track_reactions(user: str) -> dict:
     """LIKE/UNLIKE/DISLIKE/UNDISLIKE 이벤트를 접어 곡별 현재 상태를 만든다."""
     out: dict = {}
-    if not EVENTS.exists():
+    if not paths.events_path().exists():
         return out
-    for ln in EVENTS.open(encoding="utf-8"):
+    for ln in paths.events_path().open(encoding="utf-8"):
         try:
             e = json.loads(ln)
         except Exception:
@@ -1083,9 +1090,9 @@ def _file_events(user: str):
     두 출처가 같은 모양으로 들어와야 집계를 한 벌로 둘 수 있다. 두 벌이 되면 한쪽만
     고쳐져 같은 사용자에게 다른 점수가 나간다.
     """
-    if not EVENTS.exists():
+    if not paths.events_path().exists():
         return
-    for ln in EVENTS.open(encoding="utf-8"):
+    for ln in paths.events_path().open(encoding="utf-8"):
         try:
             e = json.loads(ln)
         except Exception:
@@ -1227,7 +1234,7 @@ def user_behavior(user: str, now: float | None = None,
         # 요청마다 새로 읽어 온 것이다. 캐시하면 최신성을 버리는 셈이라 그대로 집계한다.
         return _aggregate_behavior(events, now)
 
-    if not EVENTS.exists():
+    if not paths.events_path().exists():
         return {"recent_play": set(), "dislike": set(), "like": set(),
                 "complete": {}, "skip_pen": {}, "delta": {}, "recent_pen": {},
                 "events": 0}
@@ -1235,7 +1242,7 @@ def user_behavior(user: str, now: float | None = None,
     # 로그가 그대로면 다시 읽지 않는다. 추천은 사용자가 기다리는 경로라 요청마다
     # 전체를 훑으면 로그 크기에 비례해 느려진다. 파일이 자라거나 바뀌면 캐시를 버린다.
     # (시간이 흐르면 감쇠 값이 달라지므로 `now` 도 키에 넣는다 — 분 단위로 끊는다.)
-    st = EVENTS.stat()
+    st = paths.events_path().stat()
     ck = (user, st.st_size, st.st_mtime_ns, int(now // 60))
     hit = _BEH_CACHE.get(ck)
     if hit is not None:

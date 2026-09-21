@@ -26,7 +26,17 @@
 > **등록이 끝나고, 신곡 전량이 매핑된 것을 확인한 뒤에만 교체한다.**
 
 등록이 불가능하면(요구 1 미설정 — 주소·토큰이 없다) 새 판을 만들어 두고 **교체를 보류한 채**
-그 사실을 보고한다. 새 판은 지우지 않는다 — 등록이 붙으면 그대로 이어서 쓴다.
+그 사실을 보고한다. 그 판은 이번 실행이 끝날 때까지 남겨 사람이 들여다볼 수 있게 하고,
+다음 실행이 새 판을 만들기 직전에 지운다(`indexer.prune_staged`). 이어서 쓰지는 않는다 —
+한 벌이 색인 전체 크기라 쌓이면 디스크가 먼저 차고, 상태 파일이 `analyzed` 로 남아 있어
+다음 배치가 그 곡을 다시 분석하기 때문에 잃는 것도 없다.
+
+## `ok` 는 교체가 끝난 곡만 받는다
+
+분석 직후에 `ok` 를 적으면, 그날 교체가 보류된 곡이 **다음 배치에서 건너뛰어진다.**
+기록만 성공이고 색인에는 없으니 그 곡은 영영 추천에 나오지 않는다. 그래서 분석 직후에는
+`analyzed` 로 적고, 교체가 끝난 뒤에만 `ok` 로 올린다(`mark_indexed`). 건너뛸지는
+기록이 아니라 **색인 판**이 정한다 — 둘이 어긋나면 색인을 믿는다.
 
 ## 종료 코드
 
@@ -232,6 +242,8 @@ class BatchSummary:
     rows_before: int = 0
     rows_after: int = 0
     staged_dir: str = ""
+    pruned_staged: list = field(default_factory=list)   # 지운 지난 새 판
+    marked_ok: int = 0                   # 교체까지 끝나 `ok` 로 올린 곡 수
     swapped: bool = False
     restart_required: bool = False
     hold_reason: str = ""
@@ -286,6 +298,14 @@ def run(tracks: Iterable[BatchTrack], data_dir: Path, *,
         return _finish(s, t0, summary_file)
 
     # ── 새 판. 현재 판은 읽기만 한다.
+    #
+    # 만들기 **전에** 지난 판을 치운다. 보류·중단으로 남은 판은 한 벌이 색인 전체
+    # 크기(수백 MB)라, 등록이 며칠 막히면 디스크가 먼저 찬다. 이어서 쓰는 길은 없다 —
+    # 다시 분석해도 상태 파일이 `analyzed` 라 건너뛰지 않는다.
+    dropped = ix.prune_staged(data)
+    if dropped:
+        log(f"남아 있던 새 판 {len(dropped)}벌을 지웠다: {dropped}")
+    s.pruned_staged = dropped
     log(f"새 판을 만든다 — 신곡 {len(new_tracks)}곡")
     rep = ix.stage(new_tracks, data)
     s.staged_dir = str(rep.new_dir)
@@ -328,10 +348,24 @@ def run(tracks: Iterable[BatchTrack], data_dir: Path, *,
     log(f"매핑 확인 — 곡 {det['tracks']} · 구간 {det['sections']} 전량")
 
     # ── 그때 교체한다.
-    res = ix.swap(data, rep.new_dir, keep=keep_versions)
+    try:
+        res = ix.swap(data, rep.new_dir, keep=keep_versions)
+    except Exception as e:
+        # `swap` 은 실패하면 스스로 이전 판을 되돌린다 — 기존 색인은 그대로다.
+        # 예외를 그냥 올리면 요약이 남지 않아 다음 날 무슨 일이었는지 알 수 없다.
+        s.hold_reason = f"교체하지 못했다 — {type(e).__name__}: {e}"
+        s.exit_code = EXIT_FAIL
+        return _finish(s, t0, summary_file)
     s.swapped, s.restart_required = True, True
     log(ix.restart_notice(rep))
     log(f"  이전 판: {res['backup']}")
+
+    # ── 색인에 들어간 곡만 `ok` 가 된다. 여기까지 와야 다음 배치가 건너뛴다.
+    #    이미 색인에 있어 거부된 곡도 색인에는 있으므로 함께 올린다.
+    done_ids = [str(t.track_id) for t in staged]
+    done_ids += [str(r["track_id"]) for r in rep.rejected if r.get("already_indexed")]
+    s.marked_ok = mark_indexed(state, done_ids)
+
     s.exit_code = EXIT_PARTIAL if s.failed else EXIT_OK
     return _finish(s, t0, summary_file)
 
@@ -344,6 +378,7 @@ def _analyze_all(items: Sequence[BatchTrack], data: Path, state_path: Path,
     engine = None
     state = pl.load_state(state_path)
     done = state.setdefault("tracks", {})
+    indexed = _indexed_track_ids(data)       # 건너뛰기 판단은 **색인 판**이 정한다
     new_tracks = []
 
     for t in items:
@@ -357,9 +392,14 @@ def _analyze_all(items: Sequence[BatchTrack], data: Path, state_path: Path,
             continue
 
         prev = done.get(tid)
-        if prev and prev.get("audio_sha256") == sha and prev.get("status") == "ok":
-            s.skipped += 1
-            continue
+        if prev and prev.get("audio_sha256") == sha and prev.get("status") == pl.STATUS_OK:
+            if indexed is not None and tid not in indexed:
+                # 기록은 성공인데 색인에 없다. 예전 판이 남긴 기록이거나 교체가
+                # 되돌려진 경우다. 기록을 믿고 건너뛰면 그 곡은 영영 안 들어간다.
+                log(f"  {tid} 기록은 ok 인데 색인에 없다 — 다시 분석한다")
+            else:
+                s.skipped += 1
+                continue
         if prev and prev.get("audio_sha256") not in (None, "", sha):
             # 기존 색인 행을 고치는 일이다. append 경로가 아니다.
             s.changed += 1
@@ -413,7 +453,9 @@ def _analyze_all(items: Sequence[BatchTrack], data: Path, state_path: Path,
             continue
 
         s.ok += 1
-        done[tid] = r.summary()
+        # **아직 `ok` 가 아니다.** 계산만 끝났고 색인에는 없다. `ok` 는 교체가
+        # 끝난 뒤 `mark_indexed()` 가 적는다.
+        done[tid] = {**r.summary(), "status": pl.STATUS_ANALYZED}
         _discard(t)
         pl.save_state(state_path, state)     # 곡마다 저장한다. 중간에 죽어도 남는다
         new_tracks.append(ix.NewTrack(
@@ -431,6 +473,43 @@ def _analyze_all(items: Sequence[BatchTrack], data: Path, state_path: Path,
     pl.save_state(state_path, state)
     log(f"분석 — 성공 {s.ok} · 실패 {s.failed} · 건너뜀 {s.skipped} · 변경 {s.changed}")
     return new_tracks
+
+
+def _indexed_track_ids(data: Path) -> Optional[set]:
+    """지금 **색인에 실제로 들어 있는** 곡. 못 읽으면 `None`(판단하지 않는다).
+
+    상태 파일은 배치가 적는 기록일 뿐이고 색인이 정본이다. 둘이 어긋나면 색인을 믿는다 —
+    반대로 하면 기록만 성공인 곡이 영영 추천에 안 나온다.
+    """
+    import pandas as pd
+
+    p = Path(data) / "moments.parquet"
+    if not p.exists():
+        return None
+    try:
+        return set(pd.read_parquet(p, columns=["track_id"]).track_id.astype(str))
+    except Exception as e:
+        log(f"색인 곡 목록을 읽지 못했다 — 건너뛰기 판단은 기록만 본다: "
+            f"{type(e).__name__}: {e}")
+        return None
+
+
+def mark_indexed(state_path: Path, track_ids: Iterable[str]) -> int:
+    """교체가 끝난 곡을 `ok` 로 올린다. **여기 말고는 `ok` 를 적지 않는다.**"""
+    ids = [str(t) for t in track_ids]
+    if not ids:
+        return 0
+    state = pl.load_state(state_path)
+    done = state.setdefault("tracks", {})
+    n = 0
+    for tid in ids:
+        rec = done.get(tid)
+        if rec is None:
+            continue
+        rec["status"] = pl.STATUS_OK
+        n += 1
+    pl.save_state(state_path, state)
+    return n
 
 
 def _discard(t: BatchTrack) -> None:
@@ -883,6 +962,7 @@ def _default_data_dir() -> Path:
 
 __all__ = ["BatchTrack", "BatchSummary", "Registrar", "UnavailableRegistrar",
            "RunLock", "LockBusy", "run", "verify_mapping", "read_manifest", "main",
+           "mark_indexed",
            "EXIT_OK", "EXIT_PARTIAL", "EXIT_HOLD", "EXIT_LOCKED", "EXIT_FAIL"]
 
 

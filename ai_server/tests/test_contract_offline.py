@@ -8,11 +8,17 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
-from ai_server.app import ids, internal_api, paths
+# 전처리 패키지는 설치돼 있지 않다. 다른 시험 모듈(`test_analysis_batch` 등)이 이
+# 줄을 넣어 주지만, **그 모듈이 먼저 수집됐을 때만** 그렇다. 여기서도 넣어 두어야
+# 이 파일 하나만 돌릴 때와 전체를 돌릴 때가 같아진다.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "music_preprocessing" / "src"))
+
+from ai_server.app import ids, internal_api, paths    # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +32,9 @@ def restore_service_module():
 
 @pytest.fixture
 def clean_env(monkeypatch):
-    for k in ("MUPID_AI_ARTIFACT_DIR", "MUPID_ID_MAP"):
+    # 상태 디렉터리도 함께 지운다. 남아 있으면 라벨·이벤트 로그만 딴 곳을 가리켜
+    # **로컬에 실산출물이 있는 사람에게서만** 시험이 깨진다.
+    for k in ("MUPID_AI_ARTIFACT_DIR", "MUPID_ID_MAP", "MUPID_AI_STATE_DIR"):
         monkeypatch.delenv(k, raising=False)
     return monkeypatch
 
@@ -301,6 +309,58 @@ def test_catalog_tags_match_service_vocal_fields_and_hide_missing_values():
 
     vocal = recommender._catalog_tags({"has_vocal": True, "vocal_gender": "F"})
     assert vocal["has_vocal"] is True and vocal["vocal_gender"] == "F"
+
+
+# --------------------------------------------- 악기 코드: 한국어·영문 양쪽을 거른다
+
+def test_nonspecific_instrument_is_dropped_under_either_code_name():
+    """`그 외 악기` 가 `other` 로 바뀌어도 필터가 살아 있어야 한다.
+
+    코드표 정리(S15P21A204-407)로 `codes` 의 INSTRUMENT 네 행이 한국어 `code_name`
+    에서 영문으로 바뀐다. 한쪽만 보면 마이그레이션 전후 어느 한쪽에서 필터가 통째로
+    풀리고, 실측 9,292행(`music_analysis_instruments` 의 31%)이 "구체적인 악기" 로
+    검색에 노출된다. 오류는 나지 않는다 — 결과만 나빠진다.
+    """
+    from ai_server.app import recommender
+
+    for name in ("그 외 악기", "other", "Other", "OTHER"):
+        got = recommender._instrument_list(["드럼", name, "베이스"])
+        assert got == ["드럼", "베이스"], (name, got)
+
+
+def test_missing_markers_are_still_dropped_from_instruments():
+    from ai_server.app import recommender
+
+    got = recommender._instrument_list(["unknown", "nan", "null", "", "드럼", "드럼"])
+    assert got == ["드럼"]
+
+
+def test_vocal_other_is_a_different_axis_and_survives():
+    """악기 필터가 보컬 성별 `other` 까지 지우면 성별 ETC 가 통째로 사라진다."""
+    from ai_server.app import recommender
+
+    assert recommender._VOCAL_GENDER["other"] == "ETC"
+    tags = recommender._catalog_tags({"has_vocal": True, "vocal_gender": "ETC",
+                                      "instrument_tags": ["other", "드럼"]})
+    assert tags["vocal_gender"] == "ETC", "축을 섞었다"
+    assert tags["instruments"] == ["드럼"]
+
+
+def test_nonspecific_list_matches_the_preprocessing_canon():
+    """정본은 `instruments.STEMS` 하나다. 두 벌이 어긋나면 조용히 새 코드가 생긴다."""
+    from ai_server.app import recommender
+
+    ins = pytest.importorskip(
+        "music_preprocessing.analysis.instruments",
+        reason="analysis 선택 의존성이 없다")
+
+    assert ins.CODE_NAMES == ("vocals", "drums", "bass", "other")
+    drop = recommender._NONSPECIFIC_INSTRUMENTS
+    # 정본의 `other` 는 code_name 과 display_name 둘 다 제외 집합에 있어야 한다.
+    assert "other" in drop and ins.DISPLAY_NAMES["other"] in drop
+    # 나머지 셋은 구체적인 악기다. 하나라도 걸리면 검색 근거가 사라진다.
+    for stem in ("vocals", "drums", "bass"):
+        assert stem not in drop and ins.DISPLAY_NAMES[stem] not in drop
     assert recommender._vocal_values(True, "F") == ["voice", "female"]
 
     missing = recommender._catalog_tags({
@@ -493,13 +553,249 @@ def test_query_plan_path_does_not_need_interpreter():
     assert "beh_events" in seen
 
 
+# ------------------------------------------------------- 오늘의 모멘트는 4개다
+
+def _daily_probe():
+    """`daily` 가 추천기에 넘기는 개수를 들여다보는 가짜 서비스."""
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    seen: dict = {}
+
+    def _recommend(user, n, exclude, explore, plan, ct, cm, **kw):
+        seen["n"] = n
+        return {"results": [], "diagnostics": {"shortfall": 0}}
+
+    fake = SimpleNamespace(NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]),
+                           recommend=_recommend)
+    app = FastAPI()
+    internal_api.install(app, fake)
+    return TestClient(app), seen
+
+
+def test_daily_asks_for_exactly_four():
+    """`limit` 을 안 보내면 4다. 화면이 아니라 서버가 그날의 크기를 정한다."""
+    client, seen = _daily_probe()
+    client.post("/internal/recommendations/daily",
+                json={"recommendation_id": 1, "user_id": 1})
+    assert seen["n"] == internal_api.DAILY_LIMIT == 4
+
+
+def test_daily_accepts_the_fixed_count_spelled_out():
+    """이미 `limit: 4` 를 보내던 호출자를 깨뜨리지 않는다."""
+    client, seen = _daily_probe()
+    r = client.post("/internal/recommendations/daily",
+                    json={"recommendation_id": 1, "user_id": 1, "limit": 4})
+    assert r.status_code == 404, r.text          # 후보 0 → NO_CANDIDATES
+    assert seen["n"] == 4
+
+
+def test_daily_refuses_any_other_count():
+    """조용히 4로 깎지 않는다.
+
+    깎으면 10을 요청한 Spring 이 4를 받고도 그것이 전부인 줄 알고, 빈 6칸을 AI 쪽
+    후보 부족으로 읽는다. 그 오해는 며칠 뒤 적재된 데이터에서나 드러난다.
+    """
+    client, seen = _daily_probe()
+    for n in (1, 3, 5, 10, 50):
+        r = client.post("/internal/recommendations/daily",
+                        json={"recommendation_id": 1, "user_id": 1, "limit": n})
+        assert r.status_code == 400, (n, r.text)
+        assert r.json()["error_code"] == "INVALID_REQUEST"
+    assert "n" not in seen, "거부했는데 추천을 계산했다"
+
+
+def test_next_and_search_still_choose_their_own_count():
+    """고정은 `daily` 만이다. 이어 듣기·검색까지 4로 묶으면 다른 화면이 망가진다."""
+    assert internal_api.NextRequest(recommendation_id=1, user_id=1, limit=10).limit == 10
+    assert internal_api.SearchRequest(recommendation_id=1, user_id=1, query="잔잔한",
+                                      limit=20).limit == 20
+
+
+# ------------------------------------------- 악기 코드: 확정 목록 밖은 만들지 않는다
+
+def test_instrument_codes_outside_the_canon_are_refused():
+    """`POST /api/v1/code` 는 없는 이름을 받으면 **새 코드를 만든다.**
+
+    한번 생긴 코드는 사람이 지워야 한다 — 분위기에서 두 번 늘었다(98~106, 107~123).
+    그래서 확정 목록 밖의 이름은 올리지 않고 멈춘다.
+    """
+    pytest.importorskip("music_preprocessing.analysis.instruments",
+                        reason="analysis 선택 의존성이 없다")
+    from ai_server.tools import register_sections as rs
+
+    with pytest.raises(SystemExit) as e:
+        rs.add_instrument_codes({"drums", "piano"})
+    msg = str(e.value)
+    # 무엇이 문제인지 이름으로 말한다. 정본도 함께 보여 준다.
+    assert "['piano']" in msg, msg
+    assert "vocals" in msg and "bass" in msg, msg
+
+
+def test_batch_registrar_refuses_the_same_way():
+    """도구와 배치가 같은 정본을 본다. 한쪽만 막으면 다른 길로 코드가 는다."""
+    ai = pytest.importorskip("music_preprocessing.analysis.api",
+                             reason="analysis 선택 의존성이 없다")
+
+    class _T:
+        track_id = "T000001"
+        sections = [{"instruments": ["drums", "그 외 악기"]}]
+
+    reg = ai.HttpRegistrar(client=object())
+    with pytest.raises(ValueError) as e:
+        reg.ensure_instrument_codes([_T()])
+    # 한국어 표시명은 `code_name` 이 아니다 — 그대로 올리면 코드가 하나 더 생긴다.
+    assert "그 외 악기" in str(e.value)
+
+
+# ------------------------------------------- 무드 코드: 못 옮긴 태그를 남긴다
+
+def test_unmapped_mood_tags_are_counted_not_swallowed():
+    """빠뜨린 태그가 "분위기 없는 곡" 으로 섞이면 코드표 누락이 안 보인다."""
+    from collections import Counter
+
+    from ai_server.tools.register_sections import moods_of
+
+    un: Counter = Counter()
+    got = moods_of(["relaxing", "christmas", "film", "christmas"], un)
+
+    assert got == ["serene"], got            # relaxing → serene
+    assert un == {"christmas": 2, "film": 1}
+
+
+def test_moods_of_still_works_without_a_collector():
+    """세는 자리를 안 주면 종전과 똑같이 돈다 — 부르는 쪽을 다 고치지 않는다."""
+    from ai_server.tools.register_sections import moods_of
+
+    assert moods_of(["relaxing", "christmas"]) == ["serene"]
+
+
+def test_mood_codes_cover_every_code_in_the_db_table():
+    """코드표 17종이 전부 AI 에서 해석돼야 한다. 하나라도 빠지면 조용히 무시된다."""
+    from ai_server.app import onboarding
+    from ai_server.tools.register_sections import MOOD_BY_TAG
+
+    assert set(onboarding.MOOD_MAP) == set(onboarding.MOOD_NAMES), \
+        "이름표와 태그표의 코드 집합이 어긋났다"
+    assert len(onboarding.MOOD_NAMES) == 17
+    # 역방향 표가 코드 17종을 모두 돌려줄 수 있어야 한다.
+    assert set(MOOD_BY_TAG.values()) <= set(onboarding.MOOD_MAP)
+
+
+# ------------------------------------------- 행동 출처 네 상태 (합성 응답)
+
+@pytest.fixture
+def behavior_env(monkeypatch):
+    """`_behavior_events` 가 보는 것만 바꾼다. 실제 ClickHouse 는 쓰지 않는다."""
+    from ai_server.app import clickhouse, metrics
+
+    metrics.reset()
+    monkeypatch.setattr(clickhouse, "configured", lambda: True)
+    return monkeypatch, metrics, clickhouse
+
+
+def _source(metrics) -> str:
+    got = metrics.snapshot()["behavior_source"]
+    assert sum(got.values()) == 1, got
+    return next(iter(got))
+
+
+def test_behavior_source_file_when_clickhouse_is_not_configured(behavior_env):
+    mp, metrics, ch = behavior_env
+    mp.setattr(ch, "configured", lambda: False)
+    assert internal_api._behavior_events(1) is None
+    assert _source(metrics) == "file"
+
+
+def test_behavior_source_unavailable_when_the_query_blows_up(behavior_env):
+    mp, metrics, ch = behavior_env
+
+    def _boom(*a, **k):
+        raise ConnectionError("ch-01 에 닿지 못했다")
+
+    mp.setattr(ch, "behavior_events", _boom)
+    assert internal_api._behavior_events(1) == []
+    assert _source(metrics) == "unavailable"
+
+
+def test_behavior_source_clickhouse_when_rows_come_back(behavior_env):
+    """정상 경로에는 쿼리를 늘리지 않는다."""
+    mp, metrics, ch = behavior_env
+    called = {"raw": 0}
+
+    mp.setattr(ch, "behavior_events", lambda u, s: [{"event_type": "PLAY_END"}])
+    mp.setattr(ch, "raw_event_count", lambda u, s: called.__setitem__("raw", 1) or 9)
+
+    assert internal_api._behavior_events(1) == [{"event_type": "PLAY_END"}]
+    assert _source(metrics) == "clickhouse"
+    assert called["raw"] == 0, "1행 이상인데 원본을 또 조회했다"
+
+
+def test_behavior_source_clickhouse_when_the_user_really_has_nothing(behavior_env):
+    """조인도 0, 원본도 0 — 이건 진짜로 안 들은 것이다."""
+    mp, metrics, ch = behavior_env
+    mp.setattr(ch, "behavior_events", lambda u, s: [])
+    mp.setattr(ch, "raw_event_count", lambda u, s: 0)
+
+    assert internal_api._behavior_events(1) == []
+    assert _source(metrics) == "clickhouse"
+
+
+def test_behavior_source_mapping_empty_when_the_join_loses_everything(behavior_env):
+    """원본은 있는데 조인이 0이다. **행동 없음으로 처리하지 않는다.**
+
+    `v_track_sections_current` 가 그 곡을 되돌리지 못한 것이고, 한 사람이 아니라
+    전 사용자의 개인화가 빠진다. 콜드스타트 비율이 조금 오른 것처럼만 보인다.
+    """
+    mp, metrics, ch = behavior_env
+    mp.setattr(ch, "behavior_events", lambda u, s: [])
+    mp.setattr(ch, "raw_event_count", lambda u, s: 137)
+
+    assert internal_api._behavior_events(1) == []
+    assert _source(metrics) == "mapping_empty"
+
+
+def test_mapping_empty_is_not_claimed_when_the_probe_itself_fails(behavior_env):
+    """세지 못했으면 **주장하지 않는다.** 조인은 성공했으므로 clickhouse 다."""
+    mp, metrics, ch = behavior_env
+
+    def _boom(*a, **k):
+        raise ConnectionError("두 번째 조회가 실패했다")
+
+    mp.setattr(ch, "behavior_events", lambda u, s: [])
+    mp.setattr(ch, "raw_event_count", _boom)
+
+    assert internal_api._behavior_events(1) == []
+    assert _source(metrics) == "clickhouse"
+
+
+def test_raw_event_count_does_not_join(behavior_env):
+    """원본 조회는 조인을 타면 안 된다 — 그러면 같은 0을 두 번 얻는다."""
+    mp, metrics, ch = behavior_env
+    seen = {}
+
+    mp.setattr(ch, "query", lambda sql, *a, **k: seen.setdefault("sql", sql) and "" or "0")
+    ch.raw_event_count(15, 1_700_000_000.0)
+
+    sql = seen["sql"]
+    assert "listen_events" in sql
+    assert "JOIN" not in sql.upper(), sql
+    assert "v_track_sections_current" not in sql, sql
+    assert "user_id = 15" in sql
+
+
 # ------------------------------------------------------------------ 산출물 상태
 def test_artifact_status_names_what_is_missing(clean_env, tmp_path):
     """없어도 서버는 뜬다. 그래서 무엇이 없는지 응답에 보여야 한다."""
     clean_env.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
-    from ai_server.app import main, recommender
+    from ai_server.app import main
 
-    clean_env.setattr(recommender, "OUT_DIR", tmp_path / "data/proc/mupid")
+    # 경로를 손으로 끼워 넣지 않는다. 환경변수만 바꿔도 따라와야 하고, 따라오지
+    # 않으면 그것이 곧 결함이다 — 예전에는 여기서 `recommender.OUT_DIR` 을 덮어
+    # 썼고, 덮지 않은 `LABELS` 가 import 시점 값으로 남아 시험이 import 순서에
+    # 따라 달라졌다.
     st = main.artifact_status()
     assert "labels_service.parquet" in st["missing"]
     # 왜 필요한지도 함께 — 없다는 사실만으로는 무엇이 꺼졌는지 알 수 없다.
@@ -514,9 +810,8 @@ def test_id_map_is_reported_but_is_not_a_serving_gap(clean_env, tmp_path):
     개인화가 빠진 배포와 구분이 안 된다.** 상태는 싣되 결핍으로 세지 않는다.
     """
     clean_env.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
-    from ai_server.app import main, recommender
+    from ai_server.app import main
 
-    clean_env.setattr(recommender, "OUT_DIR", tmp_path / "data/proc/mupid")
     st = main.artifact_status()
     assert st["files"]["id_map.parquet"]["exists"] is False
     assert "id_map.parquet" not in st["missing"]
@@ -1914,7 +2209,7 @@ def test_behaviour_is_not_rescanned_for_every_request(tmp_path, monkeypatch):
     log.write_text(json.dumps({
         "user_ref": "u1", "track_id": "T1", "event_type": "PLAY_START",
         "occurred_at": "2026-09-15T10:00:00Z"}) + "\n", encoding="utf-8")
-    monkeypatch.setattr(recommender, "EVENTS", log)
+    monkeypatch.setattr(paths, "events_path", lambda: log)
     recommender._BEH_CACHE.clear()
 
     reads = {"n": 0}
@@ -2163,7 +2458,7 @@ def test_behavior_injection_skips_the_file_entirely(tmp_path, monkeypatch):
     """`events` 를 주면 파일을 읽지 않는다 — 파일이 없어도 돌아야 한다."""
     from ai_server.app import recommender
 
-    monkeypatch.setattr(recommender, "EVENTS", tmp_path / "없는파일.jsonl")
+    monkeypatch.setattr(paths, "events_path", lambda: tmp_path / "없는파일.jsonl")
     out = recommender.user_behavior("internal:1", now=1_700_000_100.0, events=[])
     assert out["events"] == 0 and out["delta"] == {}
 
@@ -2355,7 +2650,7 @@ def _behavior_for(events: list, user: str, now: float, tmp_path, monkeypatch) ->
     log = tmp_path / f"events_{abs(hash(json.dumps(events)))}.jsonl"
     log.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events),
                    encoding="utf-8")
-    monkeypatch.setattr(rc, "EVENTS", log)
+    monkeypatch.setattr(paths, "events_path", lambda: log)
     rc._BEH_CACHE.clear()
     return rc.user_behavior(user, now=now)
 

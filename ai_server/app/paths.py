@@ -54,6 +54,49 @@ def moments_path() -> Path:
     return data_dir() / "moments.parquet"
 
 
+# ── 배치가 **쓰는** 자리. 전부 `state_dir()` 에 붙는다. 하나라도 `data_dir()` 로
+#    돌아가면 읽기 전용 색인 마운트에서 그 순간 터진다.
+
+def serve_dir() -> Path:
+    return state_dir() / "serve"
+
+
+def events_path() -> Path:
+    return state_dir() / "logs" / "events_service.jsonl"
+
+
+def labels_path() -> Path:
+    """라벨의 정본은 ClickHouse 다(`labels_store`). 이 파일은 ClickHouse 가 없는
+    개발·오프라인에서만 쓰이고, 배치가 만든 중간 산출물이기도 하다."""
+    return state_dir() / "labels_service.parquet"
+
+
+def prefs_path() -> Path:
+    return serve_dir() / "prefs.parquet"
+
+
+def onboarding_path() -> Path:
+    return serve_dir() / "onboarding.parquet"
+
+
+# ── 시험 파이프라인 산출물. 색인 옆에 있지만 색인 갱신 대상은 아니다.
+
+def test_pipeline_dir() -> Path:
+    return artifact_root() / "data" / "test_pipeline"
+
+
+def overrides_path() -> Path:
+    return test_pipeline_dir() / "preference_overrides.jsonl"
+
+
+def checkpoint_path() -> Path:
+    return test_pipeline_dir() / "learn_checkpoint.json"
+
+
+def jamendo_catalog_path() -> Path:
+    return test_pipeline_dir() / "jamendo_catalog.parquet"
+
+
 def id_map_path() -> Path:
     """숫자 ID 매핑표.
 

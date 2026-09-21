@@ -43,7 +43,7 @@ def artifact_status() -> dict:
     않는다. 넣으면 기동 로그가 매번 "선택 산출물 없음" 을 찍어, 정작 개인화가
     빠진 배포와 구분이 되지 않는다.
     """
-    d = recommender.OUT_DIR
+    d = paths.data_dir()
     files = {name: {"exists": (d / name).exists(), "why": why}
              for name, why in _OPTIONAL_ARTIFACTS.items()}
     # 라벨은 파일이 아닐 수 있다. ClickHouse 를 쓰면 그쪽에 있는지로 판단해야
@@ -63,7 +63,7 @@ def artifact_status() -> dict:
 
 def check_integrity() -> dict:
     """색인 네 개의 행 수와 순서를 본다. 추천을 계산하기 전에 확인한다."""
-    d = recommender.OUT_DIR
+    d = paths.data_dir()
     out: dict = {"ok": False, "checks": {}, "errors": []}
     try:
         mom = pd.read_parquet(d / "moments.parquet", columns=["moment_id", "emb_row"])
@@ -134,7 +134,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "uptime_seconds": round(time.time() - _STARTED, 1),
-        "artifact_dir": str(recommender.ROOT),
+        "artifact_dir": str(paths.artifact_root()),
         "paths": paths.check(),
         "catalog_loaded": _STATE["loaded"],
         # torch 판인지 NumPy 판인지. 이미지에서 torch 를 걷어낸 뒤 실제로 어느 쪽이

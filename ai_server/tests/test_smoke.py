@@ -62,7 +62,9 @@ def test_ready(client):
 
 
 def _items(client, path="/internal/recommendations/daily", **extra):
-    body = {"recommendation_id": 5001, "user_id": 15, "limit": 10, **extra}
+    # `limit` 을 넣지 않는다. `daily` 는 4개로 고정이라 다른 값을 보내면 400 이고,
+    # `next` 는 제 기본값(5)으로 간다.
+    body = {"recommendation_id": 5001, "user_id": 15, **extra}
     r = client.post(path, json=body)
     assert r.status_code == 200, r.json()
     return r.json()
@@ -73,6 +75,22 @@ def test_daily_returns_items(client):
     assert out["recommendation_id"] == 5001
     assert out["items"], "추천이 한 건도 없다"
     assert out["model_version"]
+
+
+def test_daily_is_four_moments(client):
+    """오늘의 모멘트는 **4개**다. 진짜 색인으로 세어 본다."""
+    from ai_server.app.internal_api import DAILY_LIMIT
+
+    assert DAILY_LIMIT == 4
+    assert len(_items(client)["items"]) == DAILY_LIMIT
+
+
+def test_daily_refuses_a_different_count(client):
+    """조용히 4로 깎지 않는다. 10을 요청한 쪽이 4를 받고 모르면 안 된다."""
+    r = client.post("/internal/recommendations/daily",
+                    json={"recommendation_id": 5001, "user_id": 15, "limit": 10})
+    assert r.status_code == 400
+    assert r.json()["error_code"] == "INVALID_REQUEST"
 
 
 def test_item_fields(client):

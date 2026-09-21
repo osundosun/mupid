@@ -153,13 +153,13 @@ def test_model_runs_on_numpy_without_torch(svc):
 
 def test_missing_runner_is_reported_not_silent(svc, tmp_path, monkeypatch):
     """구간 벡터만 있고 실행기가 없으면 학습 점수가 통째로 빠진다. 말을 해야 한다."""
-    (svc.OUT_DIR / "stage1_weights.npz").rename(tmp_path / "moved.npz")
+    (svc.paths.data_dir() / "stage1_weights.npz").rename(tmp_path / "moved.npz")
     try:
         cat = svc.Catalog()
         assert cat.model is None
         assert cat.model_error and "stage1_weights.npz" in cat.model_error
     finally:
-        (tmp_path / "moved.npz").rename(svc.OUT_DIR / "stage1_weights.npz")
+        (tmp_path / "moved.npz").rename(svc.paths.data_dir() / "stage1_weights.npz")
 
 
 def test_recommend_returns_requested_count(svc):
@@ -347,17 +347,18 @@ def test_internal_api_end_to_end(svc):
     internal_api.install(app, svc)
     c = TestClient(app)
 
+    # `daily` 는 개수를 받지 않는다 — 4개 고정이다(`internal_api.DAILY_LIMIT`).
     r = c.post("/internal/recommendations/daily",
-               json={"recommendation_id": 1, "user_id": 7, "limit": 3})
+               json={"recommendation_id": 1, "user_id": 7})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert len(body["items"]) == 3
+    assert len(body["items"]) == internal_api.DAILY_LIMIT
     for it in body["items"]:
         assert it["external_id"] and it["reason_code"]
         assert it["rank_order"] >= 1
     # 같은 곡이 두 번 나오지 않는다 (`#` 앞이 곡 ID 다)
     tracks = {i["external_id"].split("#")[0] for i in body["items"]}
-    assert len(tracks) == 3
+    assert len(tracks) == internal_api.DAILY_LIMIT
 
     # 모델 수치·내부 진단은 응답으로 새지 않는다. 문자열 ID 는 이제 계약이라 셈에서 뺀다.
     raw = r.text
@@ -421,7 +422,7 @@ def test_clickhouse_signals_become_labels(svc, monkeypatch):
     # 라벨러가 이 이벤트를 실제로 읽어 등급을 만드는가
     res = svc.run_labeler()
     assert res["ok"], res
-    lab = pd.read_parquet(svc.LABELS)
+    lab = pd.read_parquet(svc.paths.labels_path())
     mine = lab[lab.user_ref == "internal:7"]
     assert not mine.empty, "ClickHouse 신호가 라벨까지 도달하지 않았다"
     assert (mine.section_key == uid).any()

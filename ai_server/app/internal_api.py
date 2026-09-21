@@ -55,6 +55,11 @@ def _expected_token() -> str:
     return os.environ.get("MUPID_AI_INTERNAL_TOKEN", "").strip()
 BIGINT_MAX = 2 ** 63 - 1
 MAX_LIMIT = 50
+# 오늘의 모멘트는 **하루 4개**다. 화면이 네 칸이라서가 아니라, 하루치로 내보내는 수가
+# 곧 그날의 추천 품질이 평가되는 단위이기 때문이다 — 개수를 호출자가 정하면 같은 날
+# 사용자마다 다른 크기의 "오늘" 이 나가고, 적재된 `daily_recommendations` 끼리 비교가
+# 안 된다. `next`·`search` 는 그 단위가 아니므로 종전대로 `limit` 을 받는다.
+DAILY_LIMIT = 4
 # `music_section_analysis.external_id` 가 VARCHAR(64) 다. 그보다 긴 값은
 # MySQL 에 있을 수 없으므로 받아도 번역되지 않는다.
 UID_MAX = 64
@@ -117,7 +122,24 @@ class NextRequest(_Base):
 
 
 class DailyRequest(_Base):
-    pass
+    """오늘의 모멘트. 개수는 **4개로 고정**이다(`DAILY_LIMIT`).
+
+    `limit` 을 안 보내면 4다. 다른 값을 보내면 **400 으로 거부한다** — 조용히 4로
+    깎지 않는다. 깎으면 10개를 요청한 Spring 이 4개를 받고도 그것이 전부인 줄 알아,
+    "왜 6개가 비나" 가 AI 쪽 후보 부족(`shortfall`)으로 잘못 읽힌다. 거절은 배포
+    한 번에 드러나고, 침묵은 데이터를 며칠 오염시킨 뒤에 드러난다.
+    """
+
+    limit: StrictInt = Field(DAILY_LIMIT, ge=1, le=MAX_LIMIT,
+                             description=f"보낸다면 {DAILY_LIMIT} 이어야 한다")
+
+    @model_validator(mode="after")
+    def _limit_is_fixed(self):
+        if self.limit != DAILY_LIMIT:
+            raise ValueError(
+                f"오늘의 모멘트는 {DAILY_LIMIT}개로 고정이다 — limit 을 빼고 보내거나 "
+                f"{DAILY_LIMIT} 로 보낸다 (개수를 바꾸려면 next·search 를 쓴다)")
+        return self
 
 
 class SearchRequest(_Base):
@@ -338,18 +360,45 @@ def _behavior_events(user_id: int) -> Optional[list]:
     눈치채지 못한다.
 
     주소가 아예 없으면 `None` 을 돌려 종전의 파일 경로로 간다(개발·오프라인).
+
+    조인 결과가 **0행일 때만** 원본 이벤트를 한 번 더 세어 `mapping_empty` 를 가른다.
+    정상 경로(1행 이상)에는 쿼리를 늘리지 않는다 — 추천은 사용자가 기다리는 경로다.
     """
+    since = time.time() - BEHAVIOR_WINDOW_SEC
     if not clickhouse.configured():
         metrics.observe_behavior_source("file")
         return None
     try:
-        rows = clickhouse.behavior_events(user_id, time.time() - BEHAVIOR_WINDOW_SEC)
+        rows = clickhouse.behavior_events(user_id, since)
     except Exception as e:                       # 연결·쿼리 실패
         metrics.observe_behavior_source("unavailable")
         log(f"행동 조회 실패 — 개인화 없이 추천한다 ({type(e).__name__}: {e})")
         return []
-    metrics.observe_behavior_source("clickhouse")
+    metrics.observe_behavior_source(
+        "clickhouse" if rows else _empty_reason(user_id, since))
     return rows
+
+
+def _empty_reason(user_id: int, since: float) -> str:
+    """조인 결과가 0행이다. **안 들은 것과 못 이은 것을 가른다.**
+
+    원본 이벤트가 있는데 조인이 0이면 `v_track_sections_current` 가 그 곡을 되돌리지
+    못한 것이다 — 색인과 ClickHouse 딕셔너리가 어긋났다는 뜻이고, 한 사용자의 문제가
+    아니라 전 사용자의 개인화가 빠지는 문제다. 그것을 "행동 없음" 으로 세면 콜드스타트
+    비율만 조금 올라간 것처럼 보인다.
+
+    세는 것 자체가 실패하면 **`mapping_empty` 라고 주장하지 않는다.** 조인은 성공했고
+    (0행) 그 뒤 판정만 못 한 것이라 `clickhouse` 로 남긴다.
+    """
+    try:
+        if clickhouse.raw_event_count(user_id, since) > 0:
+            log(f"행동 {user_id}: 원본 이벤트는 있는데 곡 매핑이 0건이다 "
+                f"— v_track_sections_current 를 본다")
+            return "mapping_empty"
+    except Exception as e:
+        log(f"원본 이벤트 수를 세지 못했다 — 매핑 공백 여부는 미판정 "
+            f"({type(e).__name__}: {e})")
+    return "clickhouse"
 
 
 def _genre_catalog(svc) -> list[str]:
@@ -404,14 +453,19 @@ def next_(req: NextRequest) -> RecommendationResponse:
 
 
 @router.post("/recommendations/daily", response_model=RecommendationResponse,
-             responses=ERRORS, summary="오늘의 추천 (곡 목록)")
+             responses=ERRORS, summary=f"오늘의 모멘트 ({DAILY_LIMIT}개 고정)")
 def daily(req: DailyRequest) -> RecommendationResponse:
+    """오늘의 모멘트 4개. 개수는 요청이 아니라 **여기가** 정한다.
+
+    `req.limit` 을 쓰지 않고 `DAILY_LIMIT` 을 그대로 넘긴다. 검증에서 이미 4만
+    통과하지만, 개수의 출처를 한 곳으로 두면 나중에 값을 바꿀 때 상수만 고치면 된다.
+    """
     svc = _svc()
-    out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
+    out = svc.recommend(_user_ref(req.user_id), DAILY_LIMIT, _exclude(req),
                         True, None, None, None,
                         beh_events=_behavior_events(req.user_id),
                         onboarding=_onboarding(req, svc))
-    return to_response(req.recommendation_id, out, req.limit, False)
+    return to_response(req.recommendation_id, out, DAILY_LIMIT, False)
 
 
 # 자연어 검색은 외부 해석기가 있어야 조건을 뽑는다. 해석기 없이 열어 두면 사용자가 적은
