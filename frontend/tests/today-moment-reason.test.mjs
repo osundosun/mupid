@@ -8,6 +8,7 @@ const source = await readFile(new URL('../lib/recommendations.ts', import.meta.u
 const js = ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
 }).outputText
+  .replace("'./mupid-data'", JSON.stringify(inline('export const moodLabel = value => value;')))
   .replace("'./api/session'", JSON.stringify(inline('export const api = { recommendation: { daily: async () => globalThis.__dailyReasonFixture } };')))
   .replace("'./stream-catalog'", JSON.stringify(inline('export const toTrack = music => ({ id: music.id, title: music.title });')));
 const { fetchTodayMoments } = await import(inline(js));
