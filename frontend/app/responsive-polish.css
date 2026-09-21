@@ -820,24 +820,16 @@
 
 .mupid-shell .chat-launcher > svg { width: 25px; height: 25px; color: #fff; stroke-width: 1.8; }
 
-/*
- * PC 고정 헤더의 위 모서리는 둥글리지 않는다.
- *
- * 전에는 30px 로 둥글리고, 스크롤해 헤더가 위에 붙었을 때 모서리 틈으로 본문이
- * 비치지 않도록 `::before` 로 하늘 배경을 덧칠했다. 그런데 덧칠한 하늘은 반투명
- * 그라데이션이 흰 헤더 위에 얹히는 것이라 셸의 진짜 하늘과 색이 어긋나, 양쪽
- * 모서리에 삼각형이 도드라졌다. 모서리를 각지게 두면 덧칠할 것도 어긋날 것도 없다.
- */
+/* PC 헤더의 위쪽 모서리를 본문 프레임과 어울리도록 둥글게 한다. */
 @media (min-width: 768px) {
   .mupid-shell:not(.page-welcome) {
     background:
       radial-gradient(ellipse at 92% 3%, #fff1f88f, transparent 42%),
-      linear-gradient(180deg, #e6f3ffd9, #f5faffed 68%),
-      url('/sky-background.webp') center top / cover;
+      linear-gradient(180deg, #e6f3ffd9, #f5faffed 68%);
     background-attachment: fixed;
   }
   .mupid-shell .app-header {
-    border-radius: 0;
+    border-radius: 28px 28px 0 0;
     background: #fbfdff;
   }
 }
@@ -2049,4 +2041,81 @@
   .mupid-shell .explore-filter-sidebar .category-description {
     font-size: 14px;
   }
+}
+
+/* 곡 정보와 재생 조작부의 시각적 중심을 맞춘다. */
+@media (min-width: 768px) {
+  .mupid-shell .desktop-song h1 {
+    font-size: clamp(28px, 2.8vw, 42px);
+    letter-spacing: -0.04em;
+    line-height: 1.2;
+    margin-bottom: 14px;
+  }
+  .mupid-shell .desktop-song-playback { margin-top: 22px; }
+  .mupid-shell .desktop-song .full-controls {
+    margin: 0 auto 12px;
+    max-width: 300px;
+    justify-content: space-between;
+  }
+  .mupid-shell .desktop-song-actions { margin-top: 18px; }
+  .mupid-shell .desktop-audio-options { margin-top: 6px; }
+  .mupid-shell .desktop-audio-options label { max-width: 180px; }
+  .mupid-shell .desktop-seek {
+    appearance: none;
+    background: transparent;
+    border: 0;
+  }
+  .mupid-shell .desktop-seek::-webkit-slider-runnable-track {
+    height: 4px;
+    background: #dce7f6;
+    border-radius: 999px;
+  }
+  .mupid-shell .desktop-seek::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border-radius: 50%;
+    background: var(--home-accent);
+  }
+  .mupid-shell .desktop-seek::-moz-range-track {
+    height: 4px;
+    background: #dce7f6;
+    border-radius: 999px;
+  }
+  .mupid-shell .desktop-seek::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--home-accent);
+  }
+}
+
+/* 순간 저장과 볼륨 조작은 작은 폭 안에서 두 줄의 끝을 맞춘다. */
+@media (min-width: 768px) {
+  .mupid-shell .desktop-song-actions,
+  .mupid-shell .desktop-audio-options {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    width: min(100%, 220px);
+    gap: 8px;
+    align-items: center;
+  }
+  .mupid-shell .desktop-moment-button {
+    justify-content: center;
+    min-height: 40px;
+    padding: 8px 10px;
+    gap: 6px;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .mupid-shell .desktop-song-actions > .icon-button,
+  .mupid-shell .desktop-audio-options > .icon-button {
+    width: 36px;
+    height: 40px;
+    min-width: 0;
+  }
+  .mupid-shell .desktop-audio-options label { width: 100%; max-width: none; }
+  .mupid-shell .desktop-audio-options input { flex: 1; min-width: 0; width: 100%; }
 }

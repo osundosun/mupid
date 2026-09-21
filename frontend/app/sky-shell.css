@@ -10,8 +10,7 @@
     padding: 24px 0 40px;
     background:
       radial-gradient(ellipse at 92% 3%, #fff1f88f, transparent 42%),
-      linear-gradient(180deg, #e6f3ffd9, #f5faffed 68%),
-      url('/sky-background.webp') center top / cover fixed;
+      linear-gradient(180deg, #e6f3ffd9, #f5faffed 68%);
   }
   .mupid-shell .app-header,
   .mupid-shell .app-layout {

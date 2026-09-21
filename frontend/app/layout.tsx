@@ -1,6 +1,9 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { UpdatePrompt } from '@/components/mupid/update-prompt';
+import { SkyCursor } from '@/components/mupid/sky-cursor';
+import { PageScrollbar } from '@/components/mupid/page-scrollbar';
+import { InnerScrollbars } from '@/components/mupid/inner-scrollbars';
 
 const siteUrl = process.env.MUPID_DEPLOY_TARGET === 'ec2'
   ? 'https://j15a204.p.ssafy.io'
@@ -93,7 +96,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      <body className="font-sans antialiased">
+      <body id="page-content" className="font-sans antialiased">
         {children}
         {/*
           업데이트 안내를 **root 에 둔다.** 인증이 필요한 `(music)` 그룹 안에
@@ -108,6 +111,9 @@ export default function RootLayout({
           않는다.
         */}
         <UpdatePrompt />
+        <SkyCursor />
+        <PageScrollbar />
+        <InnerScrollbars />
       </body>
     </html>
   );

@@ -1,0 +1,81 @@
+'use client';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+
+type Bar = { el: HTMLElement; horizontal: boolean; x: number; y: number; length: number; thumb: number; offset: number; max: number; value: number };
+export function InnerScrollbars() {
+  const [bars, setBars] = useState<Bar[]>([]);
+  useEffect(() => {
+    const media = matchMedia('(hover: hover) and (pointer: fine) and (forced-colors: none)');
+    const tracked = new Set<HTMLElement>();
+    let frame = 0;
+    const refresh = () => {
+      frame = 0;
+      if (!media.matches) { tracked.forEach(el => el.classList.remove('custom-inner-scroll')); tracked.clear(); setBars([]); return; }
+      const next: Bar[] = [];
+      tracked.forEach(el => { if (!el.isConnected) { resize.unobserve(el); tracked.delete(el); } });
+      document.body.querySelectorAll<HTMLElement>('*').forEach(el => {
+        if (el.closest('[data-custom-scrollbar], .sky-cursor-overlay, .page-scrollbar') || ['INPUT','SVG'].includes(el.tagName)) return;
+        const style = getComputedStyle(el);
+        const vertical = /auto|scroll/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1;
+        const horizontal = /auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1;
+        if (!vertical && !horizontal) { el.classList.remove('custom-inner-scroll'); tracked.delete(el); return; }
+        el.classList.add('custom-inner-scroll'); if (!tracked.has(el)) resize.observe(el); tracked.add(el);
+        const rect = el.getBoundingClientRect();
+        if (!rect.width || !rect.height || style.visibility === 'hidden') return;
+        let top = Math.max(0, rect.top), bottom = Math.min(innerHeight, rect.bottom);
+        let left = Math.max(0, rect.left), right = Math.min(innerWidth, rect.right);
+        for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+          const ps = getComputedStyle(parent), pr = parent.getBoundingClientRect();
+          if (/auto|scroll|hidden|clip/.test(ps.overflowY)) { top = Math.max(top, pr.top); bottom = Math.min(bottom, pr.bottom); }
+          if (/auto|scroll|hidden|clip/.test(ps.overflowX)) { left = Math.max(left, pr.left); right = Math.min(right, pr.right); }
+        }
+        if (bottom <= top || right <= left) return;
+        for (const h of [false, true]) {
+          if (h ? !horizontal : !vertical) continue;
+          const length = h ? right-left : bottom-top;
+          const size = h ? el.clientWidth : el.clientHeight;
+          const total = h ? el.scrollWidth : el.scrollHeight;
+          const value = h ? el.scrollLeft : el.scrollTop;
+          const thumb = Math.min(length, Math.max(24, length * size / total));
+          next.push({ el, horizontal: h, x: h ? left : right-10, y: h ? bottom-10 : top, length, thumb, max: total-size, value, offset: value/(total-size)*(length-thumb) });
+        }
+      });
+      setBars(next);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(refresh); };
+    const observer = new MutationObserver(records => {
+      if (records.some(r => !(r.target instanceof Element && r.target.closest('[data-custom-scrollbar]')))) schedule();
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    const resize = new ResizeObserver(schedule); resize.observe(document.body);
+    document.addEventListener('scroll', schedule, true);
+    window.addEventListener('resize', schedule);
+    document.addEventListener('pointerover', schedule, { passive: true });
+    media.addEventListener('change', schedule);
+    schedule();
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); resize.disconnect(); tracked.forEach(el => el.classList.remove('custom-inner-scroll')); document.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule); document.removeEventListener('pointerover', schedule); media.removeEventListener('change', schedule); };
+  }, []);
+  return <>{bars.map((bar, i) => createPortal(<div data-custom-scrollbar="" className="inner-scrollbar" style={{ left: bar.x, top: bar.y, width: bar.horizontal ? bar.length : 10, height: bar.horizontal ? 10 : bar.length }}
+    ref={node => {
+      if (!node) return;
+      const wheel = (event: WheelEvent) => { event.preventDefault(); event.stopPropagation(); const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bar.length : 1; bar.el.scrollBy({ top: bar.horizontal ? 0 : event.deltaY * scale, left: (bar.horizontal ? event.deltaY || event.deltaX : event.deltaX) * scale, behavior: 'instant' }); };
+      node.addEventListener('wheel', wheel, { passive: false });
+      return () => node.removeEventListener('wheel', wheel);
+    }}
+    onPointerDown={event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const track = event.currentTarget;
+      const start = bar.horizontal ? event.clientX : event.clientY;
+      const set = (value: number) => { if (bar.horizontal) bar.el.scrollLeft = value; else bar.el.scrollTop = value; };
+      let value = bar.horizontal ? bar.el.scrollLeft : bar.el.scrollTop;
+      if (event.target === track) { value = Math.max(0, Math.min(bar.max, (start-(bar.horizontal ? bar.x : bar.y)-bar.thumb/2)/Math.max(1,bar.length-bar.thumb)*bar.max)); set(value); }
+      track.setPointerCapture(event.pointerId);
+      const move = (e: PointerEvent) => set(value + ((bar.horizontal ? e.clientX : e.clientY)-start)/Math.max(1,bar.length-bar.thumb)*bar.max);
+      const end = () => { track.removeEventListener('pointermove',move); track.removeEventListener('pointerup',end); track.removeEventListener('pointercancel',end); track.removeEventListener('lostpointercapture',end); };
+      track.addEventListener('pointermove',move); track.addEventListener('pointerup',end); track.addEventListener('pointercancel',end); track.addEventListener('lostpointercapture',end);
+    }}><div role="scrollbar" aria-label="영역 스크롤" aria-orientation={bar.horizontal ? 'horizontal' : 'vertical'} aria-valuemin={0} aria-valuemax={Math.round(bar.max)} aria-valuenow={Math.round(bar.value)} tabIndex={0}
+    onKeyDown={event => { const delta = ['ArrowDown','ArrowRight'].includes(event.key) ? 40 : ['ArrowUp','ArrowLeft'].includes(event.key) ? -40 : 0; if (delta) { event.preventDefault(); bar.el.scrollBy(bar.horizontal ? {left:delta} : {top:delta}); } }}
+    style={{ position:'absolute', borderRadius:999, background:'#8daee0', left:bar.horizontal?bar.offset:2, top:bar.horizontal?2:bar.offset, width:bar.horizontal?bar.thumb:6, height:bar.horizontal?6:bar.thumb }} /></div>, document.body, String(i)))}</>;
+}
