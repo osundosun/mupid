@@ -464,6 +464,27 @@ export type DailyRecommendationResult = {
   }>;
 };
 
+/**
+ * 대화 한 턴에서 일어난 **툴 호출 한 건의 기록** (S15P21A204-409).
+ *
+ * <p>서버가 `tool_calls` 로 내려준다. 그냥 대화만 한 턴이면 빈 배열이다.
+ *
+ * `arguments` 는 모델이 넘긴 인자(원한 느낌·조건·개수)로, "왜 이 곡이 나왔나" 의 근거다.
+ * `label` 은 사용자에게 보여줄 이름이다(`recommend_music` → `음악 추천`). **내부 이름을
+ * 화면에 그대로 그리지 않는다** — 옮기는 판단은 서버가 한다.
+ */
+export type AiToolCallRecord = {
+  /** 개발자용 식별자(`recommend_music`). 화면에는 `label` 을 그린다. */
+  name: string;
+  /** 사용자에게 읽히는 이름. */
+  label: string;
+  arguments: Record<string, unknown>;
+  succeeded: boolean;
+  track_count: number;
+  /** 실패 사유 문장. 성공이면 `null` 이다. */
+  failure_reason: string | null;
+};
+
 /** 추천을 하지 않았으면 `tracks` 는 빈 배열이다 (null 이 아니다). */
 export type AiChatResult = {
   reply: string;
@@ -482,6 +503,11 @@ export type AiChatResult = {
    */
   recommendation_id: number | null;
   tracks: AiRecommendedTrack[];
+  /**
+   * 이 턴에 일어난 툴 호출 기록. 호출 순서대로 전부 온다 — **접지 않는다**
+   * (같은 툴이 한 턴에 두 번 불릴 수 있고, 몇 번 불렀는지가 정보다).
+   */
+  tool_calls: AiToolCallRecord[];
 };
 
 export function createEndpoints(client: ApiClient) {

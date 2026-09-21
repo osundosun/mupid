@@ -5,10 +5,18 @@ import type { MupidModel } from '@/hooks/use-mupid';
 import { useKeyboardInset } from '@/hooks/use-keyboard-inset';
 import { chatSuggestions, formatTime } from '@/lib/mupid-data';
 import { AlbumArt, TrackRow } from './primitives';
+import { ChatToolCalls } from './chat-tool-calls';
 import { useEffect, useState, type CSSProperties } from 'react';
 
 export function FloatingChat({ model: m }: { model: MupidModel }) {
-  const { chatButtonRef, chatInputRef, messageEndRef } = m;
+  const { chatButtonRef, chatInputRef, chatBoxRef, messageEndRef } = m;
+  /*
+   * 스크롤 대상은 **대화 영역(`.chat-messages`) 자신**이다 (S15P21A204-409).
+   *
+   * 끝을 가리키는 `messageEndRef` 에 기대지 않는다. 영역의 `scrollTop` 을 끝으로 밀면
+   * 곡 카드까지 함께 보이기 때문이다 — 실측 546(`block:'end'`) vs 564(끝까지, 최대).
+   * 참조 자체는 남겨 둔다. 다른 화면이 아직 끝을 가리킬 때 쓴다.
+   */
   /*
    * 폰에서 입력칸에 커서를 두면 화상 키보드가 화면 아래 절반을 덮는다. 패널은
    * 재생 독 위에 떠 있어 그대로 키보드 뒤로 들어가고, 치는 글자가 보이지 않았다.
@@ -20,10 +28,42 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
   const keyboardInset = useKeyboardInset();
   const [inputFocused, setInputFocused] = useState(false);
   const composing = m.chatOpen && (inputFocused || keyboardInset > 0);
+
+  /*
+   * 새 내용이 생기면 **대화 영역 자체를** 아래 끝으로 내린다 (S15P21A204-409).
+   *
+   * 이 자리에는 `if (composing) messageEndRef.current?.scrollIntoView(...)` 가 있었다.
+   * 두 가지가 동시에 어긋나 곡 카드가 화면 밖에 남았다 — 실측값은 커밋 메시지에 있다.
+   *
+   *  1) **의존성이 틀렸다.** `composing` 은 "지금 입력 중인가" 이지 "새 말이 왔는가" 가
+   *     아니다. 사용자가 입력칸에 커서를 두는 순간 `true` 가 되고, 그 뒤로는 응답이
+   *     도착해도 값이 변하지 않는다. 그래서 곡 카드가 붙는 순간에는 효과가 다시 돌지
+   *     않았다. 패널에 `composing` 이 붙어 있는 동안에도 스크롤이 안 된 이유가 이것이다.
+   *  2) **`behavior: 'smooth'` 가 멈춰 있었다.** `use-mupid.ts` 가 `smooth` 로 부르는데,
+   *     이 환경에서 `scrollIntoView({behavior:'smooth'})` 는 즉시 0 을 돌려주고 3.5초를
+   *     기다려도 `scrollTop` 이 0 에 머물렀다(`auto` 는 546 으로 즉시 움직였다).
+   *     **"응답이 왔는데 화면이 안 움직인다" 가 이 티켓의 본질이다.**
+   *
+   * 그래서 `composing` 에 기대지 않고 **무엇이 늘어났는지**를 의존성으로 삼는다:
+   * 말풍선 개수(`m.messages.length`)·`m.chatLoading`·`composing`. `tracks` 는 말풍선이
+   * 늘어난 뒤 같은 말풍선에 나중에 붙을 수 있어, 개수만 보면 놓치는 경우가 남는다.
+   * 마지막에 붙은 말풍선의 곡 목록 길이까지 함께 본다.
+   *
+   * `scrollIntoView` 대신 **컨테이너의 `scrollTop` 을 직접 끝으로 민다.** 곡 카드와
+   * `messageEndRef` 둘 다 영역 안에 든다는 것이 실측으로 확인됐다(546 vs 564 — 끝까지
+   * 내리면 카드가 온전히 보인다). `smooth` 를 쓰지 않으므로 도착 지점이 곧바로 확정되고,
+   * 애니메이션이 예약한 스크롤이 다음 렌더에 밀려나는 일도 없다.
+   *
+   * 키보드가 올라와 패널 높이가 바뀌는 경우도 같은 효과가 받는다(`composing` 이 의존성).
+   */
+  const lastMessage = m.messages[m.messages.length - 1];
+  const trackCount = lastMessage?.tracks?.length ?? 0;
   useEffect(() => {
-    // 패널 높이가 바뀌면 마지막 말풍선이 입력칸 뒤로 숨는다. 다시 끝으로 내린다.
-    if (composing) messageEndRef.current?.scrollIntoView({ block: 'end' });
-  }, [composing, keyboardInset, messageEndRef]);
+    const box = chatBoxRef.current;
+    if (!box) return;
+    // 끝까지 내린다. `smooth` 를 쓰지 않는 이유는 위 주석에 있다.
+    box.scrollTop = box.scrollHeight;
+  }, [m.chatOpen, m.messages.length, trackCount, m.chatLoading, composing]);
   if (!m.chatOpen)
     return (
       <button
@@ -83,6 +123,7 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
       </div>}
       <div
         className="chat-messages"
+        ref={chatBoxRef}
         aria-live="polite"
         aria-relevant="additions text"
         aria-busy={m.chatLoading}
@@ -94,6 +135,29 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
             )}
             <div className="message-body">
               <p className="chat-handwriting">{message.text}</p>
+              {/*
+                툴 호출 기록 (S15P21A204-409).
+
+                **사용자 요구**: "도구를 호출했으면 어떤 도구를 호출했는지 화면에 기록으로
+                남겨주세요". 지금까지는 LLM 의 자연어 답변만 보여서, 사용자가 "3곡
+                골라뒀어요" 를 믿을 근거가 화면에 없었다. 실패도 여기에 남는다 — 예전에는
+                추천 서버 장애가 조용히 삼켜져 "추천이 안 온다" 로만 보였다.
+
+                자리 잡기: 답변(`p`) **아래, 곡 목록 위**. 왜 그 순서인가 —
+                  · 답변 바로 밑이라 "이 말이 어떤 도구를 거쳐 나왔는가" 로 읽힌다.
+                  · 곡 목록보다 **위**여야 한다. 카드 아래 두면 곡을 다 훑고 나서야 보이고,
+                    정작 "이 곡이 어디서 왔나" 를 묻는 순간에는 시야 밖이다.
+                  · 말풍선(`.message-body`) 안이다. 밖에 두면 어느 답변의 기록인지 모른다.
+
+                **문구는 개발자용이 아니라 사용자용이다.** `recommend_music` 같은 내부
+                이름을 그대로 노출하지 않고 서버가 옮겨 준 `label`(`음악 추천`)을 쓴다.
+                내부 이름은 화면에 그리지 않는다 — 시험용 훅(`data-tool`)에만 남긴다.
+
+                **툴 호출이 없던 턴에는 아무것도 그리지 않는다.** 그냥 대화만 한 경우다.
+              */}
+              {message.toolCalls && message.toolCalls.length > 0 && (
+                <ChatToolCalls calls={message.toolCalls} />
+              )}
               {message.tracks && (
                 <div className="chat-tracks">
                   {message.tracks.filter(track => !m.ignored.includes(track.id)).map((track) => (
