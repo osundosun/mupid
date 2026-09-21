@@ -274,7 +274,8 @@ export function useMupid(bootstrap: Bootstrap) {
     if (typeof window !== 'undefined' && window.history.length > 1) router.back();
     else router.push(pagePaths.home);
   };
-  const go = (next: Page) => {
+  const go = (next: Page, preserveSearch = false) => {
+    if (next === 'search' && !preserveSearch) setQuery('');
     // URL 직접 이동과 UI 이동 모두 같은 조건으로 보호한다. 실제 접근 권한 검증은 서버 책임이다.
     router.push(guardPath(pagePaths[next], !!sessionRef.current, onboardingRef.current));
   };
@@ -651,7 +652,19 @@ export function useMupid(bootstrap: Bootstrap) {
   };
 
   const loadTrack = (track: Track) => {
-    if (activeRef.current?.id === track.id) return;
+    if (activeRef.current?.id === track.id) {
+      // 같은 음원으로 다시 진입해도 모먼트에서 받은 추천 근거는 갱신한다.
+      if (track.recommended || track.recommendationReason) {
+        const updated = {
+          ...activeRef.current,
+          recommended: track.recommended ?? activeRef.current.recommended,
+          recommendationReason: track.recommendationReason ?? activeRef.current.recommendationReason,
+        };
+        activeRef.current = updated;
+        setActive(updated);
+      }
+      return;
+    }
     activeRef.current = track;
     setActive(track);
     setTime(0);

@@ -58,9 +58,9 @@ void test('going back clears the query so the list is not silently narrowed', ()
   assert.match(back, /setGenreQuery\(''\)/);
 });
 
-void test('the mood step stays a plain list', () => {
+void test('the mood step scrolls without requiring search', () => {
   // 분위기는 8~9개다. 검색을 붙이면 두 단계의 조작이 달라져 헷갈린다.
   const moods = screen.match(/step === 1 && <fieldset[\s\S]{0,1400}/)?.[0] ?? '';
   assert.doesNotMatch(moods, /onboarding-search/);
-  assert.doesNotMatch(moods, /onboarding-scroll/);
+  assert.match(moods, /onboarding-scroll/);
 });

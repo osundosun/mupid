@@ -64,6 +64,58 @@
 
 /* QR 다운로드 링크는 모바일에서만 표시한다. */
 .welcome-qr .welcome-qr-mobile { display: none; }
+/* Keep both preference steps within the viewport; only choices scroll. */
+.mupid-shell .welcome-page.is-onboarding {
+  height: 100dvh;
+  min-height: 560px;
+  padding: max(16px, var(--safe-area-inset-top)) clamp(16px, 4vw, 48px) max(16px, var(--safe-area-inset-bottom));
+  justify-content: flex-start;
+  gap: 16px;
+}
+.welcome-page.is-onboarding .welcome-logo { width: 112px; margin-left: 40px; }
+.mupid-shell .welcome-page.is-onboarding .welcome-form {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 680px);
+  flex: 1;
+  min-height: 0;
+  max-height: 800px;
+  margin: auto;
+  padding: clamp(20px, 3vw, 32px);
+}
+.welcome-page.is-onboarding .welcome-form h1 { margin: 4px 0 16px; line-height: 1.4; }
+.welcome-page.is-onboarding .onboarding-choice-group {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin: 12px 0 0;
+}
+.welcome-page.is-onboarding .onboarding-choice-group legend { margin-bottom: 12px; }
+.welcome-page.is-onboarding .onboarding-search { flex-shrink: 0; margin: 0 0 12px; }
+.welcome-page.is-onboarding .onboarding-picked { max-height: 72px; overflow-y: auto; flex-shrink: 0; margin: 0 0 12px; }
+.welcome-page.is-onboarding .onboarding-scroll {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  mask-image: none;
+  padding: 3px 8px 8px 3px;
+  margin: 0;
+  scrollbar-gutter: stable;
+}
+.welcome-page.is-onboarding .onboarding-scroll button { min-height: 48px; margin: 0; white-space: normal; overflow-wrap: anywhere; }
+.welcome-page.is-onboarding .onboarding-footer { flex-shrink: 0; border-top: 1px solid #e2eafa; padding-top: 16px; margin-top: 16px; }
+.welcome-page.is-onboarding .onboarding-footer p { margin: 0 0 12px; line-height: 1.5; }
+.welcome-page.is-onboarding .onboarding-footer .primary-button { margin: 0; width: 100%; }
+@media (max-width: 767px) {
+  .welcome-page.is-onboarding .onboarding-scroll { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .welcome-page.is-onboarding .welcome-logo { width: 96px; }
+}
 .welcome-qr a.welcome-qr-image:focus-visible { outline: 2px solid #628bd0; outline-offset: 4px; }
 @media (max-width: 767px) {
   .welcome-qr .welcome-qr-desktop { display: none; }
