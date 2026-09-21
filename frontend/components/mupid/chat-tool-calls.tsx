@@ -63,7 +63,16 @@ const readArg = (value: unknown): string => {
       .filter(Boolean)
       .join(', ');
   }
-  return String(value);
+  // 여기까지 오는 것은 숫자·참거짓뿐이다. 인자는 JSON 으로 실려 오므로 symbol 이나
+  // 함수는 애초에 들어올 수 없고, 그런 값을 `String()` 에 넘기면 `[object Object]`
+  // 같은 글자가 화면에 남는다.
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  )
+    return String(value);
+  return '';
 };
 
 /**

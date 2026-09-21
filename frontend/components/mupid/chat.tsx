@@ -63,7 +63,7 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
     if (!box) return;
     // 끝까지 내린다. `smooth` 를 쓰지 않는 이유는 위 주석에 있다.
     box.scrollTop = box.scrollHeight;
-  }, [m.chatOpen, m.messages.length, trackCount, m.chatLoading, composing]);
+  }, [m.chatOpen, m.messages.length, trackCount, m.chatLoading, composing, chatBoxRef]);
   if (!m.chatOpen)
     return (
       <button

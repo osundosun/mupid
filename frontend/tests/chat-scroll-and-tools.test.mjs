@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import ts from 'typescript';
 
 /*
  * 대화에 새 내용이 오면 **화면이 실제로 움직이는가** (S15P21A204-409).
