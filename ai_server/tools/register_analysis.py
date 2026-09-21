@@ -11,19 +11,30 @@ A축(`findVocalShare`)이 여기서 온다. 그런데 **넣는 경로가 없었�
 
 옮기는 규칙
 
-    voice_label      has_vocal    gender_label   vocal_gender
-    ---------------  -----------  -------------  ------------
-    voice            True         female         F
-    instrumental     False        (무관)         None (비움)
-    unknown          **(제외)**   unknown        None (비움)
+    voice_label      has_vocal    gender_label    vocal_gender
+    ---------------  -----------  --------------  ------------
+    voice            True         female          F
+    voice            True         male            M
+    voice            True         mixed / mix     MIX
+    voice            True         그 밖의 값      None (비움)
+    instrumental     False        (무관)          None (비움)
+    unknown          **(제외)**   (무관)          (보내지 않는다)
 
 `unknown` 을 뺀 이유
     `has_vocal` 은 ERD 에서 `NOT NULL` 이다. `unknown` 135곡(13%)은 넣을 값이 없다.
     `true` 로 밀면 연주곡을 보컬곡으로 만들고, `false` 로 밀면 그 반대다 —
     둘 다 **추측을 사실처럼** 넣는 것이다. 판정이 나오면 그때 넣는다.
 
-`vocal_gender` 의 `unknown` 은 **비운다.** `ETC` 로 뭉개지 않는다 — `ETC` 는
-"기타로 판정했다" 이고 `None` 은 "모른다" 다.
+`vocal_gender` 의 `unknown` 은 **비운다.** `MIX` 로 승격하지 않는다 — `MIX` 는
+"남녀가 함께 부른다고 판정했다" 이고 `None` 은 "모른다" 다. ERD 의
+`vocal_gender ENUM('M','F','MIX')` 에는 '판정 못 함' 자리가 없다.
+(예전에 그 자리에 있던 `ETC` 는 S15P21A204-402 에서 `MIX` 로 바뀌었다.)
+
+매핑에 없는 `gender_label` 은 조용히 비워지면 안 된다
+    혼성 곡이 성별 없이 등록돼 있던 원인이 바로 이것이다 — `GENDER_BY_LABEL` 에
+    `mixed` 가 없어서 `.get()` 이 `None` 을 돌려주는데 **아무 데도 드러나지
+    않았다.** 그래서 매핑되지 않은 라벨을 집계해 마지막에 출력한다. 새 라벨이
+    들어오면 숫자로 보인다.
 
 환경변수
 
@@ -51,7 +62,17 @@ TIMEOUT = 30
 # 원천 열 → (has_vocal, gender 열)
 VOICE_TRUE = "voice"
 VOICE_FALSE = "instrumental"
-GENDER_BY_LABEL = {"female": "F", "male": "M"}
+
+# `mixed` 의 근거: 태깅 단계(`t01_pipeline`)는 이 저장소 밖이라 분류기 소스로
+# 확인할 수 없다 — `music_preprocessing` 은 `gender_label` 을 문자열 그대로
+# 통과시키기만 한다(`analysis/registry.py` 의 `TAG_COLS`). 저장소 안에서 확인되는
+# 어휘는 두 곳이다: 생성 프롬프트의 `vocal_type`("male"·"female"·"mixed"·
+# "instrumental", `flow_music_automation/scripts/build_genre_mood_plan.py`)과
+# `recommender._VOCAL_GENDER` 가 받아 주는 `"mixed"`. 둘 다 `mixed` 다.
+# `mix` 도 함께 받는다 — 목적지 enum 이름 자체가 `MIX` 라 산출물이 그 철자로 나올
+# 여지가 있고, 빗나가면 또 조용히 비워지기 때문이다. 근거가 없는 변형
+# (`both`·`duet` 등)은 넣지 않는다. 대신 매핑되지 않은 라벨을 세어 출력한다.
+GENDER_BY_LABEL = {"female": "F", "male": "M", "mixed": "MIX", "mix": "MIX"}
 
 
 def read_track_map(path: Path) -> dict[str, int]:
@@ -85,7 +106,8 @@ def read_track_map(path: Path) -> dict[str, int]:
 def payload_from(voice: str, gender: str) -> tuple[dict | None, str]:
     """`(voice_label, gender_label)` → 요구 1 본문. 넣을 수 없으면 `(None, 이유)`."""
     if voice == VOICE_TRUE:
-        # 성별을 판정하지 못한 보컬은 null 로 둔다. ETC 는 "기타로 판정함" 이다.
+        # 성별을 판정하지 못한 보컬은 null 로 둔다. `MIX` 는 "혼성으로 판정함" 이지
+        # "모름" 이 아니라, `unknown` 을 여기로 승격시키지 않는다.
         vocal_gender = GENDER_BY_LABEL.get(gender)
     elif voice == VOICE_FALSE:
         # 연주곡에 성별 분류기가 값을 냈더라도 보컬 성별로 저장하면 모순이다.
@@ -146,10 +168,16 @@ def main() -> int:
     unmapped: list[str] = []
     failed: list[dict] = []
     sent = 0
-    gender_seen = {"F": 0, "M": 0, "(없음)": 0}
+    gender_seen = {"F": 0, "M": 0, "MIX": 0, "(없음)": 0}
+    # 보컬곡인데 `GENDER_BY_LABEL` 이 못 받은 라벨. 혼성이 조용히 비워졌던 일을
+    # 되풀이하지 않으려고 센다 — 새 어휘가 들어오면 여기 숫자로 드러난다.
+    unmapped_gender: dict[str, int] = {}
 
-    token = "" if a.dry_run else _api_auth.access_token()
-    base = _api_auth.base()
+    # `--dry-run` 은 아무것도 보내지 않으므로 주소도 토큰도 필요 없다. 예전에는
+    # `base()` 를 먼저 불러서 `MUPID_API_BASE_URL` 이 없으면 무엇을 보낼지 세어
+    # 보지도 못하고 멈췄다 — 매핑을 확인하려고 쓰는 것이 `--dry-run` 이다.
+    token, base = ("", "") if a.dry_run else (
+        _api_auth.access_token(), _api_auth.base())
 
     # `itertuples` 는 밑줄로 시작하는 열 이름을 `Pandas` 같은 무효 식별자로 바꾼다
     # (실제로 `AttributeError: 'Pandas' object has no attribute '_tid'` 로 죽었다).
@@ -173,6 +201,9 @@ def main() -> int:
             continue
         key = body["vocal_gender"] or "(없음)"
         gender_seen[key] = gender_seen.get(key, 0) + 1
+        if body["has_vocal"] and body["vocal_gender"] is None:
+            label = gender or "(빈값)"
+            unmapped_gender[label] = unmapped_gender.get(label, 0) + 1
         if a.dry_run:
             sent += 1
             continue
@@ -190,6 +221,10 @@ def main() -> int:
     log(f"곡 {len(df)}개 중 {sent}개 적재 · 건너뜀 {len(skipped)} · 실패 {len(failed)}")
     log(f"  voice_label 집계 {stat}")
     log(f"  vocal_gender 분포 {gender_seen}")
+    if unmapped_gender:
+        log(f"  매핑 못 한 gender_label {unmapped_gender} "
+            "— 성별을 비운 채 보낸다. `unknown` 외의 값이 보이면 "
+            "GENDER_BY_LABEL 을 확인한다.")
     if unmapped:
         log(f"  --track-map 에 없는 곡 {len(unmapped)}개 (예: {unmapped[:5]})")
     if skipped:
