@@ -152,7 +152,7 @@ def slice_index(src: Path, dst: Path, *, src_data: Path | None = None) -> dict:
         if (data / name).exists():
             shutil.copy2(data / name, out / name)
     _restamp_features_info(out, len(sliced))
-    id_map_note = _carry_id_map(data, out)
+    id_map_note = _note_id_map(data)
 
     report = _verify(out)
     report["id_map"] = id_map_note
@@ -188,43 +188,38 @@ def _slice_clap(data: Path, out: Path, moments: set[str]) -> None:
                  moment_ids=d["moment_ids"][pick], embeddings=d["embeddings"][pick])
 
 
-def _carry_id_map(data: Path, out: Path) -> dict:
-    """매핑표를 묶음에 넣는다. **운영에서는 여기 말고 둘 자리가 없다.**
+def _note_id_map(data: Path) -> dict:
+    """매핑표를 묶음에 **넣지 않는다.** 어디로 가야 하는지만 말한다.
 
-    `paths.id_map_path()` 는 `MUPID_ID_MAP` 이 없으면 `data_dir()/id_map.parquet` 다.
-    그런데 운영 매니페스트(`ai.yaml` · `ai-labeler.yaml`)에 `MUPID_ID_MAP` 이 없고
-    `/artifacts` 는 읽기 전용 마운트다 — 그래서 **색인과 함께 올라가는 것 말고는
-    매핑표가 노드에 놓일 길이 없다.** (`MUPID_AI_STATE_DIR=/state` 는 쓰기 자리라
-    라벨·로그는 그리로 가지만, 매핑표는 상태가 아니라 판에 딸린 것이다.)
+    한 번 넣게 고쳤다가 되돌렸다. 두 가지가 막는다.
+
+    1. 받는 쪽의 허용 목록에 그 이름이 없다 — `infra_k8s/deploy/receive-index.py`
+       의 `ALLOWED` 는 색인 파일 13종만 받고, 하나라도 섞이면 **묶음 전체를 exit 65
+       로 거부한다.** 그 목록은 "이 엔드포인트로 노드에 임의의 파일을 놓을 수 있으면
+       안 된다" 는 보안 경계라 색인 도구가 우회할 것이 아니다.
+    2. 매핑표는 운영 MySQL 에서 나온다. 러너도 배포 키도 MySQL 에 닿지 못한다
+       (Service 가 ClusterIP 이고 강제 명령에 조회 결과를 내보내는 동사가 없다).
+       만들 수 있는 것은 **네임스페이스 안에서 도는 Job** 뿐이고, 그 Job 은
+       읽기 전용인 `/artifacts` 에 쓸 수 없다.
+
+    그래서 자리는 `/state` 다. `MUPID_AI_STATE_DIR` 가 가리키는 쓰기 가능한
+    hostPath 이고 `ai`·`ai-labeler` 양쪽이 이미 마운트한다. 매니페스트에
+    `MUPID_ID_MAP=/state/id_map.parquet` 를 주면 `paths.id_map_path()` 가 그쪽을
+    본다(`ai_server/app/paths.py`).
 
     이게 비면 조용히 무너진다 — `pull_signals` 는 재생신호를 **전부** 버리고
     (`source_track_id` 가 `MappingError`), `push_sections` 는 아무것도 올리지 못해
     `track_sections` 가 비고, 그러면 `mv_user_section_signals` 가 행동 이벤트를
-    통째로 버린다. 2026-09-18 이후 운영에서 실제로 그랬다.
-
-    그래서 있으면 넣고, **없으면 말한다.** 어느 쪽이든 조용히 지나가지 않는다.
+    통째로 버린다. 2026-09-18 이후 운영에서 실제로 그랬다. 그래서 **말은 한다.**
     """
     src = data / "id_map.parquet"
+    print("[id_map] 묶음에 넣지 않는다 — 받는 쪽 허용 목록 밖이고, 운영 매핑표는 "
+          "클러스터 안 Job 만 만들 수 있다. 자리는 /state 이고 매니페스트에 "
+          "MUPID_ID_MAP=/state/id_map.parquet 가 있어야 한다.", file=sys.stderr)
     if not src.exists():
-        print("[경고] id_map.parquet 이 판에 없다 — 이 묶음을 올리면 행동 데이터가 "
-              "전부 버려진다 (pull_signals 제외 · push_sections 0건). "
-              "운영 MySQL 에서 뽑아 넣고 다시 묶는다.", file=sys.stderr)
-        return {"present": False}
-    shutil.copy2(src, out / "id_map.parquet")
-    note = {"present": True, "rows": int(len(pd.read_parquet(src, columns=["external_id"])))}
-    # 어느 DB 에서 뽑았는지는 `build_id_map` 이 parquet 메타에 남긴다. 로컬 스냅샷본이
-    # 운영으로 새는 것이 가장 걱정되는 실수라, 묶을 때 한 번 더 눈에 보이게 한다.
-    try:
-        import pyarrow.parquet as pq
-
-        meta = pq.read_schema(src).metadata or {}
-        source = meta.get(b"mupid_id_map_source")
-        if source:
-            note["source"] = source.decode("utf-8")
-            print(f"[id_map] {note['rows']:,}행 — {note['source']}")
-    except Exception:                       # 메타가 없어도 묶는 일은 막지 않는다
-        pass
-    return note
+        return {"shipped": False, "in_source_plate": False}
+    return {"shipped": False, "in_source_plate": True,
+            "rows": int(len(pd.read_parquet(src, columns=["external_id"])))}
 
 
 def _restamp_features_info(out: Path, rows: int) -> None:

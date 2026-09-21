@@ -196,11 +196,11 @@ def test_features_info_row_count_follows_the_slice(sliced):
     assert info["version"] == "feat-v1"          # 기저 항목은 그대로
 
 
-def test_id_map_travels_with_the_bundle(tmp_path, monkeypatch):
-    """운영에는 `MUPID_ID_MAP` 이 없고 `/artifacts` 가 읽기 전용이다.
+def test_id_map_never_ships(tmp_path, monkeypatch):
+    """매핑표는 묶음에 들어가면 **안 된다.**
 
-    그래서 매핑표가 노드에 놓일 길은 색인과 함께 올라가는 것뿐이다. 빠지면
-    `pull_signals` 가 재생신호를 전부 버린다 — 2026-09-18 운영에서 실제로 그랬다.
+    한 번 넣게 고쳤다가 되돌렸다. 받는 쪽 `ALLOWED` 밖의 이름이 섞이면 묶음 전체가
+    exit 65 로 거부된다. 자리는 `/state` 이고 `MUPID_ID_MAP` 이 가리킨다.
     """
     monkeypatch.setenv("MUPID_POOL", "flow")
     from ai_server.tools import slice_index
@@ -214,22 +214,38 @@ def test_id_map_travels_with_the_bundle(tmp_path, monkeypatch):
     report = slice_index.slice_index(src, dst)
     out = dst / "data" / "proc" / "mupid"
 
-    assert (out / "id_map.parquet").exists()
-    assert report["id_map"] == {"present": True, "rows": 1}
+    assert not (out / "id_map.parquet").exists()
+    assert report["id_map"]["shipped"] is False
+    assert report["id_map"]["in_source_plate"] is True
 
 
-def test_missing_id_map_is_reported_not_swallowed(tmp_path, monkeypatch, capsys):
-    """없는 것 자체는 막지 않는다 — 운영본을 나중에 넣을 수 있다. 다만 말은 한다."""
-    monkeypatch.setenv("MUPID_POOL", "flow")
-    from ai_server.tools import slice_index
+def test_every_shipped_file_is_one_the_receiver_accepts(sliced):
+    """받는 쪽 허용 목록과 **실제로 맞춰 본다.**
 
-    src, dst = tmp_path / "full", tmp_path / "serving"
-    _build(src)
-    report = slice_index.slice_index(src, dst)
+    이 시험이 없어서 2026-09-21 에 묶음이 거부되는 변경이 그대로 커밋됐다.
+    `receive-index.py` 의 `ALLOWED` 는 "이 엔드포인트로 노드에 임의의 파일을 놓을 수
+    있으면 안 된다" 는 보안 경계다. 색인 도구가 그 목록 밖의 이름을 쓰면 배포가
+    통째로 멈추는데, 여기서는 아무 신호도 나지 않는다.
+    """
+    import ast
+    import pathlib
 
-    assert report["id_map"] == {"present": False}
-    assert not (dst / "data" / "proc" / "mupid" / "id_map.parquet").exists()
-    assert "id_map.parquet 이 판에 없다" in capsys.readouterr().err
+    receiver = pathlib.Path(__file__).resolve().parents[2] / "infra_k8s" / "deploy" / "receive-index.py"
+    if not receiver.exists():
+        pytest.skip("인프라 저장소가 함께 있지 않다")
+
+    tree = ast.parse(receiver.read_text(encoding="utf-8"))
+    allowed = next(
+        (set(ast.literal_eval(node.value))
+         for node in ast.walk(tree)
+         if isinstance(node, ast.Assign)
+         and any(getattr(t, "id", None) == "ALLOWED" for t in node.targets)),
+        None)
+    assert allowed, "receive-index.py 에서 ALLOWED 를 읽지 못했다"
+
+    _, out, _ = sliced
+    shipped = {p.name for p in out.rglob("*") if p.is_file()}
+    assert shipped <= allowed, f"받는 쪽이 거부할 파일: {sorted(shipped - allowed)}"
 
 
 def test_state_directories_never_ship(sliced):
