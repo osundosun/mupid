@@ -367,6 +367,7 @@
 .mupid-shell .sky-tabs > [role='tablist'] {
   flex-wrap: nowrap;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -1941,7 +1942,14 @@
  * 미니 플레이어 몫으로 비워 두던 112px 도 여기서는 필요 없다.
  */
 @media (min-width: 768px) {
-  .mupid-shell.page-player .chat-launcher { display: grid; bottom: 28px; }
+  .mupid-shell.no-mini .chat-launcher {
+    position: fixed;
+    right: max(48px, calc((100vw - 1440px) / 2 + 16px));
+    bottom: 28px;
+    display: grid;
+  }
+  .mupid-shell:not(.no-mini) .chat-launcher { display: none; }
+  .mupid-shell .mini-player .ai-button { display: inline-flex; }
   .mupid-shell.page-player .chat-panel { bottom: 28px; }
 }
 .mupid-shell.page-player .player-lyrics-inline .song-lyrics { margin: 0 auto; max-width: 420px; max-height: min(30dvh, 300px); overflow-y: auto; overscroll-behavior: contain; padding: 4px 12px; color: #4e688e; font-size: 14px; line-height: 1.9; text-align: center; scrollbar-width: thin; scrollbar-color: #cfdded transparent; }

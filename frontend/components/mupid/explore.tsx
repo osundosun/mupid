@@ -266,7 +266,9 @@ export function SearchView({ model: m }: { model: MupidModel }) {
             </output>
           </div>}
           {listing.error && results.length === 0 ? <p className="keyword-idle" role="alert">{listing.error}</p> :
-            results.length ? <div key={requestKey} ref={trackList} className="explore-track-list">{results.map((track) => <TrackRow key={track.id} track={track} model={m} queueable showDetail={false} titleInteractive={false} />)}</div> :
+            results.length ? <div key={requestKey} ref={trackList} className="explore-track-list">{results.map((track) => <TrackRow key={track.id} track={track} model={m} queueable showDetail={false} onTitleClick={() => {
+              if (m.active?.id !== track.id || !m.playing) m.play(track);
+            }} />)}</div> :
             !initialLoading && <p className="keyword-idle">검색 결과가 없어요. 조건을 바꿔보세요.</p>}
           <div className="explore-load-more-target" aria-hidden="true" />
           {listing.error && results.length > 0 && <p className="explore-load-error" role="alert">{listing.error}</p>}
