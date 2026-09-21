@@ -34,6 +34,8 @@ import { fetchSections } from '@/lib/music-analysis';
 import { chatErrorMessage, requestChat } from '@/lib/ai-chat';
 import { momentPlaybackRanges } from '@/lib/saved-moments';
 import { useMediaSession } from './use-media-session';
+import { useDismissableOverlay } from './use-dismissable-overlay';
+import { closeTopOverlay } from '@/lib/overlay-stack';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
   getSongSectionAt,
@@ -250,6 +252,21 @@ export function useMupid(bootstrap: Bootstrap) {
   const [deletePlaylist, setDeletePlaylist] = useState<number | null>(null);
   const [renamePlaylist, setRenamePlaylist] = useState<number | null>(null);
   const [showAllSimilar, setShowAllSimilar] = useState(false);
+  /*
+   * 뒤로가기로 닫혀야 하는 오버레이들을 스택에 등록한다 (S15P21A204-410).
+   *
+   * 상태는 각자 쓰던 `useState` 그대로다 — 여기서는 "무엇이 열려 있는가"만
+   * 적는다. **가장 위(최근에 연 것)** 가 뒤로가기 한 번에 닫히려면 이 순서가
+   * 화면에 그려지는 순서와 같아야 하므로, 등록은 여기 한 곳에 모아 둔다
+   * (호출 순서가 곧 스택 순서다).
+   */
+  useDismissableOverlay(loginDialog, () => setLoginDialog(false));
+  useDismissableOverlay(playlistDialog, () => setPlaylistDialog(false));
+  useDismissableOverlay(renamePlaylist !== null, () => setRenamePlaylist(null));
+  useDismissableOverlay(deletePlaylist !== null, () => setDeletePlaylist(null));
+  useDismissableOverlay(selectedArtist !== null, () => setSelectedArtist(null));
+  useDismissableOverlay(queueOpen, () => setQueueOpen(false));
+  useDismissableOverlay(chatOpen, () => setChatOpen(false));
   const activeRef = useRef(active);
   const mountedRef = useRef(true);
   const previewEnd = useRef<number | null>(null);
@@ -271,6 +288,9 @@ export function useMupid(bootstrap: Bootstrap) {
 
   // 어디서 들어왔든 그 화면으로 돌아간다. 앱을 바로 열었으면 홈으로.
   const goBack = () => {
+    // 열려 있는 오버레이가 있으면 **그것부터** 닫는다. 화면 헤더의 뒤로가기와
+    // 안드로이드 소프트버튼이 같은 규칙을 따르게 한다 (S15P21A204-410).
+    if (closeTopOverlay()) return;
     if (typeof window !== 'undefined' && window.history.length > 1) router.back();
     else router.push(pagePaths.home);
   };

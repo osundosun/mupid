@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { api } from '@/lib/api/session';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import type { DailyReport } from '@/lib/api/endpoints';
 import { toImageSource } from '@/lib/platform/image';
 import { MupidMascot } from './mascot';
@@ -51,6 +52,8 @@ function fetchDay(date: string): Promise<void> {
 /** 리포트의 MUBTI 카드에 두는 버튼. 누르면 아래 대화상자가 열린다. */
 export function WeeklyMubtiButton({ today }: { today: DailyReport | null }) {
   const [open, setOpen] = useState(false);
+  // 뒤로가기로 닫히게 한다. 주 이동(◀▶)은 창 안의 상태라 뒤로가기와 무관하다.
+  useDismissableOverlay(open, () => setOpen(false));
   return <>
     <button type="button" className="weekly-mubti-button" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
       <CalendarDays aria-hidden="true" />이번 주 보기

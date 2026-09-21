@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Clock3, Search, X } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { useRecentSearches } from '@/hooks/use-recent-searches';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import { filterRecentSearches, matchKeyword } from '@/lib/recent-search';
 
 /**
@@ -50,6 +51,17 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
   const showNotice = !draft.trim() && !!notice;
   // 지우기가 실패했다면 치는 중이어도 알린다. 목록이 되돌아온 이유다.
   const showPanel = open && signedIn && (visible.length > 0 || showNotice || !!error);
+
+  /*
+   * 뒤로가기로 닫히게 한다 (S15P21A204-410). `showPanel` 을 그대로 쓴다 —
+   * 목록이 실제로 펼쳐진 동안에만 스택에 오르므로, 비로그인이나 빈 목록에서
+   * 뒤로가기가 이 패널에 먹히지 않는다.
+   *
+   * 전체 삭제를 한 번 더 묻는 중이면 **그 확인부터** 접는다. 그때 패널을
+   * 통째로 닫으면 되돌릴 수 없는 삭제를 눈앞에서 감추는 셈이 된다.
+   */
+  useDismissableOverlay(showPanel && confirming, () => setConfirming(false));
+  useDismissableOverlay(showPanel, () => { setOpen(false); setConfirming(false); });
 
   useEffect(() => {
     if (!open) return;

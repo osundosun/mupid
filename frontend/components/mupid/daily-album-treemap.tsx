@@ -4,6 +4,7 @@ import { formatListening } from '@/lib/report';
 import { resolveAlbumCover } from '@/lib/mupid-data';
 import { toImageSource } from '@/lib/platform/image';
 import { squarify } from '@/lib/treemap';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import type { ReportTrack } from '@/lib/api/endpoints';
 
 /** 제목을 얹을 만한 최소 타일 크기(%). 이보다 작으면 앨범아트만 보여 준다. */
@@ -69,6 +70,9 @@ export function DailyAlbumTreemap({
   const tiles = layout(tracks);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  // 타일을 누르면 뜨는 설명 팝업도 뒤로가기로 닫히게 한다 (S15P21A204-410).
+  // Escape·바깥클릭 핸들러는 그대로 남는다 — 셋이 같은 상태를 닫는다.
+  useDismissableOverlay(selectedId !== null, () => setSelectedId(null));
   const map = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const selected = tiles.find((tile) => tile.music_id === selectedId);
