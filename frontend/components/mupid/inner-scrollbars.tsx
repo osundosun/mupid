@@ -13,9 +13,9 @@ export function InnerScrollbars() {
       frame = 0;
       if (!media.matches) { tracked.forEach(el => el.classList.remove('custom-inner-scroll')); tracked.clear(); setBars([]); return; }
       const next: Bar[] = [];
-      const menuBounds = Array.from(document.querySelectorAll<HTMLElement>('.nav-account-panel, .recent-search-panel'))
+      const menuBounds = Array.from(document.querySelectorAll<HTMLElement>('.nav-account-panel, .recent-search-panel, .chat-panel'))
         .filter(menu => menu.getClientRects().length > 0)
-        .map(menu => menu.getBoundingClientRect());
+        .map(menu => ({ element: menu, bounds: menu.getBoundingClientRect() }));
       tracked.forEach(el => { if (!el.isConnected) { resize.unobserve(el); tracked.delete(el); } });
       document.body.querySelectorAll<HTMLElement>('*').forEach(el => {
         if (el.closest('[data-custom-scrollbar], .sky-cursor-overlay, .page-scrollbar') || ['INPUT','SVG'].includes(el.tagName)) return;
@@ -67,7 +67,8 @@ export function InnerScrollbars() {
           // Temporarily hide intersecting tracks while the menu is open.
           const x = h ? left : right - 10;
           const y = h ? bottom - 10 : top;
-          if (menuBounds.some(menu => x < menu.right && x + (h ? length : 10) > menu.left &&
+          if (menuBounds.some(({ element, bounds: menu }) => !element.contains(el) &&
+            x < menu.right && x + (h ? length : 10) > menu.left &&
             y < menu.bottom && y + (h ? 10 : length) > menu.top)) continue;
           const size = h ? el.clientWidth : el.clientHeight;
           const total = h ? el.scrollWidth : el.scrollHeight;
@@ -91,7 +92,7 @@ export function InnerScrollbars() {
     schedule();
     return () => { cancelAnimationFrame(frame); observer.disconnect(); resize.disconnect(); tracked.forEach(el => el.classList.remove('custom-inner-scroll')); document.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule); document.removeEventListener('pointerover', schedule); media.removeEventListener('change', schedule); };
   }, []);
-  return <>{bars.map((bar, i) => createPortal(<div data-custom-scrollbar="" className="inner-scrollbar" style={{ left: bar.x, top: bar.y, width: bar.horizontal ? bar.length : 10, height: bar.horizontal ? 10 : bar.length }}
+  return <>{bars.map((bar, i) => createPortal(<div data-custom-scrollbar="" data-chat-scroll={bar.el.closest('.chat-panel') ? 'true' : undefined} className="inner-scrollbar" style={{ left: bar.x, top: bar.y, width: bar.horizontal ? bar.length : 10, height: bar.horizontal ? 10 : bar.length }}
     ref={node => {
       if (!node) return;
       const wheel = (event: WheelEvent) => { event.preventDefault(); event.stopPropagation(); const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bar.length : 1; bar.el.scrollBy({ top: bar.horizontal ? 0 : event.deltaY * scale, left: (bar.horizontal ? event.deltaY || event.deltaX : event.deltaX) * scale, behavior: 'instant' }); };

@@ -235,6 +235,15 @@ html.dark .mupid-shell .chat-panel :is(.chat-source,.chat-symbol,.message-body,.
 html.dark .mupid-shell .chat-panel .chat-message.user .message-body {
   background: #303946 !important;
 }
+html.dark .mupid-shell .chat-panel .message-body { background: transparent !important; }
+html.dark .mupid-shell .chat-panel .message-body > p {
+  background: #272727 !important;
+  border-color: #414141 !important;
+  color: #ddd !important;
+}
+html.dark .mupid-shell .chat-panel .chat-message.user .message-body > p {
+  background: #303946 !important;
+}
 html.dark .mupid-shell .chat-panel :is(.chat-handwriting,.chat-track-reason) { color: #d1d1d1; }
 html.dark .mupid-shell .chat-panel .chat-header :is(p,small),
 html.dark .mupid-shell .chat-panel .chat-source :is(p,small) { color: #aaa; }
@@ -275,6 +284,14 @@ html.dark .sky-dialog > [data-slot='dialog-close'] {
   box-shadow: none;
 }
 html.dark .weekly-arrow:hover { background: #414141 !important; }
+html.dark .mupid-shell .track-row:is(.is-playing,.is-selected,:hover) {
+  background: #2c2c2c !important;
+  border-color: #454545 !important;
+  box-shadow: none;
+}
+html.dark .mupid-shell .track-row:is(.is-playing,.is-selected) .track-title-link strong { color: #f0f0f0; }
+html.dark .mupid-shell .track-row:is(.is-playing,.is-selected) .track-artist-link { color: #bdbdbd; }
+html.dark .mupid-shell .explore-mobile-list .track-row.is-playing::before { background: #2c2c2c; }
 html.dark .mupid-shell .queue-dock :is(.queue-item,.track-row) {
   background: transparent !important;
   border-color: #353535 !important;
