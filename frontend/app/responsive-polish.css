@@ -822,16 +822,29 @@
 .mupid-shell .chat-launcher > svg { width: 25px; height: 25px; color: #fff; stroke-width: 1.8; }
 
 /* PC 헤더의 위쪽 모서리를 본문 프레임과 어울리도록 둥글게 한다. */
+.app-header-frame { display: contents; }
 @media (min-width: 768px) {
   .mupid-shell:not(.page-welcome) {
+    padding-top: 0;
     background:
       radial-gradient(ellipse at 92% 3%, #fff1f88f, transparent 42%),
       linear-gradient(180deg, #e6f3ffd9, #f5faffed 68%);
     background-attachment: fixed;
   }
-  .mupid-shell .app-header {
+  .mupid-shell .app-header-frame {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    padding-top: 24px;
+    background: linear-gradient(100deg, #eaf4ff, #f2f0fa);
+  }
+  .mupid-shell .app-header-frame .app-header {
+    position: relative;
+    top: auto;
     border-radius: 28px 28px 0 0;
     background: #fbfdff;
+    box-shadow: none;
   }
 }
 
@@ -2121,9 +2134,51 @@
   .mupid-shell .desktop-song-actions > .icon-button,
   .mupid-shell .desktop-audio-options > .icon-button {
     width: 36px;
-    height: 40px;
-    min-width: 0;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 6px;
+    box-sizing: border-box;
+    border-radius: 50%;
   }
   .mupid-shell .desktop-audio-options label { width: 100%; max-width: none; }
   .mupid-shell .desktop-audio-options input { flex: 1; min-width: 0; width: 100%; }
+}
+
+.team-secret-credit {
+  position: fixed;
+  z-index: 100;
+  left: 50%;
+  bottom: calc(190px + var(--safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 18px 22px;
+  border: 1px solid #dce7f6;
+  border-radius: 24px;
+  background: #f8fbfff5;
+  box-shadow: 0 8px 30px #5275a529;
+  color: #617da6;
+  pointer-events: none;
+}
+.team-secret-credit strong { font-size: 13px; font-weight: 500; }
+.team-secret-credit p { margin: 6px 0 0; font-size: 14px; line-height: 1.8; }
+.team-secret-record {
+  display: grid; place-items: center; flex: 0 0 64px;
+  width: 64px; height: 64px; border-radius: 50%;
+  background: repeating-radial-gradient(circle, #354355 0 2px, #455368 3px 4px);
+}
+.team-secret-record span {
+  display: grid; place-items: center; width: 34px; height: 34px;
+  border-radius: 50%; background: #b0d3fa; color: #38577f; font-size: 10px; font-weight: 700;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .team-secret-credit { animation: team-secret-reveal 6s ease both; }
+  @keyframes team-secret-reveal {
+    0%, 100% { opacity: 0; translate: 0 8px; }
+    10%, 85% { opacity: 1; translate: 0 0; }
+  }
 }

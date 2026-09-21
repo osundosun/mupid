@@ -150,6 +150,13 @@ export function MupidApp() {
 function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   const m = useMupid(bootstrap);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [teamCredits, setTeamCredits] = useState(false);
+  const logoTaps = useRef({ count: 0, last: 0 });
+  useEffect(() => {
+    if (!teamCredits) return;
+    const timer = window.setTimeout(() => setTeamCredits(false), 6000);
+    return () => window.clearTimeout(timer);
+  }, [teamCredits]);
   const photo = useStore(profilePhotoStore, s => s.url);
   const ownPhoto = useStore(profilePhotoStore, s => !s.isDefault);
   const accountRef = useRef<HTMLDivElement>(null);
@@ -201,11 +208,22 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
         </main>
       ) : (
         <>
+          <div className="app-header-frame">
           <header className="app-header">
             <button
               className="brand"
               aria-label="뮤피드 홈"
-              onClick={() => m.go('home')}
+              onClick={() => {
+                const now = Date.now();
+                const taps = logoTaps.current;
+                taps.count = now - taps.last < 900 ? taps.count + 1 : 1;
+                taps.last = now;
+                if (taps.count === 5) {
+                  taps.count = 0;
+                  setTeamCredits(true);
+                }
+                m.go('home');
+              }}
             >
               <Brand />
             </button>
@@ -238,6 +256,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
               </div>}
             </div>
           </header>
+          </div>
           <div className="app-layout">
             <aside className="side-nav">
               <div className="side-sticky">
@@ -361,6 +380,10 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
         </>
       )}
       <AppDialogs model={m} />
+      {teamCredits && <div className="team-secret-credit" role="status">
+        <span className="team-secret-record" aria-hidden="true"><span>A204</span></span>
+        <div><strong>이 음악 공간을 만든 사람들</strong><p>이규원 · 김건우 · 안규리<br />정예준 · 정준호</p></div>
+      </div>}
       <ArtistInfo model={m} />
       {/* 업데이트 안내는 여기 없다 — `app/layout.tsx`(root)로 옮겼다.
           인증 뒤에만 도는 이 트리 안에 두면 로그인 전 사용자가 새 판을 못 본다. */}
