@@ -93,14 +93,18 @@ const isAlreadySubmitted = (error: unknown): boolean =>
  *
  * `display_name`을 우선적으로 사용하며, 없을 경우 `name`을 씁니다.
  */
-export const namesOf = (options: CodeOption[]): string[] => options.map((o) => o.display_name || o.name);
+const optionName = (option: CodeOption): string =>
+  (option.display_name?.trim() || option.name.trim()).normalize('NFC');
+
+export const namesOf = (options: CodeOption[]): string[] =>
+  [...new Set(options.map(optionName).filter(Boolean))];
 
 /**
  * 이름을 코드 번호로 바꾼다. 서버가 모르는 이름은 버린다 — 예전 브라우저 저장분에
  * 지금은 없는 항목이 남아 있을 수 있다.
  */
 const idsOf = (options: CodeOption[], names: string[]): number[] => {
-  const byName = new Map(options.map((o) => [o.display_name || o.name, o.code_id]));
+  const byName = new Map(options.map((o) => [optionName(o), o.code_id]));
   const ids: number[] = [];
   for (const name of names) {
     const id = byName.get(name);
