@@ -264,6 +264,13 @@ export function useMupid(bootstrap: Bootstrap) {
   const playedInCycle = useRef<Set<string>>(new Set());
   const requestId = useRef(0);
   const messageEndRef = useRef<HTMLDivElement>(null);
+  /**
+   * 대화 스크롤 영역(`.chat-messages`) 자체. 새 말이 오면 여기를 끝으로 내린다.
+   *
+   * `messageEndRef`(끝을 가리키는 sentinel)는 곡 카드까지 온전히 보이게 하지 못한다 —
+   * 실측 546 / 564 (`S15P21A204-409`). 패널이 이 참조를 `ref` 로 직접 단다.
+   */
+  const chatBoxRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatButtonRef = useRef<HTMLButtonElement>(null);
   /** 진행 중인 AI 요청. 화면을 떠나거나 다음 요청이 오면 끊는다. */
@@ -397,12 +404,22 @@ export function useMupid(bootstrap: Bootstrap) {
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
   }, [chatOpen]);
+  /**
+   * 대화가 열리거나 새 말이 오가면 끝으로 내린다 (S15P21A204-409).
+   *
+   * **`smooth` 를 쓰지 않는다.** 이 환경에서 `scrollIntoView({behavior:'smooth'})` 는
+   * 곧바로 아무것도 하지 않고 끝났다(3.5초를 기다려도 `scrollTop` 이 0 이었다).
+   * 그래서 곡 카드가 화면 밖에 남았다 — 실측값은 `chat.tsx` 주석과 커밋 메시지에 있다.
+   * 같은 일이 두 곳에서 벌어지면 원인을 찾느라 두 번 헤매게 되므로 여기도 함께 막는다.
+   *
+   * 패널의 스크롤 영역(`.chat-messages`)을 직접 내린다. 끝을 가리키는 sentinel 은
+   * `block:'end'` 로도 끝까지 가지 못한다(546 / 564 — `chat.tsx` 참고).
+   */
   useEffect(() => {
-    if (chatOpen)
-      messageEndRef.current?.scrollIntoView({
-        block: 'nearest',
-        behavior: 'smooth',
-      });
+    if (!chatOpen) return;
+    const box = chatBoxRef.current;
+    if (!box) return;
+    box.scrollTop = box.scrollHeight;
   }, [chatOpen, messages, chatLoading]);
 
   /**
@@ -1704,6 +1721,9 @@ export function useMupid(bootstrap: Bootstrap) {
             role: 'assistant',
             text: answer.text,
             tracks: answer.tracks.length ? answer.tracks : undefined,
+            // 툴 호출 기록 (S15P21A204-409). **비어 있으면 넣지 않는다** — 툴 호출이 없던
+            // 턴에 화면이 "도구 호출" 줄을 그리면 거짓말이 된다.
+            toolCalls: answer.toolCalls.length ? answer.toolCalls : undefined,
           },
         ]);
       } catch (error) {
@@ -1938,6 +1958,7 @@ export function useMupid(bootstrap: Bootstrap) {
     showAllSimilar,
     setShowAllSimilar,
     messageEndRef,
+    chatBoxRef,
     chatInputRef,
     chatButtonRef,
     play,
