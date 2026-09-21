@@ -7,10 +7,12 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import com.osundosun.mupid.api.code.MoodCodeIds;
 import com.osundosun.mupid.api.code.entity.Code;
 import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.report.entity.Mubti;
@@ -336,6 +338,119 @@ class BootstrapSeedTest {
             .classA(MubtiClass.A.V).classB(MubtiClass.B.T)
             .classC(MubtiClass.C.F).classD(MubtiClass.D.C)
             .title("t").subtitle("s").description("d").build())).isEqualTo("VTFC");
+    }
+
+    // ------------------------------------------------------ 무드 코드 32~48
+
+    @Test
+    @DisplayName("무드 17종은 code_id 32~48 에 선언한 차례대로 놓인다")
+    void moodTargetsAreNumberedFrom32() {
+        Map<Integer, BootstrapRunner.CodeSeed> targets = BootstrapRunner.moodTargets();
+
+        assertThat(targets).hasSize(17);
+        assertThat(targets.keySet()).containsExactlyElementsOf(
+            java.util.stream.IntStream.rangeClosed(32, 48).boxed().toList());
+        assertThat(targets.get(32).name()).isEqualTo("serene");
+        assertThat(targets.get(40).name()).isEqualTo("melancholic");
+        assertThat(targets.get(47).displayName()).isEqualTo("고요한");
+        assertThat(targets.get(48).name()).isEqualTo("exciting");
+    }
+
+    /**
+     * 32~48 이 규격대로면 한 문장도 실행하지 않는다. 이 검사가 헐거우면 멀쩡한 운영
+     * DB 를 기동마다 다시 쓴다.
+     */
+    @Test
+    @DisplayName("32~48 이 규격대로면 고칠 번호가 없다")
+    void nothingToFixWhenTargetsAgree() {
+        Map<Integer, BootstrapRunner.CodeSeed> targets = BootstrapRunner.moodTargets();
+
+        assertThat(BootstrapRunner.mismatchedMoodIds(moodRows(targets), targets)).isEmpty();
+    }
+
+    /**
+     * <b>32~48 밖의 무드 행은 보지 않는다.</b> 곡을 추가로 전처리하면서 무드가 늘 수 있고,
+     * 그 번호는 이 배치가 정하지 않는다 — 있다고 해서 고칠 일이 생겨서는 안 된다.
+     */
+    @Test
+    @DisplayName("32~48 밖의 무드가 있어도 고칠 번호가 생기지 않는다")
+    void moodsOutsideTheRangeAreIgnored() {
+        Map<Integer, BootstrapRunner.CodeSeed> targets = BootstrapRunner.moodTargets();
+
+        List<Code> rows = new java.util.ArrayList<>(moodRows(targets));
+        rows.add(mood(124, "고요한", "고요한"));          // 지난 중복 적재로 남은 행
+        rows.add(mood(200, "nostalgic", "아련한"));      // 전처리가 새로 늘린 무드
+
+        assertThat(BootstrapRunner.mismatchedMoodIds(rows, targets)).isEmpty();
+    }
+
+    /**
+     * 어긋난 자리만 골라낸다 — 없는 번호, 다른 용도가 쓰는 번호, 이름이나 표시명이
+     * 다른 번호.
+     */
+    @Test
+    @DisplayName("어긋난 번호만 골라낸다")
+    void onlyMismatchedIdsAreReported() {
+        Map<Integer, BootstrapRunner.CodeSeed> targets = BootstrapRunner.moodTargets();
+
+        List<Code> rows = new java.util.ArrayList<>(moodRows(targets));
+        rows.removeIf(row -> row.getCodeId() == 44);                  // 없는 번호
+        rows.set(0, mood(32, "serene", "잔잔"));                       // 표시명이 다르다
+        rows.set(1, mood(33, "uplifting-old", "벅찬"));                // 이름이 다르다
+        rows.set(2, Code.builder().codeId(34).codeType(CodeType.GENRE)
+            .codeName("ethereal").displayName("몽환적인").build());     // 용도가 다르다
+
+        assertThat(BootstrapRunner.mismatchedMoodIds(rows, targets))
+            .containsExactly(32, 33, 34, 44);
+    }
+
+    /**
+     * 시드 목록과 동결 구간이 같은 것을 가리키는지 본다.
+     *
+     * <p>둘은 서로 모른 채로 같은 것을 말한다 — {@link BootstrapRunner#CODE_SEEDS} 는
+     * 무엇을 넣을지, {@link MoodCodeIds} 는 온보딩이 어느 번호를 받아들일지. 한쪽만
+     * 고치면 <b>오류 없이</b> 어긋난다: 구간만 넓히면 빈 번호를 받고, 시드만 늘리면
+     * 새로 넣은 무드가 온보딩 선택지에 나오지 않는다.
+     */
+    @Test
+    @DisplayName("동결 구간과 무드 시드 목록이 같은 범위를 가리킨다")
+    void frozenRangeMatchesSeeds() {
+        Map<Integer, BootstrapRunner.CodeSeed> targets = BootstrapRunner.moodTargets();
+
+        assertThat(targets).hasSize(MoodCodeIds.COUNT);
+        assertThat(targets.keySet()).containsExactlyElementsOf(
+            java.util.stream.IntStream.rangeClosed(MoodCodeIds.FIRST, MoodCodeIds.LAST)
+                .boxed().toList());
+    }
+
+    /** 경계는 포함이다 — 32 와 48 도 동결 구간 안이다. */
+    @Test
+    @DisplayName("동결 구간의 경계는 포함이고, 중복 적재분은 밖이다")
+    void frozenRangeBoundaries() {
+        assertThat(MoodCodeIds.isFrozen(32)).isTrue();
+        assertThat(MoodCodeIds.isFrozen(48)).isTrue();
+        assertThat(MoodCodeIds.isFrozen(31)).isFalse();
+        assertThat(MoodCodeIds.isFrozen(49)).isFalse();
+
+        // 운영에 남아 있는 중복 적재분. 온보딩이 받아들이면 안 된다.
+        assertThat(MoodCodeIds.isFrozen(98)).isFalse();
+        assertThat(MoodCodeIds.isFrozen(124)).isFalse();
+        assertThat(MoodCodeIds.isFrozen(132)).isFalse();
+    }
+
+    private static List<Code> moodRows(Map<Integer, BootstrapRunner.CodeSeed> targets) {
+        return targets.entrySet().stream()
+            .map(entry -> mood(entry.getKey(), entry.getValue().name(), entry.getValue().displayName()))
+            .toList();
+    }
+
+    private static Code mood(int codeId, String name, String displayName) {
+        return Code.builder()
+            .codeId(codeId)
+            .codeType(CodeType.MOOD)
+            .codeName(name)
+            .displayName(displayName)
+            .build();
     }
 
     /**
