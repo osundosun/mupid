@@ -170,10 +170,11 @@
     left: 0;
     right: 0;
     bottom: 0;
-    /* 좁은 화면에서도 AI 런처 위다. 막(46)과 짝을 이룬다. */
-    z-index: 47;
+    /* 헤더(60)까지 덮되 AI 대화(70)와 확인 대화상자(85)는 위에 둔다. */
+    z-index: 66;
     width: auto;
-    max-height: min(78vh, 680px);
+    max-height: min(78dvh, 680px);
+    background: #fbfdff;
     border-radius: 18px 18px 0 0;
     border-bottom: none;
     padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -227,7 +228,7 @@
     display: block;
     position: fixed;
     inset: 0;
-    z-index: 46;
+    z-index: 65;
     border: 0;
     padding: 0;
     background: #1b2c4a3d;
@@ -258,7 +259,18 @@
   }
 
   .queue-dock-body {
+    min-height: 0;
     padding: 8px 10px 16px;
+  }
+
+  html:has(.queue-dock),
+  body:has(.queue-dock) {
+    overflow: hidden;
+  }
+
+  /* 배경 가사 등의 body 포털 스크롤바가 시트 위로 나오지 않게 한다. */
+  body:has(.queue-dock) .inner-scrollbar {
+    display: none;
   }
 }
 
