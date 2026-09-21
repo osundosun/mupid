@@ -98,6 +98,7 @@ spec:
             - {name: server, mountPath: /etc/clickhouse-server/config.d/00-cluster.xml, subPath: 00-cluster.xml, readOnly: true}
             - {name: server, mountPath: /etc/clickhouse-server/config.d/01-keeper.xml, subPath: 01-keeper.xml, readOnly: true}
             - {name: server, mountPath: /etc/clickhouse-server/config.d/02-server.xml, subPath: 02-server.xml, readOnly: true}
+            - {name: server, mountPath: /etc/clickhouse-server/config.d/03-system-logs.xml, subPath: 03-system-logs.xml, readOnly: true}
             - {name: server, mountPath: /etc/clickhouse-server/config.d/10-macros.xml, subPath: 10-macros.xml, readOnly: true}
             - {name: users, mountPath: /etc/clickhouse-server/users.d/00-profile.xml, subPath: 00-profile.xml, readOnly: true}
             - {name: users, mountPath: /etc/clickhouse-server/users.d/10-mupid-user.xml, subPath: 10-mupid-user.xml, readOnly: true}
