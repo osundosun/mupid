@@ -438,11 +438,15 @@ mod android_sink {
     use super::{Kind, MESSAGE_LIMIT};
     use std::sync::OnceLock;
     use tauri::plugin::PluginHandle;
-    use tauri::Runtime;
 
     /// `lib.rs` 의 `setup` 에서 넣는다. **설치 전에 부르면 조용히 아무 일도
     /// 일어나지 않는다** — 기동 순서상 그 전에 보고가 날 수 있고, 그때
     /// 훅을 세우지 않는 편이 안전하다(등록 전 부팅 보고는 로그로만 남는다).
+    ///
+    /// **`Runtime` 을 import 하지 않는다.** 이 `static` 은 generic `R` 을 담을 수
+    /// 없어 `Wry` 로 구체화돼 있고, 그래서 `R: Runtime` 바운드가 필요 없다.
+    /// (`use tauri::Runtime;` 이 여기 있었지만 아무 것도 바인딩하지 않아
+    /// 안드로이드 빌드에서 `unused_imports` 경고를 냈다.)
     static SINK: OnceLock<PluginHandle<tauri::Wry>> = OnceLock::new();
 
     pub fn register(handle: PluginHandle<tauri::Wry>) {

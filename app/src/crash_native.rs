@@ -24,13 +24,39 @@
 
 #![cfg_attr(not(target_os = "android"), allow(dead_code, unused_imports))]
 
-use tauri::Runtime;
-
 /// 안드로이드 쪽 Crashlytics 플러그인을 붙인다.
 ///
 /// 부르는 자리는 `lib.rs` 의 `Builder::plugin(crash_native::init())` 이다 —
 /// `update_native::init()` 옆이다.
-pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
+///
+/// ## 왜 `update_native.rs` 와 달리 **`R` 이 아니라 `tauri::Wry` 인가**
+///
+/// `update_native.rs` 는 `init<R: Runtime>()` 이다. 핸들을 `app.manage()` 로 넣은
+/// **generic 컨테이너**(`UpdatePlugin<R>`)에 담기 때문이다 — 꺼낼 때
+/// `try_state::<UpdatePlugin<tauri::Wry>>()` 로 구체 타입을 적어 준다
+/// (`commands.rs`).
+///
+/// 이쪽은 다르다. 핸들을 **`crash.rs` 의 `static SINK`** 에 넣어야 한다 —
+/// 패닉 훅·로그 브리지·JS 커맨드가 전부 그 `static` 을 보기 때문이다.
+/// **`static` 은 generic 을 담을 수 없다**(모노모픽화 대상이 아니다). 그래서
+/// `SINK` 는 `OnceLock<PluginHandle<tauri::Wry>>` 이고, `register_sdk` 도
+/// `PluginHandle<tauri::Wry>` 를 받는다.
+///
+/// 그런데 여기서 `init<R: Runtime>()` 이라고 선언하면 **모순이 된다**:
+/// `register_sdk(handle)` 에 넘기는 순간 `api` 가 `PluginApi<Wry>` 로 추론되고,
+/// `builder.build()` 가 `TauriPlugin<Wry>` 를 내는데 **반환 타입은 `TauriPlugin<R>`**
+/// 이다 → `error[E0308]: mismatched types`.
+///
+/// **이 오류는 데스크톱에서 보이지 않는다.** `builder.setup(...)` 이
+/// `#[cfg(target_os = "android")]` 라 데스크톱에서는 `Builder::new(...)` 만 남아
+/// `R` 이 자유롭게 잡힌다. 그래서 `cargo test`(데스크톱)는 통과하고
+/// **안드로이드 빌드에서만** 깨진다 — 실제로 master 의 `app-build` 가 이것으로
+/// 실패했다(2026-09-21, job 598113).
+///
+/// `Wry` 는 이 앱의 실제 런타임이다. `lib.rs` 가 `tauri::Builder::default()` 를
+/// 쓰고, `commands.rs` 도 `UpdatePlugin<tauri::Wry>` 를 꺼낸다. 그래서
+/// **generic 을 주장하지 않고 `Wry` 를 정직하게 적는 것**이 맞다.
+pub fn init() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     let builder = tauri::plugin::Builder::new("mupid-crashlytics");
     #[cfg(target_os = "android")]
     let builder = builder.setup(|_app, api| {
