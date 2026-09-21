@@ -77,6 +77,35 @@ else
   printf 'MUPID_CRASHLYTICS_* 가 없다 — 예외 보고 없이 굽는다(비활성이 기본이다)\n'
 fi
 
+# ── google-services.json 을 CI 에서 만든다 ────────────────────────────
+#
+# 왜 필요한가: `383` 2단계에서 Firebase Crashlytics SDK 를 붙였다
+# (`app/gen/android/**` 의 google-services 플러그인, MR !200). 그 플러그인은
+# **`app/gen/android/app/google-services.json` 을 요구하고, 없으면 기본 전략이
+# ERROR 라 빌드를 실패시킨다.**
+#
+# 그런데 그 파일은 `app/.gitignore:29` 가 막는다 — 자격증명(프로젝트 번호·API 키·
+# 앱 ID)이라 커밋할 수 없다. 그래서 **CI 체크아웃에는 존재하지 않는다.**
+# 이 주입이 없으면 master 배포의 `app-build` job 이 그대로 죽는다.
+#
+# **키스토어와 완전히 같은 패턴을 쓴다**(아래 `ANDROID_KEYSTORE_BASE64` 참고).
+# 값을 base64 로 `MUPID_APP_ENV` 에 넣으면 여기서 파일로 되돌린다.
+#   만드는 법: `base64 -w0 app/gen/android/app/google-services.json`
+#
+# **없으면 조용히 넘어가지 않는다.** 넘어가면 google-services 플러그인이 ERROR 로
+# 잡아 주긴 하지만, 그 오류는 "파일이 없다" 이지 "왜 없는지" 를 말해 주지 않는다.
+# 여기서 먼저 짚어 준다.
+GOOGLE_SERVICES_JSON_BASE64=$(read_value GOOGLE_SERVICES_JSON_BASE64)
+if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+  umask 077
+  printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/gen/android/app/google-services.json
+  printf 'google-services.json 을 MUPID_APP_ENV 에서 복원했다 (Crashlytics SDK 활성)\n'
+else
+  printf '경고: MUPID_APP_ENV 에 GOOGLE_SERVICES_JSON_BASE64 가 없다\n' >&2
+  printf '      google-services 플러그인이 파일을 못 찾아 빌드를 실패시킨다(기본 전략 ERROR).\n' >&2
+  printf '      base64 -w0 app/gen/android/app/google-services.json 의 값을 넣어라.\n' >&2
+fi
+
 # ── 빌드 타임스탬프가 곧 버전이다 ──────────────────────────────────
 # semver 를 쓰지 않는다(`tauri.conf.json` 의 version 은 0.1.0 그대로 둔다).
 # 두 소비자가 **같은 값**을 봐야 한다.
