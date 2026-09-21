@@ -32,7 +32,7 @@ function CommentAvatar({ comment }: { comment: TrackComment }) {
   return <img className="comment-avatar-image" src={src} alt="" onError={() => { if (src !== DEFAULT_PROFILE_PHOTO) setFailed(src); }} />;
 }
 
-export function TrackComments({ model: m, children }: { model: MupidModel; children?: ReactNode }) {
+export function TrackComments({ model: m, children, controlsAside }: { model: MupidModel; children?: ReactNode; controlsAside?: ReactNode }) {
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
   if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
@@ -204,7 +204,7 @@ export function TrackComments({ model: m, children }: { model: MupidModel; child
       </div>
       {/* 팝오버가 파형을 덮으면 숫자만 남아 무슨 시간인지 알 수 없다. 이름표를 붙인다. */}
       <div className="time-labels"><span aria-label={`현재 재생 시간 ${formatTime(m.time)}`}>{formatTime(m.time)}</span><span aria-label={`전체 재생 시간 ${formatTime(active.duration)}`}>{formatTime(active.duration)}</span></div>
-      <PlayerControls model={m} />
+      {controlsAside ? <div className="player-controls-row"><PlayerControls model={m} />{controlsAside}</div> : <PlayerControls model={m} />}
       <div className="player-quick-actions" aria-label="좋아요와 곡 저장, 댓글">
         {children}
         <button type="button" className="moment-panel-toggle" aria-expanded={selectedTime !== null} onClick={() => {

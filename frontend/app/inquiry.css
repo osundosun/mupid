@@ -33,3 +33,29 @@
   flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
   height: 46px; min-height: 46px; margin: 0; padding: 0 18px; border-radius: 14px; font-size: 15px; font-weight: 600; line-height: 1;
 }
+
+/* Position within the visible area rather than centering behind the keyboard. */
+@media (max-width: 767px), (pointer: coarse) {
+  .sky-dialog.inquiry-dialog[data-slot='dialog-content'] {
+    top: calc(var(--visual-viewport-top, 0px) + 12px) !important;
+    bottom: auto !important;
+    margin: 0 auto !important;
+    max-height: calc(var(--visual-viewport-height, 100dvh) - 24px) !important;
+    padding: 20px;
+    scroll-padding-block: 16px 76px;
+  }
+  .inquiry-dialog textarea {
+    font-size: 16px;
+    min-height: 88px;
+    height: clamp(88px, calc(var(--visual-viewport-height, 100dvh) - 290px), 180px);
+    max-height: 180px;
+    resize: none;
+  }
+  .inquiry-dialog .inquiry-actions[data-slot='dialog-footer'] {
+    position: sticky;
+    bottom: -20px;
+    z-index: 1;
+    padding: 10px 0 16px;
+    background: #f9fcff;
+  }
+}

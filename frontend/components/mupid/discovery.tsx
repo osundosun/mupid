@@ -2,6 +2,7 @@
 import { VinylRecord } from './vinyl-record';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Lyrics } from './lyrics';
+import { VolumeSlider } from './volume-slider';
 import { TrackMenu } from './track-menu';
 import { TrackInfoDialog } from './track-info-dialog';
 import { TrackComments } from './track-comments';
@@ -20,6 +21,7 @@ import {
   Play,
   Search,
   Sparkles,
+  Volume2,
   X,
 } from 'lucide-react';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
@@ -125,7 +127,11 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             <Lyrics key={active.id} track={active} time={m.time} expanded onSeek={(seconds) => m.seek(seconds)} />
           </div>}
           {/* 줄은 `TrackComments` 가 그린다 — 같은 줄에 설 댓글 토글이 그쪽 상태를 쓴다. */}
-          <TrackComments key={active.id} model={m}>
+          <TrackComments key={active.id} model={m} controlsAside={!isMobile && <label className="player-desktop-volume">
+            <Volume2 size={20} aria-hidden="true" />
+            <span className="sr-only">볼륨</span>
+            <VolumeSlider />
+          </label>}>
             <button className="secondary-button quick-like" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
               <Heart className="pink" fill={m.liked.includes(active.id) ? 'currentColor' : 'none'} />
               좋아요

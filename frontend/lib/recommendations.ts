@@ -92,6 +92,7 @@ export async function fetchTodayMoments(
       ...toTrack(row.music),
       mood: group.mood || '',
       reason: row.reason ?? '',
+      recommendationReason: row.reason?.trim() || group.reason?.trim() || undefined,
     })),
   };
 }

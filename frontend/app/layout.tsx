@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import './dark-mode.css';
+import { ThemeProvider } from '@/components/mupid/theme';
 import { UpdatePrompt } from '@/components/mupid/update-prompt';
 import { SkyCursor } from '@/components/mupid/sky-cursor';
 import { PageScrollbar } from '@/components/mupid/page-scrollbar';
@@ -97,7 +99,7 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body id="page-content" className="font-sans antialiased">
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
         {/*
           업데이트 안내를 **root 에 둔다.** 인증이 필요한 `(music)` 그룹 안에
           두면 로그인 전에는 새 판이 있어도 알 수 없다 — 실기기에서 확인했다

@@ -1,4 +1,5 @@
 'use client';
+import { ThemeToggle } from '@/components/mupid/theme';
 import { ArtistInfo } from '@/components/mupid/artist-info';
 import { useEffect, useRef, useState } from 'react';
 import { mupidService } from '@/lib/services';
@@ -252,6 +253,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
               </button>
               {accountOpen && <div id="nav-account-panel" className="nav-account-panel">
                 <button onClick={() => { setAccountOpen(false); m.go('profile'); }}>마이페이지</button>
+                <ThemeToggle />
                 <button onClick={() => { setAccountOpen(false); void m.signOutDemo(); }}>로그아웃</button>
               </div>}
             </div>

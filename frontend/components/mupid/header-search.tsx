@@ -24,8 +24,10 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
    * 치고 있는 글자. 검색은 엔터나 검색 버튼으로 **제출할 때만** 확정되므로,
    * 그 전까지는 앱의 검색어(`m.query`)를 건드리지 않고 여기에만 담는다.
    */
-  const [draft, setDraft] = useState(m.query);
-  const [applied, setApplied] = useState(m.query);
+  const visibleQuery = m.page === 'search' ? m.query : '';
+  const [draft, setDraft] = useState(visibleQuery);
+  const [applied, setApplied] = useState(visibleQuery);
+  const [draftPage, setDraftPage] = useState(m.page);
   const root = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const signedIn = m.demoSession?.kind === 'authenticated';
@@ -36,9 +38,10 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
 
   // 바깥에서 검색어가 바뀌면(탐색 화면의 "검색 해제" 등) 입력창도 따라간다.
   // 그리는 중에 맞추는 편이 효과로 미루는 것보다 한 번 덜 그린다.
-  if (applied !== m.query) {
-    setApplied(m.query);
-    setDraft(m.query);
+  if (applied !== visibleQuery || draftPage !== m.page) {
+    setApplied(visibleQuery);
+    setDraft(visibleQuery);
+    setDraftPage(m.page);
   }
 
   // 치는 동안에는 안내 문구를 띄우지 않는다. 겹치는 게 없으면 그냥 닫힌다 —
@@ -81,7 +84,7 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
     setConfirming(false);
     setDraft(keyword.trim());
     m.submitSearch(keyword);
-    m.go('search');
+    m.go('search', true);
   };
 
   return <div className="nav-search-area" ref={root}>

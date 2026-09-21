@@ -1,4 +1,5 @@
 'use client';
+import { ThemeToggle } from './theme';
 import { WeeklyMubtiButton } from './listening-calendar';
 import { DailyAlbumTreemap } from './daily-album-treemap';
 
@@ -727,6 +728,7 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
       {m.demoSession && (
         <section className="profile-settings-card" aria-label="계정 설정">
           <h2>계정 설정</h2>
+          <ThemeToggle />
           <NicknameForm key={m.nickname} model={m} />
           <PasswordForm />
           {m.demoSession?.kind === 'authenticated' && <WithdrawAccount model={m} />}
@@ -793,7 +795,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
     ? options.genres.filter((genre) => genre.toLowerCase().includes(query))
     : options.genres;
   return (
-    <div className="welcome-page">
+    <div className={`welcome-page${m.demoSession && !m.onboardingSubmitted ? ' is-onboarding' : ''}`}>
       {(step > 0 || m.onboardingSubmitted) && <button
         className="icon-button welcome-back"
         aria-label={step > 0 ? '이전 단계로 돌아가기' : '홈으로 돌아가기'}
@@ -803,6 +805,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
         <ChevronLeft />
       </button>}
       <Brand className="welcome-logo" />
+      <div className="welcome-theme"><ThemeToggle /></div>
       {!m.demoSession || m.onboardingSubmitted ? (
         <div className="welcome-composition">
           <div className="welcome-copy">
@@ -921,7 +924,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
           </fieldset>}
           {step === 1 && <fieldset key="moods" className="onboarding-choice-group">
           <legend>좋아하는 분위기 <small>하나 이상 · 여러 개 선택 가능</small></legend>
-          <div className="filter-chips wrap">
+          <div className="filter-chips wrap onboarding-scroll">
             {options.moods.map((mood) => (
               <button
                 type="button"
@@ -942,11 +945,13 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             ))}
           </div>
           </fieldset>}
+          <div className="onboarding-footer">
           <p>{step === 0 ? '좋아하는 장르를 하나 이상 선택해 주세요.' : '좋아하는 분위기를 하나 이상 선택해 주세요.'}</p>
           {error && <p role="alert">{error}</p>}
           <button className="primary-button wide" disabled={busy || (step === 0 ? !selectedGenres.length : !selectedMoods.length)}>
             {busy ? '취향 저장 중…' : step < 1 ? '다음' : '음악 둘러보기'} <ChevronRight />
           </button>
+          </div>
         </form>
       )}
     </div>

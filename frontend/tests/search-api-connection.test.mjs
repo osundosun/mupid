@@ -11,7 +11,7 @@ test('submitted header search moves to explore and calls the integrated music AP
     read('components/mupid/explore.tsx'),
   ]);
 
-  assert.match(header, /m\.submitSearch\(keyword\);\s*m\.go\('search'\);/);
+  assert.match(header, /m\.submitSearch\(keyword\);\s*m\.go\('search', true\);/);
   assert.match(header, /placeholder="곡, 아티스트, 앨범 검색"/);
   assert.match(model, /setSearchRevision\(revision => revision \+ 1\)/);
   assert.match(explore, /api\.music\.search\(\{ q: query, vocal: appliedVocal, mood: appliedMood, genre: appliedGenre, page: 0, size: PAGE_SIZE \}, controller\.signal\)/);
@@ -44,7 +44,8 @@ test('explore sends all sidebar filters and keeps them in its request key', asyn
   assert.match(explore, /threshold: 1/);
   assert.match(explore, /MINIMUM_MORE_LOADING_MS = 320/);
   assert.match(explore, /key=\{requestKey\} ref=\{trackList\} className="explore-track-list"/);
-  assert.match(explore, /className={`explore-filter-sidebar\$\{desktopSidebarStyle \? ' is-desktop-floating' : ''\}`}/);
+  assert.match(explore, /className={`explore-filter-sidebar\$\{desktopSidebarStyle \? ' is-desktop-floating' : ''\}/);
+  assert.match(explore, /' is-height-constrained'/);
   assert.match(explore, /new ResizeObserver\(sync\)/);
   assert.match(explore, /const headerBottom = header\?\.getBoundingClientRect\(\)\.bottom/);
   assert.match(explore, /const top = Math\.max\(headerBottom \+ 20, bounds\.top\)/);

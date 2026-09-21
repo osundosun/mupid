@@ -241,7 +241,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
     <PageHeader title="탐색" onBack={() => m.go('home')} />
     <div className="explore-search-layout">
       <div ref={filterSlot} className="explore-filter-slot">
-      <aside className={`explore-filter-sidebar${desktopSidebarStyle ? ' is-desktop-floating' : ''}`} style={desktopSidebarStyle}>
+      <aside className={`explore-filter-sidebar${desktopSidebarStyle ? ' is-desktop-floating' : ''}${desktopSidebarStyle && Number(desktopSidebarStyle.height) < 480 ? ' is-height-constrained' : ''}`} style={desktopSidebarStyle}>
         <button className="explore-keyword-toggle" aria-expanded={keywordsOpen} aria-controls="explore-keyword-panel" onClick={() => setKeywordsOpen((value) => !value)}>
           <span>{keywordsOpen ? '검색 조건 접기' : '검색 조건 변경'}{keywords.length > 0 ? ` · ${keywords.length}개 선택` : ''}</span>
           {keywordsOpen ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
