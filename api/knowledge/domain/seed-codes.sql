@@ -1,5 +1,12 @@
 -- 공통 코드(codes) 기준 데이터.
 --
+-- ⛔ **무드 17종(code_id 32~48)은 동결이다.** 번호·이름·표시명을 바꾸는 변경은
+--    사람에게 확인받기 전에는 하지 않는다 —
+--    `knowledge/decision/0025-mood-codes-32-48-are-frozen.md`.
+--    이 파일의 MOOD 행은 번호를 지정하지 않으므로, 빈 DB 를 이 파일만으로 채우면
+--    32~48 이 아닌 번호가 매겨진다. 무드 번호를 맞추는 것은 기동 때
+--    `BootstrapRunner.reconcileMoodCodes()` 다.
+--
 -- 평소에는 손댈 일이 없다 — 기동 때
 -- `api/src/main/java/com/osundosun/mupid/api/bootstrap/BootstrapRunner.java` 가
 -- 같은 목록으로 빠진 코드를 채운다. **두 목록은 같이 고쳐야 한다.**

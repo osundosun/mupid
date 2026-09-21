@@ -32,9 +32,11 @@
 | [0022](0022-play-queue-in-redis.md) | 재생 큐는 Redis 에 사용자당 문서 하나로 둔다 | 채택 · 규칙 일부 대체됨 |
 | [0023](0023-queue-insert-position-is-a-user-choice.md) | 담을 자리는 사용자가 고르고, 큐에 같은 곡은 한 번만 둔다 | 채택 |
 | [0024](0024-mysql-ngram-fulltext-for-catalog-search.md) | 카탈로그 통합 검색은 MySQL ngram FULLTEXT 로 시작한다 | 채택 |
+| [0025](0025-mood-codes-32-48-are-frozen.md) | 무드 코드 `code_id` 32~48 을 동결하고 FE·BE 는 이 구간만 쓴다 | 채택 · **동결 규약 · 변경 전 확인 필수** |
 
 ## 먼저 볼 것
 
+- [0025](0025-mood-codes-32-48-are-frozen.md) — ⛔ 무드 17종을 건드리기 전에 **반드시** 읽는다. 확인 없이 고치지 않는다.
 - [0008](0008-deploy-image-from-infra.md) — `api/Dockerfile` 만 고치면 운영에 반영되지 않는다.
 - [0011](0011-jpa-manages-schema.md) — 엔티티를 건드리기 전에 반드시 읽는다. `ddl-auto` 가 아직 미설정이다.
 - [0012](0012-frontend-static-to-ec2.md) — Workers 의존성은 잔재다.
