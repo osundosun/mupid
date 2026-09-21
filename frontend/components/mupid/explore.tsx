@@ -190,6 +190,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
     if (!slot) return;
     const desktop = window.matchMedia('(min-width: 1024px)');
     const appLayout = slot.closest('.app-layout');
+    const header = slot.closest('.mupid-shell')?.querySelector('.app-header');
     const miniPlayer = slot.closest('.mupid-shell')?.querySelector('.mini-player');
     let frame = 0;
     const sync = () => {
@@ -201,7 +202,8 @@ export function SearchView({ model: m }: { model: MupidModel }) {
         }
         const bounds = slot.getBoundingClientRect();
         const appLayoutBottom = appLayout?.getBoundingClientRect().bottom ?? window.innerHeight;
-        const top = Math.max(110, bounds.top);
+        const headerBottom = header?.getBoundingClientRect().bottom ?? 90;
+        const top = Math.max(headerBottom + 20, bounds.top);
         const playerBounds = miniPlayer?.getBoundingClientRect();
         const visibleBottom = playerBounds && playerBounds.height > 0
           ? Math.min(window.innerHeight, playerBounds.top)
@@ -216,6 +218,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
     const resize = new ResizeObserver(sync);
     resize.observe(slot);
     if (appLayout) resize.observe(appLayout);
+    if (header) resize.observe(header);
     if (miniPlayer) resize.observe(miniPlayer);
     desktop.addEventListener('change', sync);
     window.addEventListener('resize', sync);

@@ -30,6 +30,24 @@ export function InnerScrollbars() {
           if (/auto|scroll|hidden|clip/.test(ps.overflowY)) { top = Math.max(top, pr.top); bottom = Math.min(bottom, pr.bottom); }
           if (/auto|scroll|hidden|clip/.test(ps.overflowX)) { left = Math.max(left, pr.left); right = Math.min(right, pr.right); }
         }
+        // Body portals do not inherit the content's stacking context. Keep their
+        // hit area below the sticky navigation as well as their visible track.
+        if (el.closest('.main-content')) {
+          const shell = el.closest('.mupid-shell');
+          const header = shell?.querySelector('.app-header');
+          if (header) {
+            const nav = header.getBoundingClientRect();
+            if (nav.height > 0 && nav.right > left && nav.left < right) {
+              top = Math.max(top, nav.bottom);
+            }
+          }
+          shell?.querySelectorAll('.mobile-nav, .mini-player').forEach(dock => {
+            const bounds = dock.getBoundingClientRect();
+            if (bounds.height > 0 && bounds.right > left && bounds.left < right) {
+              bottom = Math.min(bottom, bounds.top);
+            }
+          });
+        }
         if (bottom <= top || right <= left) return;
         for (const h of [false, true]) {
           if (h ? !horizontal : !vertical) continue;
