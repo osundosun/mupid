@@ -7,16 +7,32 @@
   max-width: calc(100% - 32px) !important;
   height: fit-content;
   /*
-   * 화상 키보드가 올라온 몫을 빼고 선다 (S15P21A204-389).
+   * ## 화상 키보드 몫 (S15P21A204-389 → 411)
    *
-   * `--keyboard-inset` 은 `visualViewport` 로 잰 가림 높이다(`hooks/use-keyboard-inset.ts`).
-   * 이 값을 빼지 않으면 키보드가 대화상자의 아래쪽을 그대로 덮는다 — 로그인·회원가입
-   * 대화상자에서 「비밀번호 확인」·「출생 연도」가 키보드 뒤로 들어가 보이지 않았다.
+   * **`--keyboard-inset` 은 브라우저에서만 양수다.** 앱에서는 키보드가 뜨는 순간
+   * 네이티브가 웹뷰를 담은 컨테이너를 줄이므로(`SafeArea.kt`) `100dvh` 가 이미
+   * 키보드 위에서 끝나고, 이 변수는 0 이다. 두 환경이 같은 규칙으로 맞는다.
    *
-   * 빼야 하는 이유는 이 앱이 `100dvh` 로 자리를 잡기 때문이다. `dvh` 는 "지금 보이는
-   * 동적 높이"지만, 안드로이드 웹뷰는 키보드가 올라와도 그것을 줄이지 않는다
-   * (`app/layout.tsx` 의 `interactiveWidget`, `AndroidManifest.xml` 의 `windowSoftInputMode`).
-   * 그래서 키보드 몫은 `dvh` 에 이미 들어 있지 않고, 여기서 따로 빼야 한다.
+   * 아래 두 줄은 **한 쌍이다. 둘 중 하나만으로는 안 된다** — 411 에서 확인했다.
+   */
+  /*
+   * (1) 아래 끝을 키보드 위로 올린다.
+   *
+   * 이 대화상자는 `inset: 16px; margin: auto` 로 **가운데 정렬**이다. 그래서
+   * `max-height` 만 낮추면 **가운데를 중심으로 줄어들 뿐 아래 끝이 올라오지 않는다.**
+   * 389 가 `max-height` 만 넣고 "고쳤다"고 닫힌 자리가 여기다. `bottom` 을 올리면
+   * `margin: auto` 가 그 줄어든 상자 안에서 다시 가운데를 잡아 대화상자가 통째로
+   * 키보드 위로 올라온다.
+   *
+   * `inset` 뒤에 와야 한다 — 같은 `!important` 끼리는 나중 선언이 이긴다.
+   */
+  bottom: calc(16px + var(--keyboard-inset, 0px)) !important;
+  /*
+   * (2) 키보드 위에 남은 자리보다 커지지 않는다.
+   *
+   * (1)만 있으면 자연 높이가 남은 자리보다 큰 대화상자는 위로 삐져나간다.
+   * 넘치는 내용은 `overflow-y` 로 스크롤한다 — 포커스를 받은 입력란은
+   * `demo-login.tsx` 의 `revealFocused` 가 끌어온다.
    */
   max-height: calc(100dvh - 32px - var(--keyboard-inset, 0px)) !important;
   /*
@@ -84,7 +100,22 @@
     flex-direction: column;
     justify-content: flex-start;
     gap: 16px;
-    max-height: calc(100dvh - 24px) !important;
+    /*
+     * 화상 키보드 몫 (S15P21A204-411).
+     *
+     * 이 시트는 `inset: auto 0 0` 으로 **화면 최하단에 고정**되고, 안에 입력란이 있다
+     * (`track-menu.tsx` 의 `#new-track-playlist` — "새 플레이리스트 이름"). 그래서
+     * 키보드가 뜨면 시트가 통째로 키보드 뒤로 들어간다. 389 는 일반 `.sky-dialog`
+     * (이 파일 위쪽 규칙)만 고치고 **이 시트는 빠뜨렸다.**
+     *
+     * **바닥에 붙은 시트는 `max-height` 로는 절대 안 올라온다** — 높이를 줄여도
+     * `bottom: 0` 이라 아래 끝이 그대로다. 바닥 자체를 키보드 위로 올려야 한다.
+     *
+     * 앱에서는 네이티브가 웹뷰를 줄이므로 이 변수가 0 이고 `bottom: 0` 그대로다
+     * (`SafeArea.kt`). 양수가 되는 곳은 브라우저다.
+     */
+    bottom: var(--keyboard-inset, 0px) !important;
+    max-height: calc(100dvh - 24px - var(--keyboard-inset, 0px)) !important;
     border-radius: 24px 24px 0 0 !important;
     padding: 24px 20px max(24px, var(--safe-area-inset-bottom)) !important;
   }
