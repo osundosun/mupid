@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.code.MoodCodeIds;
 import com.osundosun.mupid.api.code.entity.Code;
 import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.code.repository.CodeRepository;
@@ -71,7 +72,7 @@ public class OnboardingServiceImpl implements OnboardingService {
     @Override
     @Transactional(readOnly = true)
     public OnboardingOptionResponse getOptions() {
-        List<CodeOption> moods = options(CodeType.MOOD);
+        List<CodeOption> moods = moodOptions();
         List<CodeOption> genres = options(CodeType.GENRE);
         if (moods.isEmpty() || genres.isEmpty()) {
             throw new BusinessException(OnboardingErrorCode.ONBOARDING_OPTION_EMPTY);
@@ -153,6 +154,31 @@ public class OnboardingServiceImpl implements OnboardingService {
     }
 
     /**
+     * 분위기 선택지 — <b>동결 구간({@code code_id} 32~48)만</b>.
+     *
+     * <p>용도로만 고르면 안 된다. 운영 DB 의 {@code codes} 에는 같은 무드가 옛 중복
+     * 적재로 여러 번호에 남아 있어(98~106 · 107~123 · 124~132), 전량을 내놓으면
+     * <b>화면에 같은 분위기가 두 칩, 세 칩으로 뜨고</b> 사용자가 그 중복 칩을 고른 답이
+     * {@code onboarding_survey} 에 쌓인다. 실제로 그렇게 쌓였다.
+     *
+     * <p>중복분을 다 치운 뒤에도 이 경계는 남긴다 — 팀원의 로컬 DB 는 정리 시점이
+     * 제각각이라, 경계가 없으면 같은 일이 로컬에서 되풀이된다.
+     *
+     * <p>전처리가 무드를 늘려 <b>새 번호</b>가 생기면 그 무드는 여기 나오지 않는다.
+     * 선택지에 넣으려면 {@link MoodCodeIds} 의 구간을 넓혀야 하고, 그것은
+     * {@code knowledge/decision/0025-mood-codes-32-48-are-frozen.md} 의 확인 절차를
+     * 거쳐 사람이 정한다.
+     */
+    private List<CodeOption> moodOptions() {
+        return codeRepository
+            .findAllByCodeTypeAndCodeIdBetweenOrderByCodeIdAsc(
+                CodeType.MOOD, MoodCodeIds.FIRST, MoodCodeIds.LAST)
+            .stream()
+            .map(CodeOption::of)
+            .toList();
+    }
+
+    /**
      * 보내 온 번호를 코드로 바꾼다. 중복은 버리고, 없는 번호나 용도가 다른 번호는 400 이다.
      */
     private List<Code> resolve(List<Integer> codeIds, CodeType type) {
@@ -163,6 +189,19 @@ public class OnboardingServiceImpl implements OnboardingService {
         if (wanted.isEmpty() || wanted.size() > MAX_SELECTION) {
             throw new BusinessException(OnboardingErrorCode.ONBOARDING_INVALID_CODE);
         }
+        /*
+         * 분위기는 동결 구간(32~48) 밖 번호를 받지 않는다. 선택지를 그 구간으로 좁혔어도
+         * 쓰기 경로를 함께 막아야 한다 — 옛 화면을 띄워 둔 탭, 캐시된 번들, 손으로 부르는
+         * 요청은 얼마든지 옛 번호를 보낸다. 실제로 중복 칩(124~132)을 고른 답이 쌓였고,
+         * 그 답은 나중에 손으로 이관해야 했다.
+         *
+         * 여기서 막지 않으면 다음 문장의 조회가 그 번호를 그대로 찾아내 통과시킨다 —
+         * 중복 행도 용도는 MOOD 라 타입 검사에 걸리지 않기 때문이다.
+         */
+        if (type == CodeType.MOOD && wanted.stream().anyMatch(id -> !MoodCodeIds.isFrozen(id))) {
+            throw new BusinessException(OnboardingErrorCode.ONBOARDING_INVALID_CODE);
+        }
+
         Map<Integer, Code> found = codeRepository.findAllByCodeIdIn(wanted).stream()
             .filter(code -> code.getCodeType() == type)
             .collect(Collectors.toMap(Code::getCodeId, Function.identity()));

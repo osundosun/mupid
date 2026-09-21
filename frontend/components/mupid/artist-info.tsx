@@ -11,6 +11,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AlbumArt } from './primitives';
 
 export function ArtistInfo({ model: m }: { model: MupidModel }) {
+  // 뒤로가기로 닫히는 배선은 `hooks/use-mupid.ts` 가 같은 상태(`selectedArtist`)
+  // 로 등록한다 — 여기서 또 등록하면 같은 창이 스택에 두 번 오른다
+  // (`components/mupid/queue-dock.tsx` 의 독과 같은 이유) (S15P21A204-410).
   return <Dialog open={m.selectedArtist !== null} onOpenChange={open => { if (!open) m.setSelectedArtist(null); }}>
     <DialogContent className="sky-dialog artist-info-dialog">
       <ArtistContent key={m.selectedArtist} model={m} />

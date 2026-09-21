@@ -119,11 +119,37 @@ export type Playlist = {
   tracks: Track[];
 };
 
+/**
+ * 화면이 그리는 **툴 호출 기록 한 줄** (S15P21A204-409).
+ *
+ * 서버 응답(`tool_calls`)을 `lib/ai-chat.ts` 가 이 모양으로 옮긴다. 필드 이름을 화면식
+ * (`trackCount`)으로 바꾸는 자리가 거기다 — 서버 계약(snake_case)을 컴포넌트까지
+ * 끌고 오지 않는다.
+ */
+export type ChatToolCall = {
+  /** 개발자용 식별자. 화면에는 그리지 않는다 — 시험용 훅(`data-tool`)과 로그에만 쓴다. */
+  name: string;
+  /** 사용자에게 읽히는 이름(`음악 추천`). 서버가 옮겨서 준다. */
+  label: string;
+  /** 모델이 넘긴 인자. "왜 이 곡이 나왔나" 의 근거다. */
+  arguments: Record<string, unknown>;
+  succeeded: boolean;
+  /** 돌아온 곡 수. 실패했거나 곡이 없으면 0 이다. */
+  trackCount: number;
+  /** 실패 사유. 성공이면 `null` 이다. */
+  failureReason: string | null;
+};
+
 export type ChatMessage = {
   id: number;
   role: 'assistant' | 'user';
   text: string;
   tracks?: Track[];
+  /**
+   * 이 말풍선을 만든 턴에 일어난 툴 호출 기록. **없으면 아무것도 그리지 않는다** —
+   * 그냥 대화만 한 턴이다 (S15P21A204-409).
+   */
+  toolCalls?: ChatToolCall[];
 };
 
 /**

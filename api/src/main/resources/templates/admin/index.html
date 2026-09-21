@@ -205,13 +205,34 @@
 
         /* 이미지가 없거나 못 받아왔을 때. 빈 자리를 남기면 "아직 안 불러왔다" 와
            구분되지 않아 화면이 거짓말을 한다. */
-        .thumb.empty {
+        /* 이름이 `empty` 가 아니라 `thumb-empty` 인 이유가 있다. 아래쪽의 `.empty` 는
+           "조건에 맞는 행이 없습니다" 같은 **빈 화면 안내**를 그리는 별개 클래스이고
+           `padding: 40px` 을 건다. 이 자리가 그 이름을 같이 쓰는 동안 `.thumb` 쪽은
+           padding 을 선언하지 않았고, `box-sizing: border-box` 아래에서 좌우 40px 과
+           테두리 2px 이 28px 를 밀어내 **82×82** 로 부풀었다 (S15P21A204-412).
+           이름을 갈라 두면 `.empty` 를 나중에 어떻게 고쳐도 이 자리가 다시 끌려가지
+           않는다. */
+        .thumb.thumb-empty {
             display: inline-flex;
             align-items: center;
             justify-content: center;
+            /* 28×28 은 `.thumb` 이 정한다. 여백을 0 으로 못박아 바깥 규칙이 이 상자를
+               넓히지 못하게 한다. */
+            padding: 0;
             color: var(--muted);
             font-size: 15px;
+            /* 글리프가 상자를 밀지 않게 한다 — 높이는 28px 하나로만 정해진다. */
+            line-height: 1;
         }
+
+        /* 상자 크기를 맞춰도 **줄 높이**는 아직 어긋난다. `.fk` 가 inline-flex 라
+           글줄 기준선을 첫 항목에서 가져오는데, `<img>` 는 기준선이 없어 아래 모서리로
+           대신 잡히면서 글꼴의 아래쪽 여유(6.8px)가 행에 그대로 더해진다. 이미지가
+           있는 행만 51.8px, 없는 행은 45px 이 되던 이유다 (S15P21A204-412).
+           썸네일이 든 FK 칸만 가운데 정렬로 돌려 45px 로 맞춘다 — `.fk` 전체에 걸면
+           썸네일 없는 FK 칸의 글줄이 옆 칸과 0.08px 어긋난다.
+           `:has()` 를 못 쓰는 브라우저에서는 이 줄만 빠지고 상자 크기는 그대로다. */
+        .fk:has(.thumb) { vertical-align: middle; }
 
         .child-links { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 
@@ -476,6 +497,11 @@
     var LOGIN_URL = '/api/admin/login';
     var API = '/api/v1/admin';
 
+    // 쪽 크기 선택지. 주소로 들어온 값도 이 목록에 있는 것만 받는다 — 목록에 없는 수는
+    // 아래 <select> 에서 아무것도 선택되지 않은 것처럼 보인다.
+    var PAGE_SIZES = [10, 25, 50, 100, 200];
+    var DEFAULT_SIZE = 25;
+
     var state = {
         resources: [],
         dashboard: null,
@@ -501,7 +527,7 @@
         timeline: null,
         timelineMusicId: null,
         page: 0,
-        size: 25,
+        size: DEFAULT_SIZE,
         sort: null,
         direction: 'desc',
         keyword: '',
@@ -958,7 +984,7 @@
 
         html += '<div class="pager">'
             + '<select id="page-size" class="field">'
-            + [10, 25, 50, 100, 200].map(function (size) {
+            + PAGE_SIZES.map(function (size) {
                 return '<option value="' + size + '"' + (size === state.size ? ' selected' : '') + '>'
                     + size + '행</option>';
             }).join('')
@@ -1294,10 +1320,10 @@
         var thumbnails = row._thumbnails || {};
         var found = thumbnails[field.name];
         if (!found) {
-            return '<span class="thumb empty" title="이미지 없음">?</span>';
+            return '<span class="thumb thumb-empty" title="이미지 없음">?</span>';
         }
         if (found.requires_authorization) {
-            return '<span class="thumb empty" data-thumb="' + escape(found.url)
+            return '<span class="thumb thumb-empty" data-thumb="' + escape(found.url)
                 + '" title="불러오는 중">…</span>';
         }
         return '<img class="thumb" src="' + escape(found.url) + '" alt="" loading="lazy"'
@@ -1306,7 +1332,7 @@
             // 깨진 그림 아이콘을 그려서 "이미지가 있는데 못 그렸다" 처럼 보인다.
             // 값이 없을 때와 **같은 `?`** 로 떨어뜨려 두 경우를 한 가지로 보이게 한다.
             + ' onerror="this.replaceWith(Object.assign(document.createElement(\'span\'),'
-            + '{className:\'thumb empty\', textContent:\'?\', title:\'이미지를 불러오지 못했습니다\'}))">';
+            + '{className:\'thumb thumb-empty\', textContent:\'?\', title:\'이미지를 불러오지 못했습니다\'}))">';
     }
 
     /**
@@ -2172,6 +2198,184 @@
             });
     }
 
+    // ------------------------------------------------------------- 주소와 히스토리
+
+    /**
+     * 화면 상태를 히스토리에 싣는다. 이게 없으면 FK 링크로 참조 테이블에 들어간 뒤
+     * 뒤로가기를 눌러도 브라우저가 돌아갈 곳을 찾지 못해 관리자 화면 밖으로 나가 버린다.
+     *
+     * <p><b>왜 주소(쿼리스트링)에까지 적는가.</b> history.state 객체만 써도 뒤로·앞으로가기는
+     * 된다. 그런데 주소에 적어야 새로고침(F5)과 링크 공유가 같은 화면을 연다.
+     * 검색어·필터가 주소에 드러나는 것은 감수한다 — <b>같은 값이 이미 목록 조회 요청의
+     * 쿼리스트링(`q`, `filter.*`)으로 나가고 있어서</b>(loadRows 참조) 노출 경로가 늘지
+     * 않는다. 페이지 자체는 `GET /api/admin` 경로로만 매칭되므로(SecurityConfig)
+     * 쿼리스트링이 붙어도 서버 쪽 판정은 달라지지 않는다.
+     *
+     * <p><b>자격증명은 절대 싣지 않는다.</b> 액세스 토큰은 sessionStorage 에, ClickHouse
+     * 열람권은 HttpOnly 쿠키에 있다. 둘 다 주소나 히스토리로 새어 나가면 안 되므로
+     * 아래 snapshot() 이 담는 것은 "무엇을 보고 있었는가" 뿐이다.
+     */
+
+    /**
+     * 이 문서 안에서 우리가 쌓은 항목의 깊이. 첫 진입 항목이 0 이다.
+     *
+     * <p>타임라인의 "목록으로" 단추가 `history.back()` 을 써도 되는지 판단하는 데 쓴다.
+     * 0 이면 그 타임라인은 F5 나 공유된 링크로 바로 열린 것이라 되돌아갈 항목이 없다.
+     */
+    var depth = 0;
+
+    function snapshot() {
+        return {
+            view: state.view,
+            consoleTab: state.consoleTab,
+            resource: state.resource,
+            timelineMusicId: state.timelineMusicId,
+            page: state.page,
+            size: state.size,
+            sort: state.sort,
+            direction: state.direction,
+            keyword: state.keyword,
+            filters: Object.assign({}, state.filters),
+            depth: depth
+        };
+    }
+
+    function href(snap) {
+        var params = new URLSearchParams();
+        params.set('view', snap.view);
+        if (snap.view === 'clickhouse') {
+            params.set('tab', snap.consoleTab);
+        }
+        if (snap.view === 'timeline') {
+            params.set('music', snap.timelineMusicId);
+        }
+        // 타임라인에도 목록 맥락을 같이 적는다. 그래야 F5 로 타임라인에 바로 들어와도
+        // "목록으로" 가 어느 목록의 몇 페이지로 돌아갈지 안다.
+        if ((snap.view === 'resource' || snap.view === 'timeline') && snap.resource) {
+            params.set('resource', snap.resource);
+            // 기본값은 적지 않는다. 주소가 짧아야 무엇을 좁혀 봤는지 한눈에 읽힌다.
+            if (snap.page) {
+                params.set('page', snap.page);
+            }
+            if (snap.size !== DEFAULT_SIZE) {
+                params.set('size', snap.size);
+            }
+            if (snap.sort) {
+                params.set('sort', snap.sort);
+            }
+            if (snap.direction !== 'desc') {
+                params.set('direction', snap.direction);
+            }
+            if (snap.keyword) {
+                params.set('q', snap.keyword);
+            }
+            Object.keys(snap.filters).forEach(function (key) {
+                if (snap.filters[key] !== '') {
+                    params.set('filter.' + key, snap.filters[key]);
+                }
+            });
+        }
+        return location.pathname + '?' + params.toString();
+    }
+
+    /**
+     * 주소를 상태로 되읽는다. 손으로 고친 주소나 오래된 링크가 들어올 수 있으므로
+     * 값을 그대로 믿지 않고 아는 것만 받는다.
+     */
+    function parse(search) {
+        var params = new URLSearchParams(search);
+        var view = params.get('view');
+        var size = Number(params.get('size'));
+        var known = view === 'resource' || view === 'clickhouse' || view === 'timeline';
+        var snap = {
+            view: known ? view : 'dashboard',
+            consoleTab: params.get('tab') === 'dashboard' ? 'dashboard' : 'play',
+            resource: params.get('resource'),
+            timelineMusicId: params.get('music'),
+            page: Math.max(Math.floor(Number(params.get('page')) || 0), 0),
+            size: PAGE_SIZES.indexOf(size) >= 0 ? size : DEFAULT_SIZE,
+            sort: params.get('sort'),
+            direction: params.get('direction') === 'asc' ? 'asc' : 'desc',
+            keyword: params.get('q') || '',
+            filters: {},
+            depth: 0
+        };
+        params.forEach(function (value, key) {
+            if (key.indexOf('filter.') === 0 && key.length > 7) {
+                snap.filters[key.slice(7)] = value;
+            }
+        });
+        if (snap.view === 'resource' && !snap.resource) {
+            snap.view = 'dashboard';
+        }
+        if (snap.view === 'timeline' && !snap.timelineMusicId) {
+            snap.view = snap.resource ? 'resource' : 'dashboard';
+        }
+        return snap;
+    }
+
+    /**
+     * 지금 화면을 <b>현재</b> 히스토리 항목에 덮어쓴다. 새 항목은 만들지 않는다.
+     *
+     * <p>페이지 넘김·검색어·필터·정렬을 바꿀 때마다 항목이 쌓이면 뒤로가기가 한 글자씩
+     * 되감겨서 쓸 수 없게 된다. 그래서 "같은 목록 안에서의 변화" 는 전부 덮어쓰기이고,
+     * 새 항목은 다른 자원이나 화면으로 옮겨 갈 때만(navigate) 쌓는다.
+     */
+    function syncHistory() {
+        var snap = snapshot();
+        history.replaceState(snap, '', href(snap));
+    }
+
+    /**
+     * 다른 화면으로 옮겨 가면서 히스토리에 항목을 하나 쌓는다.
+     *
+     * <p>옮기기 <b>전에</b> 지금 상태를 현재 항목에 굳히고(replaceState), 옮긴 <b>뒤에</b>
+     * 새 항목을 쌓는다(pushState). 그래야 뒤로가기가 방금 보던 목록을 그때의
+     * 페이지·검색어·필터까지 그대로 되살린다.
+     *
+     * <p>`run()` 의 동기 구간이 state 를 새 화면으로 바꿔 놓는다는 전제다. 스키마를 받아야
+     * 알 수 있는 값(기본 정렬 컬럼, FK 필터)은 나중에 loadRows() 의 syncHistory() 가
+     * 같은 항목에 채워 넣는다.
+     */
+    function navigate(run) {
+        syncHistory();
+        var result = run();
+        depth = depth + 1;
+        var snap = snapshot();
+        history.pushState(snap, '', href(snap));
+        return result;
+    }
+
+    /**
+     * 히스토리 항목 하나를 화면으로 되살린다. 보던 것을 <b>다시 그리는</b> 것이 아니라
+     * 다시 불러온다 — 돌아온 사이에 다른 사람이 고쳤을 수 있기 때문이다.
+     */
+    function restore(snap) {
+        depth = snap.depth || 0;
+        if (snap.view === 'clickhouse') {
+            openConsole(snap.consoleTab);
+            return;
+        }
+        if (snap.view === 'timeline' && snap.timelineMusicId) {
+            // 목록 맥락도 같이 되돌려 둔다. 표를 부르지는 않는다 — 타임라인이 덮고 있어
+            // 보이지도 않고, "목록으로" 를 누를 때 그때 불러도 늦지 않다.
+            state.resource = snap.resource;
+            state.page = snap.page;
+            state.size = snap.size;
+            state.sort = snap.sort;
+            state.direction = snap.direction;
+            state.keyword = snap.keyword;
+            state.filters = Object.assign({}, snap.filters);
+            openTimeline(snap.timelineMusicId);
+            return;
+        }
+        if (snap.view === 'resource' && snap.resource) {
+            openResource(snap.resource, snap);
+            return;
+        }
+        loadDashboard();
+    }
+
     // ------------------------------------------------------------------ 불러오기
 
     function loadResources() {
@@ -2205,16 +2409,26 @@
         });
     }
 
-    function openResource(name) {
+    /**
+     * 자원 목록을 연다.
+     *
+     * @param saved      히스토리에서 되살리는 경우 그때의 페이지·검색어·필터. 없으면 처음
+     *                   보는 화면으로 치고 전부 초기화한다 (쪽 크기만 유지).
+     * @param beforeLoad 스키마를 받은 뒤 목록을 부르기 <b>전에</b> 한 번 불린다. FK 나 자식
+     *                   자원으로 들어올 때 걸 필터 컬럼이 스키마에 있어서 이 자리가 필요하다 —
+     *                   목록을 부른 뒤에 필터를 걸면 조회가 두 번 나간다.
+     */
+    function openResource(name, saved, beforeLoad) {
         state.view = 'resource';
         state.resource = name;
         state.schema = null;
         state.rows = null;
-        state.page = 0;
-        state.sort = null;
-        state.direction = 'desc';
-        state.keyword = '';
-        state.filters = {};
+        state.page = saved ? saved.page : 0;
+        state.size = saved ? saved.size : state.size;
+        state.sort = saved ? saved.sort : null;
+        state.direction = saved ? saved.direction : 'desc';
+        state.keyword = saved ? saved.keyword : '';
+        state.filters = saved ? Object.assign({}, saved.filters) : {};
         renderNav();
         el('content').innerHTML = '<div class="empty">불러오는 중…</div>';
 
@@ -2223,7 +2437,13 @@
                 return;
             }
             state.schema = schema;
-            state.sort = schema.ids[0];
+            if (!state.sort) {
+                // 주소에 정렬이 없으면(=기본값) 식별자 컬럼으로 정렬한다.
+                state.sort = schema.ids[0];
+            }
+            if (beforeLoad) {
+                beforeLoad(schema);
+            }
             return loadRows();
         }).catch(fail);
     }
@@ -2235,18 +2455,19 @@
      * 일이 생긴다 — 필터를 건 뒤 목록을 다시 부르는 것만 다르다.
      */
     function openChild(childResource, filterField, parentId) {
-        return openResource(childResource).then(function () {
-            // 늦게 온 응답이 다른 자원 화면을 덮어쓰지 않게 openResource 가 이미 걸러 준다.
-            if (state.view !== 'resource' || state.resource !== childResource) {
-                return;
-            }
+        // 필터는 `beforeLoad` 에서 건다. 목록을 부른 뒤에 걸면 조회가 두 번 나가고,
+        // 그 사이의 한 번이 히스토리 항목에 필터 없는 상태를 남긴다.
+        return openResource(childResource, null, function () {
             state.filters[filterField] = parentId;
             state.page = 0;
-            loadRows();
         });
     }
 
     function loadRows() {
+        // 목록을 부를 때마다 지금 상태를 현재 히스토리 항목에 굳힌다. 페이지·정렬·검색어·
+        // 필터가 바뀌는 길목이 전부 여기로 모이므로 한 곳만 붙잡으면 된다.
+        syncHistory();
+
         var params = new URLSearchParams();
         params.set('page', state.page);
         params.set('size', state.size);
@@ -2356,17 +2577,23 @@
         }
 
         if (target.dataset.view === 'dashboard') {
-            loadDashboard();
+            navigate(loadDashboard);
             return;
         }
         if (target.dataset.view === 'clickhouse') {
-            openConsole();
+            // 콘솔에서 뒤로가기를 누르면 iframe 이 자기 히스토리를 먼저 되감아서 한 번은
+            // 화면이 그대로다. iframe 안은 ClickHouse 가 만든 화면이라 우리가 손댈 수
+            // 없다 — 한 번 더 누르면 나간다.
+            navigate(openConsole);
             return;
         }
         if (target.dataset.consoleTab) {
-            // 열람권은 그대로 쓰고 주소만 바꾼다.
+            // 열람권은 그대로 쓰고 iframe 주소만 바꾼다. 히스토리 항목은 새로 쌓지 않는다 —
+            // 같은 콘솔 안의 탭 전환이라 덮어쓰기로 충분하고, 그래야 뒤로가기가 콘솔을
+            // 나가는 동작으로 남는다.
             state.consoleTab = target.dataset.consoleTab;
             renderConsole();
+            syncHistory();
             return;
         }
         if (target.id === 'console-reopen') {
@@ -2375,18 +2602,23 @@
         }
         if (target.dataset.resource) {
             event.preventDefault();
-            openResource(target.dataset.resource);
+            var name = target.dataset.resource;
+            navigate(function () {
+                return openResource(name);
+            });
             return;
         }
         if (target.dataset.relation) {
             event.preventDefault();
             var relation = target.dataset.relation;
             var id = target.dataset.id;
-            openResource(relation).then(function () {
-                var idField = state.schema.ids[0];
-                state.filters[idField] = id;
-                state.page = 0;
-                loadRows();
+            // 참조 테이블로 옮겨 가되 지금 목록을 히스토리에 남긴다. 뒤로가기로 돌아올
+            // 자리가 바로 여기다.
+            navigate(function () {
+                return openResource(relation, null, function (schema) {
+                    state.filters[schema.ids[0]] = id;
+                    state.page = 0;
+                });
             });
             return;
         }
@@ -2394,23 +2626,39 @@
             // 앨범 행의 "음악" 처럼 자식 자원으로 건너간다. 자식 목록을 부모를 가리키는
             // 필터로 걸어서 연다 — 새 엔드포인트 없이 기존 필터 규약을 그대로 쓴다.
             event.preventDefault();
-            openChild(target.dataset.childResource, target.dataset.childField,
-                target.dataset.childId);
+            var childResource = target.dataset.childResource;
+            var childField = target.dataset.childField;
+            var childId = target.dataset.childId;
+            navigate(function () {
+                return openChild(childResource, childField, childId);
+            });
             return;
         }
         if (target.dataset.timelineId) {
             // 곡 행의 "가사·구간" — 그 곡의 타임라인으로 간다 (S15P21A204-380-B).
             event.preventDefault();
-            openTimeline(target.dataset.timelineId);
+            var timelineId = target.dataset.timelineId;
+            navigate(function () {
+                return openTimeline(timelineId);
+            });
             return;
         }
         if (target.dataset.timelineBack) {
-            // 목록으로 돌아간다. 열었던 자원이 그대로 남아 있으므로 다시 부르지 않는다 —
-            // 표를 새로 그리면 스크롤과 필터가 날아간다.
-            state.view = 'resource';
-            state.timeline = null;
-            renderNav();
-            renderTable();
+            // 화면 안의 "목록으로" 를 브라우저 뒤로가기와 **같은 동작**으로 맞춘다.
+            // 둘이 따로 놀면 이 단추를 누른 뒤의 뒤로가기가 방금 떠난 타임라인을 다시
+            // 열어서, 사용자는 "뒤로가기가 안 먹는다" 로 읽는다.
+            //
+            // depth 가 0 이면 F5 나 공유된 링크로 타임라인에 바로 들어온 것이라 되돌아갈
+            // 항목이 없다. 그때만 목록을 직접 연다 — 주소에 실어 둔 자원·페이지·필터로.
+            if (history.state && history.state.depth > 0) {
+                history.back();
+                return;
+            }
+            if (state.resource) {
+                navigate(function () {
+                    return openResource(state.resource, snapshot());
+                });
+            }
             return;
         }
         if (target.dataset.timelineRefresh) {
@@ -2506,6 +2754,14 @@
         }
     });
 
+    /**
+     * 뒤로·앞으로가기. 브라우저가 돌려주는 state 객체를 그대로 쓰되, 없으면
+     * (주소를 손으로 고쳤거나 오래된 항목) 주소에서 읽는다.
+     */
+    window.addEventListener('popstate', function (event) {
+        restore(event.state || parse(location.search));
+    });
+
     el('reload').addEventListener('click', function () {
         if (state.view === 'dashboard') {
             loadDashboard();
@@ -2554,7 +2810,20 @@
         el('who').textContent = '';
     }
 
-    loadDashboard();
+    // 첫 진입 때 지금 화면을 히스토리 항목에 심어 둔다. 이게 없으면 FK 를 한 번 누른 뒤의
+    // 첫 뒤로가기가 state 없는 항목을 만나 빈 화면이 된다.
+    var entry = parse(location.search);
+    state.consoleTab = entry.consoleTab;
+    state.size = entry.size;
+    history.replaceState(entry, '', href(entry));
+
+    if (entry.view !== 'dashboard') {
+        // 대시보드를 거치지 않고 바로 들어오면(F5·공유된 링크) 왼쪽 목록을 채울 데이터가
+        // 없다. 대시보드 응답이 겸하던 일을 여기서 따로 한 번 한다.
+        loadResources().catch(fail);
+    }
+
+    restore(entry);
 }());
 </script>
 </body>

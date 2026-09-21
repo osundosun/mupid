@@ -288,3 +288,11 @@
 - **원인**: 복합키를 코드에서 직접 채워 넣으므로 `SimpleJpaRepository.save()` 의 "새 엔티티인가" 판단(id 가 null 인가)이 **false** 가 되어 `persist` 가 아니라 `merge` 가 돈다. `merge` 는 관리 상태의 **복사본**을 돌려주고, `@CreatedDate` 는 그 복사본에만 채워진다. 내가 넘긴 인스턴스는 준영속 상태 그대로라 `getCreatedAt()` 이 null 이다. 응답 DTO 를 그 인스턴스로 만들면 `created_at: null` 이 나간다.
 - **해결**: `save()` / `saveAndFlush()` 의 **반환값**을 쓴다. 넘긴 인스턴스를 계속 쓰지 않는다. (근본 해결은 `Persistable` 구현이지만, 이 프로젝트의 복합키 엔티티는 아직 그렇게 하지 않는다.)
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/playlist/service/PlaylistServiceImpl.java:91`, `api/src/test/java/com/osundosun/mupid/api/playlist/PlaylistTrackAddTest.java`
+
+### 배포할 때마다 `codes` 에 무드 17행이 새 번호로 더 쌓인다 — 해소됨
+
+- **증상**: 2026-09-18 에 98~106, 2026-09-21 에 107~123 · 124~132. **기동할 때마다** 늘었다. 온보딩 화면에 같은 분위기가 두 칩, 세 칩으로 떴다. 오류는 나지 않는다.
+- **원인**: 부트스트랩이 **"이 이름이 있나" 로** 넣을지 말지를 정했다. 무드 `code_name` 을 한국어에서 영문으로 바꾼 뒤(`애상적인` → `melancholic`), 아직 배포되지 않은 **옛 판**은 한국어 이름을 찾다 못 찾고 없는 코드로 봤다. `code_id` 는 IDENTITY 라 자동 채번되어 새 번호 17개가 생긴다. **배포가 끝나도 옛 파드가 살아 있는 동안 계속 늘어난다** — 이름 비교를 촘촘히 해도(표시명까지 대조해도) 이름을 못 알아보는 판이 하나만 떠 있으면 같은 일이 반복된다.
+- **해결**: 무드는 **이름이 아니라 번호로** 본다. `BootstrapRunner.reconcileMoodCodes()` 가 `code_id` 32~48 **각 자리**를 규격과 대조해, 어긋난 자리에만 쓴다 — 있으면 UPDATE, 없으면 **번호를 지정해** INSERT. `seedCodes()` 는 MOOD 를 건너뛴다(거기서 넣으면 자동 채번이다). 32~48 밖은 읽지도 건드리지도 않는다(전처리로 무드가 늘 수 있다). 규약은 [decision/0025](../decision/0025-mood-codes-32-48-are-frozen.md) — ⛔ **32~48 을 바꾸려면 사람에게 확인받는다.**
+- **남은 것**: 이미 쌓인 98~132 는 배치가 치우지 않는다. 참조를 확인한 뒤 사람이 정리한다 ([migrate-mood-codes-2026-09-21.sql](../domain/migrate-mood-codes-2026-09-21.sql) 과 같은 절차).
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/bootstrap/BootstrapRunner.java`, `api/src/test/java/com/osundosun/mupid/api/bootstrap/BootstrapSeedTest.java`

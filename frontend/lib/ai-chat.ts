@@ -11,8 +11,8 @@
 
 import { api } from './api/session';
 import { ApiError } from './api/client';
-import type { AiChatTurn, AiRecommendedTrack } from './api/endpoints';
-import type { ChatMessage, Track } from './mupid-data';
+import type { AiChatTurn, AiRecommendedTrack, AiToolCallRecord } from './api/endpoints';
+import type { ChatMessage, ChatToolCall, Track } from './mupid-data';
 
 /** 서버로 함께 보내는 이전 대화 수. 서버도 `ai.max-history` 로 한 번 더 자른다. */
 const HISTORY_LIMIT = 12;
@@ -22,7 +22,19 @@ const CONTENT_LIMIT = 2000;
 
 const MESSAGE_LIMIT = 500;
 
-export type ChatAnswer = { text: string; tracks: Track[]; sessionId: number | null };
+export type ChatAnswer = {
+  text: string;
+  tracks: Track[];
+  sessionId: number | null;
+  /**
+   * 이 턴에 일어난 툴 호출 기록 (S15P21A204-409). 그냥 대화만 했으면 빈 배열이다.
+   *
+   * **서버가 준 것을 그대로 옮긴다.** 예전에는 이 자리가 없어서 화면이 "3곡 골라뒀어요"
+   * 라는 말만 보여 줬고, 사용자가 그것을 확인할 근거가 없었다. 실패도 함께 온다 —
+   * 추천 서버가 죽었을 때 화면이 침묵하지 않게 하려는 것이다.
+   */
+  toolCalls: ChatToolCall[];
+};
 
 export type ChatRequest = {
   prompt: string;
@@ -102,6 +114,29 @@ const resolve = (
   });
 
 /**
+ * 서버의 툴 호출 기록을 화면 모양으로 옮긴다 (S15P21A204-409).
+ *
+ * **버리지 않는다.** `sessionId` 를 버리던 전례(378 커밋 fcefb33: `requestChat` 이
+ * `result.session_id` 를 버렸다)가 있다 — 그때는 세션 번호가 화면에 없어 대화가 매 턴
+ * 갈라졌다. 여기서도 같은 실수를 하면 "왜 이 곡이 나왔나" 의 근거가 다시 사라진다.
+ *
+ * 다만 **빈 기록은 만들지 않는다.** 툴 호출이 없던 턴에 화면이 "도구 호출" 줄을 그리면
+ * 거짓말이 된다. 서버가 빈 배열을 주면 빈 배열 그대로 둔다.
+ *
+ * `label` 이 빈 문자열이면 내부 이름으로 되돌아간다. 모르는 툴이 와도 줄 자체는 남긴다 —
+ * 없는 것보다는 낫고, 무엇을 불렀는지는 알 수 있어야 한다.
+ */
+const toToolCalls = (records: AiToolCallRecord[] | undefined): ChatToolCall[] =>
+  (records ?? []).map((record) => ({
+    name: record.name,
+    label: record.label?.trim() || record.name,
+    arguments: record.arguments ?? {},
+    succeeded: record.succeeded !== false,
+    trackCount: record.track_count ?? 0,
+    failureReason: record.failure_reason ?? null,
+  }));
+
+/**
  * 한 번의 문답. 실패하면 던진다 — 화면이 안내 문구를 고른다.
  */
 export async function requestChat({
@@ -130,6 +165,8 @@ export async function requestChat({
     // 서버가 발급(또는 재사용)한 세션 번호. 화면이 들고 있다가 다음 턴에 되돌려 보낸다.
     // 저장에 실패했으면 null 이고, 그러면 다음 턴에 새 세션이 열린다 — 답변은 정상이다.
     sessionId: result?.session_id ?? null,
+    // 툴 호출 기록. 순서 그대로, 접지 않고 옮긴다.
+    toolCalls: toToolCalls(result?.tool_calls),
   };
 }
 

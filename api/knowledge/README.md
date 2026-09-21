@@ -26,6 +26,8 @@
 
 문서만 읽어서는 알 수 없는, 조사 중 확인된 사실들이다.
 
+- **무드 코드 `code_id` 32~48 은 동결이다.** 17종의 번호·이름·표시명을 바꾸는 변경은 **사람에게 확인받기 전에는 하지 않는다** — 사용자의 온보딩 답이 이 번호를 가리킨다. → [decision/0025](decision/0025-mood-codes-32-48-are-frozen.md)
+- **FE·BE 는 무드 `code_id` 를 32~48 만 쓴다.** 운영·로컬 DB 에 98~132 의 중복분이 남아 있지만 **보인다고 쓸 수 있는 번호가 아니다.** 새 무드는 preprocess 가 새 `code_id` 를 발급할 때만 생긴다. → [decision/0025](decision/0025-mood-codes-32-48-are-frozen.md) 의 *쓰는 쪽 규칙*
 - **스키마 기준은 JPA 엔티티 매핑, `ddl-auto` 는 로컬·운영 모두 `none`.** 앱이 테이블을 만들지 않으므로 **엔티티를 고치면 DDL 을 직접 실행해야 한다.** Flyway 는 도입하지 않는다. → [decision/0011](decision/0011-jpa-manages-schema.md)
 - **실제 배포되는 이미지와 nginx 설정은 `api/` 것이 아니다.** `infra/image/Dockerfile` 과 `infra/deploy/nginx.conf` 다. → [decision/0008](decision/0008-deploy-image-from-infra.md)
 - **프론트엔드는 Cloudflare Workers 에 배포되지 않는다.** wrangler 의존성은 템플릿 잔재이고 실제로는 정적 빌드가 EC2 로 간다. → [decision/0012](decision/0012-frontend-static-to-ec2.md)

@@ -13,6 +13,7 @@ import { PasswordForm } from './password-form';
 import { WithdrawAccount } from './withdraw-account';
 import { useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { useTrackWaveform } from '@/lib/track-waveform';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import type { Track } from '@/lib/mupid-data';
 import { DemoAccount } from './demo-login';
 import {
@@ -99,6 +100,13 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
   const playlistPick = useTrackSelection((selected?.tracks ?? []).map((t) => t.id));
   // 곡을 목록에서 빼는 건 한 곡이든 여러 곡이든 똑같이 한 번 확인받는다.
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
+  /*
+   * 뒤로가기로 닫히게 한다 (S15P21A204-410). 확인 대화상자 둘은 목록 위에
+   * 겹쳐 열리므로 위에 등록해 두었다 — 먼저 닫힌다. 확인 창이 떠 있는 동안
+   * 곡을 고르는 상태는 그대로 남고, 확인 창만 사라진다(취소와 같은 결과).
+   */
+  useDismissableOverlay(removeMomentTrack !== null, () => setRemoveMomentTrack(null));
+  useDismissableOverlay(confirmRemove !== null, () => setConfirmRemove(null));
   const removeTargets = (selected?.tracks ?? []).filter((t) => confirmRemove?.includes(t.id));
   return (
     <div className="content-page collection-page" data-playlist-detail={Boolean(selected && m.libraryTab === 'playlists')}>

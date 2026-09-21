@@ -322,6 +322,63 @@ def test_register_analysis_never_stores_gender_for_instrumental():
     assert body is None and "unknown" in why
 
 
+def test_register_analysis_maps_every_gender_label_the_erd_enum_has():
+    """`ENUM('M','F','MIX')` 세 값이 모두 나갈 수 있어야 한다.
+
+    혼성 곡이 성별 없이 등록돼 있던 원인이 `GENDER_BY_LABEL` 에 `mixed` 가 없어
+    `.get()` 이 조용히 `None` 을 돌려준 것이었다(S15P21A204-414).
+    """
+    from ai_server.tools import register_analysis as ra
+
+    assert ra.payload_from("voice", "female") == (
+        {"has_vocal": True, "vocal_gender": "F"}, "")
+    assert ra.payload_from("voice", "male") == (
+        {"has_vocal": True, "vocal_gender": "M"}, "")
+    assert ra.payload_from("voice", "mixed") == (
+        {"has_vocal": True, "vocal_gender": "MIX"}, "")
+    assert ra.payload_from("voice", "mix") == (
+        {"has_vocal": True, "vocal_gender": "MIX"}, "")
+
+    # `unknown` 은 "모른다" 다. 혼성으로 승격하지 않는다.
+    assert ra.payload_from("voice", "unknown") == (
+        {"has_vocal": True, "vocal_gender": None}, "")
+    # `other`("남/여로 판정 못 함") 도 마찬가지다.
+    assert ra.payload_from("voice", "other") == (
+        {"has_vocal": True, "vocal_gender": None}, "")
+
+    # 연주곡은 성별 분류기가 무엇을 냈든 성별을 남기지 않는다.
+    for label in ("female", "male", "mixed", "unknown", ""):
+        assert ra.payload_from("instrumental", label) == (
+            {"has_vocal": False, "vocal_gender": None}, "")
+
+    # 와이어는 snake_case 다. camelCase 로 보내면 400 이 난다.
+    body, _ = ra.payload_from("voice", "mixed")
+    assert set(body) == {"has_vocal", "vocal_gender"}
+
+    # 이 도구가 내보내는 성별은 ERD 의 enum 안에만 있어야 한다.
+    assert set(ra.GENDER_BY_LABEL.values()) <= {"M", "F", "MIX"}
+
+
+def test_catalog_gender_vocabulary_matches_the_server_enum():
+    """`ETC` 는 S15P21A204-402 이후 존재하지 않는다. 카탈로그도 `MIX` 를 쓴다."""
+    from ai_server.app import recommender
+
+    assert set(recommender._VOCAL_GENDER.values()) <= {"M", "F", "MIX"}
+    assert recommender._catalog_tags(
+        {"has_vocal": True, "gender_label": "mixed"})["vocal_gender"] == "MIX"
+    # `vocal_type` 만 있는 카탈로그 행도 같은 값으로 읽힌다.
+    assert recommender._catalog_tags(
+        {"vocal_type": "mixed"})["vocal_gender"] == "MIX"
+    # 판정하지 못한 보컬은 비운다 — 혼성으로 올리지 않는다.
+    assert recommender._catalog_tags(
+        {"has_vocal": True, "gender_label": "other"})["vocal_gender"] is None
+
+    assert recommender._vocal_values(True, "MIX") == ["voice", "mixed"]
+    # 검색 어휘와 category 접두어가 같아야 스타일이 남는다.
+    assert recommender.parse_style(
+        "mixed_korean_pop_ballad", ["voice", "mixed"], "korean") == "pop_ballad"
+
+
 # ------------------------------------------------------------------ 순위 불변
 def _old_blend(v, clap_active, clap_pct, bdelta, pct, CW):
     """수정 전 식 그대로. 동결 확인용 기준이다."""

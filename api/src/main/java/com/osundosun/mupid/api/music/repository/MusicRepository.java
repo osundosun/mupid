@@ -387,4 +387,74 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
     @Query("UPDATE Music m SET m.playCount = :playCount WHERE m.musicId = :musicId")
     int updatePlayCount(@Param("musicId") int musicId, @Param("playCount") int playCount);
 
+    /**
+     * 고른 장르와 분위기를 <b>둘 다</b> 가진 곡을 조회수 내림차순으로. 「오늘의 모먼트」
+     * 폴백이 쓴다({@code DailyRecommendationServiceImpl}).
+     *
+     * <h2>왜 조인이 아니라 EXISTS 인가</h2>
+     *
+     * 곡 하나에 장르·분위기가 여러 개 붙는다. 조인으로 붙이면 태그 수만큼 같은 곡이
+     * 여러 줄로 나와 {@code DISTINCT} 와 상한이 서로를 망친다 — 4줄을 받았는데 곡은
+     * 2개일 수 있다. EXISTS 는 곡 한 줄을 그대로 둔다.
+     *
+     * <h2>왜 곡이 아니라 번호만 돌려주는가</h2>
+     *
+     * 부르는 쪽이 {@code MusicSummaryAssembler.byIds} 로 다시 읽는다. 목록 표현에
+     * 필요한 연관(아티스트·앨범·표지·스트림)을 그쪽이 한 번에 끌어오므로, 여기서
+     * 엔티티를 들고 나가면 같은 것을 두 번 읽는다.
+     *
+     * <h2>두 번째 정렬 키</h2>
+     *
+     * {@code play_count} 는 한 번도 재생되지 않은 곡이 많아 동점이 흔하다. 상한을
+     * 걸고 자르는 조회라 동점 순서가 흔들리면 같은 요청이 매번 다른 곡을 준다.
+     * 곡 번호로 못 박는다.
+     */
+    @Query("""
+        SELECT m.musicId FROM Music m
+        WHERE m.isDeleted = false
+          AND EXISTS (SELECT 1 FROM MusicGenre g
+                       WHERE g.music.musicId = m.musicId
+                         AND g.genreCode.codeId IN :genreCodeIds)
+          AND EXISTS (SELECT 1 FROM MusicMood d
+                       WHERE d.music.musicId = m.musicId
+                         AND d.moodCode.codeId IN :moodCodeIds)
+        ORDER BY m.playCount DESC, m.musicId DESC
+        """)
+    List<Integer> findTopIdsByGenresAndMoods(
+        @Param("genreCodeIds") List<Integer> genreCodeIds,
+        @Param("moodCodeIds") List<Integer> moodCodeIds,
+        Pageable pageable);
+
+    /** 위와 같되 장르나 분위기 <b>하나만</b> 맞아도 된다. 좁은 조건이 비었을 때 쓴다. */
+    @Query("""
+        SELECT m.musicId FROM Music m
+        WHERE m.isDeleted = false
+          AND (EXISTS (SELECT 1 FROM MusicGenre g
+                        WHERE g.music.musicId = m.musicId
+                          AND g.genreCode.codeId IN :genreCodeIds)
+            OR EXISTS (SELECT 1 FROM MusicMood d
+                        WHERE d.music.musicId = m.musicId
+                          AND d.moodCode.codeId IN :moodCodeIds))
+        ORDER BY m.playCount DESC, m.musicId DESC
+        """)
+    List<Integer> findTopIdsByGenresOrMoods(
+        @Param("genreCodeIds") List<Integer> genreCodeIds,
+        @Param("moodCodeIds") List<Integer> moodCodeIds,
+        Pageable pageable);
+
+    /**
+     * 카탈로그 전체에서 조회수 상위. 취향으로 좁힐 수 없을 때의 마지막 갈래다.
+     *
+     * <p>{@code music.play_count} 를 본다. 재생 이벤트의 정본은 ClickHouse 지만
+     * <b>요청 경로에서 분석 클러스터를 때리지 않는다</b> — 홈 화면 한 번이 전 기간
+     * 집계를 부르게 되고, 장르·분위기 태그가 MySQL 에만 있어 어차피 한 질의로
+     * 묶이지도 않는다. 컬럼은 재생수 배치가 ClickHouse 집계를 옮겨 적는 사본이다.
+     */
+    @Query("""
+        SELECT m.musicId FROM Music m
+        WHERE m.isDeleted = false
+        ORDER BY m.playCount DESC, m.musicId DESC
+        """)
+    List<Integer> findTopIdsByPlayCount(Pageable pageable);
+
 }

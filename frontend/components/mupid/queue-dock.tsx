@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import { Check, ChevronDown, ListMusic, ListEnd } from 'lucide-react';
 import { QueueList } from './queue-list';
 import { useTrackSelection } from './track-selection';
@@ -87,6 +88,17 @@ function QueueDockPanel({
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
   /** 담을 위치 고르기가 펼쳐져 있는가. 머리글 버튼 아래로 열린다. */
   const [positionOpen, setPositionOpen] = useState(false);
+  /*
+   * 뒤로가기 순서 (S15P21A204-410). 확인 대화상자 → 위치 고르기 → 독 순으로
+   * 닫힌다. Escape 핸들러가 쓰던 우선순위와 같은 순서이고, 등록 순서가 곧
+   * "가장 위" 순서다(나중에 등록한 것이 먼저 닫힌다).
+   *
+   * 독 자체(열려 있는 동안)는 `hooks/use-mupid.ts` 가 같은 상태로 등록한다 —
+   * 여기서 또 등록하면 같은 것이 스택에 두 번 오른다. 그래서 여기서는 독
+   * **위에** 겹치는 둘만 맡는다.
+   */
+  useDismissableOverlay(confirmRemove !== null, () => setConfirmRemove(null));
+  useDismissableOverlay(positionOpen, () => setPositionOpen(false));
   const positionRef = useRef<HTMLDivElement>(null);
   const removeTargets = m.queueTracks.filter((t) => confirmRemove?.includes(t.id));
 

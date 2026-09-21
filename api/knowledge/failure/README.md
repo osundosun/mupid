@@ -9,7 +9,7 @@
 | 문서 | 건수 | 무엇이 들어 있나 |
 |---|---:|---|
 | [build-and-spring.md](build-and-spring.md) | 16 | Gradle 빌드 실패, Spring Boot 4 스타터 이름 변경, SNAPSHOT 저장소, Lombok·빈 주입, Mockito 목이 삼키는 예외·`RestClient` 예외의 URL 노출 |
-| [database-and-jpa.md](database-and-jpa.md) | 30 | 트랜잭션 경계, 더티체킹, 지연로딩, 스키마 반영 |
+| [database-and-jpa.md](database-and-jpa.md) | 31 | 트랜잭션 경계, 더티체킹, 지연로딩, 스키마 반영 |
 | [auth-and-api.md](auth-and-api.md) | 47 | JWT·쿠키·필터, 이메일 인증, 오류 응답 규약 위반 |
 | [config-and-env.md](config-and-env.md) | 11 | `MUPID_` 접두사, `.env` 주입 경로, 값이 컨테이너에서만 안 잡히는 경우 |
 | [docker-and-nginx.md](docker-and-nginx.md) | 18 | 베이스 이미지 차이, 레이어 캐싱, compose 파일 혼동, envsubst 치환 |

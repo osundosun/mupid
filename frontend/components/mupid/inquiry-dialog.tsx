@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Mail, MessageSquareText } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { api } from '@/lib/api/session';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import type { MupidModel } from '@/hooks/use-mupid';
 
 const BODY_MAX = 1000;
@@ -19,8 +20,13 @@ export function InquiryButton({ model: m }: { model: MupidModel }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const ready = body.trim().length > 0;
-
+  /** 창의 내용을 비우고 닫는다. 전송 성공·취소·뒤로가기가 모두 이 길로 온다. */
   const close = () => { setOpen(false); setBody(''); setError(''); };
+
+  // 뒤로가기로 닫히게 한다. 보내는 중에는 닫지 않는다 — 진행 중인 요청이
+  // 사라지면 사용자가 보냈는지 알 수 없다 (기존 onOpenChange 와 같은 규칙).
+  useDismissableOverlay(open, () => { if (!busy) close(); });
+
   const submit = async () => {
     if (!ready || busy) return;
     setBusy(true); setError('');

@@ -14,6 +14,7 @@ import com.osundosun.mupid.api.ai.client.OpenAiTool;
 import com.osundosun.mupid.api.ai.client.OpenAiToolCall;
 import com.osundosun.mupid.api.ai.dto.AiChatTurn;
 import com.osundosun.mupid.api.ai.dto.AiRecommendedTrack;
+import com.osundosun.mupid.api.ai.dto.AiToolCallRecord;
 import com.osundosun.mupid.api.ai.entity.AiChatSession;
 import com.osundosun.mupid.api.ai.enumerate.AiMessageType;
 import com.osundosun.mupid.api.ai.error.AiErrorCode;
@@ -96,6 +97,8 @@ public class AiChatServiceImpl implements AiChatService {
 
         // 툴이 여러 번 불려도 화면에는 한 번만 보여야 한다. 곡 번호로 접는다.
         Map<Integer, AiRecommendedTrack> tracks = new LinkedHashMap<>();
+        // **접지 않는다.** 호출 순서대로 전부 남긴다 — 몇 번 불렀는지가 정보다.
+        List<AiToolCallRecord> toolCalls = new ArrayList<>();
         // 마지막으로 곡을 돌려준 추천 묶음의 번호. 화면이 재생 이벤트에 되돌려 싣는다.
         long[] recommendationId = {0L};
 
@@ -105,13 +108,13 @@ public class AiChatServiceImpl implements AiChatService {
             if (!answer.hasToolCalls()) {
                 // 답이 나왔다. 여기서 저장하고 돌려준다 — 응답이 나간 뒤에 저장하면
                 // 저장을 못 한 턴의 답변은 화면에만 남고 기록에는 없다.
-                return save(user, request, replyText(answer), tracks, recommendationId[0]);
+                return save(user, request, replyText(answer), tracks, toolCalls, recommendationId[0]);
             }
 
             // 툴 결과 앞에는 그것을 요청한 assistant 메시지가 반드시 있어야 한다.
             messages.add(answer);
             for (OpenAiToolCall call : answer.toolCalls()) {
-                messages.add(runTool(user, request, call, tracks, recommendationId));
+                messages.add(runTool(user, request, call, tracks, toolCalls, recommendationId));
             }
         }
 
@@ -136,6 +139,7 @@ public class AiChatServiceImpl implements AiChatService {
         AiChatRequest request,
         String reply,
         Map<Integer, AiRecommendedTrack> tracks,
+        List<AiToolCallRecord> toolCalls,
         long recommendationId
     ) {
         Integer sessionId = request.sessionId();
@@ -155,7 +159,8 @@ public class AiChatServiceImpl implements AiChatService {
             reply,
             sessionId,
             recommendationId == 0L ? null : recommendationId,
-            List.copyOf(tracks.values()));
+            List.copyOf(tracks.values()),
+            List.copyOf(toolCalls));
     }
 
     /**
@@ -185,17 +190,26 @@ public class AiChatServiceImpl implements AiChatService {
      *
      * 실패해도 예외로 올리지 않는다. 모델에게 안 됐다고 알려 주면 그 사실을 담아 답할 수
      * 있는데, 여기서 502 를 내면 대화 자체가 끊긴다.
+     *
+     * <p><b>모델에게 돌려주는 메시지 모양은 그대로다.</b> 게이트웨이가 요구하는 계약이라
+     * 여기서 손대면 툴 왕복 자체가 깨진다. 기록은 {@code records} 에 따로 모은다
+     * (S15P21A204-409) — 실패도 담는다. 예전에는 여기서 삼킨 실패가 로그로만 남아
+     * 사용자에게는 "추천이 안 온다" 로 보였다.
      */
     private OpenAiMessage runTool(
         User user,
         AiChatRequest request,
         OpenAiToolCall call,
         Map<Integer, AiRecommendedTrack> tracks,
+        List<AiToolCallRecord> records,
         long[] recommendationId
     ) {
         String name = call.function() != null ? call.function().name() : null;
         if (!AiRecommendTool.NAME.equals(name)) {
             log.warn("선언하지 않은 툴을 불렀다 name={}", name);
+            // 사용자에게는 우리가 아는 이름으로 보여준다. 모르는 툴이면 이름 그대로가 정직하다.
+            records.add(AiToolCallRecord.failed(
+                name, labelOf(name), Map.of(), "이 대화에서 쓸 수 없는 도구입니다."));
             return OpenAiMessage.tool(call.id(), AiJson.writeString(
                 Map.of("error", "%s 라는 툴은 없습니다.".formatted(String.valueOf(name)))
             ));
@@ -216,11 +230,19 @@ public class AiChatServiceImpl implements AiChatService {
             // 추천 서버가 죽었다고 대화까지 끊지 않는다. 모델에게 사실을 알려 주면
             // "지금은 곡을 찾아드릴 수 없다" 고 말할 수 있다. 여기서 502 를 올리면
             // 사용자는 빈 화면만 본다.
+            //
+            // **대화를 이어 가는 것과 조용히 넘기는 것은 다르다.** 실패를 기록에 남겨
+            // 화면까지 보낸다 — 그래야 사용자가 "도구 호출 → 실패" 를 볼 수 있다.
             log.warn("추천 서버 호출 실패 — 대화는 이어 간다 code={}", e.getErrorCode());
+            records.add(AiToolCallRecord.failed(
+                AiRecommendTool.NAME, labelOf(AiRecommendTool.NAME), argumentsOf(arguments),
+                e.getMessage()));
             return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of(
                 "error", "지금은 곡을 찾을 수 없습니다. 잠시 후 다시 시도해 주세요.")));
         }
         found.forEach(track -> tracks.putIfAbsent(track.musicId(), track));
+        records.add(AiToolCallRecord.succeeded(
+            AiRecommendTool.NAME, labelOf(AiRecommendTool.NAME), argumentsOf(arguments), found.size()));
 
         if (found.isEmpty()) {
             // 빈 배열만 주면 모델이 "오류" 로 읽고 곡을 지어내는 일이 있다. 조건에 맞는
@@ -230,6 +252,80 @@ public class AiChatServiceImpl implements AiChatService {
                 "message", "조건에 맞는 곡이 없습니다. 조건을 줄이거나 다른 분위기를 제안하세요.")));
         }
         return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of("tracks", found)));
+    }
+
+    /**
+     * 툴 이름을 사용자에게 읽히는 말로 옮긴다 (S15P21A204-409).
+     *
+     * <p>화면은 **개발자용 로그가 아니라 사용자 화면**이다. {@code recommend_music} 을
+     * 그대로 노출하면 사용자는 그것이 무슨 일을 한 것인지 알 수 없다. 옮기는 판단을
+     * 서버가 하는 이유는, 화면마다 다른 문구가 생기는 것을 막고 툴이 늘어도 한 곳만
+     * 고치면 되게 하려는 것이다.
+     *
+     * <p>모르는 이름은 그대로 돌려준다. 우리가 모르는 툴을 화면이 임의로 번역하면
+     * 없는 기능을 있다고 말하게 된다.
+     */
+    private String labelOf(String name) {
+        if (AiRecommendTool.NAME.equals(name)) {
+            return "음악 추천";
+        }
+        return name;
+    }
+
+    /**
+     * 모델이 넘긴 인자를 화면에 보여줄 모양으로 다듬는다.
+     *
+     * <p>사용자가 **"왜 이 곡이 나왔나"** 를 이해하는 근거라 버리지 않는다. 다만 빈 칸은
+     * 뺀다 — {@code {"query": null, "filters": {}}} 처럼 빈 껍데기가 화면에 줄줄이
+     * 그려지면 읽을 수 없다. 모델은 조건이 없을 때도 빈 껍데기를 곧잘 만든다.
+     *
+     * <p>순서를 고정한다({@code LinkedHashMap}). 같은 대화가 매번 다른 차례로 보이면
+     * 기록으로 읽히지 않는다.
+     */
+    private Map<String, Object> argumentsOf(AiRecommendTool.Arguments arguments) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (arguments == null) {
+            return out;
+        }
+        if (arguments.query() != null && !arguments.query().isBlank()) {
+            out.put("query", arguments.query());
+        }
+        if (arguments.limit() != null) {
+            out.put("limit", arguments.limit());
+        }
+        // 조건은 **알맹이가 있는 것만** 넣는다. 모델은 조건이 없을 때도
+        // `{"genre": []}` 같은 빈 껍데기를 곧잘 만드는데, 그것을 그대로 실으면 화면에
+        // 값 없는 줄이 붙어 "무언가를 걸었다" 로 잘못 읽힌다.
+        putIfMeaningful(out, "filters", arguments.filters());
+        putIfMeaningful(out, "exclude", arguments.exclude());
+        return out;
+    }
+
+    /**
+     * 조건 맵에서 알맹이가 있는 칸만 남긴다.
+     *
+     * <p>빈 리스트(`[]`)·빈 맵(`{}`)·null 은 걷어낸다. 값이 남은 칸만 기록에 싣는다 —
+     * 전부 빈 껍데기면 키 자체가 기록에 나오지 않는다.
+     */
+    private void putIfMeaningful(Map<String, Object> out, String key, Map<String, Object> conditions) {
+        Map<String, Object> meaningful = new LinkedHashMap<>();
+        if (conditions != null) {
+            conditions.forEach((field, value) -> {
+                if (value == null) {
+                    return;
+                }
+                if (value instanceof List<?> list && list.isEmpty()) {
+                    return;
+                }
+                if (value instanceof Map<?, ?> map && map.isEmpty()) {
+                    return;
+                }
+                meaningful.put(field, value);
+            });
+        }
+        if (!meaningful.isEmpty()) {
+            out.put(key, meaningful);
+        }
     }
 
     /**
