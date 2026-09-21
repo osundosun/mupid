@@ -88,7 +88,8 @@ class ClickHouseCopyTest(unittest.TestCase):
 
     COPIED = (
         ("server", "00-cluster.xml"), ("server", "01-keeper.xml"),
-        ("server", "02-server.xml"), ("server", "10-macros.xml"),
+        ("server", "02-server.xml"), ("server", "03-system-logs.xml"),
+        ("server", "10-macros.xml"),
         ("users", "00-profile.xml"), ("users", "10-mupid-user.xml"),
     )
 

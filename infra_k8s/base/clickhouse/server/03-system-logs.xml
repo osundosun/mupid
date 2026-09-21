@@ -1,0 +1,106 @@
+<?xml version="1.0"?>
+<!--
+  ClickHouse 가 자기 자신에 대해 남기는 로그의 양을 묶는다.
+
+  왜 필요한가. 기본값은 "무제한"이다. 2026-09-21 운영 클러스터를 보니 실제
+  서비스 데이터는 listen_events 16,540 행(530 KiB)뿐인데 system 로그는
+  노드당 11 GiB 를 넘었다. trace_log 한 테이블이 6.7 억 행이었다.
+
+  디스크가 문제가 아니었다(270 GiB 여유). 비용은 CPU 다. 로그를 쓰면 파트가
+  생기고, 파트가 생기면 머지가 돈다. 노드당 시간당 1,015 개씩 파트가 생기고
+  있었고, 그 머지가 코어 4 개짜리 노드의 LoadAverage 를 4.86 까지 올렸다.
+  그 할당들이 메모리 트래커를 3 GiB 상한에 붙여놔서, RSS 가 1.5 GiB 인데도
+  분석 쿼리가 MEMORY_LIMIT_EXCEEDED 로 죽었다.
+
+  로그를 쓰는 일 자체가 로그를 만든다는 것이 핵심이다. 트래픽이 0 이어도
+  metric_log 인서트가 프로파일링되어 trace_log 에 쌓이고, 그 머지가 메모리를
+  할당해 다시 trace_log 에 쌓인다. 그래서 상한을 걸지 않으면 멈추지 않는다.
+-->
+<clickhouse>
+    <!--
+      끄는 것들.
+
+      trace_log 가 11 GiB 중 10.4 GiB 였다. 쿼리 프로파일러는 실행 중인 스레드마다
+      1 초에 한 번, 거기에 4 MiB 할당할 때마다 한 번 더 찍는다. 프로파일링을 실제로
+      할 때만 켜는 것이 관행이다. 필요해지면 이 줄만 지우고 재기동한다.
+
+      text_log 는 02-server.xml 의 <console>1</console> 때문에 같은 내용이 이미
+      컨테이너 stdout 으로 나간다. 418 MiB 짜리 중복이었다.
+    -->
+    <trace_log remove="1"/>
+    <text_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <latency_log remove="1"/>
+
+    <!--
+      남기는 것들. 공통 규칙 셋:
+
+      1. partition_by 를 event_date(일 단위)로 내린다. 기본값은 toYYYYMM(월 단위)라
+         7 일 TTL 을 걸면 만료된 행이 이번 달 파티션 안에 산 행과 섞여서, ClickHouse 가
+         파티션을 통째로 버리지 못하고 파트를 다시 써서 지운다. 머지를 줄이려다
+         머지를 늘리게 된다. 일 단위면 하루치가 통째로 만료되어 그냥 드롭된다.
+
+      2. flush_interval_milliseconds 를 60 초로 올린다. 파트는 수집할 때가 아니라
+         flush 할 때 생긴다. 기본값 7.5 초를 그대로 두면 수집 주기를 아무리 늘려도
+         파트는 7.5 초마다 하나씩 계속 생긴다. 파트 수가 머지 부하이므로 여기가
+         실제로 효과를 내는 손잡이다. 대가는 로그가 테이블에 보이기까지 최대 60 초,
+         그리고 비정상 종료 시 마지막 60 초 유실이다.
+
+      3. ttl 7 일. query_log 만 14 일이다 — 지난주에 있었던 일을 이번 주에
+         쫓는 일이 실제로 생기는 유일한 테이블이고, 27 MiB 라 두 배로 늘려도
+         비용이 없다.
+
+      주의: partition_by 가 바뀌면 ClickHouse 는 기존 테이블을 metric_log_0 처럼
+      이름만 바꿔 남기고 새로 만든다. 데이터가 사라지는 것이 아니다. 재기동 후
+      남은 _0 테이블을 DROP 해서 옛 데이터를 회수한다.
+    -->
+    <metric_log>
+        <!-- 기본 1000. 관리자 대시보드가 rounding=60 으로 그리므로 10 초도 화면
+             해상도보다 촘촘하다. 행 수가 1/10 이 된다. -->
+        <collect_interval_milliseconds>10000</collect_interval_milliseconds>
+        <flush_interval_milliseconds>60000</flush_interval_milliseconds>
+        <partition_by>event_date</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </metric_log>
+
+    <asynchronous_metric_log>
+        <flush_interval_milliseconds>60000</flush_interval_milliseconds>
+        <partition_by>event_date</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </asynchronous_metric_log>
+
+    <!-- 성능 분석과 감사의 근거. 이것만은 끄지 않는다. 여기만 14 일인 이유는
+         위 3 번에 적었다. -->
+    <query_log>
+        <flush_interval_milliseconds>60000</flush_interval_milliseconds>
+        <partition_by>event_date</partition_by>
+        <ttl>event_date + INTERVAL 14 DAY DELETE</ttl>
+    </query_log>
+
+    <!--
+      관행대로라면 끌 자리다. 남기는 것은 이 서비스의 사정 때문이다:
+      mv_kafka_to_events 아래의 MV 사슬이 listen_events 에 16,540 행이 들어왔는데도
+      track_sections / user_section_signals / play_section_coverage 를 한 행도
+      만들지 못하고 있다. 그 원인을 추적할 수 있는 테이블이 이것뿐이다.
+      MV 파이프라인이 정상화되면 그때 remove 해도 된다. 6 MiB 다.
+    -->
+    <query_views_log>
+        <flush_interval_milliseconds>60000</flush_interval_milliseconds>
+        <partition_by>event_date</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </query_views_log>
+
+    <!-- 이 파일이 바꾸는 것이 정확히 머지 동작이다. 그 효과를 확인할 근거라
+         남긴다. 1 MiB 다. -->
+    <part_log>
+        <flush_interval_milliseconds>60000</flush_interval_milliseconds>
+        <partition_by>event_date</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </part_log>
+
+    <error_log>
+        <flush_interval_milliseconds>60000</flush_interval_milliseconds>
+        <partition_by>event_date</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </error_log>
+</clickhouse>
