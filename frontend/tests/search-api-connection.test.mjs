@@ -46,7 +46,8 @@ test('explore sends all sidebar filters and keeps them in its request key', asyn
   assert.match(explore, /key=\{requestKey\} ref=\{trackList\} className="explore-track-list"/);
   assert.match(explore, /className={`explore-filter-sidebar\$\{desktopSidebarStyle \? ' is-desktop-floating' : ''\}`}/);
   assert.match(explore, /new ResizeObserver\(sync\)/);
-  assert.match(explore, /const top = Math\.max\(110, bounds\.top\)/);
+  assert.match(explore, /const headerBottom = header\?\.getBoundingClientRect\(\)\.bottom/);
+  assert.match(explore, /const top = Math\.max\(headerBottom \+ 20, bounds\.top\)/);
   // 하단 재생바 위에서 패널이 끝나야 검색 버튼이 가려지지 않는다.
   assert.match(explore, /Math\.min\(window\.innerHeight, playerBounds\.top\)/);
   assert.match(explore, /Math\.min\(visibleBottom, appLayoutBottom\) - top - 20/);

@@ -67,7 +67,11 @@ function ArtistContent({ model: m }: { model: MupidModel }) {
   const image = profileImage ?? catalogImage;
   const albums = [...new Set(tracks.map(track => track.album))];
   const genres = [...new Set(tracks.map(track => track.genre).filter(Boolean))];
-  const song = (track: Track) => <button className="artist-song" key={track.id} onClick={() => { m.setSelectedArtist(null); m.openTrack(track); }}>
+  const song = (track: Track) => <button className="artist-song" key={track.id} onClick={() => {
+    m.setSelectedArtist(null);
+    if (m.active?.id !== track.id || !m.playing) m.play(track);
+    m.go('player');
+  }}>
     <AlbumArt track={track} /><span>{track.title}</span><ChevronRight size={18} aria-hidden="true" />
   </button>;
   return <>

@@ -151,6 +151,7 @@ export function TrackRow({
   detail,
   showDetail = true,
   titleInteractive = true,
+  onTitleClick,
   action,
   onPlay,
   // 추천·검색처럼 둘러보는 목록에서만 켠다. 자리가 빠듯한 목록에서는 생략한다.
@@ -171,6 +172,7 @@ export function TrackRow({
   detail?: string;
   showDetail?: boolean;
   titleInteractive?: boolean;
+  onTitleClick?: () => void;
   action?: ReactNode;
   onPlay?: () => void;
   queueable?: boolean;
@@ -198,7 +200,7 @@ export function TrackRow({
       <AlbumArt track={track} />
       <div className="track-info">
         {titleInteractive ? (
-          <button className="track-title-link" onClick={picking ? onSelect : () => m.openTrack(track)}><strong>{track.title}</strong></button>
+          <button className="track-title-link" onClick={picking ? onSelect : onTitleClick ?? (() => m.openTrack(track))}><strong>{track.title}</strong></button>
         ) : (
           <span className="track-title-link"><strong>{track.title}</strong></span>
         )}

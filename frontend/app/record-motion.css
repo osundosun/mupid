@@ -70,6 +70,7 @@
 .record-tonearm {
   position: absolute; inset: 0;
   background: url('/mupid-tonearm-isolated.png') center / contain no-repeat;
+  filter: drop-shadow(3px 4px 3px #10182066) drop-shadow(9px 14px 9px #1018204d);
   transform: scaleY(0.91);
   transform-origin: top center;
   pointer-events: none;
