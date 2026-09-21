@@ -284,6 +284,25 @@ html.dark .sky-dialog > [data-slot='dialog-close'] {
   box-shadow: none;
 }
 html.dark .weekly-arrow:hover { background: #414141 !important; }
+html.dark .mupid-shell :is(.desktop-playlist-row,.today-moment-row) {
+  border-color: transparent !important;
+  border-bottom-color: #353535 !important;
+}
+html.dark .mupid-shell :is(.desktop-playlist-row,.today-moment-row):is(.is-current,:hover,:focus-within) {
+  background: #292929 !important;
+  border-color: transparent !important;
+  border-bottom-color: #353535 !important;
+}
+html.dark .mupid-shell .desktop-moment-button {
+  background: #282828 !important;
+  border-color: #454545 !important;
+  color: #b9cbe4 !important;
+  box-shadow: none;
+}
+html.dark .mupid-shell .desktop-moment-button:hover { background: #343434 !important; }
+html.dark .mupid-shell .desktop-seek { background: transparent !important; }
+html.dark .mupid-shell .desktop-seek::-webkit-slider-runnable-track { background: #424242; }
+html.dark .mupid-shell .desktop-seek::-moz-range-track { background: #424242; }
 html.dark .mupid-shell .track-row:is(.is-playing,.is-selected,:hover) {
   background: #2c2c2c !important;
   border-color: #454545 !important;
