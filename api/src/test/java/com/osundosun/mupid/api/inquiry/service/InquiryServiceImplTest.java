@@ -3,7 +3,6 @@ package com.osundosun.mupid.api.inquiry.service;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -42,6 +41,9 @@ import com.osundosun.mupid.api.user.enumerate.UserStatus;
  *       {@code TaskRejectedException} 이 요청 스레드로 올라오는데, 그때 문의가 실패하면
  *       부가 기능이 본 기능을 막는 셈이다.</li>
  * </ol>
+ *
+ * <p>Mattermost 본문에 실리는 문자열 자체는 {@code InquiryMattermostBodyTest} 가 본다 —
+ * 여기서는 "넘겼는가" 까지만 본다.
  */
 class InquiryServiceImplTest {
 

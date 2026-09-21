@@ -155,7 +155,7 @@ public class InquiryNotifier {
         String text = """
             **새 문의가 도착했습니다**
             - 보낸 사람: %s (%s)
-            - 내용: %s""".formatted(senderName, senderEmail, content);
+            - 내용: %s""".formatted(senderName, senderEmail, toMattermostBody(content));
         mattermostNotifier.notify(text);
     }
 
@@ -180,6 +180,73 @@ public class InquiryNotifier {
             .fragment(null)
             .encode()
             .toUriString();
+    }
+
+    /**
+     * 문의 내용을 Mattermost 본문에 넣을 수 있게 다듬는다.
+     *
+     * <h2>왜 필요한가 — 사용자 입력이 마크다운으로 해석된다</h2>
+     *
+     * <p>Mattermost 는 `{"text": "..."}` 를 **마크다운으로 렌더링**한다. 내용을 그대로
+     * 이어 붙이면 사용자가 쓴 서식이 채널에서 그대로 살아난다. 그 중 위험한 것이
+     * <b>H1(`# `)</b> 이다 — Mattermost 는 H1 을 본문보다 훨씬 큰 글씨로, 그리고
+     * 채널의 다른 메시지들보다 강하게 그려서 알림 한 건이 채널 전체를 덮는다. 관리자
+     * 화면에서 보면 "누가 공지라도 올린 것처럼" 보이고, 정작 읽어야 할 문의 목록은
+     * 밀려난다.
+     *
+     * <p>그 밖에 제목 계열(`## `…), 인용(`&gt; `), 코드펜스(```` ``` ````), 수평선(`---`)도
+     * 채널 서식을 흔든다. `<b>`·링크 같은 인라인 서식은 원문 확인에 도움이 되므로
+     * 남긴다 — 여기서 막으려는 것은 <b>줄 단위 블록 서식</b>이다.
+     *
+     * <h2>어떻게 막는가</h2>
+     *
+     * <p>줄 머리의 서식 표시를 지우지 않고 <b>제로폭 문자(U+200B)를 앞에 붙인다.</b> 지우면
+     * 사용자가 쓴 글자를 우리가 바꾸는 셈이고("왜 내 문의가 달라졌지"), 붙이면 화면에는
+     * 그대로 보이면서 마크다운 문법만 무력해진다. 눈에 보이는 문자열은 원문 그대로다.
+     *
+     * <p>표는 {@code \n} 만 보므로 `\r\n` 을 먼저 정규화한다.
+     */
+    static String toMattermostBody(String content) {
+        if (content == null) {
+            return "";
+        }
+        String normalized = content.replace("\r\n", "\n").replace("\r", "\n");
+        String[] lines = normalized.split("\n", -1);
+        StringBuilder body = new StringBuilder(normalized.length());
+        for (int index = 0; index < lines.length; index++) {
+            if (index > 0) {
+                body.append('\n');
+            }
+            body.append(neutralizeBlockMarkdown(lines[index]));
+        }
+        return body.toString();
+    }
+
+    /** 줄 머리에서 블록 서식을 만드는 문자들. `#` 은 H1~H6, `>` 는 인용, `-`/`+`/`*` 는 목록·수평선. */
+    private static final String BLOCK_MARKDOWN_PREFIXES = "#>-+*";
+
+    /** 마크다운 문법 앞에 붙이는 제로폭 공백. 화면에는 보이지 않는다. */
+    private static final char ZERO_WIDTH_SPACE = '\u200B';
+
+    /**
+     * 한 줄의 머리가 블록 서식이면 제로폭 문자를 앞에 붙여 무력화한다.
+     *
+     * <p>`#제목`(공백 없음)도 함께 막는다 — Mattermost 의 렌더러가 여유를 두고 받아들이는
+     * 경우가 있어, 공백 유무로 갈라 두면 한쪽만 새는 구멍이 된다.
+     *
+     * <p>들여쓰기(`  # 제목`)로 만드는 블록 서식도 막으려고 앞쪽 공백을 건너뛴 뒤 첫 글자를
+     * 본다. 이때 제로폭 문자는 <b>들여쓰기 뒤·표시 앞</b>에 넣는다 — 맨 앞에 넣으면 그 줄이
+     * 코드 블록(4칸 들여쓰기)으로 재해석될 수 있다.
+     */
+    private static String neutralizeBlockMarkdown(String line) {
+        int first = 0;
+        while (first < line.length() && (line.charAt(first) == ' ' || line.charAt(first) == '\t')) {
+            first++;
+        }
+        if (first >= line.length() || BLOCK_MARKDOWN_PREFIXES.indexOf(line.charAt(first)) < 0) {
+            return line;
+        }
+        return line.substring(0, first) + ZERO_WIDTH_SPACE + line.substring(first);
     }
 
     /**
