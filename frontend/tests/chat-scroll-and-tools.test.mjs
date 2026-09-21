@@ -175,14 +175,20 @@ void test('내부 툴 이름을 사용자 화면에 그대로 노출하지 않�
 });
 
 void test('실패한 툴 호출은 사유까지 보인다 — 조용한 실패로 돌아가지 않는다', () => {
-  // 접히는 것은 성공한 호출뿐이다.
-  assert.match(toolCalls, /!call\.succeeded\s*\|\|\s*open/);
-  assert.match(toolCalls, /chat-tool-failure/);
-  // 요약 줄에도 사유가 들어간다.
-  assert.match(toolCalls, /실패 — \$\{call\.failureReason\}/);
-  // 비활성 버튼으로 두면 눌러도 안 펼쳐진다 — 사유가 화면에 남아야 하므로 그 자체가
-  // 문제가 되지 않는다는 것을 명시적으로 남긴다.
-  assert.match(toolCalls, /disabled=\{!call\.succeeded\}/);
+  /*
+   * 처음엔 실패를 **늘 펼쳐 두었다.** 그랬더니 재시도가 겹칠 때 높이가 묶이지 않아
+   * 그 턴의 답변이 밀려났다(실측 470px). 지금은 실패도 접을 수 있지만 **사유는 접히지
+   * 않는다** — 요약 줄의 결과 자리에 그대로 들어가기 때문이다.
+   *   "1번째 음악 추천   실패 — 곡 추천 서버가 응답하지 않습니다."
+   * 조건을 보려면 펼쳐야 하지만, 상황을 아는 데 필요한 것은 사유다.
+   */
+  const source = code(toolCalls);
+  // 사유가 요약 줄에 그대로 있다(접힌 상태에서도 읽힌다).
+  assert.match(source, /실패 — \$\{call\.failureReason\}/);
+  // 상세에도 있어 펼치면 온전히 읽힌다.
+  assert.match(source, /chat-tool-failure/);
+  // 접힌 줄의 접근성 이름에도 들어간다 — 화면 낭독기로도 사유를 알 수 있다.
+  assert.match(source, /실패: \$\{call\.failureReason/);
 });
 
 void test('여러 번 불린 툴을 접지 않는다 — 몇 번 불렀는지가 정보다', () => {
@@ -191,25 +197,86 @@ void test('여러 번 불린 툴을 접지 않는다 — 몇 번 불렀는지가
   assert.match(toolCalls, /\$\{index \+ 1\}번째/);
 });
 
-void test('같은 조건으로 다시 부른 줄은 인자를 두 번 그리지 않는다 — 기록은 그대로 남는다', () => {
+void test('같은 조건으로 다시 부른 줄을 표시한다 — 기록은 그대로 남는다', () => {
   /*
-   * 실측 근거: 추천 서버가 죽으면 모델이 `max-tool-rounds` 를 다 쓰고 **같은 인자로 세 번**
-   * 부른다. 조건 줄을 매번 그리면 패널이 똑같은 글로 뒤덮였다 — 실패 3회에 약 470px 로,
-   * 좁은 화면에서는 그 턴의 답변 자체가 밀려났다.
+   * 실측 근거: 추천 서버가 죽으면 모델이 `max-tool-rounds` 를 다 쓰고 **같은 요청을 여러 번**
+   * 부른다. 그래서 호출 수는 그대로 남기되(그것이 정보다) "왜 같은 도구가 두 줄인가" 를
+   * 줄에 적어 준다.
    *
-   * 기록(3줄)은 그대로 남기고 **인자만** 한 번 보여준다. 호출 수는 정보지만, 같은 글을
-   * 세 번 읽는 것은 소음이다.
+   * 다만 이 판정은 **글자 그대로 같을 때만** 선다. live 에서 모델은 말을 살짝 바꿔 부른다
+   * (`"…좋은 곡, 차분한…"` → `"…좋은, 차분한…"`). 그때 높이를 묶는 것은 이 힌트가 아니라
+   * 아래 아코디언이다 — 판정에 기대면 다시 123px 씩 쌓인다.
    */
   const source = code(toolCalls);
   assert.match(source, /const signature = /);
   assert.match(source, /const isRepeat = /);
-  // 인자 블록이 반복 줄에서 빠진다.
-  assert.match(source, /!isRepeat && \(!call\.succeeded \|\| open\)/);
   // 번호는 그대로 남는다 — 몇 번 불렀는지가 정보다.
   assert.match(source, /\$\{index \+ 1\}번째/);
-  // 같은 조건이라는 사실 자체도 남긴다.
   assert.match(source, /같은 조건/);
   assert.match(source, /data-tool-repeat=/);
+});
+
+void test('조건 상세는 한 번에 하나만 펼친다 — 호출이 몇 번이든 높이가 묶인다', () => {
+  /*
+   * 이것이 높이를 묶는 **실제 장치**다.
+   *
+   * 실측: 실패를 늘 펼쳐 두니 재시도 3회에 조건 블록이 3번 그려져 약 470px 였고, 좁은
+   * 화면에서 그 턴의 답변이 밀려났다. 인자 비교로 중복을 걷어내려 했지만 모델이 말을
+   * 바꿔 부르는 바람에 서지 않았다(live 확인). 그래서 **구조로** 묶는다 —
+   * 상태를 `openIndex: number | null` 하나로 두고, 펼친 것은 언제나 최대 하나다.
+   */
+  const source = code(toolCalls);
+  // 열린 것이 인덱스 하나로 결정된다(불리언이면 여러 개가 동시에 열린다).
+  assert.match(source, /useState<number \| null>\(null\)/);
+  assert.match(source, /const open = openIndex === index/);
+  // 같은 줄을 다시 누르면 접히고, 다른 줄을 누르면 그 줄만 열린다 — 어느 쪽이든 값은 하나다.
+  assert.match(source, /setOpenIndex\(open \? null : index\)/);
+  assert.equal(/useState\(false\)/.test(source), false,
+    '불리언이면 여러 줄이 동시에 열려 높이 상한이 사라진다');
+  // 상세 블록은 열린 하나에서만 그린다.
+  assert.match(source, /\{open && \(\s*<div className="chat-tool-detail">/);
+  // 실패도 접을 수 있어야 한다(늘 펼쳐 두면 위 상한이 사라진다).
+  assert.equal(/disabled=\{!call\.succeeded\}/.test(source), false,
+    '실패를 펼칠 수 없게 두면 높이 상한이 사라진다');
+  // 펼칠 수 있는 모든 줄에 캐럿이 붙는다(하나만 열린다는 것을 눈으로도 알 수 있게).
+  assert.match(source, /className=\{`chat-tool-caret\$\{open \? ' open' : ''\}`\}/);
+});
+
+void test('펼친 내용이 영역 밖으로 나가면 내린다 — 커밋 뒤에 재는 자리에서', () => {
+  /*
+   * 실측으로 두 번 걸렸다.
+   *
+   *  · `requestAnimationFrame` 으로 쟀더니 React 가 아직 DOM 을 커밋하기 전이라
+   *    **펼치기 전 높이**가 나왔고(`hasDetail` false) 넘친 양이 0 으로 계산됐다.
+   *    펼친 뒤에도 상세 아래가 화면 밖에 남았다(`rowBox` bottom 603 vs 컨테이너 566,
+   *    `maxScroll` 179 인데 `scrollTop` 61).
+   *  · `useEffect` 는 **커밋 뒤에** 돌아 배치가 확정된 값을 잰다. 여기가 맞는 자리다.
+   *
+   * 넘친 만큼만 민다. 접을 때는 내용이 줄어 알아서 들어오므로 손대지 않는다.
+   */
+  const source = code(toolCalls);
+  assert.equal(/requestAnimationFrame/.test(source), false,
+    'rAF 는 커밋 전에 돌아 펼치기 전 높이를 잰다 — 실측으로 실패한 방식이다');
+  assert.match(source, /useEffect\(\(\) => \{/);
+  assert.match(source, /\}, \[openIndex\]\)/);
+  // 넘친 만큼만 민다(>= 0 이 아니라 > 0).
+  assert.match(source, /if \(gap > 0\) box\.scrollTop \+= gap/);
+  // 스크롤 영역은 대화 영역이다.
+  assert.match(source, /closest\('\.chat-messages'\)/);
+});
+
+void test('실패 사유는 접힌 요약 줄에 남는다 — 조용한 실패로 돌아가지 않는다', () => {
+  /*
+   * 상세를 접어도 **사유는 접히지 않는다.** 사유는 요약 줄의 결과 자리에 들어간다:
+   *   "1번째 음악 추천   실패 — 곡 추천 서버가 응답하지 않습니다."
+   * 조건을 보려면 펼쳐야 하지만, 상황을 아는 데 필요한 것은 사유다.
+   */
+  const source = code(toolCalls);
+  assert.match(source, /실패 — \$\{call\.failureReason\}/);
+  // 상세 안에도 같은 사유가 있어 펼치면 온전히 읽힌다.
+  assert.match(source, /chat-tool-failure/);
+  // 접힌 줄의 접근성 이름에도 사유가 들어간다.
+  assert.match(source, /실패: \$\{call\.failureReason/);
 });
 
 void test('기록 줄이 기존 말풍선 구조 안에 들어간다 — 디자인을 깨지 않는다', () => {

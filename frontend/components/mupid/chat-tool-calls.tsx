@@ -1,7 +1,7 @@
 'use client';
 
 import { ChevronDown, Wrench } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { ChatToolCall } from '@/lib/mupid-data';
 
@@ -21,14 +21,26 @@ import type { ChatToolCall } from '@/lib/mupid-data';
  * "이 곡이 어디서 왔나" 를 묻는 순간에 시야 안에 있다. 카드 아래 두면 곡을 다 훑은
  * 뒤에야 보인다.
  *
- * ## 접었다 편다
+ * ## 한 번에 하나만 펼친다 (아코디언)
  *
- * 기본은 **한 줄**이다. 기록은 근거이고, 근거는 필요할 때 펼치면 된다 — 늘 펼쳐 두면
- * 잡담 한 턴에도 조건 JSON 이 줄줄이 붙어 대화가 읽히지 않는다.
+ * **실측으로 두 번 고쳤다.**
  *
- * 다만 **실패는 접지 않는다.** 실패한 호출은 사유까지 그대로 보여준다. 접어 두면
- * "추천이 왜 안 왔는지" 를 알려는 사람이 한 번 더 눌러야 하고, 무엇보다 이 저장소는
- * **조용한 실패**를 반복해서 겪었다 — 접는 순간 그것이 다시 조용해진다.
+ *   1) 처음엔 실패를 접지 않고 늘 펼쳐 뒀다. 그런데 추천 서버가 죽으면 모델이
+ *      `max-tool-rounds` 를 다 쓰고 **같은 요청을 세 번** 부른다. 조건 블록이 3번
+ *      그려져 약 470px — 좁은 화면에서 그 턴의 답변 자체가 밀려났다.
+ *   2) 그래서 "직전과 인자가 같으면 조건을 한 번만" 이라는 규칙을 넣었는데, **live 에서
+ *      무력했다.** 모델은 같은 요청을 그대로 다시 부르지 않고 **말을 살짝 바꿔** 부른다:
+ *         1번째 query "비 오는 날 듣기 좋은 곡, 차분한 피아노 중심"
+ *         2번째 query "비 오는 날 듣기 좋은, 차분한 피아노 중심"   ← "곡" 하나 차이
+ *      문자열이 다르니 중복 판정이 서지 않아 다시 123px 씩 쌓였다.
+ *
+ * 사전(辭典)으로 "같은 뜻인가" 를 재는 것은 취약하다. 대신 **높이를 구조로 묶는다:**
+ * 요약 줄은 호출마다 늘 보이고(번호·결과·**실패 사유**), 조건 상세는 **한 번에 하나만**
+ * 펼친다. 그러면 호출이 몇 번이든 높이는 `호출 수 × 한 줄 + 상세 한 블록` 으로 묶인다.
+ *
+ * **실패가 조용해지지 않는다.** 사유(`실패 — 곡 추천 서버가 응답하지 않습니다.`)는 접힌
+ * 요약 줄에 **그대로** 있다. 펼쳐야 보이는 것은 조건이고, 상황을 아는 데 필요한 것은
+ * 사유다. 이 저장소가 반복해 겪은 "조용한 실패" 로 돌아가지 않는다.
  *
  * ## 문구
  *
@@ -66,7 +78,7 @@ const argumentLines = (args: Record<string, unknown>): [string, string][] =>
     .map(([key, value]) => [key, readArg(value)] as [string, string])
     .filter(([, value]) => value !== '');
 
-/** 사용자에게 보여줄 결과 요약. */
+/** 사용자에게 보여줄 결과 요약. **실패 사유는 여기 들어간다** — 접힌 줄에 남는다. */
 const resultText = (call: ChatToolCall): string => {
   if (!call.succeeded) {
     return call.failureReason ? `실패 — ${call.failureReason}` : '실패';
@@ -82,55 +94,54 @@ const summaryArg = (args: Record<string, unknown>): string => {
 };
 
 /**
- * "직전 호출과 같은 조건인가" 를 가리는 서명.
+ * 인자가 **글자 그대로** 같은가.
  *
- * 실측 근거: 추천 서버가 죽으면 모델이 `max-tool-rounds` 를 다 쓰고 **같은 인자로 세 번**
- * 부른다. 그때 조건 줄을 매번 그리면 패널이 똑같은 글로 뒤덮였다 — 실패 3회에 약 470px,
- * 좁은 화면에서는 그 턴의 답변 자체가 밀려난다.
- *
- * **기록은 접지 않는다.** 호출 수 자체가 정보라 3건을 3줄로 그대로 남긴다(번호가 붙는다).
- * 다만 **인자는 똑같으므로 한 번만** 보여준다. 같은 글을 세 번 읽는 것은 정보가 아니라
- * 소음이다.
+ * 아코디언으로 높이를 묶었으므로 이 값은 이제 **표시용 힌트**일 뿐이다 — 모델이 말을
+ * 살짝 바꿔 부르면(위 주석) 서지 않는다. 그래도 같은 조건으로 다시 부른 턴에는
+ * `· 같은 조건` 을 붙여 "왜 같은 도구가 두 줄인가" 를 설명한다.
  */
 const signature = (call: ChatToolCall): string => JSON.stringify(call.arguments ?? {});
 
 export function ChatToolCalls({ calls }: { calls: ChatToolCall[] }) {
-  const [open, setOpen] = useState(false);
+  // 한 번에 하나만 펼친다. 여러 개를 펼치면 높이 상한이 사라져 원래 문제로 돌아간다.
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  /** 기록 묶음 자신. 펼칠 때 스크롤 영역을 찾는 데 쓴다. */
+  const toolsRef = useRef<HTMLDivElement>(null);
 
   /**
-   * 접었다 펴기. **펼친 내용이 영역 밖으로 나가면 그만큼 내린다.**
+   * 펼친 내용이 영역 밖으로 나가면 그만큼 내린다.
    *
-   * 실측: 펼치면 기록 높이가 21px → 84px 로 늘고 `maxScroll` 이 213 → 275 가 되는데
-   * `scrollTop` 은 213 에 머물렀다. 아래 62px 이 화면 밖으로 밀려 `limit` 줄이 안 보였다.
-   * 근거를 보려고 편 것인데 접힌 것보다 덜 보이면 뜻이 없다.
+   * **`requestAnimationFrame` 으로는 안 됐다.** 실측: 클릭 직후 rAF 콜백에서 재봤더니
+   * React 가 아직 DOM 을 커밋하기 전이라 **펼치기 전 높이**가 나왔고(`hasDetail` 이 false),
+   * 그래서 넘친 양이 0 으로 계산돼 스크롤이 일어나지 않았다. 펼친 뒤에도 상세 아래 37px 이
+   * 화면 밖에 남았다(`rowBox` bottom 603 vs 컨테이너 566, `maxScroll` 179 인데 `scrollTop` 61).
+   *
+   * `useEffect` 는 **커밋 뒤에** 돌아 배치가 확정된 값을 잰다. 여기서 재야 맞다.
    *
    * `scrollIntoView` 도 `behavior:'smooth'` 도 쓰지 않는다 — 대화 패널에서 그 둘이 어떻게
    * 어긋나는지는 `chat.tsx` 주석에 있다(409 의 본질이다). 필요한 만큼만 `scrollTop` 을 민다.
    */
-  const toggle = (node: HTMLElement | null) => {
-    if (open) {
-      // 접을 때는 자리를 건드리지 않는다. 접히면 내용이 줄어 알아서 들어온다.
-      setOpen(false);
-      return;
-    }
-    setOpen(true);
-    requestAnimationFrame(() => {
-      const box = node?.closest('.chat-messages');
-      if (!(box instanceof HTMLElement) || !node) return;
-      const gap = node.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom;
-      if (gap > 0) box.scrollTop += gap;
-    });
-  };
+  useEffect(() => {
+    if (openIndex === null) return;
+    const tools = toolsRef.current;
+    const box = tools?.closest('.chat-messages');
+    if (!(box instanceof HTMLElement) || !tools) return;
+    const row = tools.querySelectorAll('.chat-tool')[openIndex];
+    if (!row) return;
+    const gap = row.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom;
+    // 넘친 만큼만 민다. 접을 때는 내용이 줄어 알아서 들어오므로 건드리지 않는다.
+    if (gap > 0) box.scrollTop += gap;
+  }, [openIndex]);
 
   return (
-    <div className="chat-tools">
+    <div className="chat-tools" ref={toolsRef}>
       {calls.map((call, index) => {
         const lines = argumentLines(call.arguments);
         const summary = summaryArg(call.arguments);
+        const open = openIndex === index;
         // 같은 툴이 두 번 불릴 수 있다(`ai.max-tool-rounds`). 순서를 번호로 남긴다 —
         // 몇 번 불렀는지가 정보이므로 합치지 않는다.
         const ordinals = calls.length > 1 ? `${index + 1}번째 ` : '';
-        // 직전 호출과 인자가 같으면 조건 줄을 다시 그리지 않는다(`signature` 주석).
         const isRepeat = index > 0 && signature(calls[index - 1]) === signature(call);
         return (
           <div
@@ -143,10 +154,9 @@ export function ChatToolCalls({ calls }: { calls: ChatToolCall[] }) {
             <button
               type="button"
               className="chat-tool-summary"
-              aria-expanded={call.succeeded ? open : false}
-              disabled={!call.succeeded}
-              onClick={(event) => toggle(event.currentTarget.parentElement)}
-              /* 접히는 것은 성공한 호출뿐이다. 실패는 사유까지 늘 보인다(`위 주석`). */
+              aria-expanded={open}
+              onClick={() => setOpenIndex(open ? null : index)}
+              /* 접힌 줄에도 결과가 다 있다. 실패면 사유까지 — 이것이 조용한 실패를 막는다. */
               aria-label={
                 call.succeeded
                   ? `${ordinals}${call.label} 기록 ${open ? '접기' : '펼치기'}`
@@ -160,19 +170,15 @@ export function ChatToolCalls({ calls }: { calls: ChatToolCall[] }) {
               </span>
               <span className="chat-tool-result">
                 {resultText(call)}
-                {/* 같은 인자로 다시 불렀다는 사실 자체는 남긴다 — 그것도 정보다. */}
+                {/* 같은 조건으로 다시 불렀다는 사실 자체는 남긴다 — 그것도 정보다. */}
                 {isRepeat && ' · 같은 조건'}
               </span>
-              {call.succeeded && (
-                <ChevronDown
-                  className={`chat-tool-caret${open ? ' open' : ''}`}
-                  aria-hidden="true"
-                />
-              )}
+              <ChevronDown
+                className={`chat-tool-caret${open ? ' open' : ''}`}
+                aria-hidden="true"
+              />
             </button>
-            {/* 실패는 접지 않는다 — 조용한 실패로 돌아가지 않기 위해서다.
-                같은 조건으로 다시 부른 줄은 인자를 한 번만 보여준다(`signature` 주석). */}
-            {!isRepeat && (!call.succeeded || open) && (
+            {open && (
               <div className="chat-tool-detail">
                 {summary && <p className="chat-tool-query">‘{summary}’</p>}
                 {lines.length > 0 && (
