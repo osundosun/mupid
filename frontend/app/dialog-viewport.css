@@ -45,6 +45,14 @@
   overflow-wrap: anywhere;
 }
 .sky-dialog input { width: 100%; min-width: 0; box-sizing: border-box; }
+.sky-dialog.withdraw-account-dialog [data-slot='alert-dialog-header'] {
+  padding-right: 0;
+  justify-items: center;
+  text-align: center;
+}
+.sky-dialog.withdraw-account-dialog [role='alert'] {
+  text-align: center;
+}
 /* A dim veil keeps the page legible without magnifying its blurred shapes. */
 .sky-dialog[data-open],
 [data-slot='dialog-overlay'][data-open], [data-slot='alert-dialog-overlay'][data-open] {

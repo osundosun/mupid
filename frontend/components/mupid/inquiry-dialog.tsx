@@ -44,7 +44,7 @@ export function InquiryButton({ model: m }: { model: MupidModel }) {
       <DialogContent className="sky-dialog inquiry-dialog">
         <DialogHeader>
           <DialogTitle>문의하기</DialogTitle>
-          <DialogDescription>불편한 점이나 바라는 점을 알려주세요.</DialogDescription>
+          <DialogDescription>좋았던 점이나 칭찬, 불편했던 점을 자유롭게 남겨주세요.</DialogDescription>
         </DialogHeader>
         <form onSubmit={e => { e.preventDefault(); void submit(); }}>
           <label className="field-label" htmlFor="inquiry-body">내용</label>
@@ -52,7 +52,7 @@ export function InquiryButton({ model: m }: { model: MupidModel }) {
             id="inquiry-body"
             rows={5}
             maxLength={BODY_MAX}
-            placeholder="언제, 어떤 화면에서 무슨 일이 있었는지 적어주시면 빨리 살펴볼 수 있어요."
+            placeholder="마음에 들었던 기능이나 불편했던 경험, 바라는 점을 편하게 적어주세요. 어떤 화면에서 느끼셨는지도 함께 알려주시면 도움이 돼요."
             value={body}
             onChange={e => setBody(e.target.value)}
             disabled={busy}
