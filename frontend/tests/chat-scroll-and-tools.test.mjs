@@ -191,6 +191,27 @@ void test('여러 번 불린 툴을 접지 않는다 — 몇 번 불렀는지가
   assert.match(toolCalls, /\$\{index \+ 1\}번째/);
 });
 
+void test('같은 조건으로 다시 부른 줄은 인자를 두 번 그리지 않는다 — 기록은 그대로 남는다', () => {
+  /*
+   * 실측 근거: 추천 서버가 죽으면 모델이 `max-tool-rounds` 를 다 쓰고 **같은 인자로 세 번**
+   * 부른다. 조건 줄을 매번 그리면 패널이 똑같은 글로 뒤덮였다 — 실패 3회에 약 470px 로,
+   * 좁은 화면에서는 그 턴의 답변 자체가 밀려났다.
+   *
+   * 기록(3줄)은 그대로 남기고 **인자만** 한 번 보여준다. 호출 수는 정보지만, 같은 글을
+   * 세 번 읽는 것은 소음이다.
+   */
+  const source = code(toolCalls);
+  assert.match(source, /const signature = /);
+  assert.match(source, /const isRepeat = /);
+  // 인자 블록이 반복 줄에서 빠진다.
+  assert.match(source, /!isRepeat && \(!call\.succeeded \|\| open\)/);
+  // 번호는 그대로 남는다 — 몇 번 불렀는지가 정보다.
+  assert.match(source, /\$\{index \+ 1\}번째/);
+  // 같은 조건이라는 사실 자체도 남긴다.
+  assert.match(source, /같은 조건/);
+  assert.match(source, /data-tool-repeat=/);
+});
+
 void test('기록 줄이 기존 말풍선 구조 안에 들어간다 — 디자인을 깨지 않는다', () => {
   // `.message-body` 안, 곡 목록보다 **위**. 카드 아래면 곡을 다 훑고 나서야 보인다.
   const bodyIndex = chatTsx.indexOf('<div className="message-body">');

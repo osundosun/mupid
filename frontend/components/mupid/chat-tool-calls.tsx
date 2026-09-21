@@ -81,6 +81,19 @@ const summaryArg = (args: Record<string, unknown>): string => {
   return argumentLines(args)[0]?.[1] ?? '';
 };
 
+/**
+ * "직전 호출과 같은 조건인가" 를 가리는 서명.
+ *
+ * 실측 근거: 추천 서버가 죽으면 모델이 `max-tool-rounds` 를 다 쓰고 **같은 인자로 세 번**
+ * 부른다. 그때 조건 줄을 매번 그리면 패널이 똑같은 글로 뒤덮였다 — 실패 3회에 약 470px,
+ * 좁은 화면에서는 그 턴의 답변 자체가 밀려난다.
+ *
+ * **기록은 접지 않는다.** 호출 수 자체가 정보라 3건을 3줄로 그대로 남긴다(번호가 붙는다).
+ * 다만 **인자는 똑같으므로 한 번만** 보여준다. 같은 글을 세 번 읽는 것은 정보가 아니라
+ * 소음이다.
+ */
+const signature = (call: ChatToolCall): string => JSON.stringify(call.arguments ?? {});
+
 export function ChatToolCalls({ calls }: { calls: ChatToolCall[] }) {
   const [open, setOpen] = useState(false);
 
@@ -88,7 +101,7 @@ export function ChatToolCalls({ calls }: { calls: ChatToolCall[] }) {
    * 접었다 펴기. **펼친 내용이 영역 밖으로 나가면 그만큼 내린다.**
    *
    * 실측: 펼치면 기록 높이가 21px → 84px 로 늘고 `maxScroll` 이 213 → 275 가 되는데
-   * `scrollTop` 은 213 에 머물렀다. 아래 62px 이 화면 밖으로 밀려, `limit` 줄이 안 보였다.
+   * `scrollTop` 은 213 에 머물렀다. 아래 62px 이 화면 밖으로 밀려 `limit` 줄이 안 보였다.
    * 근거를 보려고 편 것인데 접힌 것보다 덜 보이면 뜻이 없다.
    *
    * `scrollIntoView` 도 `behavior:'smooth'` 도 쓰지 않는다 — 대화 패널에서 그 둘이 어떻게
@@ -117,12 +130,15 @@ export function ChatToolCalls({ calls }: { calls: ChatToolCall[] }) {
         // 같은 툴이 두 번 불릴 수 있다(`ai.max-tool-rounds`). 순서를 번호로 남긴다 —
         // 몇 번 불렀는지가 정보이므로 합치지 않는다.
         const ordinals = calls.length > 1 ? `${index + 1}번째 ` : '';
+        // 직전 호출과 인자가 같으면 조건 줄을 다시 그리지 않는다(`signature` 주석).
+        const isRepeat = index > 0 && signature(calls[index - 1]) === signature(call);
         return (
           <div
             className={`chat-tool${call.succeeded ? '' : ' failed'}`}
             key={`${call.name}-${index}`}
             data-tool={call.name}
             data-tool-ok={call.succeeded ? 'true' : 'false'}
+            data-tool-repeat={isRepeat ? 'true' : 'false'}
           >
             <button
               type="button"
@@ -142,7 +158,11 @@ export function ChatToolCalls({ calls }: { calls: ChatToolCall[] }) {
                 {ordinals}
                 {call.label}
               </span>
-              <span className="chat-tool-result">{resultText(call)}</span>
+              <span className="chat-tool-result">
+                {resultText(call)}
+                {/* 같은 인자로 다시 불렀다는 사실 자체는 남긴다 — 그것도 정보다. */}
+                {isRepeat && ' · 같은 조건'}
+              </span>
               {call.succeeded && (
                 <ChevronDown
                   className={`chat-tool-caret${open ? ' open' : ''}`}
@@ -150,8 +170,9 @@ export function ChatToolCalls({ calls }: { calls: ChatToolCall[] }) {
                 />
               )}
             </button>
-            {/* 실패는 접지 않는다 — 조용한 실패로 돌아가지 않기 위해서다. */}
-            {(!call.succeeded || open) && (
+            {/* 실패는 접지 않는다 — 조용한 실패로 돌아가지 않기 위해서다.
+                같은 조건으로 다시 부른 줄은 인자를 한 번만 보여준다(`signature` 주석). */}
+            {!isRepeat && (!call.succeeded || open) && (
               <div className="chat-tool-detail">
                 {summary && <p className="chat-tool-query">‘{summary}’</p>}
                 {lines.length > 0 && (
