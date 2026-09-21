@@ -70,15 +70,15 @@ export function Lyrics({ track, time = 0, expanded = false, onSeek }: { track: T
     // 인라인 가사에서 그랬다). 화면 좌표 차이로 재면 어디에 놓여도 같다.
     const lineRect = line.getBoundingClientRect();
     const boxRect = box.getBoundingClientRect();
-    // 이미 보이는 줄이면 움직이지 않는다. 줄을 눌러 그 시점으로 갔을 때 상자가
-    // 가운데로 미끄러지는 것이 어색했다 — 눌렀던 자리에서 그대로 이어진다.
-    // 노래가 흘러 현재 줄이 상자 밖으로 나가면 그때 가운데로 데려온다.
-    if (lineRect.top >= boxRect.top && lineRect.bottom <= boxRect.bottom) return;
+    // 현재 줄이 화면 밖으로 나갈 때까지 기다리면 여러 줄을 한꺼번에 뛰게 된다.
+    // 줄이 바뀔 때마다 같은 위치를 향해 조금씩 이동한다.
     const offset = lineRect.top - boxRect.top + box.scrollTop;
     const top = offset - box.clientHeight / 2 + line.clientHeight / 2;
     const gentle = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    box.scrollTo({ top: Math.max(0, top), behavior: gentle ? 'smooth' : 'auto' });
-  }, [activeId, expanded]);
+    const target = Math.max(0, Math.min(top, box.scrollHeight - box.clientHeight));
+    if (Math.abs(box.scrollTop - target) < 1) return;
+    box.scrollTo({ top: target, behavior: gentle ? 'smooth' : 'auto' });
+  }, [activeId, expanded, track.id]);
   return <section className="song-lyrics" key={track.id} aria-label={`${track.title} 가사`}>
     <h3>{track.title}</h3>
     {note && <p className="song-lyrics-empty" role={error ? 'alert' : 'status'}>{note}</p>}
