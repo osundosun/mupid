@@ -13,6 +13,9 @@ export function InnerScrollbars() {
       frame = 0;
       if (!media.matches) { tracked.forEach(el => el.classList.remove('custom-inner-scroll')); tracked.clear(); setBars([]); return; }
       const next: Bar[] = [];
+      const menuBounds = Array.from(document.querySelectorAll<HTMLElement>('.nav-account-panel, .recent-search-panel, .chat-panel'))
+        .filter(menu => menu.getClientRects().length > 0)
+        .map(menu => ({ element: menu, bounds: menu.getBoundingClientRect() }));
       tracked.forEach(el => { if (!el.isConnected) { resize.unobserve(el); tracked.delete(el); } });
       document.body.querySelectorAll<HTMLElement>('*').forEach(el => {
         if (el.closest('[data-custom-scrollbar], .sky-cursor-overlay, .page-scrollbar') || ['INPUT','SVG'].includes(el.tagName)) return;
@@ -25,6 +28,14 @@ export function InnerScrollbars() {
         if (!rect.width || !rect.height || style.visibility === 'hidden') return;
         let top = Math.max(0, rect.top), bottom = Math.min(innerHeight, rect.bottom);
         let left = Math.max(0, rect.left), right = Math.min(innerWidth, rect.right);
+        // Portal scrollbars must stay inside the dialog's rounded corners.
+        if (el.matches('.demo-login-dialog')) {
+          const inset = Math.max(16, parseFloat(style.borderTopRightRadius) || 0,
+            parseFloat(style.borderBottomRightRadius) || 0);
+          top = Math.max(top, rect.top + inset);
+          bottom = Math.min(bottom, rect.bottom - inset);
+          right = Math.min(right, rect.right - 6);
+        }
         for (let parent = el.parentElement; parent; parent = parent.parentElement) {
           const ps = getComputedStyle(parent), pr = parent.getBoundingClientRect();
           if (/auto|scroll|hidden|clip/.test(ps.overflowY)) { top = Math.max(top, pr.top); bottom = Math.min(bottom, pr.bottom); }
@@ -52,6 +63,13 @@ export function InnerScrollbars() {
         for (const h of [false, true]) {
           if (h ? !horizontal : !vertical) continue;
           const length = h ? right-left : bottom-top;
+          // These body portals otherwise paint above the header's dropdowns.
+          // Temporarily hide intersecting tracks while the menu is open.
+          const x = h ? left : right - 10;
+          const y = h ? bottom - 10 : top;
+          if (menuBounds.some(({ element, bounds: menu }) => !element.contains(el) &&
+            x < menu.right && x + (h ? length : 10) > menu.left &&
+            y < menu.bottom && y + (h ? 10 : length) > menu.top)) continue;
           const size = h ? el.clientWidth : el.clientHeight;
           const total = h ? el.scrollWidth : el.scrollHeight;
           const value = h ? el.scrollLeft : el.scrollTop;
@@ -74,7 +92,7 @@ export function InnerScrollbars() {
     schedule();
     return () => { cancelAnimationFrame(frame); observer.disconnect(); resize.disconnect(); tracked.forEach(el => el.classList.remove('custom-inner-scroll')); document.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule); document.removeEventListener('pointerover', schedule); media.removeEventListener('change', schedule); };
   }, []);
-  return <>{bars.map((bar, i) => createPortal(<div data-custom-scrollbar="" className="inner-scrollbar" style={{ left: bar.x, top: bar.y, width: bar.horizontal ? bar.length : 10, height: bar.horizontal ? 10 : bar.length }}
+  return <>{bars.map((bar, i) => createPortal(<div data-custom-scrollbar="" data-chat-scroll={bar.el.closest('.chat-panel') ? 'true' : undefined} className="inner-scrollbar" style={{ left: bar.x, top: bar.y, width: bar.horizontal ? bar.length : 10, height: bar.horizontal ? 10 : bar.length }}
     ref={node => {
       if (!node) return;
       const wheel = (event: WheelEvent) => { event.preventDefault(); event.stopPropagation(); const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bar.length : 1; bar.el.scrollBy({ top: bar.horizontal ? 0 : event.deltaY * scale, left: (bar.horizontal ? event.deltaY || event.deltaX : event.deltaX) * scale, behavior: 'instant' }); };

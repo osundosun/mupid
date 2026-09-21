@@ -1,5 +1,7 @@
 /* Keep native scrolling and interaction, with the shared sky palette. */
 .page-scrollbar { display: none; }
+/* Suppress stale background portals immediately when chat mounts. */
+body:has(.chat-panel) .inner-scrollbar:not([data-chat-scroll='true']) { display: none; }
 .inner-scrollbar { position: fixed; z-index: 2147483645; background: #edf4fc; touch-action: none; user-select: none; }
 @media (hover: hover) and (pointer: fine) and (forced-colors: none) {
   .custom-inner-scroll { scrollbar-width: none !important; }

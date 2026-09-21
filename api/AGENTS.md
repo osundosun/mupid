@@ -17,6 +17,8 @@
 
 작업 전에 반드시 확인할 것:
 
+- **무드 코드(`codes` 의 `MOOD`)를 건드린다면** → [decision/0025](knowledge/decision/0025-mood-codes-32-48-are-frozen.md) — ⛔ `code_id` **32~48 은 동결**이다. `CODE_SEEDS` 의 MOOD 항목 · `seed-codes.sql` 의 MOOD 행 · `mupid-data.ts` 의 `moodOptions` · `onboarding.py` 의 `MOOD_MAP` 키 · DB 의 32~48 중 **하나라도** 바꾸려면 **작업을 멈추고 사람에게 확인받는다.** 사용자의 온보딩 답이 이 번호를 가리키고 있어 되돌릴 수 없다.
+- **무드 코드를 `읽거나 보내는` 코드를 쓴다면** → 같은 문서의 *쓰는 쪽 규칙* — FE·BE 는 **32~48 만** 쓴다. `code_type = 'MOOD'` 로만 고르면 중복분(98~132)이 딸려 나온다. 구간은 `code/MoodCodeIds.java` 한 곳에 있다. 새 무드는 **preprocess 가 새 `code_id` 를 발급할 때만** 생긴다 — 로컬 DB 에 보인다고 쓸 수 있는 번호가 아니다.
 - **엔티티를 건드린다면** → [decision/0011](knowledge/decision/0011-jpa-manages-schema.md) — `ddl-auto` 가 `none` 이라 **DDL 을 직접 실행해야 한다.** Flyway 는 쓰지 않는다.
 - **테이블·컬럼을 추가하거나 바꾼다면** → [domain/erd.md](knowledge/domain/erd.md) — MySQL 스키마 설계의 기준은 ERD 다. **ERD 수정은 반드시 팀에 의사를 물은 뒤에 한다.**
 - **배포에 반영되어야 한다면** → [decision/0008](knowledge/decision/0008-deploy-image-from-infra.md) — `api/Dockerfile` 과 `api/nginx/` 는 실제 배포에 쓰이지 않는다.

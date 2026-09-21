@@ -3,6 +3,7 @@ package com.osundosun.mupid.api.ai.response;
 import java.util.List;
 
 import com.osundosun.mupid.api.ai.dto.AiRecommendedTrack;
+import com.osundosun.mupid.api.ai.dto.AiToolCallRecord;
 
 /**
  * 화면(`frontend/components/mupid/chat.tsx`)이 말풍선 하나를 그리는 데 필요한 전부.
@@ -36,7 +37,22 @@ public record AiChatResponse(
     /**
      * 추천 툴이 돌아갔을 때만 채워진다. 그냥 대화만 했으면 빈 배열이다 (null 이 아니다).
      */
-    List<AiRecommendedTrack> tracks
+    List<AiRecommendedTrack> tracks,
+
+    /**
+     * 이 턴에 일어난 **툴 호출 기록**. 호출 순서대로 전부 담는다 (S15P21A204-409).
+     *
+     * <p>그냥 대화만 한 턴이면 빈 배열이다(null 이 아니다). 화면은 **비어 있으면 아무것도
+     * 그리지 않는다** — 툴 호출이 없던 턴에 "도구 호출" 줄을 띄우면 거짓말이 된다.
+     *
+     * <p>곡 목록({@link #tracks})과 달리 **접지 않는다.** {@code ai.max-tool-rounds} 가 3 이라
+     * 같은 툴이 한 턴에 두 번 불릴 수 있고, 몇 번 불렀는지가 그 자체로 정보다.
+     *
+     * <p>실패한 호출도 담는다. 예전에는 {@code AiChatServiceImpl.runTool} 이
+     * {@code RECOMMENDER_UNAVAILABLE} 을 삼키고 대화를 이어 가서, 사용자에게는
+     * "추천이 안 온다" 로만 보였다. 이제 화면에 실패가 보인다.
+     */
+    List<AiToolCallRecord> toolCalls
 
 ) {
 

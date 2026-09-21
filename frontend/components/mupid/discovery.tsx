@@ -2,6 +2,7 @@
 import { VinylRecord } from './vinyl-record';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Lyrics } from './lyrics';
+import { VolumeSlider } from './volume-slider';
 import { TrackMenu } from './track-menu';
 import { TrackInfoDialog } from './track-info-dialog';
 import { TrackComments } from './track-comments';
@@ -20,6 +21,7 @@ import {
   Play,
   Search,
   Sparkles,
+  Volume2,
   X,
 } from 'lucide-react';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
@@ -34,6 +36,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import { useIsMobile } from '@/hooks/use-mobile';
 import type { Track } from '@/lib/mupid-data';
 import {
@@ -70,6 +73,15 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
   // 폰은 가사를 LP 를 눌러 대화상자로, PC 는 오른쪽 빈 자리에 바로 펼친다.
   const isMobile = useIsMobile();
   const [lyricsOpen, setLyricsOpen] = useState(false);
+  /*
+   * 뒤로가기로 닫히게 한다 (S15P21A204-410). 세 창이 겹쳐 열릴 수 있으므로
+   * 등록 순서(호출 순서)가 곧 "가장 위" 순서다 — 나중에 연 것이 먼저 닫힌다.
+   * 가사 창은 폰에서만 뜨므로 열림 조건에 `isMobile` 을 함께 본다.
+   */
+  useDismissableOverlay(trackInfoOpen, () => setTrackInfoOpen(false));
+  useDismissableOverlay(reasonOpen, () => setReasonOpen(false));
+  useDismissableOverlay(lyricsOpen && isMobile, () => setLyricsOpen(false));
+  useDismissableOverlay(confirmUnsave, () => setConfirmUnsave(false));
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
   if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
@@ -125,7 +137,11 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             <Lyrics key={active.id} track={active} time={m.time} expanded onSeek={(seconds) => m.seek(seconds)} />
           </div>}
           {/* 줄은 `TrackComments` 가 그린다 — 같은 줄에 설 댓글 토글이 그쪽 상태를 쓴다. */}
-          <TrackComments key={active.id} model={m}>
+          <TrackComments key={active.id} model={m} controlsAside={!isMobile && <label className="player-desktop-volume">
+            <Volume2 size={20} aria-hidden="true" />
+            <span className="sr-only">볼륨</span>
+            <VolumeSlider />
+          </label>}>
             <button className="secondary-button quick-like" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
               <Heart className="pink" fill={m.liked.includes(active.id) ? 'currentColor' : 'none'} />
               좋아요

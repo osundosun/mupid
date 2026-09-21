@@ -9,6 +9,7 @@ import { isTauri } from './bridge';
 import { createTauriTransport } from './transport';
 
 export { isTauri } from './bridge';
+export { onBackButtonPress } from './bridge';
 export { clearNativeCookies } from './transport';
 export { createSqliteService, setStoredAccount } from './service';
 export {

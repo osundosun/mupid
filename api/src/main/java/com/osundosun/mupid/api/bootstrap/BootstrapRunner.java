@@ -8,18 +8,25 @@ import java.nio.charset.StandardCharsets;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StreamUtils;
 
+import com.osundosun.mupid.api.code.MoodCodeIds;
 import com.osundosun.mupid.api.code.entity.Code;
 import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.code.repository.CodeRepository;
@@ -43,8 +50,22 @@ import lombok.extern.slf4j.Slf4j;
  * `codes` 가 비어 있으면 {@code GET /api/v1/onboarding/option} 이 503 이다
  * ({@code ONBOARDING_OPTION_EMPTY}). 그래서 없을 때만 넣는다.
  *
- * <p>이미 있는 행은 건드리지 않는다. 여러 번 띄워도 늘어나지 않고, 운영에서 이름을
- * 고쳐 두었다면 그 값이 그대로 남는다.
+ * <p>이미 있는 행은 대체로 건드리지 않는다. 여러 번 띄워도 늘어나지 않고, 운영에서
+ * 이름을 고쳐 두었다면 그 값이 그대로 남는다.
+ *
+ * <p><b>무드 코드만 예외다.</b> 17종은 `code_id` 32~48 에 정해진 이름으로 있어야 하고,
+ * 그 자리가 어긋나면 <b>그 번호에만</b> 쓴다 ({@link #reconcileMoodCodes()}).
+ * "없는 것만 더한다" 로는 번호가 늘어나는 것을 못 막았다 — 이름을 못 알아본 옛 판이
+ * 하나라도 떠 있으면 기동마다 17행이 새 번호로 더 들어가, 운영에서 98~106 · 107~123 ·
+ * 124~132 이 그렇게 쌓였다.
+ *
+ * <p>대신 <b>32~48 밖의 무드는 건드리지 않는다.</b> 곡을 추가로 전처리하면서 무드가
+ * 늘 수 있고, 그 번호는 이 배치가 정하지 않는다.
+ *
+ * <p><b>⛔ 32~48 은 동결이다</b> — `knowledge/decision/0025-mood-codes-32-48-are-frozen.md`.
+ * 아래 {@code CODE_SEEDS} 의 MOOD 항목을 고치려 한다면 <b>멈추고 사람에게 확인받는다.</b>
+ * 사용자의 온보딩 답(`onboarding_survey.mood_code_id`)이 이 번호를 가리키고 있어
+ * 되돌릴 수 없다.
  *
  * <p>채우는 것은 두 가지다 — 공통 코드(`codes`)와 취향 유형(`mubti`).
  *
@@ -67,6 +88,13 @@ public class BootstrapRunner implements ApplicationRunner {
      * ({@code findAllByCodeTypeOrderByCodeIdAsc}). 여기 적은 차례가 곧 화면 차례다.
      *
      * <p>{@link CodeType#INSTRUMENT} 는 아직 확정된 목록이 없어 넣지 않는다.
+     *
+     * <p><b>⛔ 무드 17종(code_id 32~48)은 동결이다.</b> 추가·삭제·수정·재배치 어느
+     * 쪽이든 <b>사람에게 확인받기 전에는 하지 않는다</b> —
+     * `knowledge/decision/0025-mood-codes-32-48-are-frozen.md`. 이 값은 운영 DB 의
+     * `codes` · `onboarding_survey` · `ai_server` 의 {@code MOOD_MAP} 키 ·
+     * `frontend/lib/mupid-data.ts` 의 {@code moodOptions} 다섯 곳에 동시에 걸려 있고,
+     * 어긋나도 오류가 나지 않는다.
      *
      * <p><b>무드 17종은 {@code codeName} 이 영문 내부 코드, {@code displayName} 이
      * 화면용 한국어다</b> (2026-09-21 정리). 운영 DB 에서 같은 무드가 한국어 이름과
@@ -118,6 +146,18 @@ public class BootstrapRunner implements ApplicationRunner {
         new CodeSeed(CodeType.GENRE, "Jazz", "재즈"),
         new CodeSeed(CodeType.GENRE, "Classical", "클래식")
     );
+
+    /**
+     * 무드 17종이 쓰는 첫 `code_id`. {@link #CODE_SEEDS} 의 MOOD 차례가 곧 번호 차례라
+     * 32·33·… 으로 이어진다 (운영 32~48).
+     *
+     * <p>번호를 못 박는 이유는 이 값이 <b>데이터가 아니라 식별자</b>이기 때문이다.
+     * {@code onboarding_survey}·{@code music_moods}·{@code music_section_analysis_mood}·
+     * {@code daily_recommendations} 네 표가 이 번호를 들고 있다. 빈 DB 에서 순서대로
+     * INSERT 하면 1 부터 매겨져 운영과 다른 번호가 되고, 덤프를 옮겨 붙이는 순간
+     * 어긋난다.
+     */
+    static final int MOOD_CODE_ID_BASE = MoodCodeIds.FIRST;
 
     /** MuBTI 캐릭터 이미지가 담긴 classpath zip. 파일 이름이 곧 코드다 (`VTFC.webp`). */
     static final String MUBTI_IMAGE_ZIP = "bootstrap/mubti-characters.zip";
@@ -202,10 +242,32 @@ public class BootstrapRunner implements ApplicationRunner {
     private final MubtiRepository mubtiRepository;
     private final StorageService storageService;
 
+    /**
+     * 무드 코드의 번호를 맞추는 일은 JPA 로 못 한다 — `code_id` 가 IDENTITY 라 엔티티로는
+     * 번호를 지정해 넣을 수 없고, 참조 이관도 표 네 개를 한 문장씩 훑는 편이 싸다.
+     * `JdbcTemplate` 빈이 둘이라(ClickHouse 용이 따로 있다) 못 박아 둔다.
+     */
+    @Qualifier("jdbcTemplate")
+    private final JdbcTemplate jdbcTemplate;
+
+    /**
+     * 무드 코드 정리는 전부 되거나 전부 안 되어야 한다 — 참조만 옮기고 행을 못 지우면
+     * 다음 기동에 같은 일을 또 한다. 이 빈 안에서 부르는 호출은 프록시를 타지 않아
+     * {@code @Transactional} 이 듣지 않으므로 템플릿으로 직접 연다.
+     *
+     * <p>자동 설정된 {@code TransactionTemplate} 빈을 받지 않고 매니저에서 만든다 —
+     * 그 빈은 {@code TransactionManager} 후보가 하나일 때만 생기는데, Spring Batch 가
+     * 함께 있어 후보가 늘면 <b>주입이 실패해 기동이 막힌다.</b> 이름으로 못 박으면 그
+     * 영향을 받지 않는다 (JPA 가 등록하는 이름이 {@code transactionManager} 다).
+     */
+    @Qualifier("transactionManager")
+    private final PlatformTransactionManager transactionManager;
+
     @Override
     public void run(ApplicationArguments args) throws Exception {
         // 기준 데이터가 없다고 해서 애플리케이션이 못 뜰 이유는 없다. 테이블이 아직
         // 없거나 계정에 권한이 없더라도 기동은 그대로 두고, 무엇이 막혔는지만 남긴다.
+        seed("무드 코드 번호", this::reconcileMoodCodes);
         seed("공통 코드", this::seedCodes);
         seed("취향 유형", this::seedMubti);
         seed("취향 유형 이미지 키", this::repairMubtiImageKeys);
@@ -380,6 +442,9 @@ public class BootstrapRunner implements ApplicationRunner {
      *
      * <p>이 판단은 <b>넣을지 말지만</b> 정한다. 이미 있는 행은 고치지 않는다 —
      * 운영에서 사람이 이름을 손봤다면 그 값이 남아야 한다.
+     *
+     * <p><b>무드는 여기서 다루지 않는다.</b> 번호가 정해진 17종이라
+     * {@link #reconcileMoodCodes()} 가 그 자리에만 쓴다.
      */
     private void seedCodes() {
         List<Code> all = codeRepository.findAll();
@@ -388,6 +453,11 @@ public class BootstrapRunner implements ApplicationRunner {
 
         List<Code> missing = new ArrayList<>();
         for (CodeSeed seed : CODE_SEEDS) {
+            // 무드는 번호가 정해져 있어 reconcileMoodCodes 가 맡는다. 여기서 넣으면
+            // 자동 채번이라 새 번호가 생긴다 — 애초에 막으려던 바로 그 일이다.
+            if (seed.type() == CodeType.MOOD) {
+                continue;
+            }
             if (alreadyThere(existing, seed)) {
                 continue;
             }
@@ -399,7 +469,7 @@ public class BootstrapRunner implements ApplicationRunner {
         }
 
         if (missing.isEmpty()) {
-            log.debug("공통 코드 {}건이 모두 있어 넣을 것이 없습니다.", CODE_SEEDS.size());
+            log.debug("무드 밖 공통 코드가 모두 있어 넣을 것이 없습니다.");
             return;
         }
 
@@ -408,6 +478,136 @@ public class BootstrapRunner implements ApplicationRunner {
         log.info("공통 코드 {}건이 없어 자동으로 등록했습니다: {}",
             missing.size(),
             missing.stream().map(code -> code.getCodeType() + ":" + code.getCodeName()).toList());
+    }
+
+    // -------------------------------------------------------- 무드 코드 32~48
+
+    /**
+     * 무드 17종이 `code_id` 32~48 에 정해진 이름으로 있는지 보고, <b>어긋난 자리만</b> 만든다.
+     *
+     * <p>{@link #seedCodes()} 의 "없는 것만 더한다" 로는 부족했다. 그 판단은 이름으로만
+     * 하는데, <b>이름을 못 알아본 판이 하나라도 떠 있으면 17행이 새 번호로 더 들어간다</b> —
+     * 2026-09-21 운영에서 98~106, 107~123, 124~132 가 그렇게 생겼다. 그래서 무드는 이름이
+     * 아니라 <b>번호를 보고</b> 그 자리에만 쓴다. 새 번호가 생길 여지를 아예 없앤다.
+     *
+     * <p><b>32~48 밖의 MOOD 행은 보지도, 건드리지도 않는다.</b> 곡을 추가로 전처리하면서
+     * 새 무드가 늘 수 있고, 그 번호는 여기서 정하지 않는다. 이 배치가 책임지는 것은
+     * 온보딩·추천이 딛고 선 17종이 늘 제자리에 있다는 것뿐이다.
+     *
+     * <p>지우는 일은 하지 않는다. 32~48 이 이미 규격대로면 한 문장도 실행하지 않는다.
+     */
+    private void reconcileMoodCodes() {
+        Map<Integer, CodeSeed> targets = moodTargets();
+        List<Code> rows = codeRepository.findAllByCodeIdIn(List.copyOf(targets.keySet()));
+
+        List<Integer> wrong = mismatchedMoodIds(rows, targets);
+        if (wrong.isEmpty()) {
+            log.debug("무드 코드 {}종이 code_id {}~{} 에 규격대로 있습니다.",
+                targets.size(), MOOD_CODE_ID_BASE, MOOD_CODE_ID_BASE + targets.size() - 1);
+            return;
+        }
+
+        log.warn("무드 코드 code_id {} 가 규격과 달라 그 자리만 맞춥니다.", wrong);
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            for (Integer codeId : wrong) {
+                writeMoodTarget(codeId, targets.get(codeId));
+            }
+        });
+    }
+
+    /**
+     * 무드가 있어야 할 자리 — {@code code_id} → 그 번호에 들어갈 값.
+     *
+     * <p>{@link #CODE_SEEDS} 에서 뽑아 만든다. 목록을 두 벌 적으면 한쪽만 고쳤을 때
+     * 어긋나고, 그 어긋남은 운영 DB 를 덮어쓰는 쪽으로 나타난다.
+     */
+    static Map<Integer, CodeSeed> moodTargets() {
+        Map<Integer, CodeSeed> targets = new LinkedHashMap<>();
+        int codeId = MOOD_CODE_ID_BASE;
+        for (CodeSeed seed : CODE_SEEDS) {
+            if (seed.type() == CodeType.MOOD) {
+                targets.put(codeId++, seed);
+            }
+        }
+        return targets;
+    }
+
+    /**
+     * 32~48 중 규격과 다른 번호 — 없거나, 용도가 MOOD 가 아니거나, 이름·표시명이 다른 것.
+     *
+     * <p>{@code rows} 에 32~48 밖의 행이 섞여 들어와도 결과가 달라지지 않는다. 대조는
+     * 규격 번호 쪽에서만 돌기 때문이다.
+     */
+    static List<Integer> mismatchedMoodIds(List<Code> rows, Map<Integer, CodeSeed> targets) {
+        Map<Integer, Code> byId = new LinkedHashMap<>();
+        for (Code row : rows) {
+            byId.put(row.getCodeId(), row);
+        }
+
+        List<Integer> wrong = new ArrayList<>();
+        targets.forEach((codeId, seed) -> {
+            Code row = byId.get(codeId);
+            if (row == null
+                || row.getCodeType() != CodeType.MOOD
+                || !seed.name().equals(row.getCodeName())
+                || !seed.displayName().equals(row.getDisplayName())) {
+                wrong.add(codeId);
+            }
+        });
+        return wrong;
+    }
+
+    /**
+     * 규격 번호 하나를 선언대로 만든다. 있으면 고치고, 없으면 <b>그 번호로</b> 넣는다.
+     *
+     * <p>번호를 지정해 넣는 것이라 JPA 를 쓰지 않는다 — {@code code_id} 가 IDENTITY 라
+     * 엔티티로는 번호를 정할 수 없고, 자동 채번에 맡기면 애초에 막으려던 "새 번호로
+     * 17행" 이 그대로 일어난다.
+     *
+     * <p>두 경우에는 손대지 않고 로그만 남긴다. 어느 쪽이든 사람이 봐야 하고, 배치가
+     * 밀어붙이면 멀쩡한 참조가 틀어진다.
+     * <ul>
+     *   <li>그 번호를 다른 용도(장르 등) 코드가 쓰고 있을 때 — 덮으면 그 장르를 참조하는
+     *       곡이 전부 다른 뜻이 된다.</li>
+     *   <li>같은 이름을 <b>다른 번호</b>의 MOOD 행이 이미 쥐고 있을 때 —
+     *       {@code UNIQUE (code_type, code_name)} 에 걸린다. 지난 중복분(124~132 등)이
+     *       남아 있는 경우가 여기다. 그 행을 어떻게 할지는 참조를 보고 정해야 한다.</li>
+     * </ul>
+     */
+    private void writeMoodTarget(int codeId, CodeSeed seed) {
+        List<Integer> nameHolder = jdbcTemplate.queryForList(
+            "SELECT code_id FROM codes WHERE code_type = 'MOOD' AND code_name = ? AND code_id <> ?",
+            Integer.class, seed.name(), codeId);
+        if (!nameHolder.isEmpty()) {
+            log.error("""
+                무드 code_id={} ('{}') 를 맞추지 못했습니다 — 같은 이름을 code_id={} 가 쓰고 있습니다.
+                지난 중복 적재로 남은 행일 수 있습니다. 참조를 확인한 뒤 사람이 정리해야 합니다.""",
+                codeId, seed.name(), nameHolder.get(0));
+            return;
+        }
+
+        int updated = jdbcTemplate.update(
+            "UPDATE codes SET code_name = ?, display_name = ? WHERE code_id = ? AND code_type = 'MOOD'",
+            seed.name(), seed.displayName(), codeId);
+        if (updated > 0) {
+            log.info("무드 code_id={} 를 규격대로 고쳤습니다: {} / {}", codeId, seed.name(), seed.displayName());
+            return;
+        }
+
+        List<String> occupant = jdbcTemplate.queryForList(
+            "SELECT code_type FROM codes WHERE code_id = ?", String.class, codeId);
+        if (!occupant.isEmpty()) {
+            log.error("무드 code_id={} ('{}') 자리를 {} 코드가 쓰고 있어 건너뜁니다.",
+                codeId, seed.name(), occupant.get(0));
+            return;
+        }
+
+        // created_at 은 DEFAULT CURRENT_TIMESTAMP 다. 번호는 우리가 정해 넣는다.
+        jdbcTemplate.update(
+            "INSERT INTO codes (code_id, code_type, code_name, display_name) VALUES (?, 'MOOD', ?, ?)",
+            codeId, seed.name(), seed.displayName());
+        log.info("무드 code_id={} 가 없어 그 번호로 넣었습니다: {} / {}",
+            codeId, seed.name(), seed.displayName());
     }
 
     /**

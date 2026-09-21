@@ -31,21 +31,55 @@
         android:theme="@style/Theme.mupid_app"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <!--
-          화상 키보드가 입력란을 가리던 문제 (S15P21A204-389).
+          화상 키보드가 입력란을 가리던 문제 (S15P21A204-389 → 411 재발).
 
-          이 선언이 없으면 안드로이드의 기본값은 `adjustUnspecified` 다. 그 값이면
-          시스템이 창 크기를 줄일지 화면을 밀어 올릴지 스스로 정하는데, 실제로는
-          **줄이지 않고 키보드를 위에 덮었다** — 로그인·회원가입 대화상자의 아래쪽
-          입력란(비밀번호 확인·출생 연도)이 키보드 뒤로 들어가 보이지 않았다.
+          ## 389 의 진단과 그 오류
 
-          `adjustResize` 는 키보드 높이만큼 창(과 그 안의 웹뷰)을 줄이고, 그 몫을
-          인셋으로 넘긴다. 줄어든 것을 아는 순간의 처리는 두 갈래다.
+          389 는 "이 선언이 없으면 기본값 `adjustUnspecified` 라 시스템이 창을
+          줄이지 않고 키보드를 덮었다" 고 보고 `adjustResize` 를 넣었다.
+          **그 진단은 절반만 맞았다.** 실기기 실측(2026-09-21, Galaxy S23 /
+          Android 16 / WebView 152):
 
-          - 화면 쪽: `layout.tsx` 의 `interactiveWidget: 'overlays-content'` 와
-            `useKeyboardInset` 이 `visualViewport` 로 잰 가림 높이
-            (CSS 변수 `keyboard-inset`) — 대화상자가 그만큼 짧아진다.
-          - 네이티브 쪽: `SafeArea.install` 의 인셋 리스너가 같은 순간 울리고,
-            CSS 변수 `safe-area-inset-*` 로 건너간다.
+              mFocusedWindowSoftInputMode = STATE_UNSPECIFIED | ADJUST_RESIZE
+
+          **이 값은 실제로 적용되고 있다** — 그런데도 키보드가 입력란을 덮었다.
+          비밀번호 입력란이 IME 인셋 안에 통째로 들어가 한 픽셀도 보이지 않았다.
+
+              IME 인셋          [0,1308][1080,2316]   visible=true
+              비밀번호 입력란    [109,1490][970,1628]  ← IME 안
+
+          ## 왜 적용되는데도 안 되는가
+
+          `MainActivity` 가 `enableEdgeToEdge()` 를 부르므로
+          `decorFitsSystemWindows=false` 다. **Android 15+(targetSdk 35+) 에서는
+          IME 인셋을 `WindowInsetsCompat.Type.ime()` 로 직접 읽어 소비해야 하고,
+          프레임워크가 창을 줄여 주지 않는다.** `adjustResize` 가 요청한 '창 축소' 가
+          웹뷰 레이아웃까지 도달하지 않는 이유가 이것이다.
+
+          **그래서 이 선언은 지금 키보드 문제를 해결하지 않는다.** 지우지 않고 남기는
+          이유는 해가 되지 않고(AOSP 문서상 edge-to-edge 에서 무시된다), 지우면
+          안드로이드 14 이하에서 이전 동작으로 돌아가기 때문이다.
+          **이 줄을 근거로 "키보드는 처리됐다" 고 판단하지 마라** — 389 의 재발이
+          정확히 그 판단에서 나왔다.
+
+          ## 지금 키보드 처리는 어디에 있나
+
+          **`SafeArea.kt` 한 곳뿐이다.** 인셋 리스너가
+          `WindowInsetsCompat.Type.ime()` 의 `bottom` 을 읽어, **웹뷰를 담은
+          `android.R.id.content` 컨테이너에 그만큼 아래쪽 패딩을 준다.** 컨테이너가
+          줄면 그 안의 웹뷰도 함께 줄어 웹뷰 뷰포트가 키보드 위에서 끝난다.
+
+          값을 웹에 건네 CSS 가 빼게 하는 길이 아니다 — 그 길은 네 번 실패했다
+          (`SafeArea.kt` 의 `install` 주석에 표로 적어 두었다). 그래서 브리지의
+          `keyboardHeight` 는 **앱에서 늘 0** 이다. 가려진 몫이 실제로 0 이다.
+
+          실기기에서 웹뷰가 실제로 줄어드는 것을 확인했다:
+
+              WebView   [0,0][1080,2316] → [0,0][1080,1308]   (IME 1008px)
+
+          `visualViewport` 로 재는 경로는 **브라우저 전용**으로 남는다
+          (`frontend/hooks/use-keyboard-inset.ts`). 거기서는 뷰를 줄여 줄 네이티브가
+          없다.
 
           **`adjustPan` 을 쓰면 안 된다.** 화면을 통째로 밀어 올리는 방식이라
           시스템 바 여백(`safe-area-inset-top`)과 어긋나고 스크롤 컨테이너 기준이

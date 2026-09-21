@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import { formatTime } from '@/lib/mupid-data';
 import { EmptyState, PlayerControls } from './primitives';
 import { commentable, validateComment } from '@/lib/comment-rules';
@@ -32,7 +33,7 @@ function CommentAvatar({ comment }: { comment: TrackComment }) {
   return <img className="comment-avatar-image" src={src} alt="" onError={() => { if (src !== DEFAULT_PROFILE_PHOTO) setFailed(src); }} />;
 }
 
-export function TrackComments({ model: m, children }: { model: MupidModel; children?: ReactNode }) {
+export function TrackComments({ model: m, children, controlsAside }: { model: MupidModel; children?: ReactNode; controlsAside?: ReactNode }) {
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
   if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
@@ -123,6 +124,13 @@ export function TrackComments({ model: m, children }: { model: MupidModel; child
     });
   };
   const closePanel = () => { setSelectedTime(null); setDraft(null); setBody(''); };
+  /*
+   * 뒤로가기로 닫히게 한다 (S15P21A204-410). 삭제 확인 창을 위에 등록했으므로
+   * 확인 창이 떠 있으면 그쪽이 먼저 닫히고, 그 다음이 댓글 창이다. 열려 있지
+   * 않은 것은 `open` 이 false 라 스택에 오르지 않는다.
+   */
+  useDismissableOverlay(selectedTime !== null, closePanel);
+  useDismissableOverlay(remove !== null, () => setRemove(null));
   const visible = items.filter(c => c.trackId === active.id && Number.isFinite(c.at) && c.at >= 0 && c.at <= active.duration);
   // 같은 시점만 묶는다. 가까운 다른 시점은 가로 위치를 유지하고 다음 줄에 둔다.
   const moments = new Map<number, TrackComment[]>();
@@ -204,7 +212,7 @@ export function TrackComments({ model: m, children }: { model: MupidModel; child
       </div>
       {/* 팝오버가 파형을 덮으면 숫자만 남아 무슨 시간인지 알 수 없다. 이름표를 붙인다. */}
       <div className="time-labels"><span aria-label={`현재 재생 시간 ${formatTime(m.time)}`}>{formatTime(m.time)}</span><span aria-label={`전체 재생 시간 ${formatTime(active.duration)}`}>{formatTime(active.duration)}</span></div>
-      <PlayerControls model={m} />
+      {controlsAside ? <div className="player-controls-row"><PlayerControls model={m} />{controlsAside}</div> : <PlayerControls model={m} />}
       <div className="player-quick-actions" aria-label="좋아요와 곡 저장, 댓글">
         {children}
         <button type="button" className="moment-panel-toggle" aria-expanded={selectedTime !== null} onClick={() => {

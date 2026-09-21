@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import './dark-mode.css';
+import { ThemeProvider } from '@/components/mupid/theme';
 import { UpdatePrompt } from '@/components/mupid/update-prompt';
 import { SkyCursor } from '@/components/mupid/sky-cursor';
 import { PageScrollbar } from '@/components/mupid/page-scrollbar';
@@ -14,26 +16,40 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: 'cover',
   /*
-   * 키보드가 올라올 때 **레이아웃 뷰포트를 줄이지 않는다** (S15P21A204-389).
+   * ## 389 가 여기에 `overlays-content` 를 박았고, 그것이 계측을 껐다
+   * (S15P21A204-389 → 411 재발)
    *
-   * 기본값(`resizes-content`)이면 브라우저가 레이아웃 뷰포트까지 줄여 준다.
-   * 크롬 안드로이드에서는 그게 곧 `100dvh` 가 키보드 위까지 줄어든다는 뜻이라
-   * 편해 보이지만, **안드로이드 웹뷰에서는 실제로 그렇게 되지 않는다** — 이 앱의
-   * 재생 표시가 그 차이를 이미 기록해 두었다(`hooks/use-keyboard-inset.ts`,
-   * `components/mupid/chat.tsx`): 페이지 높이는 그대로인데 키보드가 위에 덮여
-   * `--keyboard-inset` 이 양수로 잡혔다.
+   * 389 는 이렇게 적었다: "`overlays-content` 로 명시하면 키보드 높이가
+   * `visualViewport` 로 **일관되게** 드러난다."
    *
-   * 그 상태에서는 `dvh` 기반 자리 계산이 하나도 줄지 않아, 로그인·회원가입
-   * 대화상자가 `max-height: calc(100dvh - 32px)` 로 그대로 서고 아래쪽 입력란이
-   * 키보드 뒤로 들어갔다.
+   * **정확히 반대다.** `overlays-content` 는 스펙상 **"어떤 뷰포트도 줄이지 않는다"**
+   * 는 선언이라, `visualViewport.height` 가 줄어드는 기본 동작(`resizes-visual`)까지
+   * 스스로 껐다. 재는 유일한 통로를 막아 놓고 그 값으로 재려 한 셈이다.
    *
-   * 그래서 '덮이되 줄지 않는' 쪽을 **명시한다.** 그러면 키보드 높이가
-   * `visualViewport` 로 일관되게 드러나고, 그 값을 `--keyboard-inset` 으로 받아
-   * 대화상자가 스스로 줄어든다 (`dialog-viewport.css`, `demo-login.css`).
-   * 네이티브 쪽은 `AndroidManifest.xml` 의 `windowSoftInputMode="adjustResize"` 가
-   * 창 자체를 줄여 그 몫을 인셋으로 넘긴다 — 두 경로가 같은 순간에 울린다.
+   * 앱에서는 그것과 무관하게 0 이었다. `MainActivity` 가 `enableEdgeToEdge()` 를
+   * 부르므로 `decorFitsSystemWindows=false` 이고, 그러면 프레임워크가 창을 줄여
+   * 주지 않는다 — 매니페스트의 `adjustResize` 가 실기기에서
+   * `STATE_UNSPECIFIED|ADJUST_RESIZE` 로 **적용되는 것까지 확인했는데도** 그렇다.
+   *
+   * ## 지금 구조 — 두 환경이 **다른 방법**으로 같은 결과에 닿는다
+   *
+   * - **앱**: 키보드가 뜨면 `SafeArea.kt` 가 웹뷰를 담은 컨테이너를 IME 높이만큼
+   *   줄인다. 웹뷰의 뷰포트가 키보드 위에서 끝나므로 `100dvh` 가 저절로 맞고,
+   *   `--keyboard-inset` 은 0 이다. 이 선언은 앱에서 **아무 역할도 하지 않는다**
+   *   — 뷰 크기가 곧 뷰포트라 브라우저의 IME 처리가 끼어들 자리가 없다.
+   * - **브라우저**: 뷰를 줄여 줄 네이티브가 없다. `visualViewport` 로 재어
+   *   `--keyboard-inset` 에 싣고 CSS 가 자리를 옮긴다(`dialog-viewport.css`).
+   *
+   * 그래서 값을 **기본값인 `resizes-visual` 로 되돌린다.** 브라우저 쪽 계측이
+   * 살아나야 하고, `dvh`(레이아웃 뷰포트)는 어느 값에서도 키보드로 줄지 않으므로
+   * `100dvh - var(--keyboard-inset)` 라는 CSS 계약은 그대로다.
+   *
+   * 실기기 실측(2026-09-21, Galaxy S23 / Android 16 / WebView 152) — 앱 경로:
+   *
+   *     WebView        [0,0][1080,2316] → [0,0][1080,1308]
+   *     비밀번호 입력란  [109,1490][970,1628] → [109,1099][942,1240]   (IME 상단 1308)
    */
-  interactiveWidget: 'overlays-content',
+  interactiveWidget: 'resizes-visual',
   themeColor: '#f3f7fe',
 };
 
@@ -97,7 +113,7 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body id="page-content" className="font-sans antialiased">
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
         {/*
           업데이트 안내를 **root 에 둔다.** 인증이 필요한 `(music)` 그룹 안에
           두면 로그인 전에는 새 판이 있어도 알 수 없다 — 실기기에서 확인했다

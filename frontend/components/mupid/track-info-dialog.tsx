@@ -1,5 +1,6 @@
 'use client';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import { formatTime, type Track } from '@/lib/mupid-data';
 
 export function TrackInfoDialog({ track, open, onOpenChange, onArtist }: {
@@ -8,6 +9,9 @@ export function TrackInfoDialog({ track, open, onOpenChange, onArtist }: {
   onOpenChange: (open: boolean) => void;
   onArtist: (artist: string) => void;
 }) {
+  // 뒤로가기로 닫히게 한다. `onOpenChange(false)` 로 닫으므로 곡 더보기 창에서
+  // 열린 경우에도 상태 정리가 같은 길을 탄다 (S15P21A204-410).
+  useDismissableOverlay(open, () => onOpenChange(false));
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="sky-dialog track-info-dialog">
       <DialogHeader>

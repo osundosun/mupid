@@ -170,13 +170,27 @@
     left: 0;
     right: 0;
     bottom: 0;
-    /* 좁은 화면에서도 AI 런처 위다. 막(46)과 짝을 이룬다. */
-    z-index: 47;
+    /* 헤더(60)까지 덮되 AI 대화(70)와 확인 대화상자(85)는 위에 둔다. */
+    z-index: 66;
     width: auto;
-    max-height: min(78vh, 680px);
+    max-height: min(78dvh, 680px);
+    background: #fbfdff;
     border-radius: 18px 18px 0 0;
     border-bottom: none;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    /*
+     * `env()` 가 아니라 `--safe-area-inset-*` 다 (S15P21A204-418).
+     *
+     * 안드로이드 웹뷰의 `env()` 는 노치만 세고 시스템 바는 빼먹어서, 노치 없는
+     * 기기에서는 이 줄이 통째로 0 이 된다 — 목록 마지막 줄이 제스처바에 깔렸다
+     * (실측: 인셋 40px 을 준 상태에서 `padding-bottom` 이 `0px`).
+     * 자세한 사정은 `app/globals.css` 의 주석에 있다.
+     *
+     * 좌우도 같이 비운다. 가로로 눕히면 컷아웃이 좌우에 서는데, 이 시트는
+     * `left: 0; right: 0` 이라 그 자리까지 목록이 들어간다.
+     */
+    padding-left: var(--safe-area-inset-left);
+    padding-right: var(--safe-area-inset-right);
+    padding-bottom: var(--safe-area-inset-bottom);
   }
 
   .queue-dock.is-open {
@@ -227,7 +241,7 @@
     display: block;
     position: fixed;
     inset: 0;
-    z-index: 46;
+    z-index: 65;
     border: 0;
     padding: 0;
     background: #1b2c4a3d;
@@ -258,7 +272,18 @@
   }
 
   .queue-dock-body {
+    min-height: 0;
     padding: 8px 10px 16px;
+  }
+
+  html:has(.queue-dock),
+  body:has(.queue-dock) {
+    overflow: hidden;
+  }
+
+  /* 배경 가사 등의 body 포털 스크롤바가 시트 위로 나오지 않게 한다. */
+  body:has(.queue-dock) .inner-scrollbar {
+    display: none;
   }
 }
 

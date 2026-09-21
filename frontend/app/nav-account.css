@@ -34,6 +34,39 @@
 .nav-account-panel { position: absolute; right: 0; top: calc(100% + 10px); width: 160px; padding: 6px; background: #fff; border: 1px solid #dce6f5; border-radius: 14px; box-shadow: 0 8px 28px #42628c26; }
 .nav-account-panel button { display: block; width: 100%; padding: 12px; text-align: left; font-size: 15px; border-radius: 8px; white-space: nowrap; }
 .nav-account-panel button:hover, .nav-account-panel button:focus-visible { background: #edf3ff; }
+.nav-account-panel { width: 200px; max-width: calc(100vw - 32px); }
+.nav-account-panel button.theme-toggle { display: flex; align-items: center; gap: 8px; }
+.nav-account-panel .theme-toggle svg { flex-shrink: 0; }
+.nav-account-panel .theme-toggle small { margin-left: auto; }
+.nav-account-panel > button,
+.nav-account-panel > button.theme-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 15px;
+  line-height: 24px;
+}
+.nav-account-panel > button:last-child {
+  margin-top: 6px;
+  position: relative;
+}
+.nav-account-panel > button:last-child::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: 8px;
+  right: 8px;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
 @media (max-width: 1100px) and (min-width: 768px) {
   .mupid-shell .app-header { flex-wrap: wrap; }
   .nav-search-area { order: 4; max-width: none; flex-basis: 100%; }

@@ -34,6 +34,8 @@ import { fetchSections } from '@/lib/music-analysis';
 import { chatErrorMessage, requestChat } from '@/lib/ai-chat';
 import { momentPlaybackRanges } from '@/lib/saved-moments';
 import { useMediaSession } from './use-media-session';
+import { useDismissableOverlay } from './use-dismissable-overlay';
+import { closeTopOverlay } from '@/lib/overlay-stack';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
   getSongSectionAt,
@@ -250,6 +252,21 @@ export function useMupid(bootstrap: Bootstrap) {
   const [deletePlaylist, setDeletePlaylist] = useState<number | null>(null);
   const [renamePlaylist, setRenamePlaylist] = useState<number | null>(null);
   const [showAllSimilar, setShowAllSimilar] = useState(false);
+  /*
+   * 뒤로가기로 닫혀야 하는 오버레이들을 스택에 등록한다 (S15P21A204-410).
+   *
+   * 상태는 각자 쓰던 `useState` 그대로다 — 여기서는 "무엇이 열려 있는가"만
+   * 적는다. **가장 위(최근에 연 것)** 가 뒤로가기 한 번에 닫히려면 이 순서가
+   * 화면에 그려지는 순서와 같아야 하므로, 등록은 여기 한 곳에 모아 둔다
+   * (호출 순서가 곧 스택 순서다).
+   */
+  useDismissableOverlay(loginDialog, () => setLoginDialog(false));
+  useDismissableOverlay(playlistDialog, () => setPlaylistDialog(false));
+  useDismissableOverlay(renamePlaylist !== null, () => setRenamePlaylist(null));
+  useDismissableOverlay(deletePlaylist !== null, () => setDeletePlaylist(null));
+  useDismissableOverlay(selectedArtist !== null, () => setSelectedArtist(null));
+  useDismissableOverlay(queueOpen, () => setQueueOpen(false));
+  useDismissableOverlay(chatOpen, () => setChatOpen(false));
   const activeRef = useRef(active);
   const mountedRef = useRef(true);
   const previewEnd = useRef<number | null>(null);
@@ -264,6 +281,13 @@ export function useMupid(bootstrap: Bootstrap) {
   const playedInCycle = useRef<Set<string>>(new Set());
   const requestId = useRef(0);
   const messageEndRef = useRef<HTMLDivElement>(null);
+  /**
+   * 대화 스크롤 영역(`.chat-messages`) 자체. 새 말이 오면 여기를 끝으로 내린다.
+   *
+   * `messageEndRef`(끝을 가리키는 sentinel)는 곡 카드까지 온전히 보이게 하지 못한다 —
+   * 실측 546 / 564 (`S15P21A204-409`). 패널이 이 참조를 `ref` 로 직접 단다.
+   */
+  const chatBoxRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatButtonRef = useRef<HTMLButtonElement>(null);
   /** 진행 중인 AI 요청. 화면을 떠나거나 다음 요청이 오면 끊는다. */
@@ -271,10 +295,14 @@ export function useMupid(bootstrap: Bootstrap) {
 
   // 어디서 들어왔든 그 화면으로 돌아간다. 앱을 바로 열었으면 홈으로.
   const goBack = () => {
+    // 열려 있는 오버레이가 있으면 **그것부터** 닫는다. 화면 헤더의 뒤로가기와
+    // 안드로이드 소프트버튼이 같은 규칙을 따르게 한다 (S15P21A204-410).
+    if (closeTopOverlay()) return;
     if (typeof window !== 'undefined' && window.history.length > 1) router.back();
     else router.push(pagePaths.home);
   };
-  const go = (next: Page) => {
+  const go = (next: Page, preserveSearch = false) => {
+    if (next === 'search' && !preserveSearch) setQuery('');
     // URL 직접 이동과 UI 이동 모두 같은 조건으로 보호한다. 실제 접근 권한 검증은 서버 책임이다.
     router.push(guardPath(pagePaths[next], !!sessionRef.current, onboardingRef.current));
   };
@@ -396,12 +424,22 @@ export function useMupid(bootstrap: Bootstrap) {
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
   }, [chatOpen]);
+  /**
+   * 대화가 열리거나 새 말이 오가면 끝으로 내린다 (S15P21A204-409).
+   *
+   * **`smooth` 를 쓰지 않는다.** 이 환경에서 `scrollIntoView({behavior:'smooth'})` 는
+   * 곧바로 아무것도 하지 않고 끝났다(3.5초를 기다려도 `scrollTop` 이 0 이었다).
+   * 그래서 곡 카드가 화면 밖에 남았다 — 실측값은 `chat.tsx` 주석과 커밋 메시지에 있다.
+   * 같은 일이 두 곳에서 벌어지면 원인을 찾느라 두 번 헤매게 되므로 여기도 함께 막는다.
+   *
+   * 패널의 스크롤 영역(`.chat-messages`)을 직접 내린다. 끝을 가리키는 sentinel 은
+   * `block:'end'` 로도 끝까지 가지 못한다(546 / 564 — `chat.tsx` 참고).
+   */
   useEffect(() => {
-    if (chatOpen)
-      messageEndRef.current?.scrollIntoView({
-        block: 'nearest',
-        behavior: 'smooth',
-      });
+    if (!chatOpen) return;
+    const box = chatBoxRef.current;
+    if (!box) return;
+    box.scrollTop = box.scrollHeight;
   }, [chatOpen, messages, chatLoading]);
 
   /**
@@ -651,7 +689,19 @@ export function useMupid(bootstrap: Bootstrap) {
   };
 
   const loadTrack = (track: Track) => {
-    if (activeRef.current?.id === track.id) return;
+    if (activeRef.current?.id === track.id) {
+      // 같은 음원으로 다시 진입해도 모먼트에서 받은 추천 근거는 갱신한다.
+      if (track.recommended || track.recommendationReason) {
+        const updated = {
+          ...activeRef.current,
+          recommended: track.recommended ?? activeRef.current.recommended,
+          recommendationReason: track.recommendationReason ?? activeRef.current.recommendationReason,
+        };
+        activeRef.current = updated;
+        setActive(updated);
+      }
+      return;
+    }
     activeRef.current = track;
     setActive(track);
     setTime(0);
@@ -1691,6 +1741,9 @@ export function useMupid(bootstrap: Bootstrap) {
             role: 'assistant',
             text: answer.text,
             tracks: answer.tracks.length ? answer.tracks : undefined,
+            // 툴 호출 기록 (S15P21A204-409). **비어 있으면 넣지 않는다** — 툴 호출이 없던
+            // 턴에 화면이 "도구 호출" 줄을 그리면 거짓말이 된다.
+            toolCalls: answer.toolCalls.length ? answer.toolCalls : undefined,
           },
         ]);
       } catch (error) {
@@ -1925,6 +1978,7 @@ export function useMupid(bootstrap: Bootstrap) {
     showAllSimilar,
     setShowAllSimilar,
     messageEndRef,
+    chatBoxRef,
     chatInputRef,
     chatButtonRef,
     play,
