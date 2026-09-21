@@ -2184,3 +2184,31 @@
     10%, 85% { opacity: 1; translate: 0 0; }
   }
 }
+
+/* Keep choices readable when the desktop viewport is short. */
+@media (min-width: 1024px) {
+  .mupid-shell .explore-filter-sidebar .explore-category-card { height: 100%; }
+  .mupid-shell .explore-filter-sidebar.is-height-constrained .explore-category-card { overflow-y: auto; overscroll-behavior: contain; }
+  .mupid-shell .explore-filter-sidebar.is-height-constrained .category-options-scroll { flex: 0 0 auto; overflow: visible; }
+  .mupid-shell .explore-filter-sidebar.is-height-constrained .category-groups { flex: none; overflow: visible; }
+  .mupid-shell .explore-filter-sidebar.is-height-constrained .category-groups fieldset { height: auto; }
+  .mupid-shell .explore-filter-sidebar.is-height-constrained .category-groups fieldset > div { flex: none; max-height: none; overflow: visible; }
+  .mupid-shell .explore-filter-sidebar.is-height-constrained .category-search-action { position: sticky; bottom: -16px; z-index: 2; padding-block: 12px; background: #fbfdff; }
+}
+
+@media (min-width: 768px) {
+  .mupid-shell.page-player .player-lyrics-inline .song-lyrics { width: 100%; max-width: none; box-sizing: border-box; }
+  .mupid-shell .player-desktop-volume { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: 16px 0 0 auto; width: 180px; max-width: 100%; color: #6a8fc6; }
+  .mupid-shell .player-desktop-volume svg { flex-shrink: 0; }
+  .mupid-shell .player-desktop-volume input { flex: 1; min-width: 0; width: 100%; accent-color: #6a93d9; }
+}
+
+@media (min-width: 768px) {
+  .mupid-shell .player-controls-row { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px 20px; margin: 16px 0 20px; }
+  .mupid-shell .player-controls-row .full-controls { flex: 1 1 260px; min-width: 0; max-width: 360px; margin: 0; }
+  .mupid-shell .player-controls-row .player-desktop-volume { flex: 0 1 120px; width: 120px; margin: 0; gap: 8px; }
+}
+/* Chat must cover the lyrics beneath it, including in the light theme. */
+.mupid-shell .chat-panel { background: #f7faff; }
+.mupid-shell .chat-panel .chat-messages { background: #f7faff; }
+html.dark .mupid-shell .chat-panel .chat-messages { background: #171717; }

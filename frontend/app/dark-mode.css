@@ -1,0 +1,336 @@
+.theme-toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--card); color: var(--foreground); }
+.theme-toggle small { margin-left: auto; font-size: 12px; opacity: .8; }
+.welcome-theme { position: absolute; top: max(16px, var(--safe-area-inset-top)); right: 20px; }
+html.dark .mupid-shell .nav-account-panel > button.theme-toggle {
+  background: transparent !important;
+  border: 0 !important;
+  color: var(--foreground) !important;
+}
+html.dark .mupid-shell .nav-account-panel > button.theme-toggle:is(:hover,:focus-visible) {
+  background: #303030 !important;
+}
+html.dark {
+  color-scheme: dark;
+  --background: #080808;
+  --foreground: #ededed;
+  --card: #171717;
+  --primary: #8fb5fa;
+  --muted: #242424;
+  --muted-foreground: #b5b5b5;
+  --border: #353535;
+  --surface-line: #353535;
+  --ink-strong: #f2f2f2;
+  --ink-secondary: #b5b5b5;
+  --surface-hover: #292929;
+  --home-surface: #171717;
+  --home-accent: #9bbdf9;
+  --home-search: #9bbdf9;
+  --sky-tint: #242424;
+  --sky-accent: #9bbdf9;
+  --sky-pink: #f3a0c8;
+  background: var(--background);
+  color: var(--foreground);
+}
+html.dark body { background: var(--background); color: var(--foreground); }
+html.dark .mupid-shell,
+html.dark .mupid-shell .app-header-frame,
+html.dark .mupid-shell .welcome-page { background: #080808 !important; }
+html.dark :is(.app-header, .app-layout, .mobile-nav, .mini-player, .nav-account-panel,
+  .sky-dialog, .demo-login-dialog, .welcome-form, .explore-category-card,
+  .profile-settings-card, .profile-hero, .queue-dock, .chat-panel,
+  .onboarding-footer, .category-search-action, .inquiry-actions) {
+  background: var(--card) !important; border-color: var(--border) !important; color: var(--foreground) !important;
+}
+html.dark :is(.mupid-shell, .sky-dialog, .demo-login-dialog) :is(h1,h2,h3,h4,legend,strong,label,.field-label,.track-title-link,.player-title-trigger) { color: #ededed; }
+html.dark :is(.mupid-shell, .sky-dialog, .demo-login-dialog) :is(p,small,.eyebrow,.track-artist-link,.text-link,.nav-item) { color: #b5b5b5; }
+html.dark :is(.mupid-shell, .sky-dialog, .demo-login-dialog) :is(input,textarea,select) {
+  background: #101010 !important; color: #ededed !important; border-color: #424242 !important;
+}
+html.dark :is(input,textarea)::placeholder { color: #999999 !important; opacity: 1; }
+html.dark :is(.secondary-button,.icon-button,.inquiry-button,.theme-toggle,.filter-chips button,.category-tabs,.category-tab,.category-groups button,.onboarding-picked-chip,.nav-avatar,.nav-item.active) {
+  background: #242424 !important; color: #e0e0e0 !important; border-color: #424242 !important;
+}
+html.dark :is(.filter-chips,.category-groups) button.selected,
+html.dark :is(.category-tab,.nav-item).active,
+html.dark [data-slot='tabs-trigger'][data-state='active'] { background: #3e5f8b !important; color: #fff !important; }
+html.dark :is(.primary-button,.full-controls .play-button) { background: #567fc2; color: #fff; }
+html.dark :is(.track-row,.today-moment-row,.section-heading,.category-search-action,.onboarding-footer) { border-color: #353535 !important; }
+html.dark :is(.track-row,.nav-account-panel button,.theme-toggle):hover { background-color: #303030 !important; }
+html.dark :is(.player-recommendation-toggle,.song-lyrics,.song-lyrics p) { color: #b5b5b5; }
+html.dark .song-lyrics :is(.active,.is-active,.lyric-current,[aria-current='true']) { color: #ffffff; }
+html.dark .song-lyrics .lyric-seek { color: inherit; }
+html.dark .mupid-shell .player-quick-actions :is(.quick-save,.moment-panel-toggle) {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: #a7bad5;
+}
+html.dark .mupid-shell .player-quick-actions button:is(:hover,:active,:focus-visible) {
+  background: #292929 !important;
+  border-color: transparent !important;
+}
+/* Preserve the player's unboxed controls in both themes. */
+html.dark .mupid-shell .player-page .full-controls .icon-button {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none;
+  color: #a7bad5 !important;
+}
+html.dark .mupid-shell .player-page .full-controls .play-main {
+  background: #567fc2 !important;
+  color: #fff !important;
+}
+html.dark .mupid-shell .player-page .full-controls .toggle-control[aria-pressed='true'] { color: #a9caff !important; }
+html.dark .mupid-shell .player-page :is(.secondary-button.quick-like,.player-quick-actions .secondary-button) {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none;
+  color: #a7bad5 !important;
+}
+html.dark .song-lyrics .lyric-seek:is(:hover, :active, :focus-visible) {
+  background: #303030;
+  color: #f0f0f0;
+}
+html.dark .song-lyrics .lyric-seek:focus-visible {
+  outline: 2px solid #8498b5;
+  outline-offset: -2px;
+}
+html.dark :is(.desktop-listening-room,.desktop-home,.player-page,.main-content,.home-feed,.library-page) { background-color: transparent; }
+html.dark :is(.desktop-app-nav,.mobile-nav) button { color: #b5b5b5; }
+html.dark :is(.desktop-app-nav,.mobile-nav) button.active { background: #303030; color: #ededed; }
+html.dark .pink { color: #f3a0c8; }
+html.dark :is(.player-art-area,.home-record,.record-clouds)::before,
+html.dark :is(.player-art-area,.home-record,.record-clouds)::after { opacity: .12; }
+html.dark [data-slot='dialog-overlay'], html.dark [data-slot='alert-dialog-overlay'] { background: rgb(0 0 0 / 70%) !important; }
+
+/* Actual navigation and filter states use ARIA attributes, not .active. */
+html.dark .mupid-shell :is(.desktop-app-nav,.mobile-nav) button[aria-current='page'],
+html.dark .mupid-shell .explore-filter-sidebar .explore-category-switch button[aria-pressed='true'],
+html.dark .mupid-shell .sky-tabs [data-slot='tabs-trigger'][data-active] {
+  background: #383838 !important;
+  color: #e8e8e8 !important;
+  border-color: #555 !important;
+  box-shadow: none !important;
+}
+html.dark .mupid-shell .explore-filter-sidebar .explore-category-switch,
+html.dark .mupid-shell [data-slot='tabs-list'],
+html.dark .mupid-shell .nav-search,
+html.dark .mupid-shell .recent-search-panel {
+  background: #222 !important;
+  border-color: #353535 !important;
+}
+html.dark .mupid-shell .explore-filter-sidebar .explore-category-switch button,
+html.dark .mupid-shell .nav-search button,
+html.dark .mupid-shell .keyword-results > header > span,
+html.dark .mupid-shell [data-slot='tabs-trigger'] {
+  background: #292929 !important;
+  color: #c4c4c4 !important;
+  border-color: #404040 !important;
+  box-shadow: none !important;
+}
+html.dark .mupid-shell .nav-search { overflow: hidden; }
+html.dark .mupid-shell .nav-search input { background: transparent !important; }
+html.dark .mupid-shell .category-reset { color: #b5b5b5; }
+html.dark .mupid-shell :is(.desktop-app-nav,.mobile-nav) button:is(:hover,:focus-visible) {
+  background: #292929 !important;
+  color: #e5e5e5 !important;
+  border-color: #444 !important;
+}
+html.dark .mupid-shell :is(.desktop-app-nav,.mobile-nav) button[aria-current='page']:is(:hover,:focus-visible) {
+  background: #404040 !important;
+}
+html.dark .mupid-shell :is(.desktop-app-nav,.mobile-nav) button:focus-visible {
+  outline: 2px solid #8498b5;
+  outline-offset: 2px;
+}
+html.dark .mupid-shell .recent-search-list li:is(:hover,:focus-within) { background: #303030; }
+
+/* Dim decorative artwork without changing its shape or the light theme assets. */
+html.dark {
+  --dark-art-tone: brightness(.68) saturate(.55);
+  --dark-cursor-tone: brightness(.72) saturate(.6);
+}
+html.dark .mupid-logo,
+html.dark .mupid-mascot,
+html.dark .welcome-illustration,
+html.dark .mascot-sparkle,
+html.dark .nav-avatar img[alt='기본 프로필'],
+html.dark .profile-photo-editor:not(.has-photo) .profile-photo-frame img {
+  filter: var(--dark-art-tone);
+}
+html.dark .sky-cursor-overlay {
+  filter: var(--dark-cursor-tone);
+}
+html.dark .mupid-shell .profile-photo-editor {
+  background: #202020;
+  border-color: #353535;
+  box-shadow: none;
+}
+html.dark .mupid-shell .profile-photo-frame,
+html.dark .mupid-shell .profile-photo-pick:hover .profile-photo-frame {
+  background: #242424;
+  border-color: #484848;
+}
+html.dark .mupid-shell .profile-photo-badge {
+  background: #35465f;
+  border-color: #202020;
+  color: #c4cedc;
+  box-shadow: none;
+}
+html.dark .mupid-shell .profile-photo-editor:not(.has-photo) .profile-photo-frame img {
+  filter: brightness(.45) saturate(.35);
+}
+html.dark .mupid-shell .profile-photo-editor :is(small,output) { color: #aaa; }
+html.dark .mupid-shell .collection-page .sky-tabs > [role='tablist'] {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  height: auto;
+  border: 0;
+  border-radius: 16px;
+  background: #222 !important;
+}
+html.dark .mupid-shell .collection-page .sky-tabs [role='tab'] {
+  flex: 1 1 0;
+  min-height: 44px;
+  height: auto;
+  padding: 10px 12px;
+  border: 0 !important;
+  border-radius: 11px;
+  background: transparent !important;
+  color: #aaa !important;
+  box-shadow: none !important;
+}
+html.dark .mupid-shell .collection-page .sky-tabs [role='tab'][data-active] {
+  background: #383838 !important;
+  color: #eee !important;
+}
+html.dark .mupid-shell .collection-page .sky-tabs [role='tab']::after { display: none; }
+html.dark .mupid-shell .collection-page .sky-tabs [role='tab']:focus-visible { outline: 2px solid #8faad1; outline-offset: -2px; }
+
+/* Blend the sky texture into charcoal without muddy blue cloud silhouettes. */
+html.dark .desktop-record-stage::before,
+html.dark .mobile-record-stage::before,
+html.dark .player-art-area::before {
+  filter: grayscale(1) contrast(.55) brightness(.8) blur(4px);
+  opacity: .13;
+  mask-image: radial-gradient(ellipse at 50% 55%, #000 15%, transparent 72%);
+}
+html.dark .mobile-record-stage::after,
+html.dark .player-art-area::after {
+  filter: grayscale(1) contrast(.55) brightness(.8) blur(4px);
+  opacity: .08;
+  mask-image: radial-gradient(ellipse at 50% 60%, #000 10%, transparent 72%);
+}
+
+html.dark .mupid-shell .chat-panel :is(.chat-header,.chat-footer) {
+  background: #1c1c1c !important;
+  border-color: #353535 !important;
+}
+html.dark .mupid-shell .chat-panel :is(.chat-source,.chat-symbol,.message-body,.chat-track,.chat-suggestions button,.chat-composer) {
+  background: #272727 !important;
+  border-color: #414141 !important;
+  color: #ddd !important;
+  box-shadow: none;
+}
+html.dark .mupid-shell .chat-panel .chat-message.user .message-body {
+  background: #303946 !important;
+}
+html.dark .mupid-shell .chat-panel .message-body { background: transparent !important; }
+html.dark .mupid-shell .chat-panel .message-body > p {
+  background: #272727 !important;
+  border-color: #414141 !important;
+  color: #ddd !important;
+}
+html.dark .mupid-shell .chat-panel .chat-message.user .message-body > p {
+  background: #303946 !important;
+}
+html.dark .mupid-shell .chat-panel :is(.chat-handwriting,.chat-track-reason) { color: #d1d1d1; }
+html.dark .mupid-shell .chat-panel .chat-header :is(p,small),
+html.dark .mupid-shell .chat-panel .chat-source :is(p,small) { color: #aaa; }
+html.dark .mupid-shell .chat-panel .chat-composer :is(input,textarea) {
+  background: transparent !important;
+  color: #eee !important;
+}
+html.dark .mupid-shell .chat-panel .chat-suggestions button:hover { background: #363636 !important; }
+html.dark .mupid-shell .chat-launcher {
+  background: #262626 !important;
+  border-color: #444 !important;
+  color: #a4b8d6 !important;
+  box-shadow: none;
+}
+
+html.dark .weekly-mubti-dialog .weekly-card {
+  background: #252525;
+  border-color: #484848;
+  color: #ddd;
+  box-shadow: none;
+  opacity: 1;
+}
+html.dark .weekly-mubti-dialog .weekly-card.is-today { background: #292d33; border-color: #829bc0; }
+html.dark .weekly-mubti-dialog .weekly-card.is-future { background: #202020; border-color: #383838; }
+html.dark .weekly-mubti-dialog .weekly-art { background: #323232; box-shadow: none; }
+html.dark .weekly-mubti-dialog .weekly-mascot { opacity: 1; filter: brightness(.78) saturate(.4); }
+html.dark .weekly-mubti-dialog .weekly-art img { filter: brightness(.8) saturate(.65); }
+html.dark .weekly-mubti-dialog .weekly-card :is(strong,.weekly-code) { color: #f0f0f0; }
+html.dark .weekly-mubti-dialog :is(.weekly-weekday,.weekly-card footer) { color: #bdbdbd; }
+html.dark .weekly-mubti-dialog .weekly-weekday.is-sun { color: #dfa6b5; }
+html.dark .weekly-mubti-dialog .weekly-weekday.is-sat { color: #aac3e8; }
+html.dark .weekly-mubti-dialog .weekly-card header > em { background: #39495f; color: #e2edff; }
+html.dark :is(.weekly-arrow,.weekly-mubti-button),
+html.dark .sky-dialog > [data-slot='dialog-close'] {
+  background: #303030 !important;
+  color: #e0e0e0 !important;
+  border-color: #555 !important;
+  box-shadow: none;
+}
+html.dark .weekly-arrow:hover { background: #414141 !important; }
+html.dark .mupid-shell :is(.desktop-playlist-row,.today-moment-row) {
+  border-color: transparent !important;
+  border-bottom-color: #353535 !important;
+}
+html.dark .mupid-shell :is(.desktop-playlist-row,.today-moment-row):is(.is-current,:hover,:focus-within) {
+  background: #292929 !important;
+  border-color: transparent !important;
+  border-bottom-color: #353535 !important;
+}
+html.dark .mupid-shell .desktop-moment-button {
+  background: #282828 !important;
+  border-color: #454545 !important;
+  color: #b9cbe4 !important;
+  box-shadow: none;
+}
+html.dark .mupid-shell .desktop-moment-button:hover { background: #343434 !important; }
+html.dark .mupid-shell .desktop-seek { background: transparent !important; }
+html.dark .mupid-shell .desktop-seek::-webkit-slider-runnable-track { background: #424242; }
+html.dark .mupid-shell .desktop-seek::-moz-range-track { background: #424242; }
+html.dark .mupid-shell .track-row:is(.is-playing,.is-selected,:hover) {
+  background: #2c2c2c !important;
+  border-color: #454545 !important;
+  box-shadow: none;
+}
+html.dark .mupid-shell .track-row:is(.is-playing,.is-selected) .track-title-link strong { color: #f0f0f0; }
+html.dark .mupid-shell .track-row:is(.is-playing,.is-selected) .track-artist-link { color: #bdbdbd; }
+html.dark .mupid-shell .explore-mobile-list .track-row.is-playing::before { background: #2c2c2c; }
+html.dark .mupid-shell .queue-dock :is(.queue-item,.track-row) {
+  background: transparent !important;
+  border-color: #353535 !important;
+  box-shadow: none !important;
+}
+html.dark .mupid-shell .queue-dock .queue-item:is(:hover,.is-selected,.is-current) {
+  background: #2c2c2c !important;
+}
+html.dark .mupid-shell .queue-dock :is(.queue-dock-head,.queue-dock-body) { border-color: #353535; }
+html.dark .mupid-shell .queue-dock :is(.queue-head-action,.queue-insert-toggle,.queue-insert-menu) {
+  background: #292929; border-color: #454545; color: #ccc;
+}
+html.dark .mupid-shell .queue-dock .queue-handle { color: #888; }
+html.dark .inner-scrollbar[data-custom-scrollbar],
+html.dark.custom-page-scrollbar .page-scrollbar { background: #222 !important; }
+html.dark .inner-scrollbar [role='scrollbar'] { background: #777 !important; }
+@media (forced-colors: none) {
+  html.dark, html.dark body * { scrollbar-color: #777 #222; }
+  html.dark :is(.inner-scrollbar,.page-scrollbar) { background: #222; }
+  html.dark .page-scrollbar-thumb { background: #777; }
+  html.dark ::-webkit-scrollbar-track, html.dark ::-webkit-scrollbar-corner { background: #222; }
+  html.dark ::-webkit-scrollbar-thumb { background: #777; border-color: #222; }
+}

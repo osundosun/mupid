@@ -1,6 +1,7 @@
 'use client';
 import { useRef, useState } from 'react';
 import type { MupidModel } from '@/hooks/use-mupid';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -11,6 +12,8 @@ export function WithdrawAccount({ model }: { model: MupidModel }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const pending = useRef(false);
+  // 뒤로가기로 닫히게 한다. 탈퇴 처리 중에는 닫지 않는다(기존 규칙 그대로).
+  useDismissableOverlay(open, () => setOpen(false));
   return <div className="profile-withdraw">
     <button type="button" className="secondary-button" onClick={() => { setError(''); setOpen(true); }}>회원탈퇴</button>
     <AlertDialog open={open} onOpenChange={value => { if (!pending.current) setOpen(value); }}>

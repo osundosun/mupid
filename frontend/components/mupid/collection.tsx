@@ -1,4 +1,5 @@
 'use client';
+import { ThemeToggle } from './theme';
 import { WeeklyMubtiButton } from './listening-calendar';
 import { DailyAlbumTreemap } from './daily-album-treemap';
 
@@ -12,6 +13,7 @@ import { PasswordForm } from './password-form';
 import { WithdrawAccount } from './withdraw-account';
 import { useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { useTrackWaveform } from '@/lib/track-waveform';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import type { Track } from '@/lib/mupid-data';
 import { DemoAccount } from './demo-login';
 import {
@@ -98,6 +100,13 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
   const playlistPick = useTrackSelection((selected?.tracks ?? []).map((t) => t.id));
   // 곡을 목록에서 빼는 건 한 곡이든 여러 곡이든 똑같이 한 번 확인받는다.
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
+  /*
+   * 뒤로가기로 닫히게 한다 (S15P21A204-410). 확인 대화상자 둘은 목록 위에
+   * 겹쳐 열리므로 위에 등록해 두었다 — 먼저 닫힌다. 확인 창이 떠 있는 동안
+   * 곡을 고르는 상태는 그대로 남고, 확인 창만 사라진다(취소와 같은 결과).
+   */
+  useDismissableOverlay(removeMomentTrack !== null, () => setRemoveMomentTrack(null));
+  useDismissableOverlay(confirmRemove !== null, () => setConfirmRemove(null));
   const removeTargets = (selected?.tracks ?? []).filter((t) => confirmRemove?.includes(t.id));
   return (
     <div className="content-page collection-page" data-playlist-detail={Boolean(selected && m.libraryTab === 'playlists')}>
@@ -727,6 +736,7 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
       {m.demoSession && (
         <section className="profile-settings-card" aria-label="계정 설정">
           <h2>계정 설정</h2>
+          <ThemeToggle />
           <NicknameForm key={m.nickname} model={m} />
           <PasswordForm />
           {m.demoSession?.kind === 'authenticated' && <WithdrawAccount model={m} />}
@@ -793,7 +803,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
     ? options.genres.filter((genre) => genre.toLowerCase().includes(query))
     : options.genres;
   return (
-    <div className="welcome-page">
+    <div className={`welcome-page${m.demoSession && !m.onboardingSubmitted ? ' is-onboarding' : ''}`}>
       {(step > 0 || m.onboardingSubmitted) && <button
         className="icon-button welcome-back"
         aria-label={step > 0 ? '이전 단계로 돌아가기' : '홈으로 돌아가기'}
@@ -803,6 +813,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
         <ChevronLeft />
       </button>}
       <Brand className="welcome-logo" />
+      <div className="welcome-theme"><ThemeToggle /></div>
       {!m.demoSession || m.onboardingSubmitted ? (
         <div className="welcome-composition">
           <div className="welcome-copy">
@@ -921,7 +932,7 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
           </fieldset>}
           {step === 1 && <fieldset key="moods" className="onboarding-choice-group">
           <legend>좋아하는 분위기 <small>하나 이상 · 여러 개 선택 가능</small></legend>
-          <div className="filter-chips wrap">
+          <div className="filter-chips wrap onboarding-scroll">
             {options.moods.map((mood) => (
               <button
                 type="button"
@@ -942,11 +953,13 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
             ))}
           </div>
           </fieldset>}
+          <div className="onboarding-footer">
           <p>{step === 0 ? '좋아하는 장르를 하나 이상 선택해 주세요.' : '좋아하는 분위기를 하나 이상 선택해 주세요.'}</p>
           {error && <p role="alert">{error}</p>}
           <button className="primary-button wide" disabled={busy || (step === 0 ? !selectedGenres.length : !selectedMoods.length)}>
             {busy ? '취향 저장 중…' : step < 1 ? '다음' : '음악 둘러보기'} <ChevronRight />
           </button>
+          </div>
         </form>
       )}
     </div>

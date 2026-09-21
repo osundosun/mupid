@@ -90,7 +90,12 @@
     position: fixed!important;
     top: auto!important;
     right: 0!important;
-    bottom: 0!important;
+    /*
+     * 바닥을 키보드 위로 올린다 (S15P21A204-411). `dialog-viewport.css` 의 같은
+     * 시트 규칙과 **같은 값이어야 한다** — 둘 중 하나만 고치면 어느 쪽이 이기는지에
+     * 따라 조용히 덮인다. 앱에서는 네이티브가 웹뷰를 줄여 이 변수가 0 이다.
+     */
+    bottom: var(--keyboard-inset, 0px)!important;
     left: 0!important;
     transform: none!important;
     translate: none!important;
@@ -99,7 +104,8 @@
     margin: 0!important;
     width: auto!important;
     max-width: none!important;
-    max-height: 85dvh;
+    /* 올라온 바닥 위에 남은 자리보다 커지지 않는다. 넘치면 아래 `overflow-y` 로 스크롤. */
+    max-height: calc(85dvh - var(--keyboard-inset, 0px));
     overflow-y: auto;
     border-radius: 24px 24px 0 0!important;
     padding-bottom: calc(24px + var(--safe-area-inset-bottom));

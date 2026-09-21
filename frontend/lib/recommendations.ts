@@ -93,6 +93,7 @@ export async function fetchTodayMoments(
       // 묶음의 무드도 코드 이름(영문)으로 온다.
       mood: moodLabel(group.mood || ''),
       reason: row.reason ?? '',
+      recommendationReason: row.reason?.trim() || group.reason?.trim() || undefined,
     })),
   };
 }

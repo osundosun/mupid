@@ -89,13 +89,24 @@ const isAlreadySubmitted = (error: unknown): boolean =>
   (error.status === 409 || error.code === 'MUPID_ONBOARDING_ALREADY_SUBMITTED');
 
 /**
- * 화면에 그릴 이름 목록.
+ * 화면에 그릴 이름 하나.
  *
- * `display_name`을 우선적으로 사용하며, 없을 경우 `name`을 씁니다.
+ * `display_name` 을 우선 쓰고, 없으면 `name` 을 쓴다.
+ *
+ * **`normalize('NFC')` 를 뺄 수 없다.** 같은 한글이 자모 분리형(NFD)으로 들어오면
+ * 눈으로는 같은데 문자열로는 다르다 — 목록에 같은 칩이 둘로 뜨고, 이름으로 번호를
+ * 되찾는 `idsOf` 는 못 찾아 그 선택이 조용히 버려진다.
  */
 const optionName = (option: CodeOption): string =>
   (option.display_name?.trim() || option.name.trim()).normalize('NFC');
 
+/**
+ * 화면에 그릴 이름 목록.
+ *
+ * **같은 이름은 한 번만 내놓는다.** 서버 코드표에 같은 분위기가 여러 번호로 남아
+ * 있어(운영의 98~132 중복 적재분), 그대로 그리면 온보딩에 같은 칩이 두 개, 세 개
+ * 뜬다 (S15P21A204-368).
+ */
 export const namesOf = (options: CodeOption[]): string[] =>
   [...new Set(options.map(optionName).filter(Boolean))];
 
