@@ -67,38 +67,56 @@ public class BootstrapRunner implements ApplicationRunner {
      * ({@code findAllByCodeTypeOrderByCodeIdAsc}). 여기 적은 차례가 곧 화면 차례다.
      *
      * <p>{@link CodeType#INSTRUMENT} 는 아직 확정된 목록이 없어 넣지 않는다.
+     *
+     * <p><b>무드 17종은 {@code codeName} 이 영문 내부 코드, {@code displayName} 이
+     * 화면용 한국어다</b> (2026-09-21 정리). 운영 DB 에서 같은 무드가 한국어 이름과
+     * 영문 이름으로 두 번 들어가(예: {@code melancholic} / {@code 애상적인}) 매핑
+     * 테이블마다 다른 번호를 쓰던 것을, 영문 한 벌로 합쳤다
+     * ({@code knowledge/domain/migrate-mood-codes-2026-09-21.sql}). 장르 45종과
+     * 같은 방향이다. 이 값은 AI 서버로 그대로 넘어가므로({@code CodeOption::name})
+     * {@code ai_server/app/onboarding.py} 의 {@code MOOD_MAP} 키와 맞아야 한다.
      */
     static final List<CodeSeed> CODE_SEEDS = List.of(
-        new CodeSeed(CodeType.MOOD, "잔잔한"),
-        new CodeSeed(CodeType.MOOD, "벅찬"),
-        new CodeSeed(CodeType.MOOD, "몽환적인"),
-        new CodeSeed(CodeType.MOOD, "신나는"),
-        new CodeSeed(CodeType.MOOD, "집중되는"),
-        new CodeSeed(CodeType.MOOD, "감성적인"),
-        new CodeSeed(CodeType.MOOD, "강렬한"),
-        new CodeSeed(CodeType.MOOD, "설레는"),
+        // 대분류 8종 (화면 디자인). 운영 code_id 32~39.
+        new CodeSeed(CodeType.MOOD, "serene", "잔잔한"),
+        new CodeSeed(CodeType.MOOD, "uplifting", "벅찬"),
+        new CodeSeed(CodeType.MOOD, "ethereal", "몽환적인"),
+        new CodeSeed(CodeType.MOOD, "energetic", "신나는"),
+        new CodeSeed(CodeType.MOOD, "focused", "집중되는"),
+        new CodeSeed(CodeType.MOOD, "emotional", "감성적인"),
+        new CodeSeed(CodeType.MOOD, "intense", "강렬한"),
+        new CodeSeed(CodeType.MOOD, "romantic", "설레는"),
         // taxonomy 무드 9종 (2026-09-17 추가). **반드시 위 8종 뒤에 붙인다.**
         // 화면 차례가 곧 `code_id` 차례라(`findAllByCodeTypeOrderByCodeIdAsc`),
         // 사이에 끼워 넣으면 기존 사용자의 `onboarding_survey` 답이 다른 분위기로
-        // 읽힌다. 이름은 한국어(화면용), `displayName` 이 색인 원문이다 —
-        // 장르 45종과 **방향이 반대**라 여기서 헷갈리기 쉽다.
-        new CodeSeed(CodeType.MOOD, "애상적인", "melancholic"),
-        new CodeSeed(CodeType.MOOD, "따뜻한", "warm"),
-        new CodeSeed(CodeType.MOOD, "몽글한", "dreamy"),
-        new CodeSeed(CodeType.MOOD, "화사한", "bright"),
-        new CodeSeed(CodeType.MOOD, "희망찬", "hopeful"),
-        new CodeSeed(CodeType.MOOD, "웅장한", "powerful"),
-        new CodeSeed(CodeType.MOOD, "어두운", "dark"),
-        new CodeSeed(CodeType.MOOD, "고요한", "calm"),
-        new CodeSeed(CodeType.MOOD, "짜릿한", "exciting"),
-        new CodeSeed(CodeType.GENRE, "Electronic"),
-        new CodeSeed(CodeType.GENRE, "Indie"),
-        new CodeSeed(CodeType.GENRE, "R&B"),
-        new CodeSeed(CodeType.GENRE, "Rock"),
-        new CodeSeed(CodeType.GENRE, "Pop"),
-        new CodeSeed(CodeType.GENRE, "Hip-hop"),
-        new CodeSeed(CodeType.GENRE, "Jazz"),
-        new CodeSeed(CodeType.GENRE, "Classical")
+        // 읽힌다. 운영 code_id 40~48. 이름은 `genre_mood_taxonomy.json` 원문이다.
+        new CodeSeed(CodeType.MOOD, "melancholic", "애상적인"),
+        new CodeSeed(CodeType.MOOD, "warm", "따뜻한"),
+        new CodeSeed(CodeType.MOOD, "dreamy", "몽글한"),
+        new CodeSeed(CodeType.MOOD, "bright", "화사한"),
+        new CodeSeed(CodeType.MOOD, "hopeful", "희망찬"),
+        new CodeSeed(CodeType.MOOD, "powerful", "웅장한"),
+        new CodeSeed(CodeType.MOOD, "dark", "어두운"),
+        new CodeSeed(CodeType.MOOD, "calm", "고요한"),
+        new CodeSeed(CodeType.MOOD, "exciting", "짜릿한"),
+        // 장르 대분류 8종 (온보딩 선택지). 운영 code_id 9~16.
+        //
+        // **`codeName` 은 그대로 둔다.** AI 서버가 이 이름을 세분류에 이름 포함으로
+        // 잇고(`map_genre`), `GENRE_EXTRA` 의 키도 이 철자다 — 바꾸면 그 사용자의
+        // 장르가 추천에 반영되지 않는다. 이미 영문이라 규칙(`code_name` = 영문)에 맞다.
+        //
+        // 표시명은 한국어다 (2026-09-21). 그전에는 비어 있어 화면이 `codeName` 으로
+        // 되돌아갔고, 세분류 45종만 한국어라 **온보딩 목록에 영문과 한국어가 섞여**
+        // 보였다. `R&B` 는 세분류 `rnb` 의 표시명(`R&B`)과 글자가 겹쳐 같은 칩이
+        // 둘로 보이기까지 했다 — 그래서 대분류 쪽을 `알앤비` 로 갈라 둔다.
+        new CodeSeed(CodeType.GENRE, "Electronic", "일렉트로닉"),
+        new CodeSeed(CodeType.GENRE, "Indie", "인디"),
+        new CodeSeed(CodeType.GENRE, "R&B", "알앤비"),
+        new CodeSeed(CodeType.GENRE, "Rock", "록"),
+        new CodeSeed(CodeType.GENRE, "Pop", "팝"),
+        new CodeSeed(CodeType.GENRE, "Hip-hop", "힙합"),
+        new CodeSeed(CodeType.GENRE, "Jazz", "재즈"),
+        new CodeSeed(CodeType.GENRE, "Classical", "클래식")
     );
 
     /** MuBTI 캐릭터 이미지가 담긴 classpath zip. 파일 이름이 곧 코드다 (`VTFC.webp`). */
@@ -209,6 +227,43 @@ public class BootstrapRunner implements ApplicationRunner {
      * <p>고치는 것은 사람이 한다 — {@code code_id} 를 온보딩 응답이 참조하므로
      * 함부로 지울 수 없다.
      */
+    /**
+     * 코드표가 이미 쓰고 있는 이름 — <b>{@code code_name} 과 {@code display_name} 둘 다</b>.
+     *
+     * <p>두 벌을 한 자리에 모으는 것이 핵심이다. 코드표는 이름을 두 벌 갖는데 어느
+     * 쪽이 영문이고 어느 쪽이 한국어인지가 판마다 달랐다 — 2026-09-21 정리 전에는
+     * 분위기만 {@code code_name} 이 한국어였다. 한쪽만 보면 같은 코드를 못 알아본다.
+     */
+    static Set<CodeSeed> existingNames(List<Code> codes) {
+        Set<CodeSeed> existing = new HashSet<>();
+        for (Code code : codes) {
+            existing.add(new CodeSeed(code.getCodeType(), code.getCodeName()));
+            if (code.getDisplayName() != null && !code.getDisplayName().isBlank()) {
+                existing.add(new CodeSeed(code.getCodeType(), code.getDisplayName()));
+            }
+        }
+        return existing;
+    }
+
+    /**
+     * 이 시드가 이미 코드표에 있는가. <b>이름과 표시명 중 하나만 겹쳐도 있는 것이다.</b>
+     *
+     * <p>좁게 보면 같은 것을 두 번 넣는다. 운영에서 2026-09-21 에 두 번 그랬다 —
+     * 코드표의 분위기 {@code code_name} 을 한국어에서 영문으로 바꾼 뒤
+     * ({@code 애상적인} → {@code melancholic}), 아직 배포되지 않은 옛 판이 한국어
+     * 이름을 찾다 못 찾고 <b>17행을 새로 넣었다</b>(98~106, 다시 107~123). 어느 곡도
+     * 참조하지 않는 고아였고 화면에는 같은 분위기가 두 칩으로 떴다.
+     *
+     * <p>넣으려는 {@code (MOOD, 애상적인)} 은 이미 있는
+     * {@code (MOOD, melancholic, 애상적인)} 의 <b>표시명</b>과 겹치므로 여기서 걸린다.
+     * 반대 방향도 같다 — 표시명이 영문이던 옛 행도 새 시드의 이름과 겹쳐 걸린다.
+     */
+    static boolean alreadyThere(Set<CodeSeed> existing, CodeSeed seed) {
+        // `key()` 로 비교한다 — 표시명이 달라도 이름이 같으면 같은 코드다.
+        return existing.contains(seed.key())
+            || existing.contains(new CodeSeed(seed.type(), seed.displayName()));
+    }
+
     private void warnGarbled(List<Code> codes) {
         for (Code code : codes) {
             String recovered = recoverDoubleEncoded(code.getCodeName());
@@ -310,24 +365,37 @@ public class BootstrapRunner implements ApplicationRunner {
      * 여기에 {@code @Transactional} 을 달아도 같은 빈 안에서 부르는 호출이라 프록시를
      * 타지 않아 아무 효과가 없다.
      */
+    /**
+     * 없는 코드만 넣는다. <b>"없다" 를 좁게 보면 같은 것을 두 번 넣는다.</b>
+     *
+     * <p>2026-09-21 에 운영에서 두 번 그랬다. 코드표를 정리해 분위기 `code_name` 을
+     * 한국어에서 영문으로 바꿨는데(`애상적인` → `melancholic`), 그때까지 배포돼 있던
+     * 판의 시드는 한국어 이름을 찾고 있었다. 이름이 없으니 <b>없는 코드로 보고 17행을
+     * 새로 넣었다</b> — 98~106, 다시 107~123. 둘 다 어느 곡도 참조하지 않는 고아였고,
+     * 화면에는 같은 분위기가 두 칩으로 떴다.
+     *
+     * <p>그래서 <b>이름과 표시명 둘 다</b>로 본다. 한쪽이라도 같은 종류 안에서 겹치면
+     * 이미 있는 것으로 친다. 위 사고에서 넣으려던 `(MOOD, 애상적인)` 은 이미 있는
+     * `(MOOD, melancholic, 애상적인)` 의 표시명과 겹치므로 여기서 걸린다.
+     *
+     * <p>이 판단은 <b>넣을지 말지만</b> 정한다. 이미 있는 행은 고치지 않는다 —
+     * 운영에서 사람이 이름을 손봤다면 그 값이 남아야 한다.
+     */
     private void seedCodes() {
-        Set<CodeSeed> existing = new HashSet<>();
         List<Code> all = codeRepository.findAll();
-        for (Code code : all) {
-            existing.add(new CodeSeed(code.getCodeType(), code.getCodeName()));
-        }
+        Set<CodeSeed> existing = existingNames(all);
         warnGarbled(all);
 
         List<Code> missing = new ArrayList<>();
         for (CodeSeed seed : CODE_SEEDS) {
-            // `key()` 로 비교한다 — 표시명이 달라도 같은 코드다.
-            if (!existing.contains(seed.key())) {
-                missing.add(Code.builder()
-                    .codeType(seed.type())
-                    .codeName(seed.name())
-                    .displayName(seed.displayName())
-                    .build());
+            if (alreadyThere(existing, seed)) {
+                continue;
             }
+            missing.add(Code.builder()
+                .codeType(seed.type())
+                .codeName(seed.name())
+                .displayName(seed.displayName())
+                .build());
         }
 
         if (missing.isEmpty()) {
@@ -604,7 +672,7 @@ public class BootstrapRunner implements ApplicationRunner {
      * 넣어야 할 공통 코드 한 종.
      *
      * <p>{@code displayName} 은 화면에 보여줄 이름이다. 두 인자짜리 생성자는
-     * {@code codeName} 과 같게 채운다 — 기존 16종은 코드 이름이 곧 표시명이다.
+     * {@code codeName} 과 같게 채운다 — 장르 8종은 코드 이름이 곧 표시명이다.
      */
     record CodeSeed(CodeType type, String name, String displayName) {
 

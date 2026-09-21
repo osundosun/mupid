@@ -14,8 +14,8 @@ import com.osundosun.mupid.api.code.entity.Code;
  * 그래서 둘을 갈라 둔다.
  *
  * @param codeId      되돌려 받을 코드 번호
- * @param name        AI 색인과 맞추는 값 (`codeName`). **여기를 바꾸지 않는다**
- * @param displayName 화면에 그릴 이름. 기존 행은 `name` 과 같다
+ * @param name        영문 내부 코드 (`codeName`). AI 색인과 맞추는 값이다. **여기를 바꾸지 않는다**
+ * @param displayName 화면에 그릴 한국어 이름. 아직 표시명이 없는 행은 `name` 과 같다
  */
 public record CodeOption(
     Integer codeId,

@@ -64,13 +64,13 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 
 | 컬럼 | 무엇 | 예 |
 |---|---|---|
-| `code_name` | **AI 색인과 맞추는 값.** 스프링이 AI 서버로 넘긴다 | 장르 `poprock`, 무드 `애상적인` |
-| `display_name` | **화면에 그릴 값** | 장르 `팝 록`, 무드 `melancholic` |
+| `code_name` | **영문 내부 코드.** AI 색인과 맞추는 값이고 스프링이 AI 서버로 넘긴다 | 장르 `poprock`, 무드 `melancholic` · `serene` |
+| `display_name` | **화면에 그릴 한국어** | 장르 `팝 록`, 무드 `애상적인` · `잔잔한` |
 
-**어느 쪽이 색인 값인지는 종류마다 반대다.** 장르 45종은 `code_name` 이 색인
-원문(`poprock`)이고 `display_name` 이 나중에 한국어가 된다. taxonomy 무드 9종은
-`code_name` 이 화면용 한국어(`애상적인`)이고 `display_name` 이 색인 원문
-(`melancholic`)이다 — 무드 9종이 기존 8종(`잔잔한`)과 같은 방향이기 때문이다.
+**두 종류 모두 같은 방향이다** (2026-09-21 정리). 그전에는 무드만 반대여서
+(`code_name` 이 한국어, `display_name` 이 영문) 운영 DB 에 같은 무드가
+`melancholic` / `애상적인` 두 행으로 들어가 `music_moods` 와 `onboarding_survey` 가
+다른 번호를 썼다. 정리 절차는 [`migrate-mood-codes-2026-09-21.sql`](migrate-mood-codes-2026-09-21.sql).
 
 헷갈리면 **`AiRecommendToolImpl` 이 `CodeOption::name`(= `code_name`)을 보낸다**는
 것을 기준으로 삼는다. 여기에 한국어가 실수로 들어가면 색인에 없는 말이 가서
