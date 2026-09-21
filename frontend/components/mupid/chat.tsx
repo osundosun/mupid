@@ -6,6 +6,7 @@ import { useKeyboardInset } from '@/hooks/use-keyboard-inset';
 import { chatSuggestions, formatTime } from '@/lib/mupid-data';
 import { AlbumArt, TrackRow } from './primitives';
 import { ChatToolCalls } from './chat-tool-calls';
+import { ChatTracksNote } from './chat-tracks-note';
 import { useEffect, useState, type CSSProperties } from 'react';
 
 export function FloatingChat({ model: m }: { model: MupidModel }) {
@@ -187,6 +188,23 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
                   ))}
                 </div>
               )}
+              {/*
+                추천 건수와 실제로 그려진 곡 수의 차이 (S15P21A204-421).
+
+                위의 `filter` 와 `resolve()`(`lib/ai-chat.ts`)는 **말없이** 곡을 지운다 —
+                카탈로그에 없는 곡, 그리고 답변이 온 뒤 '관심 없음' 으로 표시한 곡이다.
+                그래서 답변은 "3곡 골라뒀어요", 기록 줄은 `곡 3건` 인데 카드는 2장인
+                화면이 나왔다. 여기서 그 차이를 사용자 문구로 남긴다.
+
+                **곡 목록 밖이다.** 추천이 전부 사라지면 `message.tracks` 가 `undefined`
+                라 위 블록이 통째로 빠지는데, 그때가 사용자가 가장 헷갈리는 경우다.
+                더할 말이 없는 턴에는 스스로 `null` 을 돌려준다.
+              */}
+              <ChatTracksNote
+                calls={message.toolCalls}
+                tracks={message.tracks}
+                ignored={m.ignored}
+              />
             </div>
           </div>
         ))}
