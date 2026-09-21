@@ -12,6 +12,11 @@
 음원도 demucs 도 없다. 파형은 numpy 로 만들고 적재 함수를 끼워 넣는다 — 여기서
 보는 것은 신호 처리가 아니라 연결이다. 문턱값 자체는 실측으로 맞춰야 하고, 그
 근거는 `instruments.section_levels()` 가 내는 비율이다.
+
+**악기 이름은 영문 스템 이름이다** (`vocals`·`drums`·`bass`·`other`, 2026-09-21).
+그 값이 곧 서버의 `codes.code_name` 이고, 화면에 그릴 한국어는 `display_name` 에
+따로 있다(`instruments.DISPLAY_NAMES`) — 분위기·장르와 같은 방향이다. 그전에는
+이 함수가 한국어를 돌려주어 코드표에 한국어 `code_name` 이 들어가 있었다.
 """
 from __future__ import annotations
 
@@ -75,9 +80,9 @@ def test_instruments_differ_between_sections():
         other=tone(0.5),                       # 그 외 악기는 내내
     ), segments())
 
-    assert got[0] == ["그 외 악기"]
-    assert got[1] == ["보컬", "드럼", "베이스", "그 외 악기"]
-    assert got[2] == ["그 외 악기"]
+    assert got[0] == ["other"]
+    assert got[1] == ["vocals", "drums", "bass", "other"]
+    assert got[2] == ["other"]
 
 
 def test_order_is_fixed_so_the_screen_does_not_shuffle():
@@ -86,7 +91,7 @@ def test_order_is_fixed_so_the_screen_does_not_shuffle():
     got = ins.section_instruments(
         mix, stems(bass=tone(0.5), vocals=tone(0.5)), segments())
 
-    assert got[0] == ["보컬", "베이스"]
+    assert got[0] == ["vocals", "bass"]
 
 
 # ────────────────────────────────────────────── 2. 누설을 악기로 세지 않는다
@@ -102,7 +107,7 @@ def test_bleed_in_a_silent_stem_is_not_called_present():
     got = ins.section_instruments(mix, stems(vocals=tone(0.01), other=tone(0.9)),
                                   segments())
 
-    assert got[0] == ["그 외 악기"]
+    assert got[0] == ["other"]
 
 
 def test_a_near_silent_section_reports_nothing():
@@ -121,7 +126,7 @@ def test_a_near_silent_section_reports_nothing():
     # 바닥을 내리면 같은 입력이 통과한다 — 이 시험이 무엇을 보는지 못 박아 둔다.
     loosened = ins.section_instruments(
         faint, stems(vocals=faint, other=faint), segments(), abs_floor=0.0)
-    assert loosened[0] == ["보컬", "그 외 악기"]
+    assert loosened[0] == ["vocals", "other"]
 
 
 def test_a_fully_silent_section_reports_nothing():
@@ -152,8 +157,8 @@ def test_a_shorter_stem_does_not_crash():
 
     got = ins.section_instruments(mix, short, segments())
 
-    assert got[0] == ["그 외 악기"]
-    assert got[2] == ["그 외 악기"]                      # 잘린 앞부분으로 판정한다
+    assert got[0] == ["other"]
+    assert got[2] == ["other"]                      # 잘린 앞부분으로 판정한다
 
 
 # ────────────────────────────────────────────── 3. 스템을 찾고 읽는 길
@@ -245,11 +250,11 @@ def section_row(idx: int, instruments=None) -> dict:
 
 
 def test_payload_carries_instruments_per_section():
-    got = ap.sections_payload(Track([section_row(0, ["보컬"]),
-                                     section_row(1, ["드럼", "베이스"])]))
+    got = ap.sections_payload(Track([section_row(0, ["vocals"]),
+                                     section_row(1, ["drums", "bass"])]))
 
-    assert got[0]["instruments"] == ["보컬"]
-    assert got[1]["instruments"] == ["드럼", "베이스"]
+    assert got[0]["instruments"] == ["vocals"]
+    assert got[1]["instruments"] == ["drums", "bass"]
     assert got[0]["external_id"] == "1234#0"
 
 
@@ -310,7 +315,7 @@ def test_codes_are_registered_before_any_section_goes_out():
     """뒤집히면 서버가 이름을 버리고 세어 **오류 없이** 악기만 빈다."""
     client = FakeClient()
     reg = ap.HttpRegistrar(client=client)
-    tracks = [Track([section_row(0, ["보컬", "드럼"])])]
+    tracks = [Track([section_row(0, ["vocals", "drums"])])]
 
     reg.ensure_instrument_codes(tracks)
     client.replace_sections(1234, ap.sections_payload(tracks[0]))
@@ -324,18 +329,18 @@ def test_the_same_instrument_is_registered_once_per_run():
     client = FakeClient()
     reg = ap.HttpRegistrar(client=client)
 
-    reg.ensure_instrument_codes([Track([section_row(0, ["보컬"]),
-                                        section_row(1, ["보컬", "드럼"])]),
-                                 Track([section_row(0, ["보컬"])])])
+    reg.ensure_instrument_codes([Track([section_row(0, ["vocals"]),
+                                        section_row(1, ["vocals", "drums"])]),
+                                 Track([section_row(0, ["vocals"])])])
 
-    assert [name for _, name in client.calls] == ["보컬", "드럼"]
+    assert [name for _, name in client.calls] == ["vocals", "drums"]
 
 
 def test_already_existing_codes_are_not_counted_as_added():
     """두 번째 배치부터는 전부 있다. `created` 로 가린다."""
     client = FakeClient()
     reg = ap.HttpRegistrar(client=client)
-    tracks = [Track([section_row(0, ["보컬"])])]
+    tracks = [Track([section_row(0, ["vocals"])])]
 
     reg.ensure_instrument_codes(tracks)
     reg.ensure_instrument_codes(tracks)
@@ -353,9 +358,9 @@ def test_added_code_records_the_real_id_not_none():
     client = FakeClient()
     reg = ap.HttpRegistrar(client=client)
 
-    reg.ensure_instrument_codes([Track([section_row(0, ["보컬"])])])
+    reg.ensure_instrument_codes([Track([section_row(0, ["vocals"])])])
 
-    assert reg.codes_added == [{"code_id": 901, "name": "보컬"}]
+    assert reg.codes_added == [{"code_id": 901, "name": "vocals"}]
 
 
 def test_nothing_is_registered_when_no_track_has_instruments():
@@ -480,15 +485,15 @@ def test_register_sends_codes_then_sections_over_real_http(spring, tmp_path):
                             token_file=None, max_retries=1)
     reg = ap.HttpRegistrar(client=client)
 
-    got = reg.register([Track([section_row(0, ["보컬", "드럼"]),
-                               section_row(1, ["드럼"])])], tmp_path)
+    got = reg.register([Track([section_row(0, ["vocals", "drums"]),
+                               section_row(1, ["drums"])])], tmp_path)
 
     assert [kind for kind, _ in spring.calls] == ["code", "code", "section"]
-    assert [name for _, name in spring.calls][:2] == ["보컬", "드럼"]
+    assert [name for _, name in spring.calls][:2] == ["vocals", "drums"]
 
     sent = spring.bodies[0]["sections"]
-    assert sent[0]["instruments"] == ["보컬", "드럼"]
-    assert sent[1]["instruments"] == ["드럼"]
+    assert sent[0]["instruments"] == ["vocals", "drums"]
+    assert sent[1]["instruments"] == ["drums"]
     assert got["sections"] == 2 and got["codes_added"] == 2
 
     # `id_map` 이 실제로 채워져야 추천 결과가 곡으로 이어진다.
@@ -519,7 +524,7 @@ def test_every_call_carries_the_bearer_token(spring, tmp_path):
     client = mc.MupidClient(base_url=spring.url, refresh_token=REFRESH,
                             token_file=None, max_retries=1)
     ap.HttpRegistrar(client=client).register(
-        [Track([section_row(0, ["보컬"])])], tmp_path)
+        [Track([section_row(0, ["vocals"])])], tmp_path)
 
-    assert ("code", "보컬") in spring.calls        # 403 이면 기록 전에 끊긴다
+    assert ("code", "vocals") in spring.calls        # 403 이면 기록 전에 끊긴다
     assert ("section", "1234") in spring.calls
