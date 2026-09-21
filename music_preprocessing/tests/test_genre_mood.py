@@ -46,7 +46,8 @@ class Server:
 
     def __init__(self):
         self.codes = [{"codeId": 7, "codeType": "GENRE", "codeName": "Pop"},
-                      {"codeId": 30, "codeType": "MOOD", "codeName": "화사한"}]
+                      # 운영 코드표와 같은 방향 — 영문 `code_name`, 한국어 `display_name`.
+                      {"codeId": 30, "codeType": "MOOD", "codeName": "bright", "displayName": "화사한"}]
         self.music = [{"musicId": 91, "title": "First", "genres": [], "moods": []},
                       {"musicId": 37, "title": "Second", "genres": [], "moods": []}]
         self.writes = []
@@ -225,7 +226,7 @@ class RegistrationTests(unittest.TestCase):
         raw["taxonomy"]["genres"] = [{"name": "pop", "track_count": 2}]
         tracks = validate(raw)
         state = inspect(self.server, tracks)
-        self.assertEqual(state["missing_codes"], [("MOOD", "따뜻한")])
+        self.assertEqual(state["missing_codes"], [("MOOD", "warm")])
         report = {"created": []}
         apply_plan(self.server, tracks, state, report, lambda: None)
         self.assertEqual(len([c for c in self.server.codes if c["codeType"] == "GENRE"]), 1)
@@ -263,7 +264,7 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(self.server.writes, [])
 
     def test_ambiguous_codes_stop_before_writing(self):
-        self.server.codes.append({"codeId": 99, "codeType": "MOOD", "codeName": "화사한"})
+        self.server.codes.append({"codeId": 99, "codeType": "MOOD", "codeName": "bright", "displayName": "화사한"})
         with self.assertRaises(ValueError):
             self.apply()
         self.assertEqual(self.server.writes, [])
@@ -481,8 +482,8 @@ class ClientTests(unittest.TestCase):
     def test_mood_display_names_match_the_ai_table(self):
         """뜻 표가 AI 쪽과 어긋나면 안 된다.
 
-        `MISMATCHED_MOOD_DISPLAY_NAMES` 는 `ai_server/app/onboarding.py` 의
-        `MOOD_MAP` 뒷 9줄과 **같은 출처**인데, 이 패키지가 `ai_server` 를 부르면
+        `MOOD_DISPLAY_NAMES` 는 `ai_server/app/onboarding.py` 의
+        `TAXONOMY_MOOD_NAMES`(= `MOOD_MAP` 뒷 9줄의 키) 와 **같은 출처**인데, 이 패키지가 `ai_server` 를 부르면
         numpy·pandas·torch 를 끌고 오게 되어 표를 두 벌로 둘 수밖에 없다.
         그래서 대조를 여기서 한다 — 한쪽만 고치면 여기서 멈춘다."""
         ai_root = Path(__file__).resolve().parents[2] / "ai_server"
@@ -494,16 +495,14 @@ class ClientTests(unittest.TestCase):
         finally:
             sys.path.remove(str(ai_root))
 
-        # taxonomy 원문 → 그 태그가 뜻으로 이어지는 한국어 이름이 아니라,
-        # **taxonomy 이름 → 한국어 코드 이름** 표를 직접 맞춘다. 이게 두 벌이
-        # 어긋나는지 볼 수 있는 유일한 지점이다 — 색인 태그(emotional 등)를
-        # 거쳐서는 melancholic 이 어느 항목인지 알 수 없다.
-        self.assertEqual(gn.MISMATCHED_MOOD_DISPLAY_NAMES, onb.TAXONOMY_MOOD_NAMES,
+        # **taxonomy 이름(= 코드 이름) → 한국어 표시명** 표를 직접 맞춘다. 이게 두
+        # 벌이 어긋나는지 볼 수 있는 유일한 지점이다.
+        self.assertEqual(gn.MOOD_DISPLAY_NAMES, onb.TAXONOMY_MOOD_NAMES,
                          "taxonomy 무드의 한국어 이름이 AI 표와 다르다")
-        # 그 이름들이 실제로 MOOD_MAP 에 있어야 한다 — 없으면 변환이 비어
+        # 그 코드 이름들이 실제로 MOOD_MAP 의 키여야 한다 — 없으면 변환이 비어
         # 온보딩에서 고른 그 무드가 추천에 반영되지 않는다.
-        for korean in onb.TAXONOMY_MOOD_NAMES.values():
-            self.assertIn(korean, onb.MOOD_MAP, f"{korean} 이 AI 표에 없다")
+        for code in onb.TAXONOMY_MOOD_NAMES:
+            self.assertIn(code, onb.MOOD_MAP, f"{code} 이 AI 표에 없다")
 
     def test_display_name_is_blank_for_genres_and_known_moods(self):
         """장르·악기는 표시명이 그대로 코드 이름이다 (빈 값 → 서버가 채운다).
@@ -513,8 +512,10 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(gn.display_name_for("INSTRUMENT", "drums", {}), "")
         # 뜻 표에 없는 이름 — 서버가 코드 이름을 표시명으로 쓴다.
         self.assertEqual(gn.display_name_for("MOOD", "잔잔한", {}), "")
-        # 이미 한국어 코드가 서버에 있으면 붙이지 않는다.
-        folded = gn.fold([("MOOD", "애상적인")])
+        # 없는 taxonomy 무드에는 한국어 표시명이 붙는다.
+        self.assertEqual(gn.display_name_for("MOOD", "melancholic", {}), "애상적인")
+        # 이미 서버에 있는 코드에는 붙이지 않는다 — 서버가 멱등 판정으로 무시한다.
+        folded = gn.fold([("MOOD", "melancholic")])
         self.assertEqual(gn.display_name_for("MOOD", "melancholic", folded), "")
 
     def test_taxonomy_mood_outside_the_table_stops_the_run(self):

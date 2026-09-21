@@ -16,15 +16,32 @@ import json
 
 import numpy as np
 
-# taxonomy 무드 원문 → 화면용 한국어. **아래 `MOOD_MAP` 뒷 9줄이 여기서 나온다.**
+# Spring 코드표(`codes`, MOOD) 의 **영문 내부 코드 → 화면용 한국어.** 17종.
+#
+# 2026-09-21 정리: `code_name` 은 영문 내부 코드, `display_name` 은 한국어다 — 장르
+# 45종과 같은 방향이다. 그전에는 무드만 방향이 반대(`code_name` 이 한국어)였고,
+# 그 탓에 운영 DB 에 같은 무드가 `melancholic` / `애상적인` 두 행으로 들어가
+# 매핑 테이블마다 다른 번호를 썼다 (`api/knowledge/domain/migrate-mood-codes-2026-09-21.sql`).
+#
+# 앞 8종은 화면 디자인의 대분류(운영 code_id 32~39), 뒤 9종은 taxonomy
+# (`genre_mood_taxonomy.json`) 세분류(40~48)다. **차례가 곧 `code_id` 차례다.**
 #
 # 이 대응이 코드에 **데이터로** 있어야 하는 이유: `music_preprocessing` 의
-# `genre_mood.py` 가 코드표에 심을 때 `code_name`(화면용 한국어)과
-# `display_name`(taxonomy 원문)을 갈라야 하는데, 그 패키지는 이 모듈의 의존성
-# (numpy·pandas)을 끌고 올 수 없어 표를 한 벌 더 갖는다. 두 벌이 어긋나면
-# **화면 언어와 색인 언어가 뒤바뀐 채 조용히 적재된다** — 그래서 양쪽 테스트가
-# 이 표를 서로 대조한다 (`test_genre_mood.py` 의
-# `test_mood_display_names_match_the_ai_table`).
+# `genre_mood.py` 가 코드표에 심을 때 같은 표가 필요한데, 그 패키지는 이 모듈의
+# 의존성(numpy·pandas)을 끌고 올 수 없어 표를 한 벌 더 갖는다. 두 벌이 어긋나면
+# **화면에 다른 한국어가 뜬 채 조용히 적재된다** — 그래서 양쪽 테스트가 이 표를
+# 서로 대조한다 (`test_genre_mood.py` 의 `test_mood_display_names_match_the_ai_table`).
+BASE_MOOD_NAMES = {
+    "serene": "잔잔한",
+    "uplifting": "벅찬",
+    "ethereal": "몽환적인",
+    "energetic": "신나는",
+    "focused": "집중되는",
+    "emotional": "감성적인",
+    "intense": "강렬한",
+    "romantic": "설레는",
+}
+
 TAXONOMY_MOOD_NAMES = {
     "melancholic": "애상적인",
     "warm": "따뜻한",
@@ -37,22 +54,28 @@ TAXONOMY_MOOD_NAMES = {
     "exciting": "짜릿한",
 }
 
-# Spring 온보딩 코드표(17종) → AI 카탈로그 태그. **여기가 유일한 자리다.**
+MOOD_NAMES = {**BASE_MOOD_NAMES, **TAXONOMY_MOOD_NAMES}
+
+# Spring 온보딩 코드표(17종, 영문 내부 코드) → AI 카탈로그 태그. **여기가 유일한 자리다.**
 #
 # mood 는 뜻으로 이어야 해서 표로 적는다. genre 는 대분류 → 세분류라 이름 포함으로
 # 자동 확장한다(`Rock` → `Alternative Rock`·`Pop Rock`·`Indie Rock` …).
 # 앞 8종은 온보딩 첫 화면의 대분류, 뒤 9종은 taxonomy 세분류다 (2026-09-17 추가).
+#
+# **키는 Spring `code_name` 이고 값은 색인 태그다 — 둘은 다른 어휘다.** `energetic`·
+# `romantic`·`uplifting`·`emotional` 은 우연히 색인 태그와 철자가 같지만, 키는
+# 코드표 이름이고 값이 태그라는 역할은 그대로다.
 MOOD_MAP = {
-    "잔잔한": ["relaxing", "meditative", "slow", "background"],
-    "벅찬": ["epic", "uplifting", "inspiring", "motivational"],
-    "몽환적인": ["space", "deep", "drama"],
-    "신나는": ["energetic", "happy", "party", "positive"],
-    "집중되는": ["background", "corporate", "meditative"],
-    "감성적인": ["emotional", "melodic", "sad", "ballad"],
-    "강렬한": ["heavy", "action", "trailer", "dark"],
-    "설레는": ["love", "romantic", "summer"],
+    "serene": ["relaxing", "meditative", "slow", "background"],          # 잔잔한
+    "uplifting": ["epic", "uplifting", "inspiring", "motivational"],     # 벅찬
+    "ethereal": ["space", "deep", "drama"],                              # 몽환적인
+    "energetic": ["energetic", "happy", "party", "positive"],            # 신나는
+    "focused": ["background", "corporate", "meditative"],                # 집중되는
+    "emotional": ["emotional", "melodic", "sad", "ballad"],              # 감성적인
+    "intense": ["heavy", "action", "trailer", "dark"],                   # 강렬한
+    "romantic": ["love", "romantic", "summer"],                          # 설레는
     # 아래 9종은 taxonomy 무드를 뜻으로 이은 것이다 (2026-09-17). **이름은 위의
-    # `TAXONOMY_MOOD_NAMES` 에서 온다** — 여기서 새로 적지 않는다.
+    # `TAXONOMY_MOOD_NAMES` 와 같은 차례다** — 여기서 새로 적지 않는다.
     # 색인 축(`mood_tags` 27종)에 그 이름이 하나도 없다 — taxonomy 쪽 어휘가 완전히
     # 달라서 축을 더 넘기는 것으로는 풀리지 않는다. 실측으로 세어 보면 taxonomy
     # 9종은 색인에 1~5곡뿐이고(추천풀 763곡 기준으로는 `dark` 조차 0곡), 위 8종은
@@ -64,18 +87,37 @@ MOOD_MAP = {
     # 거기서 `setdefault` 로 기존 8종이 우선하므로 **이미 라벨이 붙은 곡의 무드는
     # 바뀌지 않는다.** 아래 태그를 고칠 때는 그 성질이 깨지는지 먼저 확인한다.
     #
-    # **`dark` 를 `강렬한` 과 같이 쓴다.** 게이트가 OR 이라 중복 반영이 아니라
-    # 단순 커버다. `trailer` 를 빼고 `heavy`·`drama` 만 쓰면 5곡이 라벨을 잃는다.
-    "애상적인": ["emotional", "ballad", "drama"],          # melancholic
-    "따뜻한": ["relaxing", "love", "meditative", "background"],  # warm
-    "몽글한": ["space", "deep", "relaxing"],              # dreamy
-    "화사한": ["happy", "positive", "uplifting", "summer"],  # bright
-    "희망찬": ["inspiring", "motivational", "uplifting"],   # hopeful
-    "웅장한": ["epic", "action", "trailer", "heavy"],      # powerful
-    "어두운": ["heavy", "drama", "trailer"],               # dark
-    "고요한": ["relaxing", "meditative", "background"],     # calm
-    "짜릿한": ["energetic", "action", "happy"],             # exciting
+    # **`dark` 를 `intense`(강렬한) 와 같이 쓴다.** 게이트가 OR 이라 중복 반영이
+    # 아니라 단순 커버다. `trailer` 를 빼고 `heavy`·`drama` 만 쓰면 5곡이 라벨을 잃는다.
+    "melancholic": ["emotional", "ballad", "drama"],                     # 애상적인
+    "warm": ["relaxing", "love", "meditative", "background"],            # 따뜻한
+    "dreamy": ["space", "deep", "relaxing"],                             # 몽글한
+    "bright": ["happy", "positive", "uplifting", "summer"],              # 화사한
+    "hopeful": ["inspiring", "motivational", "uplifting"],               # 희망찬
+    "powerful": ["epic", "action", "trailer", "heavy"],                  # 웅장한
+    "dark": ["heavy", "drama", "trailer"],                               # 어두운
+    "calm": ["relaxing", "meditative", "background"],                    # 고요한
+    "exciting": ["energetic", "action", "happy"],                        # 짜릿한
 }
+
+# 한국어 표시명 → 영문 코드. 코드표 정리 전에 저장된 요청·기록에는 한국어가 남아
+# 있을 수 있어(`mood_raw` 등) 둘 다 받는다. 정리 전 운영 표시명이던
+# `몽글몽글한`·`차분한` 도 같은 무드로 읽는다.
+MOOD_ALIASES = {ko: en for en, ko in MOOD_NAMES.items()}
+MOOD_ALIASES.update({"몽글몽글한": "dreamy", "차분한": "calm"})
+
+
+def mood_code(name) -> str | None:
+    """받은 이름을 Spring 영문 코드로. 한국어·대소문자 차이를 받아 준다."""
+    if not isinstance(name, str):
+        return None
+    key = name.strip()
+    if key in MOOD_MAP:
+        return key
+    if key.casefold() in MOOD_MAP:
+        return key.casefold()
+    return MOOD_ALIASES.get(key)
+
 
 # 이름 포함으로는 못 잇는 것만 적는다.
 GENRE_EXTRA = {
@@ -90,7 +132,8 @@ GENRE_EXTRA = {
 def map_mood(names: list[str]) -> list[str]:
     out: list[str] = []
     for n in names:
-        for v in MOOD_MAP.get(n, []):
+        code = mood_code(n)
+        for v in (MOOD_MAP.get(code, []) if code else []):
             if v not in out:
                 out.append(v)
     return out

@@ -8,6 +8,7 @@
   display: block;
   width: 100%;
   height: auto;
+  visibility: hidden;
 }
 /* Source-preserving crops from the 1254px supplied photograph. The 380px
    label fits inside its printed rim; the stationary pin hides its own crop. */
@@ -41,5 +42,35 @@
   height: 4.1467305%;
   border-radius: 50%;
   background: url('/sky-vinyl.webp') 48.3361065% 47.8369384% / 2411.5384615% 2411.5384615% no-repeat;
+  pointer-events: none;
+}
+
+.record-disc-rotation {
+  position: absolute;
+  left: 1.5%; top: 1.0215311%;
+  width: 93.8102073%; height: 93.8102073%;
+  border-radius: 50%;
+  background: url('/mupid-rotating-disc.png') center / 109% 109% no-repeat;
+  clip-path: circle(50%);
+  filter: contrast(0.95) brightness(0.72);
+  backface-visibility: hidden;
+  pointer-events: none;
+}
+.record-disc-light {
+  position: absolute;
+  left: 1.5%; top: 1.0215311%;
+  width: 93.8102073%; height: 93.8102073%;
+  border-radius: 50%;
+  background: conic-gradient(from 15deg, transparent 0deg, #e5efff18 55deg, transparent 90deg, transparent 180deg, #e5efff18 235deg, transparent 270deg);
+  pointer-events: none;
+}
+.record-motion[data-playing='true'] .record-disc-rotation {
+  will-change: transform;
+}
+.record-tonearm {
+  position: absolute; inset: 0;
+  background: url('/mupid-tonearm-isolated.png') center / contain no-repeat;
+  transform: scaleY(0.91);
+  transform-origin: top center;
   pointer-events: none;
 }

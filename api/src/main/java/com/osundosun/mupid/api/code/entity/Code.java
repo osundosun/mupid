@@ -50,10 +50,11 @@ public class Code {
     /**
      * 코드 이름
      *
-     * <p>이 값이 <b>AI 서버로 넘어간다</b>({@code AiRecommendToolImpl} 가
-     * {@code CodeOption::name} 을 보낸다). 그래서 색인 어휘와 맞아야 하는 값은
-     * 여기다 — 분위기 taxonomy 처럼 색인 태그가 원문인 경우
-     * {@code displayName} 쪽에 원문을 둔다.
+     * <p><b>영문 내부 코드다.</b> 이 값이 <b>AI 서버로 넘어간다</b>({@code AiRecommendToolImpl} 가
+     * {@code CodeOption::name} 을 보낸다). 무드 17종({@code serene}·{@code melancholic} …)과
+     * 장르 45종({@code poprock})이 모두 이 방향이다. 한국어를 여기에 넣으면 같은 무드가
+     * 두 번호로 갈라진다 — 운영에서 {@code melancholic} 과 {@code 애상적인} 이 따로
+     * 들어가 매핑 테이블마다 다른 번호를 쓰던 것을 2026-09-21 에 합쳤다.
      */
     @Column(nullable = false)
     private String codeName;
@@ -61,12 +62,11 @@ public class Code {
     /**
      * 화면에 보여줄 이름.
      *
-     * <p>{@code codeName} 은 <b>AI 색인과 맞추는 값</b>, 이쪽은 <b>사람이 읽는 값</b>이다.
-     * 장르 45종은 반대다 — {@code codeName} 이 색인 원문({@code poprock})이고
-     * 이 컬럼이 화면용({@code 팝 록})이다. <b>어느 쪽이 색인 값인지는 종류마다 다르므로</b>
-     * 코드를 옮길 때 여기를 먼저 확인한다.
+     * <p>{@code codeName} 은 <b>영문 내부 코드</b>, 이쪽은 <b>사람이 읽는 한국어</b>다
+     * (무드 {@code 잔잔한}, 장르 {@code 팝 록}). 장르 대분류 8종처럼 아직 한국어
+     * 표시명이 없는 행은 {@code codeName} 과 같은 값으로 채워져 있다.
      *
-     * <p>기존 16행은 {@code codeName} 과 같은 값으로 채워져 있다. 비워 두면 안 된다 —
+     * <p>비워 두면 안 된다 —
      * {@code POST /api/v1/code} 가 값이 없을 때 {@code codeName} 으로 채우지만,
      * 손으로 넣은 행이 빈 채로 남으면 화면이 빈 칸을 그린다.
      */

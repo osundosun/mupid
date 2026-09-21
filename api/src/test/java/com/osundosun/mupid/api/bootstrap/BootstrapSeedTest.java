@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import com.osundosun.mupid.api.code.entity.Code;
 import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.report.entity.Mubti;
 import com.osundosun.mupid.api.report.enumerate.MubtiClass;
@@ -138,9 +139,79 @@ class BootstrapSeedTest {
 
         assertThat(moods).hasSize(17);
         assertThat(moods.subList(0, 8)).containsExactly(
-            "잔잔한", "벅찬", "몽환적인", "신나는", "집중되는", "감성적인", "강렬한", "설레는");
+            "serene", "uplifting", "ethereal", "energetic", "focused", "emotional", "intense", "romantic");
         assertThat(moods.subList(8, 17)).containsExactly(
+            "melancholic", "warm", "dreamy", "bright", "hopeful", "powerful", "dark", "calm", "exciting");
+    }
+
+    @Test
+    @DisplayName("분위기는 코드 이름이 영문 내부 코드이고 표시명이 한국어다 — 운영 DB 정리(2026-09-21)와 같은 방향")
+    void moodSeedsUseEnglishCodeNamesAndKoreanDisplayNames() {
+        /* 운영에서 같은 무드가 한국어·영문 두 이름으로 들어가 매핑 테이블마다 다른
+           번호를 쓰던 것을 영문 한 벌로 합쳤다. 시드가 한국어 이름으로 돌아가면
+           기동 때 그 이름이 없다고 보고 **중복 행을 다시 만든다.** */
+        List<BootstrapRunner.CodeSeed> moods = BootstrapRunner.CODE_SEEDS.stream()
+            .filter(seed -> seed.type() == CodeType.MOOD)
+            .toList();
+
+        for (BootstrapRunner.CodeSeed seed : moods) {
+            assertThat(seed.name()).as("%s 코드 이름", seed.name()).matches("[a-z]+");
+            assertThat(seed.displayName()).as("%s 표시명", seed.name()).matches("[가-힣]+");
+        }
+        assertThat(moods.stream().map(BootstrapRunner.CodeSeed::displayName).distinct().count())
+            .as("화면에 같은 한국어가 두 번 뜨면 안 된다").isEqualTo(moods.size());
+        assertThat(moods).extracting(BootstrapRunner.CodeSeed::displayName).containsExactly(
+            "잔잔한", "벅찬", "몽환적인", "신나는", "집중되는", "감성적인", "강렬한", "설레는",
             "애상적인", "따뜻한", "몽글한", "화사한", "희망찬", "웅장한", "어두운", "고요한", "짜릿한");
+    }
+
+    @Test
+    @DisplayName("이미 있는 코드는 이름이든 표시명이든 겹치면 다시 넣지 않는다")
+    void seedSkipsCodesAlreadyThereUnderEitherName() {
+        /* 2026-09-21 운영 사고의 재현. 코드표를 영문 이름으로 정리한 뒤, 아직
+           배포되지 않은 옛 판이 한국어 이름으로 시드를 시도했다. 이름만 보던
+           판정은 '없다' 고 보고 17행을 새로 넣었다 — 두 번(98~106, 107~123). */
+        List<Code> table = List.of(
+            code(CodeType.MOOD, "melancholic", "애상적인"),
+            code(CodeType.MOOD, "serene", "잔잔한"));
+        Set<BootstrapRunner.CodeSeed> existing = BootstrapRunner.existingNames(table);
+
+        // 옛 판의 시드 — 이름이 한국어이고 표시명이 영문이다.
+        assertThat(BootstrapRunner.alreadyThere(existing,
+            new BootstrapRunner.CodeSeed(CodeType.MOOD, "애상적인", "melancholic")))
+            .as("표시명이 겹치는데 새로 넣으려 한다").isTrue();
+        // 지금 판의 시드 — 이름이 영문이다.
+        assertThat(BootstrapRunner.alreadyThere(existing,
+            new BootstrapRunner.CodeSeed(CodeType.MOOD, "serene", "잔잔한")))
+            .as("같은 코드를 새로 넣으려 한다").isTrue();
+        // 정말 없는 코드는 넣어야 한다 — 빈 DB 로 띄운 환경이 막히면 안 된다.
+        assertThat(BootstrapRunner.alreadyThere(existing,
+            new BootstrapRunner.CodeSeed(CodeType.MOOD, "warm", "따뜻한")))
+            .as("없는 코드를 있다고 본다").isFalse();
+        // 종류가 다르면 남이다. 같은 글자가 장르에 있어도 분위기는 넣는다.
+        assertThat(BootstrapRunner.alreadyThere(existing,
+            new BootstrapRunner.CodeSeed(CodeType.GENRE, "serene", "serene")))
+            .as("종류를 가리지 않고 있다고 본다").isFalse();
+    }
+
+    @Test
+    @DisplayName("지금 코드표 위에서 시드는 한 건도 넣지 않는다 — 기동해도 늘지 않는다")
+    void seedingIsANoOpOnTheCurrentTable() {
+        /* 시드 목록이 곧 코드표의 지금 모습이어야 한다. 하나라도 '없다' 로 판정되면
+           운영에서 기동할 때마다 고아 행이 생긴다. */
+        List<Code> table = BootstrapRunner.CODE_SEEDS.stream()
+            .map(seed -> code(seed.type(), seed.name(), seed.displayName()))
+            .toList();
+        Set<BootstrapRunner.CodeSeed> existing = BootstrapRunner.existingNames(table);
+
+        assertThat(BootstrapRunner.CODE_SEEDS)
+            .allSatisfy(seed -> assertThat(BootstrapRunner.alreadyThere(existing, seed))
+                .as("%s:%s 를 다시 넣으려 한다", seed.type(), seed.name()).isTrue());
+    }
+
+    /** 코드표 한 줄. 저장하지 않는다 — 판정만 본다. */
+    private static Code code(CodeType type, String name, String displayName) {
+        return Code.builder().codeType(type).codeName(name).displayName(displayName).build();
     }
 
     @Test

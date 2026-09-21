@@ -2,6 +2,7 @@ package com.osundosun.mupid.api.music.service;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -145,6 +146,32 @@ public class MusicSectionServiceImpl implements MusicSectionService {
     }
 
     /**
+     * 코드 이름과 화면용 이름 <b>둘 다</b>로 찾을 수 있는 색인.
+     *
+     * <p>코드표는 이름을 두 벌 갖는다 — {@code code_name} 은 영문 내부 코드
+     * ({@code melancholic} · {@code vocals}), {@code display_name} 은 화면용 한국어다.
+     * 구간을 올리는 배치가 어느 쪽을 보내는지는 배포 시점에 따라 다르다.
+     * <b>한쪽만 받으면 코드표를 정리한 날 구간의 분위기·악기가 조용히 빈다</b> —
+     * 오류가 아니라 빈 값이라 화면을 볼 때까지 아무도 모른다.
+     *
+     * <p><b>코드 이름이 이긴다.</b> 어떤 코드의 표시명이 다른 코드의 이름과 같아도
+     * 이름 쪽으로 붙는다 — 그쪽이 계약이다.
+     */
+    private Map<String, Code> byNameAndDisplayName(CodeType codeType) {
+        List<Code> codes = codeRepository.findAllByCodeTypeOrderByCodeIdAsc(codeType);
+        Map<String, Code> byName = new HashMap<>();
+        for (Code code : codes) {
+            if (code.getDisplayName() != null && !code.getDisplayName().isBlank()) {
+                byName.putIfAbsent(code.getDisplayName(), code);
+            }
+        }
+        for (Code code : codes) {
+            byName.put(code.getCodeName(), code);
+        }
+        return byName;
+    }
+
+    /**
      * 구간마다 딸린 분위기를 갈아 끼운다.
      *
      * 구간을 통째로 지웠다 다시 만들었으므로 옛 연결은 함께 사라진다(복합키의 한쪽이
@@ -161,9 +188,11 @@ public class MusicSectionServiceImpl implements MusicSectionService {
         if (!any) {
             return;
         }
-        Map<String, Code> byName = codeRepository
-            .findAllByCodeTypeOrderByCodeIdAsc(CodeType.MOOD).stream()
-            .collect(Collectors.toMap(Code::getCodeName, code -> code, (a, b) -> a));
+        // 영문 내부 코드(`code_name`)와 화면용 한국어(`display_name`) 둘 다 받는다.
+        // `ai_server/tools/register_sections.py` 가 한국어 이름을 보내던 시절의
+        // 요청도 그대로 통과해야 한다 — 코드명이 영문으로 바뀌었다고 구간 무드가
+        // 조용히 비면 화면이 틀린 것을 말하게 된다. 코드명이 먼저다.
+        Map<String, Code> byName = byNameAndDisplayName(CodeType.MOOD);
 
         List<MusicSectionAnalysisMood> links = new ArrayList<>();
         Set<String> unknown = new HashSet<>();
@@ -213,9 +242,10 @@ public class MusicSectionServiceImpl implements MusicSectionService {
         if (!any) {
             return;
         }
-        Map<String, Code> byName = codeRepository
-            .findAllByCodeTypeOrderByCodeIdAsc(CodeType.INSTRUMENT).stream()
-            .collect(Collectors.toMap(Code::getCodeName, code -> code, (a, b) -> a));
+        // 분위기와 같은 규칙이다 — 영문 코드 이름(`vocals`)과 화면용 한국어(`보컬`)를
+        // 둘 다 받는다. 배치가 한국어를 보내던 시절의 요청도 그대로 통과해야 한다.
+        // 코드명이 먼저다.
+        Map<String, Code> byName = byNameAndDisplayName(CodeType.INSTRUMENT);
 
         List<MusicAnalysisInstrument> links = new ArrayList<>();
         Set<String> unknown = new HashSet<>();

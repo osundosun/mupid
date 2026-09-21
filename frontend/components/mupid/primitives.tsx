@@ -150,6 +150,7 @@ export function TrackRow({
   model: m,
   detail,
   showDetail = true,
+  titleInteractive = true,
   action,
   onPlay,
   // 추천·검색처럼 둘러보는 목록에서만 켠다. 자리가 빠듯한 목록에서는 생략한다.
@@ -169,6 +170,7 @@ export function TrackRow({
   model: MupidModel;
   detail?: string;
   showDetail?: boolean;
+  titleInteractive?: boolean;
   action?: ReactNode;
   onPlay?: () => void;
   queueable?: boolean;
@@ -195,7 +197,11 @@ export function TrackRow({
       )}
       <AlbumArt track={track} />
       <div className="track-info">
-        <button className="track-title-link" onClick={picking ? onSelect : () => m.openTrack(track)}><strong>{track.title}</strong></button>
+        {titleInteractive ? (
+          <button className="track-title-link" onClick={picking ? onSelect : () => m.openTrack(track)}><strong>{track.title}</strong></button>
+        ) : (
+          <span className="track-title-link"><strong>{track.title}</strong></span>
+        )}
         <button className="track-artist-link" onClick={picking ? onSelect : () => m.setSelectedArtist(track.artist)}>{track.artist}</button>
         {showDetail && <span className="moment-meta">
           {detail || `${sectionNameOf(track)} · ${formatTime(track.moment)}`}

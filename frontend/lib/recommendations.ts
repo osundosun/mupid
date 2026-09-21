@@ -13,7 +13,7 @@ import type {
   SimilarSectionResult,
 } from './api/endpoints';
 import { api } from './api/session';
-import type { Track } from './mupid-data';
+import { moodLabel, type Track } from './mupid-data';
 import { toTrack } from './stream-catalog';
 
 /** 서버 enum → 화면 이름. 모르는 값은 그대로 보여준다 (코드는 늘 수 있다). */
@@ -90,7 +90,8 @@ export async function fetchTodayMoments(
     note: group.reason,
     tracks: group.tracks.map((row) => ({
       ...toTrack(row.music),
-      mood: group.mood || '',
+      // 묶음의 무드도 코드 이름(영문)으로 온다.
+      mood: moodLabel(group.mood || ''),
       reason: row.reason ?? '',
     })),
   };

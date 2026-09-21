@@ -270,10 +270,11 @@ def fold(codes):
     return {(kind, name.casefold()): name for kind, name in codes}
 
 
-# 이 저장소가 곧 분류 어휘다. taxonomy 무드 9종은 색인(`mood_tags`)에 그 이름이
-# 하나도 없어 뜻으로 이어야 했다 — 그 대응이 여기 있다 (`ai_server/app/onboarding.py`
-# 의 `MOOD_MAP` 과 **같은 출처**다). 서버에 심을 때 `code_name` 은 화면용 한국어,
-# `display_name` 은 taxonomy 원문이 된다.
+# 이 저장소가 곧 분류 어휘다. 서버에 심을 때 `code_name` 은 taxonomy 원문(영문 내부
+# 코드), `display_name` 은 화면용 한국어다 — 장르와 같은 방향이다 (2026-09-21 정리.
+# 그전에는 무드만 반대였고, 그 탓에 운영 `codes` 에 같은 무드가 `melancholic` 과
+# `애상적인` 두 행으로 들어갔다). 한국어 이름은 `ai_server/app/onboarding.py` 의
+# `TAXONOMY_MOOD_NAMES` 와 **같은 출처**다.
 #
 # `genre_mood` 가 직접 계산하지 않고 `ai_server` 를 부르지 않는 이유: 이 패키지는
 # 배치 서버에서 단독으로 도는 도구라 `ai_server` 의 의존성(numpy·pandas·torch)을
@@ -329,7 +330,7 @@ GENRE_DISPLAY_NAMES = {
     "chamber_classical": "체임버 클래식"
 }
 
-MISMATCHED_MOOD_DISPLAY_NAMES = {
+MOOD_DISPLAY_NAMES = {
     "melancholic": "애상적인",
     "warm": "따뜻한",
     "dreamy": "몽글한",
@@ -343,20 +344,19 @@ MISMATCHED_MOOD_DISPLAY_NAMES = {
 
 
 def display_name_for(kind: str, name: str, folded: dict) -> str:
-    """서버에 보낼 표시명. **화면용 한국어가 색인 원문과 다를 때만** 값이 다르다.
+    """서버에 보낼 표시명. **화면용 한국어를 아는 무드에만** 값이 있다.
 
     `name` 은 taxonomy 원문(`melancholic`)이고, 화면에 그릴 말은 따로 있다
     (`애상적인`). 대응이 없으면 빈 문자열을 돌려주고, 그러면 서버가 코드 이름을
     그대로 표시명으로 쓴다 — 기존 동작과 같다.
 
-    **서버 철자를 먼저 본다.** 이미 `애상적인` 이라는 코드가 손으로 들어가 있어도
-    (`folded` 는 대소문자만 무시하고 한국어↔영문은 구분한다) 여기서는 걸리지
-    않으므로, 없는 코드에만 표시명이 붙는다.
+    **서버 철자를 먼저 본다.** 이미 있는 코드는 서버가 `(종류, 이름)` 으로 멱등
+    판정하므로 표시명을 보내도 무시된다 — 없는 코드에만 표시명이 붙는다.
     """
     if kind != "MOOD":
         return ""
-    korean = MISMATCHED_MOOD_DISPLAY_NAMES.get(name.casefold())
-    if korean and (kind, korean.casefold()) not in folded:
+    korean = MOOD_DISPLAY_NAMES.get(name.casefold())
+    if korean and (kind, name.casefold()) not in folded:
         return korean
     return ""
 
@@ -368,19 +368,17 @@ def validate_taxonomy_moods(tracks) -> None:
     화면에 영문이 뜨고 분류도 조용히 어긋난다. 여기서 멈춘다.
     """
     unknown = sorted({name for t in tracks for name in t["moods"]
-                      if name.casefold() not in MISMATCHED_MOOD_DISPLAY_NAMES})
+                      if name.casefold() not in MOOD_DISPLAY_NAMES})
     if unknown:
         raise ValueError(f"뜻 표에 없는 taxonomy 무드: {unknown}"
-                         " — `MISMATCHED_MOOD_DISPLAY_NAMES` 를 채워야 한다")
+                         " — `MOOD_DISPLAY_NAMES` 를 채워야 한다")
 
 
 def wanted(track, folded):
     """이 곡에 있어야 할 분류를 **서버 철자로** 돌려준다."""
     genres = [folded.get(("GENRE", track["genre"].casefold()), track["genre"])]
-    moods = []
-    for name in track["moods"]:
-        korean = MISMATCHED_MOOD_DISPLAY_NAMES.get(name.casefold(), name)
-        moods.append(folded.get(("MOOD", korean.casefold()), korean))
+    # 무드도 장르처럼 taxonomy 원문이 곧 `code_name` 이다.
+    moods = [folded.get(("MOOD", name.casefold()), name) for name in track["moods"]]
     return sorted(set(genres)), sorted(set(moods))
 
 
@@ -442,8 +440,7 @@ def inspect(client, tracks, exempt=()):
     needed = {("GENRE", t["genre"]) for t in tracks}
     for t in tracks:
         for name in t["moods"]:
-            korean = MISMATCHED_MOOD_DISPLAY_NAMES.get(name.casefold(), name)
-            needed.add(("MOOD", korean))
+            needed.add(("MOOD", name))
     return {"codes": codes, "folded": folded,
             "missing_codes": sorted(key for key in needed
                                     if (key[0], key[1].casefold()) not in folded),
@@ -465,12 +462,9 @@ def apply_plan(client, tracks, state, report, save, replace_existing=False):
     report["skipped"] = [] if replace_existing else sorted(state["differs"])
 
     for kind, name in state["missing_codes"]:
-        if kind == "MOOD":
-            korean = MISMATCHED_MOOD_DISPLAY_NAMES.get(name.casefold(), name)
-            row = client.add_code(kind, korean, name)
-        else:
-            korean = GENRE_DISPLAY_NAMES.get(name.casefold(), name)
-            row = client.add_code(kind, name, korean)
+        # 장르·무드 모두 `code_name` 은 taxonomy 원문, `display_name` 은 한국어다.
+        table = MOOD_DISPLAY_NAMES if kind == "MOOD" else GENRE_DISPLAY_NAMES
+        row = client.add_code(kind, name, table.get(name.casefold(), name))
         code_id = positive_id(row["code_id"])
         # 서버가 돌려준 철자를 쓴다. 대소문자만 다른 코드가 이미 있었다면 그 이름이다.
         codes[(kind, row["code_name"])] = code_id
