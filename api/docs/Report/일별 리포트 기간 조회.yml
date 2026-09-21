@@ -1,0 +1,195 @@
+info:
+  name: 일별 리포트 기간 조회
+  type: http
+  seq: 2
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/report/daily?from={{REPORT_FROM}}&to={{REPORT_TO}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: REPORT_FROM
+      value: "2026-09-14"
+    - name: REPORT_TO
+      value: "2026-09-20"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공 — 데이터 있는 날과 없는 날
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "from": "2026-09-14",
+              "to": "2026-09-20",
+              "time_zone": "Asia/Seoul",
+              "days": [
+                { "date": "2026-09-14", "total_listening_ms": 0, "mubti": null, "sample": { "sufficient": false } },
+                { "date": "2026-09-15", "total_listening_ms": 1234104, "mubti": null, "sample": { "sufficient": false } },
+                { "date": "2026-09-16", "total_listening_ms": 0, "mubti": null, "sample": { "sufficient": false } },
+                {
+                  "date": "2026-09-17",
+                  "total_listening_ms": 360000,
+                  "mubti": {
+                    "code": "VMFE",
+                    "title": "보컬 발굴가형",
+                    "image_url": "/api/v1/storage/image/121"
+                  },
+                  "sample": { "sufficient": true }
+                },
+                { "date": "2026-09-18", "total_listening_ms": 0, "mubti": null, "sample": { "sufficient": false } },
+                { "date": "2026-09-19", "total_listening_ms": 0, "mubti": null, "sample": { "sufficient": false } },
+                { "date": "2026-09-20", "total_listening_ms": 0, "mubti": null, "sample": { "sufficient": false } }
+              ]
+            }
+          }
+
+  - name: 400 날짜가 잘못됨
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_REPORT_INVALID_DATE",
+            "message": "조회할 수 없는 날짜입니다.",
+            "error_details": null
+          }
+
+  - name: 400 기간이 너무 김
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_REPORT_RANGE_TOO_LONG",
+            "message": "조회 기간은 31일까지입니다.",
+            "error_details": null
+          }
+
+  - name: 503 분석 데이터를 읽지 못함
+    response:
+      status: 503
+      statusText: Service Unavailable
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_REPORT_ANALYTICS_UNAVAILABLE",
+            "message": "청취 분석 데이터를 읽지 못했습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 일별 리포트 기간 조회
+
+  `GET /api/v1/report/daily` · **인증 필요**
+
+  여러 날의 취향 리포트를 한 번에 받습니다. 주간 MUBTI 대화상자
+  (`frontend/components/mupid/listening-calendar.tsx`)가 씁니다.
+
+  ## 요청
+
+  | 파라미터 | 필수 | 뜻 |
+  | --- | --- | --- |
+  | `from` | 예 | `YYYY-MM-DD`. `Asia/Seoul` 기준. **포함** |
+  | `to` | 예 | `YYYY-MM-DD`. `Asia/Seoul` 기준. **포함** |
+
+  둘 다 필수입니다. 빈 값을 "오늘"로 읽지 않습니다 — 화면 버그로 파라미터가 빠졌을 때
+  조용히 다른 답을 주는 것보다 400 이 낫습니다.
+
+  ## 응답
+
+  | 필드 | 뜻 |
+  | --- | --- |
+  | `from` · `to` | 요청한 기간 그대로 |
+  | `time_zone` | `Asia/Seoul`. `date` 들이 어느 시간대의 날짜인지 |
+  | `days[].date` | 그 날짜. 오름차순 |
+  | `days[].total_listening_ms` | 그날 실제로 들은 시간. 기록이 없으면 0 |
+  | `days[].mubti.code` · `.title` · `.image_url` | 그날의 유형. 표본이 모자라면 `mubti` 가 `null` |
+  | `days[].sample.sufficient` | 판정할 만큼 들었는가 (5분 이상 · 3곡 이상) |
+
+  **기록이 없는 날도 빠지지 않습니다.** `total_listening_ms` 가 0 이고 `mubti` 가
+  `null` 일 뿐입니다. 화면이 요일 카드 일곱 장을 항상 그리므로, 빼면 그 자리가
+  "아직 불러오는 중"이 되어 기록 없음과 로딩 중을 구분할 수 없습니다.
+
+  ### 하루치 조회와 무엇이 다른가
+
+  값은 **같습니다.** `days[]` 는 하루치 응답(`GET /api/v1/report`) 하나를 달력이
+  읽는 필드만 남겨 줄인 것이라, 같은 날의 유형이 두 경로에서 달라지지 않습니다.
+
+  다만 **무게가 다릅니다.** 하루치는 트리맵 타일 40곡과 키워드 6개를 담는데 달력은
+  그중 어느 것도 쓰지 않습니다. 일곱 날을 묶으면 그 목록이 일곱 벌 중복되므로
+  여기서는 빼 두었습니다.
+
+  ### 하루치는 그대로입니다
+
+  `GET /api/v1/report?date=` 는 이 엔드포인트가 생기면서 **바뀌지 않았습니다.**
+  필드도 의미도 그대로입니다(`ReportDailyRangeTest` 의
+  `legacySingleDayEndpointUnchanged` 가 이를 못 박습니다).
+
+  ## 언제 MySQL 에 남는가
+
+  하루치와 같습니다. 날짜마다 별도로 조회했을 때와 동일하게 동작합니다 —
+  스냅샷이 있으면 읽고, 없으면 그 자리에서 계산해 저장합니다.
+  (`api/knowledge/domain/mubti-report.md` 의 적재 시점 표)
+
+  ## 오류
+
+  | 코드 | 상태 | 언제 |
+  | --- | --- | --- |
+  | `MUPID_REPORT_INVALID_DATE` | 400 | `from`·`to` 가 없거나, `from > to` 이거나, `to` 가 미래일 때 |
+  | `MUPID_REPORT_RANGE_TOO_LONG` | 400 | 창이 31일을 넘을 때 |
+  | `MUPID_REPORT_ANALYTICS_UNAVAILABLE` | 503 | ClickHouse 를 읽지 못할 때 |
+  | `MUPID_REPORT_MUBTI_NOT_SEEDED` | 503 | `mubti` 기준 16행이 없을 때 |
+
+  **넘친 기간을 조용히 잘라 주지 않습니다.** 1년을 요청했는데 31일치를 돌려주면
+  클라이언트는 그것을 1년치로 읽습니다 — 화면에는 "이 기간에는 기록이 없다"로
+  보이는데 실제로는 잘린 것이라, 틀린 답이 맞는 답처럼 보입니다.
+
+  ## 상한이 31일인 근거
+
+  1. 화면이 실제로 쓰는 창은 **7일**입니다. 31일은 그 네 배가 넘는 여유입니다.
+  2. 스냅샷이 없는 지난 날짜는 조회 시점에 ClickHouse 에서 다시 집계합니다
+     (backfill-on-read). 창이 길어질수록 요청 시간이 날짜 수에 비례해 늘어나고,
+     운영 nginx 의 `/api/` 는 `proxy_read_timeout 60s` 입니다. 31일은 그 안에
+     들어오는 크기입니다.
+
+  31일보다 긴 창은 일별 목록이 아니라 **주·월 집계**로 답하는 것이 맞습니다.
+  그것은 `reports` 위에서 만드는 별도 작업입니다.
+
+  ## 설계 배경
+
+  - 집계·판정 규칙 전부 → `api/knowledge/domain/mubti-report.md`
+  - 일별 조회를 어디서 만드는가 → `api/knowledge/decision/0019-report-reads-clickhouse-directly.md`

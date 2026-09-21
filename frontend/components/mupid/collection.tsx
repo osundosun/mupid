@@ -198,6 +198,7 @@ export function LibraryView({ model: m }: { model: MupidModel }) {
                     track={t}
                     model={m}
                     selected={playlistPick.has(t.id)}
+                    showDetail={false}
                     onSelect={playlistPick.active ? () => playlistPick.toggle(t.id) : undefined}
                     onPlay={() => m.playPlaylist(selected, t)}
                     action={
@@ -749,7 +750,7 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
           showDetail={false}
           action={<button className="text-link ignored-restore" onClick={() => m.restoreIgnored(track.id)}>해제</button>}
         />)}
-        {!ignoredTracks.length && <p className="listening-history-empty">관심 없는 곡이 없어요.<span>등록한 곡은 추천에서 제외돼요.</span></p>}
+        {!ignoredTracks.length && <p className="listening-history-empty">관심 없는 곡이 없어요.<span>등록한 곡은 추천에서 제외 됩니다.</span></p>}
       </section>
       </section>
     </div>

@@ -15,6 +15,19 @@ public enum CacheKind {
     EventId("event:id"),
 
     /**
+     * 추천 묶음 번호 → 그 추천이 화면에 건 사유 문장.
+     *
+     * **재생 이벤트에는 사유가 실리지 않는다.** 진입 경로(`entry_path`)만 실리고, 사유는
+     * 사용자가 곡을 누르기 **전에** 본 추천 응답에만 있다
+     * (`knowledge/domain/listening-events.md` 의 `PLAY_START` 고유 필드). 그래서 응답을
+     * 내보내는 자리에서 여기 적어 두고, 재생이 들어올 때 `rec_id` 로 되짚는다.
+     *
+     * 상관 키가 있어 가능한 일이다 — `NextTrackService` 가 화면에 `recommendation_id` 를
+     * 주고 화면이 `rec_id` 로 되돌려 준다. 그 왕복이 곧 조회 키다.
+     */
+    RecommendationReason("recommendation:reason"),
+
+    /**
      * 관리자 ClickHouse 콘솔의 열람권. 값은 연 사람의 이메일이다.
      *
      * JWT 로 만들지 않는다. iframe 은 로그아웃했다고 알려 주지 않으므로, 서버가
@@ -51,6 +64,16 @@ public enum CacheKind {
 
     /** 오늘의 모먼트 생성 배치 선점. 스케줄러는 인스턴스마다 돈다. */
     DailyRecommendationBatch("recommendation:daily:batch"),
+
+    /**
+     * 재생수 집계 배치 선점. 스케줄러는 인스턴스마다 돈다.
+     *
+     * <p>이 배치가 {@code music.play_count} 를 채우고, 그 값이 목록 조회의 <b>기본 정렬</b>
+     * (조회순)이 된다. 즉 선점이 뚫려 여러 인스턴스가 동시에 돌면 같은 곡의 값을 서로
+     * 다른 시점의 집계로 덮어써 <b>화면 순서가 흔들린다</b> — 다른 배치들과 달리
+     * 중복 실행의 결과가 "더 오래 걸린다" 로 끝나지 않는다.
+     */
+    PlayCountBatch("music:playcount:batch"),
     /**
      * 사용자별 재생 큐. `queue:user:{userId}` 한 자리에 큐 한 벌이 통째로 들어간다.
      *

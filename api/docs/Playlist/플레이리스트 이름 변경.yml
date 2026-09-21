@@ -130,7 +130,7 @@ docs: |-
   | 코드 | 상태 | 설명 |
   | --- | --- | --- |
   | `MUPID_INVALID_REQUEST_BODY` | 400 | `title` 누락·공백·100자 초과. `error_details` 의 키는 **자바 필드명**입니다 |
-  | `MUPID_NOT_READABLE_MESSAGE` | 404 | 요청 본문 누락/파싱 실패 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 400 | 요청 본문 누락/파싱 실패 |
   | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
   | `MUPID_PLAYLIST_ACCESS_DENIED` | 403 | 내 플레이리스트가 아님 |
   | `MUPID_PLAYLIST_NOT_FOUND` | 404 | 없거나 이미 삭제된 플레이리스트 |

@@ -60,6 +60,7 @@ import logging
 from pathlib import Path
 
 from .api_client import MupidClient
+from .audit import exempt_track_ids
 from .catalog import CatalogError, ProgressReporter
 from .registrar import Registry
 
@@ -300,6 +301,7 @@ class LyricRegistrar:
             "songs_empty": 0,
             "songs_untimed": 0,
             "songs_unregistered": 0,
+            "songs_exempt": 0,
             "lines_written": 0,
             "lines_deleted": 0,
             "lines_timed": 0,
@@ -308,9 +310,19 @@ class LyricRegistrar:
             "errors": [],
         }
 
+        # 서버에서 사라진 곡. `PUT /lyric` 은 410 Gone 이라(2026-09-18 변경, 그전엔
+        # 404) 그대로 부르면 배치가 실패한다 — ticket S15P21A204-399 의 실제 실패
+        # 경로였다. 표식은 `catalog` 의 서버 대조가 남긴 것이라 여기서는 읽기만 한다.
+        exempt = exempt_track_ids(self.registry)
+
         self.progress.phase("가사", len(sheets))
         for track_id in sorted(sheets):
             sheet = sheets[track_id]
+            if track_id in exempt:
+                summary["songs_exempt"] += 1
+                logger.info("가사 건너뜀(서버에 없는 곡): %s", track_id)
+                self.progress.advance("가사")
+                continue
             try:
                 self._register(sheet, force, summary)
             except Exception as e:  # noqa: BLE001 — 한 곡이 깨져도 나머지를 올린다

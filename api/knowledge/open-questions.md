@@ -246,7 +246,7 @@ M + G 로 줄고 표 주석과도 맞는다. 조합에서 각 축을 `DISTINCT` 
 | D4 | `redis.key-prefix` | 선언만 있고 읽는 코드가 없다. 살릴지 지울지 (`MUPID_KAFKA_BOOTSTRAP` 은 `event.kafka-bootstrap-servers` 가 읽게 됐다) |
 | D5 | 브랜치 `type` 어휘 | `feat` 과 `feature` 가 공존한다. 고정할지 → [convention/git.md](convention/git.md) |
 | D6 | CI 백엔드 테스트 | 현재 build-only. 테스트 실행을 넣을지 |
-| D7 | `GlobalErrorCode.NOT_READABLE_MESSAGE` = 404 | 400 이 맞아 보이나 Bruno 문서에도 404 로 기록돼 이미 계약이다. 바꿀지 |
+| D7 | ~~`GlobalErrorCode.NOT_READABLE_MESSAGE` = 404~~ | **해소 (2026-09-18)** — 400 으로 정정. Bruno 문서 8곳도 함께 고쳤다 |
 | D8 | `StorageServiceImpl` 읽기 메서드의 `@Transactional(readOnly = false)` | 의도인지 오타인지 |
 | D9 | `EmailCheckAddressVerification` | 유일하게 `Response` 접미사가 없다. 통일할지 |
 | D10 | `common/gmail` 패키지 구조 | S3·ClickHouse 는 `config`+`properties` 로 쪼개져 있는데 여기만 다르다 |

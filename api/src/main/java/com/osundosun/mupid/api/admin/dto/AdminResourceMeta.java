@@ -4,8 +4,12 @@ import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 
+import com.osundosun.mupid.api.admin.dto.AdminChildLink;
+import com.osundosun.mupid.api.admin.dto.AdminTimelineAxis;
+
 import lombok.Builder;
 import lombok.Getter;
+import lombok.Setter;
 
 /**
  * 관리 대상 자원 하나(= 엔티티 하나)의 전부.
@@ -69,6 +73,28 @@ public class AdminResourceMeta {
      * 필드 이름 → 속성. 선언 순서를 지킨다 (LinkedHashMap).
      */
     private final Map<String, AdminAttribute> attributes;
+
+    /**
+     * 이 자원의 행에서 자식 자원으로 건너가는 링크 ("이 앨범의 음악들"). 없으면 빈 목록이다.
+     *
+     * <p>기동할 때는 빈 목록으로 만들고, 모든 자원이 만들어진 **뒤에**
+     * {@code AdminResourceRegistry.validateChildLinks} 가 채운다 — 선언이 실제 관계와
+     * 맞는지 보려면 자식 자원의 속성 표가 이미 있어야 하기 때문이다.
+     */
+    @Setter
+    @Builder.Default
+    private List<AdminChildLink> childLinks = List.of();
+
+    /**
+     * 이 자원의 행을 **시간축 위에 가로로** 그릴 때 쓸 밴드들 ("이 곡의 가사·구간").
+     * 없으면 빈 목록이다 (S15P21A204-380-B).
+     *
+     * <p>{@link #childLinks} 와 같은 방식으로 채워진다 — 기동할 때 빈 목록으로 만들고,
+     * 모든 자원이 준비된 **뒤에** `AdminResourceRegistry` 가 선언을 검증해 채운다.
+     */
+    @Setter
+    @Builder.Default
+    private List<AdminTimelineAxis> timelineAxes = List.of();
 
     public AdminAttribute attribute(String fieldName) {
         return attributes.get(fieldName);

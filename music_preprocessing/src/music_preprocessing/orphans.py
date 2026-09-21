@@ -40,6 +40,7 @@ import logging
 from collections import defaultdict
 
 from .api_client import MupidApiError, MupidClient
+from .audit import EXEMPT_KEY
 from .catalog import ProgressReporter
 from .registrar import Registry
 
@@ -75,10 +76,12 @@ def scan_streams(
         "duplicate": [],
         "count_mismatch": [],
         "short": [],
+        "deleted_songs": scan_deleted_songs(registry),
         "errors": [],
     }
     if not music_ids:
         logger.info("등록 기록이 비어 있어 훑을 곡이 없습니다.")
+        _report_deleted_songs(report)
         return report
 
     logger.info("스트림 점검 시작: 곡 %d개", len(music_ids))
@@ -91,13 +94,24 @@ def scan_streams(
             report["streams_seen"] += len(streams)
             _inspect(client, music_id, streams, expected[music_id], verify_chunks, report)
         except MupidApiError as e:
-            if e.status == 404:
-                # 곡이 서버에서 지워졌다. 남은 스트림이 있는지도 물어볼 수 없다.
+            # 410 Gone = 서버에서 삭제됐다. 404 = 등록 기록이 낡아 그런 곡이 없다.
+            # 둘 다 스트림을 물어볼 수 없다는 점은 같지만 원인이 다르다 — 410 이면
+            # 사람이 곡을 되살릴지 정해야 하고, 404 면 `registered.json` 이 틀렸다.
+            # **410 을 안 잡으면 삭제된 곡이 그냥 오류로 보고된다** (2026-09-18,
+            # 그전엔 서버가 404 를 줘서 아래 경고가 났다).
+            if e.status in (404, 410):
                 logger.warning(
-                    "곡이 서버에 없습니다: music_id=%s — 딸린 스트림이 남아 있어도 "
+                    "곡이 서버에 없습니다: music_id=%s (%s) — 딸린 스트림이 남아 있어도 "
                     "여기서는 보이지 않습니다",
                     music_id,
+                    "삭제됨" if e.status == 410 else "등록 기록에 없는 번호",
                 )
+                if e.status == 410:
+                    # 이 자리에서는 스트림 번호를 모른다(`stream_ids` 는 청킹
+                    # 기록에서 찾은 것만 채운다). 곡 단위로만 남긴다.
+                    report["deleted_songs"].append(
+                        {"music_id": music_id, "stream_ids": [],
+                         "reason": "서버에서 삭제됨"})
                 continue
             report["errors"].append({"key": f"music_id={music_id}", "error": str(e)})
         except Exception as e:  # noqa: BLE001 — 점검이 배치를 망치면 안 된다
@@ -121,17 +135,29 @@ def _expected_streams(registry: Registry) -> dict[int, dict]:
     (`catalog.tracks`)에는 곡만 있고 스트림은 없다. 후자는 "스트림이 하나도
     없어야 정상" 인 곡이라 같이 넣는다 — 거기 스트림이 있으면 배치가 만든 것이
     아니다.
+
+    서버에서 **사라진 곡은 뺀다.** 어차피 404 라 스트림을 볼 수 없고
+    (`getStreamByMusicId` 의 `isExists` 검사), 그 곡의 남은 스트림은
+    `scan_deleted_songs` 가 `registered.json` 기록으로 따로 보고한다. 여기 두면
+    곡마다 헛된 404 호출이 나가고 같은 사실을 두 번 알리게 된다.
     """
     expected: dict[int, dict] = {}
 
+    # 서버에서 사라진 것으로 표시된 곡. 배치 한 바퀴에서 `catalog` 이 남긴 표식이다.
+    gone = {
+        entry.get("music_id")
+        for entry in registry.catalog("tracks").values()
+        if entry.get(EXEMPT_KEY)
+    }
+
     for entry in registry.catalog("tracks").values():
         music_id = entry.get("music_id")
-        if music_id:
+        if music_id and music_id not in gone:
             expected[music_id] = {"stream_id": None, "chunk_count": None}
 
     for entry in registry.data["tracks"].values():
         music_id = entry.get("music_id")
-        if not music_id:
+        if not music_id or music_id in gone:
             continue
         expected[music_id] = {
             "stream_id": entry.get("stream_id"),
@@ -261,11 +287,67 @@ def _verify_chunks(
     )
 
 
+def scan_deleted_songs(registry: Registry) -> list[dict]:
+    """서버에서 사라진 곡에 배치가 붙여 둔 스트림을 모은다.
+
+    표식(`server_missing`)은 `catalog` 의 서버 대조가 남긴 것이다. 여기서 서버를
+    다시 훑지 않는 이유: 배치 한 바퀴에서 `catalog` 이 이미 같은 목록을 읽었고
+    그 결과가 파일에 남아 있다. 없는 곡을 찾는 책임은 한 곳(`audit`)에 둔다.
+    """
+    from .audit import orphan_streams_of_missing, AuditResult
+
+    missing = [
+        {"track_id": track_id, "music_id": entry.get("music_id")}
+        for track_id, entry in registry.catalog("tracks").items()
+        if entry.get("server_missing")
+    ]
+    if not missing:
+        return []
+    result = AuditResult()
+    result.missing = missing
+    return orphan_streams_of_missing(registry, result)
+
+
+def _report_deleted_songs(report: dict) -> None:
+    """서버에서 사라진 곡에 딸린 스트림을 알린다. **지우지는 않는다.**
+
+    이 스트림들은 조회로 볼 수 없다 — 곡이 없으면 `GET /api/v1/music/{id}/stream`
+    이 410 이다(`StreamServiceImpl.getStreamByMusicId` 의 `requireAlive` 검사). 그래서
+    청킹 기록에 남은 `stream_id` 로만 알 수 있고, 여기서 보고하는 것이 유일한
+    단서다. 그냥 두면 청크가 스토리지를 계속 먹는데 어디에도 안 나타난다.
+
+    남은 곡 원본 파일을 지울지 스트림을 지울지는 사람이 정한다 — 배치가
+    "내 기록에 없다" 를 "버려도 된다" 로 승격시키지 않는다(`모듈 문서` 참고).
+    """
+    deleted = report.get("deleted_songs") or []
+    if not deleted:
+        return
+    for row in deleted:
+        logger.warning(
+            "서버에서 사라진 곡에 스트림이 남아 있습니다: %s (music_id=%s, stream_id=%s). "
+            "조회로는 확인할 수 없습니다(곡이 없으면 410). 지우려면 "
+            "DELETE /api/v1/stream/{streamId}",
+            row.get("track_id") or "-",
+            row["music_id"],
+            # 두 곳이 이 보고에 모인다. `scan_deleted_songs` 는 청킹 기록에서
+            # `stream_ids` 를 찾아 넣고, 조회 중 410 을 만난 자리는 그 자리에서
+            # 곡만 안다(`stream_ids` 가 없다). 없는 것을 KeyError 로 터뜨리면
+            # 보고하다 배치가 죽는다 — 보고는 배치를 망치지 않는다.
+            ", ".join(str(s) for s in row.get("stream_ids") or []) or "기록 없음",
+        )
+    logger.warning(
+        "서버에서 사라진 곡 %d개에 딸린 스트림입니다. **지우지 않았습니다** — "
+        "등록 기록에서 그 곡만 걷어내려면 `music-preprocessing repair-track <track_id>`",
+        len(deleted),
+    )
+
+
 def _report(report: dict) -> None:
     """마지막에 한 줄로 정리한다. 경고만 하고 종료 코드는 건드리지 않는다."""
     found = sum(
         len(report[key]) for key in ("unknown", "duplicate", "count_mismatch", "short")
     )
+    _report_deleted_songs(report)
     if found:
         logger.warning(
             "스트림 점검: 곡 %d개 · 스트림 %d개를 보고 %d건을 찾았습니다 "

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -36,6 +37,7 @@ import com.osundosun.mupid.api.user.enumerate.UserGender;
 import com.osundosun.mupid.api.user.enumerate.UserRole;
 import com.osundosun.mupid.api.user.enumerate.UserStatus;
 import com.osundosun.mupid.api.user.error.UserErrorCode;
+import com.osundosun.mupid.api.user.request.UserUpdateRequest;
 import com.osundosun.mupid.api.user.service.UserService;
 import com.osundosun.mupid.api.user.service.UserServiceImpl;
 
@@ -147,7 +149,7 @@ class UserSoftDeleteTest {
     }
 
     @Test
-    @DisplayName("이미 탈퇴한 계정을 또 탈퇴시키면 404 다")
+    @DisplayName("이미 탈퇴한 계정을 또 탈퇴시키면 404 가 아니라 410 이다")
     void rejectsDoubleDelete() {
         userService.deleteUser(me.getUserId());
         em.flush();
@@ -155,7 +157,31 @@ class UserSoftDeleteTest {
         BusinessException e = assertThrows(BusinessException.class,
             () -> userService.deleteUser(me.getUserId()));
 
-        assertEquals(UserErrorCode.USER_NOT_FOUND, e.getErrorCode());
+        /*
+         * 예전에는 404 였다. 탈퇴는 행을 지우지 않으므로 "그런 회원이 없다" 와
+         * "탈퇴했다" 를 나눌 수 있고, 보낸 쪽이 할 일이 다르다 — 앞은 번호를
+         * 고쳐야 하고, 뒤는 그 계정을 포기해야 한다.
+         */
+        assertEquals(UserErrorCode.USER_GONE, e.getErrorCode());
+        assertEquals(HttpStatus.GONE, UserErrorCode.USER_GONE.getStatus());
+    }
+
+    @Test
+    @DisplayName("탈퇴한 회원을 수정하려 하면 410 이다 — 없는 회원과 구분된다")
+    void goneIsDistinctFromNotFoundOnUpdate() {
+        int withdrawn = me.getUserId();
+        userService.deleteUser(withdrawn);
+        em.flush();
+
+        BusinessException gone = assertThrows(BusinessException.class,
+            () -> userService.updateUser(withdrawn, new UserUpdateRequest(null, "새이름", null, null)));
+        assertEquals(UserErrorCode.USER_GONE, gone.getErrorCode());
+
+        /* 애초에 없는 번호는 그대로 404 다 — 이 구분이 이 테스트의 요점이다. */
+        BusinessException missing = assertThrows(BusinessException.class,
+            () -> userService.updateUser(Integer.MAX_VALUE,
+                new UserUpdateRequest(null, "새이름", null, null)));
+        assertEquals(UserErrorCode.USER_NOT_FOUND, missing.getErrorCode());
     }
 
     // ─────────────────────────────────────────────────────────────

@@ -36,11 +36,11 @@ public interface MusicSectionAnalysisMoodRepository extends JpaRepository<
      * 비어 있을 수 있다. 분위기를 못 고른 곡이 카탈로그의 14% 다.
      */
     @Query("""
-        select m.moodCodeId.codeId
+        select m.moodCode.codeId
           from MusicSectionAnalysisMood m
          where m.musicSectionAnalysis.music.musicId in :musicIds
-         group by m.moodCodeId.codeId
-         order by count(m) desc, m.moodCodeId.codeId asc
+         group by m.moodCode.codeId
+         order by count(m) desc, m.moodCode.codeId asc
         """)
     List<Integer> findMoodCodeIdsByPopularity(@Param("musicIds") Collection<Integer> musicIds);
 

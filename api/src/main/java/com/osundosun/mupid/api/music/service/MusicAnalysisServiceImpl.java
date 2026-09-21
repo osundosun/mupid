@@ -8,7 +8,6 @@ import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicAnalysis;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
 import com.osundosun.mupid.api.music.repository.MusicAnalysisRepository;
-import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.request.MusicAnalysisRequest;
 import com.osundosun.mupid.api.music.response.MusicAnalysisBulkResponse;
 
@@ -18,7 +17,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class MusicAnalysisServiceImpl implements MusicAnalysisService {
 
-    private final MusicRepository musicRepository;
+    private final MusicService musicService;
     private final MusicAnalysisRepository musicAnalysisRepository;
 
     /**
@@ -33,12 +32,18 @@ public class MusicAnalysisServiceImpl implements MusicAnalysisService {
      * {@code MIX} 로 바꾸지 않는다 — {@code MIX} 는 "혼성으로 판정했다" 이고
      * {@code null} 은 "판정하지 못했다" 다. 재분석에서 성별을 못 냈다고 옛 판정을
      * {@code MIX} 로 덮으면 화면이 판정 실패를 혼성 보컬로 말하게 된다.
+     *
+     * <p><b>곡을 찾을 때 리포지토리를 직접 쓰지 않는다.</b>
+     * {@code musicRepository.findById} 는 소프트 삭제된 곡도 돌려주므로, 서버에서
+     * 지운 곡의 분석 결과가 조용히 다시 붙는다(`deleteMusic` 은 행을 지우지 않는다).
+     * {@code requireAlive} 는 살아 있는 곡만 주고, 삭제된 곡이면 404 가 아니라
+     * 410 Gone 이다 — 분류({@code MusicClassificationServiceImpl})·가사·구간과
+     * 같은 방식이다.
      */
     @Override
     @Transactional
     public MusicAnalysisBulkResponse replaceAnalysis(int musicId, MusicAnalysisRequest request) {
-        Music music = musicRepository.findById(musicId)
-            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+        Music music = musicService.requireAlive(musicId);
 
         MusicAnalysis existing = musicAnalysisRepository.findById(musicId).orElse(null);
         boolean replaced = existing != null;

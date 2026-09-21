@@ -47,11 +47,22 @@ public class MusicSectionAnalysisMood {
 
     /**
      * 분위기
+     *
+     * <p><b>필드 이름이 복합키 구성 요소(`moodCodeId`)와 같으면 안 된다.</b> 관리자 화면은
+     * 임베디드 식별자의 구성 요소를 바깥으로 펼쳐 **이름을 키로** 담는데, 연관 필드가 같은
+     * 이름을 쓰면 나중에 담는 쪽이 앞의 것을 조용히 덮어쓴다. 그러면 펼쳐 둔 구성 요소의
+     * 리플렉션 통로가 사라져 관리자 조회가
+     * `IllegalArgumentException: Can not get ... field ... on ...Id` 로 500 이 된다
+     * (S15P21A204-387). 여기서는 이름을 바꾸는 것으로 막고, 같은 부류가 다시 생기지 않도록
+     * `AdminResourceRegistry` 가 기동 시 이름 충돌을 검사한다.
+     *
+     * <p>`@MapsId("moodCodeId")` 의 인자는 **식별자 구성 요소 이름**이라 그대로 둔다 —
+     * 관계 필드 이름과 무관하다.
      */
     @MapsId("moodCodeId")
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "mood_code_id", nullable = false)
-    private Code moodCodeId;
+    private Code moodCode;
 
     @Embeddable
     @Getter

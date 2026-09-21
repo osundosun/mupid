@@ -398,6 +398,7 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 ### 13. 취향 리포트 · MuBTI — ✅ 구현
 
 `GET /api/v1/report?date=YYYY-MM-DD` · 화면 연결까지 끝났다.
+여러 날을 한 번에 받는 `GET /api/v1/report/daily?from=&to=` 가 S15P21A204-379 에서 더해졌다.
 
 막고 있던 것은 **API 서버에 ClickHouse 조회 계층이 없다**는 것이었다. 리포트가
 그 첫 사용처가 됐다 — `analytics/repository/ListenAnalyticsRepository`. 서비스
@@ -417,6 +418,13 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 - **기간은 일간뿐이다.** 원래 이 항목은 `period=week|month|year&offset=N` 을
   적어 두었지만, 화면이 실제로 쓰는 것은 하루치다. 채우지 않을 파라미터를
   미리 열면 계약이 잘못 굳는다.
+  > 2026-09-20 (S15P21A204-379): **주·월 "집계" 는 여전히 없다.** 다만 이미 있는 일별
+  > 리포트를 **여러 날 묶어 주는** `GET /api/v1/report/daily?from=&to=` 가 더해졌다.
+  > 주간 MUBTI 대화상자가 일곱 날을 그리면서 요청을 날마다 따로 보내고 있었다
+  > (`listening-calendar.tsx` 의 `CONCURRENCY = 3`) — 스냅샷 없는 지난 날짜는 그때마다
+  > ClickHouse 를 다시 때렸다. 위 문장의 뜻(채우지 않을 `period` 를 열지 않는다)은
+  > 그대로다: 늘어난 것은 기간의 **단위**가 아니라 **묶음**이다.
+  > 규칙·상한·오류는 `domain/mubti-report.md` §2-A 와 `api/docs/Report/` 참고.
 - **`mubti` 표 16행은 기동 때 `BootstrapRunner` 가 채운다** (S15P21A204-344).
   `image_file_id` 가 NOT NULL 이라 행만 넣을 수 없어 손으로 넣던 `seed-mubti.sql`
   은 없앴다. 비어 있으면 503 이라는 점은 그대로다.

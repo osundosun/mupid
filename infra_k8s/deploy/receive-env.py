@@ -100,7 +100,14 @@ def main():
         fail("필수 키가 빠졌다: " + ", ".join(missing), 64)
     # 기능 하나가 죽을 뿐 서비스는 뜨는 것들. 막지 않고 알리기만 한다 —
     # 여기서 실패시키면 키를 넣기 전까지 master 푸시가 계속 빨개진다.
-    for name, effect in (("MUPID_AI_GMS_KEY", "/api/v1/ai/chat 이 503"),):
+    #
+    # 목록에 있는 키는 "비어 있어도 정상" 이 아니라 **"비면 이 기능이 조용히
+    # 꺼진다"** 는 뜻이다. 배포 로그에 남겨야 운영자가 상태를 알 수 있다 —
+    # 조용한 비활성은 "왜 알림이 안 오지" 로 한참 뒤에 드러난다.
+    for name, effect in (
+        ("MUPID_AI_GMS_KEY", "/api/v1/ai/chat 이 503"),
+        ("MUPID_MATTERMOST_WEBHOOK_URL", "피드백 Mattermost 알림이 꺼진다(접수는 정상)"),
+    ):
         if not values.get(name):
             print(f"경고: {name} 이 비어 있다 — {effect}")
 

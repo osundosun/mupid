@@ -27,6 +27,16 @@ export {
 } from './media-session';
 export { watchSafeArea, type SafeArea } from './safe-area';
 export {
+  CRASH_MESSAGE_LIMIT,
+  CRASH_SESSION_LIMIT,
+  CRASH_STACK_LIMIT,
+  currentRoute,
+  describe,
+  reportCrash,
+  watchCrashReports,
+  type CrashPayload,
+} from './crash';
+export {
   checkForUpdates,
   checkForUpdatesNow,
   installNativeUpdate,

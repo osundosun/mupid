@@ -170,9 +170,10 @@ class PlaylistDetailAndDeleteTest {
         assertNotNull(playlist.getDeletedAt());
         assertTrue(playlistService.getPlaylistAll(owner.getUserId()).isEmpty());
 
+        /* 삭제된 목록은 410 이다 — 없는 목록(404)과 구분한다 (2026-09-18 변경). */
         BusinessException e = assertThrows(BusinessException.class,
             () -> playlistService.getPlaylist(owner.getUserId(), playlist.getPlaylistId()));
-        assertEquals(PlaylistErrorCode.PLAYLIST_NOT_FOUND, e.getErrorCode());
+        assertEquals(PlaylistErrorCode.PLAYLIST_GONE, e.getErrorCode());
     }
 
     @Test
@@ -191,7 +192,7 @@ class PlaylistDetailAndDeleteTest {
     }
 
     @Test
-    @DisplayName("두 번 삭제하면 두 번째는 404 다")
+    @DisplayName("두 번 삭제하면 두 번째는 410 이다 — 없는 것(404)과 구분한다")
     void rejectsDoubleDelete() {
         playlistService.deletePlaylist(owner.getUserId(), playlist.getPlaylistId());
         em.flush();
@@ -199,7 +200,8 @@ class PlaylistDetailAndDeleteTest {
         BusinessException e = assertThrows(BusinessException.class,
             () -> playlistService.deletePlaylist(owner.getUserId(), playlist.getPlaylistId()));
 
-        assertEquals(PlaylistErrorCode.PLAYLIST_NOT_FOUND, e.getErrorCode());
+        /* 2026-09-18 변경: `deleted_at` 이 찍힌 행은 남아 있으므로 Gone 이다. */
+        assertEquals(PlaylistErrorCode.PLAYLIST_GONE, e.getErrorCode());
     }
 
     @Test

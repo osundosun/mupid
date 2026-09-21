@@ -89,6 +89,53 @@
 - **해결**: 이 컬럼은 NULL 허용이어야 한다. 매핑을 `nullable = true` 로 고치는 편이 맞다. `ddl-auto: none` 이라 매핑만으로는 드러나지 않지만, 이 매핑을 기준으로 테이블을 NOT NULL 로 만들면 발송이 깨진다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/email/entity/EmailVerification.java:82-83`
 
+### 410 이 소비자를 깨뜨린다 — 서버·배치를 함께 고쳐야 한다 (2026-09-18)
+
+- **원인**: 삭제 자원을 `410 Gone` 으로 바꾸면 **그 상태코드를 읽는 쪽을 함께 고쳐야 한다.** `music_preprocessing` 의 `orphans.scan_streams` 가 `except MupidApiError` 안에서 `if e.status == 404:` 로만 삭제를 판정하고 있었다.
+- **영향**: 서버 변경 뒤 이 분기가 **영원히 죽은 코드**가 됐다. 410 이 `report["errors"]` 로 올라가 **삭제된 곡이 스캔 오류처럼 보고**된다 — 실제로는 정상적으로 감지한 것인데도. 그 자리에서 곡별 보고(`deleted_songs`)에도 안 들어가 스트림 잔재 단서가 사라졌다.
+- **교훈**: 이 저장소의 다른 소비자와 달리 **배치는 상태코드가 계약의 일부다** — `api_client` 는 4xx 를 재시도하지 않고 그대로 올린다(`e.code < 500` 이면 즉시 raise). 그래서 서버의 상태코드 변경은 배치에 곧바로 도달한다. 프런트는 404/410 을 분기하지 않아 무영향이었지만, **분기하지 않는다는 사실을 확인하고 나서야** 무영향이라고 말할 수 있었다.
+- **해결**: `if e.status in (404, 410):` 로 넓히되 **뜻을 갈랐다** — 410 은 `deleted_songs` 에 "서버에서 삭제됨" 으로, 404 는 "등록 기록에 없는 번호" 로. 둘 다 스트림을 물어볼 수 없다는 점은 같지만 사람이 할 일이 다르다(410 은 곡을 되살릴지 정해야 하고, 404 는 `registered.json` 이 틀렸다).
+- **함께 고친 것**: `_report_deleted_songs` 가 두 출처의 항목을 받는데 `stream_ids` 키를 가정하고 있어, 410 자리에서 넣은 항목이 오면 `KeyError` 로 **보고하다 배치가 죽었다.** `row.get("stream_ids") or []` 로 바꿨다 — 보고는 배치를 망치지 않는다.
+- **검증**: `OrphanScanGoneContractTest` 3건 — 410 은 삭제로, **404 는 삭제로 세지 않는다**, 살아 있는 곡은 그대로 조회한다. 가드를 `== 404` 로 되돌리면 첫 건이 실패한다(확인함). 배치 전체 117건 통과.
+- **근거**: `music_preprocessing/src/music_preprocessing/orphans.py:102`, `music_preprocessing/tests/test_server_audit.py`
+
+### 410 을 만들었는데 소비자가 못 써서 절반만 이득이었다 (해소됨 2026-09-18)
+
+- **원인**: 위에서 `410 Gone` 을 만들어 놓고 **배치가 그 신호를 쓰지 않았다.** 배치에는 곡 단건 조회 자체가 없었고(`MupidClient.get_music` 부재), 삭제 판정은 `GET /api/v1/music` **목록에서 빠졌는가** 하나뿐이었다. 그래서 서버가 410 을 주기 시작해도 "삭제됨" 과 "등록 기록이 낡음" 이 여전히 구분되지 않았다 — 둘 다 "목록에 없음" 이다.
+- **영향**: 사람이 할 일이 갈리는데 알 길이 없었다. 삭제면 그 곡을 포기해야 하고(`repair-track` 으로 기록 정리), 기록이 낡은 것이면 곡 번호를 다시 맞춰야 한다. 게다가 1060곡 전부가 빠지는 상황(DB 재기동)이 **조용히 종료 0** 으로 끝날 수 있었다. 게다가 내가 `audit.py` docstring 에 "구분은 곡별로 한다" 고 적어 두었는데 **그 코드가 없었다** — 문서가 코드보다 앞서 나간 상태였다.
+- **해결**: 목록에 없던 곡만 단건 조회한다. **곡마다 부르지 않는다** — 목록에 있던 곡은 이미 살아 있음이 확인됐고, 1060회가 아니라 삭제·노후화가 확인된 몇 회다. 표식이 이미 붙은 곡도 다시 묻지 않는다(지난 판정이 파일에 있다).
+  - 410 → `verdict: "deleted"` / 404 → `verdict: "stale_record"` 가 표식과 보고서·CLI 에 남는다.
+  - 단건 조회가 **200** 을 주면(목록과 어긋났을 뿐) **표식을 붙이지 않는다** — 붙이면 멀쩡한 곡을 영영 건너뛴다.
+  - 인증 실패·서버 장애는 **판단을 보류**하고 올린다. 삭제로 단정하면 사람이 멀쩡한 곡을 걷어낸다.
+  - `repair_one` 도 목록 대신 단건 조회를 쓴다 — 곡 하나를 고치는 자리라 요청 한 번이다. 404 면 "걷어냅니다" 대신 곡 번호를 맞추라고 안내한다(안내가 틀리면 사람이 멀쩡한 기록을 버린다).
+- **테스트 더블이 실제 클라이언트와 달라 버그를 가렸다**: 더블이 삭제된 곡에 **예외**를 던지도록 돼 있었는데, 실제 `MupidClient.get_music` 은 410 을 자기 안에서 흡수해 **`None`** 을 준다. 그래서 부르는 쪽의 `None` 처리가 한 번도 실행되지 않았고, 삭제된 곡이 **판정 없이 지나가는** 실제 버그가 초록불 뒤에 숨었다. 더블을 실제 계약에 맞추고, `_request` 만 스텁으로 바꿔 **실제 `MupidClient.get_music` 을 실행하는 시험**을 따로 두었다.
+- **검증**: 배치 126건 통과. 분류 단계를 끄면 5건이 실패한다(확인함). 실제 HTTP 하네스 2개 통과 — `verify_batch_survives_deleted_song` 이 `verdict: "deleted"` 와 단건 조회 발생을 단언하고, 삭제된 곡에 **쓰기 요청은 0건**임을 유지한다.
+- **근거**: `music_preprocessing/src/music_preprocessing/audit.py`(`classify_server_missing`), `api_client.py`(`get_music`), `catalog.py`, `cli.py`, `music_preprocessing/tests/test_server_audit.py`
+
+### 삭제된 자원이 404 로 나가 "없다" 와 구분되지 않았다 (해소됨 2026-09-18)
+
+- **원인**: 소프트 삭제를 도입했는데 **응답 코드는 전부 `*_NOT_FOUND`(404) 그대로**였다. 삭제된 곡·아티스트·앨범·댓글·플레이리스트·회원이 "그런 자원이 없다" 와 똑같이 404 로 나갔다. 행이 남는데도 그 사실이 응답에 드러나지 않았다.
+- **영향**: 보낸 쪽이 둘을 구분할 수 없다 — 번호를 고쳐야 하는지(404) 그 자원을 포기해야 하는지(410) 를 모른다. 전처리 배치는 그래서 **등록 기록 1060곡을 목록 조회로 통째로 훑어** 삭제를 우회해야 했고(S15P21A204-399), 실제로 한 곡(T000957) 때문에 배치가 두 단계에서 실패했다.
+- **해결**: 도메인별 `*_GONE`(410) 을 새로 두고 판정을 **한 곳에 모았다.**
+  - `MusicService.requireAlive(int)` — 곡을 참조하는 모든 경로(가사·구간·분류·분석·댓글·반응·큐·스트림)가 이걸 쓴다. 아티스트·앨범도 같은 모양이다.
+  - 조회가 `isDeleted = false` 로 걸러 버리면 둘 다 `empty` 라, **행 자체를 보는 조회**(`findByMusicId` 등)를 따로 두고 그걸로 가른다.
+  - 스트림은 부모 곡이 삭제됐으면 `STREAM_NOT_FOUND` 가 아니라 `MUSIC_GONE` 이다 — 스트림 번호를 고치려 들면 안 된다.
+  - **권한 거절은 410 으로 바꾸지 않았다.** `PLAYLIST_ACCESS_DENIED`(403) 을 410 으로 옮기면 "존재하는 남의 플레이리스트" 를 캐내는 통로가 된다.
+- **응답에 캐시 지시자를 붙이지 않는다.** 410 은 보통 영구 캐시 대상인데 이 자원들은 되살아날 수 있다(서버 행과 배치 서버 원본이 남아 있다).
+- **검증**: `SoftDeleteGoneContractTest` — HTTP 로 410 + `X-Mupid-Error` 헤더를 확인하고, **없는 자원은 그대로 404, 살아 있는 자원은 200** 인지 함께 본다. 404/410 을 나누는 것이 요점이라 한쪽만 보면 의미가 없다.
+- **남은 404 (의도)**: `GlobalErrorCode.NOT_FOUND`(라우팅 없음), `CODE_NOT_FOUND`·`RECORD_NOT_FOUND`·`RESOURCE_NOT_FOUND`(삭제 개념 없음), `INVALID_VERIFICATION_ID`(만료·무효), `LYRIC_NOT_FOUND`·`CHUNK_NOT_FOUND`·`SECTION_NOT_FOUND`(자식 자체가 없는 게 정상인 경우가 많아 부모와 별개로 다룰지 미정).
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/music/service/MusicServiceImpl.java`(`requireAlive`), 각 `*ErrorCode.java`, `api/src/test/java/com/osundosun/mupid/api/music/SoftDeleteGoneContractTest.java`
+
+### 소프트 삭제된 곡에도 분류·분석이 쓰였다 (배치 경로, 해소됨 2026-09-18)
+
+- **원인**: `deleteMusic` 은 행을 지우지 않고 `is_deleted` 만 세운다([decision/0013](../decision/0013-soft-delete-policy.md)). 그런데 `MusicClassificationServiceImpl.replaceClassification` 과 `MusicAnalysisServiceImpl.replaceAnalysis` 가 `musicRepository.findById(musicId)` 를 써서 **`isDeleted` 를 보지 않았다.** `getMusic()`(`MusicServiceImpl.getMusic`)이 살아 있는 곡만 돌려주는데도 그 길을 쓰지 않았다.
+- **영향**: 전처리 배치가 `registered.json` 의 낡은 곡 번호로 보내면 **서버에서 사라진 곡의 분류·분석이 조용히 바뀐다.** 조회 경로는 전부 삭제된 곡을 걸러 주므로 화면·API 어디에도 흔적이 남지 않는다. 특히 `replaceClassification` 은 지우고 다시 넣으므로, 삭제된 곡의 기존 분류가 지워진다 — `PUT` 은 멱등이지만 그 곡이 되살아나면 옛 분류가 사라진 상태로 남는다.
+- **해결**: `musicService.getMusic(musicId)` 로 바꿨다. 가사(`LyricServiceImpl`)·구간(`MusicSectionServiceImpl`)이 이미 쓰던 방식이고, 같은 패키지의 `MusicCommentServiceImpl.addComment` 도 `.filter(found -> !Boolean.TRUE.equals(found.getIsDeleted()))` 로 같은 뜻을 지킨다. 이제 `MusicRepository` 를 직접 쓰는 곳은 전부 `isDeleted` 를 보거나(`existsByMusicIdAndIsDeletedFalse`) 삭제된 곡을 거르는 쿼리(`findTrackIds`)뿐이다.
+- **왜 놓쳤나**: 이 엔드포인트는 **배치만** 부른다(`@SystemRole`). 화면 흐름에는 삭제된 곡 번호를 보낼 일이 없어서 드러나지 않았다. 소프트 삭제를 도입할 때 조회 경로는 훑었지만 **쓰기 경로의 곡 조회**는 같은 점검 대상으로 보지 않았다.
+- **교훈**: 소프트 삭제를 다루는 코드에서는 "조회가 걸러 주니 괜찮다" 가 쓰기 경로에 대해서는 성립하지 않는다. **쓰기 경로일수록 대상이 살아 있는지 먼저 확인해야 한다** — 조회는 잘못된 결과를 보여 주는 데 그치지만, 쓰기는 남의 행을 지우거나 바꾼다.
+- **검증**: `MusicClassificationReplaceTest.rejectsSoftDeletedMusicAndLeavesNoRow` — 삭제된 곡이면 `MUSIC_NOT_FOUND` 이고, **지우기·넣기 어느 쪽도 일어나지 않아** 삭제 전의 분류 행이 그대로인지 본다. 가드를 되돌리면 이 테스트만 실패한다(확인함).
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/music/service/MusicClassificationServiceImpl.java:62`, `api/src/main/java/com/osundosun/mupid/api/music/service/MusicAnalysisServiceImpl.java:45`, `api/src/test/java/com/osundosun/mupid/api/music/MusicClassificationReplaceTest.java`
+
 ### 회원 탈퇴가 상태 전환이 아니라 행 삭제다 (정책 위반)
 
 - **원인**: 삭제 정책은 **soft delete** 다 ([decision/0013](../decision/0013-soft-delete-policy.md)). `UserStatus.WITHDRAW`("삭제된 사용자")가 있고 `UserRepository` 의 두 조회 메서드와 `AuthProvider.auth()` 가 모두 `…AndStatusNot(UserStatus.WITHDRAW)` 로 거르는 것도 그 전제 위에 있다. 그런데 `UserServiceImpl.deleteUser()` 는 `repository.delete(user)` 로 실제 행을 지운다(78-81행).

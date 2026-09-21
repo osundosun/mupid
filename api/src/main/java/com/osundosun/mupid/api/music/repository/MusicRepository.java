@@ -286,6 +286,17 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
         """)
     Optional<Music> findDetail(@Param("musicId") int musicId);
 
+    Optional<Music> findByMusicIdAndIsDeletedFalse(int musicId);
+
+    /**
+     * <b>삭제된 곡도</b> 찾는다. 살아 있는지 아닌지는 부르는 쪽이 판단한다.
+     *
+     * <p>"없다"(404)와 "지워졌다"(410)를 나누려면 행 자체가 있는지 먼저 봐야 한다.
+     * {@code findDetail}·{@code existsByMusicIdAndIsDeletedFalse} 는 삭제된 행을
+     * 걸러서 둘 다 {@code empty}/{@code false} 가 되므로 구분되지 않는다.
+     */
+    Optional<Music> findByMusicId(int musicId);
+
     List<Music> findByMusicIdInAndIsDeletedFalse(List<Integer> musicIds);
 
     /** 목록 표현에 필요한 연관까지 한 번에 끌어온다. 순서는 호출 쪽이 다시 잡는다. */
@@ -338,5 +349,42 @@ public interface MusicRepository extends JpaRepository<Music, Integer> {
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("UPDATE Music m SET m.likeCount = m.likeCount - 1 WHERE m.musicId = :musicId AND m.likeCount > 0")
     void decreaseLikeCount(@Param("musicId") int musicId);
+
+    /**
+     * 한 곡의 누적 재생 수를 <b>절대값으로</b> 덮어쓴다. {@code PlayCountBatch} 전용이다.
+     *
+     * <h2>왜 {@code + 1} 이 아니라 대입인가</h2>
+     *
+     * 좋아요({@code increaseLikeCount})와 다르다. 좋아요는 사용자 행동 한 건이 곧 증가분
+     * 하나라 더하는 것이 맞지만, 재생수는 <b>ClickHouse 집계가 정본</b>이다. 원천이
+     * 누적값을 들고 있으므로 MySQL 은 그것을 <b>옮겨 적는 사본</b>이다.
+     *
+     * <p>더하는 방식이었다면 두 번 돌 때 두 배가 되고, 이벤트가 유실됐을 때 그 손실이
+     * 영원히 남는다(원천에 다시 나타나도 이미 어긋난 값 위에 더해진다). 대입은 매번
+     * 원천으로 되돌리므로 <b>두 번 돌려도, 하루를 건너뛰어도, 이벤트가 늦게 도착해도</b>
+     * 값이 스스로 맞는다.
+     *
+     * <h2>값이 줄어드는 것도 정상이다</h2>
+     *
+     * {@code listen_events} 는 18개월 TTL 이고 {@code ReplicatedReplacingMergeTree} 라
+     * 중복 제거가 나중에 일어난다. 그래서 집계값이 지난번보다 <b>작아질 수 있다.</b>
+     * {@code GREATEST} 같은 것으로 큰 값을 유지하면 그 감소를 막아버려 원천과 갈린다 —
+     * 여기서는 그냥 덮어쓴다.
+     *
+     * <h2>음수 방어만 남긴다</h2>
+     *
+     * 곡이 지워져도 재생 로그에는 남으므로 그럴 일은 없지만, 집계가 비정상이어도 컬럼이
+     * 음수가 되지는 않게 막는다. 부르는 쪽이 이미 0 이상만 넘긴다.
+     *
+     * <h2>왜 등록 수정 쿼리와 달리 결과를 돌려주는가</h2>
+     *
+     * 갱신된 행 수를 돌려준다. 0 이면 <b>그런 곡이 없다</b>는 뜻이고(삭제된 곡의 재생
+     * 로그가 남아 있는 정상적인 경우), 배치는 그것을 실패가 아니라 별도 카운터로 센다.
+     * {@code increaseLikeCount} 처럼 {@code void} 로 두면 "대상이 없었다" 와 "갱신됐다" 가
+     * 구분되지 않아, 곡이 지워진 뒤로는 매일 조용히 아무 일도 안 하면서 성공으로 보인다.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Music m SET m.playCount = :playCount WHERE m.musicId = :musicId")
+    int updatePlayCount(@Param("musicId") int musicId, @Param("playCount") int playCount);
 
 }

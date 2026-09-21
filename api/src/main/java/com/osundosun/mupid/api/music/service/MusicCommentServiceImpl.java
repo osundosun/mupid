@@ -14,7 +14,6 @@ import com.osundosun.mupid.api.music.entity.MusicComment;
 import com.osundosun.mupid.api.music.error.MusicCommentErrorCode;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
 import com.osundosun.mupid.api.music.repository.MusicCommentRepository;
-import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.request.MusicCommentCreateRequest;
 import com.osundosun.mupid.api.music.request.MusicCommentUpdateRequest;
 import com.osundosun.mupid.api.music.response.MusicCommentPageResponse;
@@ -39,7 +38,9 @@ public class MusicCommentServiceImpl implements MusicCommentService {
     public static final int DEFAULT_PAGE_SIZE = 50;
 
     private final MusicCommentRepository repository;
-    private final MusicRepository musicRepository;
+    // 곡 생사를 가르는 판정은 `MusicService` 한 곳에 있다. 여기서 리포지토리를
+    // 직접 보면 404/410 을 서비스마다 베끼게 되고, 한쪽만 고쳐지면 조용히 갈린다.
+    private final MusicService musicService;
 
     @Override
     @Transactional(readOnly = true)
@@ -63,9 +64,8 @@ public class MusicCommentServiceImpl implements MusicCommentService {
 
     @Override
     public MusicCommentSummary addComment(User user, int musicId, MusicCommentCreateRequest request) {
-        Music music = musicRepository.findById(musicId)
-            .filter(found -> !Boolean.TRUE.equals(found.getIsDeleted()))
-            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+        // 삭제된 곡이면 404 가 아니라 410 이다.
+        Music music = musicService.requireAlive(musicId);
 
         MusicComment saved = repository.save(MusicComment.builder()
             .music(music)
@@ -93,17 +93,23 @@ public class MusicCommentServiceImpl implements MusicCommentService {
 
     private MusicComment requireOwn(User user, int commentId) {
         MusicComment comment = repository.findByMusicCommentIdAndIsDeletedFalse(commentId)
-            .orElseThrow(() -> new BusinessException(MusicCommentErrorCode.COMMENT_NOT_FOUND));
+            .orElseGet(() -> {
+                // 살아 있는 댓글이 없다. 없는 댓글(404)과 삭제된 댓글(410)을 가른다 —
+                // 조회가 `IsDeletedFalse` 로 걸러서 그대로는 둘 다 비어 있다.
+                if (repository.findByMusicCommentId(commentId).isPresent()) {
+                    throw new BusinessException(MusicCommentErrorCode.COMMENT_GONE);
+                }
+                throw new BusinessException(MusicCommentErrorCode.COMMENT_NOT_FOUND);
+            });
         if (!comment.getUser().getUserId().equals(user.getUserId())) {
             throw new BusinessException(MusicCommentErrorCode.COMMENT_FORBIDDEN);
         }
         return comment;
     }
 
+    /** 곡이 없으면 404, 삭제됐으면 410 이다. */
     private void requireMusic(int musicId) {
-        if (!musicRepository.existsByMusicIdAndIsDeletedFalse(musicId)) {
-            throw new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND);
-        }
+        musicService.requireAlive(musicId);
     }
 
     private MusicCommentSummary toSummary(MusicComment comment, User viewer) {

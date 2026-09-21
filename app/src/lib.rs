@@ -10,9 +10,19 @@
 mod assets;
 mod commands;
 mod config;
+// 예외 보고 (S15P21A204-383). JS 예외는 `commands::crash_report` 로 들어오고,
+// Rust 패닉은 `crash::install_panic_hook` 이 잡는다.
+mod crash;
+// 예외 보고의 SDK 다리 (S15P21A204-383 2단계, B안). Kotlin `CrashlyticsPlugin`
+// 을 등록하고 핸들을 `crash.rs` 에 넘긴다 — 부르는 쪽은 화면이 아니라
+// `crash.rs` 다.
+mod crash_native;
 mod db;
 mod http;
 mod image;
+// 진단 로그 (S15P21A204-353). `log` 는 파사드라 이 등록이 없으면 매크로가
+// 조용히 버려진다 — 그 20곳을 살린 것이 이 모듈이다. **내가 만들려던 것과
+// 같은 일이라 이쪽을 남기고 중복 구현을 만들지 않았다**(crash.rs 모듈 주석 참조).
 mod logging;
 mod media;
 mod store;
@@ -161,6 +171,10 @@ pub fn run() {
     // 조용히 버려진다 — 그러면 아래의 모든 진단이 사라진다(실제로 그랬다).
     // 무엇보다 먼저 불러야 그 뒤의 실패도 남는다.
     logging::init();
+    // 로거 **뒤에** 경고 이상을 예외 보고로도 흘려보내는 후크를 꽂는다
+    // (S15P21A204-383). 순서가 뒤바뀌면 꽂을 자리가 없어 조용히 아무 일도
+    // 일어나지 않는다 — 출력은 `logging.rs` 몫이고 여기서는 보고만 얹는다.
+    crash::install_log_bridge();
 
     // 기동을 한 줄 남긴다. **이 줄이 로거가 살아 있다는 증거다.**
     //
@@ -192,6 +206,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(media::init())
         .plugin(update_native::init())
+        // 예외 보고의 SDK 다리 (S15P21A204-383 2단계, B안). 이 플러그인의
+        // `setup` 이 **앱 `setup` 보다 먼저** 돈다(`app.rs` 의
+        // `initialize_plugins` → 그 다음 앱 `setup`) — 그래서 아래에서 패닉
+        // 훅을 걸 때는 이미 Crashlytics 싱크가 들어가 있다.
+        .plugin(crash_native::init())
         .register_asynchronous_uri_scheme_protocol(config::IMAGE_SCHEME, |ctx, request, responder| {
             serve_image(ctx.app_handle().clone(), request, responder);
         })
@@ -207,6 +226,30 @@ pub fn run() {
             let http_state = http::HttpState::new(&database)?;
             app.manage(database);
             app.manage(http_state);
+
+            // ── 예외 보고 (S15P21A204-383) ──────────────────────
+            // 순서가 있다.
+            //
+            //  1. 설치 식별자를 **먼저** 확정한다. 첫 보고에 이미 정해진 값이
+            //     실려야 앱을 껐다 켜도 같은 설치로 세어진다.
+            //  2. 그 다음 패닉 훅. 이 뒤에 나는 패닉은 전부 잡힌다.
+            //  3. 마지막으로 수집 루프.
+            //
+            // 셋 다 **키가 없으면 스스로 아무 일도 하지 않는다**(`crash.rs`).
+            // 기동 경로에 조건문을 두지 않은 이유가 그것이다 — 여기서
+            // `enabled()` 를 따로 물어보면 그 판단이 두 곳으로 갈라진다.
+            //
+            // **로거는 여기서 세우지 않는다.** 위 `run()` 의 첫 줄에서
+            // `logging::init()` 이 이미 세웠다(진단 로그 브리지가 거기 있다 —
+            // `logging.rs`). 여기서 다시 등록하면 두 번째 호출이 조용히 무시될
+            // 뿐이라 아무 일도 일어나지 않지만, 판단이 두 곳으로 갈라지지 않게
+            // 한 자리에만 둔다.
+            {
+                let database = app.state::<db::Db>();
+                crash::bind_install_id(&database);
+            }
+            crash::install_panic_hook();
+            crash::start_collector();
 
             // 창은 설정(`tauri.conf.json` 의 `create: false`)이 아니라 여기서
             // 만든다. 자산 응답의 헤더를 손볼 수 있는 자리가 여기뿐이기 때문이다.
@@ -239,6 +282,9 @@ pub fn run() {
             media::media_session_update,
             media::media_session_clear,
             commands::assets_status,
+            // 예외 보고 (S15P21A204-383) — Rust 는 훅으로, JS 는 이 커맨드로.
+            commands::crash_report,
+            commands::crash_report_status,
             // 자동 업데이트 (update.rs · update_net.rs)
             commands::update_status,
             commands::update_web,

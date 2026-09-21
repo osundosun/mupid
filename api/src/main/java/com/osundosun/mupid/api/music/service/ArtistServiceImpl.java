@@ -66,8 +66,8 @@ public class ArtistServiceImpl implements ArtistService {
     @Override
     @Transactional(readOnly = true)
     public ArtistSummary getArtistSummary(int artistId) {
-        return toSummary(repository.findDetail(artistId)
-            .orElseThrow(() -> new BusinessException(ArtistErrorCode.ARTIST_NOT_FOUND)));
+        // 없으면 404, 삭제됐으면 410 이다 (`requireAlive` 가 가른다).
+        return toSummary(requireAlive(artistId));
     }
 
     /** 다른 서비스(앨범 상세 등)도 같은 표현을 쓰도록 정적으로 둔다. */
@@ -81,11 +81,28 @@ public class ArtistServiceImpl implements ArtistService {
     @Override
     @Transactional(readOnly = true)
     public Optional<Artist> getArtist(int artistId) {
-        Artist artist = repository.findById(artistId).orElse(null);
+        Artist artist = repository.findByArtistId(artistId).orElse(null);
         if (artist == null || artist.getIsDeleted()) {
             return Optional.empty();
         }
         return Optional.of(artist);
+    }
+
+    /**
+     * 아티스트를 찾되 <b>왜 없는지</b>까지 가른다. 없으면 404, 삭제됐으면 410.
+     *
+     * <p>아티스트 삭제는 `is_deleted` 를 세우는 소프트 삭제라 행이 남는다
+     * (`deleteArtist`). 그래서 "그런 아티스트가 없다" 와 "지워졌다" 를 나눌 수 있다.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Artist requireAlive(int artistId) {
+        Artist artist = repository.findByArtistId(artistId)
+            .orElseThrow(() -> new BusinessException(ArtistErrorCode.ARTIST_NOT_FOUND));
+        if (artist.getIsDeleted()) {
+            throw new BusinessException(ArtistErrorCode.ARTIST_GONE);
+        }
+        return artist;
     }
 
     @Override
@@ -93,16 +110,15 @@ public class ArtistServiceImpl implements ArtistService {
         if (name == null || name.isBlank()) {
             return false;
         }
-        Artist artist = getArtist(artistId)
-            .orElseThrow(() -> new BusinessException(ArtistErrorCode.ARTIST_NOT_FOUND));
+        Artist artist = requireAlive(artistId);
         artist.setName(name);
         return true;
     }
 
     @Override
     public void deleteArtist(int artistId) {
-        Artist artist = getArtist(artistId)
-            .orElseThrow(() -> new BusinessException(ArtistErrorCode.ARTIST_NOT_FOUND));
+        // 이미 지워진 아티스트를 또 지우면 404 가 아니라 410 이다.
+        Artist artist = requireAlive(artistId);
         artist.setIsDeleted(true);
     }
     

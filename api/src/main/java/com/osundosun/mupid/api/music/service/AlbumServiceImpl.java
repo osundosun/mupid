@@ -80,8 +80,8 @@ public class AlbumServiceImpl implements AlbumService {
     @Override
     @Transactional(readOnly = true)
     public AlbumDetailResponse getAlbumDetail(int albumId) {
-        Album album = repository.findDetail(albumId)
-            .orElseThrow(() -> new BusinessException(AlbumErrorCode.ALBUM_NOT_FOUND));
+        // 없으면 404, 삭제됐으면 410 이다.
+        Album album = requireAlive(albumId);
         // 수록곡은 곡 목록과 같은 표현이다. 화면이 목록에서 쓰던 코드를 그대로 쓴다.
         List<Integer> trackIds = musicRepository.findTrackIds(albumId);
         return new AlbumDetailResponse(toSummary(album), assembler.byIds(trackIds));
@@ -98,17 +98,32 @@ public class AlbumServiceImpl implements AlbumService {
 
     @Override
     public Optional<Album> getAlbum(int albumId) {
-        Album album = repository.findById(albumId).orElse(null);
+        Album album = repository.findByAlbumId(albumId).orElse(null);
         if (album == null || album.getIsDeleted()) {
             return Optional.empty();
         }
         return Optional.of(album);
     }
 
+    /**
+     * 앨범을 찾되 <b>왜 없는지</b>까지 가른다. 없으면 404, 삭제됐으면 410.
+     *
+     * <p>앨범 삭제는 `is_deleted` 를 세우는 소프트 삭제라 행이 남는다
+     * (`deleteAlbum`). 그래서 "그런 앨범이 없다" 와 "지워졌다" 를 나눌 수 있다.
+     */
+    @Override
+    public Album requireAlive(int albumId) {
+        Album album = repository.findByAlbumId(albumId)
+            .orElseThrow(() -> new BusinessException(AlbumErrorCode.ALBUM_NOT_FOUND));
+        if (album.getIsDeleted()) {
+            throw new BusinessException(AlbumErrorCode.ALBUM_GONE);
+        }
+        return album;
+    }
+
     @Override
     public void updateAlbum(int albumId, AlbumUpdateRequest request) {
-        Album album = getAlbum(albumId)
-            .orElseThrow(() -> new BusinessException(AlbumErrorCode.ALBUM_NOT_FOUND));
+        Album album = requireAlive(albumId);
         if (request.artistId() != null) {
             Artist artist = artistService.getArtist(request.artistId())
                 .orElseThrow(() -> new BusinessException(ArtistErrorCode.ARTIST_NOT_FOUND));
@@ -124,8 +139,8 @@ public class AlbumServiceImpl implements AlbumService {
 
     @Override
     public void deleteAlbum(int albumId) {
-        Album album = getAlbum(albumId)
-            .orElseThrow(() -> new BusinessException(AlbumErrorCode.ALBUM_NOT_FOUND));
+        // 이미 지워진 앨범을 또 지우면 404 가 아니라 410 이다.
+        Album album = requireAlive(albumId);
         album.setIsDeleted(true);
     }
     

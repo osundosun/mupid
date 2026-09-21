@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated
@@ -50,6 +51,7 @@ from rich.progress import (
 from rich.table import Table
 
 from .api_client import MupidClient
+from .audit import ServerAuditError, repair_one
 from .batch import build_registrar, run_batch
 from .catalog import (
     CatalogError,
@@ -187,8 +189,18 @@ def catalog(
 
     with _progress_bar(console, show_progress and not console.is_jupyter) as bar:
         registrar = _registrar(cfg, dry_run, RichProgress(bar))
-        result = registrar.run(tracks)
+        # 서버에 없는 곡을 먼저 찾아 예외로 남긴다. 이걸 건너뛰면 지문이 같은 곡은
+        # 서버를 아예 안 부르므로 삭제된 곡을 영원히 모른다 (S15P21A204-399).
+        try:
+            audit = registrar.audit()
+        except CatalogError as e:
+            Console(stderr=True).print(f"[red]✖[/] {e}")
+            raise typer.Exit(1) from None
+        result = registrar.run(tracks, audit)
+        if audit is not None:
+            result["audit"] = audit.as_report()
 
+    _report_audit(console, result.get("audit"))
     table = Table(title="카탈로그 등록" + (" (dry-run)" if dry_run else ""), title_style="bold")
     table.add_column("대상")
     table.add_column("새로", justify="right")
@@ -207,6 +219,8 @@ def catalog(
             str(result[total]),
         )
     table.add_row("커버 업로드", str(result["covers_uploaded"]), "-", "-")
+    if result["tracks_exempt"]:
+        table.add_row("서버에 없어 건너뜀", "[yellow]-[/]", "[yellow]-[/]", str(result["tracks_exempt"]))
     console.print(table)
     if result["covers_missing"]:
         console.print(
@@ -504,6 +518,217 @@ def classify(
             " — 보고서의 `held` 를 확인하세요."
             " 원본으로 덮어쓰려면 --replace-existing."
         )
+
+
+def _report_audit(console: Console, audit: dict | None) -> None:
+    """서버 대조 결과를 화면에 남긴다. **누락 곡은 빠짐없이** 보여 준다.
+
+    첫 곡에서 멈추면 나머지를 알 수 없다는 것이 이 티켓의 요구사항이다
+    (`S15P21A204-399`).
+    """
+    if not audit:
+        return
+    missing = audit.get("missing") or []
+    mismatch = audit.get("title_mismatch") or []
+    if not missing and not mismatch:
+        return
+
+    if missing:
+        console.print(
+            f"[yellow]서버에 없는 곡 {len(missing)}개[/] "
+            f"(대조 {audit['checked']}곡 · 서버 {audit['server_total']}곡) — 건너뜁니다:"
+        )
+        verdicts = audit.get("verdicts") or {}
+        why = {
+            "deleted": "서버에서 삭제됨",
+            "stale_record": "서버에 그런 번호 없음 — 기록이 낡음",
+        }
+        for item in missing:
+            verdict = verdicts.get(item["track_id"])
+            console.print(
+                f"  · [yellow]{item['track_id']}[/] "
+                f"(music_id={item['music_id']}, {item['title']!r})"
+                + (f" — {why[verdict]}" if verdict in why else "")
+            )
+        # 왜 없는지에 따라 다음 사람이 할 일이 다르다. 판정별로 안내를 나눈다.
+        if any(verdicts.get(i["track_id"]) == "stale_record" for i in missing):
+            console.print(
+                "[dim]  번호가 어긋난 곡은 등록 기록을 다시 맞추세요: "
+                "`music-preprocessing repair-track <track_id>` (미리보기, "
+                "`--apply` 로 실제 반영).[/]"
+            )
+        if any(verdicts.get(i["track_id"]) == "deleted" for i in missing):
+            console.print(
+                "[dim]  서버에서 삭제된 곡인지 확인하려면: "
+                "SELECT music_id, is_deleted FROM music WHERE music_id=<번호>  ·  "
+                "원본을 지울지 곡을 되살릴지는 사람이 정합니다.[/]"
+            )
+        if not verdicts:
+            console.print(
+                "[dim]  서버에서 지워졌는지 확인하려면: "
+                "SELECT music_id, is_deleted FROM music WHERE music_id=<번호>  ·  "
+                "원본을 지울지 곡을 되살릴지는 사람이 정합니다.[/]"
+            )
+        console.print(
+            "[dim]  등록 기록에서 그 곡만 걷어내려면 "
+            "`music-preprocessing repair-track <track_id>`.[/]"
+        )
+
+    if audit.get("alive_but_unlisted"):
+        # 목록에 없는데 단건 조회는 살아 있다고 답한 곡. 표식을 붙이지 않았다.
+        console.print(
+            f"[yellow]곡 목록에는 없는데 살아 있는 곡 "
+            f"{len(audit['alive_but_unlisted'])}개[/] — 목록이 낡았을 수 있습니다. "
+            "표식을 붙이지 않았으니 다음 실행이 다시 봅니다: "
+            + ", ".join(i["track_id"] for i in audit["alive_but_unlisted"])
+        )
+    if mismatch:
+        console.print(
+            f"[red]곡명이 어긋난 곡 {len(mismatch)}개[/] — 등록 기록이 다른 곡을 "
+            "가리키고 있습니다. 분류 등록(PUT)이 엉뚱한 곡의 값을 지울 수 있어 "
+            "한 건도 쓰지 않았습니다:"
+        )
+        for item in mismatch:
+            console.print(
+                f"  · [red]{item['track_id']}[/] (기록 {item['title']!r} / "
+                f"서버 {item.get('server_title', item.get('server_music_ids'))!r})"
+            )
+    if audit.get("recovered"):
+        console.print(
+            f"[green]서버에 다시 나타난 곡 {len(audit['recovered'])}개[/] — "
+            "예외 표식을 지웠습니다: " + ", ".join(audit["recovered"])
+        )
+
+
+@app.command("repair-track")
+def repair_track(
+    track_id: Annotated[
+        str,
+        typer.Argument(help="고칠 곡. 예: T000957"),
+    ],
+    config: ConfigOpt = None,
+    api_base_url: Annotated[
+        str | None, typer.Option(help="Mupid API 루트", show_default=False)
+    ] = None,
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="실제로 고친다. 없으면 무엇을 할지만 보여 준다"),
+    ] = False,
+    log_file: LogFileOpt = None,
+    no_log_file: NoLogOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """등록 기록에서 곡 하나만 걷어내거나 다시 맞춘다.
+
+    `registered.json` **전체를 지우지 않는다.** 서버에서 사라진 곡 하나 때문에
+    1060곡의 등록 결과를 버리면 전부 다시 만들게 된다.
+
+    서버에 그 곡이 없는 경우:
+
+    - 그 곡의 `catalog.tracks` 항목과 청킹 기록(`tracks`)을 걷어낸다.
+      그래야 다음 실행이 그 곡을 "모르는 채" 시작하지 않는다.
+    - 예외 표식도 함께 지운다 — 등록 기록 자체가 없으면 표식이 가리킬 것이 없다.
+    - 딸린 스트림 번호를 보여 준다. 조회로는 확인할 수 없다(곡이 없으면
+      `GET /music/{id}/stream` 이 410 이다) — `registered.json` 에 남은 기록이다.
+
+    서버에 그 곡이 있는 경우:
+
+    - 낡은 매핑만 그 곡 기준으로 다시 맞춘다(`PATCH`).
+
+    **원본 오디오·메타데이터 파일은 건드리지 않는다.** 서버 곡을 되살릴지
+    주피터의 원본을 지울지는 사람이 정한다.
+    """
+    console = _start("repair-track", log_file, no_log_file, config, verbose)
+    try:
+        cfg = ChunkConfig.from_file(str(config)) if config else ChunkConfig()
+        if api_base_url:
+            cfg.api_base_url = api_base_url
+    except (OSError, TypeError, ValueError) as e:
+        Console(stderr=True).print(f"[red]✖[/] {e}")
+        raise typer.Exit(1) from None
+
+    if not cfg.api_base_url:
+        Console(stderr=True).print(
+            "[red]✖[/] api_base_url 이 필요합니다 — 서버 상태를 봐야 고칠 수 있습니다."
+        )
+        raise typer.Exit(1)
+
+    if not re.fullmatch(r"T\d{6}", track_id):
+        # 오타를 그대로 받아 넘기면 엉뚱한 곡을 고친다. 형식을 먼저 막는다.
+        Console(stderr=True).print(f"[red]✖[/] 곡 ID 형식이 아닙니다: {track_id!r} (예: T000957)")
+        raise typer.Exit(1)
+
+    registry = Registry(cfg.api_registry_log)
+    try:
+        client = _client(cfg)
+        summary = repair_one(client, registry, track_id, apply=apply)
+    except (CatalogError, ServerAuditError, OSError, RuntimeError, TypeError, ValueError) as e:
+        Console(stderr=True).print(f"[red]✖[/] {e}")
+        raise typer.Exit(1) from None
+
+    table = Table(title=f"곡 복구 {track_id}" + ("" if apply else " (미리보기)"), title_style="bold")
+    table.add_column("항목")
+    table.add_column("값")
+    why = {
+        "deleted": "서버에서 삭제됨 (410 Gone)",
+        "stale_record": "서버에 그런 곡 번호 없음 (404) — 기록이 낡음",
+    }
+    rows = [
+        ("서버에 있는가", "on_server"),
+        ("기록된 music_id", "music_id"),
+        ("기록된 곡명", "title"),
+        ("정리할 스트림", "stream_ids"),
+        ("걷어낼 청킹 기록", "chunk_entries"),
+        ("예외 표식", "exempt"),
+    ]
+    if summary.get("verdict") in why:
+        # 왜 없는지 — 410(삭제) 과 404(기록이 낡음) 는 다음에 할 일이 다르다.
+        rows.insert(1, ("왜 없는가", "verdict"))
+    for label, key in rows:
+        value = summary.get(key)
+        if key == "verdict":
+            value = why.get(value, value)
+        if isinstance(value, list):
+            value = ", ".join(str(v) for v in value) if value else "-"
+        table.add_row(label, str(value))
+    console.print(table)
+
+    if summary["on_server"]:
+        console.print(
+            "[green]서버에 있습니다.[/] 낡은 매핑만 다시 맞춥니다."
+            + ("" if apply else " [yellow]--apply[/] 를 주면 실제로 고칩니다.")
+        )
+    elif summary.get("verdict") == "stale_record":
+        # 404 — 서버가 이 번호를 모른다. 삭제된 것이 아니라 기록이 낡은 것이라
+        # 곡을 걷어내면 멀쩡한 등록 기록을 버린다.
+        console.print(
+            "[red]서버에 그런 곡 번호가 없습니다(404).[/] 삭제된 것이 아니라 "
+            "등록 기록의 곡 번호가 어긋난 것입니다 — 서버 곡 번호를 다시 맞추세요. "
+            "`registered.json` 의 `music_id` 를 고친 뒤 다시 돌리는 편이 "
+            "걷어내는 것보다 안전합니다."
+        )
+        if not apply:
+            console.print(
+                "  그래도 이 곡을 기록에서 걷어내려면 [yellow]--apply[/] 를 주세요."
+            )
+    else:
+        console.print(
+            "[yellow]서버에 없습니다.[/] 등록 기록에서 이 곡만 걷어냅니다 "
+            "(원본 파일은 그대로 둡니다)."
+        )
+        if summary["stream_ids"]:
+            console.print(
+                "[dim]  남은 스트림은 조회로 확인할 수 없습니다(곡이 없으면 "
+                "`GET /music/{id}/stream` 이 410). 정말 지우려면: "
+                + " ".join(f"DELETE /api/v1/stream/{sid}" for sid in summary["stream_ids"])
+                + "[/]"
+            )
+        if not apply:
+            console.print("  [yellow]--apply[/] 를 주면 실제로 고칩니다.")
+    if summary["changed"]:
+        console.print("[green]등록 기록을 고쳤습니다.[/]")
+    elif apply:
+        console.print("[dim]고칠 것이 없었습니다.[/]")
 
 
 @app.command()

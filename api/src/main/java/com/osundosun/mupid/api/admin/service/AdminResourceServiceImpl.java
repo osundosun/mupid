@@ -33,6 +33,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.PersistenceUnitUtil;
+import jakarta.persistence.Tuple;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Expression;
@@ -41,6 +42,7 @@ import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Path;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Selection;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -60,6 +62,19 @@ public class AdminResourceServiceImpl implements AdminResourceService {
      * 빈 문자열은 "필터 없음" 과 구분되지 않아서 따로 약속을 둔다.
      */
     private static final String NULL_FILTER = "__null__";
+
+    /**
+     * 필터 값이 이 접두사로 시작하면 쉼표로 이은 **목록 중 하나**(`IN`)로 본다 (S15P21A204-380-B).
+     *
+     * <p>타임라인의 구간-분위기 밴드가 이것을 쓴다. 분위기는 구간에 달려 있어서 곡 하나의
+     * 분위기를 고르려면 **그 곡의 구간 번호 여러 개**를 한 번에 걸어야 한다. 구간마다 한 번씩
+     * 부르면 구간 수만큼 질의가 붙어 그대로 N+1 이 된다.
+     *
+     * <p>`__null__` 과 같은 성격의 약속이다 — 값을 타입에 맞춰 바꾸기 전에 해석하므로,
+     * 문자열 컬럼에 이 접두사를 값으로 넣으려 하면 걸린다. 그런 값은 관리자 화면에서 쓰지
+     * 않는다는 판단이 `__null__` 과 같다.
+     */
+    private static final String IN_FILTER = "__in__:";
 
     /**
      * `count(*)` 에 테이블 이름을 끼워 넣기 전에 확인하는 모양.
@@ -105,7 +120,9 @@ public class AdminResourceServiceImpl implements AdminResourceService {
             meta.getCategory(),
             meta.isComposite(),
             meta.getIdFieldNames(),
-            meta.fields()
+            meta.fields(),
+            meta.getChildLinks(),
+            meta.getTimelineAxes()
         );
     }
 
@@ -132,37 +149,136 @@ public class AdminResourceServiceImpl implements AdminResourceService {
 
         CriteriaQuery<Object> query = builder.createQuery(javaType);
         Root<Object> root = query.from(javaType);
-        query.where(predicates(builder, root, meta, keyword, filters));
+        Predicate[] where = predicates(builder, root, meta, keyword, filters);
+        query.where(where);
         query.orderBy(order(builder, root, meta, sort, direction));
+
+        /*
+         * FK 자리에 함께 그릴 대표값과 썸네일을 **같은 질의로** 가져온다.
+         *
+         * 행마다 따로 물어보면 그대로 N+1 이라 목록이 수백 행일 때 죽는다. 값은 이미
+         * `order`·필터가 쓰는 LEFT JOIN 을 그대로 타고 올라가므로 질의 수가 늘지 않는다 —
+         * 목록 1 + COUNT 1 은 그대로다 (`AdminRowProjection`).
+         *
+         * 연관 필드가 없는 자원이거나 대표값·이미지가 없으면 투영이 비고, 그때는 예전과
+         * 똑같이 엔티티만 가져온다.
+         */
+        AdminRowProjection projection = AdminRowProjection.of(root, meta, registry);
+        boolean projected = !projection.selections().isEmpty();
 
         CriteriaQuery<Long> countQuery = builder.createQuery(Long.class);
         Root<Object> countRoot = countQuery.from(javaType);
         countQuery.select(builder.count(countRoot));
         countQuery.where(predicates(builder, countRoot, meta, keyword, filters));
 
-        List<Object> rows;
+        List<Map<String, Object>> content = new ArrayList<>(safeSize);
         long total;
         try {
-            rows = entityManager.createQuery(query)
-                .setFirstResult(safePage * safeSize)
-                .setMaxResults(safeSize)
-                .getResultList();
+            /*
+             * 투영이 있으면 질의를 **Tuple 로 따로 만든다.**
+             *
+             * 결과 타입이 엔티티인 질의에 `multiselect` 를 걸면 하이버네이트는 그 결과를
+             * 생성자로 만들려 든다 — `Cannot instantiate ... no constructor with signature`
+             * 로 기동 후 첫 조회가 죽는다. 결과 타입을 Tuple 로 선언해야 행이 값 묶음으로
+             * 온다. 그래서 조회가 두 갈래다: 있는 그대로 엔티티를 받거나, Tuple 로 받아
+             * 평평한 Map 으로 만들거나.
+             */
+            if (projected) {
+                CriteriaQuery<Tuple> tupleQuery = builder.createQuery(Tuple.class);
+                Root<Object> tupleRoot = tupleQuery.from(javaType);
+                tupleQuery.where(predicates(builder, tupleRoot, meta, keyword, filters));
+                tupleQuery.orderBy(order(builder, tupleRoot, meta, sort, direction));
+
+                // 투영은 **이 질의의 root** 로 세워야 한다. 위에서 세운 계획은 다른 root 의
+                // 것이라 여기 못 쓴다.
+                AdminRowProjection tupleProjection =
+                    AdminRowProjection.of(tupleRoot, meta, registry);
+
+                List<Selection<?>> selections = new ArrayList<>();
+                selections.add(tupleRoot);
+                selections.addAll(tupleProjection.selections());
+                tupleQuery.multiselect(selections);
+
+                List<Tuple> tuples = entityManager.createQuery(tupleQuery)
+                    .setFirstResult(safePage * safeSize)
+                    .setMaxResults(safeSize)
+                    .getResultList();
+
+                for (Tuple tuple : tuples) {
+                    Map<String, Object> flat = toRow(meta, tuple.get(0));
+                    tupleProjection.attach(tuple, flat);
+                    content.add(flat);
+                }
+            } else {
+                List<Object> rows = entityManager.createQuery(query)
+                    .setFirstResult(safePage * safeSize)
+                    .setMaxResults(safeSize)
+                    .getResultList();
+                for (Object row : rows) {
+                    content.add(toRow(meta, row));
+                }
+            }
             total = entityManager.createQuery(countQuery).getSingleResult();
         } catch (PersistenceException e) {
             throw queryFailed(meta, e);
         }
 
-        List<Map<String, Object>> content = new ArrayList<>(rows.size());
-        for (Object row : rows) {
-            content.add(toRow(meta, row));
-        }
         return AdminRowPageResponse.of(content, safePage, safeSize, total);
     }
 
     @Override
     public Map<String, Object> get(String resource, String id) {
         AdminResourceMeta meta = require(resource);
-        return toRow(meta, findOrThrow(meta, id));
+        return attachProjection(meta, findOrThrow(meta, id));
+    }
+
+    /**
+     * 단건 조회에 FK 부가값을 붙인다.
+     *
+     * <p>목록과 **같은 규칙**을 쓴다. 목록에서만 대표값이 나오고 단건에서는 안 나오면
+     * 화면이 갈라진다. 한 행짜리라 질의가 한 번 더 도는 값은 싸다 (N+1 이 아니다).
+     *
+     * <p>투영 계획은 `root.join(...)` 을 부르며 만들어지므로 **그 질의의 root 로** 세워야
+     * 한다. 그래서 계획을 재사용하지 않고 여기서 다시 세운다.
+     */
+    private Map<String, Object> attachProjection(AdminResourceMeta meta, Object entity) {
+        Map<String, Object> row = toRow(meta, entity);
+        if (hasNoRelation(meta)) {
+            return row;
+        }
+
+        @SuppressWarnings("unchecked")
+        Class<Object> javaType = (Class<Object>) meta.getJavaType();
+
+        Object id = read(meta.getIdMember(), entity);
+        CriteriaBuilder builder = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Tuple> query = builder.createQuery(Tuple.class);
+        Root<Object> root = query.from(javaType);
+        query.where(builder.equal(root.get(meta.getIdAttributeName()), id));
+
+        AdminRowProjection projection = AdminRowProjection.of(root, meta, registry);
+        if (projection.selections().isEmpty()) {
+            return row;
+        }
+
+        List<Selection<?>> selections = new ArrayList<>();
+        selections.add(root);
+        selections.addAll(projection.selections());
+        query.multiselect(selections);
+
+        List<Tuple> found = entityManager.createQuery(query).setMaxResults(1).getResultList();
+        if (!found.isEmpty()) {
+            projection.attach(found.get(0), row);
+        }
+        return row;
+    }
+
+    /**
+     * 연관 필드가 하나도 없는 자원인가. 그런 자원에는 붙일 부가값 자체가 없다.
+     */
+    private static boolean hasNoRelation(AdminResourceMeta meta) {
+        return meta.getAttributes().values().stream()
+            .noneMatch(attribute -> attribute.getRelationType() != null);
     }
 
     /**
@@ -247,6 +363,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
                 Path<?> path = path(root, joins, meta, attribute);
                 if (NULL_FILTER.equals(filter.getValue())) {
                     predicates.add(builder.isNull(path));
+                } else if (filter.getValue() != null && filter.getValue().startsWith(IN_FILTER)) {
+                    predicates.add(inPredicate(builder, path, attribute, filter.getValue()));
                 } else {
                     predicates.add(builder.equal(path, AdminValueCodec.coerce(filter.getValue(), attribute.getValueType())));
                 }
@@ -258,6 +376,34 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         }
 
         return predicates.toArray(Predicate[]::new);
+    }
+
+    /**
+     * `IN` 필터 하나. 값은 `__in__:5,7,9` 처럼 **쉼표로 이은 목록**이다.
+     *
+     * <p>값이 하나도 없으면 **거짓 조건**을 만든다. 빈 `IN ()` 은 SQL 문법 오류라 질의 자체가
+     * 죽고, 조건을 빼면 "아무것도 안 걸린 곡의 전부" 가 나와 화면이 다른 곡의 데이터를 그린다.
+     * 둘 다 거짓말이므로 `disjunction()`(항상 거짓) 이 정직하다.
+     */
+    private Predicate inPredicate(
+        CriteriaBuilder builder,
+        Path<?> path,
+        AdminAttribute attribute,
+        String raw
+    ) {
+        List<Object> values = new ArrayList<>();
+        for (String part : raw.substring(IN_FILTER.length()).split(",")) {
+            if (part.isBlank()) {
+                continue;
+            }
+            values.add(AdminValueCodec.coerce(part, attribute.getValueType()));
+        }
+        if (values.isEmpty()) {
+            return builder.disjunction();
+        }
+        CriteriaBuilder.In<Object> in = builder.in(path);
+        values.forEach(in::value);
+        return in;
     }
 
     /**

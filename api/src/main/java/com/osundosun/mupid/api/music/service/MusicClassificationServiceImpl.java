@@ -21,7 +21,6 @@ import com.osundosun.mupid.api.music.mapping.entity.MusicGenre;
 import com.osundosun.mupid.api.music.mapping.entity.MusicMood;
 import com.osundosun.mupid.api.music.mapping.repository.MusicGenreRepository;
 import com.osundosun.mupid.api.music.mapping.repository.MusicMoodRepository;
-import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.request.MusicClassificationRequest;
 import com.osundosun.mupid.api.music.response.MusicClassificationResponse;
 
@@ -31,7 +30,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class MusicClassificationServiceImpl implements MusicClassificationService {
 
-    private final MusicRepository musicRepository;
+    private final MusicService musicService;
     private final CodeRepository codeRepository;
     private final MusicGenreRepository musicGenreRepository;
     private final MusicMoodRepository musicMoodRepository;
@@ -45,14 +44,22 @@ public class MusicClassificationServiceImpl implements MusicClassificationServic
      * <p>코드 번호는 <b>종류까지</b> 본다. 장르 자리에 분위기 번호를 넣어도 표에는
      * 들어간다. 둘 다 `codes` 를 가리키는 숫자라서. 그러면 온보딩 설문과 곡 분류가
      * 서로 다른 것을 보게 되고, 그 어긋남은 조회에서 드러나지 않는다.
+     *
+     * <p><b>곡을 찾을 때 리포지토리를 직접 쓰지 않는다.</b> 여기서
+     * {@code musicRepository.findById} 를 쓰면 <b>소프트 삭제된 곡에도 분류가
+     * 쓰인다</b> — 다른 조회·수정 경로는 전부 {@code isDeleted} 를 보는데 이
+     * 엔드포인트만 빠져 있었다(`deleteMusic` 은 행을 지우지 않고 플래그만 세운다).
+     * 배치가 등록 기록(`registered.json`)의 낡은 곡 번호로 보내면 서버에 없는 곡의
+     * 분류가 조용히 바뀐다. {@code getMusic} 은 살아 있는 곡만 돌려준다
+     * (`MusicServiceImpl.getMusic`). 같은 이유로 가사({@code LyricServiceImpl})와
+     * 구간({@code MusicSectionServiceImpl})도 같은 방식을 쓴다.
      */
     @Override
     @Transactional
     public MusicClassificationResponse replaceClassification(
         int musicId, MusicClassificationRequest request) {
 
-        Music music = musicRepository.findById(musicId)
-            .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
+        Music music = musicService.requireAlive(musicId);
 
         List<Integer> genreIds = distinct(request.genreCodeIds());
         List<Integer> moodIds = distinct(request.moodCodeIds());

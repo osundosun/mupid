@@ -14,6 +14,8 @@ import com.osundosun.mupid.api.ai.client.OpenAiTool;
 import com.osundosun.mupid.api.ai.client.OpenAiToolCall;
 import com.osundosun.mupid.api.ai.dto.AiChatTurn;
 import com.osundosun.mupid.api.ai.dto.AiRecommendedTrack;
+import com.osundosun.mupid.api.ai.entity.AiChatSession;
+import com.osundosun.mupid.api.ai.enumerate.AiMessageType;
 import com.osundosun.mupid.api.ai.error.AiErrorCode;
 import com.osundosun.mupid.api.ai.properties.AiProperties;
 import com.osundosun.mupid.api.ai.request.AiChatRequest;
@@ -37,14 +39,25 @@ import lombok.extern.slf4j.Slf4j;
  * 4. 본문이 돌아오면 그것이 답변이다. 그동안 모은 곡을 함께 돌려준다
  * </pre>
  *
- * <b>대화를 저장하지 않는다.</b> `ai_chat_sessions`·`ai_chat_messages` 엔티티가 이미 있지만
- * 아직 쓰지 않는다. 화면이 대화를 들고 있어 지금 당장 필요하지 않고, ERD 의
- * `ai_chat_sessions.ai_chat_session_id` 가 `AUTO_INCREMENT` 없이 `INT NOT NULL` 이라
- * (엔티티는 `GenerationType.IDENTITY`) 저장을 켜려면 DDL 부터 손봐야 하기 때문이다 —
- * `api/knowledge/decision/0011-jpa-manages-schema.md`.
+ * <b>대화를 저장한다.</b> `ai_chat_sessions`·`ai_chat_messages` 에 남긴다 —
+ * {@link AiChatHistoryService}. 한때는 저장하지 않았다. 화면이 대화를 들고 있어 지금
+ * 당장 필요하지 않았고, ERD 의 `ai_chat_sessions.ai_chat_session_id` 가
+ * `AUTO_INCREMENT` 없이 `INT NOT NULL` 이라(엔티티는 `GenerationType.IDENTITY`) 저장을
+ * 켜려면 DDL 부터 손봐야 했기 때문이다 — `api/knowledge/decision/0011-jpa-manages-schema.md`.
+ * 그 수기 보정이 `erd.sql` 에 반영돼 이제 남긴다 (S15P21A204-375).
  *
- * `@Transactional` 을 붙이지 않는다. 이 서비스가 하는 DB 작업은 곡 한 건 조회뿐인데,
- * 트랜잭션으로 감싸면 LLM 응답을 기다리는 수십 초 동안 커넥션을 쥐고 있게 된다.
+ * <h2>저장이 대화를 끊지 않는다</h2>
+ *
+ * <p>화면은 여전히 `history` 를 함께 보낸다. 저장은 그 위에 얹는 <b>기록</b>이지 대화의
+ * 전제가 아니다. 그래서 저장 실패는 로그로 남기고 대화는 이어 간다 — 기록을 못 남긴 것과
+ * 답변을 못 한 것은 사용자에게 전혀 다른 일이고, 후자를 전자의 대가로 치를 이유가 없다.
+ *
+ * <p><b>응답은 저장이 끝난 뒤에 만든다.</b> 그래야 클라이언트가 받은 세션 번호로 다음 턴을
+ * 이어 갈 때 그 세션의 첫 마디가 이미 DB 에 있다.
+ *
+ * `@Transactional` 을 붙이지 않는다. 이 서비스가 하는 DB 작업은 곡 한 건 조회와 대화 저장인데,
+ * 트랜잭션으로 감싸면 LLM 응답을 기다리는 수십 초 동안 커넥션을 쥐고 있게 된다. 저장만
+ * {@link AiChatHistoryService} 안에서 짧은 트랜잭션으로 돈다.
  */
 @Slf4j
 @Service
@@ -70,6 +83,7 @@ public class AiChatServiceImpl implements AiChatService {
     private final AiRecommendTool recommendTool;
     private final MusicRepository musicRepository;
     private final AiProperties props;
+    private final AiChatHistoryService history;
 
     @Override
     public AiChatResponse chat(User user, AiChatRequest request) {
@@ -89,10 +103,9 @@ public class AiChatServiceImpl implements AiChatService {
             OpenAiMessage answer = openAiClient.complete(messages, tools);
 
             if (!answer.hasToolCalls()) {
-                return new AiChatResponse(
-                    replyText(answer),
-                    recommendationId[0] == 0L ? null : recommendationId[0],
-                    List.copyOf(tracks.values()));
+                // 답이 나왔다. 여기서 저장하고 돌려준다 — 응답이 나간 뒤에 저장하면
+                // 저장을 못 한 턴의 답변은 화면에만 남고 기록에는 없다.
+                return save(user, request, replyText(answer), tracks, recommendationId[0]);
             }
 
             // 툴 결과 앞에는 그것을 요청한 assistant 메시지가 반드시 있어야 한다.
@@ -105,6 +118,44 @@ public class AiChatServiceImpl implements AiChatService {
         log.warn("툴 호출이 {}회를 넘겨 대화를 끝내지 못했다 user_id={}",
             props.maxToolRounds(), user.getUserId());
         throw new BusinessException(AiErrorCode.AI_TOOL_ROUND_EXCEEDED);
+    }
+
+    /**
+     * 대화 한 턴을 DB 에 남기고 응답을 만든다.
+     *
+     * <p><b>저장 실패가 대화를 끊지 않는다.</b> 화면은 `history` 를 함께 보내므로 대화는
+     * 저장과 무관하게 이어진다. 기록을 못 남긴 것과 답변을 못 한 것은 사용자에게 전혀 다른
+     * 일인데, 후자를 전자의 대가로 치를 이유가 없다. 대신 조용히 넘기지 않는다 — 여기서
+     * 아무것도 남기지 않으면 "기록이 안 쌓인다" 는 사실을 아무도 모른다.
+     *
+     * <p>세션은 요청에 `sessionId` 가 있으면 그 세션을, 없으면 새로 연다. 새로 열면 그
+     * 번호가 응답에 실려 화면이 다음 턴부터 이어 쓸 수 있다.
+     */
+    private AiChatResponse save(
+        User user,
+        AiChatRequest request,
+        String reply,
+        Map<Integer, AiRecommendedTrack> tracks,
+        long recommendationId
+    ) {
+        Integer sessionId = request.sessionId();
+        try {
+            if (sessionId == null) {
+                AiChatSession session = history.open(user, request.message());
+                sessionId = session.getAiChatSessionId();
+            }
+            // 사용자 말 → AI 답 순서로 붙인다. 순서는 서비스가 세션별로 이어 붙인다.
+            history.append(sessionId, AiMessageType.USER, request.message(), request.musicId());
+            history.append(sessionId, AiMessageType.AI, reply, request.musicId());
+        } catch (RuntimeException e) {
+            log.warn("대화 기록을 저장하지 못했다 user_id={} session_id={} — 대화는 그대로 답한다",
+                user.getUserId(), sessionId, e);
+        }
+        return new AiChatResponse(
+            reply,
+            sessionId,
+            recommendationId == 0L ? null : recommendationId,
+            List.copyOf(tracks.values()));
     }
 
     /**

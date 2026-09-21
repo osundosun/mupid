@@ -1,0 +1,254 @@
+info:
+  name: 곡 가사·구간 타임라인
+  type: http
+  seq: 11
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/admin/resource/music/{{MUSIC_ID}}/timeline"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MUSIC_ID
+      value: "1"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "music_id": 1,
+              "title": "1-Prelude-in-C-Major",
+              "axis_max_ms": 214000,
+              "has_time": true,
+              "bands": [
+                {
+                  "axis": {
+                    "label": "가사",
+                    "resource": "lyric",
+                    "kind": "POINT",
+                    "filter_field": "music",
+                    "via_field": null,
+                    "time_field": "timeMs",
+                    "start_field": null,
+                    "end_field": null,
+                    "title_fields": ["text"],
+                    "owns_time": true
+                  },
+                  "total": 12,
+                  "truncated": false,
+                  "rows": [
+                    {
+                      "lyricId": 91,
+                      "music": 1,
+                      "text": "첫 줄",
+                      "timeMs": 1000,
+                      "_id": "91",
+                      "_time_ms": 1000,
+                      "_labels": { "music": "1-Prelude-in-C-Major" }
+                    }
+                  ]
+                },
+                {
+                  "axis": {
+                    "label": "구간 분석",
+                    "resource": "musicSectionAnalysis",
+                    "kind": "RANGE",
+                    "filter_field": "music",
+                    "via_field": null,
+                    "time_field": null,
+                    "start_field": "startTimeMs",
+                    "end_field": "endTimeMs",
+                    "title_fields": ["sectionLabel", "index"],
+                    "owns_time": true
+                  },
+                  "total": 9,
+                  "truncated": false,
+                  "rows": [
+                    {
+                      "musicSectionAnalysisId": 7,
+                      "music": 1,
+                      "sectionLabel": "INTRO",
+                      "index": 0,
+                      "startTimeMs": 0,
+                      "endTimeMs": 26000,
+                      "externalId": "T000001#0",
+                      "_id": "7",
+                      "_start_ms": 0,
+                      "_end_ms": 26000
+                    }
+                  ]
+                },
+                {
+                  "axis": {
+                    "label": "구간-분위기",
+                    "resource": "musicSectionAnalysisMood",
+                    "kind": "RANGE",
+                    "filter_field": "musicSectionAnalysis",
+                    "via_field": "musicSectionAnalysis",
+                    "time_field": null,
+                    "start_field": "startTimeMs",
+                    "end_field": "endTimeMs",
+                    "title_fields": ["moodCode"],
+                    "owns_time": false
+                  },
+                  "total": 3,
+                  "truncated": false,
+                  "rows": [
+                    {
+                      "musicSectionAnalysisId": 7,
+                      "moodCodeId": 4,
+                      "moodCode": 4,
+                      "_id": "7,4",
+                      "_start_ms": 0,
+                      "_end_ms": 26000,
+                      "_parent_id": 7,
+                      "_labels": { "moodCode": "잔잔한" }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+  - name: 404 없는 곡
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_RECORD_NOT_FOUND",
+            "message": "요청한 레코드를 찾을 수 없습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 곡 가사·구간 타임라인
+
+  `GET /api/v1/admin/resource/music/{id}/timeline` · `ROLE_ADMIN`
+
+  곡 하나의 **가사·구간을 시간축 위에 가로로** 그리기 위한 응답입니다
+  (S15P21A204-380-B). 화면의 곡 행에 있는 **가사·구간** 버튼이 이걸 부릅니다.
+
+  ## 왜 자원 목록 조회로는 안 되는가
+
+  가사·구간 분석·구간-분위기는 **각각 별도 자원**입니다. 목록 조회(`GET /resource/{resource}`)
+  를 세 번 부르면 화면이 세 번 갈라지고, 무엇보다 **가로축의 기준(최대 시간)이 밴드마다
+  달라집니다** — 이 응답은 그 셋을 한 번에 주고 축을 하나로 정합니다.
+
+  다만 **행의 모양은 목록 조회와 같습니다**(`_id`·`_labels`·`_thumbnails`). 그래야 화면이
+  **같은 편집기**로 고칠 수 있습니다. 그래서 이 엔드포인트는 **조회 전용**이고,
+  저장은 기존 `PATCH /api/v1/admin/resource/{resource}/{id}` 를 그대로 씁니다.
+
+  ## 응답
+
+  | 필드 | 설명 |
+  | --- | --- |
+  | `music_id`·`title` | 어느 곡인가 |
+  | `axis_max_ms` | 가로축의 최대값(ms). **DB 에서 집계합니다** |
+  | `has_time` | 시간 정보가 하나라도 있는가. `false` 면 화면이 시간축 대신 세로로 나열합니다 |
+  | `bands[]` | 밴드(축) 목록. 가사·구간 분석·구간-분위기 셋 |
+
+  ### `axis_max_ms` 를 DB 에서 집계하는 이유
+
+  행에서 유도하면 밴드가 잘렸을 때 축이 함께 줄어들어, **같은 곡인데 밴드마다 눈금이
+  달라집니다.** 그러면 가사 밴드의 후렴 위치와 구간 밴드의 후렴 위치가 화면에서 어긋나
+  보입니다. 가사(`lyrics.time_ms`)와 구간(`music_section_analysis.end_time_ms`) 중
+  **큰 쪽**을 씁니다.
+
+  `has_time` 이 `false` 이면 `axis_max_ms` 는 `0` 입니다. **0 을 축으로 나누면 안 됩니다** —
+  모든 항목이 0% 에 뭉쳐 화면이 거짓말을 합니다.
+
+  ## 밴드 = 자원 하나
+
+  | 필드 | 설명 |
+  | --- | --- |
+  | `label` | 화면에 보일 이름 (`가사`) |
+  | `resource` | 자원 이름 (`lyric`). 항목을 고칠 때 `PATCH` 경로에 씁니다 |
+  | `kind` | `POINT`(점) · `RANGE`(막대) |
+  | `filter_field` | **그 곡으로 거르는 필드** (`music`) |
+  | `via_field` | 시간을 **부모에서 빌려올** 관계 (`musicSectionAnalysis`). 자기 시간이 있으면 `null` |
+  | `time_field`/`start_field`/`end_field` | 시간 컬럼 이름. **참고용**입니다 — 값은 아래 정규화 키로 옵니다 |
+  | `title_fields` | 항목에 보일 한 줄을 만들 필드들 |
+  | `owns_time` | 자기 행에서 시간을 읽을 수 있는가. `false` 면 `via_field` 의 시간을 빌립니다 |
+  | `total`·`truncated` | 전체 개수와 잘림 여부 |
+  | `rows[]` | 시간 오름차순 항목 |
+
+  **화면에 자원 이름이 없다는 규칙을 지키기 위해** 축을 데이터로 보냅니다. 화면이
+  `lyric`·`timeMs` 를 알고 있으면 자원이 늘 때마다 템플릿을 고쳐야 합니다.
+
+  ### 구간-분위기만 `owns_time: false` 인 이유
+
+  `music_section_analysis_mood` 에는 **시간 컬럼이 없습니다.** 분위기는 구간에 달리고,
+  시간은 부모인 `music_section_analysis` 에만 있습니다. 그래서 서버가 부모 구간의 시작·끝을
+  빌려 와 **같은 축 위에** 놓습니다 — 안 그러면 "어느 구간의 분위기인가" 가 화면에서
+  사라집니다.
+
+  빌려올 때 자식은 부모를 거쳐야 곡에 닿으므로, 서버는 부모(구간)를 먼저 받아 식별자를
+  모으고 자식을 **한 번의 `IN` 질의로** 고릅니다. 구간마다 부르면 구간 수만큼 질의가 붙어
+  그대로 N+1 입니다.
+
+  ## 시간 값은 정규화된 키로 옵니다
+
+  화면은 자원마다 다른 컬럼 이름(`timeMs` vs `startTimeMs`)을 **읽지 않습니다.**
+
+  | 키 | 무엇 | 언제 |
+  | --- | --- | --- |
+  | `_time_ms` | 시점 | `kind: POINT` |
+  | `_start_ms` | 구간 시작 | `kind: RANGE` |
+  | `_end_ms` | 구간 끝 | `kind: RANGE` |
+  | `_parent_id` | 어느 부모(구간)의 항목인가 | 빌린 시간을 쓸 때 |
+
+  값이 없으면 **키 자체를 만들지 않습니다**(`_labels` 와 같은 규칙). 화면이 `0` 과
+  "시간 없음" 을 구분할 수 있어야 합니다.
+
+  ## 저장
+
+  이 엔드포인트는 조회만 합니다. 항목을 고치려면 **목록 조회와 같은 경로**를 씁니다.
+
+  ```
+  PATCH /api/v1/admin/resource/lyric/91          { "text": "...", "timeMs": 1200 }
+  PATCH /api/v1/admin/resource/musicSectionAnalysis/7  { "startTimeMs": 0, "endTimeMs": 30000 }
+  ```
+
+  행의 키가 목록 조회와 같으므로(`_id` 가 그대로 있습니다) 화면이 같은 편집기를 씁니다.
+  저장 뒤에는 **타임라인을 다시 불러야** 합니다 — 저장했는데 화면이 옛 값을 보여주면
+  사용자는 저장 실패로 읽습니다.
+
+  ## N+1 을 내지 않습니다
+
+  밴드마다 질의가 한 번씩이고 그 수는 **행 수와 무관**합니다. 축 최대값은 `MAX()` 집계
+  2회, 곡 확인 1회입니다. 부모를 이미 받아 둔 밴드는 그 결과를 재사용합니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_RECORD_NOT_FOUND` | 404 | 그 곡이 없거나 지워짐 |
+  | `MUPID_RESOURCE_NOT_FOUND` | 404 | `music` 이 관리 대상이 아님 |
+  | `MUPID_RESOURCE_QUERY_FAILED` | 500 | 조회 자체가 실패. 사유는 서버 로그 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

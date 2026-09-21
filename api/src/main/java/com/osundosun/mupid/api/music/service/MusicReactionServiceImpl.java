@@ -38,6 +38,8 @@ public class MusicReactionServiceImpl implements MusicReactionService {
 
     private final MusicReactionRepository repository;
     private final MusicRepository musicRepository;
+    // 곡 생사 판정은 `MusicService` 한 곳에 모아 둔다 (404/410 이 서비스마다 갈리지 않게).
+    private final MusicService musicService;
     private final MusicSummaryAssembler assembler;
 
     @Override
@@ -119,9 +121,7 @@ public class MusicReactionServiceImpl implements MusicReactionService {
      * 올릴 때 영속성 컨텍스트에 낡은 값이 남는다.
      */
     private void requireMusic(int musicId) {
-        if (!musicRepository.existsByMusicIdAndIsDeletedFalse(musicId)) {
-            throw new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND);
-        }
+        musicService.requireAlive(musicId);
     }
 
 }

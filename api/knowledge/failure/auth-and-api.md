@@ -113,7 +113,7 @@
 ### JSON 파싱 실패가 400 이 아니라 404 로 나간다
 
 - **원인**: `GlobalErrorCode.NOT_READABLE_MESSAGE` 가 `HttpStatus.NOT_FOUND` 로 선언되어 있다. `HttpMessageNotReadableException` 이 이 코드로 매핑된다.
-- **해결**: 의도인지 실수인지는 코드에 근거가 없다. docs 의 오류 표들도 `MUPID_NOT_READABLE_MESSAGE | 404` 로 이 동작을 그대로 적어 두었으므로, 400 으로 바꾸면 이미 404 를 기대하는 클라이언트·문서가 깨진다.
+- **해결 (2026-09-18)**: **400 으로 정정했다.** 클라이언트가 보는 것은 오류 `code`(`MUPID_NOT_READABLE_MESSAGE`)이고 상태코드는 그 코드에 딸린 값이라, 코드를 보는 쪽은 영향이 없다 — 실제로 프런트·배치 모두 이 코드를 분기하지 않는다. Bruno 문서 8곳의 404 표기도 함께 고쳤다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/common/error/GlobalErrorCode.java:20`
 
 ### 오타 난 경로를 호출했는데 404 가 아니라 401 이 온다

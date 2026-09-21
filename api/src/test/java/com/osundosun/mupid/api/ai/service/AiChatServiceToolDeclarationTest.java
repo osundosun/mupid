@@ -1,6 +1,9 @@
 package com.osundosun.mupid.api.ai.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -19,6 +22,7 @@ import com.osundosun.mupid.api.ai.client.OpenAiClient;
 import com.osundosun.mupid.api.ai.client.OpenAiTool;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.dto.AiChatTurn;
+import com.osundosun.mupid.api.ai.entity.AiChatSession;
 import com.osundosun.mupid.api.ai.enumerate.AiMessageType;
 import com.osundosun.mupid.api.ai.properties.AiProperties;
 import com.osundosun.mupid.api.ai.properties.RecommenderProperties;
@@ -88,11 +92,22 @@ class AiChatServiceToolDeclarationTest {
         factory.setReadTimeout(props.readTimeout());
         return new AiRecommendToolImpl(new RecommenderClient(RestClient.builder()
             .baseUrl(props.isConfigured() ? props.baseUrl() : "http://recommender.invalid")
-            .requestFactory(factory).build(), props), null, null, null);
+            .requestFactory(factory).build(), props), null, null, null, null);
+    }
+
+    /**
+     * 대화 저장 대역. 이 테스트의 관심사는 **툴 선언**이라 저장은 곁가지다 —
+     * 세션 번호만 발급해 준다. 저장 자체는 {@code AiChatHistoryPersistTest} 가 실 DB 로 본다.
+     */
+    private AiChatHistoryService history() {
+        AiChatHistoryService stub = mock(AiChatHistoryService.class);
+        AiChatSession session = AiChatSession.builder().aiChatSessionId(1).build();
+        when(stub.open(any(), any())).thenReturn(session);
+        return stub;
     }
 
     private AiChatServiceImpl service(OpenAiClient ai, AiRecommendTool tool) {
-        return new AiChatServiceImpl(ai, tool, null, aiProps("x"));
+        return new AiChatServiceImpl(ai, tool, null, aiProps("x"), history());
     }
 
     @Test
@@ -102,7 +117,7 @@ class AiChatServiceToolDeclarationTest {
             gateway("잔잔한 곡을 찾아볼게요."), tool(DEAD_RECOMMENDER));
 
         AiChatResponse response = service.chat(User.builder().userId(15).build(),
-            new AiChatRequest("조금 더 잔잔한 곡", List.of(), null));
+            new AiChatRequest("조금 더 잔잔한 곡", List.of(), null, null));
 
         assertThat(response.reply()).isNotBlank();
         assertThat(gatewayRequests).hasSize(1);
@@ -132,7 +147,7 @@ class AiChatServiceToolDeclarationTest {
         AiChatServiceImpl service = service(gateway("그냥 대화만 할게요."), exploding);
 
         AiChatResponse response = service.chat(User.builder().userId(15).build(),
-            new AiChatRequest("안녕", List.of(), null));
+            new AiChatRequest("안녕", List.of(), null, null));
 
         assertThat(response.reply()).isNotBlank();
         // tools 가 빈 배열이어도 요청 자체는 나가야 한다.
@@ -146,7 +161,7 @@ class AiChatServiceToolDeclarationTest {
         AiChatServiceImpl service = service(gateway("네."), tool(DEAD_RECOMMENDER));
 
         service.chat(User.builder().userId(15).build(),
-            new AiChatRequest("추천", List.of(new AiChatTurn(AiMessageType.AI, "이전")), null));
+            new AiChatRequest("추천", List.of(new AiChatTurn(AiMessageType.AI, "이전")), null, null));
 
         String sent = gatewayRequests.getFirst();
         assertThat(sent).contains("저장한 순간");

@@ -58,18 +58,30 @@ class MediaSessionPlugin(private val activity: Activity) : Plugin(activity) {
         canNext = args.canNext,
       ),
     )
+    // 재생이 시작되면 오디오 포커스를 요청한다. 곡과 함께 오는 `playing` 이 곧
+    // 재생의 시작·정지다 — 화면이 재생 여부를 아는 유일한 쪽이다.
+    //
+    // 멈춤(`playing == false`)일 때는 **놓지 않는다.** 일시정지로 포커스를 놓으면
+    // 잠금화면의 재생 버튼으로 이어 들을 수 없다 (문서의 규칙이기도 하다).
+    // 놓는 자리는 재생을 닫을 때(`clear`)와 액티비티가 사라질 때뿐이다.
+    if (args.playing) AudioFocus.acquire(activity)
     invoke.resolve()
   }
 
   @Command
   fun clear(invoke: Invoke) {
     NowPlayingSession.clear(activity)
+    // 재생을 닫았다. 포커스도 함께 놓는다.
+    AudioFocus.abandon()
     invoke.resolve()
   }
 
   override fun onDestroy(activity: AppCompatActivity) {
     NowPlayingSession.onControl = null
     NowPlayingSession.release()
+    // 액티비티가 사라지면 소리도 사라진다. 쥐고 있던 포커스를 남겨 두면 다른
+    // 음악 앱이 "누가 쥐고 있다"고 여겨 재생을 못 시작할 수 있다.
+    AudioFocus.abandon()
   }
 
   private fun send(action: String, positionMs: Long) {

@@ -1,0 +1,162 @@
+info:
+  name: 문의 보내기
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/inquiries"
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+  body:
+    type: json
+    data: |-
+      {
+        "content": "홈에서 추천 곡이 바뀔 때마다 목록이 위로 튀어요. 스크롤 위치가 유지되면 좋겠습니다."
+      }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 접수 성공 (본문 없음)
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: text
+        data: ""
+  - name: 400 내용이 비었거나 공백만
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INQUIRY_CONTENT_REQUIRED",
+            "message": "문의 내용을 입력해 주세요.",
+            "error_details": null
+          }
+  - name: 400 1000자 초과
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INQUIRY_CONTENT_TOO_LONG",
+            "message": "문의 내용은 1000자를 넘을 수 없습니다.",
+            "error_details": null
+          }
+  - name: 401 토큰 없음/만료
+    response:
+      status: 401
+      statusText: Unauthorized
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_UNAUTHORIZED",
+            "message": "인증 정보가 유효하지 않거나 존재하지 않습니다.",
+            "errorDetails": null
+          }
+
+docs: |-
+  # 문의 보내기
+
+  `POST /api/v1/inquiries` · **인증 필요**
+
+  문의를 접수하고 관리자·문의자에게 알립니다. 응답은 **본문이 없습니다**(`200`).
+
+  ## 왜 본문이 없는가 — 계약의 출처
+
+  프런트가 그렇게 정했습니다. `frontend/lib/api/endpoints.ts`:
+
+  ```ts
+  inquiry: {
+    /** 문의 보내기. 내용만 받는다. 답변은 가입한 메일로 서버가 보낸다. */
+    send: (content: string) =>
+      client.request<void>({
+        method: 'POST',
+        path: '/api/v1/inquiries',
+        json: { content },
+        responseType: 'none',
+      }),
+  },
+  ```
+
+  `responseType: 'none'` 이라 성공 응답의 본문을 읽지 않습니다. 그래서 서버는
+  `ResponseEntity<Void>` 로 답하고 `message` 조차 만들지 않습니다 — 여기에
+  `BaseResponse` 를 만들면 서버만 규약을 어기게 됩니다.
+
+  > **실패 응답의 본문은 다릅니다.** `transport.ts` 는 2xx 가 아닌 응답을
+  > `responseType` 과 무관하게 JSON 으로 파싱합니다. 화면이 보여줄 문구가 거기 들어
+  > 있기 때문입니다. 그래서 **성공은 본문 없이, 실패는 메시지 있는 JSON** 이 맞습니다.
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 규칙 |
+  | --- | --- | --- | --- |
+  | `content` | string | ✅ | **trim 기준** 1~1000자. 공백만은 불가 |
+
+  **필드는 이것 하나입니다.** 이메일을 받지 않습니다 — 받는 사람 주소는 서버가 액세스
+  토큰의 주체에서 꺼내기 때문입니다. `email` 을 끼워 넣어도 무시됩니다(매핑할 필드가
+  없습니다).
+
+  상한 `1000` 은 화면의 `maxLength`(`inquiry-dialog.tsx:8` 의 `BODY_MAX`)와 같은
+  값입니다. 둘 다 있어야 계약입니다 — `maxLength` 는 UI 제약이라 curl 로 우회할 수
+  있고, 그래서 서버도 강제합니다.
+
+  ## 응답
+
+  **본문 없음.** 2xx 면 접수된 것입니다. 본문을 기대하지 마세요.
+
+  ## 오류
+
+  | 코드 | 상태 | 화면에 뜨는 문구 |
+  | --- | --- | --- |
+  | `MUPID_INQUIRY_CONTENT_REQUIRED` | 400 | 문의 내용을 입력해 주세요. |
+  | `MUPID_INQUIRY_CONTENT_TOO_LONG` | 400 | 문의 내용은 1000자를 넘을 수 없습니다. |
+  | `MUPID_NOT_READABLE_MESSAGE` | 400 | 요청 데이터 파싱에 실패했습니다. |
+  | `MUPID_UNAUTHORIZED` | 401 | 인증 정보가 유효하지 않거나 존재하지 않습니다. |
+  | `MUPID_METHOD_NOT_ALLOWED` | 405 | 지원하지 않는 요청 방식입니다. |
+
+  > ⚠️ **오류 문구가 사용자에게 그대로 보입니다.** 대화상자가
+  > `setError(e.message)` 로 그리기 때문입니다(`inquiry-dialog.tsx`). 그래서
+  > `MUPID_INVALID_REQUEST_BODY`("데이터가 잘못 입력되었습니다.") 를 쓰지 않았습니다 —
+  > 정확한 원인은 `error_details` 로 가는데 화면은 그것을 보지 않습니다. 대신 원인별로
+  > 문구를 나눠 **무엇을 고쳐야 하는지** 알려 줍니다. 내부 코드·스택·SQL 은 나가지
+  > 않습니다.
+
+  > 401 은 시큐리티 필터 단계에서 만들어져 **snake_case 가 적용되지 않습니다** — 이
+  > 응답만 `errorDetails` 로 나갑니다.
+
+  ## 메일·알림은 접수와 독립입니다
+
+  응답이 200 이라는 것은 **접수됐다**는 뜻이지 메일이 나갔다는 뜻이 아닙니다. 메일과
+  Mattermost 알림은 비동기로 나가고 각자 실패를 삼킵니다. Gmail 자격증명이 죽어 있거나
+  웹훅이 비어 있어도 200 입니다 — 발송 실패는 서버 로그에만 남습니다.
+
+  자세한 배경과 로컬에서 Gmail 이 반드시 실패하는 이유는 `Inquiry/folder.yml` 참고.

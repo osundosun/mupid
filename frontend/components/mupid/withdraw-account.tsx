@@ -11,13 +11,13 @@ export function WithdrawAccount({ model }: { model: MupidModel }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const pending = useRef(false);
-  return <div className="profile-withdraw" style={{ marginTop: 24 }}>
-    <button type="button" className="text-link" onClick={() => { setError(''); setOpen(true); }}>회원탈퇴</button>
+  return <div className="profile-withdraw">
+    <button type="button" className="secondary-button" onClick={() => { setError(''); setOpen(true); }}>회원탈퇴</button>
     <AlertDialog open={open} onOpenChange={value => { if (!pending.current) setOpen(value); }}>
-      <AlertDialogContent className="sky-dialog">
+      <AlertDialogContent className="sky-dialog withdraw-account-dialog">
         <AlertDialogHeader>
           <AlertDialogTitle>회원탈퇴를 진행할까요?</AlertDialogTitle>
-          <AlertDialogDescription>탈퇴하면 이 계정으로 로그인할 수 없으며, 계정에 저장한 음악과 활동 기록을 이용할 수 없어요.</AlertDialogDescription>
+          <AlertDialogDescription>탈퇴하면 이 계정으로 로그인할 수 없으며,<br />계정에 저장한 음악과 활동 기록을 이용할 수 없어요.</AlertDialogDescription>
         </AlertDialogHeader>
         {error && <p role="alert">{error}</p>}
         <AlertDialogFooter>

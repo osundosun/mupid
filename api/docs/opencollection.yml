@@ -42,6 +42,7 @@ docs:
     | `Storage` | 범용 이미지 스토리지 (프로필 사진 포함) |
     | `AI` | Mupid AI 대화 + AI 연동으로 **BE 에 요구하는 API** 4건 + AI 서버 내부 계약 2건 |
     | `Admin` | 관리자 화면이 쓰는 자원 CRUD·대시보드 (ADMIN 전용) |
+    | `Inquiry` | 사용자 피드백(문의) 접수 — 관리자·문의자 메일 + Mattermost 알림 |
     | `Actuator` / `Error` | 헬스체크, 오류 응답 확인 |
 
     ## 환경 변수

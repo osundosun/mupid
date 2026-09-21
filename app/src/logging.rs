@@ -33,10 +33,33 @@
 //! 줄바꿈은 **한 줄로 눌러 담는다.** 메시지에 개행이 있으면 logcat 에서 여러
 //! 줄로 쪼개져 grep·추적이 어려워진다.
 
+use std::sync::OnceLock;
+
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
 /// 이 앱의 로그임을 알아볼 표식. `adb logcat | grep mupid-` 로 걸러낸다.
 const PREFIX: &str = "[mupid-";
+
+/// 로그 한 줄이 나간 뒤에 부를 함수 — **예외 보고로 흘려보내는 자리.**
+///
+/// # 왜 여기(로거 안)에 후크가 있는가 (S15P21A204-383)
+///
+/// `log::set_logger` 는 프로세스당 **한 번만** 성공하고, `log::logger()` 는
+/// 현재 로거를 꺼내는 공개 API 를 주지 않는다(`&'static dyn Log` 를 그대로
+/// 준다 — `take()` 같은 것이 없다). 그래서 "이미 세워진 로거를 감싸는" 방법이
+/// 없다. 감싸려면 로거를 **세우는 쪽**(여기)이 그 자리를 열어 두는 수밖에 없다.
+///
+/// `app/src/crash.rs` 의 `install_log_bridge()` 가 이 자리에 함수를 꽂는다.
+/// **꽂지 않으면 아무 일도 일어나지 않는다** — 로그 출력은 그대로다.
+static ON_RECORD: OnceLock<fn(&Record)> = OnceLock::new();
+
+/// 로그 한 줄이 나갈 때마다 부를 함수를 등록한다. **한 번만 등록된다.**
+///
+/// 이 모듈은 그 함수가 무엇을 하는지 모른다 — 출력과 보고를 가르는 것이
+/// 요점이다(`crash.rs` 참고).
+pub fn forward_to(on_record: fn(&Record)) {
+    let _ = ON_RECORD.set(on_record);
+}
 
 /// `println!` 로 내보내는 로거. 상태를 갖지 않는다.
 struct StdoutLogger;
@@ -54,6 +77,12 @@ impl Log for StdoutLogger {
         // 개행을 눌러 담는다. 메시지 한 건이 logcat 에서 한 줄이어야 한다.
         let message = record.args().to_string().replace('\n', " ⏎ ");
         println!("{PREFIX}{}] {message}", record.level());
+
+        // **출력을 맡은 이 자리에서만 후크를 부른다.** 후크가 없으면 로그는
+        // 지금까지와 완전히 같다.
+        if let Some(hook) = ON_RECORD.get() {
+            hook(record);
+        }
     }
 
     fn flush(&self) {}

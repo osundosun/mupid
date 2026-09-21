@@ -359,7 +359,7 @@ src/main/resources/
 - ClickHouse `JdbcTemplate` 을 등록하면 MySQL `JdbcTemplate` 자동 설정이 사라진다. ClickHouse 풀을 `DataSource` 빈으로 올리면 헬스체크가 서비스 전체를 내린다.
 - 수정 로직에 `save()` 가 없다. `@Transactional` 을 떼면 조용히 저장이 안 된다.
 - 401/403 응답만 필드명이 camelCase 로 나가고, `error_details` 의 키는 snake_case 로 변환되지 않는다.
-- `GlobalErrorCode.NOT_READABLE_MESSAGE` 가 400 이 아니라 404 로 매핑돼 있다.
+- `GlobalErrorCode.NOT_READABLE_MESSAGE` 가 404 로 매핑돼 있었다 (**해소됨 2026-09-18**, 400 으로 정정).
 - permitAll 이 아닌 경로는 존재하지 않아도 404 가 아니라 401 이 먼저 온다.
 - `api/README.md` 의 디렉터리 구조 절은 초기 상태 그대로라 도메인 패키지가 없다. 구조 파악은 소스 트리로 한다.
 

@@ -42,6 +42,7 @@ import sys
 from urllib.parse import urlencode, urlsplit
 
 from .api_client import MupidClient
+from .audit import EXEMPT_KEY
 from .mood_approximations import MOOD_APPROXIMATIONS, SOURCE as APPROXIMATION_SOURCE
 
 TAXONOMY_NAME = "genre_mood_taxonomy.json"
@@ -52,6 +53,26 @@ PAGE_SIZE = 100
 
 def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+
+
+def _exempt_track_ids(registry_path) -> set[str]:
+    """`registered.json` 에서 서버에 없는 것으로 표시된 곡을 읽는다.
+
+    표식은 `catalog` 의 서버 대조(`audit`)가 남긴 것이다. 여기서 서버를 다시
+    훑지 않는 이유: 배치 한 바퀴에서 `catalog` 이 이미 같은 목록을 읽었고, 그
+    결과가 파일에 남아 있다. 없는 곡을 찾는 책임은 한 곳(`audit`)에 둔다.
+    """
+    if not registry_path:
+        return set()
+    path = Path(registry_path).expanduser()
+    if not path.exists():
+        return set()
+    catalog = read_json(path).get("catalog", {}).get("tracks", {})
+    return {
+        track_id
+        for track_id, entry in catalog.items()
+        if isinstance(entry, dict) and entry.get(EXEMPT_KEY)
+    }
 
 
 def build_snapshot(metadata_dir, registry, taxonomy):
@@ -214,28 +235,14 @@ class BatchClient(MupidClient):
         """온보딩 선택지 = 지금 서버에 있는 GENRE·MOOD 코드 전부. 번호까지 온다."""
         return self._request("GET", "/api/v1/onboarding/option")["data"]
 
-    def music_rows(self):
-        """곡 전체를 훑는다. 곡명과 **현재 분류**가 같이 오므로 한 번에 끝난다.
+    def music_rows(self, page_size=100):
+        """곡 전체를 훑는다. `MupidClient` 와 **같은 구현**이다.
 
-        응답 키는 snake_case 다 (`total_elements`·`total_pages`). 서버의
-        `spring.jackson.property-naming-strategy: SNAKE_CASE` 가 여기에도 걸린다.
+        이 클래스가 따로 들고 있던 사본을 걷어냈다 — 구간 분석 배치도 같은 것을
+        부르게 되면서 한쪽만 고쳐지는 위험이 생겼기 때문이다. 이름은 남겨 둔다
+        (기존 호출부·테스트가 이 이름을 쓴다).
         """
-        rows, page, total = [], 0, None
-        while True:
-            params = urlencode({"page": page, "size": PAGE_SIZE})
-            data = self._request("GET", f"/api/v1/music?{params}")["data"]
-            if total is not None and total != data["total_elements"]:
-                raise ValueError("조회 중 곡 수가 바뀜; 재실행 필요")
-            total = data["total_elements"]
-            rows.extend(data["items"])
-            page += 1
-            if page >= data["total_pages"]:
-                break
-            if not data["items"]:
-                raise ValueError("빈 페이지")
-        if len(rows) != total:
-            raise ValueError("조회 개수 불일치")
-        return rows
+        return super().music_rows(page_size)
 
     # `add_code` 는 `MupidClient` 에 있다. 구간 분석 배치도 악기 코드를 넣느라
     # 같은 것을 부르므로, 두 벌을 두면 한쪽만 고쳐졌을 때 조용히 갈린다.
@@ -377,11 +384,20 @@ def wanted(track, folded):
     return sorted(set(genres)), sorted(set(moods))
 
 
-def inspect(client, tracks):
+def inspect(client, tracks, exempt=()):
     """쓰기 전에 서버 상태를 읽어 계획을 세운다. 아무것도 쓰지 않는다.
 
     **읽는 키는 전부 snake_case 다.** 서버가 `SNAKE_CASE` 로 응답을 바꾼다 —
     온보딩 선택지도(`code_id`), 곡 목록도(`music_id`·`total_elements`).
+
+    Args:
+        client: 서버 클라이언트
+        tracks: 검증을 마친 곡 목록
+        exempt: 서버에서 사라진 것으로 표시된 `track_id`. 이 곡들은 서버에 없는
+            것이 이미 확인된 것이라, **첫 곡에서 멈추지 않고 전부 모아** 건너뛴다
+            (ticket S15P21A204-399). 그 밖의 누락·곡명 불일치는 그대로 멈춘다 —
+            등록 기록이 다른 곡을 가리키는 상태로 `PUT` 을 보내면 엉뚱한 곡의
+            분류를 지운다.
     """
     options = client.options()
     codes = {}
@@ -400,12 +416,22 @@ def inspect(client, tracks):
             raise ValueError(f"곡 목록에 같은 번호가 두 번: {music_id}")
         server[music_id] = row
 
-    empty, differs, held = [], [], {}
+    # 예외로 표시된 곡의 곡 번호. 서버 목록에 없어도 멈추지 않는다.
+    exempt_ids = {t["music_id"] for t in tracks if t["track_id"] in set(exempt)}
+
+    empty, differs, held, missing = [], [], {}, []
     for track in tracks:
         row = server.get(track["music_id"])
         # 곡명을 맞춰 본다. `registered.json` 이 낡아 다른 곡을 가리키고 있으면
         # `PUT` 이 엉뚱한 곡의 분류를 지운다.
         if not row or row.get("title") != track["title"]:
+            # 서버에서 삭제된 것으로 이미 확인된 곡이다(그 곡 목록 조회는 걸러 준다).
+            # 건너뛰고 보고서에 남긴다.
+            # **곡명이 다르면 예외 곡이라도 멈춘다** — 그건 삭제가 아니라 매핑이
+            # 어긋난 것이라, 그대로 두면 남의 곡을 고친다.
+            if not row and track["music_id"] in exempt_ids:
+                missing.append(track)
+                continue
             raise ValueError(f"서버 곡 누락/곡명 불일치: {track['track_id']}")
         have = (sorted(set(row.get("genres") or [])), sorted(set(row.get("moods") or [])))
         if have == wanted(track, folded):
@@ -421,12 +447,17 @@ def inspect(client, tracks):
     return {"codes": codes, "folded": folded,
             "missing_codes": sorted(key for key in needed
                                     if (key[0], key[1].casefold()) not in folded),
-            "empty": empty, "differs": differs, "held": held}
+            "empty": empty, "differs": differs, "held": held,
+            "server_missing": missing}
 
 
 def apply_plan(client, tracks, state, report, save, replace_existing=False):
     codes, folded = dict(state["codes"]), dict(state["folded"])
     by_music = {track["music_id"]: track for track in tracks}
+    # 서버에 없는 곡은 `inspect` 가 `state["server_missing"]` 으로 뽑아 두었다.
+    # 마지막 검증도 같은 것을 넘겨야 한다 — 안 그러면 방금 건너뛴 그 곡에서
+    # "서버 곡 누락" 으로 터진다.
+    missing_ids = {t["music_id"] for t in state.get("server_missing", [])}
 
     # 이미 다른 분류가 있는 곡은 건드리지 않고 넘어간다. 사람이 손으로 고친 값을
     # 배치가 조용히 지우면 안 된다. 한 곡 때문에 나머지를 멈추지도 않는다 —
@@ -471,9 +502,15 @@ def apply_plan(client, tracks, state, report, save, replace_existing=False):
         if len(report["created"]) % 100 == 0:
             print(f"등록 완료 {len(report['created'])}건", file=sys.stderr, flush=True)
 
-    after = inspect(client, tracks)
+    # 반영 뒤 서버를 다시 읽어 대상 곡의 분류가 원본과 정확히 일치하는지 본다.
+    # 서버에 없는 곡은 이 검증에서 빼야 한다 — 다시 훑으면 또 누락으로 잡힌다.
+    after_check = [t for t in tracks if t["music_id"] not in missing_ids]
+    after = inspect(client, after_check,
+                    {t["track_id"] for t in state.get("server_missing", [])})
     if after["missing_codes"] or after["empty"] or (after["differs"] and replace_existing):
         raise ValueError("반영 후에도 원본과 다른 곡이 남아 있음")
+    if after["server_missing"]:
+        raise ValueError("검증 중 건너뛴 곡이 서버에서 사라졌다; 재실행 필요")
     report["status"] = "verified"
     report["rerun_additions"] = 0
     save()
@@ -531,11 +568,25 @@ def run(args):
             raise ValueError("--apply에는 --api-base-url 필요")
         if args.api_base_url:
             client = BatchClient(args.api_base_url, args.token_file, args.refresh_token_file)
-            state = inspect(client, tracks)
+            # 서버에서 사라진 곡은 `catalog` 의 서버 대조가 표식으로 남겨 두었다.
+            # `registered.json` 을 직접 읽어 그 목록을 얻는다 — 여기서 다시 서버를
+            # 훑지 않는다(같은 목록을 이미 읽었다). 표식이 없으면 빈 집합이다.
+            exempt = _exempt_track_ids(args.registry)
+            state = inspect(client, tracks, exempt)
             report["missing_codes"] = state["missing_codes"]
             report["pending"] = {"empty": len(state["empty"]), "differs": len(state["differs"])}
             report["held"] = {str(k): v for k, v in state["held"].items()
                               if k in set(state["differs"])}
+            report["server_missing"] = [
+                {"track_id": t["track_id"], "music_id": t["music_id"]}
+                for t in state["server_missing"]
+            ]
+            if state["server_missing"]:
+                print(
+                    f"서버에 없는 곡 {len(state['server_missing'])}개를 건너뜁니다: "
+                    + ", ".join(t["track_id"] for t in state["server_missing"]),
+                    file=sys.stderr,
+                )
             report["status"] = "server_preflight_passed"
             save()
             if args.apply:

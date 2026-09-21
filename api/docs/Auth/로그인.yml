@@ -132,4 +132,4 @@ docs: |-
   | `MUPID_WRONG_EMAIL_OR_PASSWORD` | 401 | 이메일 혹은 비밀번호 불일치 |
   | `MUPID_INVALID_REQUEST_BODY` | 400 | 이메일 형식 오류 등 검증 실패 |
   | `MUPID_USER_NOT_FOUND` | 404 | 가입되지 않았거나 탈퇴한 이메일 |
-  | `MUPID_NOT_READABLE_MESSAGE` | 404 | 요청 본문 누락/파싱 실패 |
+  | `MUPID_NOT_READABLE_MESSAGE` | 400 | 요청 본문 누락/파싱 실패 |

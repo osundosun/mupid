@@ -42,4 +42,13 @@ public interface AlbumRepository extends JpaRepository<Album, Integer> {
         """)
     Optional<Album> findDetail(@Param("albumId") int albumId);
 
+    /**
+     * <b>삭제된 앨범도</b> 찾는다. 살아 있는지 아닌지는 부르는 쪽이 판단한다.
+     *
+     * <p>"없다"(404)와 "지워졌다"(410)를 나누려면 행 자체가 있는지 먼저 봐야 한다.
+     * {@code findDetail} 은 {@code isDeleted = false} 로 걸러서 둘 다
+     * {@code empty} 가 되므로 구분되지 않는다.
+     */
+    Optional<Album> findByAlbumId(int albumId);
+
 }

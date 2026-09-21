@@ -6,7 +6,26 @@
   width: min(430px, calc(100% - 32px)) !important;
   max-width: calc(100% - 32px) !important;
   height: fit-content;
-  max-height: calc(100dvh - 32px) !important;
+  /*
+   * 화상 키보드가 올라온 몫을 빼고 선다 (S15P21A204-389).
+   *
+   * `--keyboard-inset` 은 `visualViewport` 로 잰 가림 높이다(`hooks/use-keyboard-inset.ts`).
+   * 이 값을 빼지 않으면 키보드가 대화상자의 아래쪽을 그대로 덮는다 — 로그인·회원가입
+   * 대화상자에서 「비밀번호 확인」·「출생 연도」가 키보드 뒤로 들어가 보이지 않았다.
+   *
+   * 빼야 하는 이유는 이 앱이 `100dvh` 로 자리를 잡기 때문이다. `dvh` 는 "지금 보이는
+   * 동적 높이"지만, 안드로이드 웹뷰는 키보드가 올라와도 그것을 줄이지 않는다
+   * (`app/layout.tsx` 의 `interactiveWidget`, `AndroidManifest.xml` 의 `windowSoftInputMode`).
+   * 그래서 키보드 몫은 `dvh` 에 이미 들어 있지 않고, 여기서 따로 빼야 한다.
+   */
+  max-height: calc(100dvh - 32px - var(--keyboard-inset, 0px)) !important;
+  /*
+   * 포커스를 받은 입력란이 스크롤로 보정될 때 쓰는 여백 (`demo-login.tsx` 의 `revealFocused`).
+   *
+   * 키보드 몫을 여기서 또 빼지는 않는다. 위에서 대화상자 높이가 이미 키보드 위까지
+   * 줄었으므로, 그 아래 끝에서 32px만 남기면 입력란은 키보드보다 위에 선다.
+   */
+  scroll-padding-block: 32px;
   min-width: 0;
   box-sizing: border-box;
   transform: none !important;
@@ -26,6 +45,14 @@
   overflow-wrap: anywhere;
 }
 .sky-dialog input { width: 100%; min-width: 0; box-sizing: border-box; }
+.sky-dialog.withdraw-account-dialog [data-slot='alert-dialog-header'] {
+  padding-right: 0;
+  justify-items: center;
+  text-align: center;
+}
+.sky-dialog.withdraw-account-dialog [role='alert'] {
+  text-align: center;
+}
 /* A dim veil keeps the page legible without magnifying its blurred shapes. */
 .sky-dialog[data-open],
 [data-slot='dialog-overlay'][data-open], [data-slot='alert-dialog-overlay'][data-open] {
