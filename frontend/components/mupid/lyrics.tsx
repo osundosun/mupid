@@ -58,8 +58,11 @@ export function Lyrics({ track, time = 0, expanded = false, onSeek }: { track: T
           ? (track.instrumental ? '연주곡이라 원래 가사가 없어요.' : '등록된 가사가 없습니다.')
           : '';
   const activeLine = useRef<HTMLParagraphElement>(null);
+  const clickedLine = useRef<{ trackId: Track['id']; lyricId: LyricLine['lyric_id'] } | null>(null);
   useEffect(() => {
     if (!expanded) return;
+    if (clickedLine.current?.trackId === track.id && clickedLine.current.lyricId === activeId) return;
+    clickedLine.current = null;
     const line = activeLine.current;
     // 대화상자에서만 `.song-lyrics` 가 스크롤 상자다. 그 밖에서는 넘치는 부분을
     // 잘라 두므로 움직일 것이 없다.
@@ -91,7 +94,13 @@ export function Lyrics({ track, time = 0, expanded = false, onSeek }: { track: T
         aria-current={current ? 'true' : undefined}
       >
         {onSeek
-          ? <button type="button" className="lyric-seek" onClick={() => onSeek(line.time_ms / 1000)} aria-label={`${formatTime(line.time_ms / 1000)}부터 듣기: ${line.text}`}>{line.text}</button>
+          ? <button type="button" className="lyric-seek" onClick={(event) => {
+            clickedLine.current = { trackId: track.id, lyricId: line.lyric_id };
+            const box = event.currentTarget.closest('.song-lyrics');
+            // Cancel any ongoing auto-scroll so the clicked line stays put.
+            box?.scrollTo({ top: box.scrollTop, behavior: 'instant' });
+            onSeek(line.time_ms / 1000);
+          }} aria-label={`${formatTime(line.time_ms / 1000)}부터 듣기: ${line.text}`}>{line.text}</button>
           : line.text}
       </p>;
     })}
