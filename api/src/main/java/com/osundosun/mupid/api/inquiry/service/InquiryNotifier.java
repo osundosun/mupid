@@ -151,11 +151,26 @@ public class InquiryNotifier {
      * {@link MattermostNotifier} 가 실패 로그에서까지 가린다.
      */
     private void notifyMattermost(String content, String senderEmail, String senderName) {
-        /* 보낸 사람을 알아야 관리자가 채널에서 바로 답할 수 있다. */
+        /*
+         * 제목은 H1(`# `)이다. `**...**` 는 본문 굵기라 채널에서 제목으로 읽히지 않는다 —
+         * 요구가 "제목을 크게" 이므로 줄 맨 앞 `# ` 를 쓴다.
+         *
+         * 이모지 📬 는 "받은 편지함에 들어왔다" 를 뜻한다. 관리자 채널에는 곡·배치 알림도
+         * 섞여 들어오므로, 스크롤만 훑어도 **사용자 문의** 임이 구분되는 편이 낫다.
+         * (📩 는 같은 뜻이지만 작은 편지라 큰 제목 옆에서 잘 안 보이고, 💬 는 대화·댓글
+         * 쪽으로 읽혀 문의와 어긋난다.)
+         *
+         * H1 은 **한 줄만** 둔다 — 제목이 여럿이면 어느 것이 제목인지 사라진다. 그래서
+         * 사용자 내용에 `# ` 가 있어도 제목이 되지 않도록 아래에서 코드블록으로 감싼다.
+         *
+         * 보낸 사람 줄을 남기는 이유는 관리자가 채널에서 바로 답할 수 있어야 하기 때문이다.
+         * 닉네임과 이메일을 함께 적어야 동명이인을 가릴 수 있다.
+         */
         String text = """
-            **새 문의가 도착했습니다**
-            - 보낸 사람: %s (%s)
-            - 내용: %s""".formatted(senderName, senderEmail, toMattermostBody(content));
+            # 📬 새 문의가 도착했습니다
+            - **보낸 사람**: %s (%s)
+
+            %s""".formatted(senderName, senderEmail, toMattermostBody(content));
         mattermostNotifier.notify(text);
     }
 
@@ -183,70 +198,77 @@ public class InquiryNotifier {
     }
 
     /**
-     * 문의 내용을 Mattermost 본문에 넣을 수 있게 다듬는다.
+     * 문의 내용을 Mattermost 본문에 넣을 수 있게 <b>코드블록으로 감싼다.</b>
      *
-     * <h2>왜 필요한가 — 사용자 입력이 마크다운으로 해석된다</h2>
+     * <h2>왜 코드블록인가</h2>
      *
-     * <p>Mattermost 는 `{"text": "..."}` 를 **마크다운으로 렌더링**한다. 내용을 그대로
-     * 이어 붙이면 사용자가 쓴 서식이 채널에서 그대로 살아난다. 그 중 위험한 것이
-     * <b>H1(`# `)</b> 이다 — Mattermost 는 H1 을 본문보다 훨씬 큰 글씨로, 그리고
-     * 채널의 다른 메시지들보다 강하게 그려서 알림 한 건이 채널 전체를 덮는다. 관리자
-     * 화면에서 보면 "누가 공지라도 올린 것처럼" 보이고, 정작 읽어야 할 문의 목록은
-     * 밀려난다.
+     * <p>Mattermost 는 `{"text": "..."}` 를 **마크다운으로 렌더링**한다. 내용을 그대로 이어
+     * 붙이면 사용자가 쓴 서식이 채널에서 살아나는데, 특히 <b>H1(`# `)</b> 이 나쁘다 — 채널에서
+     * H1 은 본문보다 훨씬 크게 그려져 <b>알림 한 건이 채널 전체를 덮고</b>, 정작 읽어야 할
+     * 문의가 밀려난다. 우리 제목(`# 📬 ...`)까지 있으므로 내용이 H1 을 만들면 제목이 둘이 된다.
      *
-     * <p>그 밖에 제목 계열(`## `…), 인용(`&gt; `), 코드펜스(```` ``` ````), 수평선(`---`)도
-     * 채널 서식을 흔든다. `<b>`·링크 같은 인라인 서식은 원문 확인에 도움이 되므로
-     * 남긴다 — 여기서 막으려는 것은 <b>줄 단위 블록 서식</b>이다.
+     * <p>코드블록은 이 문제를 <b>한 번에 전부</b> 없앤다.
      *
-     * <h2>어떻게 막는가</h2>
+     * <ul>
+     *   <li>마크다운이 통째로 무력해진다 — H1·인용·목록·수평선이 전부 글자로 남는다.</li>
+     *   <li>여러 줄로 감싸므로 내용 전체가 한 덩어리로 읽힌다.</li>
+     *   <li><b>원문이 그대로 보존된다.</b> 들여쓰기·빈 줄·앞뒤 공백이 그대로다.</li>
+     *   <li><b>복사해도 깨끗하다.</b> 관리자가 채널에서 문의를 복사해 답장할 때 따라가는
+     *       문자가 없다.</li>
+     * </ul>
      *
-     * <p>줄 머리의 서식 표시를 지우지 않고 <b>제로폭 문자(U+200B)를 앞에 붙인다.</b> 지우면
-     * 사용자가 쓴 글자를 우리가 바꾸는 셈이고("왜 내 문의가 달라졌지"), 붙이면 화면에는
-     * 그대로 보이면서 마크다운 문법만 무력해진다. 눈에 보이는 문자열은 원문 그대로다.
+     * <h2>왜 제로폭 문자(ZWSP)를 쓰지 않는가</h2>
      *
-     * <p>표는 {@code \n} 만 보므로 `\r\n` 을 먼저 정규화한다.
+     * <p>한때 줄 앞에 ZWSP 를 붙여 무력화했는데, 두 가지가 잘못이었다.
+     *
+     * <ol>
+     *   <li><b>보이지 않는 문자가 본문에 섞인다.</b> 복사해 붙여넣은 쪽에는 안 보이는데 문자는
+     *       있어서, 검색이 안 되거나 이상하게 취급된다.</li>
+     *   <li><b>원문이 변형된다.</b> 요구는 "관리자가 사용자가 쓴 것을 그대로 읽는" 것이다.</li>
+     * </ol>
+     *
+     * <h2>펜스 길이 — 내용에 백틱이 있으면 블록이 거기서 닫힌다</h2>
+     *
+     * <p>사용자가 ```` ``` ```` 를 쓰면 그 뒤가 블록 밖으로 나가 <b>마크다운이 다시 살아나고
+     * H1 주입이 가능해진다.</b> CommonMark 규칙은 "닫는 펜스는 여는 펜스보다 짧을 수 없다" 이므로,
+     * <b>내용에서 가장 긴 백틱 연속보다 긴 펜스</b>로 감싼다. 내용에 백틱이 없으면 3개다.
+     *
+     * <p>여는 펜스 뒤에 언어 태그를 붙이지 않는다 — 붙이면 내용이 그 언어로 강조돼 원문이
+     * 달라 보이고, 언어에 따라 `#` 가 주석으로 흐려진다.
+     *
+     * <p><b>펜스는 최소 3개다.</b> {@code 가장 긴 연속 + 1} 만 쓰면 백틱이 없는 내용에서
+     * 1개가 나오는데, 백틱 1개는 코드블록이 아니라 인라인 코드다 — 블록이 만들어지지 않아
+     * 마크다운이 그대로 살아난다.
+     *
+     * @param content 사용자가 쓴 문의 내용 (trim 된 값)
+     * @return 코드블록으로 감싼 본문. {@code null} 이면 빈 코드블록
      */
     static String toMattermostBody(String content) {
         if (content == null) {
-            return "";
+            content = "";
         }
-        String normalized = content.replace("\r\n", "\n").replace("\r", "\n");
-        String[] lines = normalized.split("\n", -1);
-        StringBuilder body = new StringBuilder(normalized.length());
-        for (int index = 0; index < lines.length; index++) {
-            if (index > 0) {
-                body.append('\n');
-            }
-            body.append(neutralizeBlockMarkdown(lines[index]));
-        }
-        return body.toString();
+        /* 백틱 1~2개로는 블록이 만들어지지 않는다. 최소 3개를 보장한다. */
+        int length = Math.max(MIN_FENCE_LENGTH, longestBacktickRun(content) + 1);
+        String fence = "`".repeat(length);
+        return fence + "\n" + content + "\n" + fence;
     }
 
-    /** 줄 머리에서 블록 서식을 만드는 문자들. `#` 은 H1~H6, `>` 는 인용, `-`/`+`/`*` 는 목록·수평선. */
-    private static final String BLOCK_MARKDOWN_PREFIXES = "#>-+*";
+    /** 코드블록을 만드는 최소 백틱 개수. CommonMark 가 정한 값이다. */
+    static final int MIN_FENCE_LENGTH = 3;
 
-    /** 마크다운 문법 앞에 붙이는 제로폭 공백. 화면에는 보이지 않는다. */
-    private static final char ZERO_WIDTH_SPACE = '\u200B';
-
-    /**
-     * 한 줄의 머리가 블록 서식이면 제로폭 문자를 앞에 붙여 무력화한다.
-     *
-     * <p>`#제목`(공백 없음)도 함께 막는다 — Mattermost 의 렌더러가 여유를 두고 받아들이는
-     * 경우가 있어, 공백 유무로 갈라 두면 한쪽만 새는 구멍이 된다.
-     *
-     * <p>들여쓰기(`  # 제목`)로 만드는 블록 서식도 막으려고 앞쪽 공백을 건너뛴 뒤 첫 글자를
-     * 본다. 이때 제로폭 문자는 <b>들여쓰기 뒤·표시 앞</b>에 넣는다 — 맨 앞에 넣으면 그 줄이
-     * 코드 블록(4칸 들여쓰기)으로 재해석될 수 있다.
-     */
-    private static String neutralizeBlockMarkdown(String line) {
-        int first = 0;
-        while (first < line.length() && (line.charAt(first) == ' ' || line.charAt(first) == '\t')) {
-            first++;
+    /** 코드블록을 닫아 버릴 수 있는 가장 긴 백틱 연속 길이. 백틱이 없으면 0. */
+    private static int longestBacktickRun(String content) {
+        int longest = 0;
+        int current = 0;
+        for (int index = 0; index < content.length(); index++) {
+            if (content.charAt(index) == '`') {
+                current++;
+                longest = Math.max(longest, current);
+            } else {
+                current = 0;
+            }
         }
-        if (first >= line.length() || BLOCK_MARKDOWN_PREFIXES.indexOf(line.charAt(first)) < 0) {
-            return line;
-        }
-        return line.substring(0, first) + ZERO_WIDTH_SPACE + line.substring(first);
+        return longest;
     }
 
     /**
