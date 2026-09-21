@@ -209,10 +209,11 @@ export function SearchView({ model: m }: { model: MupidModel }) {
           ? Math.min(window.innerHeight, playerBounds.top)
           : window.innerHeight;
         const maxHeight = Math.max(0, Math.min(visibleBottom, appLayoutBottom) - top - 20);
+        const height = Math.min(600, maxHeight);
         setDesktopSidebarStyle((current) =>
           current?.left === bounds.left && current.width === bounds.width && current.top === top && current.maxHeight === maxHeight
             ? current
-            : { left: bounds.left, top, width: bounds.width, maxHeight });
+            : { left: bounds.left, top, width: bounds.width, maxHeight, height });
       });
     };
     const resize = new ResizeObserver(sync);
