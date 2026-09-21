@@ -177,7 +177,20 @@
     background: #fbfdff;
     border-radius: 18px 18px 0 0;
     border-bottom: none;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    /*
+     * `env()` 가 아니라 `--safe-area-inset-*` 다 (S15P21A204-418).
+     *
+     * 안드로이드 웹뷰의 `env()` 는 노치만 세고 시스템 바는 빼먹어서, 노치 없는
+     * 기기에서는 이 줄이 통째로 0 이 된다 — 목록 마지막 줄이 제스처바에 깔렸다
+     * (실측: 인셋 40px 을 준 상태에서 `padding-bottom` 이 `0px`).
+     * 자세한 사정은 `app/globals.css` 의 주석에 있다.
+     *
+     * 좌우도 같이 비운다. 가로로 눕히면 컷아웃이 좌우에 서는데, 이 시트는
+     * `left: 0; right: 0` 이라 그 자리까지 목록이 들어간다.
+     */
+    padding-left: var(--safe-area-inset-left);
+    padding-right: var(--safe-area-inset-right);
+    padding-bottom: var(--safe-area-inset-bottom);
   }
 
   .queue-dock.is-open {

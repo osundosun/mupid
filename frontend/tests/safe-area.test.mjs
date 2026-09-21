@@ -163,6 +163,7 @@ const sheets = [
   'app/mobile-navigation.css',
   'app/mupid.css',
   'app/nav-account.css',
+  'app/queue-dock.css',
   'app/readability.css',
   'app/responsive-polish.css',
   'app/welcome-redesign.css',
@@ -193,6 +194,56 @@ void test('no rule reaches for env(safe-area-inset-*) directly', () => {
       `${path} still calls env() instead of var(--safe-area-inset-*)`,
     );
   }
+});
+
+// 대화상자는 포털로 `<body>` 직하에 떠서 셸의 여백을 받지 못한다. 틀을 잡는
+// 곳이 `dialog-viewport.css` 한 군데뿐이라, 네 방향을 여기서 못 세면 모든 모달이
+// 한꺼번에 시스템 바 밑으로 들어간다.
+void test('the dialog frame clears the system bars on all four sides', () => {
+  const frame = css['app/dialog-viewport.css'].slice(
+    0,
+    css['app/dialog-viewport.css'].indexOf('@media (max-width: 767px)'),
+  );
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    assert.ok(
+      frame.includes(`calc(16px + var(--safe-area-inset-${side}))`),
+      `inset-${side}`,
+    );
+  }
+  assert.ok(
+    frame.includes(
+      '100% - 32px - var(--safe-area-inset-left) - var(--safe-area-inset-right)',
+    ),
+    'max-width',
+  );
+});
+
+// 키보드는 제스처바 자리까지 덮고 올라온다. 두 몫을 더하면 키보드 위에 빈 띠가
+// 한 겹 더 생기므로 `max()` 여야 한다 — 이 규칙이 415/411 과 겹치는 자리다.
+void test('the keyboard and the navigation bar share one gap, not two', () => {
+  const frame = css['app/dialog-viewport.css'].slice(
+    0,
+    css['app/dialog-viewport.css'].indexOf('@media (max-width: 767px)'),
+  );
+  const both = 'max(var(--safe-area-inset-bottom), var(--keyboard-inset, 0px))';
+  assert.ok(frame.includes(`16px + ${both}`), 'bottom');
+  assert.ok(
+    frame.includes('100dvh - 32px - var(--safe-area-inset-top) -'),
+    'max-height',
+  );
+  assert.ok(frame.includes(both), 'max-height 의 아래 몫');
+});
+
+// 바텀시트는 화면 끝까지 붙는 것이 맞아서 상자를 좁히지 않는다. 대신 안쪽
+// 여백으로 비우고, 위쪽만 상한(max-height)에서 뺀다.
+void test('the bottom sheet pads for the bars instead of shrinking its box', () => {
+  const sheet = css['app/dialog-viewport.css'].slice(
+    css['app/dialog-viewport.css'].indexOf('@media (max-width: 767px)'),
+  );
+  assert.ok(sheet.includes('100dvh - 24px - var(--safe-area-inset-top)'));
+  assert.ok(sheet.includes('max(20px, var(--safe-area-inset-left))'));
+  assert.ok(sheet.includes('max(20px, var(--safe-area-inset-right))'));
+  assert.ok(sheet.includes('max(24px, var(--safe-area-inset-bottom))'));
 });
 
 // 상태바 몫은 하늘 위(셸 바깥 여백)에서 비운다. 카드 안쪽 헤더가 한 번 더
