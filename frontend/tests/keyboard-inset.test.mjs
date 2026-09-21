@@ -399,22 +399,31 @@ void test('the centred dialog moves its bottom edge, not just its height', () =>
    * 가운데를 중심으로 줄어들 뿐 **아래 끝이 키보드 위로 올라오지 않는다.**
    * `bottom` 을 올려야 `margin: auto` 가 그 줄어든 상자 안에서 다시 가운데를 잡는다.
    */
+  /*
+   * 418 이 여기에 내비게이션 바 몫을 얹었다. 키보드는 제스처바 자리까지 덮고
+   * 올라오므로 두 몫은 **더하지 않고 `max()`** 로 겹친다 — 더하면 키보드 위에
+   * 빈 띠가 한 겹 더 생긴다. 키보드 몫이 이 식에 남아 있는지가 여기서 볼 것이다.
+   */
+  const bottomGap =
+    /max\(\s*var\(--safe-area-inset-bottom\),\s*var\(--keyboard-inset,\s*0px\)\s*\)/
+      .source;
   assert.match(
     dialogCss,
-    /bottom:\s*calc\(\s*16px\s*\+\s*var\(--keyboard-inset,\s*0px\)\s*\)\s*!important/,
+    new RegExp(`bottom:\\s*calc\\(\\s*16px\\s*\\+\\s*${bottomGap}\\s*\\)\\s*!important`),
     '아래 끝을 올리지 않으면 가운데 정렬 대화상자는 높이를 줄여도 안 올라온다',
   );
   // 높이 제한도 함께 있어야 한다 — 올리기만 하면 위로 삐져나간다.
   assert.match(
     dialogCss,
-    /max-height:\s*calc\(\s*100dvh\s*-\s*32px\s*-\s*var\(--keyboard-inset,\s*0px\)\s*\)\s*!important/,
+    new RegExp(
+      `max-height:\\s*calc\\(\\s*100dvh\\s*-\\s*32px\\s*-\\s*var\\(--safe-area-inset-top\\)\\s*-\\s*${bottomGap}\\s*\\)\\s*!important`,
+    ),
     '대화상자가 키보드 몫을 빼지 않으면 위로 삐져나간다',
   );
   // `bottom` 은 `inset` 뒤에 와야 이긴다 (같은 !important 끼리는 나중 선언이 이긴다).
   assert.ok(
-    dialogCss.indexOf('inset: 16px !important') <
-      dialogCss.indexOf('bottom: calc(16px + var(--keyboard-inset, 0px)) !important'),
-    'bottom 이 inset 보다 앞서면 inset 의 bottom: 16px 에 덮인다',
+    dialogCss.indexOf('inset:') < dialogCss.search(/bottom:\s*calc\(\s*16px/),
+    'bottom 이 inset 보다 앞서면 inset 의 아래 값에 덮인다',
   );
   // `100vh` 는 키보드가 열리든 말든 늘 "가장 큰 높이"다. 이 자리에서 쓰면
   // 보이는 영역보다 큰 값이 나와 아래가 잘린다.
@@ -445,7 +454,9 @@ void test('the bottom-anchored sheet lifts its floor off the keyboard', () => {
   }
   assert.match(
     dialogCss,
-    /\.sky-dialog\.track-menu-sheet[\s\S]{0,2000}?max-height:\s*calc\(\s*100dvh\s*-\s*24px\s*-\s*var\(--keyboard-inset,\s*0px\)\s*\)\s*!important/,
+    // 418 이 상태바 몫(`--safe-area-inset-top`)을 같은 식에 얹었다. 시트는 바닥에
+    // 붙어 있어 아래쪽은 안쪽 여백으로 비우므로, 상한에서 빼는 것은 위쪽뿐이다.
+    /\.sky-dialog\.track-menu-sheet[\s\S]{0,2000}?max-height:\s*calc\(\s*100dvh\s*-\s*24px\s*-\s*var\(--safe-area-inset-top\)\s*-\s*var\(--keyboard-inset,\s*0px\)\s*\)\s*!important/,
     'dialog-viewport.css 의 track-menu-sheet 가 키보드 몫을 빼지 않는다',
   );
   assert.match(
