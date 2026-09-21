@@ -13,6 +13,10 @@ mod config;
 // 예외 보고 (S15P21A204-383). JS 예외는 `commands::crash_report` 로 들어오고,
 // Rust 패닉은 `crash::install_panic_hook` 이 잡는다.
 mod crash;
+// 예외 보고의 SDK 다리 (S15P21A204-383 2단계, B안). Kotlin `CrashlyticsPlugin`
+// 을 등록하고 핸들을 `crash.rs` 에 넘긴다 — 부르는 쪽은 화면이 아니라
+// `crash.rs` 다.
+mod crash_native;
 mod db;
 mod http;
 mod image;
@@ -202,6 +206,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(media::init())
         .plugin(update_native::init())
+        // 예외 보고의 SDK 다리 (S15P21A204-383 2단계, B안). 이 플러그인의
+        // `setup` 이 **앱 `setup` 보다 먼저** 돈다(`app.rs` 의
+        // `initialize_plugins` → 그 다음 앱 `setup`) — 그래서 아래에서 패닉
+        // 훅을 걸 때는 이미 Crashlytics 싱크가 들어가 있다.
+        .plugin(crash_native::init())
         .register_asynchronous_uri_scheme_protocol(config::IMAGE_SCHEME, |ctx, request, responder| {
             serve_image(ctx.app_handle().clone(), request, responder);
         })

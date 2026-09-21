@@ -68,14 +68,48 @@
 //! "조용히 죽었다" 와 "보낼 게 없었다" 를 구분하려면 그 통로가 있어야 한다
 //! (`commands.rs` 의 `assets_status` 와 같은 이유).
 //!
-//! ## 실제 Crashlytics 로 보내는 길 (아직 안 한 것)
+//! ## 실제 Crashlytics 로 보내는 길 — 두 갈래 (S15P21A204-383 2단계, B안)
 //!
-//! 정공법은 SDK 경로다 — `google-services.json` 을 넣고
-//! `com.google.firebase:firebase-crashlytics`(+Gradle 플러그인)를 붙인 뒤
-//! JS·Rust 예외를 Kotlin 플러그인(`AppUpdatePlugin` 처럼)으로 넘기는 것이다.
-//! 그 길은 **비공개 API 를 쓰지 않고** 심볼화된 스택트레이스까지 얻는다.
-//! 다만 `app/gen/android/**` 와 Android 빌드가 필요한 일이라 **키·프로젝트가
-//! 확정된 뒤에** 하는 것이 맞다(2단계).
+//! 전송로가 **둘**이고, 기기에서 무엇이 살아 있는지에 따라 자동으로 갈린다.
+//!
+//! ```text
+//! ① Firebase Crashlytics SDK  (정공법, B안 — 이번에 붙였다)
+//!    google-services.json → Gradle 플러그인 → FirebaseApp 초기화
+//!    Kotlin `CrashlyticsPlugin` ← Rust 가 run_mobile_plugin 으로 넘긴다
+//!    ─ 비공개 API 를 쓰지 않고 **심볼화된 스택트레이스**까지 얻는다.
+//!    ─ 엔드포인트·키가 **필요 없다.** 이게 B안의 요점이다.
+//!
+//! ② 비공개 배치 수집 엔드포인트  (1단계가 만든 길, 그대로 남긴다)
+//!    MUPID_CRASHLYTICS_ENDPOINT + MUPID_CRASHLYTICS_API_KEY 둘 다 있을 때만
+//! ```
+//!
+//! **우선순위는 ①이다.** SDK 싱크가 등록돼 있으면(=`sdk_registered()`, 안드로이드
+//! 빌드에 `google-services.json` 이 들어가 FirebaseApp 이 초기화된 경우) 그쪽으로
+//! 보내고, 없으면 ②로 간다. ②를 지우지 않은 이유는 두 가지다 — ①이 아직
+//! 실기기에서 검증되지 않았고(빌드까지만 확인했다), 사내 수집기를 쓰는 빌드가
+//! 있을 수 있기 때문이다.
+//!
+//! ### 로그와 예외를 섞지 않는다 (`Kind`)
+//!
+//! Crashlytics SDK 에는 `log()`(빵부스러기)와 `recordException()`(비정상 종료
+//! 이벤트)이 **따로** 있다. 1단계는 로그 브리지가 흘려보낸 경고를 예외 보고와
+//! 같은 큐에 넣었다 — HTTP 수집기에는 "보고" 하나뿐이라 그게 맞았다.
+//! SDK 쪽은 다르다. `log::warn!` 하나하나를 `recordException` 으로 올리면
+//! **비정상 종료율이 부풀고 진짜 예외가 그 속에 묻힌다.** 그래서 보고에
+//! `Kind` 를 붙여 갈래를 나눈다 — 패닉·JS 예외는 `recordException`,
+//! 로그 브리지가 보낸 것은 `log` 로 간다(`Kind::native_command`).
+//!
+//! ### 무엇이 아직 검증되지 않았나 (정직하게)
+//!
+//! **실기기·Crashlytics 대시보드 도달은 확인하지 않았다.** 확인한 것은
+//! ① Gradle 이 두 플러그인과 의존성을 해석한다는 것, ② `google-services.json`
+//! 이 `applicationId` 와 맞는다는 것, ③ 이 모듈의 배선과 갈래 판단이
+//! 시험으로 고정됐다는 것까지다. "예외가 대시보드에 떴다" 고는 말하지 않는다.
+//! 또한 **`google-services.json` 은 커밋되지 않는다**(`app/.gitignore:29`) —
+//! CI 는 이 파일을 **아직 주입하지 않는다**(`infra/ci/build-apk.sh` 는 키스토어만
+//! 넣는다). 그래서 지금 CI 에서 그대로 빌드하면 google-services 플러그인이
+//! `missingGoogleServicesStrategy=ERROR` 기본값으로 **실패한다.** 그 결정
+//! (CI 주입 vs `IGNORE`/`WARN` 전략)은 `infra/` 소관이라 여기서 정하지 않았다.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -143,11 +177,70 @@ impl Source {
     }
 }
 
+/// 이 보고가 **예외인가 로그인가.**
+///
+/// Crashlytics SDK 의 두 통로가 서로 다른 뜻을 갖기 때문에 필요하다.
+///
+/// - [`Kind::Exception`] — 실제 예외. 패닉, JS `window.onerror`, `unhandledrejection`.
+///   SDK 의 `recordException()` 으로 간다. **비정상 종료율에 잡히는 것이 맞다.**
+/// - [`Kind::Log`] — 로그 브리지가 흘려보낸 경고·오류. SDK 의 `log()` 로 가서
+///   다음 예외에 붙는 **빵부스러기**가 된다. 예외로 올리면 안 된다 — 그러면
+///   경고 한 줄마다 이벤트가 하나씩 생겨 대시보드가 오염되고, 정작 봐야 할
+///   예외가 그 속에 묻힌다.
+///
+/// HTTP 경로(②)에는 이 구분이 원래 없었다 — 수집기가 하나뿐이라 전부 "보고"였다.
+/// 그래서 본문에 `kind` 를 실어 **수집기가 거를 수 있게** 했다. 기존 수집기가
+/// 이 필드를 모르더라도 무시하면 그만이라 호환은 깨지지 않는다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Exception,
+    Log,
+}
+
+impl Default for Kind {
+    /// 없으면 예외로 본다 — 1단계가 만든 보고는 전부 예외였기 때문이다.
+    /// (로그 브리지 경로만 이 값을 명시적으로 덮어쓴다.)
+    fn default() -> Self {
+        Kind::Exception
+    }
+}
+
+impl Kind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Kind::Exception => "exception",
+            Kind::Log => "log",
+        }
+    }
+
+    /// Kotlin `CrashlyticsPlugin` 의 어느 커맨드로 보낼 것인가.
+    ///
+    /// **이 판단이 여기 한 곳에만 있어야 한다.** Rust 쪽과 Kotlin 쪽이 각자
+    /// "이건 예외인가" 를 정하면 두 판단이 갈라지고, 갈라진 쪽이 대시보드를
+    /// 오염시킨다. Kotlin 은 넘어온 커맨드 이름만 보고 그대로 실행한다.
+    ///
+    /// 데스크톱에서는 부르는 곳(`android_sink`)이 컴파일되지 않지만, **이
+    /// 함수는 남긴다** — 매핑 자체가 계약이고 시험이 그걸 고정한다
+    /// (`logs_and_exceptions_take_different_commands`).
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    fn native_command(self) -> &'static str {
+        match self {
+            Kind::Exception => "recordException",
+            Kind::Log => "log",
+        }
+    }
+}
+
 /// 보고 한 건. 화면이 넘기는 모양(`JsCrash`)과 큐가 들고 있는 모양이 같다.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CrashReport {
     pub source: Source,
+    /// **예외인가 로그인가.** SDK 싱크가 `recordException` 과 `log` 중 어디로
+    /// 보낼지 정하는 근거다(`Kind`). HTTP 본문에도 `kind` 로 실린다.
+    #[serde(default)]
+    pub kind: Kind,
     /// 패닉 메시지, 혹은 JS 오류 메시지.
     pub message: String,
     /// 패닉 위치(`file:line:col`) 또는 JS 스택.
@@ -200,6 +293,7 @@ impl CrashReport {
     pub fn from_js(value: JsCrash) -> Self {
         Self {
             source: Source::Js,
+            kind: Kind::Exception,
             message: value.message,
             stack: value.stack,
             context: value.context,
@@ -211,9 +305,13 @@ impl CrashReport {
     }
 
     /// Rust 쪽(패닉·로그)에서 만드는 기본형.
-    pub fn from_rust(message: String, stack: Option<String>, context: &str) -> Self {
+    ///
+    /// `kind` 를 인자로 받는다 — 같은 Rust 출처라도 **패닉은 예외**로,
+    /// **로그 브리지가 보낸 경고는 로그**로 가야 하기 때문이다(`Kind`).
+    pub fn from_rust(message: String, stack: Option<String>, context: &str, kind: Kind) -> Self {
         Self {
             source: Source::Rust,
+            kind,
             message,
             stack,
             context: Some(context.to_string()),
@@ -276,7 +374,126 @@ pub fn api_key() -> Option<String> {
 /// 거짓이면 `report()` 가 **아무것도 하지 않는다.** 앱 기동 경로는 이 함수를
 /// 한 번 부를 뿐이라 키 유무가 기동에 영향을 주지 않는다.
 pub fn enabled() -> bool {
-    endpoint().is_some() && api_key().is_some()
+    sdk_registered() || (endpoint().is_some() && api_key().is_some())
+}
+
+/// 이 기기에서 **실제로 쓸 전송로**를 이름으로 알린다. `status()` 가 밖에 알린다.
+///
+/// `crash_report_status` 의 판단 기준이 1단계와 달라진 자리다. 1단계는
+/// "엔드포인트·키가 있나" 를 물었고 그게 곧 켜짐이었다. B안에서는 **SDK 가
+/// 붙었으면 키 없이도 켜진다** — 그래서 무엇으로 보내는지를 따로 알려야
+/// "왜 키가 없는데 켜져 있지" 또는 그 반대를 밖에서 판단할 수 있다.
+fn route() -> &'static str {
+    if sdk_registered() {
+        "sdk"
+    } else if enabled() {
+        "endpoint"
+    } else {
+        "off"
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// ① Firebase Crashlytics SDK 싱크 (B안)
+// ─────────────────────────────────────────────────────────────
+
+/// 안드로이드 앱이 초기화됐는가. **시험에서는 항상 거짓이다.**
+///
+/// 데스크톱에는 Crashlytics 가 없다 — 그래서 이 값이 거짓이면 전부 ②(HTTP)
+/// 로 가고, 1단계가 만든 기존 동작·시험이 그대로 산다. 그게 **키 없으면
+/// 비활성** 계약을 건드리지 않는 방법이다.
+#[cfg(target_os = "android")]
+fn sdk_registered() -> bool {
+    android_sink::is_registered()
+}
+
+#[cfg(not(target_os = "android"))]
+fn sdk_registered() -> bool {
+    false
+}
+
+/// Rust → Kotlin `CrashlyticsPlugin` 다리.
+///
+/// # 왜 `update_native.rs`·`media.rs` 와 모양이 다른가 (설계 근거)
+///
+/// 그 둘은 **커맨드에서** 플러그인을 부른다(Tauri 가 메인 스레드에서 부르므로
+/// 핸들이 준비돼 있다). 그런데 이 모듈의 보고는 **패닉 훅에서도** 나온다.
+/// 패닉 훅은 아무 스레드에서나 돌고, 그때 JNI 로 Activity 를 건드리면
+///  - `PluginHandle` 은 내부적으로 호출이 끝날 때까지 **블로킹으로 기다리고**
+///    (`plugin/mobile.rs` 의 `rx.recv()`),
+///  - 안드로이드 `PluginManager.runCommand` 는 **메인 스레드에서 커맨드를
+///    실행한다**(`@Command` 핸들러가 `activity` 를 그대로 만지므로 그럴 수밖에 없다).
+///
+/// 그래서 메인 스레드에서 죽은 경우 그대로 블로킹하면 **영원히 안 돌아온다.**
+/// 이미 예외를 처리하는 중에 교착이 걸리면 그 교착이 곧 데이터 손실이다.
+/// 그래서 두 가지를 강제한다.
+///
+///  1. **보내기는 절대 블로킹하지 않는다** — 별도 스레드로 넘기고 즉시 돌려준다.
+///     `report()` 가 이미 그 계약이다(패닉 훅도 화면 커맨드도 네트워크를 안 기다린다).
+///  2. **받는 것은 `recordException`/`log` 두 커맨드뿐**이고, 인자는
+///     `message`·`stack`·`context` 문자열 셋이다. 인자를 복잡하게 만들면
+///     그만큼 실패할 자리가 늘고, 실패는 조용히 삼켜진다(불변 조건).
+#[cfg(target_os = "android")]
+mod android_sink {
+    use super::{Kind, MESSAGE_LIMIT};
+    use std::sync::OnceLock;
+    use tauri::plugin::PluginHandle;
+    use tauri::Runtime;
+
+    /// `lib.rs` 의 `setup` 에서 넣는다. **설치 전에 부르면 조용히 아무 일도
+    /// 일어나지 않는다** — 기동 순서상 그 전에 보고가 날 수 있고, 그때
+    /// 훅을 세우지 않는 편이 안전하다(등록 전 부팅 보고는 로그로만 남는다).
+    static SINK: OnceLock<PluginHandle<tauri::Wry>> = OnceLock::new();
+
+    pub fn register(handle: PluginHandle<tauri::Wry>) {
+        let _ = SINK.set(handle);
+    }
+
+    pub fn is_registered() -> bool {
+        SINK.get().is_some()
+    }
+
+    /// Kotlin 이 받는 인자. 짝은 `CrashlyticsPlugin.kt` 의 `CrashArgs`.
+    ///
+    /// 본문은 여기서 이미 잘려 있다(`CrashReport::clamp`). SDK 쪽에도 한도가
+    /// 있으므로 넘길 때 한 번 더 방어한다.
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CrashArgs {
+        message: String,
+        stack: Option<String>,
+        context: Option<String>,
+    }
+
+    /// 보고 하나를 SDK 로 넘긴다. **부르는 쪽을 막지 않는다.**
+    ///
+    /// `tauri::async_runtime::spawn_blocking` 을 쓴다 — `spawn`(비동기 태스크)에
+    /// 블로킹 JNI 호출을 넣으면 워커 스레드 하나를 통째로 잡아먹는다.
+    /// `spawn_blocking` 은 그 용도로 따로 두는 스레드 풀이라 안전하고,
+    /// **호출자가 기다리지 않는다**는 점이 여기서는 더 중요하다.
+    pub fn emit(kind: Kind, message: String, stack: Option<String>, context: Option<String>) {
+        let Some(handle) = SINK.get() else {
+            return;
+        };
+        // 핸들은 복제해 넘긴다(`PluginHandle: Clone`). `'static` 스레드로
+        // 보내야 하기 때문이다.
+        let handle = handle.clone();
+        let args = CrashArgs {
+            message: super::CrashReport::trimmed(&message, MESSAGE_LIMIT),
+            stack: stack.map(|text| super::CrashReport::trimmed(&text, MESSAGE_LIMIT * 2)),
+            context,
+        };
+        let command = kind.native_command();
+        tauri::async_runtime::spawn_blocking(move || {
+            // 실패는 **삼킨다**(불변 조건). SDK 가 없는 빌드·초기화 전 호출·
+            // 커맨드 이름 오타가 전부 여기로 오는데, 그것 때문에 앱이 죽으면
+            // 안 된다. `log` 로만 남긴다 — 로그 브리지가 이 줄을 다시 보고로
+            // 올리지 않도록 `warn!` 이 아니라 `debug!` 를 쓴다(무한 증식 방지).
+            if handle.run_mobile_plugin::<()>(command, args).is_err() {
+                log::debug!("Crashlytics SDK 로 보내지 못했습니다 ({command})");
+            }
+        });
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -287,20 +504,61 @@ fn queue() -> &'static Mutex<VecDeque<CrashReport>> {
     QUEUE.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
-/// 예외 하나를 큐에 넣는다.
+/// 보고 하나를 어느 전송로로 보낼지 고르는 자리.
+///
+/// **여기가 유일한 분기점이다.** 이 위로는(패닉 훅·로그 브리지·JS 커맨드)
+/// "무엇이 났는가"만 알고, 아래로는(SDK·HTTP) "어디로 가는가"만 안다.
+/// 전송로가 늘어도 이 함수만 고치면 되고, 판단이 두 곳으로 갈라지지 않는다.
 ///
 /// **여기서 네트워크를 건드리지 않는다.** 패닉 훅과 JS 커맨드가 함께 쓰는
-/// 자리이고, 둘 다 빠르게 돌려줘야 한다. 잠금이 오염돼도(다른 스레드가
-/// 패닉) 기록은 이어간다 — 보고를 잃는 것보다 낫다.
+/// 자리이고, 둘 다 빠르게 돌려줘야 한다.
+///
+/// ## SDK 가 있을 때 큐를 건너뛰는 이유
+///
+/// 수집 루프(②)는 **살아 있는 프로세스에서** 큐를 비워 보내는 장치다. SDK 는
+/// 다르게 논다 — 자체적으로 디바이스에 쌓아 두었다가 **다음 기동에** 올린다.
+/// 그래서 SDK 로 갈 때는 우리 큐를 거칠 이유가 없다. 오히려 거치면 손해다 —
+/// 비정상 종료로 프로세스가 죽으면 그 큐는 통째로 사라지고, 정작 SDK 가
+/// 받았어야 할 마지막 예외를 못 넘긴다.
 pub fn report(report: CrashReport) {
     if !enabled() {
         return;
     }
+    // ① SDK 경로. 넘기기만 하고 곧바로 돌아온다(`android_sink::emit` 참고 —
+    //    블로킹하지 않는 것이 계약이다).
+    if sdk_registered() {
+        let report = report.clamp();
+        // `context` 가 없으면 출처라도 붙인다 — 대시보드에서 rust/js 를
+        // 가르는 단서가 사라지면 1단계의 핵심 요구가 무너진다.
+        let context = report
+            .context
+            .clone()
+            .or_else(|| Some(report.source.as_str().to_string()));
+        sdk_emit(report.kind, report.message, report.stack, context);
+        SENT.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    // ② HTTP 경로 (1단계 그대로).
     let mut guard = queue().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     while guard.len() >= QUEUE_LIMIT {
         guard.pop_front();
     }
     guard.push_back(report.clamp());
+}
+
+/// SDK 로 넘기는 자리. 데스크톱에서는 **컴파일만 되게 자리를 둔다.**
+///
+/// `sdk_registered()` 가 데스크톱에서 항상 거짓이라 여기까지 오지 않는다 —
+/// 그래도 함수가 있어야 위 `report()` 가 어느 타깃에서나 컴파일된다.
+#[cfg(target_os = "android")]
+fn sdk_emit(kind: Kind, message: String, stack: Option<String>, context: Option<String>) {
+    android_sink::emit(kind, message, stack, context);
+}
+
+#[cfg(not(target_os = "android"))]
+fn sdk_emit(kind: Kind, message: String, stack: Option<String>, context: Option<String>) {
+    // 도달하지 않는다. 인자를 소비해 경고만 막는다.
+    let _ = (kind, message, stack, context);
 }
 
 /// 큐에서 최대 `BATCH_LIMIT` 건을 꺼낸다. 수집 루프만 부른다.
@@ -367,6 +625,9 @@ async fn send(report: &CrashReport) {
 
     let body = match serde_json::to_vec(&serde_json::json!({
         "source": report.source.as_str(),
+        // 예외인가 로그인가. 기존 수집기는 이 필드를 모르면 무시하면 그만이라
+        // 호환이 깨지지 않는다(`Kind`).
+        "kind": report.kind.as_str(),
         "message": report.message,
         "stack": report.stack,
         "context": report.context,
@@ -487,10 +748,16 @@ pub fn install_panic_hook() {
         let location = info
             .location()
             .map(|spot| format!("{}:{}:{}", spot.file(), spot.line(), spot.column()));
+        // **패닉은 뒤늦게 도착해도 잃지 않는다.**
+        //
+        // `report()` 는 SDK 가 있으면 자체 저장소에 쌓아 다음 기동에 올린다.
+        // 그 뒤 앱이 죽어도 보고는 디바이스에 남는다. 그게 이 순서의 요점이다 —
+        // 훅이 **패닉 위치를 붙여** 넘길 때 `info.location()` 이 아직 살아 있다.
         report(CrashReport::from_rust(
             panic_message(info),
             location,
             "panic",
+            Kind::Exception,
         ));
         previous(info);
     }));
@@ -532,12 +799,20 @@ fn forward(record: &log::Record) {
     if record.level() > log::Level::Warn {
         return;
     }
+    // **`Kind::Log` 로 보낸다.** Crashlytics SDK 는 `recordException`(비정상
+    // 종료 이벤트)과 `log`(빵부스러기)를 따로 둔다. 경고 한 줄을 예외로
+    // 올리면 비정상 종료율이 부풀고 **진짜 예외가 그 속에 묻힌다** — 그래서
+    // 로그 브리지가 흘려보낸 것은 `log()` 로 간다.
+    //
+    // HTTP 경로(②)는 이 구분을 쓰지 않는다(수집기가 하나뿐이다). 다만 본문에
+    // `kind` 가 실리므로 수집기가 거를 수 있다.
     report(CrashReport::from_rust(
         format!("{}: {}", record.level(), record.args()),
         record
             .file()
             .map(|file| format!("{}:{}", file, record.line().unwrap_or(0))),
         "log",
+        Kind::Log,
     ));
 }
 
@@ -562,10 +837,45 @@ fn log_bridged() -> bool {
     BRIDGED.load(Ordering::Relaxed)
 }
 
-/// 보고를 보내는가, 큐에 몇 건이 남았는가. **밖에서 확인하는 통로다.**
+/// SDK 싱크를 설치한다. `crash_native.rs` 의 플러그인 `setup` 이 부른다.
 ///
-/// "조용히 죽었다"(엔드포인트가 바뀌어 실패만 하고 있음)와 "보낼 게 없었다"
+/// **여기서 패닉 훅을 다시 걸지 않는다.** 훅은 `install_panic_hook` 에서
+/// 이미 걸렸고, 그 훅은 `report()` 를 부른다 — 그 함수가 이 싱크를 보므로
+/// 패닉도 자동으로 SDK 로 간다. 훅을 두 번 걸면 `previous` 가 자기 자신을
+/// 감싸 무한 재귀가 된다(패닉 훅 안에서 패닉).
+///
+/// 데스크톱에서는 **아무 일도 하지 않는다** — `sdk_registered()` 가 언제나
+/// 거짓이라 `report()` 가 ②(HTTP)로 간다. 그게 1단계 계약을 지키는 방법이다.
+#[cfg(target_os = "android")]
+pub fn register_sdk(handle: tauri::plugin::PluginHandle<tauri::Wry>) {
+    android_sink::register(handle);
+}
+
+#[cfg(not(target_os = "android"))]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub fn register_sdk(_handle: tauri::plugin::PluginHandle<tauri::Wry>) {
+    // 데스크톱 개발 빌드. Crashlytics 가 없다. (플러그인 `setup` 이
+    // 컴파일되지 않으므로 여기까지 오는 호출도 없다 — 남겨 두는 이유는
+    // `crash_native.rs` 가 어느 타깃에서나 같은 모양으로 컴파일되게 하기 위해서다.)
+}
+
+/// 보고를 보내는가, 어디로 보내는가, 큐에 몇 건이 남았는가.
+/// **밖에서 확인하는 통로다.**
+///
+/// \"조용히 죽었다\"(전송로가 바뀌어 실패만 하고 있음)와 \"보낼 게 없었다\"
 /// 를 구분하려면 이 값이 필요하다.
+///
+/// ## 1단계와 달라진 판단 기준 (B안)
+///
+/// 1단계는 \"엔드포인트·키가 있나\" 를 물었고 **그게 곧 켜짐**이었다. B안에서는
+/// 그 둘이 **없어도 켜진다** — SDK 가 붙으면 `google-services.json` 만으로
+/// 전송된다. 그래서 이제 두 축을 따로 알린다.
+///
+///  - `route` — 지금 무엇으로 보내는가. `\"sdk\"` / `\"endpoint\"` / `\"off\"`.
+///  - `enabled` — 아무 전송로든 살아 있는가(= 위가 `off` 가 아닌가).
+///
+/// **`endpoint`/`hasApiKey` 는 그대로 남긴다.** ②를 지우지 않았으므로 그
+/// 설정이 실제로 쓰이는지 확인할 길이 있어야 한다. 키는 여전히 알리지 않는다.
 pub fn status() -> serde_json::Value {
     let pending = queue()
         .lock()
@@ -573,6 +883,13 @@ pub fn status() -> serde_json::Value {
         .unwrap_or(0);
     serde_json::json!({
         "enabled": enabled(),
+        // 어느 전송로인가. B안에서 새로 생긴 축이다.
+        "route": route(),
+        // ① Firebase Crashlytics SDK 가 이 기기에서 살아 있는가.
+        //   안드로이드 빌드에 `google-services.json` 이 들어가 FirebaseApp 이
+        //   초기화됐고 Kotlin 플러그인이 등록됐으면 참이다.
+        //   **데스크톱·시험에서는 언제나 거짓**이다.
+        "sdk": sdk_registered(),
         // 엔드포인트는 알려도 되고 **키는 알리지 않는다.** 진단에 필요한 것은
         // "어디로 보내는가" 지 "무엇으로 인증하는가" 가 아니다.
         "endpoint": endpoint(),
@@ -640,6 +957,8 @@ mod tests {
     fn sample(seed: usize) -> CrashReport {
         CrashReport {
             source: Source::Js,
+            // 기본값은 예외다 — 이 시험들이 재는 것은 큐 동작이지 갈래가 아니다.
+            kind: Kind::Exception,
             message: format!("시험 {seed}"),
             stack: None,
             context: None,
@@ -776,6 +1095,7 @@ mod tests {
             "패닉".to_string(),
             Some("src/main.rs:1:1".to_string()),
             "panic",
+            Kind::Exception,
         );
         let from_js = CrashReport::from_js(JsCrash {
             message: "js boom".to_string(),
@@ -877,6 +1197,62 @@ mod tests {
         // 경계에 정확히 걸치는 길이도 그대로 남는다.
         let exact = "a".repeat(MESSAGE_LIMIT);
         assert_eq!(CrashReport::trimmed(&exact, MESSAGE_LIMIT), exact);
+    }
+
+    /// **로그와 예외가 다른 커맨드로 간다** — B안에서 가장 중요한 판단이다.
+    ///
+    /// Crashlytics SDK 는 `recordException`(비정상 종료 이벤트)과 `log`
+    /// (빵부스러기)를 따로 둔다. 로그 브리지가 흘려보낸 경고를 예외로 올리면
+    /// 비정상 종료율이 부풀고 **진짜 예외가 그 속에 묻힌다.** 그래서 갈래를
+    /// 여기서 고정한다 — 두 판단이 갈라지면 그쪽이 대시보드를 오염시킨다.
+    #[test]
+    fn logs_and_exceptions_take_different_commands() {
+        // 패닉·JS 예외는 `recordException` 으로.
+        assert_eq!(Kind::Exception.native_command(), "recordException");
+        assert_eq!(Kind::Log.native_command(), "log");
+
+        // 기본값은 예외다 — 1단계가 만든 보고는 전부 예외였다.
+        assert_eq!(Kind::default(), Kind::Exception);
+
+        // 화면이 넘긴 JS 오류와 패닉은 예외로 분류된다.
+        let js = CrashReport::from_js(JsCrash {
+            message: "boom".to_string(),
+            stack: None,
+            context: None,
+            at_ms: None,
+        });
+        assert_eq!(js.kind, Kind::Exception);
+        let rust = CrashReport::from_rust("패닉".to_string(), None, "panic", Kind::Exception);
+        assert_eq!(rust.kind, Kind::Exception);
+        // 로그 브리지만 로그로 분류된다.
+        let logged = CrashReport::from_rust("log".to_string(), None, "log", Kind::Log);
+        assert_eq!(logged.kind, Kind::Log);
+
+        // HTTP 본문에도 실린다 — 수집기가 거를 수 있어야 한다(`Kind`).
+        let json = serde_json::to_string(&logged).expect("직렬화");
+        assert!(json.contains("\"kind\":\"log\""), "갈래가 본문에 없다");
+    }
+
+    /// `crash_report_status` 의 B안 판단 기준을 고정한다.
+    ///
+    /// 1단계는 `enabled` 하나로 "키가 있나" 를 답했다. B안에서는 SDK 라는
+    /// **키가 필요 없는** 전송로가 생겼으므로 `route` 축이 따로 있어야 한다.
+    /// 데스크톱·시험에는 SDK 가 없으니 여기서는 항상 `endpoint` 아니면 `off` 다.
+    #[test]
+    fn status_reports_which_route_is_live() {
+        with_keys(Some("https://example.invalid/crash"), Some("secret"), || {
+            let value = status();
+            assert_eq!(value["route"], serde_json::json!("endpoint"));
+            assert_eq!(value["enabled"], serde_json::json!(true));
+        });
+        with_keys(None, None, || {
+            let value = status();
+            assert_eq!(value["route"], serde_json::json!("off"));
+            assert_eq!(value["enabled"], serde_json::json!(false));
+            // 시험(데스크톱)에서는 SDK 가 언제나 꺼져 있다 — 그 계약 위에서
+            // 1단계 시험들이 살아 있다.
+            assert_eq!(value["sdk"], serde_json::json!(false));
+        });
     }
 
     /// **기동 경로를 키 없이 그대로 밟는다 — acceptance 3 의 실증이다.**
