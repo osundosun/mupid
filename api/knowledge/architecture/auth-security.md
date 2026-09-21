@@ -285,7 +285,9 @@ public static final long EMAIL_VERIFICATION_VALID_EXPIRATION_HOURS = 1; // 인�
 2. `getUserByEmail(dto.email()).isPresent()` → `MUPID_DUPLICATE_EMAIL` (400)
 3. `repository.save(newUser)`
 
-비밀번호 형식은 `UserCreateRequest` 의 `@Pattern` 이 검증한다 — 영문/숫자/특수문자 중 2가지 이상, 8~20자 (주석에 KISA 가이드라인 근거).
+비밀번호 형식은 `@Pattern` 이 검증한다 — 영문/숫자/특수문자(`@$!%*#?&`) 중 2가지 이상, 8~20자, 그 밖의 문자는 금지. 정규식과 안내 문구는 `user/request/UserPasswordPolicy` 한 곳에 있고 `UserCreateRequest`·`UserUpdateRequest`·`UserSubmitPasswordResetRequest` 셋이 같은 상수를 쓴다 (전에는 셋에 복붙돼 있었다).
+
+> 2026-09-21 이전 정규식은 조합 조건을 `(?=(.*[A-Za-z].*[0-9])|(?=...))` 로 적어 **등장 순서**까지 강제했다. `1234abcd` 처럼 숫자가 영문보다 앞에 오면 규칙을 지켰는데도 400 `MUPID_INVALID_REQUEST_BODY` 로 거절됐다 — S15P21A204-417. 지금은 분기마다 독립 룩어헤드를 써서 순서에 의존하지 않는다.
 
 가입 직후 상태는 `PENDING` 이며, 이를 `ACTIVE` 로 바꾸는 코드는 현재 없다.
 

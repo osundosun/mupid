@@ -7,9 +7,8 @@ import jakarta.validation.constraints.Size;
 public record UserUpdateRequest(
 
     @Pattern(
-        // KISA 가이드라인 : 종류 2가지 이상 조합 시 10자 이상
-        regexp = "^(?=(.*[A-Za-z].*[0-9])|(?=.*[A-Za-z].*[@$!%*#?&])|(?=.*[0-9].*[@$!%*#?&]))[A-Za-z\\d@$!%*#?&]{8,20}$",
-        message = "비밀번호는 영문, 숫자, 특수문자 중 2가지 이상을 조합하여 8~20자로 입력해주세요."
+        regexp = UserPasswordPolicy.PASSWORD_REGEXP,
+        message = UserPasswordPolicy.PASSWORD_MESSAGE
     )
     String password,
 
