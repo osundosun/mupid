@@ -198,15 +198,16 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 { "recommendation_id": 5001, "user_id": 15, "limit": 10,
   "exclude_tracks": ["T000148"],
   "current_track": "T000901", "current_section": "T000901#2",
-  "onboarding": { "moods": ["잔잔한"], "genres": ["Jazz"] } }
+  "onboarding": { "moods": ["serene"], "genres": ["Jazz"] } }
 ```
 
 `recommendation_id`·`user_id` 만 필수. `current_*` 는 `next` 전용이다.
 타입이 엄격하다 — `"5001"` 같은 문자열이나 실수 `limit` 은 400 으로 거부한다.
 
-`onboarding` 은 **Spring 코드표의 한국어 이름 그대로** 보낸다. AI 태그로 옮기는 것은
-이쪽 일이다(`app/onboarding.py`) — 두 어휘는 한 건도 겹치지 않아서, 보내는 쪽이 어설프게
-옮기면 조건이 조용히 사라진다.
+`onboarding` 은 **Spring 코드표의 `code_name`(영문 내부 코드) 그대로** 보낸다
+(`serene`·`melancholic` …, 2026-09-21 정리 전의 한국어 이름도 별칭으로 받는다). AI 태그로
+옮기는 것은 이쪽 일이다(`app/onboarding.py`) — 코드표 이름과 색인 태그는 다른 어휘라서,
+보내는 쪽이 어설프게 옮기면 조건이 조용히 사라진다.
 
 `search` 는 조건을 **누가 뽑았느냐**에 따라 둘 중 하나를 채운다. 둘 다 없으면 400 이다.
 

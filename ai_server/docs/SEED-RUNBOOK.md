@@ -55,7 +55,8 @@ ClickHouse 딕셔너리가 옛 번호를 든 채 남으므로, 다시 부른 곡
 응답의 `sections[]` 가 `externalId` 와 발급된 `musicSectionAnalysisId` 를 짝지어 준다.
 **숫자 ID 를 AI 가 만들지 않는다.**
 
-`moods` 는 **코드 이름**으로 보낸다(`잔잔한`·`신나는`…). 번호는 Spring 이 붙인다 —
+`moods` 는 **코드 이름**으로 보낸다(`serene`·`energetic`… 영문 `code_name`; 한국어 표시명도
+Spring 이 받아 준다). 번호는 Spring 이 붙인다 —
 AI 는 MySQL 이 발급한 코드 번호를 모른다. 코드표에 없는 이름은 버리고 센다.
 
 | 기대 | 확인 |

@@ -2,6 +2,7 @@ package com.osundosun.mupid.api.music;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -319,6 +320,24 @@ class MusicSectionReplaceTest {
                 List.of(result.sections().getFirst().musicSectionAnalysisId()));
         assertEquals(1, links.size());
         assertEquals(mood, links.getFirst().getMoodCode().getCodeName());
+    }
+
+    @Test
+    @DisplayName("분위기는 화면용 한국어 이름으로도 잇는다 — 구간 등록 도구가 한국어를 보낸다")
+    void linksMoodsByDisplayName() {
+        Code code = codeRepository.findAllByCodeTypeOrderByCodeIdAsc(CodeType.MOOD).getFirst();
+        assertNotEquals(code.getCodeName(), code.getDisplayName(),
+            "코드명과 표시명이 같으면 이 검증이 의미가 없다");
+
+        MusicSectionBulkResponse result = replace(music, new MusicSectionBulkLine(
+            0, uid + "#0", SectionLabel.INTRO, 0, 15_500, List.of(code.getDisplayName()), null));
+        em.flush();
+
+        List<MusicSectionAnalysisMood> links = moodRepository
+            .findByMusicSectionAnalysisMoodId_MusicSectionAnalysisIdIn(
+                List.of(result.sections().getFirst().musicSectionAnalysisId()));
+        assertEquals(1, links.size());
+        assertEquals(code.getCodeId(), links.getFirst().getMoodCode().getCodeId());
     }
 
     @Test

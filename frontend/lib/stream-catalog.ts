@@ -11,7 +11,7 @@
 import { api } from './api/session';
 import { localDemoEnabled } from './api/local-demo';
 import type { MusicSummary } from './api/endpoints';
-import { DEFAULT_ALBUM_COVER, type Track } from './mupid-data';
+import { DEFAULT_ALBUM_COVER, moodLabel, type Track } from './mupid-data';
 import { toImageSource, withCache } from './platform';
 
 /**
@@ -36,7 +36,11 @@ const CATALOG_SIZE = 100;
  */
 export const toTrack = (music: MusicSummary): Track => {
   const duration = (music.duration_ms ?? 0) / 1000;
-  const tags = [...music.genres, ...music.moods];
+  // 무드는 서버가 코드 이름(영문 `code_name`)으로 준다. 화면 값(`mood`·`tags`)은
+  // 한국어로 옮긴다 — 온보딩 답(`display_name`)과 같은 말이어야 취향 비교
+  // (`pickTodayMoments`)와 탐색 필터(`filterExploreTracks`)가 맞는다.
+  const moods = music.moods.map(moodLabel);
+  const tags = [...music.genres, ...moods];
   // 곡마다 표지가 따로 있는 카탈로그(flow_music)가 있고, 앨범 커버만 있는 곡도
   // 있다. 곡 표지 → 앨범 커버 순으로 내려간다.
   //
@@ -54,7 +58,7 @@ export const toTrack = (music: MusicSummary): Track => {
     artistImage: toImageSource(music.artist.image_url?.trim()),
     album: music.album.title,
     genre: music.genres[0] ?? '',
-    mood: music.moods[0] ?? '',
+    mood: moods[0] ?? '',
     // 구간 UI 가 duration 안쪽 값을 기대한다. 곡 길이에 맞춰 잡는다.
     moment: Math.max(0, duration * 0.3),
     duration,

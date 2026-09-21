@@ -23,13 +23,18 @@
 -- **셋(`BootstrapRunner.CODE_SEEDS` · 이 파일 · `mupid-data.ts`)을 함께 고친다.**
 --
 -- 무드는 **17종**이다 (2026-09-17). 앞 8종이 화면 디자인의 대분류, 뒤 9종이
--- taxonomy(`genre_mood_taxonomy.json`) 세분류다. taxonomy 9종은 색인 축에 이름이
--- 하나도 없어 뜻으로 이어야 했고(`ai_server/app/onboarding.py` 의 `MOOD_MAP`),
--- 그때 **`code_name` 은 화면용 한국어, `display_name` 이 색인 원문**이 된다 —
--- 장르 45종과 방향이 반대라 여기서 헷갈리기 쉽다.
+-- taxonomy(`genre_mood_taxonomy.json`) 세분류다. **`code_name` 은 영문 내부 코드,
+-- `display_name` 이 화면용 한국어다** (2026-09-21 정리) — 장르 45종과 같은 방향이다.
+-- 그전에는 무드만 방향이 반대였고, 그 탓에 운영 DB 에 같은 무드가 한국어·영문
+-- 두 이름으로 들어가 매핑 테이블마다 다른 번호를 썼다. 정리 절차는
+-- `migrate-mood-codes-2026-09-21.sql` 에 있다.
+--
+-- 장르는 **53종**이다 — 대분류 8종(아래 INSERT)과 세분류 45종(배치가 넣는다).
+-- 둘 다 `code_name` 이 영문, `display_name` 이 한국어다 (2026-09-21 정리).
+-- 그전에는 대분류 8종의 표시명이 비어 화면이 영문으로 되돌아갔다.
 --
 -- `display_name` 은 NOT NULL 이라 값을 빼면 1364 로 막힌다. 위 INSERT 는
--- 표시명을 항상 함께 넣는다 (기존 16종은 `code_name` 과 같은 값).
+-- 표시명을 항상 함께 넣는다.
 --
 -- **무드 9종은 위 8종 뒤에 붙인다.** 화면 차례가 곧 `code_id` 차례라
 -- (`findAllByCodeTypeOrderByCodeIdAsc`) 사이에 끼우면 기존 사용자의
@@ -42,35 +47,38 @@
 -- DEFAULT CURRENT_TIMESTAMP 가 붙지 않아 생략하면 1364 로 막힌다.
 INSERT INTO `codes` (`code_type`, `code_name`, `display_name`, `created_at`)
 SELECT wanted.t, wanted.n, wanted.d, NOW(6) FROM (
-  SELECT 'MOOD' AS t, '잔잔한' AS n, '잔잔한' AS d
-  UNION ALL SELECT 'MOOD', '벅찬', '벅찬'
-  UNION ALL SELECT 'MOOD', '몽환적인', '몽환적인'
-  UNION ALL SELECT 'MOOD', '신나는', '신나는'
-  UNION ALL SELECT 'MOOD', '집중되는', '집중되는'
-  UNION ALL SELECT 'MOOD', '감성적인', '감성적인'
-  UNION ALL SELECT 'MOOD', '강렬한', '강렬한'
-  UNION ALL SELECT 'MOOD', '설레는', '설레는'
-  -- taxonomy 무드 9종 (2026-09-17 추가). `code_name` 은 화면용 한국어,
-  -- `display_name` 이 색인 원문이다 — **장르 45종과 방향이 반대다.**
+  -- 대분류 8종. `code_name` 은 영문 내부 코드, `display_name` 은 화면용 한국어.
+  SELECT 'MOOD' AS t, 'serene' AS n, '잔잔한' AS d
+  UNION ALL SELECT 'MOOD', 'uplifting', '벅찬'
+  UNION ALL SELECT 'MOOD', 'ethereal', '몽환적인'
+  UNION ALL SELECT 'MOOD', 'energetic', '신나는'
+  UNION ALL SELECT 'MOOD', 'focused', '집중되는'
+  UNION ALL SELECT 'MOOD', 'emotional', '감성적인'
+  UNION ALL SELECT 'MOOD', 'intense', '강렬한'
+  UNION ALL SELECT 'MOOD', 'romantic', '설레는'
+  -- taxonomy 무드 9종 (2026-09-17 추가). `code_name` 은 taxonomy 원문이다.
   -- 반드시 위 8종 **뒤에** 붙인다. 화면 차례가 곧 `code_id` 차례라
   -- 사이에 끼우면 기존 `onboarding_survey` 답이 다른 분위기로 읽힌다.
-  UNION ALL SELECT 'MOOD', '애상적인', 'melancholic'
-  UNION ALL SELECT 'MOOD', '따뜻한', 'warm'
-  UNION ALL SELECT 'MOOD', '몽글한', 'dreamy'
-  UNION ALL SELECT 'MOOD', '화사한', 'bright'
-  UNION ALL SELECT 'MOOD', '희망찬', 'hopeful'
-  UNION ALL SELECT 'MOOD', '웅장한', 'powerful'
-  UNION ALL SELECT 'MOOD', '어두운', 'dark'
-  UNION ALL SELECT 'MOOD', '고요한', 'calm'
-  UNION ALL SELECT 'MOOD', '짜릿한', 'exciting'
-  UNION ALL SELECT 'GENRE', 'Electronic', 'Electronic'
-  UNION ALL SELECT 'GENRE', 'Indie', 'Indie'
-  UNION ALL SELECT 'GENRE', 'R&B', 'R&B'
-  UNION ALL SELECT 'GENRE', 'Rock', 'Rock'
-  UNION ALL SELECT 'GENRE', 'Pop', 'Pop'
-  UNION ALL SELECT 'GENRE', 'Hip-hop', 'Hip-hop'
-  UNION ALL SELECT 'GENRE', 'Jazz', 'Jazz'
-  UNION ALL SELECT 'GENRE', 'Classical', 'Classical'
+  UNION ALL SELECT 'MOOD', 'melancholic', '애상적인'
+  UNION ALL SELECT 'MOOD', 'warm', '따뜻한'
+  UNION ALL SELECT 'MOOD', 'dreamy', '몽글한'
+  UNION ALL SELECT 'MOOD', 'bright', '화사한'
+  UNION ALL SELECT 'MOOD', 'hopeful', '희망찬'
+  UNION ALL SELECT 'MOOD', 'powerful', '웅장한'
+  UNION ALL SELECT 'MOOD', 'dark', '어두운'
+  UNION ALL SELECT 'MOOD', 'calm', '고요한'
+  UNION ALL SELECT 'MOOD', 'exciting', '짜릿한'
+  -- 장르 대분류 8종. `code_name` 은 AI 서버가 세분류에 이름 포함으로 잇는 값이라
+  -- 그대로 두고, 표시명만 한국어다 (2026-09-21). `R&B` 는 세분류 `rnb` 의 표시명과
+  -- 글자가 겹쳐 `알앤비` 로 갈라 둔다.
+  UNION ALL SELECT 'GENRE', 'Electronic', '일렉트로닉'
+  UNION ALL SELECT 'GENRE', 'Indie', '인디'
+  UNION ALL SELECT 'GENRE', 'R&B', '알앤비'
+  UNION ALL SELECT 'GENRE', 'Rock', '록'
+  UNION ALL SELECT 'GENRE', 'Pop', '팝'
+  UNION ALL SELECT 'GENRE', 'Hip-hop', '힙합'
+  UNION ALL SELECT 'GENRE', 'Jazz', '재즈'
+  UNION ALL SELECT 'GENRE', 'Classical', '클래식'
 ) AS wanted
 WHERE NOT EXISTS (
   SELECT 1 FROM `codes` c

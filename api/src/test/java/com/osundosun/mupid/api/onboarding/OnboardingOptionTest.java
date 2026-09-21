@@ -1,6 +1,7 @@
 package com.osundosun.mupid.api.onboarding;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -48,17 +49,30 @@ import com.osundosun.mupid.api.onboarding.service.OnboardingService;
 @Transactional
 class OnboardingOptionTest {
 
-    /** taxonomy 무드 9종의 `code_name` → `display_name`. `BootstrapRunner` 와 같은 값. */
-    private static final List<String[]> TAXONOMY_MOODS = List.of(
-        new String[] {"애상적인", "melancholic"},
-        new String[] {"따뜻한", "warm"},
-        new String[] {"몽글한", "dreamy"},
-        new String[] {"화사한", "bright"},
-        new String[] {"희망찬", "hopeful"},
-        new String[] {"웅장한", "powerful"},
-        new String[] {"어두운", "dark"},
-        new String[] {"고요한", "calm"},
-        new String[] {"짜릿한", "exciting"}
+    /**
+     * 무드 17종의 `code_name` → `display_name`. `BootstrapRunner` 와 같은 값.
+     *
+     * <p>코드 이름은 영문 내부 코드, 표시명은 한국어다 (2026-09-21 정리). 앞 8종이
+     * 대분류, 뒤 9종이 taxonomy 세분류다.
+     */
+    private static final List<String[]> MOODS = List.of(
+        new String[] {"serene", "잔잔한"},
+        new String[] {"uplifting", "벅찬"},
+        new String[] {"ethereal", "몽환적인"},
+        new String[] {"energetic", "신나는"},
+        new String[] {"focused", "집중되는"},
+        new String[] {"emotional", "감성적인"},
+        new String[] {"intense", "강렬한"},
+        new String[] {"romantic", "설레는"},
+        new String[] {"melancholic", "애상적인"},
+        new String[] {"warm", "따뜻한"},
+        new String[] {"dreamy", "몽글한"},
+        new String[] {"bright", "화사한"},
+        new String[] {"hopeful", "희망찬"},
+        new String[] {"powerful", "웅장한"},
+        new String[] {"dark", "어두운"},
+        new String[] {"calm", "고요한"},
+        new String[] {"exciting", "짜릿한"}
     );
 
     @Autowired
@@ -82,62 +96,76 @@ class OnboardingOptionTest {
     }
 
     @Test
-    @DisplayName("분위기 17종이 모두 내려오고, taxonomy 9종은 두 이름이 다르다")
-    void taxonomyMoodsExposeBothLanguages() {
+    @DisplayName("분위기 17종이 모두 내려오고, 코드 이름은 영문·표시명은 한국어다")
+    void moodsExposeEnglishCodeAndKoreanDisplayName() {
         List<CodeOption> moods = onboardingService.getOptions().moods();
 
         // 17종 이상이어야 한다. 배치가 코드를 더 넣었으면 더 많을 수 있다.
         assertTrue(moods.size() >= 17, "분위기 선택지가 17종보다 적다: " + moods.size());
 
-        Set<String> names = moods.stream().map(CodeOption::name).collect(Collectors.toSet());
-        for (String[] pair : TAXONOMY_MOODS) {
+        for (String[] pair : MOODS) {
             String codeName = pair[0];
-            String indexName = pair[1];
+            String korean = pair[1];
 
             CodeOption found = moods.stream()
                 .filter(option -> codeName.equals(option.name()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("분위기 코드가 없다: " + codeName));
 
-            // `name` 은 한국어 그대로다 — 색인으로 가는 값이라 바꾸면 안 된다.
+            // `name` 은 영문 내부 코드다 — AI 서버로 가는 값이라 바꾸면 안 된다.
             assertEquals(codeName, found.name(), "code_name 이 바뀌었다");
-            // `display_name` 이 taxonomy 원문이다 — 장르 45종과 **방향이 반대**다.
-            assertEquals(indexName, found.displayName(),
-                codeName + " 의 표시명이 taxonomy 원문이어야 한다");
+            // `display_name` 이 화면용 한국어다.
+            assertEquals(korean, found.displayName(),
+                codeName + " 의 표시명이 한국어여야 한다");
         }
-        // taxonomy 원문이 `name` 으로 새어 나가면 화면에 영문이 뜬다.
-        Set<String> indexNames = TAXONOMY_MOODS.stream()
-            .map(pair -> pair[1]).collect(Collectors.toSet());
-        assertEquals(Set.of(), names.stream().filter(indexNames::contains)
-            .collect(Collectors.toSet()), "taxonomy 원문이 코드 이름으로 들어갔다");
+        // 한국어가 `name` 으로 들어가면 같은 무드가 두 번호로 갈라진다 (운영에서 겪었다).
+        Set<String> koreanNames = MOODS.stream().map(pair -> pair[1]).collect(Collectors.toSet());
+        Set<String> names = moods.stream().map(CodeOption::name).collect(Collectors.toSet());
+        assertEquals(Set.of(), names.stream().filter(koreanNames::contains)
+            .collect(Collectors.toSet()), "한국어가 코드 이름으로 들어갔다");
     }
 
     @Test
-    @DisplayName("기존 8종 분위기는 표시명이 코드 이름과 같다 — 기존 사용자 화면이 안 바뀐다")
-    void theOriginalEightKeepTheirDisplayName() {
+    @DisplayName("분위기 표시명은 화면에서 겹치지 않는다 — 같은 한국어가 두 번호로 뜨면 안 된다")
+    void moodDisplayNamesAreDistinct() {
         List<CodeOption> moods = onboardingService.getOptions().moods();
-        List<String> original = List.of("잔잔한", "벅찬", "몽환적인", "신나는",
-                                        "집중되는", "감성적인", "강렬한", "설레는");
 
-        for (String name : original) {
-            CodeOption found = moods.stream()
-                .filter(option -> name.equals(option.name()))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("기존 분위기 코드가 없다: " + name));
-            assertEquals(name, found.displayName(), name + " 의 표시명이 바뀌었다");
-        }
+        Set<String> shown = moods.stream().map(CodeOption::displayName).collect(Collectors.toSet());
+        assertEquals(moods.size(), shown.size(), "겹치는 표시명이 있다: " + moods);
     }
 
     @Test
-    @DisplayName("장르는 표시명이 코드 이름과 같다 — 표시명이 아직 한국어가 아니다")
-    void genresKeepCodeNameAsDisplayName() {
+    @DisplayName("장르도 코드 이름은 영문, 표시명은 한국어다 — 목록에 두 언어가 섞이면 안 된다")
+    void genresShowKoreanDisplayNames() {
+        /* 2026-09-21 정리 전에는 대분류 8종의 표시명이 비어 있어 화면이 `code_name`
+           으로 되돌아갔고, 세분류 45종만 한국어라 온보딩 목록에 영문과 한국어가
+           섞여 보였다. 대분류 8종은 `Electronic` → `일렉트로닉` 처럼 표시명을 채웠다.
+           `code_name` 은 그대로다 — AI 서버가 그 철자로 세분류를 잇는다. */
         List<CodeOption> genres = onboardingService.getOptions().genres();
 
         assertTrue(genres.size() >= 8, "장르 선택지가 8종보다 적다: " + genres.size());
         for (CodeOption option : genres) {
-            assertEquals(option.name(), option.displayName(),
-                "장르의 표시명이 코드 이름과 다르다: " + option.name());
+            assertNotNull(option.displayName(), "표시명이 없다: " + option.name());
+            assertTrue(!option.displayName().isBlank(),
+                "표시명이 비어 화면이 영문으로 되돌아간다: " + option.name());
         }
+        // 코드 이름에는 한국어가 없어야 한다 — AI 색인으로 가는 값이다.
+        for (CodeOption option : genres) {
+            assertFalse(option.name().matches(".*[가-힣].*"),
+                "장르 코드 이름에 한국어가 들어갔다: " + option.name());
+        }
+    }
+
+    @Test
+    @DisplayName("장르 표시명은 겹치지 않는다 — 같은 글자가 두 칩으로 뜨면 고를 수 없다")
+    void genreDisplayNamesAreDistinct() {
+        /* `R&B`(대분류) 와 `rnb`(세분류) 의 표시명이 둘 다 `R&B` 라 칩이 둘이었다.
+           대분류 쪽을 `알앤비` 로 갈라 두었다 (2026-09-21). */
+        List<CodeOption> genres = onboardingService.getOptions().genres();
+
+        Set<String> shown = genres.stream().map(CodeOption::displayName)
+            .collect(Collectors.toSet());
+        assertEquals(genres.size(), shown.size(), "겹치는 장르 표시명이 있다");
     }
 
     @Test
@@ -160,10 +188,7 @@ class OnboardingOptionTest {
 
         // 무드는 대분류 8 + taxonomy 9 로 시작한다.
         List<String> moods = options.moods().stream().map(CodeOption::name).toList();
-        assertEquals(List.of("잔잔한", "벅찬", "몽환적인", "신나는", "집중되는",
-                             "감성적인", "강렬한", "설레는",
-                             "애상적인", "따뜻한", "몽글한", "화사한", "희망찬",
-                             "웅장한", "어두운", "고요한", "짜릿한"),
+        assertEquals(MOODS.stream().map(pair -> pair[0]).toList(),
             moods.subList(0, 17), "분위기 차례가 바뀌었다 — 화면 차례가 곧 code_id 차례다");
 
         // 장르 8종도 차례가 고정이다.

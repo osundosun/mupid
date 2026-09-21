@@ -48,7 +48,12 @@ import numpy as np
 
 from .embedder import SR, Segment, keep_segments, load_audio
 
-# demucs 스템 이름 → `codes.code_name` (`CodeType.INSTRUMENT`).
+# demucs 스템 이름 → 화면용 한국어.
+#
+# **왼쪽이 `codes.code_name`, 오른쪽이 `display_name` 이다** (2026-09-21 정리).
+# 코드 이름은 AI 가 붙이는 영문 레이블 그대로 쓴다 — 분위기·장르와 같은 방향이다.
+# 그전에는 한국어가 `code_name` 으로 들어가 있어, 같은 악기를 영문으로 부르는
+# 쪽과 한국어로 부르는 쪽이 갈릴 수 있었다 (분위기에서 실제로 그렇게 갈라졌다).
 #
 # 부트스트랩은 INSTRUMENT 를 심지 않는다 — 확정된 목록이 없어서다. 배치가
 # `POST /api/v1/code` 로 이 넷을 먼저 넣고 구간을 올린다.
@@ -58,7 +63,12 @@ STEMS: tuple[tuple[str, str], ...] = (
     ("bass", "베이스"),
     ("other", "그 외 악기"),
 )
-CODE_NAMES: tuple[str, ...] = tuple(name for _, name in STEMS)
+
+#: 서버에 보낼 `code_name`. demucs 스템 이름 그대로다.
+CODE_NAMES: tuple[str, ...] = tuple(stem for stem, _ in STEMS)
+
+#: `code_name` → 화면용 한국어(`display_name`). 코드를 새로 만들 때만 쓴다.
+DISPLAY_NAMES: dict[str, str] = {stem: korean for stem, korean in STEMS}
 
 MIX_REL = 0.1          # 믹스 대비 -20 dB. 위 머리말 참고 — 실측으로 맞춘 값이 아니다
 ABS_FLOOR = 1e-3       # -60 dBFS. 수치적 무음
@@ -159,13 +169,16 @@ def section_levels(y_mix: np.ndarray, stems: dict,
 def section_instruments(y_mix: np.ndarray, stems: dict, segments: Sequence[Segment], *,
                         mix_rel: float = MIX_REL,
                         abs_floor: float = ABS_FLOOR) -> list[list[str]]:
-    """구간마다 들리는 악기의 **코드 이름** 목록.
+    """구간마다 들리는 악기의 **코드 이름**(영문 스템 이름) 목록.
 
     순서는 `STEMS` 순이다 — 화면에 뜨는 순서가 곡마다 흔들리지 않게.
+
+    한국어가 아니라 영문을 돌려준다 (2026-09-21). 서버는 `code_name` 으로 잇고,
+    화면에 그릴 한국어는 `display_name` 에 있다.
     """
     out = []
     for row in section_levels(y_mix, stems, segments):
-        names = [name for stem, name in STEMS
+        names = [stem for stem, _ in STEMS
                  if row[stem]["rms"] >= abs_floor and row[stem]["ratio"] >= mix_rel]
         out.append(names)
     return out
@@ -253,7 +266,7 @@ def _db(ratio: float) -> str:
     return f"{20 * np.log10(ratio):.1f}"
 
 
-__all__ = ["STEMS", "CODE_NAMES", "MIX_REL", "ABS_FLOOR", "StemsMissing",
+__all__ = ["STEMS", "CODE_NAMES", "DISPLAY_NAMES", "MIX_REL", "ABS_FLOOR", "StemsMissing",
            "find_stem_dir", "load_stems", "rms", "section_levels",
            "section_instruments", "for_track", "main"]
 

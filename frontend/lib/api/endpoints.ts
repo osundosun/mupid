@@ -128,14 +128,14 @@ export type Reactions = { like: number[]; dislike: number[] };
  * 온보딩 선택지 한 개. 서버는 snake_case 로 내려 준다(`spring.jackson.property-naming-strategy`).
  *
  * `name` 과 `display_name` 은 **역할이 다르다.**
- * - `name` — 서버가 AI 추천 서버로 넘기는 값(`code_name`). **바꾸면 안 된다.**
- *   한국어가 색인으로 가면 씨앗이 0 이 되는데, 오류는 안 나고 개인화만 사라진다.
- * - `display_name` — 화면에 그릴 값. 무드 taxonomy 9종은 여기가 영문 원문
- *   (`melancholic`)이고, 장르 45종은 나중에 여기가 한국어(`팝 록`)가 된다.
+ * - `name` — 영문 내부 코드(`code_name`, `serene`·`melancholic`·`poprock`). 서버가 AI
+ *   추천 서버로 넘기고 탐색 필터(`mood=`)에도 이 값을 보낸다. **바꾸면 안 된다.**
+ * - `display_name` — 화면에 그릴 한국어(`잔잔한`·`팝 록`). 아직 표시명이 없는 행은
+ *   `name` 과 같다(장르 대분류 8종).
  *
- * 지금 화면은 `name` 을 그리고 있다(`namesOf`). taxonomy 9종은 `name` 도
- * 한국어(`애상적인`)라 **당장은 맞게 보인다** — 표시명을 화면에 쓰기 시작할 때
- * `display_name` 으로 옮긴다. 둘을 섞으면 어느 쪽이 색인 값인지 알 수 없게 된다.
+ * 화면은 `display_name || name` 을 그린다(`namesOf`). 2026-09-21 까지는 무드의
+ * `name` 이 한국어였는데, 그 방향이 장르와 반대라 운영 코드표에 같은 무드가 두
+ * 번 들어갔다 — 이제 두 종류 모두 `name` 은 영문이다.
  */
 export type CodeOption = { code_id: number; name: string; display_name?: string };
 
@@ -175,6 +175,7 @@ export type MusicSummary = {
     release_date: string;
   };
   genres: string[];
+  /** 무드 `code_name`(영문 내부 코드). 화면에 그릴 때는 `moodLabel` 로 옮긴다. */
   moods: string[];
 };
 
@@ -456,6 +457,7 @@ export type DailyRecommendationResult = {
     recommendation_id: number;
     title: string;
     reason: string;
+    /** 무드 `code_name`(영문 내부 코드). 화면에 그릴 때는 `moodLabel` 로 옮긴다. */
     mood: string;
     music_count: number;
     tracks: Array<{ rank: number; reason: string; music: MusicSummary }>;
