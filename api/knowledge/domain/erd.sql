@@ -163,7 +163,7 @@ CREATE FULLTEXT INDEX `ft_music_title_ngram` ON `music` (`title`) WITH PARSER ng
 CREATE TABLE IF NOT EXISTS `music_analysis` (
   `music_id` INT NOT NULL,
   `has_vocal` TINYINT(1) NOT NULL,
-  `vocal_gender` ENUM('M', 'F', 'ETC'),
+  `vocal_gender` ENUM('M', 'F', 'MIX'),
   PRIMARY KEY (`music_id`)
 );
 CREATE TABLE IF NOT EXISTS `music_analysis_instruments` (
