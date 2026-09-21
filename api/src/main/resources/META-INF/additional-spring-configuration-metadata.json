@@ -1,32 +1,59 @@
-{"properties": [
-  {
-    "name": "jwt.secret",
-    "type": "java.lang.String",
-    "description": "A description for 'jwt.secret'"
-  },
-  {
-    "name": "gmail.client-id",
-    "type": "java.lang.String",
-    "description": "A description for 'gmail.client-id'"
-  },
-  {
-    "name": "gmail.client-secret",
-    "type": "java.lang.String",
-    "description": "A description for 'gmail.client-secret'"
-  },
-  {
-    "name": "ai.base-url",
-    "type": "java.lang.String",
-    "description": "OpenAI 호환 게이트웨이 주소. /chat/completions 앞까지."
-  },
-  {
-    "name": "ai.api-key",
-    "type": "java.lang.String",
-    "description": "게이트웨이 인증 키(MUPID_AI_GMS_KEY). 비어 있으면 AI 대화가 503."
-  },
-  {
-    "name": "ai.model",
-    "type": "java.lang.String",
-    "description": "사용할 모델 이름."
-  }
-]}
+{
+  "properties": [
+    {
+      "name": "jwt.secret",
+      "type": "java.lang.String",
+      "description": "A description for 'jwt.secret'"
+    },
+    {
+      "name": "gmail.client-id",
+      "type": "java.lang.String",
+      "description": "A description for 'gmail.client-id'"
+    },
+    {
+      "name": "gmail.client-secret",
+      "type": "java.lang.String",
+      "description": "A description for 'gmail.client-secret'"
+    },
+    {
+      "name": "gmail.token",
+      "type": "java.lang.String",
+      "description": "OAuth 리프레시 토큰(MUPID_GMAIL_TOKEN). 만료·취소되면 모든 메일 발송이 실패한다."
+    },
+    {
+      "name": "gmail.send-address",
+      "type": "java.lang.String",
+      "description": "발신 계정 주소(MUPID_GMAIL_SEND_ADDRESS). 문의 관리자 알림은 여기로 되돌려 보낸다 — '자기자신에게 메일 보내기' 가 이것이다."
+    },
+    {
+      "name": "ai.base-url",
+      "type": "java.lang.String",
+      "description": "OpenAI 호환 게이트웨이 주소. /chat/completions 앞까지."
+    },
+    {
+      "name": "ai.api-key",
+      "type": "java.lang.String",
+      "description": "게이트웨이 인증 키(MUPID_AI_GMS_KEY). 비어 있으면 AI 대화가 503."
+    },
+    {
+      "name": "ai.model",
+      "type": "java.lang.String",
+      "description": "사용할 모델 이름."
+    },
+    {
+      "name": "mupid-mattermost.webhook-url",
+      "type": "java.lang.String",
+      "description": "Mattermost Incoming Webhook URL(MUPID_MATTERMOST_WEBHOOK_URL). URL 자체가 자격증명이라 로그·커밋에 남기지 않는다. 비어 있으면 알림만 조용히 건너뛰고 문의 접수는 그대로 동작한다."
+    },
+    {
+      "name": "mupid-mattermost.connect-timeout",
+      "type": "java.time.Duration",
+      "description": "Mattermost 연결 타임아웃. 기본 2초."
+    },
+    {
+      "name": "mupid-mattermost.read-timeout",
+      "type": "java.time.Duration",
+      "description": "Mattermost 읽기 타임아웃. 기본 3초. 알림이 오래 매달려도 접수에는 영향이 없다."
+    }
+  ]
+}

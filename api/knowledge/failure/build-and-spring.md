@@ -1,6 +1,6 @@
 # 빌드 · Gradle · Spring Boot 4 · Lombok
 
-12건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+16건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -116,5 +116,17 @@
 - **원인**: `CacheServiceImpl` 이 `StringRedisTemplate` 을 주입받고 `CacheService` 시그니처도 값이 `String` 이다. 커스텀 `RedisTemplate` 이나 Jackson serializer 를 등록한 설정 클래스가 없다(`common/config` 에는 `SecurityConfig`, `JdbcTemplateConfig` 뿐).
 - **해결**: 호출부에서 직접 직렬화하거나 설정 클래스를 새로 만든다. 설정 클래스를 추가할 때는 위 `JdbcTemplateConfig` 사례처럼 자동설정을 밀어내는 부작용을 반드시 확인한다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/cache/service/CacheServiceImpl.java`
+
+### Mockito 로 `RestClient` 를 목하면 성공 경로가 거짓 통과한다
+
+- **원인**: `RequestBodySpec.body(Object)` 는 **자기 자신을 돌려주는 default 메서드**다. Mockito 는 스텁하지 않은 default 메서드를 `null` 로 답하므로 `restClient.post().contentType(..).body(..).retrieve()` 체인의 `retrieve()` 가 `null` 이 되고, 이어지는 `.toBodilessEntity()` 에서 NPE 가 난다. 그런데 S15P21A204-384 의 Mattermost 알림은 **실패를 삼키도록 설계**돼 있어(알림이 죽어도 문의 접수는 살아야 한다) 그 NPE 가 조용히 먹혔다 — "보낸다" 테스트가 실패해야 할 자리에서 실패하지 않았다. 테스트를 처음 돌렸을 때 잡힌 것은 `verify(retrieve).toBodilessEntity()` 하나뿐이었다.
+- **해결**: HTTP 클라이언트를 목하지 말고 **`ClientHttpRequestFactory` 만 갈아끼운 실물 `RestClient`** 를 쓴다. `MockClientHttpRequest`/`MockClientHttpResponse`(spring-test)로 응답을 심으면 메서드·URI·Content-Type·본문 JSON·`isExecuted()` 까지 실제로 확인된다. 목으로 둘 때는 **스텁하지 않은 default 메서드가 `null` 을 돌려준다**는 사실을 전제하고, 대상 코드가 예외를 삼키는지 먼저 본다 — 삼키는 코드를 시험하는 목은 특히 위험하다.
+- **근거**: `api/src/test/java/com/osundosun/mupid/api/common/mattermost/MattermostNotifierTest.java`, `api/src/main/java/com/osundosun/mupid/api/common/mattermost/MattermostNotifier.java`
+
+### `RestClientException` 은 연결 실패일 때만 메시지에 요청 URL 을 품는다
+
+- **원인**: 예외 문자열을 그대로 로그로 넘기면 자격증명이 새어 나간다고 보고 무조건 마스킹했는데, **어느 예외가 URL 을 품는지 확인하지 않았다.** 실측 결과가 갈린다. 연결이 거부되면 `ResourceAccessException` 이 `I/O error on POST request for "https://…/hooks/…": Connection refused` 로 URL 을 품지만, 상태 코드 오류인 `HttpClientErrorException$BadRequest` 는 `400 Bad Request: [no body]` 뿐이라 URL 이 **없다**. 그래서 상태 오류를 근거로 마스킹을 정당화하면 근거가 틀린다.
+- **해결**: 마스킹이 필요한 진짜 근거는 **연결 실패**다. 둘 다 같은 마스킹 함수를 지나므로 방어는 하나로 충분하다. 마스킹 함수는 설정값 치환과 **무관하게** 주소 모양 규칙을 항상 건다 — 우리 설정에 없더라도 웹훅 모양 주소가 로그 문자열에 들어왔다면 그건 이미 자격증명이다. 관련: 웹훅 URL 은 Incoming Webhook 이라 **URL 자체가 자격증명**이고, 이 저장소는 배포용 SSH 키를 로그에 찍어 키를 교체한 적이 있다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/common/mattermost/MattermostNotifier.java`, `api/src/test/java/com/osundosun/mupid/api/common/mattermost/MattermostNotifierTest.java`
 
 ---
