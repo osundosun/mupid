@@ -148,48 +148,73 @@ export const tracks: Track[] = [];
  * (`findAllByCodeTypeOrderByCodeIdAsc`). 여기가 어긋나면 서버가 죽은 동안 고른
  * 답이 다른 항목으로 저장된다.
  */
+/**
+ * 장르 대분류 8종의 **화면용 한국어**. 서버 선택지를 못 받았을 때 쓰는 대체 목록이다.
+ *
+ * 서버는 `code_name`(영문, AI 서버가 세분류에 잇는 값)과 `display_name`(한국어)을
+ * 함께 주고 화면은 `display_name || name` 을 그린다(`namesOf`). 여기 값은 그
+ * `display_name` 과 같아야 한다 — 다르면 서버가 응답할 때와 못 할 때 글자가 달라진다.
+ */
 export const genreOptions = [
-  'Electronic',
-  'Indie',
-  'R&B',
-  'Rock',
-  'Pop',
-  'Hip-hop',
-  'Jazz',
-  'Classical',
+  '일렉트로닉',
+  '인디',
+  '알앤비',
+  '록',
+  '팝',
+  '힙합',
+  '재즈',
+  '클래식',
 ];
-/** 위와 같은 대체 목록 — 무드 쪽. **17종이다** (2026-09-17 추가).
+/**
+ * 무드 코드표 — 서버 `codes(MOOD).code_name`(영문 내부 코드) → 화면용 한국어.
+ * **17종이다** (2026-09-17 추가, 2026-09-21 영문 코드로 정리).
+ *
+ * 서버는 곡·구간·추천 묶음의 무드를 **코드 이름(영문)** 으로 준다(`MusicSummary.moods`,
+ * `DailyRecommendationResult.groups[].mood`). 화면에는 한국어를 그려야 하므로
+ * 여기서 옮긴다 — 온보딩·탐색 선택지는 `display_name` 이 함께 내려와 이 표가
+ * 필요 없다. 서버 `BootstrapRunner.CODE_SEEDS` 와 같은 값·같은 차례다.
  *
  * **앞 8개는 대분류, 뒤 9개는 taxonomy 세분류다.** taxonomy 무드 9종은 색인 축
  * (`mood_tags`)에 그 이름이 하나도 없어 뜻으로 이어야 했고
  * (`ai_server/app/onboarding.py` 의 `MOOD_MAP`), 세분류를 온보딩에 넣기로 하면서
  * 선택지가 8에서 17로 늘었다.
+ */
+export const moodDisplayNames: Record<string, string> = {
+  serene: '잔잔한',
+  uplifting: '벅찬',
+  ethereal: '몽환적인',
+  energetic: '신나는',
+  focused: '집중되는',
+  emotional: '감성적인',
+  intense: '강렬한',
+  romantic: '설레는',
+  // taxonomy 무드 9종 (색인 어휘 → 한국어). 순서는 곡 수 많은 순이다.
+  melancholic: '애상적인',
+  warm: '따뜻한',
+  dreamy: '몽글한',
+  bright: '화사한',
+  hopeful: '희망찬',
+  powerful: '웅장한',
+  dark: '어두운',
+  calm: '고요한',
+  exciting: '짜릿한',
+};
+
+/**
+ * 서버가 준 무드 이름을 화면용 한국어로. 표에 없으면 그대로 돌려준다 — 배치가
+ * 코드를 더 넣었을 수 있고, 그때 빈 칸보다는 코드 이름이 낫다. 이미 한국어인
+ * 값(예전 저장분)도 그대로 통과한다.
+ */
+export const moodLabel = (name: string): string => moodDisplayNames[name] ?? name;
+
+/** 위와 같은 대체 목록 — 무드 쪽 화면용 이름 17종. 서버 선택지를 못 받았을 때 쓴다.
  *
  * **두 층이 한 목록에 있다.** 대분류만 보이게 하려면 온보딩 화면에서
  * `moodOptions.slice(0, 8)` 을 쓰거나 서버 응답을 갈라야 한다. 지금은 온보딩의
  * 분위기 단계가 장르 단계와 분리돼 있어서(`WelcomeView` 의 `step === 1`) 섞이지
  * 않는다 — 층위가 문제가 되는 곳은 장르 단계(대분류 8 + 세분류 45)뿐이다.
  */
-export const moodOptions = [
-  '잔잔한',
-  '벅찬',
-  '몽환적인',
-  '신나는',
-  '집중되는',
-  '감성적인',
-  '강렬한',
-  '설레는',
-  // taxonomy 무드 9종 (색인 어휘 → 한국어). 순서는 곡 수 많은 순이다.
-  '애상적인',
-  '따뜻한',
-  '몽글한',
-  '화사한',
-  '희망찬',
-  '웅장한',
-  '어두운',
-  '고요한',
-  '짜릿한',
-];
+export const moodOptions = Object.values(moodDisplayNames);
 
 export const formatTime = (seconds: number) => {
   if (!Number.isFinite(seconds)) return '00:00';
@@ -224,6 +249,7 @@ export const getSongSectionAt = (track: Track, at: number): SongSection => {
   );
 };
 
+/** `Track.mood`(화면용 한국어) → 에너지 1~5. 표에 없으면 3 으로 본다. */
 const moodEnergy: Record<string, number> = {
   잔잔한: 1,
   감성적인: 2,
@@ -233,6 +259,16 @@ const moodEnergy: Record<string, number> = {
   벅찬: 4,
   신나는: 5,
   강렬한: 5,
+  // taxonomy 9종
+  애상적인: 2,
+  따뜻한: 2,
+  몽글한: 2,
+  화사한: 4,
+  희망찬: 4,
+  웅장한: 5,
+  어두운: 3,
+  고요한: 1,
+  짜릿한: 5,
 };
 
 export const chatSuggestions = [
@@ -287,7 +323,7 @@ export function deriveChatRecommendations(
         /빌드|쌓|열리|커지/.test(`${track.reason} ${track.tags.join(' ')}`)
       )
         score += 18;
-      if (wantsCalm && ['잔잔한', '감성적인', '몽환적인'].includes(track.mood))
+      if (wantsCalm && ['잔잔한', '감성적인', '몽환적인', '고요한', '따뜻한'].includes(track.mood))
         score += 18;
       return { track, score };
     })
