@@ -161,6 +161,7 @@ services:
       - /srv/mupid/config/clickhouse/server/00-cluster.xml:/etc/clickhouse-server/config.d/00-cluster.xml:ro
       - /srv/mupid/config/clickhouse/server/01-keeper.xml:/etc/clickhouse-server/config.d/01-keeper.xml:ro
       - /srv/mupid/config/clickhouse/server/02-server.xml:/etc/clickhouse-server/config.d/02-server.xml:ro
+      - /srv/mupid/config/clickhouse/server/03-system-logs.xml:/etc/clickhouse-server/config.d/03-system-logs.xml:ro
       - /srv/mupid/config/clickhouse/server/10-macros.xml:/etc/clickhouse-server/config.d/10-macros.xml:ro
       - /srv/mupid/config/clickhouse/users/00-profile.xml:/etc/clickhouse-server/users.d/00-profile.xml:ro
       - /srv/mupid/config/clickhouse/users/10-mupid-user.xml:/etc/clickhouse-server/users.d/10-mupid-user.xml:ro

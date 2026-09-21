@@ -37,6 +37,7 @@ configMapGenerator:
       - clickhouse/server/00-cluster.xml
       - clickhouse/server/01-keeper.xml
       - clickhouse/server/02-server.xml
+      - clickhouse/server/03-system-logs.xml
       - clickhouse/server/10-macros.xml
   - name: clickhouse-users
     files:
