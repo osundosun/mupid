@@ -128,9 +128,10 @@ export function watchKeyboardInset(): void {
     document.documentElement.style.setProperty('--keyboard-inset', value);
     document.body?.style.setProperty('--keyboard-inset', value);
     // Portal dialogs can align to the visible viewport, including iOS panning.
+    const visibleViewport = window.visualViewport;
     for (const element of [document.documentElement, document.body]) {
-      element?.style.setProperty('--visual-viewport-height', `${viewport.height}px`);
-      element?.style.setProperty('--visual-viewport-top', `${viewport.offsetTop}px`);
+      element?.style.setProperty('--visual-viewport-height', `${Math.min(visibleViewport?.height ?? window.innerHeight, window.innerHeight - inset)}px`);
+      element?.style.setProperty('--visual-viewport-top', `${visibleViewport?.offsetTop ?? 0}px`);
     }
   };
 
