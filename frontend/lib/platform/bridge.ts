@@ -60,3 +60,35 @@ export async function listen<T>(
   const fn = await listening;
   return fn<T>(event, (message) => handler(message.payload));
 }
+
+/**
+ * 안드로이드 뒤로가기(소프트버튼·제스처)를 받는다 (S15P21A204-410).
+ *
+ * 돌려주는 함수를 부르면 **리스너를 뗀다.** 떼는 것이 핵심이다 — 앱 셸의
+ * `AppPlugin` 은 리스너의 유무로 갈려서, 없으면 웹뷰 히스토리 뒤로가기(그
+ * 바닥에서는 앱 종료)로 내려가고 있으면 이 통로로 웹에 넘긴다.
+ * (`lib/back-button.ts` 가 "열려 있는 오버레이가 있을 때만" 붙이는 이유다.)
+ *
+ * **앱 셸 밖에서는 아무 일도 하지 않는다.** 이벤트를 붙이려 들면
+ * `__TAURI_INTERNALS__` 가 없는 브라우저에서 그대로 터지므로, 웹·데스크톱은
+ * 빈 정리 함수를 받는다 — 부르는 쪽이 분기할 필요가 없다.
+ *
+ * 정적 import 를 피하는 이유는 아래 통로들과 같다: 웹 번들에도 함께 묶이는
+ * 파일이라, 최상단에서 불러오면 브라우저에서도 내려받게 된다.
+ */
+export async function onBackButtonPress(
+  handler: () => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  try {
+    const { onBackButtonPress: attach } = await import('@tauri-apps/api/app');
+    const listener = await attach(() => handler());
+    return () => {
+      void listener.unregister().catch(() => {});
+    };
+  } catch {
+    // 붙이지 못했으면 아무것도 하지 않는다 — 뒤로가기는 네이티브 기본
+    // 동작(히스토리 뒤로가기, 바닥이면 앱 종료)으로 남는다. 웹 회귀가 없다.
+    return () => {};
+  }
+}

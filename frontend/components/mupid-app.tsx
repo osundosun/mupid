@@ -55,6 +55,8 @@ import { FloatingChat } from '@/components/mupid/chat';
 import { InquiryButton } from '@/components/mupid/inquiry-dialog';
 import { AppDialogs } from '@/components/mupid/dialogs';
 import { DemoLoginDialog } from '@/components/mupid/demo-login';
+import { useBackButtonBridge } from '@/hooks/use-back-button';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 
 const navigation = [
   { id: 'home', label: '메인', mobileLabel: '메인', icon: Home },
@@ -163,6 +165,16 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
   const accountRef = useRef<HTMLDivElement>(null);
   const accountButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { setAccountOpen(false); }, [m.page]);
+  /*
+   * 안드로이드 소프트버튼을 오버레이 스택에 잇는다 (S15P21A204-410).
+   * 앱 전체에 **한 번만** 건다 — 오버레이마다 걸면 한 번의 뒤로가기에 여러
+   * 개가 함께 닫힌다. 열려 있는 것이 없으면 웹이 손을 떼고, 그때는 앱 셸의
+   * 기본 경로(히스토리 뒤로가기 → 바닥에서 앱 종료)가 그대로 돈다.
+   */
+  useBackButtonBridge(m.goBack);
+  // 상단바 계정 패널도 같은 규칙을 따른다. 대화상자는 아니지만 뒤로가기로
+  // 닫혀야 하는 것은 같다(Escape 핸들러는 그대로 남는다).
+  useDismissableOverlay(accountOpen, () => setAccountOpen(false));
   // 상단바 사진. 예전에는 브라우저 저장(`readPhoto`)만 봐서 **계정에 올린
   // 사진이 끝내 안 보였다.** 이제 마이페이지와 같은 자리에서 읽는다.
   useEffect(() => {

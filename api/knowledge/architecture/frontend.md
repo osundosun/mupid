@@ -97,20 +97,20 @@ Wrangler 가 플러그인 import 시점에 로그 경로를 스냅샷하므로, 
 - `/mupid` 는 `frontend/mupid-proxy.conf` 의 Apache 프록시가 상위 도메인에 붙이는 경로다(`ProxyPass "/mupid/" ...`).
 - `/email/verify` 는 `robots: { index: false, follow: false }`, `referrer: 'no-referrer'` 를 건다.
 
-**앱 내부 화면 전환은 파일 라우팅이 아니라 쿼리스트링이다.** `frontend/hooks/use-mupid.ts` 의 `go(next)` 가 `?view=<page>` 를 `history.pushState` 로 넣고, `popstate` 리스너 `readPage()` 가 다시 읽는다. `home` 은 파라미터를 지운다.
+**앱 내부 화면 전환은 파일 라우팅이 아니라 경로 이동이다.** `frontend/hooks/use-mupid.ts` 의 `go(next)` 가 `router.push(guardPath(pagePaths[next], …))` 로 next/navigation 경로를 옮긴다.
 
 ```ts
 const go = (next: Page) => {
-  if (!onboardingSubmitted && next !== 'welcome') next = 'welcome';
-  ...
-  if (next === 'home') url.searchParams.delete('view');
-  else url.searchParams.set('view', next);
-  window.history.pushState({ mupid: true }, '', url);
+  // URL 직접 이동과 UI 이동 모두 같은 조건으로 보호한다.
+  router.push(guardPath(pagePaths[next], !!sessionRef.current, onboardingRef.current));
+};
 ```
 
 화면 목록은 `frontend/lib/mupid-data.ts` 의 `Page` 유니온이다: `home` `search` `library` `report` `profile` `player` `moment` `similar` `welcome`.
 
-> 새 화면을 추가하려면 ① `Page` 유니온 ② `use-mupid.ts` 의 `pageNames` 배열 ③ `components/mupid-app.tsx` 의 `m.page === '...' && <View />` 분기, 세 곳을 같이 고친다. `pageNames` 에 없는 `view` 값은 `home` 으로 떨어진다.
+**모달의 열림 상태는 URL·히스토리가 아니라 React state 다.** `@base-ui/react` 의 Dialog/AlertDialog 는 `pushState`/`popstate` 를 쓰지 않으므로 뒤로 가기를 대신 처리해 주지 않는다. 뒤로 가기가 모달을 닫게 하는 것은 `frontend/lib/overlay-stack.ts` 의 오버레이 스택이다 (`frontend/docs/routing.md` 의 "뒤로 가기와 오버레이" 절).
+
+> 새 화면을 추가하려면 ① `Page` 유니온 ② `lib/routes.ts` 의 `pagePaths` ③ `components/mupid-app.tsx` 의 `m.page === '...' && <View />` 분기, 세 곳을 같이 고친다.
 
 ## 컴포넌트 조직
 

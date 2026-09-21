@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { EllipsisVertical, ListEnd, ListPlus, Plus, Search, ThumbsDown, UserRound, Disc3 } from 'lucide-react';
 import { TrackInfoDialog } from './track-info-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import type { MupidModel } from '@/hooks/use-mupid';
 import type { Track } from '@/lib/mupid-data';
 
@@ -12,6 +13,10 @@ export function TrackMenu({ model: m }: { model: MupidModel }) {
   const [infoTrack, setInfoTrack] = useState<Track | null>(null);
   const [name, setName] = useState('');
   const close = () => { setTrack(null); setPicker(false); setName(''); };
+  // 곡 더보기 창과 그 위에 겹치는 곡 정보 창이 각각 뒤로가기로 닫히게 한다.
+  // 곡 정보가 열려 있으면 그쪽이 위라 먼저 닫힌다 (S15P21A204-410).
+  useDismissableOverlay(!!track, close);
+  useDismissableOverlay(!!infoTrack, () => setInfoTrack(null));
   const add = (id: number) => {
     if (!track) return;
     void m.addToPlaylist(id, track);

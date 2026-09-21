@@ -84,6 +84,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Spinner } from '@/components/ui/spinner';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import {
   checkForUpdates,
   installNativeUpdate,
@@ -168,6 +169,15 @@ export function UpdatePrompt() {
   }, [showProgress, hideProgress]);
 
   const visible = shouldPromptUpdate({ isMobile, state });
+
+  /*
+   * 뒤로가기로 닫히게 한다 (S15P21A204-410). 이 창은 **비제어**라 열림 상태가
+   * 스택에 있어야 뒤로가기가 닫을 수 있다 — 다른 오버레이와 같은 규칙을 따르게
+   * 한 것이다. 닫으면 `state` 를 비우는데, 그건 지금 "나중에" 를 누르는 것과
+   * 같은 결과다(다시 띄우지 않는다). 설치 중에는 닫지 않는다 — 설치 화면으로
+   * 넘어가는 중에 창만 사라지면 진행 상황을 볼 자리가 없어진다.
+   */
+  useDismissableOverlay(visible && !busy, () => setState(null));
 
   useEffect(() => {
     if (!visible || noted.current) return;

@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import type { MupidModel } from '@/hooks/use-mupid';
+import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import { formatTime } from '@/lib/mupid-data';
 import { EmptyState, PlayerControls } from './primitives';
 import { commentable, validateComment } from '@/lib/comment-rules';
@@ -123,6 +124,13 @@ export function TrackComments({ model: m, children, controlsAside }: { model: Mu
     });
   };
   const closePanel = () => { setSelectedTime(null); setDraft(null); setBody(''); };
+  /*
+   * 뒤로가기로 닫히게 한다 (S15P21A204-410). 삭제 확인 창을 위에 등록했으므로
+   * 확인 창이 떠 있으면 그쪽이 먼저 닫히고, 그 다음이 댓글 창이다. 열려 있지
+   * 않은 것은 `open` 이 false 라 스택에 오르지 않는다.
+   */
+  useDismissableOverlay(selectedTime !== null, closePanel);
+  useDismissableOverlay(remove !== null, () => setRemove(null));
   const visible = items.filter(c => c.trackId === active.id && Number.isFinite(c.at) && c.at >= 0 && c.at <= active.duration);
   // 같은 시점만 묶는다. 가까운 다른 시점은 가로 위치를 유지하고 다음 줄에 둔다.
   const moments = new Map<number, TrackComment[]>();

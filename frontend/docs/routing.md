@@ -10,7 +10,7 @@ Vinext App Router의 파일 기반 라우팅을 사용합니다. React Router는
 
 서비스 경로는 /home, /explore, /player, /playlists, /report, /profile, /moments, /similar입니다.
 시작 화면은 /, 취향 설정은 /onboarding입니다. 기존 ?view= 링크와 /mupid는 새 주소로 교체합니다.
-인증 화면 디자인은 기존 대화상자를 유지하지만 URL과 브라우저 뒤로 가기로 상태를 관리합니다.
+인증 화면 디자인은 기존 대화상자를 유지합니다. **다만 대화상자의 열림 상태는 URL·히스토리가 아니라 React state 입니다** — `loginDialog` 는 `hooks/use-mupid.ts` 의 `useState` 이고, 화면 경로와의 동기화는 `?view=` 가 아니라 next/navigation 경로(`router.push`/`router.replace`)로 합니다. 뒤로 가기로 닫히는 것은 히스토리가 아니라 오버레이 스택이 담당합니다(아래).
 
 플레이어(/player)와 탐색(/explore)은 비로그인에게도 공개합니다. 그 외 서비스 화면은 비로그인 → 로그인 / 로그인 후 취향 미설정 → 온보딩 / 완료 회원 → 서비스 화면 순으로 제한합니다.
 댓글 등록은 authenticated 세션과 양의 정수 userId가 있어야 합니다. 수정·삭제는 authorId 일치가 필요하며, ID 없는 기존 댓글은 읽기만 가능합니다. 이 조건은 프론트 UI 제어이며 서버 권한 검증을 대체하지 않습니다.
@@ -33,3 +33,28 @@ Vinext App Router의 파일 기반 라우팅을 사용합니다. React Router는
 부트스트랩 결과는 `lib/services/bootstrap-cache.ts` 가 계정 번호를 열쇠로 모듈 스코프에 한 벌 들고 있습니다.
 `components/mupid-app.tsx` 가 다시 마운트돼도 "음악을 준비하고 있어요…" 를 거치지 않으므로 재생기 모델이 살아남고,
 계정이 바뀌면(로그아웃·계정 전환) 열쇠가 달라져 새로 받습니다.
+
+## 뒤로 가기와 오버레이 (앱 · S15P21A204-410)
+
+**모달의 열림 상태는 URL·히스토리와 무관한 React state 입니다.** `@base-ui/react` 의 Dialog 도
+`pushState`/`popstate` 를 쓰지 않으므로, 프레임워크가 뒤로 가기를 대신 처리해 주지 않습니다.
+그래서 "지금 무엇이 열려 있는가" 를 따로 모아 두고 뒤로 가기가 **가장 위의 것을** 닫게 합니다.
+
+| 어디 | 무엇 |
+| --- | --- |
+| `lib/overlay-stack.ts` | 열려 있는 오버레이 스택. LIFO — 나중에 연 것이 먼저 닫힌다 |
+| `hooks/use-dismissable-overlay.ts` | 오버레이가 열려 있는 동안만 등록한다(상태는 각자의 `useState` 그대로) |
+| `lib/back-button.ts` | 닫을 것이 있으면 닫고, 없으면 히스토리 뒤로 가기로 내려간다 |
+| `hooks/use-back-button.ts` | 루트 셸에 한 번만 건다 (`components/mupid-app.tsx`) |
+| `lib/platform/bridge.ts` | `onBackButtonPress` — 앱이 아니면 no-op |
+
+**안드로이드 소프트버튼은 앱 셸이 먼저 가로챕니다.** Tauri 의 `AppPlugin` 은 `back-button`
+리스너의 유무로 갈립니다 — 없으면 웹뷰 히스토리 뒤로 가기(그 바닥에서는 앱 종료), 있으면 웹으로
+이벤트를 던집니다. 그래서 **열려 있는 오버레이가 있을 때만** 리스너를 달고, 다 닫히면 뗍니다.
+그래야 모달이 없을 때의 뒤로 가기가 네이티브 기본 동작(이전 화면 → 앱 종료) 그대로 남습니다.
+
+`app/gen/android/.../TauriActivity.kt` 의 `handleBackNavigation` 은 **false 그대로 둡니다.**
+true 로 되돌리면 Wry 가 먼저 `goBack()` 을 해 버려 열려 있던 모달이 다시 씹힙니다.
+
+화면 헤더의 뒤로 가기(`components/mupid/discovery.tsx`)도 같은 함수(`m.goBack`)를 쓰므로 규칙이 하나입니다.
+

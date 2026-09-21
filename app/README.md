@@ -256,6 +256,70 @@ WindowInsets ─▸ SafeArea.kt ─▸ window.__mupidSafeArea (기기 픽셀)
 **상태바 몫은 카드 바깥에서 비운다** (`responsive-polish.css` 의 셸 여백). 카드
 안쪽 헤더에서 비우면 둥근 윗모서리를 시각·배터리가 가로지른다.
 
+## 안드로이드 뒤로가기 (S15P21A204-410)
+
+소프트버튼(뒤로가기)이 모달을 닫지 않고 페이지 히스토리를 뒤로 보내던 문제가 있었다.
+모달은 열린 채 남았다. 원인은 **웹이 아니라 앱 셸의 게이트**에 있었다.
+
+### 왜 씹혔나
+
+Tauri 의 `AppPlugin`(`tauri 2.11.5` 의
+`mobile/android/src/main/java/app/tauri/AppPlugin.kt`)이 액티비티 생성 시
+`OnBackPressedCallback` 을 등록하고, 그 안을 **`back-button` 리스너의 유무**로 가른다.
+
+```
+리스너 없음 → webView.canGoBack() ? webView.goBack() : activity.onBackPressed()
+리스너 있음 → 웹으로 back-button 이벤트를 던진다
+```
+
+이 앱은 그 리스너를 한 번도 등록한 적이 없었으므로 뒤로가기는 **무조건 웹뷰 히스토리
+뒤로가기**로 직행했다. 그런데 모달은 전부 React `useState` 라(히스토리와 무관)
+되돌릴 주체가 없었다. `@base-ui/react` 1.7.0 의 Dialog 도 `pushState`/`popstate` 를
+쓰지 않는다 — 프레임워크가 대신 닫아 주지 않는다.
+
+### 어떻게 고쳤나
+
+```
+뒤로가기 ─┬─ 웹: 열려 있는 오버레이가 있으면 가장 위의 것을 닫는다
+          └─ 없으면 앱 셸 기본 경로 → 이전 화면 → (바닥)앱 종료
+```
+
+| 어디 | 무엇 |
+| --- | --- |
+| `frontend/lib/overlay-stack.ts` | 열려 있는 오버레이 스택(LIFO). 상태는 옮기지 않고 등록만 한다 |
+| `frontend/hooks/use-dismissable-overlay.ts` | 열려 있는 동안만 등록 (`useState` 그대로) |
+| `frontend/lib/back-button.ts` | 닫을 것이 있으면 닫고, 없으면 히스토리 뒤로가기 |
+| `frontend/hooks/use-back-button.ts` | 루트 셸에 한 번만 (`components/mupid-app.tsx`) |
+| `frontend/lib/platform/bridge.ts` | `onBackButtonPress` 래퍼 — 앱이 아니면 no-op |
+
+**리스너는 열려 있는 오버레이가 있을 때만 단다.** 이게 핵심이다 — 항상 달아 두면
+열려 있는 것이 없을 때의 뒤로가기가 웹으로만 오는데, 웹이 앱을 닫아 줄 통로는 막혀
+있다(`app` 플러그인의 `generate_handler` 에 `exit` 이 없고 ACL 매니페스트에도 없으며
+`@tauri-apps/api` 에도 `exit` 이 없다). 그래서 다 닫히면 리스너를 **떼어** 네이티브
+기본 동작으로 내려가게 했다.
+
+**권한은 더 필요 없다.** `capabilities/default.json` 의 `core:default` 안에
+`core:app:default` 가 들어 있고, 거기에 `allow-register-listener`/`allow-remove-listener`
+가 있다.
+
+### ⚠️ `handleBackNavigation` 을 true 로 바꾸지 마라
+
+코드 생성물인 `gen/android/.../TauriActivity.kt` 에
+`override val handleBackNavigation: Boolean = false` 가 있다. 이걸 true 로 되돌리면
+Wry(`wry-0.55.1` 의 `WryActivity.setWebView`)가 자기 `OnBackPressedCallback` 을 먼저
+등록해 **웹뷰 `goBack()` 을 먼저** 해 버린다 — 모달이 다시 씹힌다. 앱 플러그인의
+`back-button` 이벤트만 쓴다.
+
+### 실기기에서 누르기
+
+```bash
+adb -s <기기> shell input keyevent KEYCODE_BACK
+```
+
+화면에 실제로 떠 있는지는 `innerText` 가 아니라 좌표·속성으로 본다 —
+`[data-slot="dialog-content"]` 의 `getBoundingClientRect()` 와
+`data-closed`/`aria-hidden`/`getComputedStyle().display` 를 함께 확인한다.
+
 ## 자동 업데이트
 
 두 갈래가 있고, 둘 다 **빌드 타임스탬프가 버전을 대신한다** (semver 를 쓰지 않는다).
