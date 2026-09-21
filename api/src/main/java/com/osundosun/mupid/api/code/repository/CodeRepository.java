@@ -16,6 +16,18 @@ public interface CodeRepository extends JpaRepository<Code, Integer> {
     List<Code> findAllByCodeTypeOrderByCodeIdAsc(CodeType codeType);
 
     /**
+     * 번호 구간을 정해 읽는다. 무드를 동결 구간({@link com.osundosun.mupid.api.code.MoodCodeIds})
+     * 으로 좁혀 읽을 때 쓴다.
+     *
+     * <p>용도만 걸고 전량을 읽으면 안 되는 자리가 있다. 운영 DB 의 {@code codes} 에는
+     * 같은 무드가 옛 중복 적재로 여러 번호에 남아 있고(98~132), 그대로 내놓으면 화면에
+     * 같은 분위기가 두 칩으로 뜬다. 사유는
+     * {@code knowledge/decision/0025-mood-codes-32-48-are-frozen.md}.
+     */
+    List<Code> findAllByCodeTypeAndCodeIdBetweenOrderByCodeIdAsc(
+        CodeType codeType, Integer startCodeId, Integer endCodeId);
+
+    /**
      * 탐색 사이드바에 내놓을 분위기 — <b>곡이 실제로 달린 코드만</b>.
      *
      * <p>코드표에는 있지만 어느 곡에도 붙지 않은 분위기가 있다. 2026-09-21 기준으로

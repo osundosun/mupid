@@ -89,18 +89,49 @@ const isAlreadySubmitted = (error: unknown): boolean =>
   (error.status === 409 || error.code === 'MUPID_ONBOARDING_ALREADY_SUBMITTED');
 
 /**
+ * 화면에 그릴 이름 하나.
+ *
+ * `display_name` 을 우선 쓰고, 없으면 `name` 을 쓴다.
+ *
+ * **`normalize('NFC')` 를 뺄 수 없다.** 같은 한글이 자모 분리형(NFD)으로 들어오면
+ * 눈으로는 같은데 문자열로는 다르다 — 목록에 같은 칩이 둘로 뜨고, 이름으로 번호를
+ * 되찾는 `idsOf` 는 못 찾아 그 선택이 조용히 버려진다.
+ */
+const optionName = (option: CodeOption): string =>
+  (option.display_name?.trim() || option.name.trim()).normalize('NFC');
+
+/**
  * 화면에 그릴 이름 목록.
  *
- * `display_name`을 우선적으로 사용하며, 없을 경우 `name`을 씁니다.
+ * **같은 이름은 한 번만 내놓는다.** 서버 코드표에 같은 분위기가 여러 번호로 남아
+ * 있어(운영의 98~132 중복 적재분), 그대로 그리면 온보딩에 같은 칩이 두 개, 세 개
+ * 뜬다 (S15P21A204-368).
  */
-export const namesOf = (options: CodeOption[]): string[] => options.map((o) => o.display_name || o.name);
+export const namesOf = (options: CodeOption[]): string[] =>
+  [...new Set(options.map(optionName).filter(Boolean))];
 
 /**
  * 이름을 코드 번호로 바꾼다. 서버가 모르는 이름은 버린다 — 예전 브라우저 저장분에
  * 지금은 없는 항목이 남아 있을 수 있다.
+ *
+ * **같은 이름이 여러 번호로 오면 가장 작은 번호를 쓴다.** 서버 목록은 `code_id`
+ * 오름차순이고, 같은 분위기가 중복 적재로 큰 번호에 또 있을 수 있다 — 운영에서
+ * 32~48 의 17종이 98~106 · 107~123 · 124~132 로 세 번 더 들어가 있었다.
+ * `new Map(options.map(...))` 는 **나중 항목이 앞 항목을 덮어쓰므로**, 화면에서
+ * `고요한` 을 고른 사람이 47 이 아니라 132 를 보내게 된다. 실제로 그렇게 보낸 답이
+ * `onboarding_survey` 에 쌓여 나중에 손으로 이관해야 했다.
+ *
+ * 서버도 분위기를 32~48 로 좁혀 내놓지만(`MoodCodeIds`), 팀원의 로컬 DB 나 옛
+ * 배포본은 아직 중복을 그대로 내놓는다. 받는 쪽에서도 막는다.
+ * 규약은 `api/knowledge/decision/0025-mood-codes-32-48-are-frozen.md`.
  */
 const idsOf = (options: CodeOption[], names: string[]): number[] => {
-  const byName = new Map(options.map((o) => [o.display_name || o.name, o.code_id]));
+  const byName = new Map<string, number>();
+  for (const option of options) {
+    const name = optionName(option);
+    // 먼저 온 것(= 작은 code_id)을 남긴다. 덮어쓰지 않는다.
+    if (!byName.has(name)) byName.set(name, option.code_id);
+  }
   const ids: number[] = [];
   for (const name of names) {
     const id = byName.get(name);
