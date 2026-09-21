@@ -152,8 +152,10 @@ def slice_index(src: Path, dst: Path, *, src_data: Path | None = None) -> dict:
         if (data / name).exists():
             shutil.copy2(data / name, out / name)
     _restamp_features_info(out, len(sliced))
+    id_map_note = _carry_id_map(data, out)
 
     report = _verify(out)
+    report["id_map"] = id_map_note
     report["dropped"] = int(len(mom) - len(sliced))
     (out / "slice_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -184,6 +186,45 @@ def _slice_clap(data: Path, out: Path, moments: set[str]) -> None:
         pick = np.flatnonzero(np.isin(ids, list(moments)))
         np.savez(out / "clap_moments.npz",
                  moment_ids=d["moment_ids"][pick], embeddings=d["embeddings"][pick])
+
+
+def _carry_id_map(data: Path, out: Path) -> dict:
+    """매핑표를 묶음에 넣는다. **운영에서는 여기 말고 둘 자리가 없다.**
+
+    `paths.id_map_path()` 는 `MUPID_ID_MAP` 이 없으면 `data_dir()/id_map.parquet` 다.
+    그런데 운영 매니페스트(`ai.yaml` · `ai-labeler.yaml`)에 `MUPID_ID_MAP` 이 없고
+    `/artifacts` 는 읽기 전용 마운트다 — 그래서 **색인과 함께 올라가는 것 말고는
+    매핑표가 노드에 놓일 길이 없다.** (`MUPID_AI_STATE_DIR=/state` 는 쓰기 자리라
+    라벨·로그는 그리로 가지만, 매핑표는 상태가 아니라 판에 딸린 것이다.)
+
+    이게 비면 조용히 무너진다 — `pull_signals` 는 재생신호를 **전부** 버리고
+    (`source_track_id` 가 `MappingError`), `push_sections` 는 아무것도 올리지 못해
+    `track_sections` 가 비고, 그러면 `mv_user_section_signals` 가 행동 이벤트를
+    통째로 버린다. 2026-09-18 이후 운영에서 실제로 그랬다.
+
+    그래서 있으면 넣고, **없으면 말한다.** 어느 쪽이든 조용히 지나가지 않는다.
+    """
+    src = data / "id_map.parquet"
+    if not src.exists():
+        print("[경고] id_map.parquet 이 판에 없다 — 이 묶음을 올리면 행동 데이터가 "
+              "전부 버려진다 (pull_signals 제외 · push_sections 0건). "
+              "운영 MySQL 에서 뽑아 넣고 다시 묶는다.", file=sys.stderr)
+        return {"present": False}
+    shutil.copy2(src, out / "id_map.parquet")
+    note = {"present": True, "rows": int(len(pd.read_parquet(src, columns=["external_id"])))}
+    # 어느 DB 에서 뽑았는지는 `build_id_map` 이 parquet 메타에 남긴다. 로컬 스냅샷본이
+    # 운영으로 새는 것이 가장 걱정되는 실수라, 묶을 때 한 번 더 눈에 보이게 한다.
+    try:
+        import pyarrow.parquet as pq
+
+        meta = pq.read_schema(src).metadata or {}
+        source = meta.get(b"mupid_id_map_source")
+        if source:
+            note["source"] = source.decode("utf-8")
+            print(f"[id_map] {note['rows']:,}행 — {note['source']}")
+    except Exception:                       # 메타가 없어도 묶는 일은 막지 않는다
+        pass
+    return note
 
 
 def _restamp_features_info(out: Path, rows: int) -> None:

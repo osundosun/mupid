@@ -177,3 +177,83 @@ def test_report_records_what_was_dropped(sliced):
     assert report["dropped"] > 0
     assert len(set(report["rows"].values())) == 1
     assert json.loads((out / "slice_report.json").read_text(encoding="utf-8"))["rows"]
+
+
+# ------------------------------------------------- 배송 묶음이 갖춰야 하는 것
+
+def test_features_info_row_count_follows_the_slice(sliced):
+    """통째로 복사하면 65,540행이라고 적힌 채 잘린 npz 옆에 놓인다.
+
+    기동을 막지 않아 더 나쁘다 — 어느 판이 올라가 있는지 이 파일로 확인할 때
+    조용히 거짓말을 한다.
+    """
+    _, out, _ = sliced
+    info = json.loads((out / "features_info.json").read_text(encoding="utf-8"))
+    rows = len(pd.read_parquet(out / "moments.parquet"))
+
+    assert info["features_rows"] == rows
+    assert info["features_sha256"]
+    assert info["version"] == "feat-v1"          # 기저 항목은 그대로
+
+
+def test_id_map_travels_with_the_bundle(tmp_path, monkeypatch):
+    """운영에는 `MUPID_ID_MAP` 이 없고 `/artifacts` 가 읽기 전용이다.
+
+    그래서 매핑표가 노드에 놓일 길은 색인과 함께 올라가는 것뿐이다. 빠지면
+    `pull_signals` 가 재생신호를 전부 버린다 — 2026-09-18 운영에서 실제로 그랬다.
+    """
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    data = _build(src)
+    pd.DataFrame({"source_track_id": ["T0"], "music_id": [1],
+                  "external_id": ["T0#0"], "music_section_analysis_id": [9330]}
+                 ).to_parquet(data / "id_map.parquet", index=False)
+
+    report = slice_index.slice_index(src, dst)
+    out = dst / "data" / "proc" / "mupid"
+
+    assert (out / "id_map.parquet").exists()
+    assert report["id_map"] == {"present": True, "rows": 1}
+
+
+def test_missing_id_map_is_reported_not_swallowed(tmp_path, monkeypatch, capsys):
+    """없는 것 자체는 막지 않는다 — 운영본을 나중에 넣을 수 있다. 다만 말은 한다."""
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    _build(src)
+    report = slice_index.slice_index(src, dst)
+
+    assert report["id_map"] == {"present": False}
+    assert not (dst / "data" / "proc" / "mupid" / "id_map.parquet").exists()
+    assert "id_map.parquet 이 판에 없다" in capsys.readouterr().err
+
+
+def test_state_directories_never_ship(sliced):
+    """`logs`(실측 51MB)·`serve` 는 판에만 있고 묶음에는 없다.
+
+    `shrink_index`(판)와 갈리는 지점이다. 보내면 서빙 로그를 색인이라고 배포하게 된다.
+    """
+    _, out, _ = sliced
+    assert not (out / "logs").exists()
+    assert not (out / "serve").exists()
+
+
+def test_src_dir_reads_a_versioned_plate(tmp_path, monkeypatch):
+    """교체 전 버전 판을 잘라야 한다 — 확인 전에 교체부터 하게 되면 순서가 거꾸로다."""
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    _build(src)
+    plate = src / "data" / "proc" / "mupid_v20260921-161142"
+    (src / "data" / "proc" / "mupid").rename(plate)
+
+    report = slice_index.slice_index(src, dst, src_data=plate)
+
+    # 들어온 이름이 무엇이든 **나가는 자리는 언제나 mupid** 다.
+    assert (dst / "data" / "proc" / "mupid" / "moments.parquet").exists()
+    assert report["rows"]["moments"] > 0
