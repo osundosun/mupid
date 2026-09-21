@@ -190,6 +190,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
     if (!slot) return;
     const desktop = window.matchMedia('(min-width: 1024px)');
     const appLayout = slot.closest('.app-layout');
+    const header = slot.closest('.mupid-shell')?.querySelector('.app-header');
     const miniPlayer = slot.closest('.mupid-shell')?.querySelector('.mini-player');
     let frame = 0;
     const sync = () => {
@@ -201,7 +202,8 @@ export function SearchView({ model: m }: { model: MupidModel }) {
         }
         const bounds = slot.getBoundingClientRect();
         const appLayoutBottom = appLayout?.getBoundingClientRect().bottom ?? window.innerHeight;
-        const top = Math.max(110, bounds.top);
+        const headerBottom = header?.getBoundingClientRect().bottom ?? 90;
+        const top = Math.max(headerBottom + 20, bounds.top);
         const playerBounds = miniPlayer?.getBoundingClientRect();
         const visibleBottom = playerBounds && playerBounds.height > 0
           ? Math.min(window.innerHeight, playerBounds.top)
@@ -216,6 +218,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
     const resize = new ResizeObserver(sync);
     resize.observe(slot);
     if (appLayout) resize.observe(appLayout);
+    if (header) resize.observe(header);
     if (miniPlayer) resize.observe(miniPlayer);
     desktop.addEventListener('change', sync);
     window.addEventListener('resize', sync);
@@ -266,7 +269,9 @@ export function SearchView({ model: m }: { model: MupidModel }) {
             </output>
           </div>}
           {listing.error && results.length === 0 ? <p className="keyword-idle" role="alert">{listing.error}</p> :
-            results.length ? <div key={requestKey} ref={trackList} className="explore-track-list">{results.map((track) => <TrackRow key={track.id} track={track} model={m} queueable showDetail={false} titleInteractive={false} />)}</div> :
+            results.length ? <div key={requestKey} ref={trackList} className="explore-track-list">{results.map((track) => <TrackRow key={track.id} track={track} model={m} queueable showDetail={false} onTitleClick={() => {
+              if (m.active?.id !== track.id || !m.playing) m.play(track);
+            }} />)}</div> :
             !initialLoading && <p className="keyword-idle">검색 결과가 없어요. 조건을 바꿔보세요.</p>}
           <div className="explore-load-more-target" aria-hidden="true" />
           {listing.error && results.length > 0 && <p className="explore-load-error" role="alert">{listing.error}</p>}
