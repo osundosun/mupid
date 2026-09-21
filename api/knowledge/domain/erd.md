@@ -319,7 +319,33 @@ MySQL 도메인을 만들 때는 **`music_id` 를 쓴다.** ERD 에 `track_id` �
 
 ## 출처
 
-[erd.sql](erd.sql) — ERD 도구 산출 DDL (2026-09-11 반입, 2026-09-15 · **2026-09-17** 재산출).
+[erd.sql](erd.sql) — ERD 도구 산출 DDL (2026-09-11 반입, 2026-09-15 · 2026-09-17 · **2026-09-21** 재산출).
+
+**2026-09-21 재산출은 `music_analysis.vocal_gender` 한 줄을 고쳤다.**
+
+| | 무엇 | 왜 |
+|---|---|---|
+| 정정 | `music_analysis.vocal_gender` 를 `ENUM('M', 'F', 'ETC')` → **`ENUM('M', 'F', 'MIX')`** | **운영 DB 와 코드가 `MIX` 를 쓰는데 `erd.sql` 만 `ETC` 로 뒤처져 있었다.** `VocalGender.MIX` 는 `4aa08e2`(S15P21A204-388)에서 도입됐고 그때 `erd.sql` 이 따라오지 않았다 |
+
+**`ETC` 는 `users.gender` 의 값이다**(`erd.sql` 의 같은 이름 컬럼, `UserGender.ETC`). 두 컬럼이 혼동된 것이 원인이었고, 그래서 **`users.gender` 는 그대로 두었다** — 그쪽은 `ETC` 가 맞다.
+
+**이 드리프트는 조용하지 않았다. 이미 개발 DB 를 오염시켰다.** 개발 DB 가 `erd.sql` 을 따라 `ETC` 로 만들어진 상태에서 코드가 `MIX` 를 쓰자 `Data truncated for column 'vocal_gender'` 가 났다. `VocalFilterSearchTest` 는 `@BeforeAll` 에서 픽스처를 만들다 이것으로 죽었고, `@AfterAll` 이 돌지 않아 **픽스처가 DB 에 남아 다음 실행까지 오염**시켰다(누적 36행 실측). **실패가 실행 순서에 따라 갈려 회귀를 오진하게 만들었다.**
+
+> ⚠️ **운영 DB 에는 아무것도 하지 않았다.** 운영이 정본이고, 잘못된 방향으로 `ALTER` 하면 **정상 값(`MIX`)이 `ETC` 로 잘린다.** 이 재산출은 **문서를 현실에 맞춘 것**이지 운영 스키마를 바꾼 것이 아니다.
+
+재산출 후 확인한 것:
+
+- **수기 보정 #1~#4 가 전부 살아 있다** — 도구가 되돌리지 않았다(`music_analysis_instruments.music_section_analysis_id` 의 `AUTO_INCREMENT` 없음 / `music_section_analysis.external_id` UNIQUE / `ai_chat_sessions.ai_chat_session_id` 의 `AUTO_INCREMENT` / ngram FULLTEXT 인덱스 3개).
+- 이번에는 **`erd.sql` 의 `--` 주석도 보존됐다**(2026-09-17 때는 사라졌다). 머리말의 수기 보정 목록이 그대로 있다.
+- **개발 DB 와의 대조 차이가 2건 → 1건으로 줄었다.** 남은 1건은 아래를 본다.
+
+### ⚠️ 남은 차이 1건 — `music_analysis_instruments` 의 `AUTO_INCREMENT`
+
+재산출 후에도 **개발 DB 에만** `music_analysis_instruments.music_section_analysis_id` 에 `AUTO_INCREMENT` 가 붙어 있다(`erd.sql` 에는 없다 — 수기 보정 #1 이 맞다).
+
+**이것은 위 "아직 DB 에 적용하지 않은 DDL" 표의 ① 이다.** 그 표는 운영·개발 **둘 다 미적용**이라고 적고 있으나, 실측에서는 **개발 DB 에 붙어 있다** — 표가 낡았거나 개발 DB 가 그 뒤 손으로 만들어진 것이다.
+
+**대상은 DB 이지 `erd.sql` 이 아니다**(`erd.sql` 이 올바르다). 위험한 부류다 — `0` 이 들어오면 MySQL 이 새 번호를 발급하고 **외래키 검사를 통과**하며 **오류도 남기지 않는다**(위 "`AUTO_INCREMENT` 는 PK 자리에만" 절). 적용 DDL 은 그 표에 있다. **운영 DB 는 손대지 않는다.**
 
 **2026-09-17 재산출은 `codes.display_name` 추가와 두 가지 결함 정정을 담았다.**
 
