@@ -240,10 +240,10 @@ def meta_row(track: dict, music_id: str) -> dict:
     필터는 "이 곡이 어떤 템포로 만들어졌나" 를 묻는 자리다. 285차의 `trk_bpm` 이
     측정값인 것과 서로 어긋나지 않는다. 자리가 다르다.
 
-    **태그는 배열이 아니라 쉼표로 이은 문자열이다.** `요구 5` 는 `mood_tags` 를 배열로
-    주는데, 저장본의 `flow_meta.mood_tags`·`instrument_tags` 는 `large_string` 이고
-    추천기가 `_tag_list()` 로 쉼표 분리해 읽는다. 배열을 그대로 넣으면 parquet 쓰기가
-    타입 오류로 멈춘다 — 실제로 여기서 한 번 막혔다. `lyrics_types` 만 리스트다.
+    **태그는 배열이 아니라 쉼표로 이은 문자열이다.** 저장본의 `flow_meta.mood_codes`·
+    `instrument_tags` 는 `large_string` 이고 추천기가 `_tag_list()` 로 쉼표 분리해
+    읽는다. 배열을 그대로 넣으면 parquet 쓰기가 타입 오류로 멈춘다 — 실제로 여기서
+    한 번 막혔다.
     """
     bpm = track.get("bpm_requested")
     lo = hi = float(bpm) if bpm not in (None, "") else float("nan")
@@ -254,9 +254,13 @@ def meta_row(track: dict, music_id: str) -> dict:
             "language": str(track.get("language") or "unknown"),
             "bpm_lo": lo, "bpm_hi": hi,
             "sound_raw": str(track.get("sound_raw") or "")[:600],
-            "lyrics_types": list(track.get("lyrics_types") or []),
-            "genre_top1": str(track.get("genre_top1") or ""),
-            "mood_tags": _tags(track.get("mood_tags")),
+            # 장르·무드는 **DB 코드표의 `code_name`** 이다 (2026-09-21 어휘 전환).
+            # 예전 `genre_top1`(`Rock---Punk`)·`mood_tags`(`relaxing`)는 카탈로그
+            # 자체 어휘였고, 코드표와 이어지지 않아 세분류 장르 45종이 통째로
+            # 빠졌다. `lyrics_types` 는 읽는 곳이 한 군데도 없어 함께 뺐다.
+            "genre_code": str(track.get("genre_code")
+                              or track.get("genre") or ""),
+            "mood_codes": _tags(track.get("mood_codes") or track.get("moods")),
             "instrument_tags": _tags(track.get("instrument_tags")),
             "voice_label": str(track.get("voice_label") or ""),
             "gender_label": str(track.get("gender_label") or "")}

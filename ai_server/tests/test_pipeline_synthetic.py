@@ -20,8 +20,9 @@ import pandas as pd
 import pytest
 
 LABELS4 = ["intro", "verse", "chorus", "bridge"]
-GENRES = ["pop", "ballad", "rock"]
-MOODS = ["relaxing", "happy"]
+# DB 코드표 어휘(`codes.code_name`). 합성이지만 모양을 실제와 맞춘다.
+GENRES = ["contemporary_pop", "pop_ballad", "indie_rock"]
+MOODS = ["calm", "bright"]
 INSTRUMENTS = ["piano", "guitar"]
 
 
@@ -91,10 +92,11 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
         "track_id": t, "title": f"곡 {t}", "category": GENRES[i % 3],
         "vocal_type": ["female", "male"][i % 2], "language": ["ko", "en"][i % 2],
         "bpm_lo": 80, "bpm_hi": 120, "sound_raw": "",
-        # 장르는 `genre` 가 아니라 `genre_top1` 에서 온다(_catalog_tags). 이름을 틀리면
-        # 패싯이 조용히 빈 목록이 되고, LLM 이 고를 어휘가 사라진다.
-        "genre_top1": GENRES[i % 3],
-        "mood_tags": MOODS[i % 2], "instrument_tags": INSTRUMENTS[i % 2],
+        # 장르·무드는 `genre_code`·`mood_codes` 에서 온다(`_catalog_tags`).
+        # 이름을 틀리면 패싯이 조용히 빈 목록이 되고, LLM 이 고를 어휘가 사라진다.
+        # 값은 DB `codes.code_name` 어휘다 (2026-09-21 전환).
+        "genre_code": GENRES[i % 3],
+        "mood_codes": MOODS[i % 2], "instrument_tags": INSTRUMENTS[i % 2],
     } for i, t in enumerate(tids)]).to_parquet(d / "flow_meta.parquet", index=False)
     return d
 
@@ -182,10 +184,11 @@ def test_recommend_honours_exclusion(svc):
 
 def test_query_plan_actually_gates(svc):
     """조건이 걸리지 않으면 자연어 검색이 무의미하다."""
-    out = svc.recommend("internal:1", 5, set(), True, {"filters": {"genre": ["pop"]}})
+    out = svc.recommend("internal:1", 5, set(), True,
+                        {"filters": {"genre": [GENRES[0]]}})
     assert out["diagnostics"]["nlp"]["applied"] == ["filters.genre"]
     for r in out["results"]:
-        assert svc.CAT.track_info(r["track_id"])["category"] == "pop"
+        assert svc.CAT.track_info(r["track_id"])["category"] == GENRES[0]
 
 
 def test_query_plan_uses_only_matching_dna_moments(svc, monkeypatch):
@@ -212,7 +215,7 @@ def test_query_plan_searches_without_dna_when_none_match(svc, monkeypatch):
     monkeypatch.setattr(svc, "user_positives", lambda _user: pos)
 
     out = svc.recommend("internal:no-query-dna", 4, set(), True,
-                        {"filters": {"flow": "verse", "mood": ["relaxing"]}})
+                        {"filters": {"flow": "verse", "mood": [MOODS[0]]}})
 
     assert out["dna"] == []
     assert out["diagnostics"]["query_source"] == "none"
@@ -304,10 +307,29 @@ def test_unsatisfiable_condition_returns_nothing_not_anything(svc):
 def test_mood_filter_reranks_without_dropping(svc):
     plain = svc.recommend("internal:1", 6, set())
     moody = svc.recommend("internal:1", 6, set(), True,
-                          {"filters": {"mood": ["relaxing"]}})
+                          {"filters": {"mood": [MOODS[0]]}})
     assert moody["diagnostics"]["mood_rerank"]["matched"] > 0
     # 후보 수는 그대로 — mood 는 게이트가 아니다.
     assert moody["diagnostics"]["candidates"] == plain["diagnostics"]["candidates"]
+
+
+def test_a_value_already_in_the_vocabulary_is_not_rewritten_by_an_alias(svc):
+    """별칭표가 **어휘에 있는 값**을 덮으면 조건이 통째로 사라진다.
+
+    어휘 전환(2026-09-21) 뒤에 실제로 걸렸다. `calm`·`serene` 은 이제 코드 이름
+    그 자체인데 별칭표가 옛 카탈로그 태그(`relaxing`·`meditative`)로 바꿔 놓았고,
+    그 태그가 없어져 `filters.mood` 가 빈 목록이 됐다 — 사용자가 "고요한" 을
+    골랐는데 아무 곡이나 나오는 상태였다. 오류는 나지 않는다.
+    """
+    out = svc.recommend("internal:1", 6, set(), True,
+                        {"filters": {"mood": ["calm"]}})
+    assert out["diagnostics"]["nlp"]["plan"]["filters"]["mood"] == ["calm"]
+    assert "mood_rerank" in out["diagnostics"], "조건이 사라졌다"
+
+    # 어휘에 없는 말은 여전히 별칭을 거친다. 거쳐도 못 맞추면 그냥 떨어진다.
+    unknown = svc.recommend("internal:1", 6, set(), True,
+                            {"filters": {"mood": ["존재하지않는무드"]}})
+    assert unknown["diagnostics"]["nlp"]["plan"]["filters"]["mood"] == []
 
 
 def test_ranking_is_unchanged_when_no_mood_is_asked(svc):

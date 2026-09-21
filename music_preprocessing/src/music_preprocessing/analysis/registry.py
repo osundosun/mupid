@@ -31,7 +31,9 @@ from .batch import BatchTrack
 
 # metadata 에 없고 태깅 산출물에만 있는 열. 없으면 빈 값으로 둔다 — 태그는 곁들이는
 # 값이고 색인·구간 적재는 그것 없이도 온전하다(`pipeline._instruments` 와 같은 판단).
-TAG_COLS = ("genre_top1", "mood_tags", "instrument_tags", "voice_label", "gender_label")
+# 2026-09-21: `genre_top1`·`mood_tags` → `genre_code`·`mood_codes`. 값은 DB 코드표의
+# `code_name` 이다. 태깅 산출물이 아직 옛 이름으로 주면 그대로 읽어 새 이름에 담는다.
+TAG_COLS = ("genre_code", "mood_codes", "instrument_tags", "voice_label", "gender_label")
 
 
 class RegistryError(RuntimeError):
@@ -108,10 +110,10 @@ class LocalRegistry:
         for r in df.itertuples(index=False):
             d = r._asdict() if hasattr(r, "_asdict") else dict(zip(df.columns, r))
             out[str(d.get("track_id"))] = {
-                "genre_top1": str(d.get("genre_top1") or ""),
+                "genre_code": str(d.get("genre_code") or d.get("genre") or ""),
                 # 색인은 **쉼표로 이은 문자열**이다(large_string). 배열로 넣으면 parquet
                 # 쓰기가 타입 오류로 멈춘다 — `batch.meta_row` 가 같은 이유로 변환한다.
-                "mood_tags": _tags(d.get("mood_json")),
+                "mood_codes": _tags(d.get("mood_codes") or d.get("mood_json")),
                 "instrument_tags": _tags(d.get("instrument_json")),
                 "voice_label": str(d.get("voice_label") or ""),
                 "gender_label": str(d.get("gender_label") or ""),

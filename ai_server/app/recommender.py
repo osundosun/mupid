@@ -342,10 +342,9 @@ def _instrument_list(v) -> list:
         if x.casefold() not in _NONSPECIFIC_INSTRUMENTS))
 
 
-def short_genre(g: str) -> str:
-    """'Rock---Punk' -> 'Punk'."""
-    g = _text(g)
-    return g.split("---")[-1].strip() if g else ""
+# `short_genre()` 를 걷어냈다. `대분류---세분류` 문자열에서 뒤를 떼던 함수인데,
+# 장르가 DB 코드 이름(`alternative_rock`) 하나가 되면서 뗄 것이 없다. 남겨 두면
+# 새 값에도 `---` 가 있는 줄 알고 다음 사람이 같은 모양을 또 만든다.
 
 
 def _catalog_tags(m: dict) -> dict:
@@ -370,10 +369,18 @@ def _catalog_tags(m: dict) -> dict:
                        (m.get("vocal_gender"), m.get("gender_label"), raw_vocal)
                        if _text(v)), "")
     vocal_gender = None if has_vocal is not True else _VOCAL_GENDER.get(raw_gender)
+    # 장르·무드는 **DB 코드표의 `code_name` 그대로**다 (`genre_code` · `mood_codes`).
+    # 예전에는 카탈로그가 제 어휘(`Rock---Punk` · `relaxing`)를 쓰고 온보딩이 코드
+    # 이름을 그 어휘로 옮겼는데, 옮기는 표가 세분류 장르 45종을 하나도 못 이어
+    # 그 축이 조용히 비어 있었다. 이제 양쪽이 같은 값을 쓴다.
+    #
+    # `genre_full` 은 옛 축의 `대분류---세분류` 에서 세분류만 떼던 자리였다. 코드는
+    # 한 값이라 둘이 같지만, 데모 응답이 두 키를 다 읽으므로 이름은 남긴다.
+    genre = _text(m.get("genre_code"))
     return {
-        "genre": short_genre(m.get("genre_top1")),
-        "genre_full": _text(m.get("genre_top1")),
-        "moods": _tag_list(m.get("mood_tags")),
+        "genre": genre,
+        "genre_full": genre,
+        "moods": _tag_list(m.get("mood_codes")),
         "instruments": _instrument_list(m.get("instruments", m.get("instrument_tags"))),
         "has_vocal": has_vocal,
         "vocal_gender": vocal_gender,
@@ -1557,12 +1564,18 @@ def _qvals(v) -> list[str]:
             for x in v if str(x).strip()]
 
 
+# 해석기가 어휘 밖의 말을 보낼 때만 쓰는 별칭. **어휘에 있는 값은 건드리지 않는다**
+# (`_canonicalize_query_tags` 가 값 자체를 먼저 본다).
+#
+# 오른쪽 값들은 어휘 전환(2026-09-21) 전의 카탈로그 태그라 **지금은 하나도 맞지
+# 않는다.** 지우지 않고 남겨 둔 이유: 무엇을 코드 이름으로 다시 이어야 하는지가
+# 여기 적혀 있고, 그 대응은 코드표가 정할 일이지 여기서 지어낼 일이 아니다.
+# 맞지 않는 별칭은 조건을 만들지 못하고 그대로 떨어진다 — 조용히 다른 곡을
+# 고르는 것보다 낫다. 이어야 할 것은 보고에 남겼다.
 _TAG_ALIASES = {
     "mood": {
-        "calm": ("relaxing", "meditative"),
         "quiet": ("relaxing", "meditative"),
         "peaceful": ("relaxing", "meditative"),
-        "serene": ("relaxing", "meditative"),
         "chill": ("relaxing",),
         "soft": ("relaxing",),
         "잔잔한": ("relaxing", "meditative"),
@@ -1597,7 +1610,18 @@ def _canonicalize_query_tags(data: dict, fac: pd.DataFrame,
     for name, vocab in allowed.items():
         normalized = []
         for value in _qvals(out.get(name)):
-            for candidate in _TAG_ALIASES.get(name, {}).get(value, (value,)):
+            # **그 값이 이미 어휘에 있으면 그대로 쓴다.** 별칭은 어휘에 없는 말을
+            # 받아 주려고 두는 것이지, 있는 말을 바꾸라고 두는 것이 아니다.
+            #
+            # 어휘 전환(2026-09-21) 뒤에 실제로 걸렸다: `calm`·`serene` 은 이제
+            # 코드 이름 그 자체인데, 별칭표가 옛 카탈로그 태그(`relaxing`·
+            # `meditative`)로 바꿔 놓고 그 태그가 없어져 **조건이 통째로 사라졌다.**
+            # 사용자가 "고요한" 을 골랐는데 아무 곡이나 나오는 상태였다.
+            if value in vocab:
+                if value not in normalized:
+                    normalized.append(value)
+                continue
+            for candidate in _TAG_ALIASES.get(name, {}).get(value, ()):
                 if candidate in vocab and candidate not in normalized:
                     normalized.append(candidate)
         out[name] = normalized if name != "flow" else (normalized[0] if normalized else None)

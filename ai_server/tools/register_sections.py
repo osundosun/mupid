@@ -73,6 +73,12 @@ def _instruments_module():
 # AI 태그 → Spring 코드표 이름(`code_name`, 영문 내부 코드 — `serene`·`melancholic`).
 # `MOOD_MAP` 을 뒤집은 것이다.
 #
+# **이 경로는 2026-09-21 어휘 전환에서 건드리지 않았다.** 여기가 만드는 것은
+# **순간 무드**(`music_section_analysis_mood`, code_id 32~39)이고, 전환한 것은
+# **곡 무드**(`music_moods`, 40~48)다. 표는 같은 `codes` 를 보지만 축이 다르고
+# 쓰는 테이블도 다르다 — 한쪽을 고치면서 다른 쪽을 같이 옮기면 순간 무드가
+# 통째로 어긋난다. 순간 무드 전환은 별건으로 남겨 두었다.
+#
 # **번호는 보내지 않는다.** 코드 번호는 MySQL 이 발급하고 이 서버는 모른다 — 이름으로
 # 보내면 Spring 이 붙인다. 카탈로그 1,063곡 중 918곡(86%)이 이 표로 옮겨진다. 나머지는
 # 분위기 없이 들어가고, 그 자체는 오류가 아니다.
@@ -336,6 +342,13 @@ def main() -> int:
         if "mood_tags" in meta.columns:
             mood_of = {str(r.track_id): moods_of(r.mood_tags, mood_unmapped)
                        for r in meta.itertuples()}
+        else:
+            # 어휘 전환(2026-09-21) 뒤의 판에는 이 열이 없다. 순간 무드는 AI 태그에서
+            # 왔는데 그 태그를 더는 싣지 않는다 — **곡 무드(`mood_codes`)로 대신하지
+            # 않는다.** 축이 다르고(32~39 대 40~48), 대신 쓰면 순간에 곡 무드가
+            # 붙는다. 조용히 넘기지 않고 왜 비는지 남긴다.
+            log(f"{meta_path.name} 에 mood_tags 가 없다 (어휘 전환 후 판) — "
+                "순간 무드 없이 적재한다. 순간 무드 전환은 별건이다")
     else:
         log(f"{meta_path.name} 이 없다 — 분위기 없이 적재한다")
 

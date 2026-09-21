@@ -1,0 +1,153 @@
+"""`flow_meta` 의 장르·무드 축을 **DB 코드표 어휘로** 바꾼다.
+
+    MUPID_AI_ARTIFACT_DIR=/경로 python -m ai_server.tools.retag_flow_meta \
+        --plate data/proc/mupid_v<stamp> --snapshot C:/…/mupid-db-snapshot
+
+## 변환표를 만들지 않는다
+
+예전에는 카탈로그가 제 어휘(`Electronic---Ambient` · `relaxing`)를 쓰고, 온보딩이
+Spring 코드 이름을 그 어휘로 **옮겼다**(`onboarding.MOOD_MAP`). 옮기는 표가 있는 한
+코드가 늘 때마다 표가 밀리고, 못 옮긴 값은 조용히 빈 목록이 된다 — 세분류 장르
+45종이 실제로 그 상태였다(0건 매칭).
+
+그래서 옮기지 않고 **카탈로그 쪽을 코드 이름으로 바꾼다.** 값의 출처는 DB 하나다.
+
+    track_id ──(external_id 의 '#' 앞)── music_section_analysis ── music_id
+             └─ music_genres · music_moods ── codes.code_name
+
+`external_id` 를 쪼개 `music_id` 를 **얻지 않는다.** 쪼개는 것은 `track_id` 를 찾을
+때뿐이고, `music_id` 는 표의 열을 그대로 읽는다.
+
+## 축
+
+    genre_code   GENRE 49~93 의 code_name 하나 (곡당 1개. music_genres 가 1:1 이다)
+    mood_codes   MOOD 40~48 의 code_name 목록, 쉼표로 이은 문자열
+    제거         genre_top1 · mood_tags · lyrics_types
+
+순간 무드(32~39)는 **건드리지 않는다.** 별건이다.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import pandas as pd
+
+from ai_server.app import paths
+
+GENRE_RANGE = (49, 93)          # 곡 장르. 대분류 9~16 은 곡이 0개라 여기 없다
+MOOD_RANGE = (40, 48)           # 곡 무드. 순간 무드 32~39 와 다른 축이다
+DROP_COLS = ("genre_top1", "mood_tags", "lyrics_types")
+
+
+def log(msg: str) -> None:
+    print(f"[retag] {msg}", flush=True)
+
+
+def track_to_music_id(sec: pd.DataFrame) -> dict[str, int]:
+    """`track_id` → `music_id`. **표의 `music_id` 열을 쓴다.**
+
+    `external_id` 는 `T000001#0` 꼴이라 `#` 앞이 곡 문자열 ID 다. 거기서 숫자를
+    뽑지 않는다 — `T000847_1` 처럼 규칙에서 벗어난 값이 섞여 있고, 뽑은 숫자가
+    실제 PK 와 맞는다는 보장이 어디에도 없다.
+    """
+    out: dict[str, int] = {}
+    bad: list[str] = []
+    for ext, mid in zip(sec.external_id.astype(str), ints(sec, "music_id")):
+        tid = ext.split("#", 1)[0]
+        prev = out.setdefault(tid, int(mid))
+        if prev != int(mid):
+            bad.append(tid)
+    if bad:
+        raise SystemExit(f"한 곡이 여러 music_id 를 가리킨다: {sorted(set(bad))[:5]}")
+    return out
+
+
+def ints(df: pd.DataFrame, col: str) -> pd.Series:
+    """스냅샷은 열이 문자열이다. 비교·색인 전에 한 번만 숫자로 맞춘다."""
+    return pd.to_numeric(df[col], errors="raise").astype("int64")
+
+
+def code_names(codes: pd.DataFrame, kind: str, lo: int, hi: int) -> dict[int, str]:
+    cid = ints(codes, "code_id")
+    sel = codes[(codes.code_type.astype(str) == kind) & cid.between(lo, hi)]
+    return {int(i): str(n) for i, n in zip(ints(sel, "code_id"),
+                                           sel.code_name.astype(str))}
+
+
+def build(plate: Path, snap: Path) -> dict:
+    codes = pd.read_parquet(snap / "codes.parquet")
+    sec = pd.read_parquet(snap / "music_section_analysis.parquet")
+    genres = pd.read_parquet(snap / "music_genres.parquet")
+    moods = pd.read_parquet(snap / "music_moods.parquet")
+
+    t2m = track_to_music_id(sec)
+    gname = code_names(codes, "GENRE", *GENRE_RANGE)
+    mname = code_names(codes, "MOOD", *MOOD_RANGE)
+    log(f"코드표 — GENRE {len(gname)}종 · MOOD {len(mname)}종")
+
+    # 코드표에 없는 번호가 참조되면 **추측하지 않고 멈춘다.**
+    for df, col, table, known in ((genres, "genre_code_id", "music_genres", gname),
+                                  (moods, "mood_code_id", "music_moods", mname)):
+        unknown = sorted(set(ints(df, col)) - set(known))
+        if unknown:
+            raise SystemExit(
+                f"{table} 이 범위 밖 코드를 가리킨다: {unknown[:10]} "
+                f"(기대 {min(known)}~{max(known)})")
+
+    g_by_music = dict(zip(ints(genres, "music_id"),
+                          (gname[c] for c in ints(genres, "genre_code_id"))))
+    m_by_music: dict[int, list[str]] = {}
+    for m, c in zip(ints(moods, "music_id"), ints(moods, "mood_code_id")):
+        m_by_music.setdefault(int(m), []).append(mname[int(c)])
+
+    fm = pd.read_parquet(plate / "flow_meta.parquet")
+    tid = fm.track_id.astype(str)
+    mid = tid.map(t2m)
+
+    fm["genre_code"] = [g_by_music.get(int(m), "") if pd.notna(m) else ""
+                        for m in mid]
+    # 순서를 코드 번호 차례로 고정한다 — 곡마다 흔들리면 응답이 안정적이지 않다.
+    order = {v: k for k, v in mname.items()}
+    fm["mood_codes"] = [
+        ", ".join(sorted(m_by_music.get(int(m), []), key=lambda x: order[x]))
+        if pd.notna(m) else "" for m in mid]
+
+    dropped = [c for c in DROP_COLS if c in fm.columns]
+    fm = fm.drop(columns=dropped)
+    fm.to_parquet(plate / "flow_meta.parquet", index=False)
+
+    no_db = int(mid.isna().sum())
+    rep = {"tracks": len(fm), "db_에_없는_곡": no_db,
+           "genre_code_채움": int((fm.genre_code != "").sum()),
+           "genre_code_빈곡": int((fm.genre_code == "").sum()),
+           "mood_codes_채움": int((fm.mood_codes != "").sum()),
+           "mood_codes_빈곡": int((fm.mood_codes == "").sum()),
+           "제거한_열": dropped,
+           "genre_어휘": sorted(set(fm.genre_code) - {""}),
+           "mood_어휘": sorted({m for s in fm.mood_codes for m in
+                              (x.strip() for x in s.split(",")) if m})}
+    log(f"곡 {rep['tracks']} · genre_code {rep['genre_code_채움']}채움/"
+        f"{rep['genre_code_빈곡']}빈칸 · mood_codes {rep['mood_codes_채움']}채움/"
+        f"{rep['mood_codes_빈곡']}빈칸 · DB 에 없는 곡 {no_db}")
+    log(f"제거: {dropped}")
+    return rep
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="flow_meta 어휘를 DB 코드표로 바꾼다")
+    ap.add_argument("--plate", required=True, help="새 판 경로 (기존 판을 주지 않는다)")
+    ap.add_argument("--snapshot", default=r"C:\Users\SSAFY\ssafy\mupid-db-snapshot")
+    a = ap.parse_args(argv)
+    plate = Path(a.plate)
+    if plate.resolve() == paths.data_dir().resolve():
+        print("현재 판을 제자리에서 고치지 않는다. 새 판 경로를 준다.", file=sys.stderr)
+        return 1
+    print(json.dumps(build(plate, Path(a.snapshot)), ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
