@@ -34,10 +34,24 @@
       3. `features_v1` 의 moment_id 순서가 `moments.parquet` 순서와 같은지
 
     를 확인하고, 하나라도 어긋나면 **아무것도 쓰지 않고** 종료한다.
+
+`shrink_index` 와 무엇이 다른가
+    **중복이 아니라 순서다.**
+
+        원본 판 ──shrink──> 새 판(상태 포함) ──slice──> 배송 묶음(색인만)
+
+    `shrink_index` 는 **판**을 만든다 — `logs`·`serve` 를 함께 옮기고 이름이
+    `mupid_v<stamp>` 다. 사람이 그 판을 확인한 뒤 교체한다.
+
+    이쪽은 **배송 묶음**을 만든다 — `deploy-index.sh` 가 그대로 묶어 노드로 보낼 수
+    있게 `<dst>/data/proc/mupid` 자리에 쓰고, 상태 디렉터리는 **가져가지 않는다.**
+    실측으로 `logs` 가 51MB 다. 판을 그대로 보내면 서빙 로그를 색인이라고 배포하게
+    되고, GitLab Job Artifacts 100MB 제한에도 그만큼 가까워진다.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -71,8 +85,17 @@ def fail(message: str) -> None:
     raise SystemExit(65)
 
 
-def slice_index(src: Path, dst: Path) -> dict:
-    data = src / "data" / "proc" / "mupid"
+def slice_index(src: Path, dst: Path, *, src_data: Path | None = None) -> dict:
+    """`src_data` 를 주면 그 판을 읽는다. 안 주면 `src/data/proc/mupid` 다.
+
+    버전 판(`data/proc/mupid_v20260921-161142`)을 자를 길이 필요해서 뚫었다. 판
+    이름이 `mupid` 로 굳어 있으면 **교체 전에는 배송 묶음을 만들 수 없고**, 그러면
+    확인 없이 교체부터 하게 된다 — 순서가 거꾸로다.
+
+    **나가는 자리는 언제나 `data/proc/mupid` 다.** 받는 쪽(`receive-index.py`)과
+    파드(`paths.data_dir()`)가 그 이름만 보기 때문이다.
+    """
+    data = Path(src_data) if src_data is not None else src / "data" / "proc" / "mupid"
     out = dst / "data" / "proc" / "mupid"
     for name in ALIGNED:
         if not (data / name).exists():
@@ -128,6 +151,7 @@ def slice_index(src: Path, dst: Path) -> dict:
     for name in COPY_AS_IS:
         if (data / name).exists():
             shutil.copy2(data / name, out / name)
+    _restamp_features_info(out, len(sliced))
 
     report = _verify(out)
     report["dropped"] = int(len(mom) - len(sliced))
@@ -162,6 +186,35 @@ def _slice_clap(data: Path, out: Path, moments: set[str]) -> None:
                  moment_ids=d["moment_ids"][pick], embeddings=d["embeddings"][pick])
 
 
+def _restamp_features_info(out: Path, rows: int) -> None:
+    """`features_rows`·`features_sha256` 를 자른 결과에 맞춘다.
+
+    `features_info.json` 은 행과 무관한 것(PCA 기저·열 이름)이 대부분이라 그대로
+    옮기지만, 이 두 값만은 **자른 파일을 가리켜야 한다.** 통째로 복사하면 65,540행
+    이라고 적힌 채 10,007행짜리 npz 옆에 놓인다.
+
+    기동을 막지는 않는다(`check_integrity` 가 이 값을 보지 않는다). 그래서 더 나쁘다 —
+    나중에 "어느 판이 올라가 있나" 를 이 파일로 확인하려 할 때 조용히 거짓말을 한다.
+    `freeze_feature_stats` 가 같은 두 키를 같은 뜻으로 쓴다.
+    """
+    path = out / "features_info.json"
+    if not path.exists():
+        return
+    info = json.loads(path.read_text(encoding="utf-8"))
+    info["features_rows"] = int(rows)
+    info["features_sha256"] = _sha256(out / "features_v1.npz")
+    path.write_text(json.dumps(info, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8")
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def _verify(out: Path) -> dict:
     """`main.check_integrity()` 가 기동 때 보는 것과 같은 조건을 미리 본다.
 
@@ -189,14 +242,20 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="서빙용 색인만 잘라낸다")
     ap.add_argument("--out", required=True, help="자른 색인을 쓸 디렉터리")
     ap.add_argument("--src", default=None, help="기본: MUPID_AI_ARTIFACT_DIR")
+    ap.add_argument("--src-dir", default=None,
+                    help="판 디렉터리를 직접 지정한다 (예: .../data/proc/mupid_v20260921-161142). "
+                         "교체 전 버전 판을 자를 때 쓴다. 나가는 자리는 언제나 data/proc/mupid 다")
     a = ap.parse_args()
 
     src = Path(a.src) if a.src else paths.artifact_root()
+    src_data = Path(a.src_dir) if a.src_dir else None
     dst = Path(a.out)
     if dst.resolve() == src.resolve():
         fail("원본 위에 덮어쓰지 않는다 — 학습에 쓸 전체 색인이 사라진다")
+    if src_data is not None and not (src_data / "moments.parquet").exists():
+        fail(f"--src-dir 에 색인이 없다: {src_data}")
 
-    report = slice_index(src, dst)
+    report = slice_index(src, dst, src_data=src_data)
     print(f"풀 {report['rows']['moments']:,}구간 남김 "
           f"({report['dropped']:,}행 버림) · {report['bytes'] / 1e6:.1f}MB -> {dst}")
     return 0
