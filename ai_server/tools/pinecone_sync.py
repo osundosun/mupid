@@ -137,18 +137,28 @@ def cmd_reload(args) -> int:
 
     # 같은 적재본이면 아무것도 하지 않는다. 바뀐 것이 없는데 지우고 다시 넣으면
     # 그동안의 추천 중단이 순전한 손해다.
+    has_control = True
     try:
         current = ps.center(reload=True)
         if current.state == ps.READY and current.snapshot == snapshot:
             _say("적재본이 같다 — 갱신하지 않는다 (추천도 멈추지 않는다)")
             return 0
     except ps.PineconeError:
-        pass                                  # control 이 없으면 처음 적재다
+        has_control = False                   # control 이 없으면 처음 적재다
+
+    # `--initial-load` 는 **control 이 없을 때만** 통한다. 있으면 최초가 아니고,
+    # 그 뒤로도 통하면 "서버 확인을 건너뛰는 상시 우회로" 가 된다 — 급할 때 그 길로
+    # 열게 되고, 서버가 옛 μ 를 든 채 READY 가 된다.
+    if args.initial_load and has_control:
+        _fail("--initial-load 는 control 레코드가 없을 때만 쓴다. 이미 있으므로 "
+              "최초 적재가 아니다 — --reload 로 돌린다", 2)
+    if args.initial_load:
+        _say("[최초 적재] 서버 반영 확인(⑦)만 건너뛴다. 삭제·적재·대사는 그대로 한다")
 
     # ① 멈춘다. 이 뒤로 서빙은 503 을 돌려준다.
-    try:
+    if has_control:
         ps.set_state(ps.UPDATING)
-    except ps.PineconeError:
+    else:
         # control 이 아직 없다. 자리를 만들면서 UPDATING 으로 연다.
         ps.save_center(Z.mean(0), version, snapshot, len(ids), state=ps.UPDATING)
     _say("control 을 UPDATING 으로 — 추천이 멈췄다")
@@ -175,7 +185,13 @@ def cmd_reload(args) -> int:
         _fail("전체 갱신 후 대사가 맞지 않는다. 고친 뒤 --reload 를 다시 돌린다", 4)
 
     # ⑦ AI 서버가 새 세대를 읽었는가. 확인하지 못하면 READY 로 넘어가지 않는다.
-    if not _wait_server(snapshot, args.server_tries, args.server_wait):
+    #
+    # 최초 적재에서만 이 단계를 건너뛴다. control 이 아직 없던 판에서는 서버가
+    # 읽을 세대 자체가 없어 영영 확인되지 않는다 — 배치와 서버가 서로 기다린다.
+    # ⑥ 대사는 위에서 이미 통과했다. 건너뛰는 것은 여기 한 단계뿐이다.
+    if args.initial_load:
+        _say("[최초 적재] 서버 반영 확인을 건너뛴다 — 기동 후 /health 로 직접 본다")
+    elif not _wait_server(snapshot, args.server_tries, args.server_wait):
         _fail("AI 서버가 새 세대를 읽었는지 확인하지 못했다 — UPDATING 을 유지한다. "
               "MUPID_AI_SERVER_URL 을 확인한다", 4)
 
@@ -343,6 +359,9 @@ def main(argv=None) -> int:
     g.add_argument("--status", action="store_true")
     g.add_argument("--resume", action="store_true")
     g.add_argument("--delete", nargs="+", metavar="ID")
+    ap.add_argument("--initial-load", action="store_true",
+                    help="최초 1회 적재. 서버 반영 확인만 건너뛴다. "
+                         "control 레코드가 이미 있으면 거절한다")
     ap.add_argument("--dry-run", action="store_true",
                     help="무엇을 할지만 말하고 Pinecone 을 바꾸지 않는다")
     ap.add_argument("--empty-tries", type=int, default=10,
@@ -354,6 +373,9 @@ def main(argv=None) -> int:
     ap.add_argument("--server-wait", type=float, default=5.0,
                     help="서버 확인 사이의 대기(초)")
     a = ap.parse_args(argv)
+
+    if a.initial_load and not a.reload:
+        _fail("--initial-load 는 --reload 와 함께 쓴다", 2)
 
     if a.status:                                  # 설정 없이도 답할 수 있다
         return cmd_status(a)

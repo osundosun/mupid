@@ -106,12 +106,18 @@ run analysis --yes --local --segmenter-python ...   # moments_emb.npy 를 만든
 
 ```
 python -m ai_server.tools.pinecone_sync --reload    멈춤 → 전체 갱신 → 검증 → 재개
+python -m ai_server.tools.pinecone_sync --reload --initial-load   최초 1회
 python -m ai_server.tools.pinecone_sync --audit     카탈로그 ↔ 인덱스 대사
 python -m ai_server.tools.pinecone_sync --verify    연결·차원·개수만 본다
 python -m ai_server.tools.pinecone_sync --status    지금 멈춰 있는가
 python -m ai_server.tools.pinecone_sync --delete ID [ID ...]
 python -m ai_server.tools.pinecone_sync --resume    정합성을 다시 통과해야 재개된다
 ```
+
+`--initial-load` 는 **control 레코드가 없을 때만** 통한다. 아직 서버가 읽을 세대가
+없어 ⑦(서버 반영 확인)이 영영 확인되지 않는 교착을 푼다 — 건너뛰는 것은 그 한 단계뿐이고
+삭제·삭제 확인·전량 적재·차원·개수·ID·snapshot 대사는 그대로 통과해야 `READY` 로 간다.
+control 이 이미 있으면 거절한다. 상시 우회로가 되면 서버가 옛 μ 를 든 채 열린다.
 
 `--dry-run` 을 붙이면 무엇을 할지만 말하고 Pinecone 을 바꾸지 않는다.
 

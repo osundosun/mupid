@@ -52,8 +52,12 @@ CHECKSUM = re.compile(r"^[0-9a-f]{64}$")
 # `content.parquet` · `flow_meta.parquet` 은 여기 없다. 곡명·장르·무드·보컬은 MySQL 이
 # 정본이고 추천 서버가 Spring 내부 카탈로그 API 로 읽는다 — 색인이 사본을 들고 오면
 # 어느 쪽이 이기는지가 자리마다 갈린다. 옛 묶음은 이 목록 밖의 이름이라 거부된다.
+#
+# `moments_emb.npy` 도 여기 없다. 순간 벡터의 정본은 Pinecone 이다 — 노드에 사본이
+# 놓이는 순간 "인덱스는 갈아 끼웠는데 파일은 옛것" 인 상태가 생기고, 서버가 조용히
+# 그 파일로 내려갈 자리가 열린다. 그 자리를 아예 두지 않는다.
 ALLOWED = {
-    "moments.parquet", "moments_emb.npy", "features_v1.npz", "stage1_section.npy",
+    "moments.parquet", "features_v1.npz", "stage1_section.npy",
     "track_features.parquet", "index_meta.json", "clap_moments.npz",
     "stage1_weights.npz", "stage1.pt", "logistic_flow_stage1.json",
     "features_info.json", "feature_stats_v1.npz", "slice_report.json",
@@ -62,7 +66,9 @@ ALLOWED = {
 #
 # `track_features.parquet` 이 없으면 BPM·언어·스타일 축이 통째로 비고,
 # `index_meta.json` 이 없으면 추천 서버가 옛 판으로 보고 거절한다.
-REQUIRED = {"moments.parquet", "moments_emb.npy", "features_v1.npz", "stage1_section.npy",
+# `moments_emb.npy` 는 **여기 없다.** slice_index 가 배송에서 뺐으므로 요구하면 정상
+# 묶음이 통째로 거부된다 — 실제로 그렇게 막혔다.
+REQUIRED = {"moments.parquet", "features_v1.npz", "stage1_section.npy",
             "track_features.parquet", "index_meta.json"}
 
 
@@ -109,7 +115,11 @@ def safe_extract(archive, target):
                 parent = str(pathlib.PurePosixPath(name).parent)
                 if parent != INNER:
                     fail(f"{INNER}/ 바로 아래만 받는다: {name}")
-                if pathlib.PurePosixPath(name).name not in ALLOWED:
+                leaf = pathlib.PurePosixPath(name).name
+                if leaf == "moments_emb.npy":
+                    fail("moments_emb.npy 는 받지 않는다 — 순간 벡터의 정본은 "
+                         "Pinecone 이다. 배송에 넣지 않는다")
+                if leaf not in ALLOWED:
                     fail(f"허용하지 않는 파일: {name}")
         tar.extractall(target, members=members)
 
@@ -143,8 +153,9 @@ def check_rows(data):
     # 네 색인은 같은 행 번호로 서로를 가리키므로, 서로 다른 판에서 온 파일이
     # 섞이면 행 수부터 어긋난다. 자르는 쪽이 남긴 보고서와도 맞춰 본다 —
     # 보고서만 새 판이고 파일이 옛 판인 경우를 잡는다.
-    counts = {name: npy_rows(data / name)
-              for name in ("moments_emb.npy", "stage1_section.npy")}
+    # `moments_emb.npy` 는 세지 않는다 — 배송에 없다. 남은 세 갈래로도 행이
+    # 어긋나면 잡힌다.
+    counts = {name: npy_rows(data / name) for name in ("stage1_section.npy",)}
     report = data / "slice_report.json"
     if report.exists():
         try:
@@ -196,7 +207,6 @@ d = sys.argv[1]
 mom = pd.read_parquet(d + "/moments.parquet", columns=["moment_id", "emb_row"])
 rows = {
     "moments": len(mom),
-    "moments_emb": int(np.load(d + "/moments_emb.npy", mmap_mode="r").shape[0]),
     "features_v1": int(np.load(d + "/features_v1.npz")["X"].shape[0]),
     "stage1_section": int(np.load(d + "/stage1_section.npy", mmap_mode="r").shape[0]),
 }
