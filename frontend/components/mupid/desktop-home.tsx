@@ -42,18 +42,6 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
               alt="하늘빛 라벨이 담긴 LP 레코드"
             />
           </div>
-          <button
-            className="desktop-record-caption"
-            onClick={() => m.go('player')}
-          >
-            <span
-              className={
-                m.playing ? 'record-status is-playing' : 'record-status'
-              }
-              aria-hidden="true"
-            />
-            {m.playing ? '지금 재생 중' : '재생 준비'} <ChevronRight />
-          </button>
         </div>
         <section className="desktop-song" aria-label="현재 곡">
           <p className="desktop-song-kicker">지금, 당신의 음악</p>
