@@ -340,12 +340,28 @@ public class AiRecommendToolImpl implements AiRecommendTool {
         }
 
         List<AiRecommendedTrack> out = new ArrayList<>();
+        int notPlayable = 0;
         for (int i = 0; i < kept.size(); i++) {
             RecommenderDto.Item item = kept.get(i);
             MusicSectionAnalysis section = keptSections.get(i);
+            MusicSummary music = summaries.get(i);
+            /*
+             * 재생할 수 없는 곡은 **여기서** 걷어낸다 (S15P21A204-426).
+             *
+             * 완료된 스트림이 없으면 눌러도 소리가 나지 않는다. 예전에는 화면까지 보내
+             * 놓고 화면이 거른 뒤 "N곡은 아직 재생할 수 없어 빼뒀어요" 라고 알렸는데,
+             * 사용자가 할 수 있는 일이 없는 의문만 남겼다. 추천 건수(`track_count` 는
+             * 이 목록의 크기다)에서도 빠져야 "3곡 중 1곡" 같은 말이 애초에 생기지 않는다.
+             */
+            if (!music.playable()) {
+                notPlayable++;
+                log.warn("추천된 music_id={} 는 재생 가능한 스트림이 없다 — 내려보내지 않는다",
+                    music.musicId());
+                continue;
+            }
             out.add(new AiRecommendedTrack(
                 out.size() + 1,                          // 버린 것이 있어도 순번은 이어 붙인다
-                summaries.get(i),
+                music,
                 section.getMusicSectionAnalysisId(),
                 section.getSectionLabel(),
                 section.getStartTimeMs(),
@@ -355,13 +371,13 @@ public class AiRecommendToolImpl implements AiRecommendTool {
                 RecommendReason.of(item.reasonCode(), section.getSectionLabel())
             ));
         }
-        int dropped = missingSection + missingMusic;
+        int dropped = missingSection + missingMusic + notPlayable;
         if (dropped > 0) {
             // 곡이 0건이 된 경우는 **한 줄로 드러낸다.** 조용히 빈 목록을 돌려주면 원인을
             // 찾을 단서가 사라진다. 원인은 보통 구간 적재가 색인보다 낡은 것이다.
-            log.warn("추천 {}건 중 {}건을 DB 에서 찾지 못해 버렸다 (구간 없음={} 곡 없음={})"
-                + " — 남은 곡 {}건. 구간 적재가 색인보다 낡았는지 본다",
-                items.size(), dropped, missingSection, missingMusic, out.size());
+            log.warn("추천 {}건 중 {}건을 버렸다 (구간 없음={} 곡 없음={} 재생 불가={})"
+                + " — 남은 곡 {}건. 구간 적재가 색인보다 낡았는지, 스트림 변환이 밀렸는지 본다",
+                items.size(), dropped, missingSection, missingMusic, notPlayable, out.size());
         }
         return List.copyOf(out);
     }

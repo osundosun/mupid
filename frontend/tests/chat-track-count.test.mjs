@@ -10,33 +10,34 @@ import { aiChat } from './fixtures/ai-chat-module.mjs';
  * ## 무엇이 문제였나
  *
  * 챗봇은 "3곡 골라뒀어요" 라고 답하고, 툴 호출 기록 줄에도 `곡 3건` 이 찍혔다. 그런데
- * 곡 카드는 2장이었다. 곡이 **말없이** 사라지는 자리가 둘이다.
+ * 곡 카드는 2장이었다. 한 곡이 **말없이** 사라졌고, 사용자는 어디로 갔는지 알 방법이
+ * 없었다. 이 저장소가 반복해 겪은 **조용한 실패**다.
  *
- *   1) `lib/ai-chat.ts` 의 `resolve()` — 아직 재생할 수 없는 곡(`playable` false)을
- *      버린다. 눌러도 재생되지 않는 줄을 만들지 않으려는 것이라 **판단 자체는 옳다.**
- *   2) `components/mupid/chat.tsx` 의 곡 목록 — 답변이 온 뒤 사용자가 '관심 없음' 으로
- *      표시한 곡을 가린다.
+ * ## 지금 곡이 빠지는 자리는 하나뿐이다
  *
- * 세 번째 자리가 있었다: 화면 카탈로그(앞쪽 100곡)에 없어서 버리던 것. 서버가 곡을
- * 통째로 실어 주게 되면서 **없어졌다** (S15P21A204-424).
+ * **사용자가 '관심 없음' 으로 표시한 곡.** 자기가 한 일이라 이유를 들으면 납득한다.
  *
- * 둘 다 사용자에게는 똑같이 보인다: 한 곡이 아무 말 없이 없어졌다. 이 저장소가 반복해
- * 겪은 **조용한 실패**다(`chat-tool-calls.tsx`·`ai-chat.ts` 주석에 이력이 있다).
+ * 빠지는 자리가 둘 더 있었고, 둘 다 없앴다.
+ *   · 화면 카탈로그(앞쪽 100곡)에 없어서 버리던 것 — 서버가 곡을 통째로 실어 주게
+ *     되면서 없어졌다 (S15P21A204-424).
+ *   · 재생할 수 없는 곡 — 서버가 아예 내려보내지 않는다 (S15P21A204-426). 추천
+ *     건수에서도 빠지므로 "3곡 중 1곡은 아직 재생할 수 없어" 같은, **사용자가 할 수
+ *     있는 일이 없는 의문**이 애초에 생기지 않는다.
  *
  * ## 여기서 고정하는 것
  *
- *  · 추천 3건 중 1건이 카탈로그에 없으면 화면이 그 차이를 **말한다**
+ *  · 가려 둔 곡이 있으면 화면이 그 사실을 **말한다**
  *  · 추천이 0건이거나 툴 호출이 아예 없던 턴에는 **아무 줄도 더하지 않는다**
  *  · 실패한 호출 위에 경고를 **겹쳐 얹지 않는다** — 기록 줄이 이미 사유를 보여 준다
  *  · 같은 도구를 여러 번 부른 턴에 건수를 **더하지 않는다** (새로운 거짓말이 된다)
+ *  · 가린 곡이 아닌 이유로 수가 모자라도 **말하지 않는다** — 설명할 수 없는 말은 안 한다
  *  · 문구에 내부 이름(`recommend_music`·`music_id`·`catalog`)이 **새지 않는다**
  *
  * ## 재는 방법
  *
- * 세는 규칙은 `lib/ai-chat.ts` 의 `missingTracksNotice` 라 **실제로 실행해서** 본다
- * (`ai-chat.test.mjs` 와 같은 방식 — 서버 호출만 가짜로 바꾼다). 화면에 실제로 놓였는지는
- * 소스 구조로 본다(`chat-scroll-and-tools.test.mjs` 와 같은 방식) — 컴포넌트를 통째로
- * 렌더하려면 React·DOM 전체가 필요하다.
+ * 세는 규칙은 `lib/ai-chat.ts` 의 `missingTracksNotice` 라 **실제로 실행해서** 본다.
+ * 화면에 실제로 놓였는지는 소스 구조로 본다(`chat-scroll-and-tools.test.mjs` 와 같은
+ * 방식) — 컴포넌트를 통째로 렌더하려면 React·DOM 전체가 필요하다.
  */
 
 const { missingTracksNotice } = aiChat;
@@ -59,34 +60,19 @@ const call = (trackCount, extra = {}) => ({
 // 1) 이 티켓의 본체
 // ─────────────────────────────────────────────────────────────
 
-void test('추천 3건 중 1건이 재생 불가로 빠지면 화면이 그 차이를 말한다', () => {
-  // `resolve()` 가 하나를 버려 화면에는 2곡만 남은 상태.
-  const notice = missingTracksNotice([call(3)], [track(1), track(2)], []);
-  assert.ok(notice, '한 곡이 말없이 사라졌는데 화면이 아무 말도 하지 않는다');
-  // 몇 곡을 추천받았고 몇 곡이 빠졌는지가 둘 다 읽혀야 한다.
-  assert.match(notice, /3곡/, '추천 건수가 문구에 없다');
-  assert.match(notice, /1곡/, '빠진 곡 수가 문구에 없다');
-});
-
-void test('답변이 온 뒤 관심 없음으로 표시한 곡도 사유가 남는다', () => {
+void test('답변이 온 뒤 관심 없음으로 표시한 곡은 사유가 남는다', () => {
   // 3곡이 다 화면까지 왔는데, 그중 하나를 사용자가 숨겼다.
-  const notice = missingTracksNotice(
-    [call(3)],
-    [track(1), track(2), track(3)],
-    [2],
-  );
-  assert.ok(notice);
+  const notice = missingTracksNotice([call(3)], [track(1), track(2), track(3)], [2]);
+  assert.ok(notice, '한 곡이 말없이 사라졌는데 화면이 아무 말도 하지 않는다');
+  assert.match(notice, /3곡/, '추천 건수가 문구에 없다');
+  assert.match(notice, /1곡/, '가려진 곡 수가 문구에 없다');
   assert.match(notice, /관심 없음/, '가려진 이유를 말하지 않는다');
 });
 
-void test('추천이 전부 사라진 턴에도 말한다 — 가장 헷갈리는 경우다', () => {
-  /*
-   * `use-mupid.ts` 는 곡이 하나도 없으면 `tracks` 를 아예 넣지 않는다(`undefined`).
-   * 그래서 곡 목록 블록이 통째로 빠지고, 예전에는 답변만 덩그러니 남았다.
-   */
-  const notice = missingTracksNotice([call(2)], undefined, []);
-  assert.ok(notice, '추천이 전부 사라졌는데 화면이 침묵한다');
-  assert.match(notice, /2곡/);
+void test('여러 곡을 가려 두면 그 수만큼 말한다', () => {
+  const notice = missingTracksNotice([call(3)], [track(1), track(2), track(3)], [1, 3]);
+  assert.ok(notice);
+  assert.match(notice, /2곡은 관심 없음/);
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -103,7 +89,7 @@ void test('추천이 원래 0건인 턴에는 아무 줄도 더하지 않는다'
   assert.equal(missingTracksNotice([call(0)], undefined, []), null);
 });
 
-void test('빠진 곡이 없으면 아무 줄도 더하지 않는다', () => {
+void test('가린 곡이 없으면 아무 줄도 더하지 않는다', () => {
   const notice = missingTracksNotice([call(2)], [track(1), track(2)], []);
   assert.equal(notice, null, '멀쩡한 답변 밑에 군더더기 한 줄이 붙는다');
 });
@@ -117,6 +103,19 @@ void test('실패한 호출 위에 경고를 겹쳐 얹지 않는다', () => {
   assert.equal(missingTracksNotice([failed], undefined, []), null);
 });
 
+void test('가린 곡이 아닌 이유로 수가 모자라도 말하지 않는다 — 설명할 수 없는 말은 안 한다', () => {
+  /*
+   * 재생할 수 없는 곡은 서버가 아예 내려보내지 않으므로(S15P21A204-426) 이 상태는
+   * 정상 경로에서 생기지 않는다. 그래도 서버가 계약을 어기면 수가 어긋날 수는 있다.
+   *
+   * 그때 "1곡은 아직 재생할 수 없어 빼뒀어요" 라고 말하면 **사용자가 할 수 있는 일이
+   * 없는 의문**만 남는다. 그런 말은 하지 않는다 — 개발자가 볼 자리(콘솔 경고)는
+   * `resolve()` 에 따로 있다.
+   */
+  assert.equal(missingTracksNotice([call(3)], [track(1), track(2)], []), null);
+  assert.equal(missingTracksNotice([call(2)], undefined, []), null);
+});
+
 // ─────────────────────────────────────────────────────────────
 // 3) 새로운 거짓말을 만들지 않는가
 // ─────────────────────────────────────────────────────────────
@@ -125,9 +124,13 @@ void test('같은 도구를 여러 번 부른 턴에 건수를 더하지 않는�
   /*
    * 모델은 한 턴에 같은 도구를 여러 번 부른다(`ai.max-tool-rounds`) — 말을 조금 바꿔
    * 다시 부르는 것이 실측으로 확인돼 있다(`chat-tool-calls.tsx` 주석). 3번을 더해
-   * 9곡으로 세면 화면은 "9곡 중 7곡이 빠졌어요" 라는 **새로운 거짓말**을 하게 된다.
+   * 9곡으로 세면 화면은 "9곡 중 …" 이라는 **새로운 거짓말**을 하게 된다.
    */
-  const notice = missingTracksNotice([call(3), call(3), call(3)], [track(1), track(2)], []);
+  const notice = missingTracksNotice(
+    [call(3), call(3), call(3)],
+    [track(1), track(2), track(3)],
+    [2],
+  );
   assert.ok(notice);
   assert.match(notice, /3곡 중/, '여러 번 부른 건수를 더해 세고 있다');
   assert.equal(/9곡/.test(notice), false, '호출 수만큼 추천 건수가 부풀었다');
@@ -142,9 +145,9 @@ void test('그린 곡이 추천 건수보다 많아도 음수를 말하지 않�
 
 void test('문구는 사용자용이다 — 내부 이름이 새지 않는다', () => {
   const notices = [
-    missingTracksNotice([call(3)], [track(1), track(2)], []),
     missingTracksNotice([call(3)], [track(1), track(2), track(3)], [3]),
-    missingTracksNotice([call(3)], [track(1), track(2)], [2]),
+    missingTracksNotice([call(3)], [track(1), track(2), track(3)], [1, 2]),
+    missingTracksNotice([call(2)], [track(1), track(2)], [1]),
   ];
   for (const notice of notices) {
     assert.ok(notice);
@@ -156,14 +159,6 @@ void test('문구는 사용자용이다 — 내부 이름이 새지 않는다', 
       );
     }
   }
-});
-
-void test('두 이유가 겹치면 한 줄에 둘 다 적는다', () => {
-  // 3건 추천 → 하나는 아직 재생할 수 없어 버려지고, 남은 둘 중 하나는 숨긴 곡이다.
-  const notice = missingTracksNotice([call(3)], [track(1), track(2)], [2]);
-  assert.ok(notice);
-  assert.match(notice, /재생할 수 없어/);
-  assert.match(notice, /관심 없음/);
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -189,8 +184,8 @@ void test('빠진 곡 줄이 곡 목록 자리에, 곡 카드 아래에 그려�
   assert.ok(noteIndex > tracksIndex, '곡 카드보다 위에 있다 — 묻기 전에 먼저 답하는 꼴이다');
   assert.ok(noteIndex < bodyEnd, '말풍선 밖으로 나갔다 — 어느 답변의 이야기인지 모른다');
   /*
-   * 곡 목록 블록 **밖**이어야 한다. 추천이 전부 사라지면 `message.tracks` 가
-   * `undefined` 라 그 블록이 통째로 빠지고, 안에 있으면 이 줄도 함께 사라진다.
+   * 곡 목록 블록 **밖**이어야 한다. 추천이 전부 가려지면 곡 목록 블록이 비는데,
+   * 안에 있으면 이 줄도 함께 사라진다.
    *
    * 들여쓰기로 형제 관계를 잰다 — 같은 깊이면 `{message.tracks && …}` 안이 아니다.
    */
@@ -230,10 +225,7 @@ void test('빠진 곡 줄에 CSS 가 있다 — 실패처럼 붉게 칠하지 �
  * ─────────────────────────────────────────────────────────────
  *
  * 세는 규칙은 실제로 돌려서 보지만, **그 줄이 눈에 보이는지**는 여기서 알 수 없다 —
- * 브라우저가 있어야 한다. 곡 카드가 많은 턴에서 이 줄이 대화 영역 밖으로 밀려나지
- * 않는지는 `chat-scroll-and-tools.test.mjs` 의 끝 주석에 적힌 방식으로 브라우저에서
- * 재야 한다(`innerText` 로 보면 안 된다 — DOM 에 있고 화면에는 없는 상태를 "정상" 으로
- * 잘못 보고하게 된다).
+ * 브라우저가 있어야 한다.
  *
  * 추천 건수의 근거는 서버가 센 `track_count` 다. 서버가 그 숫자를 틀리게 세면 이 줄도
  * 함께 틀린다. 그것은 화면에서 고칠 수 있는 문제가 아니다.

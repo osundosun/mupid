@@ -14,6 +14,7 @@ import com.osundosun.mupid.api.ai.client.OpenAiTool;
 import com.osundosun.mupid.api.ai.client.OpenAiToolCall;
 import com.osundosun.mupid.api.ai.dto.AiChatTurn;
 import com.osundosun.mupid.api.ai.dto.AiRecommendedTrack;
+import com.osundosun.mupid.api.ai.dto.AiToolTrackView;
 import com.osundosun.mupid.api.ai.dto.AiToolCallRecord;
 import com.osundosun.mupid.api.ai.entity.AiChatSession;
 import com.osundosun.mupid.api.ai.enumerate.AiMessageType;
@@ -248,10 +249,22 @@ public class AiChatServiceImpl implements AiChatService {
             // 빈 배열만 주면 모델이 "오류" 로 읽고 곡을 지어내는 일이 있다. 조건에 맞는
             // 곡이 없다는 것은 정상 결과이므로 그렇게 말해 준다.
             return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of(
-                "tracks", found,
+                "tracks", modelView(found),
                 "message", "조건에 맞는 곡이 없습니다. 조건을 줄이거나 다른 분위기를 제안하세요.")));
         }
-        return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of("tracks", found)));
+        return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of("tracks", modelView(found))));
+    }
+
+    /**
+     * 모델에게 돌려줄 모양으로 줄인다 (S15P21A204-426).
+     *
+     * <p><b>화면에 나가는 것을 그대로 보내지 않는다.</b> 곡 표현({@code MusicSummary})에는
+     * {@code LocalDateTime} 이 있는데 게이트웨이 전용 매퍼에는 JavaTimeModule 이 없어,
+     * 그대로 보내면 직렬화가 터지고 **추천이 성공한 모든 턴이 502** 가 된다. 무엇을
+     * 보내고 무엇을 안 보내는지는 {@link AiToolTrackView} 주석에 있다.
+     */
+    private List<AiToolTrackView> modelView(List<AiRecommendedTrack> tracks) {
+        return tracks.stream().map(AiToolTrackView::of).toList();
     }
 
     /**
