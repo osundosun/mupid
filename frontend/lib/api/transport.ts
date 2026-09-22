@@ -107,34 +107,49 @@ export function createFetchTransport(): Transport {
         ? setTimeout(abort, request.timeoutMs)
         : null;
 
-      let response: Response;
+      /*
+       * **본문을 다 읽을 때까지 취소와 시한을 걸어 둔다.**
+       *
+       * `fetch` 는 헤더가 오면 곧바로 돌아오고 본문은 그 뒤에 흐른다. 예전에는
+       * 이 정리를 `fetch` 만 감싼 `finally` 에서 해서, `response.arrayBuffer()`
+       * 구간은 **아무도 끊을 수 없었다.** 청크 오디오는 100KB 남짓이라 거의
+       * 전부가 그 구간이다.
+       *
+       * 그래서 곡을 바꿔 `abort()` 를 불러도 듣던 곡의 청크는 끝까지 내려받혔고,
+       * 그 응답이 새 곡이 재생되는 중에 도착했다 — 화면은 새 곡인데 소리는
+       * 듣던 곡이 나오던 일의 출발점이다 (S15P21A204-434). 매달린 본문에
+       * `timeoutMs` 가 걸리지 않던 것도 같은 자리였다.
+       */
       try {
-        response = await fetch(request.url, {
-          method: request.method,
-          headers: request.headers,
-          body: request.body as BodyInit | null | undefined,
-          credentials: request.withCredentials ? 'include' : 'same-origin',
-          keepalive: request.keepalive,
-          signal: controller.signal,
+        let response: Response;
+        try {
+          response = await fetch(request.url, {
+            method: request.method,
+            headers: request.headers,
+            body: request.body as BodyInit | null | undefined,
+            credentials: request.withCredentials ? 'include' : 'same-origin',
+            keepalive: request.keepalive,
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (request.signal?.aborted) throw error;
+          throw new TransportError('네트워크 요청에 실패했어요.', error);
+        }
+
+        const headers: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          headers[key.toLowerCase()] = value;
         });
-      } catch (error) {
-        if (request.signal?.aborted) throw error;
-        throw new TransportError('네트워크 요청에 실패했어요.', error);
+
+        return {
+          status: response.status,
+          headers,
+          data: await readBody(response, request.responseType),
+        };
       } finally {
         if (timer) clearTimeout(timer);
         request.signal?.removeEventListener('abort', abort);
       }
-
-      const headers: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        headers[key.toLowerCase()] = value;
-      });
-
-      return {
-        status: response.status,
-        headers,
-        data: await readBody(response, request.responseType),
-      };
     },
   };
 }
