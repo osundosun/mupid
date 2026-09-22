@@ -23,6 +23,7 @@ from .config import ChunkConfig
 from .hasher import compute_sha256
 from .ogg_parser import extract_opus_frames
 from .rtp import RTPPacketizer
+from .waveform import WaveformError, compute_waveform
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,20 @@ def process_file(
             chunk_count += 1
             total_packets += len(rtp_packets)
 
-    # ── 3단계: 메타데이터 저장 ──
+    # ── 3단계: 파형 ──
+    #
+    # 인코딩 전 **원본**에서 뽑는다. 파형은 곡의 성질이라 비트레이트별로 달라질
+    # 이유가 없고, 청크를 다시 풀어 세는 것보다 싸다.
+    #
+    # 실패해도 청킹을 되돌리지 않는다. 파형이 없으면 화면이 예전처럼 기기에서
+    # 직접 계산한다 — 느릴 뿐 재생에는 지장이 없다.
+    try:
+        waveform = compute_waveform(input_path, ffmpeg_threads=config.ffmpeg_threads)
+    except (WaveformError, subprocess.SubprocessError) as e:
+        logger.warning("파형 계산 실패 (등록은 계속한다): %s — %s", input_path.name, e)
+        waveform = None
+
+    # ── 4단계: 메타데이터 저장 ──
     elapsed = round(time.time() - start_time, 3)
     source_hash = compute_sha256(input_path)
     metadata = {
@@ -141,6 +155,8 @@ def process_file(
         "chunk_count": chunk_count,
         "duration_ms": sum(c["duration_ms"] for c in chunks),
         "chunks": chunks,
+        # 0~1 값 160칸. 계산에 실패했으면 null 이다 — 등록 단계가 그때는 건너뛴다.
+        "waveform": waveform,
         "total_rtp_packets": total_packets,
         "ssrc": ssrc,
         "rtp_payload_type": config.rtp_payload_type,

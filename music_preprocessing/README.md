@@ -7,8 +7,9 @@
 
 | 갈래 | 명령 | 하는 일 |
 | --- | --- | --- |
-| **청킹** | `single` · `batch` | 오디오를 Opus 청크 + RTP 패킷으로 쪼개고, 스트림·청크를 API 에 올린다 |
+| **청킹** | `single` · `batch` | 오디오를 Opus 청크 + RTP 패킷으로 쪼개고, 스트림·청크·파형을 API 에 올린다 |
 | **카탈로그** | `catalog` · `covers` · `lyrics` | 곡별 메타데이터·커버·가사를 읽어 아티스트·앨범·곡을 API 에 등록한다 |
+| **파형** | `waveform` | 이미 등록된 곡의 파형만 채운다 (`batch` 이전에 올라간 곡용) |
 
 두 갈래는 `registered.json` 하나를 함께 쓴다. `catalog` 가 만든 곡 번호를
 `batch` 가 그대로 이어받으므로, 같은 곡이 두 번 만들어지지 않는다.
@@ -18,8 +19,8 @@
 ```
 ① 청킹
 MP3/WAV/FLAC → FFMPEG(Opus 인코딩+세그먼트 분할) → Ogg 파싱 → RTP 패킷화 → .rtp 파일
-                                                                          ↓
-                                                      Mupid API 등록 (스트림 → 청크)
+      │                                                                   ↓
+      └→ FFMPEG(8kHz 모노 PCM) → 칸별 RMS 160칸 → 파형   Mupid API 등록 (스트림 → 청크 → 파형)
 
 ② 카탈로그
 metadata/*.json + covers/*.jpg → 커버 업로드 → 아티스트 → 앨범 → 곡
@@ -30,7 +31,21 @@ metadata/*.json + covers/*.jpg → 커버 업로드 → 아티스트 → 앨범 
 2. **Ogg 컨테이너 파싱**: 각 세그먼트에서 개별 Opus 프레임 추출
 3. **RTP 패킷화**: 각 프레임에 12바이트 RTP 헤더(RFC 3550) 부착
 4. **바이너리 저장**: 스트리밍 서버가 바로 전송 가능한 `.rtp` 파일로 저장
-5. **API 등록**: 곡 메타와 청크를 서버에 올린다 (`api_base_url` 을 설정했을 때만)
+5. **파형 계산**: 원본에서 진폭 포락선 160칸을 뽑아 `metadata.json` 에 남긴다
+6. **API 등록**: 곡 메타와 청크, 파형을 서버에 올린다 (`api_base_url` 을 설정했을 때만)
+
+### 파형
+
+화면의 탐색 막대가 그리는 값이다. 그전에는 **기기가 곡을 열 때마다** 청크를
+전부 내려받아 Opus 로 풀고 계산했다. 곡이 바뀌지 않는 한 같은 값이라 배치가
+한 번 만들어 두는 편이 낫다.
+
+- **인코딩 전 원본**에서 뽑는다. 파형은 곡의 성질이라 비트레이트별로 달라지지 않는다.
+- 값은 칸별 RMS 를 **그 곡의 최댓값으로 나눈 0~1** 이다. 곡 사이의 음량 비교가 아니다.
+- 칸 수는 160 — 화면이 그리는 막대 수(`WAVEFORM_SAMPLES`)와 같다.
+- **실패해도 청킹·등록을 되돌리지 않는다.** 파형이 없으면 화면이 예전처럼 직접
+  계산한다. 느릴 뿐 재생에는 지장이 없다.
+- 새 의존성이 없다. ffmpeg 로 PCM 을 받아 순수 파이썬으로 센다 (곡당 약 1초).
 
 ## 빠른 시작
 
@@ -47,6 +62,10 @@ uv run music-preprocessing covers -c config.json
 
 # 가사 (catalog 다음)
 uv run music-preprocessing lyrics -c config.json
+
+# 파형만 채우기 (이미 등록된 곡)
+uv run music-preprocessing waveform -c config.json --dry-run   # 먼저 세어 본다
+uv run music-preprocessing waveform -c config.json
 
 # 어디까지 됐나
 uv run music-preprocessing status -c config.json
@@ -70,7 +89,7 @@ PYTHONPATH=src python -m music_preprocessing --help
 명령에서나 옵션 표가 나옵니다.
 
 ```
-music-preprocessing {catalog,covers,lyrics,status,single,batch}
+music-preprocessing {catalog,covers,lyrics,waveform,status,single,batch}
 ```
 
 | 명령 | 하는 일 |
@@ -78,9 +97,10 @@ music-preprocessing {catalog,covers,lyrics,status,single,batch}
 | `catalog` | 곡별 메타데이터·커버를 읽어 아티스트·앨범·곡을 등록한다 |
 | `covers` | 이미 등록된 대상의 커버만 다시 올린다 |
 | `lyrics` | 곡별 가사를 시각과 함께 등록한다 (곡마다 한 번에 교체) |
+| `waveform` | 이미 등록된 곡의 파형만 채운다. **청킹은 하지 않는다** |
 | `status` | 무엇이 등록됐고 무엇이 남았는지 센다. **서버에 붙지 않는다** |
 | `single` | 파일 하나를 Opus 청크 + RTP 로 쪼갠다 |
-| `batch` | 입력 디렉터리를 통째로 청킹하고 스트림·청크를 등록한다 |
+| `batch` | 입력 디렉터리를 통째로 청킹하고 스트림·청크·파형을 등록한다 |
 
 ### 손으로 돌릴 때
 
@@ -111,13 +131,13 @@ uv run music-preprocessing lyrics -c config.json
 | --- | --- | --- |
 | `-c`, `--config` | 전부 | JSON 설정 파일 |
 | `--metadata-dir` · `--covers-dir` | `catalog` `covers` `lyrics` `status` | 설정 파일보다 우선 |
-| `--api-base-url` | `catalog` `covers` `lyrics` `batch` | 등록할 서버 |
-| `--dry-run` | `catalog` `covers` `lyrics` | 서버에 붙지 않고 세기만 한다 |
-| `--limit N` | `catalog` `lyrics` | 앞에서 N곡만. 처음 붙일 때 시험용 |
-| `--force` | `covers` `lyrics` | 바뀌지 않은 것도 지우고 다시 올린다 |
+| `--api-base-url` | `catalog` `covers` `lyrics` `waveform` `batch` | 등록할 서버 |
+| `--dry-run` | `catalog` `covers` `lyrics` `waveform` | 서버에 붙지 않고 세기만 한다 |
+| `--limit N` | `catalog` `lyrics` `waveform` | 앞에서 N곡만. 처음 붙일 때 시험용 |
+| `--force` | `covers` `lyrics` `waveform` | 바뀌지 않은 것도 지우고 다시 올린다 |
 | `--skip-untimed` | `lyrics` | 시각을 모르는 줄을 메우지 않고 버린다 |
-| `-y`, `--yes` | `catalog` `covers` `lyrics` | 확인 프롬프트를 건너뛴다 (크론용) |
-| `--no-progress` | `catalog` `covers` `lyrics` | 진행률 막대를 끈다 |
+| `-y`, `--yes` | `catalog` `covers` `lyrics` `waveform` | 확인 프롬프트를 건너뛴다 (크론용) |
+| `--no-progress` | `catalog` `covers` `lyrics` `waveform` | 진행률 막대를 끈다 |
 | `--no-orphan-check` | `batch` | 쓰이지 않는 스트림 점검을 건너뛴다 |
 | `--verify-chunks` | `batch` | 성한 스트림까지 청크 행 수를 대조한다 |
 | `--log-file` · `--no-log-file` | 전부 | 로그 파일 경로 / 남기지 않기 |
@@ -286,6 +306,7 @@ flow_music_data/
 | 곡이 다른 앨범/아티스트로 옮겨감 | `catalog` | `PATCH /api/v1/music/{id}` |
 | 커버 `.jpg` | `covers` | 같은 저장 키에 다시 업로드 |
 | 가사 | `lyrics` | `PUT /api/v1/music/{id}/lyric` |
+| 파형만 빠짐 | `waveform` | `PUT /api/v1/music/{id}/waveform` |
 
 #### 지문은 파일 전체가 아니라 필드 단위다
 

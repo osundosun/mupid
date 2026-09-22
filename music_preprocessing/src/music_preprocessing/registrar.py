@@ -275,6 +275,26 @@ class Registrar:
             self._drop_stream(stream_id)
             raise
 
+        # 파형은 스트림이 완료된 **뒤에** 올린다. 앞에 두면 재생이 안 되는 곡에
+        # 파형만 남는다.
+        #
+        # **실패해도 스트림을 되돌리지 않는다.** 파형이 없으면 화면이 기기에서
+        # 직접 계산하므로 재생에는 지장이 없다 — 곡을 통째로 다시 올리게 만드는
+        # 쪽이 손해다. 빠진 곡은 `waveform` 명령이 나중에 채운다.
+        waveform = metadata.get("waveform")
+        if waveform:
+            try:
+                self.client.put_waveform(music_id, waveform)
+            except Exception as e:
+                logger.warning(
+                    "파형 등록 실패 (스트림은 그대로 둔다): %s music_id=%d — %s",
+                    audio_path.name,
+                    music_id,
+                    e,
+                )
+        else:
+            logger.info("파형 없이 등록한다: %s", audio_path.name)
+
         entry = {
             "music_id": music_id,
             "album_id": album_id,
@@ -283,6 +303,7 @@ class Registrar:
             "codec": CODEC,
             "bitrate_kbps": bitrate_kbps,
             "chunk_count": metadata["chunk_count"],
+            "waveform": bool(waveform),
         }
         self.registry.put_track(audio_path, entry)
         self.registry.save()
