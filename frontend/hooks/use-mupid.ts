@@ -1732,8 +1732,13 @@ export function useMupid(bootstrap: Bootstrap) {
         const answer = await requestChat({
           prompt: text,
           current,
-          // 숨긴 곡은 추천에서 빼고 보여 준다. 서버는 아직 제외 목록을 받지 않는다.
-          catalog: tracks.filter((t) => !ignored.includes(t.id)),
+          // 카탈로그를 넘기지 않는다 (S15P21A204-424). 서버가 곡을 통째로 실어 주므로
+          // 화면이 자기가 들고 있는 앞쪽 100곡에서 다시 찾을 이유가 없어졌다 — 그게
+          // 추천곡이 통째로 사라지던 원인이었다.
+          //
+          // **숨긴 곡은 여기서 빠지지 않는다.** 예전에는 카탈로그에서 미리 걷어내는
+          // 것이 곧 제외였는데, 이제는 곡 목록이 그릴 때 거르고(`chat.tsx`) 몇 곡을
+          // 가렸는지 `missingTracksNotice` 가 말한다. 서버는 아직 제외 목록을 받지 않는다.
           history: previous,
           // 이어 갈 세션. null 이면 서버가 새로 연다.
           sessionId: chatSessionRef.current,
