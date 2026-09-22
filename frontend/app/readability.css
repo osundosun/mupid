@@ -5,7 +5,7 @@
 .mupid-shell .album-deck-copy h3 { font-size: 22px; line-height: 1.45; }
 .mupid-shell .album-deck-copy p { font-size: 17px; }
 .mupid-shell .album-deck-mood { font-size: 15px; }
-.mupid-shell .album-deck-detail { gap: 16px; padding-top: 20px; }
+.mupid-shell .album-deck-detail { gap: 16px; padding-top: 12px; }
 .mupid-shell .album-deck-play { width: 52px; height: 52px; }
 .mupid-shell .track-row .track-info strong { font-size: 18px; line-height: 1.45; }
 .mupid-shell .track-row .track-info > span { font-size: 15px; line-height: 1.5; }

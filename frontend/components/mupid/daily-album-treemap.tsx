@@ -6,6 +6,10 @@ import { toImageSource } from '@/lib/platform/image';
 import { squarify } from '@/lib/treemap';
 import { useDismissableOverlay } from '@/hooks/use-dismissable-overlay';
 import type { ReportTrack } from '@/lib/api/endpoints';
+import { Pause, Play } from 'lucide-react';
+import type { MupidModel } from '@/hooks/use-mupid';
+import { api } from '@/lib/api/session';
+import { toTrack } from '@/lib/stream-catalog';
 
 /** 제목을 얹을 만한 최소 타일 크기(%). 이보다 작으면 앨범아트만 보여 준다. */
 const LABEL_MIN_WIDTH = 14;
@@ -62,12 +66,26 @@ export function DailyAlbumTreemap({
   tracks,
   totalMs,
   loading,
+  model: m,
 }: {
   tracks: ReportTrack[];
   totalMs: number;
   loading: boolean;
+  model: MupidModel;
 }) {
   const tiles = layout(tracks);
+  const playRequest = useRef(0);
+  useEffect(() => () => { playRequest.current += 1; }, []);
+  const playTrack = async (musicId: number) => {
+    const request = ++playRequest.current;
+    try {
+      const track = m.tracks.find(item => item.musicId === musicId)
+        ?? toTrack(await api.music.get(musicId));
+      if (request === playRequest.current) m.play(track);
+    } catch {
+      if (request === playRequest.current) m.setToast('곡을 불러오지 못했어요. 다시 시도해 주세요.');
+    }
+  };
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   // 타일을 누르면 뜨는 설명 팝업도 뒤로가기로 닫히게 한다 (S15P21A204-410).
@@ -123,9 +141,11 @@ export function DailyAlbumTreemap({
               }}
               aria-expanded={selectedId === tile.music_id}
               aria-controls={selectedId === tile.music_id ? 'daily-album-popup' : undefined}
-              aria-label={`${tile.title}, ${formatListening(tile.listening_ms)}, 청취 정보 보기`}
+              aria-label={`${tile.title}, ${formatListening(tile.listening_ms)}, ${m.active?.musicId === tile.music_id && m.playing ? '일시정지' : '재생'}`}
+              data-playing={m.active?.musicId === tile.music_id && m.playing}
               onClick={(event) => {
                 trigger.current = event.currentTarget;
+                void playTrack(tile.music_id);
                 const area = map.current!.getBoundingClientRect();
                 const rect = event.currentTarget.getBoundingClientRect();
                 setPosition({
@@ -136,6 +156,9 @@ export function DailyAlbumTreemap({
               }}
             >
               <TileArt imageUrl={tile.image_url} />
+              <i className="daily-album-play" aria-hidden="true">
+                {m.active?.musicId === tile.music_id && m.playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
+              </i>
               {/* 좁은 타일에 제목을 얹으면 글자가 잘려 오히려 안 읽힌다. */}
               {tile.w >= LABEL_MIN_WIDTH && tile.h >= LABEL_MIN_HEIGHT && <span>{tile.title}</span>}
             </button>)}
@@ -161,7 +184,7 @@ export function DailyAlbumTreemap({
               </div>
             </section>}
           </div>
-          <p className="demo-note">타일 크기가 곧 들은 시간이에요. 앨범을 눌러 자세히 볼 수 있어요.</p>
+          <p className="demo-note">타일 크기가 곧 들은 시간이에요. 앨범을 누르면 재생하고 청취 정보를 볼 수 있어요.</p>
         </>}
   </section>;
 }

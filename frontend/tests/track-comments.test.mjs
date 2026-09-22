@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   COMMENT_MAX_LENGTH,
+  captureCommentTime,
   commentUserId,
   commentable,
   ownsComment,
@@ -18,6 +19,19 @@ test('댓글 소유권은 서버 판정과 인증된 회원 ID로만 판단한�
   assert.equal(ownsComment({mine:true}, null), false);
   assert.equal(ownsComment({authorId:1}, 1), false);
   assert.equal(ownsComment({author:'동일 닉네임'}, 1), false);
+});
+
+test('댓글 시점은 화면과 같은 초로 고정하고 등록 후 새로 캡처한다', () => {
+  let position = 16.9999;
+  const draftAt = captureCommentTime(position, 180);
+  position = 24.7;
+  assert.equal(draftAt, 16);
+  assert.equal(captureCommentTime(position, 180), 24);
+  assert.equal(captureCommentTime(59.9999, 180), 59);
+  assert.equal(captureCommentTime(60, 180), 60);
+  assert.equal(captureCommentTime(-1, 180), 0);
+  assert.equal(captureCommentTime(190, 180), 180);
+  assert.equal(captureCommentTime(NaN, 180), 0);
 });
 
 test('comment text and song timestamp boundaries', () => {

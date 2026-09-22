@@ -3,6 +3,13 @@
 /* Suppress stale background portals immediately when chat mounts. */
 body:has(.chat-panel) .inner-scrollbar:not([data-chat-scroll='true']) { display: none; }
 .inner-scrollbar { position: fixed; z-index: 2147483645; background: #edf4fc; touch-action: none; user-select: none; }
+.inner-scrollbar[data-filter-scroll='true'] {
+  background: transparent;
+  --inner-scroll-thumb: #bdcfe5;
+}
+.inner-scrollbar[data-filter-scroll='true']:is(:hover, :focus-within) {
+  --inner-scroll-thumb: #8daee0;
+}
 @media (hover: hover) and (pointer: fine) and (forced-colors: none) {
   .custom-inner-scroll { scrollbar-width: none !important; }
   .custom-inner-scroll::-webkit-scrollbar { display: none !important; }

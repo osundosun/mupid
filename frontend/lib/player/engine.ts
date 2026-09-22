@@ -223,10 +223,19 @@ export class PlayerEngine {
   private readonly preloaded = new Map<number, TrackSource>();
   private queue: number[] = [];
 
-  /** 네트워크에서 막 받은 청크 바이트. 디코더가 하나씩 꺼내 간다. */
-  private readonly ring = new RingBuffer<{ index: number; frames: Uint8Array[] }>(
-    RING_CAPACITY,
-  );
+  /**
+   * 네트워크에서 막 받은 청크 바이트. 디코더가 하나씩 꺼내 간다.
+   *
+   * **어느 곡의 청크인지 함께 담는다.** 링버퍼는 엔진에 하나뿐인데 곡은
+   * 바뀐다. 표가 없으면 `drain` 이 꺼낸 프레임을 지금 곡의 것으로 믿고 그
+   * 곡의 `decoded` 에 넣어 버린다 — **화면은 새 곡인데 소리는 듣던 곡**이
+   * 나오던 원인이다 (S15P21A204-434).
+   */
+  private readonly ring = new RingBuffer<{
+    source: TrackSource;
+    index: number;
+    frames: Uint8Array[];
+  }>(RING_CAPACITY);
   private seeking = false;
   /** 옮기는 동안 새로 지정된 목적지. 막대를 끌면 쉬지 않고 들어온다. */
   private seekPending: number | null = null;
@@ -859,13 +868,26 @@ export class PlayerEngine {
         index,
         this.abort?.signal,
       );
-      if (this.source !== source && !this.preloaded.has(source.musicId)) return;
+      // 그 사이 곡이 바뀌었으면 이 바이트는 **버린다.**
+      //
+      // 예전에는 `preloaded` 에 같은 음악 번호가 있으면 통과시켰다. 그런데
+      // 미리받기는 링버퍼를 쓰지 않으므로(`preloadQueue` 가 직접 푼다) 그
+      // 조건이 받아 주는 것은 **방금 지나간 곡의 응답**뿐이었다. 갈아탄 곡이
+      // 목록에 남은 이전 곡을 곧바로 미리받기 대상으로 올리기 때문에 늘
+      // 성립했고, 그렇게 들어온 프레임이 새 곡의 자리를 덮었다.
+      //
+      // 요청은 `fill` 이 지금 곡에 대해서만 낸다. 곡이 바뀐 뒤의 응답은 쓸
+      // 데가 없다 — 그 곡으로 돌아오면 `openSource` 가 새로 연다.
+      if (this.source !== source) {
+        source.inflight.delete(index);
+        return;
+      }
       // 하나라도 받았으면 회선이 돌아온 것이다. 물러서기와 안내를 되돌린다.
       source.failures = 0;
       source.retryAfter = 0;
       if (this.store.get().error) this.store.set({ error: null });
       const frames = this.keepFrames(source, index, bytes);
-      if (!this.ring.push({ index, frames })) {
+      if (!this.ring.push({ source, index, frames })) {
         // 링버퍼가 가득 찼다. 이 청크는 잊고 나중에 다시 요청한다.
         source.inflight.delete(index);
         return;
@@ -916,6 +938,10 @@ export class PlayerEngine {
    * 중이면 여기서 기다렸다가 꼬리가 생긴 뒤에 푼다.
    */
   private async drain(source: TrackSource) {
+    // 지난 곡의 응답이 부른 것이면 돌 이유가 없다. 그 곡의 프레임은 이미
+    // `receive` 가 버렸고, 여기서 돌면 **지금 곡의 청크를 지난 곡 자리에**
+    // 넣게 된다.
+    if (this.source !== source) return;
     if (this.draining) {
       this.drainPending = true;
       return;
@@ -928,36 +954,50 @@ export class PlayerEngine {
       do {
         this.drainPending = false;
         for (;;) {
+          /*
+           * **한 바퀴마다 지금 곡을 다시 본다.** 디코딩을 기다리는 사이에
+           * 곡이 바뀔 수 있는데, 이 루프는 하나만 돌기 때문에 바뀌기 전의
+           * 곡을 그대로 들고 있으면 새 곡의 청크가 죽은 곡 자리로 들어간다 —
+           * 새 곡은 그 청크를 영영 못 받고(`inflight` 가 선 채로 남는다)
+           * 버퍼링에서 빠져나오지 못했다.
+           */
+          const current: TrackSource | null = this.source;
+          if (!current) break;
           // 링버퍼는 곧바로 비운다. 여기서 기다리게 두면 수신 쪽이 막힌다.
           for (;;) {
             const item = this.ring.shift();
             if (!item) break;
-            if (source.chunks[item.index]) {
-              source.pending.set(item.index, {
+            // 다른 곡의 청크는 버린다. 그 곡으로 돌아가면 새로 받는다.
+            if (item.source !== current) {
+              item.source.inflight.delete(item.index);
+              continue;
+            }
+            if (current.chunks[item.index]) {
+              current.pending.set(item.index, {
                 frames: item.frames,
                 since: Date.now(),
               });
             } else {
-              source.inflight.delete(item.index);
+              current.inflight.delete(item.index);
             }
           }
-          const index = this.readyToDecode(source);
+          const index = this.readyToDecode(current);
           if (index === null) break;
-          const { frames } = source.pending.get(index)!;
-          source.pending.delete(index);
-          const slot = source.chunks[index];
+          const { frames } = current.pending.get(index)!;
+          current.pending.delete(index);
+          const slot = current.chunks[index];
           try {
             const buffer = await decodeOpusFrames(context, frames, {
-              channels: source.channels,
+              channels: current.channels,
               frameDurationMs: 20,
               expectedSamples: Math.round(
                 (slot.duration_ms / 1000) * OPUS_SAMPLE_RATE,
               ),
-              preRoll: source.frameTails.get(index - 1),
+              preRoll: current.frameTails.get(index - 1),
             });
-            source.decoded.set(index, buffer);
+            current.decoded.set(index, buffer);
           } catch (error) {
-            if (this.source === source) {
+            if (this.source === current) {
               this.fail(
                 error instanceof Error
                   ? error.message
@@ -965,7 +1005,7 @@ export class PlayerEngine {
               );
             }
           } finally {
-            source.inflight.delete(index);
+            current.inflight.delete(index);
           }
         }
       } while (this.drainPending);
@@ -973,13 +1013,15 @@ export class PlayerEngine {
       this.draining = false;
       this.drainPending = false;
     }
+    const current = this.source;
+    if (!current) return;
     // 프리롤을 기다리느라 남겨 둔 것이 있으면 한도가 지난 뒤 한 번 더 본다.
     // 앞 청크의 응답이 끝내 매달려 있어도 소리가 멈추지 않는다.
-    this.recheckPending(source);
+    this.recheckPending(current);
     // 버퍼링 때문에 멈춰 있었다면 여기서 이어서 시작한다.
-    if (this.source === source && this.store.get().status === 'buffering') {
+    if (this.store.get().status === 'buffering') {
       this.store.set({ bufferedSec: this.bufferedUntil() });
-      if (source.decoded.has(Math.max(0, this.indexAt(this.anchorPosition)))) {
+      if (current.decoded.has(Math.max(0, this.indexAt(this.anchorPosition)))) {
         void this.play();
       }
     }

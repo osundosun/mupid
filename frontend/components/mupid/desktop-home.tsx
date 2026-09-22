@@ -15,7 +15,7 @@ import { forYouHeading, pickForYou } from '@/lib/recommendations';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { VolumeSlider } from './volume-slider';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
-import { AlbumArt, LikeButton, PlayerControls, TrackRow } from './primitives';
+import { RowPlaybackArea, AlbumArt, LikeButton, PlayerControls, TrackRow } from './primitives';
 import { AlbumDeck } from './album-deck';
 import { GenreName } from './genre-name';
 
@@ -45,13 +45,16 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             />
           </div>
         </div>
-        <section className="desktop-song" aria-label="현재 곡">
+        <section className={`desktop-song${!m.active ? ' is-empty' : ''}`} aria-label="현재 곡">
           <p className="desktop-song-kicker">지금, 당신의 음악</p>
-          {/* 들을 곡이 없으면 제목 자리에 그 사실만 적고 조작부는 접는다. */}
-          {!m.active ? <>
-            <h1>아직 들을 곡이 없어요</h1>
-            <p className="desktop-song-artist">음악이 등록되면 여기에서 바로 들을 수 있어요.</p>
-          </> : <>
+          {/* 곡을 고르기 전에는 탐색을 안내한다. */}
+          {!m.active ? <div className="desktop-song-empty">
+            <h1>듣고 싶은 음악을 골라보세요</h1>
+            <p className="desktop-song-empty-description">추천 음악이나 탐색에서<br />마음에 드는 곡을 골라 재생해 보세요.</p>
+            <button className="primary-button" onClick={() => m.go('search')}>
+              음악 둘러보기 <ChevronRight />
+            </button>
+          </div> : <>
           <h1>{m.active.title}</h1>
           <button className="desktop-song-artist track-artist-link" onClick={() => m.setSelectedArtist(m.active!.artist)}>{m.active.artist}</button>
           <p className="desktop-song-meta">
@@ -120,7 +123,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             {todayMoments.map(track => {
               const section = getSongSectionAt(track, track.moment);
               const playing = m.active?.id === track.id && m.playing;
-              return <article className={`desktop-playlist-row ${playing ? 'is-current' : ''}`} key={track.id}>
+              return <article data-playable-row className={`desktop-playlist-row ${playing ? 'is-current' : ''}`} key={track.id}><RowPlaybackArea onPlay={() => playing ? m.play() : m.play(track, true)} />
                 <button className="desktop-playlist-open" aria-label={`${track.title} ${formatTime(section.start)} 추천 순간 듣기`} onClick={() => m.play(track, true)}>
                   <AlbumArt track={track} />
                   <span><strong>{track.title}</strong><small>{track.artist}</small></span>

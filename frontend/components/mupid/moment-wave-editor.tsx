@@ -4,8 +4,9 @@ import { formatTime, type SongSection, type Track } from '@/lib/mupid-data';
 import { Waveform } from './primitives';
 import { useTrackWaveform } from '@/lib/track-waveform';
 
-export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }: {
+export function MomentWaveEditor({ track, range, others = [], time = 0, onSelect, onTrim }: {
   track: Track;
+  time?: number;
   /** 지금 손보는 구간. 분홍 양 끝을 끌어 조절한다. */
   range?: SongSection;
   /**
@@ -52,7 +53,8 @@ export function MomentWaveEditor({ track, range, others = [], onSelect, onTrim }
         else if (press.current && !press.current.moved) onSelect(seconds(event));
         press.current = null;
       }} onPointerCancel={() => { drag.current = null; press.current = null; }}>
-      <Waveform samples={wave.values ?? undefined} duration={track.duration} ranges={[...(range ? [range] : []), ...others]} />
+      <Waveform samples={wave.values ?? undefined} duration={track.duration} progress={time} ranges={[...(range ? [range] : []), ...others]} />
+      {track.duration > 0 && <span className="moment-wave-playhead" aria-hidden="true" style={{ left: `${Math.max(0, Math.min(100, time / track.duration * 100))}%` }} />}
       {track.duration > 0 && others.map(part => <span key={`${part.start}-${part.end}`} className="moment-wave-selection is-secondary" aria-hidden="true" style={{ left: `${part.start / track.duration * 100}%`, width: `${(part.end - part.start) / track.duration * 100}%` }} />)}
       {range && track.duration > 0 && <>
         <span className="moment-wave-selection" style={{ left: `${range.start / track.duration * 100}%`, width: `${(range.end - range.start) / track.duration * 100}%` }} />
