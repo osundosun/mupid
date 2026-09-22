@@ -393,17 +393,25 @@ export type AiChatBody = {
 /**
  * 추천 툴이 돌려준 곡 하나.
  *
- * 필드는 추천 서버(`ai_server`)의 `/internal` 계약과 같다. **`music_id` 가
- * 카탈로그에 없을 수 있다** — 지금 서버 쪽 추천이 목업이면 그렇다. 화면은
- * 카탈로그에서 찾은 곡만 보여 준다 (`lib/ai-chat.ts`).
+ * **곡은 `music` 으로 통째로 온다** — `next`·`similar`·`daily` 의
+ * `RecommendedSection` 과 같은 곡 표현이다. 화면은 이 값만으로 줄을 그린다.
+ *
+ * 예전에는 `title`·`artist`·`album`·`image_url` 만 납작하게 왔다. 그것만으로는 줄을
+ * 그려도 재생할 수가 없어서 화면이 자기 카탈로그에서 같은 `music_id` 를 다시 찾아
+ * 부족한 값을 채웠는데, 그 카탈로그는 앱을 열 때 받아 둔 **앞쪽 100곡**뿐이다
+ * (`lib/stream-catalog.ts` 의 `CATALOG_SIZE`). 추천은 전체 카탈로그에서 나오므로
+ * 대부분 그 밖이었고 화면이 통째로 버렸다 — "3곡 추천했다" 는 말만 남고 곡은 하나도
+ * 보이지 않았다 (S15P21A204-424).
  */
 export type AiRecommendedTrack = {
   rank_order: number;
-  music_id: number;
-  title: string;
-  artist: string;
-  album: string;
-  image_url: string | null;
+  /**
+   * 곡. 목록·상세와 같은 표현이다.
+   *
+   * `playable` 이 false 면 재생 가능한 스트림이 없다. 화면은 그 줄을 그리지 않고 몇
+   * 곡이 그렇게 빠졌는지만 알린다 (`lib/ai-chat.ts`).
+   */
+  music: MusicSummary;
   music_section_id: number | null;
   /** INTRO · VERSE · PRE_CHORUS · CHORUS · BRIDGE · BREAK · INST · SOLO · OUTRO */
   section_label: string | null;

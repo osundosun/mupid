@@ -26,6 +26,7 @@ import com.osundosun.mupid.api.ai.properties.AiProperties;
 import com.osundosun.mupid.api.ai.properties.RecommenderProperties;
 import com.osundosun.mupid.api.ai.request.AiChatRequest;
 import com.osundosun.mupid.api.ai.response.AiChatResponse;
+import com.osundosun.mupid.api.ai.tool.TestMusicSummaries;
 import com.osundosun.mupid.api.ai.tool.AiRecommendToolImpl;
 import com.osundosun.mupid.api.music.entity.Album;
 import com.osundosun.mupid.api.music.entity.Artist;
@@ -237,8 +238,8 @@ class ChatRecommendationEndToEndTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(List.of(first, second));
 
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
-            client, musicRepository, sectionService, onboardingService,
-            mock(RecommendationReasonCache.class));
+            client, musicRepository, sectionService, TestMusicSummaries.assembler(),
+            onboardingService, mock(RecommendationReasonCache.class));
         return new AiChatServiceImpl(gateway(toolArguments), tool, musicRepository,
             new AiProperties("x", "test-key", "gpt-5-mini",
                 Duration.ofSeconds(2), Duration.ofSeconds(2), 3, 20),
@@ -266,7 +267,7 @@ class ChatRecommendationEndToEndTest {
         assertThat(response.recommendationId()).isNotNull().isPositive();
         // 2) 추천 서버가 준 두 구간이 DB 를 거쳐 곡으로 돌아왔다.
         assertThat(response.tracks()).hasSize(2);
-        assertThat(response.tracks().getFirst().title()).isEqualTo("첫 번째 곡");
+        assertThat(response.tracks().getFirst().music().title()).isEqualTo("첫 번째 곡");
         // 숫자 ID 로 번역됐다 = 우리가 `external_id` → MySQL 조회까지 갔다는 뜻이다.
         assertThat(response.tracks().getFirst().musicSectionId()).isEqualTo(8);
         assertThat(response.tracks().getFirst().startTimeMs()).isEqualTo(45_000);
