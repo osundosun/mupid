@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -73,6 +74,15 @@ class RecommendToolMusicSummaryTest {
         Map<String, MusicSectionAnalysis> sections,
         List<Music> catalog
     ) {
+        return recommendWith(fromServer, sections, catalog, Set.of());
+    }
+
+    private List<AiRecommendedTrack> recommendWith(
+        List<RecommenderDto.Item> fromServer,
+        Map<String, MusicSectionAnalysis> sections,
+        List<Music> catalog,
+        Set<Integer> notPlayable
+    ) {
         RecommenderClient recommender = mock(RecommenderClient.class);
         MusicSectionService sectionService = mock(MusicSectionService.class);
         MusicRepository musicRepository = mock(MusicRepository.class);
@@ -81,7 +91,8 @@ class RecommendToolMusicSummaryTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(catalog);
 
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
-            recommender, musicRepository, sectionService, TestMusicSummaries.assembler(),
+            recommender, musicRepository, sectionService,
+            TestMusicSummaries.assembler(notPlayable),
             null, mock(RecommendationReasonCache.class));
         return tool.recommend(15, null,
             new AiRecommendTool.Arguments("추천해줘", 3, Map.of(), Map.of())).tracks();
@@ -148,5 +159,57 @@ class RecommendToolMusicSummaryTest {
         // 버린 것이 있어도 순번은 1 부터 이어 붙는다.
         assertThat(tracks.get(0).rankOrder()).isEqualTo(1);
         assertThat(tracks.get(1).rankOrder()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("재생할 수 없는 곡은 내려보내지 않는다 — 화면이 거르게 두지 않는다")
+    void dropsTracksWithoutAPlayableStream() {
+        Music playable = music(1, "들을 수 있는 곡");
+        Music silent = music(2, "스트림이 아직 없는 곡");
+
+        List<AiRecommendedTrack> tracks = recommendWith(
+            List.of(item("T000901#1"), item("T000902#1")),
+            new LinkedHashMap<>(Map.of(
+                "T000901#1", section(playable, "T000901#1", 10_000),
+                "T000902#1", section(silent, "T000902#1", 20_000))),
+            List.of(playable, silent),
+            Set.of(2));
+
+        /*
+         * 예전에는 두 곡을 다 내려보내고 화면이 걸러 "2곡 중 1곡은 아직 재생할 수 없어
+         * 빼뒀어요" 라고 알렸다. 사용자가 할 수 있는 일이 없는 의문만 남는다.
+         */
+        assertThat(tracks).hasSize(1);
+        assertThat(tracks.getFirst().music().title()).isEqualTo("들을 수 있는 곡");
+    }
+
+    @Test
+    @DisplayName("재생 불가를 걷어낸 뒤에도 순번은 1 부터 이어 붙는다 — 건수와 순위가 어긋나지 않는다")
+    void rankStaysContiguousAfterDroppingUnplayable() {
+        Music first = music(1, "첫 곡");
+        Music silent = music(2, "스트림 없는 곡");
+        Music third = music(3, "셋째 곡");
+
+        Map<String, MusicSectionAnalysis> sections = new LinkedHashMap<>();
+        sections.put("T000901#1", section(first, "T000901#1", 10_000));
+        sections.put("T000902#1", section(silent, "T000902#1", 20_000));
+        sections.put("T000903#1", section(third, "T000903#1", 30_000));
+
+        List<AiRecommendedTrack> tracks = recommendWith(
+            List.of(item("T000901#1"), item("T000902#1"), item("T000903#1")),
+            sections,
+            List.of(first, silent, third),
+            Set.of(2));
+
+        // 추천 건수(`track_count`)는 이 목록의 크기다. 여기가 2 여야 화면이 "3곡 중" 이라고
+        // 말하지 않는다.
+        assertThat(tracks).hasSize(2);
+        assertThat(tracks.get(0).rankOrder()).isEqualTo(1);
+        assertThat(tracks.get(1).rankOrder()).isEqualTo(2);
+        // 곡과 구간의 짝도 밀리지 않는다.
+        assertThat(tracks.get(0).music().title()).isEqualTo("첫 곡");
+        assertThat(tracks.get(0).startTimeMs()).isEqualTo(10_000);
+        assertThat(tracks.get(1).music().title()).isEqualTo("셋째 곡");
+        assertThat(tracks.get(1).startTimeMs()).isEqualTo(30_000);
     }
 }
