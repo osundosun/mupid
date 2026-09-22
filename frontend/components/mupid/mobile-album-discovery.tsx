@@ -5,6 +5,7 @@ import type { MupidModel } from '@/hooks/use-mupid';
 import type { Track } from '@/lib/mupid-data';
 import { AlbumArt } from './primitives';
 import { FadeContent } from './fade-content';
+import { GenreName } from './genre-name';
 
 export function MobileAlbumDiscovery({ tracks, model: m }: { tracks: Track[]; model: MupidModel }) {
   const [selectedId, setSelectedId] = useState(m.active?.id ?? 0);
@@ -35,7 +36,7 @@ export function MobileAlbumDiscovery({ tracks, model: m }: { tracks: Track[]; mo
     </div>
     <div className="discovery-feature-info">
       <FadeContent contentKey={String(selected.id)}><div className="discovery-feature-copy">
-        <span>{selected.mood} · {selected.genre}</span><h3>{selected.title}</h3><p>{selected.artist}</p>
+        <span>{selected.mood} · <GenreName genre={selected.genre} /></span><h3>{selected.title}</h3><p>{selected.artist}</p>
       </div></FadeContent>
       <button className="discovery-feature-play" aria-label={`${selected.title} ${playing ? '일시정지' : '재생'}`} onClick={() => m.play(selected)}>
         {playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}

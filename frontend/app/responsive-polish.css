@@ -2212,3 +2212,20 @@
 .mupid-shell .chat-panel { background: #f7faff; }
 .mupid-shell .chat-panel .chat-messages { background: #f7faff; }
 html.dark .mupid-shell .chat-panel .chat-messages { background: #171717; }
+
+/* Reserve one row so adding filters never steals height from the option list. */
+.mupid-shell .explore-filter-sidebar .category-selected {
+  flex: 0 0 64px;
+  height: 64px;
+  min-height: 64px;
+  box-sizing: border-box;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.mupid-shell .explore-filter-sidebar .category-selected > * {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
