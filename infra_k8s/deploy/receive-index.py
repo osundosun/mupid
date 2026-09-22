@@ -49,14 +49,21 @@ CHECKSUM = re.compile(r"^[0-9a-f]{64}$")
 
 # 이 이름들만 받는다. 목록에 없는 파일이 섞여 오면 거부한다 — 이 엔드포인트로 노드에
 # 임의의 파일을 놓을 수 있으면 안 된다.
+# `content.parquet` · `flow_meta.parquet` 은 여기 없다. 곡명·장르·무드·보컬은 MySQL 이
+# 정본이고 추천 서버가 Spring 내부 카탈로그 API 로 읽는다 — 색인이 사본을 들고 오면
+# 어느 쪽이 이기는지가 자리마다 갈린다. 옛 묶음은 이 목록 밖의 이름이라 거부된다.
 ALLOWED = {
     "moments.parquet", "moments_emb.npy", "features_v1.npz", "stage1_section.npy",
-    "content.parquet", "flow_meta.parquet", "clap_moments.npz",
+    "track_features.parquet", "index_meta.json", "clap_moments.npz",
     "stage1_weights.npz", "stage1.pt", "logistic_flow_stage1.json",
     "features_info.json", "feature_stats_v1.npz", "slice_report.json",
 }
 # 없으면 파드가 뜨더라도 /internal/ready 가 영영 false 인 것들.
-REQUIRED = {"moments.parquet", "moments_emb.npy", "features_v1.npz", "stage1_section.npy"}
+#
+# `track_features.parquet` 이 없으면 BPM·언어·스타일 축이 통째로 비고,
+# `index_meta.json` 이 없으면 추천 서버가 옛 판으로 보고 거절한다.
+REQUIRED = {"moments.parquet", "moments_emb.npy", "features_v1.npz", "stage1_section.npy",
+            "track_features.parquet", "index_meta.json"}
 
 
 def fail(message, code=65):

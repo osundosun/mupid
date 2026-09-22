@@ -11,6 +11,20 @@
 
     자르면 약 80MB 가 된다. 파드에 색인을 밀어 넣는 일이 그만큼 가벼워진다.
 
+메타데이터는 따라가지 않는다
+    곡명·장르·무드·보컬·악기·순간 메타데이터는 **MySQL 이 정본**이고 추천 서버는
+    Spring 내부 카탈로그 API 로 읽는다(`app/catalog_api.py`). 그래서 이 도구는
+    `content.parquet` 과 `flow_meta.parquet` 을 **보내지 않고**, `moments.parquet`
+    에서도 그 열들을 뗀다(`MOMENT_DROP`).
+
+    대신 **DB 에 컬럼 자체가 없는 축**만 `track_features.parquet` 한 파일로 뽑는다 —
+    BPM·길이·언어·스타일·요청 BPM. 이것들은 오디오에서 잰 값이거나 곡을 만들 때의
+    생성 조건이라 옮길 자리가 없다.
+
+    판이 어떤 계약으로 구워졌는지는 `index_meta.json` 에 적는다. 그것이 없으면
+    추천 서버가 옛 판으로 보고 거절한다 — 옛 판을 새 코드로 읽으면 장르·무드 축이
+    **오류 없이** 통째로 빈다.
+
 값이 바뀌지 않는다
     이것이 이 도구의 전제다. 추천 계산은 이미 풀만 본다 —
 
@@ -56,12 +70,13 @@ import json
 import os
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from ai_server.app import paths
+from ai_server.app import index_contract, paths
 
 # 추천 풀의 정의는 `recommender` 와 같은 환경변수를 쓴다. 여기서 따로 정하면 자른 색인과
 # 서빙의 풀이 어긋나 — 서비스는 뜨는데 후보가 0건이 된다.
@@ -74,6 +89,26 @@ ALIGNED = ("moments.parquet", "moments_emb.npy", "features_v1.npz", "stage1_sect
 # 행과 무관한 것들. 그대로 복사한다 — 모델 가중치·결합기·특징 정의.
 COPY_AS_IS = ("stage1_weights.npz", "stage1.pt", "logistic_flow_stage1.json",
               "features_info.json", "feature_stats_v1.npz")
+
+# ── 배송 묶음에 **넣지 않는** 것들. MySQL 이 정본이라 색인이 들고 갈 이유가 없다.
+#
+# `content.parquet` 과 `flow_meta.parquet` 은 전체 색인 쪽에 그대로 남는다 — 특징을
+# 다시 굽는 오프라인 경로(`features.fit`)가 읽기 때문이다. 나가지 않을 뿐이다.
+NOT_SHIPPED = ("content.parquet", "flow_meta.parquet")
+
+# `moments.parquet` 에서 떼는 열. 전부 `music_section_analysis` 와 그에 딸린 표가
+# 정본이고, 추천 서버는 `catalog_api` 로 읽는다.
+#
+# 남겨 두면 **둘 중 어느 쪽이 이기는지가 자리마다 갈린다.** 지워진 곡의 구간이
+# 색인에 남아 계속 추천되던 것이 그 상태였다.
+MOMENT_DROP = ("section_label", "section_idx", "start_sec", "end_sec", "dur_sec",
+               "instruments", "moment_moods", "title")
+
+# `track_features.parquet` 에 담는 곡 수준 축. **MySQL 에 컬럼 자체가 없다** —
+# BPM 은 오디오에서 잰 값이고 언어·스타일은 생성 조건이다. ERD 에 자리가 생기면
+# 그때 API 로 옮긴다 (`infra/AI-API-BLOCKERS.md`).
+FEATURE_FROM_CONTENT = ("bpm", "dur_sec")
+FEATURE_FROM_FLOW_META = ("language", "category", "bpm_lo", "bpm_hi", "sound_raw")
 
 
 def pool_sources() -> set[str]:
@@ -122,10 +157,14 @@ def slice_index(src: Path, dst: Path, *, src_data: Path | None = None) -> dict:
     out.mkdir(parents=True, exist_ok=True)
 
     # ① moments — emb_row 를 0부터 다시 매긴다. 새 Z 의 행 순서와 같아야 한다.
+    #
+    # MySQL 이 정본인 열은 여기서 뗀다(`MOMENT_DROP`). 남는 것은 벡터를 가리키는
+    # 행 번호와 오디오에서 잰 값(위치·에너지)뿐이다.
     sliced = mom.loc[keep].reset_index(drop=True).copy()
     old_rows = sliced.emb_row.to_numpy()
     sliced["emb_row"] = np.arange(len(sliced))
-    sliced.to_parquet(out / "moments.parquet", index=False)
+    dropped_cols = [c for c in MOMENT_DROP if c in sliced.columns]
+    sliced.drop(columns=dropped_cols).to_parquet(out / "moments.parquet", index=False)
 
     # ② 임베딩 — mmap 으로 읽어 필요한 행만 만진다. 403MB 를 통째로 올리지 않는다.
     source_emb = np.load(data / "moments_emb.npy", mmap_mode="r")
@@ -144,37 +183,87 @@ def slice_index(src: Path, dst: Path, *, src_data: Path | None = None) -> dict:
     np.save(out / "stage1_section.npy", np.asarray(section[rows], dtype=section.dtype))
 
     tracks = set(sliced.track_id.astype(str))
-    _slice_by_track(data, out, "content.parquet", tracks, required=True)
-    _slice_by_track(data, out, "flow_meta.parquet", tracks, required=False)
+    track_features = _write_track_features(data, out, tracks)
     _slice_clap(data, out, set(sliced.moment_id.astype(str)))
 
     for name in COPY_AS_IS:
         if (data / name).exists():
             shutil.copy2(data / name, out / name)
     _restamp_features_info(out, len(sliced))
-    id_map_note = _note_id_map(data, out)
+
+    # 배송 묶음에 옛 사본이 섞이지 않았는지 본다. 섞이면 받는 쪽이 그것을 읽지는
+    # 않지만, 다음 사람이 "있으니까 읽어도 되겠지" 로 되돌린다.
+    leaked = [n for n in NOT_SHIPPED if (out / n).exists()]
+    if leaked:
+        fail(f"배송 묶음에 걷어낸 파일이 들어갔다: {', '.join(leaked)}")
+
+    (out / "index_meta.json").write_text(
+        json.dumps(index_contract.build_meta(
+            rows=len(sliced), tracks=len(tracks),
+            built_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            extra={"dropped_moment_columns": dropped_cols,
+                   "track_features": track_features}),
+            ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     report = _verify(out)
-    report["id_map"] = id_map_note
+    report["metadata_source"] = index_contract.SOURCE
+    report["track_features"] = track_features
+    report["dropped_moment_columns"] = dropped_cols
     report["dropped"] = int(len(mom) - len(sliced))
     (out / "slice_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
 
 
-def _slice_by_track(data: Path, out: Path, name: str, tracks: set[str],
-                    required: bool) -> None:
-    path = data / name
-    if not path.exists():
-        if required:
-            fail(f"{name} 이 없다")
-        return
-    frame = pd.read_parquet(path)
-    column = "track_id" if "track_id" in frame.columns else frame.index.name
-    if column != "track_id":
-        shutil.copy2(path, out / name)          # 모양을 모르면 건드리지 않는다
-        return
-    frame[frame.track_id.astype(str).isin(tracks)].to_parquet(out / name, index=False)
+def _write_track_features(data: Path, out: Path, tracks: set[str]) -> dict:
+    """`content` + `flow_meta` 에서 **MySQL 에 없는 축만** 뽑아 한 파일로.
+
+    두 파일을 그대로 보내지 않는 이유가 이것이다 — 둘은 제목·장르·무드·보컬까지
+    들고 있어서, 보내는 순간 MySQL 과 두 벌이 된다. 여기서 뽑는 것은 DB 에 컬럼
+    자체가 없는 값뿐이다.
+
+    `content.parquet` 이 없으면 멈춘다. BPM 이 빠지면 템포 조건과 이어 듣기 감점이
+    통째로 사라지는데, 그것은 오류가 아니라 "추천이 좀 이상하다" 로만 보인다.
+    """
+    content_path = data / "content.parquet"
+    if not content_path.exists():
+        fail(f"content.parquet 이 없다 — BPM·길이 축을 만들 수 없다: {content_path}")
+    content = pd.read_parquet(content_path)
+    content = content[content.track_id.astype(str).isin(tracks)]
+    frame = pd.DataFrame({"track_id": content.track_id.astype(str)})
+    for col in FEATURE_FROM_CONTENT:
+        frame[col] = (pd.to_numeric(content[col], errors="coerce").to_numpy()
+                      if col in content.columns else 0.0)
+
+    meta_path = data / "flow_meta.parquet"
+    missing_axes = []
+    if meta_path.exists():
+        meta = pd.read_parquet(meta_path)
+        meta = meta[meta.track_id.astype(str).isin(tracks)].drop_duplicates("track_id")
+        by_track = meta.set_index(meta.track_id.astype(str))
+        for col in FEATURE_FROM_FLOW_META:
+            if col in by_track.columns:
+                frame[col] = frame.track_id.map(by_track[col]).to_numpy()
+            else:
+                frame[col] = None
+                missing_axes.append(col)
+    else:
+        for col in FEATURE_FROM_FLOW_META:
+            frame[col] = None
+        missing_axes = list(FEATURE_FROM_FLOW_META)
+
+    if missing_axes:
+        # 막지는 않는다 — 그 축을 쓰지 않는 카탈로그도 있을 수 있다. 다만 조용히
+        # 비면 "조건을 걸었는데 아무 곡도 안 걸러진" 결과가 되므로 세어서 말한다.
+        print(f"[경고] 곡 수준 축이 비었다: {', '.join(missing_axes)} "
+              f"— 해당 조건이 아무 곡도 고르지 못한다.", file=sys.stderr)
+
+    frame = frame.drop_duplicates("track_id").reset_index(drop=True)
+    frame.to_parquet(out / "track_features.parquet", index=False)
+    return {"tracks": int(len(frame)),
+            "columns": [c for c in frame.columns if c != "track_id"],
+            "empty_axes": missing_axes,
+            "tracks_without_features": int(len(tracks) - len(frame))}
 
 
 def _slice_clap(data: Path, out: Path, moments: set[str]) -> None:
@@ -186,42 +275,6 @@ def _slice_clap(data: Path, out: Path, moments: set[str]) -> None:
         pick = np.flatnonzero(np.isin(ids, list(moments)))
         np.savez(out / "clap_moments.npz",
                  moment_ids=d["moment_ids"][pick], embeddings=d["embeddings"][pick])
-
-
-def _note_id_map(data: Path, out: Path) -> dict:
-    """숫자 환산의 근거가 묶음 안에 있는지 확인한다.
-
-    **별도 매핑 파일을 두지 않는다**(팀 규칙). 근거는 `flow_meta.music_id` 이고
-    `retag_flow_meta` 가 DB 표를 그대로 읽어 싣는다. 색인과 함께 버전이 매겨져
-    함께 배포되므로 판과 매핑이 어긋날 자리가 없다.
-
-    옛 `id_map.parquet` 은 묶음에 넣지 않는다. 받는 쪽 `ALLOWED`
-    (`infra_k8s/deploy/receive-index.py`) 밖의 이름이라 섞이면 묶음 전체가 exit 65
-    로 거부된다.
-
-    `music_id` 가 비면 조용히 무너진다 — `pull_signals` 는 재생신호를 **전부**
-    버리고, `push_sections` 는 아무것도 올리지 못해 `track_sections` 가 비고,
-    그러면 `mv_user_section_signals` 가 행동 이벤트를 통째로 버린다.
-    2026-09-18 이후 운영에서 실제로 그랬다. 그래서 **세어서 말한다.**
-    """
-    meta = out / "flow_meta.parquet"
-    if not meta.exists():
-        print("[경고] flow_meta.parquet 이 없다 — 숫자 환산 근거가 통째로 빠진다.",
-              file=sys.stderr)
-        return {"source": None, "tracks": 0}
-    fm = pd.read_parquet(meta)
-    if "music_id" not in fm.columns:
-        print("[경고] flow_meta 에 music_id 열이 없다 — retag_flow_meta 를 다시 "
-              "돌려야 한다. 이대로 올리면 행동 데이터가 전부 버려진다 "
-              "(pull_signals 제외 · push_sections 0건).", file=sys.stderr)
-        return {"source": "flow_meta", "tracks": 0, "missing_column": True}
-    n = int(fm.music_id.notna().sum())
-    blank = int(len(fm) - n)
-    if blank:
-        print(f"[경고] music_id 가 빈 곡 {blank}건 — 그 곡의 청취는 버려진다.",
-              file=sys.stderr)
-    print(f"[매핑] flow_meta.music_id {n}곡 — 별도 파일 없음")
-    return {"source": "flow_meta", "tracks": n, "blank": blank}
 
 
 def _restamp_features_info(out: Path, rows: int) -> None:

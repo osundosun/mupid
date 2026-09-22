@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
-from . import labels_store, metrics, paths, stage1_np
+from . import catalog_api, labels_store, metrics, paths, stage1_np
 from .log import log
 
 warnings.filterwarnings("ignore")
@@ -137,6 +137,104 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# ------------------------------------------- 색인 + 카탈로그를 하나로 합치는 자리
+#
+# 추천 계산부는 예전과 **같은 열 이름**을 읽는다. 값의 출처만 바뀌었다 — 점수·가중치·
+# 필터·후보 생성·랭킹에는 손대지 않는다. 그래서 여기서 이름을 맞춰 둔다.
+
+# 색인이 계속 들고 있는 곡 수준 축. MySQL 에 컬럼 자체가 없어 API 로 옮길 수 없다.
+TRACK_FEATURE_COLS = ("bpm", "dur_sec", "language", "category",
+                      "bpm_lo", "bpm_hi", "sound_raw")
+# `flow_meta` 가 하던 일 가운데 색인에 남는 몫. 나머지(제목·장르·무드·보컬)는 카탈로그다.
+META_FROM_FEATURES = ("language", "category", "bpm_lo", "bpm_hi", "sound_raw")
+
+
+def _track_features() -> pd.DataFrame:
+    """`track_features.parquet`. 없으면 **빈 표**가 아니라 실패다.
+
+    빈 표로 넘어가면 BPM·언어·스타일 조건이 조용히 아무 곡도 못 고르게 된다.
+    """
+    path = paths.track_features_path()
+    if not path.exists():
+        raise RuntimeError(
+            f"{path.name} 이 없다 — BPM·언어·스타일 축이 통째로 빈다. "
+            f"`python -m ai_server.tools.slice_index` 로 다시 구운 판을 올린다")
+    frame = pd.read_parquet(path)
+    if "track_id" not in frame.columns:
+        raise RuntimeError(f"{path.name} 에 track_id 열이 없다")
+    for col in TRACK_FEATURE_COLS:
+        if col not in frame.columns:
+            frame[col] = "" if col in META_FROM_FEATURES else 0.0
+    return frame.set_index(frame.track_id.astype(str)).drop(columns=["track_id"])
+
+
+def _merge_track_meta(snap, features: pd.DataFrame) -> pd.DataFrame:
+    """카탈로그(제목·장르·무드·보컬)와 색인(언어·스타일·요청 BPM)을 한 표로.
+
+    합치는 기준은 카탈로그다 — 카탈로그에 없는 곡은 추천 후보가 아니므로 메타도
+    필요 없다. 반대로 색인에 없는 곡은 `language`·`category` 가 빈 값이 되는데,
+    그것은 "그 축을 모른다" 이고 해당 게이트가 그 곡을 거를 뿐 오류가 아니다.
+    """
+    meta = snap.track_frame()
+    if meta.empty:
+        return meta
+    for col in META_FROM_FEATURES:
+        source = features[col] if col in features.columns else pd.Series(dtype=object)
+        meta[col] = meta.index.map(source)
+    # 곡 수준 악기는 **그 곡 구간들의 합집합**이다. 예전에는 `flow_meta` 가 곡마다
+    # 한 줄로 들고 있었는데, MySQL 은 구간에만 악기를 단다(`music_analysis_instruments`).
+    # 곡 단위로 묻는 자리(`filter_query_pool` 의 폴백)가 남아 있으므로 여기서 만든다.
+    by_track: dict[str, list] = {}
+    for row in snap.sections.values():
+        tid = row.get("track_id")
+        if not tid:
+            continue
+        bucket = by_track.setdefault(str(tid), [])
+        for name in str(row.get("instruments") or "").split(","):
+            name = name.strip()
+            if name and name not in bucket:
+                bucket.append(name)
+    meta["instruments"] = [", ".join(by_track.get(str(t), [])) for t in meta.index]
+    return meta
+
+
+def _attach_section_meta(mom: pd.DataFrame, snap) -> pd.DataFrame:
+    """구간 종류·시각·악기를 **카탈로그에서** 붙인다.
+
+    색인은 이 값들을 더 들고 있지 않다. 붙지 않는 행(카탈로그에 없는 구간)은
+    `section_label` 이 빈 문자열이 되고, 곧바로 후보에서 빠진다.
+
+    `dur_sec` 는 시각에서 다시 센다. 색인에 남겨 두면 MySQL 이 고쳐진 뒤에도 옛
+    길이가 살아남아 `MIN_MOMENT_SEC` 판정이 둘로 갈린다.
+    """
+    sec = snap.section_frame()
+    # 색인이 들고 있던 옛 사본은 버린다. 남겨 두고 병합하면 접미사가 붙은 두 열이
+    # 생기고, 어느 쪽을 읽느냐가 자리마다 갈린다.
+    drop = [c for c in ("section_label", "start_sec", "end_sec", "dur_sec",
+                        "instruments", "moment_moods", "section_idx",
+                        "music_section_analysis_id", "start_ms", "end_ms")
+            if c in mom.columns]
+    out = mom.drop(columns=drop).merge(
+        sec.drop(columns=["track_id"]), how="left",
+        left_on=mom.moment_id.astype(str), right_on="moment_id",
+        suffixes=("", "_cat"))
+    # merge 가 만든 키 열과 중복 이름 열을 정리한다.
+    out = out.drop(columns=[c for c in ("key_0", "moment_id_cat") if c in out.columns])
+
+    start = pd.to_numeric(out.pop("start_ms"), errors="coerce") / 1000.0
+    end = pd.to_numeric(out.pop("end_ms"), errors="coerce") / 1000.0
+    out["start_sec"] = start.fillna(0.0)
+    out["end_sec"] = end.fillna(0.0)
+    out["dur_sec"] = (out.end_sec - out.start_sec).clip(lower=0.0)
+    # 구간 종류는 카탈로그가 ENUM 이름(`CHORUS`)으로 준다. 추천 쪽 어휘는 소문자다
+    # (`features.LABELS` · 조사 선택지 · QueryPlan 의 `flow`). 경계에서 한 번만 맞춘다.
+    out["section_label"] = (out.section_label.fillna("").astype(str)
+                            .str.strip().str.lower())
+    out["instruments"] = out.instruments.fillna("").astype(str)
+    out["moment_moods"] = out.moment_moods.fillna("").astype(str)
+    return out
+
+
 class Catalog:
     def __init__(self) -> None:
         from . import features as feat
@@ -146,10 +244,38 @@ class Catalog:
             self.mom["source"] = "fma"
         self.Z = np.load(paths.data_dir() / "moments_emb.npy", mmap_mode="r")
         self.X, self.idx, self.info = feat.load()
-        self.content = pd.read_parquet(paths.data_dir() / "content.parquet").set_index("track_id")
-        self.meta = (pd.read_parquet(paths.data_dir() / "flow_meta.parquet").set_index("track_id")
-                     if (paths.data_dir() / "flow_meta.parquet").exists() else pd.DataFrame())
-        self.pool = self.mom[self.mom.source.isin(POOL_SOURCES)].reset_index(drop=True)
+
+        # ── 곡·순간 메타데이터의 정본은 **MySQL** 이다. 색인에는 없다.
+        #
+        # 예전에는 `content.parquet` 과 `flow_meta.parquet` 이 이 자리에 있었다.
+        # 그 두 파일이 제목·장르·무드·보컬을 한 벌 더 들고 있어서, DB 에서 곡을
+        # 지우거나 장르를 고쳐도 추천은 옛 값으로 계속 돌았다 — 색인을 다시 굽기
+        # 전까지 아무 오류도 나지 않는다.
+        #
+        # 이제 그 값들은 `catalog_api` 가 Spring 내부 API 로 읽어 메모리에 둔다.
+        # 색인에 남은 것은 **DB 에 컬럼 자체가 없는 축**뿐이다(BPM·언어·스타일).
+        snap = catalog_api.snapshot()
+        if snap is None:
+            # 없이 뜨면 장르·무드·보컬·악기 조건이 통째로 빈 채 추천이 나간다.
+            # 그것은 오류가 아니라 "조건에 맞는 곡이 없다" 로 보이므로 여기서 멈춘다.
+            raise RuntimeError(
+                "카탈로그를 읽지 못했다 — Spring 내부 API(/api/v1/internal/ai/catalog)를 "
+                "먼저 적재해야 한다. MUPID_API_BASE_URL · MUPID_API_REFRESH_TOKEN 확인")
+        self.catalog = snap
+        self.catalog_stats = snap.stats()
+
+        features = _track_features()
+        self.content = features                    # bpm · dur_sec 를 읽는 자리
+        self.meta = _merge_track_meta(snap, features)
+        self.mom = _attach_section_meta(self.mom, snap)
+
+        # 카탈로그에 없는 구간은 **후보에서 뺀다.** 지워진 곡이거나 아직 적재되지
+        # 않은 곡이다. 색인에 남아 있다는 이유로 추천하면 화면이 그 곡을 열지
+        # 못한다(Spring 이 external_id 를 못 찾아 그 줄을 버린다).
+        in_catalog = self.mom.moment_id.astype(str).isin(snap.sections).to_numpy()
+        self.moments_outside_catalog = int((~in_catalog).sum())
+        self.pool = self.mom[self.mom.source.isin(POOL_SOURCES) & in_catalog
+                             ].reset_index(drop=True)
         # 출처별 구간 수. 설정했는데 0건인 출처는 오타이거나 아직 안 실린 것이다.
         counts = self.pool.source.value_counts().to_dict()
         self.pool_sources = {src: int(counts.get(src, 0)) for src in sorted(POOL_SOURCES)}

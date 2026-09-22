@@ -54,6 +54,33 @@ def moments_path() -> Path:
     return data_dir() / "moments.parquet"
 
 
+def track_features_path() -> Path:
+    """곡 수준 오디오·생성 파생값. **MySQL 이 들고 있지 않은 것만** 담는다.
+
+    `content.parquet` + `flow_meta.parquet` 이 서빙에서 하던 일을 대신하는데, 둘과
+    달리 제목·장르·무드·보컬을 담지 않는다 — 그것들은 MySQL 이 정본이고
+    `catalog_api` 가 읽는다. 여기 남는 것은 DB 에 컬럼 자체가 없는 축이다.
+
+        bpm · bpm_lo · bpm_hi · dur_sec · language · category · sound_raw
+
+    `bpm` 은 오디오에서 잰 값이고, `language`·`category` 는 곡을 만들 때의 생성
+    조건이다. ERD 에 자리가 없어 API 로 옮길 수 없다 — 스키마가 생기면 그때 옮긴다
+    (`infra/AI-API-BLOCKERS.md`).
+    """
+    return data_dir() / "track_features.parquet"
+
+
+def index_meta_path() -> Path:
+    """색인이 **어떤 계약으로 구워졌는지** 적어 둔 표식.
+
+    이것이 없으면 옛 판과 새 코드가 섞인다. 옛 판은 장르·무드를
+    `flow_meta.parquet` 안에 들고 있는데 새 코드는 그 파일을 읽지 않으므로,
+    **오류 없이 장르·무드 축이 통째로 빈 채** 추천이 돈다. 그 상태는 응답만
+    봐서는 정상과 구분되지 않는다. 그래서 표식을 보고 거절한다.
+    """
+    return data_dir() / "index_meta.json"
+
+
 # ── 배치가 **쓰는** 자리. 전부 `state_dir()` 에 붙는다. 하나라도 `data_dir()` 로
 #    돌아가면 읽기 전용 색인 마운트에서 그 순간 터진다.
 
@@ -115,6 +142,7 @@ def check() -> dict:
     """
     root, data = artifact_root(), data_dir()
     idm, mom = id_map_path(), moments_path()
+    feat, meta = track_features_path(), index_meta_path()
     return {
         "artifact_dir": str(root),
         "artifact_dir_from_env": bool(os.environ.get("MUPID_AI_ARTIFACT_DIR")),
@@ -123,6 +151,8 @@ def check() -> dict:
         "state_dir_split": bool(os.environ.get("MUPID_AI_STATE_DIR")),
         "data_dir_exists": data.is_dir(),
         "moments": {"path": str(mom), "exists": mom.exists()},
+        "track_features": {"path": str(feat), "exists": feat.exists()},
+        "index_meta": {"path": str(meta), "exists": meta.exists()},
         "id_map": {"path": str(idm), "exists": idm.exists(),
                    "overridden": bool(os.environ.get("MUPID_ID_MAP"))},
     }

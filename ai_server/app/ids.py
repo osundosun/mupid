@@ -11,11 +11,16 @@
 이 프로젝트가 색인 불일치로 두 번 겪은 실패와 같은 형태다. 그래서 여기서는 **매핑이 없으면
 만들지 않고 오류를 낸다.**
 
-## 근거는 색인 안에 있다
+## 근거는 MySQL 이다
 
-**별도 매핑 파일을 두지 않는다**(팀 규칙). `flow_meta.parquet` 의 `music_id` 열이
-근거다 — `retag_flow_meta` 가 DB 표(`music_section_analysis.music_id`)를 그대로 읽어
-싣는다. 색인과 함께 버전이 매겨져 함께 배포되므로 판과 매핑이 어긋날 자리가 없다.
+**별도 매핑 파일을 두지 않는다**(팀 규칙). 예전에는 `flow_meta.parquet` 의
+`music_id` 열이 근거였는데, 그것도 결국 색인 안의 사본이었다 — 곡이 지워지거나
+번호가 바뀌면 색인을 다시 굽기 전까지 옛 값이 살아 있었다.
+
+이제 근거는 Spring 내부 카탈로그 API 다(`app/catalog_api.py`). 곡 수준
+(`track_id` → `music_id`)과 구간 수준(`external_id` →
+`music_section_analysis_id`)을 **둘 다** 그쪽이 준다 — 예전 `flow_meta` 경로는
+곡 수준밖에 만들지 못했다.
 
 숫자가 필요한 곳은 배치 도구 둘뿐이고 둘 다 **곡 수준만** 쓴다 — `push_sections` 의
 `im.music_id(tid)` 와 `pull_signals` 의 `im.source_track_id(...)`. 구간 PK
@@ -97,7 +102,7 @@ class IdMap:
             if self.path.exists():
                 print(f"[ids] 규칙상 없어야 할 매핑표가 있다(무시): {self.path}",
                       file=sys.stderr)
-            self._from_flow_meta()
+            self._from_catalog()
             return
         try:
             df = pd.read_parquet(self.path)
@@ -123,39 +128,50 @@ class IdMap:
             return
         self.loaded = True
 
-    def _from_flow_meta(self) -> None:
-        """색인의 `flow_meta.music_id` 로 곡 수준 매핑을 만든다.
+    def _from_catalog(self) -> None:
+        """Spring 내부 카탈로그로 곡·구간 매핑을 만든다.
 
-        **지어내지 않는다.** `music_id` 열이 없으면 빈 채로 둔다 — `T000001` 에서
+        **지어내지 않는다.** 카탈로그를 읽지 못하면 빈 채로 둔다 — `T000001` 에서
         1 을 뽑는 식의 규칙은 시딩이 그렇게 만들었을 뿐 계약이 아니고, 실제로
         `T000847_1` 처럼 규칙 밖 값이 있었다. 어긋난 순간 오류 없이 엉뚱한 곡을
         추천하게 된다.
 
-        구간 매핑은 만들지 않는다. 쓰는 코드가 없다.
+        이미 적재된 스냅샷이 있으면 그것을 쓴다. 없으면 한 번 받아온다 — 이 길로
+        오는 것은 배치 도구(`push_sections`·`pull_signals`)뿐이고, 그쪽은 어차피
+        같은 자격으로 Spring 을 부른다. 서빙은 기동 때 이미 적재해 둔다.
         """
-        meta = paths.data_dir() / "flow_meta.parquet"
-        self.source = "flow_meta"
-        if not meta.exists():
-            self.error = f"매핑 근거가 없다 — {self.path} 도 {meta} 도 없다"
-            return
+        from . import catalog_api      # 순환 import 를 피해 쓰는 자리에서 가져온다
+
+        self.source = "catalog_api"
+        snap = catalog_api.snapshot()
+        if snap is None:
+            try:
+                snap = catalog_api.load()
+            except Exception as e:
+                self.error = (f"카탈로그를 읽지 못했다 — {type(e).__name__}: {e} "
+                              f"(MUPID_API_BASE_URL · MUPID_API_REFRESH_TOKEN 확인)")
+                return
+        rows = [{"source_track_id": tid,
+                 "music_id": row.get("music_id"),
+                 "external_id": pd.NA,
+                 "music_section_analysis_id": pd.NA}
+                for tid, row in snap.tracks.items()]
+        rows += [{"source_track_id": row.get("track_id"),
+                  "music_id": pd.NA,
+                  "external_id": uid,
+                  "music_section_analysis_id": row.get("music_section_analysis_id")}
+                 for uid, row in snap.sections.items()]
         try:
-            df = pd.read_parquet(meta, columns=["track_id", "music_id"])
-        except Exception as e:
-            self.error = (f"{meta} 에 music_id 열이 없다 — retag_flow_meta 를 다시 "
-                          f"돌려야 한다 ({type(e).__name__})")
-            return
-        try:
-            self._ingest(df.assign(external_id=pd.NA,
-                                   music_section_analysis_id=pd.NA)
-                           .rename(columns={"track_id": "source_track_id"}))
+            self._ingest(pd.DataFrame(rows, columns=list(COLS)))
         except MapIntegrityError as e:
             self.error = str(e)
             self.track_to_num, self.num_to_track = {}, {}
+            self.sec_to_num, self.num_to_sec = {}, {}
             if self.strict:
                 raise
             return
         if not self.track_to_num:
-            self.error = f"{meta} 의 music_id 가 전부 비어 있다"
+            self.error = "카탈로그의 music_id 가 전부 비어 있다"
             return
         self.loaded = True
 

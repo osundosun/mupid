@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import threading
 import time
 from contextlib import asynccontextmanager
 
@@ -15,11 +16,12 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 
-from . import internal_api, labels_store, paths, recommender
+from . import catalog_api, index_contract, internal_api, labels_store, paths, recommender
 from .log import log
 
 _STARTED = time.time()
-_STATE: dict = {"loaded": False, "error": None, "integrity": None, "load_seconds": None}
+_STATE: dict = {"loaded": False, "error": None, "integrity": None, "load_seconds": None,
+                "plate": None, "catalog_match": None}
 
 
 # 없어도 서비스가 뜨지만 **기능 하나가 조용히 사라지는** 파일들. 행 수 검사 대상이 아니라
@@ -99,6 +101,18 @@ def _startup() -> None:
         # 죽이지 않는다. "정상처럼 뜬 채 기능만 없는" 상태를 로그와 /health 에 남긴다.
         # 무결성 검사보다 **먼저** 찍는다 — 무결성이 깨지면 아래에서 돌아 나가기 때문이다.
         log(f"선택 산출물 없음 — {', '.join(miss)}")
+
+    # ① 판의 계약 표식. 옛 판(장르·무드를 색인 안에 들고 있던 판)과 새 코드가 섞이면
+    #    오류 없이 그 축이 통째로 빈다. 값을 읽기 전에 막는다.
+    plate = index_contract.check_plate()
+    _STATE["plate"] = plate
+    for line in plate["warnings"]:
+        log(f"색인 주의 — {line}")
+    if not plate["ok"]:
+        _STATE["error"] = "; ".join(plate["errors"])
+        log(f"색인 계약 실패 — {_STATE['error']}")
+        return
+
     integrity = check_integrity()
     _STATE["integrity"] = integrity
     if not integrity["ok"]:
@@ -106,22 +120,84 @@ def _startup() -> None:
         _STATE["error"] = "; ".join(integrity["errors"])
         log(f"산출물 무결성 실패 — {_STATE['error']}")
         return
+
+    # ② 카탈로그. **최초 적재 실패는 실패다** — 없이 뜨면 장르·무드·보컬·악기
+    #    조건이 통째로 빈 채 추천이 나가고, 그것은 응답만 봐서는 정상과 구분되지
+    #    않는다. 갱신 실패는 다르다(`catalog_api.refresh` 가 옛 것을 지킨다).
     try:
-        recommender.CAT = recommender.Catalog()
-        _STATE["loaded"] = True
-        _STATE["load_seconds"] = round(time.time() - t0, 3)
-        log(f"적재 완료 {_STATE['load_seconds']}초 · "
-              f"{recommender.CAT.pool.track_id.nunique()}곡 "
-              f"{len(recommender.CAT.pool)}구간")
+        catalog_api.load()
     except Exception as e:
         _STATE["error"] = f"{type(e).__name__}: {e}"
         log(f"카탈로그 적재 실패 — {_STATE['error']}")
+        return
+
+    try:
+        recommender.CAT = recommender.Catalog()
+    except Exception as e:
+        _STATE["error"] = f"{type(e).__name__}: {e}"
+        log(f"색인 적재 실패 — {_STATE['error']}")
+        return
+
+    # ③ 판과 카탈로그가 짝인가. 표식만으로는 "이 카탈로그와 짝인가" 를 알 수 없다.
+    match = index_contract.check_catalog(
+        recommender.CAT.pool.moment_id.astype(str).tolist(), catalog_api.snapshot())
+    _STATE["catalog_match"] = match
+    if not match["ok"]:
+        _STATE["error"] = match["reason"]
+        log(f"색인-카탈로그 불일치 — {match['reason']}")
+        return
+    if match["moments_unmatched"]:
+        # 정상일 수 있다(지워진 곡). 그래도 수를 남긴다 — 조용히 줄어드는 것이 제일 나쁘다.
+        log(f"카탈로그에 없는 색인 구간 {match['moments_unmatched']}건 — 후보에서 뺐다 "
+            f"(예: {', '.join(match['sample_unmatched'])})")
+
+    _STATE["loaded"] = True
+    _STATE["load_seconds"] = round(time.time() - t0, 3)
+    log(f"적재 완료 {_STATE['load_seconds']}초 · "
+        f"{recommender.CAT.pool.track_id.nunique()}곡 "
+        f"{len(recommender.CAT.pool)}구간")
+
+
+def _refresh_loop(stop: threading.Event) -> None:
+    """TTL 이 지나면 카탈로그를 다시 읽는다. **요청 경로에서 하지 않는다.**
+
+    요청 안에서 갱신하면 그 사용자 한 명이 카탈로그 전체를 받아오는 동안 기다린다.
+    여기서 하면 느려지는 것은 아무도 아니고, 실패해도 옛 카탈로그로 계속 돈다.
+
+    깨어나는 간격을 TTL 보다 짧게 두는 것은 **종료 때문**이다. TTL 이 한 시간이면
+    파드가 내려갈 때 그만큼 기다리게 된다.
+    """
+    while not stop.is_set():
+        ttl = catalog_api.ttl_seconds()
+        if not ttl:
+            return
+        if stop.wait(min(ttl, 60.0)):
+            return
+        snap = catalog_api.snapshot()
+        if snap is None or time.time() - snap.loaded_at < ttl:
+            continue
+        try:
+            internal_api.refresh_catalog()
+        except Exception as e:                   # 주기 작업이 프로세스를 죽이지 않게
+            log(f"카탈로그 주기 갱신이 예외로 끝났다 — {type(e).__name__}: {e}")
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _startup()
-    yield
+    stop = threading.Event()
+    thread = None
+    if _STATE["loaded"] and catalog_api.ttl_seconds():
+        thread = threading.Thread(target=_refresh_loop, args=(stop,),
+                                  name="catalog-refresh", daemon=True)
+        thread.start()
+        log(f"카탈로그 주기 갱신 {catalog_api.ttl_seconds():.0f}초")
+    try:
+        yield
+    finally:
+        stop.set()
+        if thread is not None:
+            thread.join(timeout=5)
 
 
 app = FastAPI(title="MUPID AI 추천 서비스", version="1.0.0", lifespan=lifespan)
@@ -148,8 +224,14 @@ def health() -> dict:
                      "moments": len(cat.pool),
                      # 설정한 출처가 실제로 몇 건 실렸는지. 0 이면 오타이거나 미적재다.
                      "by_source": cat.pool_sources,
-                     "empty_sources": cat.pool_sources_empty}
+                     "empty_sources": cat.pool_sources_empty,
+                     # 색인에는 있는데 MySQL 에 없는 구간. 지워진 곡이면 정상이다.
+                     "moments_outside_catalog": cat.moments_outside_catalog}
                     if cat is not None else None),
+        # 곡·순간 메타데이터의 출처. **여기가 비면 장르·무드 축이 통째로 빈다.**
+        "metadata_source": catalog_api.status(),
+        "index_contract": _STATE["plate"],
+        "catalog_match": _STATE["catalog_match"],
         "integrity": (_STATE["integrity"] or {}).get("checks"),
         "artifacts": artifact_status(),
     }

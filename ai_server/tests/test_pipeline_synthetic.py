@@ -19,6 +19,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from ai_server.app import catalog_api, index_contract
+
 LABELS4 = ["intro", "verse", "chorus", "bridge"]
 # DB 코드표 어휘(`codes.code_name`). 합성이지만 모양을 실제와 맞춘다.
 GENRES = ["contemporary_pop", "pop_ballad", "indie_rock"]
@@ -33,15 +35,15 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
     (d / "serve").mkdir(parents=True, exist_ok=True)
     (d / "logs").mkdir(parents=True, exist_ok=True)
 
+    # 색인에는 **벡터를 가리키는 행 번호와 오디오에서 잰 값만** 둔다. 구간 종류·
+    # 시각·악기는 MySQL 이 정본이고 `catalog_api` 가 읽는다(`_catalog_payload`).
     rows, r = [], 0
     for t in range(n_tracks):
         tid = f"T{t:06d}"
         for s in range(per_track):
             rows.append({
-                "moment_id": f"{tid}#{s}", "track_id": tid, "section_idx": s,
-                "section_label": LABELS4[s % len(LABELS4)], "label_source": "allin1",
-                "start_sec": float(s * 30), "end_sec": float(s * 30 + 28),
-                "dur_sec": 28.0, "emb_row": r, "source": "flow",
+                "moment_id": f"{tid}#{s}", "track_id": tid, "label_source": "allin1",
+                "emb_row": r, "source": "flow",
                 "rms": float(rng.uniform(0.05, 0.4)),
                 "track_dur_sec": float(per_track * 30),
                 # 곡 안에서의 상대 위치. 위치 prior 가 읽는다.
@@ -84,21 +86,55 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
         hist_max=np.asarray(hist_max, dtype=np.int64),
         in_dim=np.asarray(feat_dim, dtype=np.int64))
 
+    # 색인에 남는 곡 수준 축. **MySQL 에 컬럼이 없는 것만** 담는다.
     tids = sorted(mom.track_id.unique())
-    pd.DataFrame([{"track_id": t, "bpm": float(rng.uniform(70, 150)),
-                   "dur_sec": float(per_track * 30)} for t in tids]
-                 ).to_parquet(d / "content.parquet", index=False)
     pd.DataFrame([{
-        "track_id": t, "title": f"곡 {t}", "category": GENRES[i % 3],
-        "vocal_type": ["female", "male"][i % 2], "language": ["ko", "en"][i % 2],
-        "bpm_lo": 80, "bpm_hi": 120, "sound_raw": "",
-        # 장르·무드는 `genre_code`·`mood_codes` 에서 온다(`_catalog_tags`).
-        # 이름을 틀리면 패싯이 조용히 빈 목록이 되고, LLM 이 고를 어휘가 사라진다.
-        # 값은 DB `codes.code_name` 어휘다 (2026-09-21 전환).
-        "genre_code": GENRES[i % 3],
-        "mood_codes": MOODS[i % 2], "instrument_tags": INSTRUMENTS[i % 2],
-    } for i, t in enumerate(tids)]).to_parquet(d / "flow_meta.parquet", index=False)
+        "track_id": t, "bpm": float(rng.uniform(70, 150)),
+        "dur_sec": float(per_track * 30),
+        "language": ["ko", "en"][i % 2], "category": GENRES[i % 3],
+        "bpm_lo": 80.0, "bpm_hi": 120.0, "sound_raw": "",
+    } for i, t in enumerate(tids)]).to_parquet(d / "track_features.parquet", index=False)
+
+    (d / "index_meta.json").write_text(json.dumps(
+        index_contract.build_meta(rows=len(mom), tracks=len(tids),
+                                  built_at="1970-01-01T00:00:00Z"),
+        ensure_ascii=False), encoding="utf-8")
     return d
+
+
+def _catalog_payload(n_tracks=6, per_track=4):
+    """Spring `GET /api/v1/internal/ai/catalog` 응답의 `tracks` 모양 그대로.
+
+    사전을 손으로 채우지 않고 이 모양을 지나가게 하는 이유는, 계약이 바뀌면 시험도
+    함께 깨지게 하려는 것이다. 값은 예전 `flow_meta` 합성값과 같게 두어 **이 변경이
+    추천 결과를 바꾸지 않았다**는 것을 다른 시험들이 그대로 확인할 수 있게 한다.
+    """
+    # 추천 쪽 어휘는 소문자이고 MySQL ENUM 은 대문자다. 경계에서 한 번 바뀌는지가
+    # 이 시험이 지나가는 길이다.
+    enum_of = {"intro": "INTRO", "verse": "VERSE", "chorus": "CHORUS",
+               "bridge": "BRIDGE"}
+    out = []
+    for t in range(n_tracks):
+        tid = f"T{t:06d}"
+        out.append({
+            "musicId": 1000 + t,
+            "title": f"곡 {tid}",
+            "hasVocal": True,
+            "vocalGender": ["F", "M"][t % 2],
+            "genres": [GENRES[t % 3]],
+            "moods": [MOODS[t % 2]],
+            "sections": [{
+                "externalId": f"{tid}#{s}",
+                "musicSectionAnalysisId": 500000 + t * 100 + s,
+                "sectionLabel": enum_of[LABELS4[s % len(LABELS4)]],
+                "index": s,
+                "startTimeMs": s * 30 * 1000,
+                "endTimeMs": (s * 30 + 28) * 1000,
+                "instruments": [INSTRUMENTS[t % 2]],
+                "moods": [],
+            } for s in range(per_track)],
+        })
+    return out
 
 
 @pytest.fixture(scope="module")
@@ -127,6 +163,10 @@ def svc(tmp_path_factory):
         from ai_server.app import recommender as mod
         return importlib.reload(mod)
 
+    # 곡·순간 메타데이터는 색인이 아니라 Spring 내부 API 에서 온다. 시험은 그
+    # 응답 모양 그대로를 꽂는다 — 망을 타지 않을 뿐 담기는 길은 운영과 같다.
+    catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))
+
     rc = _reload()
     rc.CAT = rc.Catalog()
     yield rc
@@ -135,6 +175,7 @@ def svc(tmp_path_factory):
         os.environ.pop("MUPID_AI_ARTIFACT_DIR", None)
     else:
         os.environ["MUPID_AI_ARTIFACT_DIR"] = saved_env
+    catalog_api.reset()
     back = _reload()
     back.CAT = None
 

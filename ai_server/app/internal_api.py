@@ -26,7 +26,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
-from . import clickhouse, metrics, onboarding as onb, paths
+from . import catalog_api, clickhouse, metrics, onboarding as onb, paths
 from .log import log
 
 PREFIX = "/internal"
@@ -640,12 +640,63 @@ def ready() -> dict:
     빠진 콜드스타트 추천이 나가지만 추천 자체는 된다. 그때 준비 완료를 거두면 모든
     파드가 한꺼번에 빠져 품질 저하가 장애로 번진다.
     """
-    svc = _svc()                       # 카탈로그 미적재면 INDEX_NOT_READY (503)
+    svc = _svc()                       # 색인 미적재면 INDEX_NOT_READY (503)
     return {"ready": True,
             "tracks": int(svc.CAT.pool.track_id.nunique()),
             "moments": int(len(svc.CAT.pool)),
+            # 곡·순간 메타데이터의 출처. 이것이 비면 장르·무드·보컬 조건이
+            # 통째로 빈 채 추천이 나가므로, 준비 판정을 보는 자리에서 함께 읽는다.
+            "metadata_source": catalog_api.status(),
             "behavior_store": behavior_store_status(),
             "paths": paths.check()}
+
+
+def refresh_catalog() -> dict:
+    """카탈로그를 다시 읽고, 성공하면 색인과 다시 묶는다. **구현은 여기 하나다.**
+
+    부르는 자리가 둘이다 — 운영자가 치는 `/internal/catalog/refresh` 와 TTL 주기
+    갱신. 두 곳이 각자 들고 있으면 한쪽만 고쳐져 "손으로 부르면 반영되는데 주기로는
+    안 된다" 같은 상태가 생긴다.
+
+    실패는 두 단계로 갈린다.
+
+      · 받아오기 실패 — 옛 카탈로그를 그대로 쓴다(`catalog_api.refresh`).
+      · 받아왔는데 색인과 못 묶음 — **옛 `Catalog` 객체를 그대로 둔다.** 반쯤 바뀐
+        상태로 추천하지 않는다. 다만 `catalog_api` 쪽 스냅샷은 이미 새것이므로,
+        다음 갱신에서 다시 묶기를 시도한다.
+    """
+    result = catalog_api.refresh()
+    svc = _svc_mod()
+    if result["ok"] and getattr(svc, "CAT", None) is not None:
+        # 색인은 그대로 두고 **메타데이터만** 갈아 끼운다. 판을 다시 읽지 않으므로
+        # 벡터·행 번호는 건드리지 않는다 — 어긋날 자리가 생기지 않는다.
+        try:
+            svc.CAT = svc.Catalog()
+            result["reloaded"] = True
+        except Exception as e:
+            result["reloaded"] = False
+            result["reload_error"] = f"{type(e).__name__}: {e}"
+            log(f"카탈로그 갱신 후 색인 재구성 실패 — {result['reload_error']}")
+    else:
+        result["reloaded"] = False
+    return result
+
+
+@router.post("/catalog/refresh", summary="곡·순간 메타데이터를 다시 읽는다")
+def catalog_refresh() -> dict:
+    """MySQL 쪽이 바뀐 것을 **재기동 없이** 반영한다.
+
+    곡을 지우거나 장르를 고친 뒤 부른다. 시간으로도 갱신되게 하려면
+    `MUPID_AI_CATALOG_TTL_SEC` 를 켠다 — 기본은 꺼져 있다.
+
+    **실패해도 200 이다.** 돌려주는 `ok` 가 거짓이면 갱신을 못 했다는 뜻이고,
+    그때도 들고 있던 카탈로그로 추천은 계속된다. 여기서 500 을 내면 부르는 쪽이
+    재시도하다 서비스를 멈추게 만들기 쉬운데, 멈춰야 할 상황이 아니다.
+
+    토큰 검사 안에 있다(`PUBLIC_PATHS` 밖). 카탈로그를 다시 읽게 하는 것은 Spring 을
+    향한 호출을 일으키는 일이라 아무나 부를 자리가 아니다.
+    """
+    return refresh_catalog()
 
 
 # ------------------------------------------------------------------ 설치
