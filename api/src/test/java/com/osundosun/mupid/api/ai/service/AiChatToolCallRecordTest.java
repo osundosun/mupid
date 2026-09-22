@@ -27,6 +27,7 @@ import com.osundosun.mupid.api.ai.properties.AiProperties;
 import com.osundosun.mupid.api.ai.properties.RecommenderProperties;
 import com.osundosun.mupid.api.ai.request.AiChatRequest;
 import com.osundosun.mupid.api.ai.response.AiChatResponse;
+import com.osundosun.mupid.api.ai.tool.TestMusicSummaries;
 import com.osundosun.mupid.api.ai.tool.AiRecommendToolImpl;
 import com.osundosun.mupid.api.music.entity.Album;
 import com.osundosun.mupid.api.music.entity.Artist;
@@ -251,8 +252,8 @@ class AiChatToolCallRecordTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(List.of(first, second));
 
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
-            client, musicRepository, sectionService, onboardingService,
-            mock(RecommendationReasonCache.class));
+            client, musicRepository, sectionService, TestMusicSummaries.assembler(),
+            onboardingService, mock(RecommendationReasonCache.class));
         return new AiChatServiceImpl(gateway(twoRounds), tool, musicRepository,
             new AiProperties("x", "test-key", "gpt-5-mini",
                 Duration.ofSeconds(2), Duration.ofSeconds(2), 3, 20),
@@ -367,6 +368,7 @@ class AiChatToolCallRecordTest {
         MusicRepository musicRepository = mock(MusicRepository.class);
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
             client, musicRepository, mock(MusicSectionService.class),
+            TestMusicSummaries.assembler(),
             mock(OnboardingService.class), mock(RecommendationReasonCache.class));
         return new AiChatServiceImpl(openAiClient("http://127.0.0.1:" + plain.getAddress().getPort()),
             tool, musicRepository,
@@ -441,7 +443,8 @@ class AiChatToolCallRecordTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(List.of(first));
 
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
-            client, musicRepository, sectionService, mock(OnboardingService.class),
+            client, musicRepository, sectionService, TestMusicSummaries.assembler(),
+            mock(OnboardingService.class),
             mock(RecommendationReasonCache.class));
         return new AiChatServiceImpl(
             openAiClient("http://127.0.0.1:" + fixed.getAddress().getPort()),

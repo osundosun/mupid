@@ -13,6 +13,8 @@ import { api } from './api/session';
 import { ApiError } from './api/client';
 import type { AiChatTurn, AiRecommendedTrack, AiToolCallRecord } from './api/endpoints';
 import type { ChatMessage, ChatToolCall, Track } from './mupid-data';
+import { sectionName } from './recommendations';
+import { toTrack } from './stream-catalog';
 
 /** 서버로 함께 보내는 이전 대화 수. 서버도 `ai.max-history` 로 한 번 더 자른다. */
 const HISTORY_LIMIT = 12;
@@ -40,8 +42,6 @@ export type ChatRequest = {
   prompt: string;
   /** 지금 듣고 있는 곡. 없으면 곡 문맥 없이 답한다. */
   current: Track | null;
-  /** 화면이 들고 있는 곡 전부. 추천 결과를 여기에서 찾는다. */
-  catalog: Track[];
   /** 지금까지 오간 말. 이번에 보낼 말은 포함하지 않는다. */
   history: ChatMessage[];
   /**
@@ -61,53 +61,51 @@ const toTurns = (messages: ChatMessage[]): AiChatTurn[] =>
   }));
 
 /**
- * 추천 결과를 화면의 곡에 얹는다.
+ * 추천 결과를 화면의 곡으로 옮긴다.
  *
- * **카탈로그에 없는 곡은 버린다.** 서버가 준 제목·아티스트만으로 줄을 그리면
- * 눌러도 재생되지 않는 곡이 목록에 남는다. 서버 쪽 추천이 목업인 동안에는
- * 대부분 버려지고 답변만 남는다 — 빈 목록이지 오류가 아니다.
+ * **서버가 준 곡을 그대로 쓴다** (S15P21A204-424). 곡 변환은 카탈로그와 같은 것
+ * (`stream-catalog.toTrack`)이라 같은 곡이 목록에 따라 다르게 보이지 않는다 —
+ * `이어 듣기`·`비슷한 곡`·`데일리 추천`(`lib/recommendations.ts` 의 `withSection`)이
+ * 이미 하던 방식이고, 챗봇만 예외였다.
  *
- * **버리는 것은 맞지만, 버렸다는 사실을 숨기지는 않는다** (S15P21A204-421). 여기서
- * 조용히 줄어든 개수 때문에 화면이 "3곡 골라뒀어요" 라고 말하면서 카드는 2장만
- * 그리는 일이 있었다. 차이를 사용자 문구로 옮기는 것은 `missingTracksNotice` 다.
+ * 예전에는 화면이 들고 있는 카탈로그에서 `music_id` 를 **다시 찾아** 못 찾으면 버렸다.
+ * 그 카탈로그는 앱을 열 때 받아 둔 앞쪽 100곡뿐인데(`stream-catalog.ts` 의
+ * `CATALOG_SIZE`) 추천은 전체 카탈로그에서 나오므로, 대부분이 말없이 버려졌다.
+ * 배포 환경에서 "추천받은 3곡 중 3곡은 지금 재생할 수 있는 목록에 없어 빼뒀어요" 만
+ * 뜨고 곡이 하나도 안 보이던 것이 이것이다.
+ *
+ * **재생할 수 없는 곡은 여전히 버린다.** 눌러도 안 나는 줄을 목록에 남기지 않으려는
+ * 것인데, 이제 그 판단을 카탈로그에 들어 있느냐가 아니라 **서버가 말해 주는 실제
+ * 신호**(`playable` — 완료된 스트림이 있는가)로 한다. 버린 건수는 숨기지 않는다
+ * (`missingTracksNotice`).
  */
-/** 서버 enum → 화면 이름. 모르는 값은 그대로 보여준다 (코드는 늘 수 있다). */
-const SECTION_LABELS: Record<string, string> = {
-  INTRO: '인트로',
-  VERSE: '벌스',
-  PRE_CHORUS: '프리코러스',
-  CHORUS: '코러스',
-  BRIDGE: '브리지',
-  BREAK: '브레이크',
-  INST: '간주',
-  SOLO: '솔로',
-  OUTRO: '아웃트로',
-};
-
 const resolve = (
   recommended: AiRecommendedTrack[],
-  catalog: Track[],
   recommendationId: number | null,
 ): Track[] =>
   recommended.flatMap((item) => {
-    const found = catalog.find((track) => track.musicId === item.music_id);
-    if (!found) return [];
+    if (!item.music.playable) return [];
+    const base = toTrack(item.music);
     const start = item.start_time_ms / 1000;
     const end = item.end_time_ms / 1000;
-    const usable = Number.isFinite(start) && start > 0 && start < found.duration;
+    // 곡 길이를 모르는 곡이 있다(`streams` 에 행이 없으면 `duration_ms` 가 null).
+    // 그때는 길이로 거르지 않는다 — 거르면 멀쩡한 추천이 통째로 0초가 된다.
+    const usable =
+      Number.isFinite(start) && start > 0 && (!base.duration || start < base.duration);
     return [
       {
-        ...found,
+        ...base,
         // 곡 자체가 아니라 "이 구간" 을 권한 것이다. 구간 시작을 순간으로 잡는다.
-        moment: usable ? start : found.moment,
+        moment: usable ? start : base.moment,
         match: Math.round(Math.min(Math.max(item.score, 0), 1) * 100),
         reason: item.reason,
         recommended: {
-          sectionLabel:
-            SECTION_LABELS[item.section_label ?? ''] ?? item.section_label ?? '',
-          start: usable ? start : found.moment,
+          // 구간 이름 옮기는 표는 `lib/recommendations.ts` 한 곳에 둔다. 두 벌이 되면
+          // 같은 구간이 챗봇과 이어듣기에서 다른 이름으로 보인다.
+          sectionLabel: sectionName(item.section_label),
+          start: usable ? start : base.moment,
           // 끝이 시작보다 앞서면 믿지 않는다. 구간 끝을 모르면 곡 끝까지 튼다.
-          end: Number.isFinite(end) && end > start ? end : found.duration,
+          end: Number.isFinite(end) && end > start ? end : base.duration,
           reasonCode: item.reason_code,
           reason: item.reason,
           recommendationId: recommendationId ?? undefined,
@@ -141,13 +139,18 @@ const recommendedCount = (calls: ChatToolCall[] | undefined): number =>
  *
  * ## 왜 필요한가
  *
- * 곡이 말없이 사라지는 자리가 둘이다.
- *   1) `resolve()` — 추천된 곡이 화면 카탈로그에 없으면 버린다. 눌러도 재생되지 않는
- *      줄을 만들지 않으려는 것이라 **버리는 판단 자체는 옳다.**
- *   2) 채팅의 곡 목록 — 답변이 온 뒤 사용자가 '관심 없음' 으로 표시한 곡을 가린다.
+ * 답변은 "3곡 골라뒀어요" 인데 카드는 2장인 화면이 있었다. 한 곡이 어디로 갔는지
+ * 화면 어디에도 없었다 — 이 저장소가 반복해 겪은 조용한 실패다.
  *
- * 둘 다 결과만 보면 똑같다: 답변은 "3곡 골라뒀어요" 인데 카드는 2장이다. 한 곡이
- * 어디로 갔는지 화면 어디에도 없었다. 이 저장소가 반복해 겪은 조용한 실패다.
+ * ## 지금 곡이 빠지는 자리는 둘뿐이다
+ *
+ *   1) **아직 재생할 수 없는 곡.** 완료된 스트림이 없어 `playable` 이 false 다.
+ *      `resolve()` 가 버린다 — 눌러도 안 나는 줄을 목록에 남기지 않으려는 것이다.
+ *   2) **사용자가 가린 곡.** 답변이 온 뒤 '관심 없음' 으로 표시한 곡을 곡 목록이 가린다.
+ *
+ * 세 번째 자리가 있었다: 화면 카탈로그(앞쪽 100곡)에 없어서 버리던 것. 서버가 곡을
+ * 통째로 실어 주게 되면서 **없어졌다** (S15P21A204-424). 그래서 이 줄은 이제 드물게만
+ * 나온다 — 늘 뜨고 있다면 그것 자체가 이상 신호다.
  *
  * ## 무엇을 하지 않는가
  *
@@ -160,9 +163,6 @@ const recommendedCount = (calls: ChatToolCall[] | undefined): number =>
  * `null` 이다. 멀쩡한 답변 밑에 군더더기 한 줄을 붙이지 않는다.
  *
  * 문구는 **사용자용**이다. 내부 이름을 쓰지 않는다(`chat-tool-calls.tsx` 의 문구 원칙).
- * 카탈로그에 없어서 버린 곡과 사용자가 오기 전에 숨겨 둔 곡은 화면에서 구별되지
- * 않으므로("숨긴 곡" 은 요청 단계에서 카탈로그에서 빠진다), 둘 다 참인 말로 적는다 —
- * "지금 재생할 수 있는 목록에 없어" 다.
  */
 export function missingTracksNotice(
   toolCalls: ChatToolCall[] | undefined,
@@ -179,7 +179,7 @@ export function missingTracksNotice(
   const hidden = Math.max(0, resolved - shown);
   if (unplayable === 0 && hidden === 0) return null;
   const parts: string[] = [];
-  if (unplayable > 0) parts.push(`${unplayable}곡은 지금 재생할 수 있는 목록에 없어 빼뒀`);
+  if (unplayable > 0) parts.push(`${unplayable}곡은 아직 재생할 수 없어 빼뒀`);
   if (hidden > 0) parts.push(`${hidden}곡은 관심 없음으로 표시해 가려뒀`);
   return `추천받은 ${recommended}곡 중 ${parts.join('고, ')}어요.`;
 }
@@ -213,7 +213,6 @@ const toToolCalls = (records: AiToolCallRecord[] | undefined): ChatToolCall[] =>
 export async function requestChat({
   prompt,
   current,
-  catalog,
   history,
   sessionId,
   signal,
@@ -232,7 +231,7 @@ export async function requestChat({
   );
   return {
     text: result?.reply ?? '',
-    tracks: resolve(result?.tracks ?? [], catalog, result?.recommendation_id ?? null),
+    tracks: resolve(result?.tracks ?? [], result?.recommendation_id ?? null),
     // 서버가 발급(또는 재사용)한 세션 번호. 화면이 들고 있다가 다음 턴에 되돌려 보낸다.
     // 저장에 실패했으면 null 이고, 그러면 다음 턴에 새 세션이 열린다 — 답변은 정상이다.
     sessionId: result?.session_id ?? null,

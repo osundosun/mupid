@@ -13,15 +13,16 @@ import com.osundosun.mupid.api.ai.client.OpenAiTool;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
 import com.osundosun.mupid.api.ai.dto.AiRecommendedTrack;
+import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.service.MusicSectionService;
+import com.osundosun.mupid.api.music.service.MusicSummaryAssembler;
 import com.osundosun.mupid.api.recommendation.service.RecommendationReasonCache;
 import com.osundosun.mupid.api.onboarding.dto.CodeOption;
 import com.osundosun.mupid.api.onboarding.response.OnboardingResultResponse;
 import com.osundosun.mupid.api.onboarding.service.OnboardingService;
-import com.osundosun.mupid.api.storage.service.StorageImageService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -63,6 +64,7 @@ public class AiRecommendToolImpl implements AiRecommendTool {
     private final RecommenderClient recommender;
     private final MusicRepository musicRepository;
     private final MusicSectionService musicSectionService;
+    private final MusicSummaryAssembler musicSummaryAssembler;
     private final OnboardingService onboardingService;
     private final RecommendationReasonCache reasonCache;
 
@@ -273,11 +275,18 @@ public class AiRecommendToolImpl implements AiRecommendTool {
     }
 
     /**
-     * 추천 서버가 돌려준 문자열 ID 를 숫자 ID·곡 정보로 옮긴다.
+     * 추천 서버가 돌려준 문자열 ID 를 곡 표현으로 옮긴다.
      *
-     * 추천 서버는 `external_id` 와 순위·사유만 준다. 곡 번호·구간 번호·시간·구간 종류·
-     * 제목·아티스트·표지는 **전부 여기서** 나온다. 어차피 제목을 붙이려고 하는 조회라
-     * 조회 조건만 `external_id` 로 바뀐 것이다.
+     * 추천 서버는 `external_id` 와 순위·사유만 준다. 곡·구간 번호·시간·구간 종류는
+     * **전부 여기서** 나온다. 어차피 제목을 붙이려고 하던 조회라, 조회 조건만
+     * `external_id` 로 바뀐 것이다.
+     *
+     * <p><b>곡은 {@link MusicSummary} 로 통째로 싣는다</b> (S15P21A204-424). 예전에는
+     * 제목·아티스트·앨범·표지만 납작하게 실었는데, 그것만으로는 화면이 줄을 그려도
+     * 재생할 수가 없어서 화면이 자기 카탈로그에서 같은 곡을 다시 찾아 채웠다. 그
+     * 카탈로그가 앞쪽 100곡뿐이라 추천이 대부분 버려졌다 — 자세한 것은
+     * {@link AiRecommendedTrack} 주석에 있다. 조립은 목록·상세와 같은
+     * {@link MusicSummaryAssembler} 가 한다. 두 벌이 되면 같은 곡이 화면마다 다르게 보인다.
      *
      * MySQL 에 없는 `external_id` 는 **버린다.** 화면이 재생할 수 없는 줄을 그리게 되기
      * 때문이다. 그런 일이 생겼다면 구간 적재가 색인보다 낡았다는 뜻이라 로그에 남긴다.
@@ -293,7 +302,11 @@ public class AiRecommendToolImpl implements AiRecommendTool {
         Map<Integer, Music> byId = musicRepository.findDetailAllByIds(ids).stream()
             .collect(Collectors.toMap(Music::getMusicId, m -> m, (a, b) -> a));
 
-        List<AiRecommendedTrack> out = new ArrayList<>();
+        // 남길 것을 먼저 고른다. 곡 표현은 **한 번에** 조립한다 — 곡마다 부르면
+        // 길이·장르·분위기 조회가 곡 수만큼 반복돼 N+1 이 된다.
+        List<RecommenderDto.Item> kept = new ArrayList<>();
+        List<MusicSectionAnalysis> keptSections = new ArrayList<>();
+        List<Music> keptMusics = new ArrayList<>();
         // 버린 건수를 센다. 건별 경고만으로는 "전부 버려서 곡 0건인데 대화는 정상 응답" 하는
         // 상태가 눈에 띄지 않는다 — 사용자에게는 "추천이 안 온다" 로 보인다.
         int missingSection = 0;
@@ -312,13 +325,27 @@ public class AiRecommendToolImpl implements AiRecommendTool {
                 log.warn("구간 external_id={} 의 곡을 찾지 못했다", item.externalId());
                 continue;
             }
+            kept.add(item);
+            keptSections.add(section);
+            keptMusics.add(music);
+        }
+
+        // 넘긴 순서 그대로 돌려준다 (`MusicSummaryAssembler.assemble`). 자리로 맞물리므로
+        // 길이가 어긋나면 곡과 구간이 뒤바뀐다 — 어긋나면 그 자리에서 멈춘다.
+        List<MusicSummary> summaries = musicSummaryAssembler.assemble(keptMusics);
+        if (summaries.size() != keptMusics.size()) {
+            throw new IllegalStateException(
+                "곡 표현 조립 결과가 넘긴 곡 수와 다르다 보낸=%d 받은=%d"
+                    .formatted(keptMusics.size(), summaries.size()));
+        }
+
+        List<AiRecommendedTrack> out = new ArrayList<>();
+        for (int i = 0; i < kept.size(); i++) {
+            RecommenderDto.Item item = kept.get(i);
+            MusicSectionAnalysis section = keptSections.get(i);
             out.add(new AiRecommendedTrack(
                 out.size() + 1,                          // 버린 것이 있어도 순번은 이어 붙인다
-                music.getMusicId(),
-                music.getTitle(),
-                music.getArtist().getName(),
-                music.getAlbum().getTitle(),
-                StorageImageService.imageUrl(music.getAlbum().getImageFile()),
+                summaries.get(i),
                 section.getMusicSectionAnalysisId(),
                 section.getSectionLabel(),
                 section.getStartTimeMs(),

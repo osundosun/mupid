@@ -78,7 +78,8 @@ class RecommendToolSilentDropTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(catalog);
 
         AiRecommendToolImpl tool =
-            new AiRecommendToolImpl(recommender, musicRepository, sectionService, null,
+            new AiRecommendToolImpl(recommender, musicRepository, sectionService,
+                TestMusicSummaries.assembler(), null,
                 mock(RecommendationReasonCache.class));
         // 현재 곡이 없으면 조건 없는 next 경로다. userId 는 온보딩 조회에만 쓰이는데
         // 온보딩 서비스가 null 이므로 추천 요청 자체는 대역으로 바로 간다.
@@ -141,7 +142,7 @@ class RecommendToolSilentDropTest {
             List.of(found));
 
         assertThat(tracks).hasSize(1);
-        assertThat(tracks.getFirst().title()).isEqualTo("살아남은 곡");
+        assertThat(tracks.getFirst().music().title()).isEqualTo("살아남은 곡");
         assertThat(warnings()).anySatisfy(w ->
             assertThat(w).contains("추천 2건 중 1건을 DB 에서 찾지 못해 버렸다")
                 .contains("남은 곡 1건"));

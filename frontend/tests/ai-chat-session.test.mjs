@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
-import ts from 'typescript';
+
+import { aiChat } from './fixtures/ai-chat-module.mjs';
 
 /**
  * 세션 이어받기. S15P21A204-375 의 프론트 절반이다.
@@ -24,40 +25,7 @@ import ts from 'typescript';
  * 같은 방식이다.
  */
 
-const inline = (source) =>
-  'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
-
-const sessionStub = inline(`
-  export const api = {
-    ai: {
-      chat: async (body) => {
-        globalThis.__aiCalls.push(body);
-        return globalThis.__aiReply;
-      },
-    },
-  };
-`);
-
-const clientStub = inline(`
-  export class ApiError extends Error {
-    constructor(status, code, message) { super(message); this.status = status; this.code = code; }
-  }
-`);
-
-const source = await readFile(new URL('../lib/ai-chat.ts', import.meta.url), 'utf8');
-const js = ts
-  .transpileModule(source, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-  })
-  .outputText.replace("'./api/session'", JSON.stringify(sessionStub))
-  .replace("'./api/client'", JSON.stringify(clientStub));
-
-const { requestChat } = await import(inline(js));
-
-const catalog = [
-  { id: 1002, musicId: 2, title: '곡', artist: '테스트', album: '테스트', genre: '', mood: '',
-    moment: 30, duration: 120, match: 100, reason: '', image: '/a.webp', tags: [], sections: [] },
-];
+const { requestChat } = aiChat;
 
 /** 서버 본문을 그대로 옮긴 것. `session_id` 를 포함한다. */
 const replyWith = (sessionId, extra = {}) => ({
@@ -74,14 +42,14 @@ const wireBody = (index) => JSON.parse(JSON.stringify(globalThis.__aiCalls[index
 
 test('응답의 session_id 를 읽어 ChatAnswer 로 올린다', async () => {
   setReply(replyWith(42));
-  const answer = await requestChat({ prompt: '추천해 줘', current: null, catalog, history: [] });
+  const answer = await requestChat({ prompt: '추천해 줘', current: null, history: [] });
   assert.equal(answer.sessionId, 42);
 });
 
 test('두 번째 턴은 같은 세션으로 나간다 — 턴마다 새 세션이 열리지 않는다', async () => {
   // 1턴: 세션이 없다. 서버가 42 를 발급한다.
   setReply(replyWith(42));
-  const first = await requestChat({ prompt: '잔잔하게', current: null, catalog, history: [] });
+  const first = await requestChat({ prompt: '잔잔하게', current: null, history: [] });
   assert.equal(first.sessionId, 42);
   // 첫 턴에는 실을 번호가 없다. 키가 빠져야 서버가 새 세션을 연다.
   assert.equal('session_id' in wireBody(0), false, '첫 턴에 session_id 가 나가면 안 된다');
@@ -90,7 +58,7 @@ test('두 번째 턴은 같은 세션으로 나간다 — 턴마다 새 세션�
   globalThis.__aiCalls = [];
   setReply(replyWith(42));
   const second = await requestChat({
-    prompt: '조금 더 빠르게', current: null, catalog, history: [],
+    prompt: '조금 더 빠르게', current: null, history: [],
     sessionId: first.sessionId,
   });
 
@@ -101,7 +69,7 @@ test('두 번째 턴은 같은 세션으로 나간다 — 턴마다 새 세션�
   globalThis.__aiCalls = [];
   setReply(replyWith(42));
   await requestChat({
-    prompt: '다른 것도', current: null, catalog, history: [], sessionId: second.sessionId,
+    prompt: '다른 것도', current: null, history: [], sessionId: second.sessionId,
   });
   assert.equal(wireBody(0).session_id, 42);
 });
@@ -109,7 +77,7 @@ test('두 번째 턴은 같은 세션으로 나간다 — 턴마다 새 세션�
 test('세션이 없으면(null) 키를 보내지 않는다 — null 은 서버 검증에 걸린다', async () => {
   setReply(replyWith(null));
   const answer = await requestChat({
-    prompt: '추천', current: null, catalog, history: [], sessionId: null,
+    prompt: '추천', current: null, history: [], sessionId: null,
   });
 
   assert.equal('session_id' in wireBody(0), false);
@@ -121,7 +89,7 @@ test('세션이 없으면(null) 키를 보내지 않는다 — null 은 서버 �
 test('session_id 가 아예 없는 응답(구 서버)에도 터지지 않는다', async () => {
   // 배포 순서가 어긋나면 화면이 새 서버보다 먼저 뜰 수 있다.
   setReply({ reply: '네', recommendation_id: null, tracks: [] });
-  const answer = await requestChat({ prompt: '추천', current: null, catalog, history: [] });
+  const answer = await requestChat({ prompt: '추천', current: null, history: [] });
   assert.equal(answer.sessionId, null);
   assert.equal(answer.text, '네');
 });

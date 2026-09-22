@@ -92,7 +92,7 @@ class AiChatServiceToolDeclarationTest {
         factory.setReadTimeout(props.readTimeout());
         return new AiRecommendToolImpl(new RecommenderClient(RestClient.builder()
             .baseUrl(props.isConfigured() ? props.baseUrl() : "http://recommender.invalid")
-            .requestFactory(factory).build(), props), null, null, null, null);
+            .requestFactory(factory).build(), props), null, null, null, null, null);
     }
 
     /**
