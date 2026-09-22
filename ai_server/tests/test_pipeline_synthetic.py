@@ -294,13 +294,23 @@ def test_query_plan_ignores_history_onboarding_bpm_and_explore(svc, monkeypatch)
 
 
 def test_missing_vocal_and_instrument_data_do_not_drop_candidates(svc):
-    old = svc.CAT.meta.copy()
+    """카탈로그가 보컬·악기를 안 주면 그 조건은 **무시**한다 — 후보를 비우지 않는다.
+
+    악기는 이제 곡이 아니라 **구간**에 달린다(MySQL `music_analysis_instruments`).
+    그래서 곡 메타만 비워서는 "악기 데이터가 없다" 가 되지 않는다 — 구간 쪽도 함께
+    비워야 실제로 그 상태가 된다.
+    """
+    old_meta, old_pool, old_mom = svc.CAT.meta.copy(), svc.CAT.pool, svc.CAT.mom
     svc.CAT.meta["vocal_type"] = ""
     svc.CAT.meta["voice_label"] = ""
     svc.CAT.meta["gender_label"] = ""
     svc.CAT.meta["has_vocal"] = np.nan
     svc.CAT.meta["vocal_gender"] = ""
-    svc.CAT.meta["instrument_tags"] = ""
+    svc.CAT.meta["instruments"] = ""
+    svc.CAT.pool = old_pool.copy()
+    svc.CAT.mom = old_mom.copy()
+    svc.CAT.pool["instruments"] = ""
+    svc.CAT.mom["instruments"] = ""
     svc.CAT.__dict__.pop("_facets_cache", None)
     svc.CAT.__dict__.pop("_facets_by_track", None)
     try:
@@ -311,7 +321,7 @@ def test_missing_vocal_and_instrument_data_do_not_drop_candidates(svc):
         assert set(diag["ignored"]) == {
             "vocal(카탈로그 데이터 없음)", "instrument(카탈로그 데이터 없음)"}
     finally:
-        svc.CAT.meta = old
+        svc.CAT.meta, svc.CAT.pool, svc.CAT.mom = old_meta, old_pool, old_mom
         svc.CAT.__dict__.pop("_facets_cache", None)
         svc.CAT.__dict__.pop("_facets_by_track", None)
 

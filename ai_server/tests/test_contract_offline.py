@@ -2806,52 +2806,71 @@ def test_pull_signals_seoul_string_with_z_would_be_read_as_future(tmp_path, monk
     assert ev["track_id"] not in ok["recent_play"]
 
 
-# ---------------------------------------- 매핑 근거가 색인 안에 있다 (파일 없이)
+# ------------------------------------- 매핑 근거는 MySQL 이다 (파일도 색인도 아니다)
 
-def _plate_with_music_id(root, pairs, *, with_col=True):
-    """`flow_meta.parquet` 만 있는 판 하나. `pairs` 는 (track_id, music_id) 다."""
-    import pandas as pd
+@pytest.fixture
+def catalog():
+    """Spring 카탈로그 응답 모양으로 스냅샷을 꽂아 준다. 시험이 끝나면 비운다.
 
-    data = root / "data" / "proc" / "mupid"
-    data.mkdir(parents=True, exist_ok=True)
-    frame = {"track_id": [t for t, _ in pairs], "title": ["x"] * len(pairs)}
-    if with_col:
-        frame["music_id"] = pd.array([m for _, m in pairs], dtype="Int64")
-    pd.DataFrame(frame).to_parquet(data / "flow_meta.parquet", index=False)
-    return data
+    사전을 직접 채우지 않고 응답 모양을 지나가게 하는 이유는, 계약이 바뀌면 시험도
+    함께 깨지게 하려는 것이다.
+    """
+    from ai_server.app import catalog_api
+
+    def install(pairs, *, with_music_id=True, per_track=1):
+        tracks = [{
+            "musicId": mid if with_music_id else None,
+            "title": f"곡 {tid}",
+            "hasVocal": None, "vocalGender": None, "genres": [], "moods": [],
+            "sections": [{
+                "externalId": f"{tid}#{s}",
+                "musicSectionAnalysisId": 9000 + mid * 10 + s,
+                "sectionLabel": "CHORUS", "index": s,
+                "startTimeMs": s * 1000, "endTimeMs": (s + 1) * 1000,
+                "instruments": [], "moods": [],
+            } for s in range(per_track)],
+        } for tid, mid in pairs]
+        catalog_api.install(catalog_api.snapshot_from_tracks(tracks))
+
+    yield install
+    catalog_api.reset()
 
 
-def test_id_map_falls_back_to_the_index(clean_env, tmp_path, monkeypatch):
-    """별도 매핑 파일을 두지 않는다 — 근거는 `flow_meta.music_id` 다.
+def test_id_map_comes_from_the_catalog(clean_env, tmp_path, monkeypatch, catalog):
+    """별도 매핑 파일도, 색인 안의 사본도 두지 않는다 — 근거는 MySQL 이다.
 
-    숫자를 쓰는 곳은 배치 도구 둘뿐이고 둘 다 곡 수준만 쓴다. 그 값은 색인과 함께
-    버전이 매겨져 배포되므로 판과 매핑이 어긋날 자리가 없다.
+    예전 근거였던 `flow_meta.music_id` 도 결국 색인 안의 사본이라, 곡이 지워지거나
+    번호가 바뀌면 색인을 다시 굽기 전까지 옛 값이 살아 있었다.
     """
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
     from ai_server.app import ids as idsmod
 
-    _plate_with_music_id(tmp_path, [("T000001", 1), ("T000002", 2)])
+    catalog([("T000001", 1), ("T000002", 2)])
     im = idsmod.IdMap(strict=True)
 
-    assert im.loaded and im.stats()["source"] == "flow_meta"
+    assert im.loaded and im.stats()["source"] == "catalog_api"
     assert im.music_id("T000001") == 1
     assert im.source_track_id(2) == "T000002"
 
 
-def test_section_conversion_stays_unavailable(clean_env, tmp_path, monkeypatch):
-    """구간 PK 를 환산하는 코드는 저장소에 없다. 없는 채로 두고 오류를 낸다."""
+def test_section_conversion_now_comes_from_the_catalog(clean_env, tmp_path,
+                                                       monkeypatch, catalog):
+    """구간 PK 환산이 생겼다. 예전 `flow_meta` 경로는 곡 수준밖에 못 만들었다."""
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
     from ai_server.app import ids as idsmod
 
-    _plate_with_music_id(tmp_path, [("T000001", 1)])
+    catalog([("T000001", 1)], per_track=2)
     im = idsmod.IdMap(strict=True)
 
-    assert im.stats()["sections"] == 0
+    assert im.stats()["sections"] == 2
+    assert im.music_section_analysis_id("T000001#0") == 9010
+    assert im.external_id(9011) == "T000001#1"
+    # 카탈로그에 없는 구간은 **지어내지 않는다.**
     with pytest.raises(idsmod.MappingError):
-        im.music_section_analysis_id("T000001#0")
+        im.music_section_analysis_id("T000001#9")
 
 
-def test_missing_music_id_column_is_not_guessed(clean_env, tmp_path, monkeypatch):
+def test_missing_music_id_is_not_guessed(clean_env, tmp_path, monkeypatch, catalog):
     """`T000001` 에서 1 을 뽑지 않는다.
 
     시딩이 그렇게 만들었을 뿐 계약이 아니다 — `T000847_1` 처럼 규칙 밖 값이 실제로
@@ -2860,7 +2879,7 @@ def test_missing_music_id_column_is_not_guessed(clean_env, tmp_path, monkeypatch
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
     from ai_server.app import ids as idsmod
 
-    _plate_with_music_id(tmp_path, [("T000001", 1)], with_col=False)
+    catalog([("T000001", 1)], with_music_id=False)
     im = idsmod.IdMap(strict=False)
 
     assert not im.loaded
@@ -2870,25 +2889,27 @@ def test_missing_music_id_column_is_not_guessed(clean_env, tmp_path, monkeypatch
 
 
 def test_a_stray_map_file_is_ignored_not_obeyed(clean_env, tmp_path, monkeypatch,
-                                                capsys):
+                                                capsys, catalog):
     """판 자리의 매핑표는 규칙상 없어야 한다. 있어도 읽지 않는다.
 
-    조용히 그쪽이 이기면 낡은 표가 색인을 덮어 **오류 없이** 엉뚱한 곡을 가리킨다.
+    조용히 그쪽이 이기면 낡은 표가 카탈로그를 덮어 **오류 없이** 엉뚱한 곡을 가리킨다.
     """
     import pandas as pd
 
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
     from ai_server.app import ids as idsmod
 
-    data = _plate_with_music_id(tmp_path, [("T000001", 1)])
+    data = tmp_path / "data" / "proc" / "mupid"
+    data.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"source_track_id": ["T000001"], "music_id": [999],
                   "external_id": ["T000001#0"],
                   "music_section_analysis_id": [9330]}
                  ).to_parquet(data / "id_map.parquet", index=False)
+    catalog([("T000001", 1)])
 
     im = idsmod.IdMap(strict=True)
 
-    assert im.stats()["source"] == "flow_meta"
+    assert im.stats()["source"] == "catalog_api"
     assert im.music_id("T000001") == 1              # 표의 999 가 아니다
     assert "규칙상 없어야 할 매핑표" in capsys.readouterr().err
 

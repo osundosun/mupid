@@ -47,8 +47,15 @@ def _build(root, n_pool=6, n_fma=14):
              pca_comp=rng.normal(size=(DIM_EMB, DIM_X)).astype(np.float32),
              side_cols=np.array(["a"], dtype="<U24"), evr=np.float32(0.7))
     np.save(data / "stage1_section.npy", rng.normal(size=(total, DIM_Z)).astype(np.float32))
-    pd.DataFrame({"track_id": mom.track_id, "bpm": 120.0}).to_parquet(
-        data / "content.parquet", index=False)
+    pd.DataFrame({"track_id": mom.track_id, "bpm": 120.0, "dur_sec": 200.0}
+                 ).to_parquet(data / "content.parquet", index=False)
+    # 전체 색인 쪽에는 그대로 남는다(특징을 다시 굽는 오프라인 경로가 읽는다).
+    # **배송 묶음에는 나가면 안 된다** — 제목·장르는 MySQL 이 정본이다.
+    pd.DataFrame({"track_id": mom.track_id, "title": "제목",
+                  "genre_code": "indie_rock", "mood_codes": "calm",
+                  "language": "ko", "category": "pop", "sound_raw": "",
+                  "bpm_lo": 100.0, "bpm_hi": 140.0}
+                 ).to_parquet(data / "flow_meta.parquet", index=False)
     (data / "features_info.json").write_text(json.dumps({"version": "feat-v1"}),
                                              encoding="utf-8")
     return data
@@ -135,12 +142,57 @@ def test_pca_basis_is_carried_over_not_refitted(sliced):
     assert np.array_equal(before["side_cols"], after["side_cols"])
 
 
-def test_content_is_narrowed_to_pool_tracks(sliced):
+def test_track_features_are_narrowed_to_pool_tracks(sliced):
     _, out, _ = sliced
     mom = pd.read_parquet(out / "moments.parquet")
-    content = pd.read_parquet(out / "content.parquet")
+    features = pd.read_parquet(out / "track_features.parquet")
 
-    assert set(content.track_id) == set(mom.track_id)
+    assert set(features.track_id) == set(mom.track_id)
+
+
+def test_mysql_owned_metadata_never_ships(sliced):
+    """제목·장르·무드·보컬·악기는 **MySQL 이 정본**이다. 묶음에 사본이 가면 안 된다.
+
+    가면 어느 쪽이 이기는지가 자리마다 갈린다 — 지워진 곡의 구간이 색인에 남아
+    계속 추천되던 것이 그 상태였다. 오류는 나지 않는다.
+    """
+    _, out, _ = sliced
+
+    assert not (out / "content.parquet").exists()
+    assert not (out / "flow_meta.parquet").exists()
+
+    # 곡 축에는 DB 에 컬럼이 없는 것만 남는다.
+    features = pd.read_parquet(out / "track_features.parquet")
+    assert set(features.columns) == {
+        "track_id", "bpm", "dur_sec", "language", "category",
+        "bpm_lo", "bpm_hi", "sound_raw"}
+
+    # 구간 축에서도 MySQL 이 정본인 열은 떨어져 나간다.
+    mom = pd.read_parquet(out / "moments.parquet")
+    for gone in ("section_label", "section_idx", "start_sec", "end_sec",
+                 "dur_sec", "instruments"):
+        assert gone not in mom.columns, gone
+    # 벡터를 가리키는 값과 오디오에서 잰 값은 남아야 한다.
+    for kept in ("moment_id", "track_id", "emb_row", "source",
+                 "rel_start", "rel_end", "rms"):
+        assert kept in mom.columns, kept
+
+
+def test_bundle_declares_the_contract_it_was_baked_with(sliced):
+    """표식이 없으면 옛 판과 새 코드가 **오류 없이** 섞인다.
+
+    옛 판은 장르·무드를 `flow_meta` 안에 들고 있는데 새 코드는 그 파일을 읽지
+    않으므로, 그 축이 통째로 빈 채 추천이 돈다. 추천 서버가 이 표식을 보고 거절한다.
+    """
+    from ai_server.app import index_contract
+
+    _, out, report = sliced
+    meta = json.loads((out / "index_meta.json").read_text(encoding="utf-8"))
+
+    assert meta["index_contract"] == index_contract.CONTRACT
+    assert meta["catalog_source"] == index_contract.SOURCE
+    assert meta["rows"] == len(pd.read_parquet(out / "moments.parquet"))
+    assert report["metadata_source"] == index_contract.SOURCE
 
 
 def test_refuses_to_overwrite_the_source(tmp_path, monkeypatch):
@@ -200,7 +252,7 @@ def test_id_map_file_never_ships(tmp_path, monkeypatch):
     """옛 매핑 파일은 묶음에 들어가면 **안 된다.**
 
     받는 쪽 `ALLOWED` 밖의 이름이 섞이면 묶음 전체가 exit 65 로 거부된다.
-    근거는 파일이 아니라 `flow_meta.music_id` 다.
+    근거는 파일도 색인도 아니라 **MySQL** 이다 (`app/catalog_api.py`).
     """
     monkeypatch.setenv("MUPID_POOL", "flow")
     from ai_server.tools import slice_index
@@ -215,38 +267,39 @@ def test_id_map_file_never_ships(tmp_path, monkeypatch):
     assert not (dst / "data" / "proc" / "mupid" / "id_map.parquet").exists()
 
 
-def test_bundle_reports_the_mapping_it_carries(tmp_path, monkeypatch, capsys):
-    """숫자 환산 근거는 `flow_meta.music_id` 다. 몇 곡분인지 세어서 말한다."""
-    monkeypatch.setenv("MUPID_POOL", "flow")
-    from ai_server.tools import slice_index
+def test_empty_track_axes_are_reported_not_swallowed(tmp_path, monkeypatch, capsys):
+    """비면 조용히 무너진다 — 그 조건이 아무 곡도 고르지 못한다. 말은 한다.
 
-    src, dst = tmp_path / "full", tmp_path / "serving"
-    data = _build(src)
-    fm = pd.read_parquet(data / "content.parquet")[["track_id"]].copy()
-    fm["music_id"] = pd.array(range(1, len(fm) + 1), dtype="Int64")
-    fm.to_parquet(data / "flow_meta.parquet", index=False)
-
-    report = slice_index.slice_index(src, dst)
-
-    assert report["id_map"]["source"] == "flow_meta"
-    assert report["id_map"]["tracks"] > 0
-    assert "flow_meta.music_id" in capsys.readouterr().out
-
-
-def test_missing_music_id_is_reported_not_swallowed(tmp_path, monkeypatch, capsys):
-    """비면 조용히 무너진다 — pull_signals 가 재생신호를 전부 버린다. 말은 한다."""
+    오류가 아니라 "조건에 맞는 곡이 없다" 로 나오므로, 세어서 말하지 않으면
+    응답만 봐서는 정상과 구분되지 않는다.
+    """
     monkeypatch.setenv("MUPID_POOL", "flow")
     from ai_server.tools import slice_index
 
     src, dst = tmp_path / "full", tmp_path / "serving"
     data = _build(src)
     pd.read_parquet(data / "content.parquet")[["track_id"]].to_parquet(
-        data / "flow_meta.parquet", index=False)          # music_id 열이 없다
+        data / "flow_meta.parquet", index=False)      # language·category 가 없다
 
     report = slice_index.slice_index(src, dst)
 
-    assert report["id_map"].get("missing_column") is True
-    assert "music_id 열이 없다" in capsys.readouterr().err
+    assert set(report["track_features"]["empty_axes"]) == {
+        "language", "category", "bpm_lo", "bpm_hi", "sound_raw"}
+    assert "곡 수준 축이 비었다" in capsys.readouterr().err
+
+
+def test_refuses_when_bpm_cannot_be_carried(tmp_path, monkeypatch):
+    """BPM 이 빠지면 템포 조건과 이어 듣기 감점이 통째로 사라진다 — 그 전에 멈춘다."""
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    data = _build(src)
+    (data / "content.parquet").unlink()
+
+    with pytest.raises(SystemExit) as e:
+        slice_index.slice_index(src, dst)
+    assert e.value.code == 65
 
 
 def test_every_shipped_file_is_one_the_receiver_accepts(sliced):

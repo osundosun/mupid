@@ -860,9 +860,21 @@ def run_labeler() -> dict:
     # 디코드하는데, Windows 는 cp949 라서 자식이 찍은 한국어 한 줄에 UnicodeDecodeError
     # 로 죽는다. 라벨은 제대로 만들어진 뒤에 출력을 읽다가 터지는 것이라, 증상이
     # "라벨 생성 실패" 로만 보여 원인이 인코딩이라는 것이 드러나지 않는다.
+    #
+    # 구간 종류·시각·순서는 색인에 없다 — MySQL 이 정본이고 `CAT.mom` 에 이미 합쳐져
+    # 있다. 자식에게 **stdin 으로** 넘긴다. 파일로 떨구면 그 파일이 곧 두 번째 사본이
+    # 되고, 다음 사람은 그것을 읽어도 되는 줄 안다.
+    from . import labeler as _lab
+    argv = [sys.executable, "-m", "ai_server.app.labeler", "--events", str(src_events),
+            "--out", str(paths.labels_path()), "--pool", "service"]
+    payload = None
+    if CAT is not None:
+        cols = [c for c in _lab.MOMENT_COLS if c in CAT.mom.columns]
+        payload = json.dumps(CAT.mom[cols].to_dict("records"),
+                             ensure_ascii=False, default=str)
+        argv += ["--moments", "-"]
     r = subprocess.run(
-        [sys.executable, "-m", "ai_server.app.labeler", "--events", str(src_events),
-         "--out", str(paths.labels_path()), "--pool", "service"],
+        argv, input=payload,
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         cwd=paths.PKG_ROOT.parent)
     out = {"ok": r.returncode == 0 and paths.labels_path().exists(),
