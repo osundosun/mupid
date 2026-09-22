@@ -94,7 +94,7 @@ curl 'http://localhost:18123/?query=SELECT%20version()' \
 cd api && ./clickhouse/verify.sh
 ```
 
-고정 ID 로만 데이터를 넣으므로 여러 번 실행해도 결과가 같다. 28개 항목을 검사한다.
+고정 ID 로만 데이터를 넣으므로 여러 번 실행해도 결과가 같다. 29개 항목을 검사한다.
 
 | # | 검사 |
 | --- | --- |
@@ -209,9 +209,10 @@ ch() { docker exec mupid-dev-ch-01 clickhouse-client --user mupid --password "$P
 
 # 1) 트랙 구간 등록 — 이게 있어야 이벤트가 어느 구간인지 판정된다
 ch "INSERT INTO track_sections
-      (track_id, analysis_version, section_index, section_uid, fn, start_ms, end_ms, peak_ms)
+      (track_id, music_section_analysis_id, analysis_version,
+       section_index, section_uid, fn, start_ms, end_ms)
     SETTINGS distributed_foreground_insert = 1
-    VALUES (1001,'v1',1,'s1001-intro','INTRO',0,30000,15000)"
+    VALUES (1001,90001,'v1',1,'s1001-intro','INTRO',0,30000)"
 ch "SYSTEM RELOAD DICTIONARY default.dict_track_sections"
 
 # 2) Kafka 로 이벤트 1건 발행
@@ -400,8 +401,21 @@ public class SectionStatsService {
 `api/lombok.config` 에 `lombok.copyableAnnotations` 를 설정해 두었다. 이 파일이 없으면
 `@Qualifier` 가 조용히 무시된다.
 
-아직 이 템플릿을 사용하는 애플리케이션 코드는 없다. 연결과 조회는 확인했고
-(Distributed 테이블 조회, `dictGet` 포함) 실제 사용은 다음 작업에서 붙이면 된다.
+### 이 템플릿을 쓰는 곳
+
+| 클래스 | 하는 일 |
+| --- | --- |
+| `analytics/repository/ListenAnalyticsRepository` | MUBTI·리포트가 쓰는 판정용 집계 |
+| `analytics/repository/UserActivityRepository` | 관리자 화면의 사용자 타임라인 (원본 이벤트) |
+| `analytics/repository/TrackSectionRepository` | **유일하게 쓰는 쪽.** 구간 적재 (S15P21A204-435) |
+
+`TrackSectionRepository` 는 `MusicSectionServiceImpl.replaceSections` 가 부른다. 배치가
+`PUT /api/v1/music/{musicId}/section` 으로 올린 구간이 MySQL 과 `track_sections` 양쪽에
+들어간다. **MySQL 트랜잭션이 커밋된 뒤에** 넣고, 실패해도 MySQL 을 되돌리지 않는다 —
+분석 DB 가 죽었다고 곡 등록이 멈추면 배치가 곡마다 선다. 대신 곡 번호가 `ERROR` 로그에
+남고, 밀린 곡은 `ai_server/tools/push_sections.py` 로 메운다.
+
+행동 데이터(`listen_events`)는 스프링이 직접 쓰지 않는다. Kafka 를 거쳐 들어온다.
 
 ## 함께 고친 것: `storage`(SeaweedFS)
 

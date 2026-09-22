@@ -1567,6 +1567,10 @@ class _FakeMap:
             raise KeyError("매핑 없음")
         return {"T001001": 1001, "T001002": 1002}[s]
 
+    def music_section_analysis_id(self, uid):
+        # `T001002#3` 은 일부러 빼 둔다 — 곡은 매핑됐는데 구간만 없는 경우다.
+        return {"T001001#4": 50004}[uid]
+
 
 def _moments():
     import pandas as pd
@@ -1580,6 +1584,8 @@ def _moments():
          "section_label": "chorus", "start_sec": 10.0, "end_sec": 20.0},
         {"track_id": "T001001", "moment_id": "T001001#5", "section_idx": 5,
          "section_label": "chorus", "start_sec": 70.0, "end_sec": 70.0},
+        {"track_id": "T001002", "moment_id": "T001002#3", "section_idx": 3,
+         "section_label": "intro", "start_sec": 0.0, "end_sec": 20.0},
     ])
 
 
@@ -1591,6 +1597,36 @@ def test_push_sections_never_invents_a_numeric_id():
     assert stat["unmapped_track"] == 1
     assert "T000999" in stat["unmapped_sample"]
     assert all(r["track_id"] in (1001, 1002) for r in rows)
+
+
+def test_push_sections_carries_the_mysql_section_id():
+    """구간 표에 MySQL PK 를 함께 싣는다 (S15P21A204-435).
+
+    ClickHouse 쪽에서 구간을 가리키는 값이 문자열 `section_uid` 뿐이면 분석 결과를
+    MySQL 구간 행에 붙이려고 매번 문자열로 조인해야 한다. 스프링이 구간을 적재할 때
+    넣는 것과 같은 컬럼이므로 이쪽도 채운다.
+    """
+    from ai_server.tools import push_sections as ps
+
+    rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1")
+    by_uid = {r["section_uid"]: r for r in rows}
+    assert by_uid["T001001#4"]["music_section_analysis_id"] == 50004
+
+
+def test_push_sections_keeps_sections_whose_number_is_unknown():
+    """**구간은 매핑이 없어도 넣는다.** 곡과 다르다.
+
+    이 표의 첫 번째 쓰임은 `dictGet` 으로 재생 위치를 구간에 붙이는 것이고 거기에는
+    `section_uid` 면 충분하다. 번호가 없다고 빼면 그 구간의 이벤트가 통째로 버려지고,
+    그건 이 도구가 막으려는 바로 그 침묵이다.
+    """
+    from ai_server.tools import push_sections as ps
+
+    rows, stat = ps.build_rows(_moments(), _FakeMap(), "v1")
+    by_uid = {r["section_uid"]: r for r in rows}
+    assert "T001002#3" in by_uid, "번호를 모른다고 구간을 버리면 안 된다"
+    assert by_uid["T001002#3"]["music_section_analysis_id"] == 0
+    assert stat["unmapped_section"] == 1
 
 
 def test_push_sections_drops_labels_outside_the_erd_enum():
@@ -1679,19 +1715,31 @@ def test_push_sections_accepts_the_jdbc_url_shape(monkeypatch):
 
 
 # ------------------------------------------------------------------ 증분 적재
+def _remote(row: dict) -> tuple:
+    """`remote_state()` 가 돌려주는 모양. 컬럼이 늘면 여기만 고친다."""
+    return (row["start_ms"], row["end_ms"], row["fn"], row["music_section_analysis_id"])
+
+
 def test_push_sections_incremental_only_sends_changes():
     """구간 1만 개를 매번 밀면 파트가 쌓이고 머지가 따라오지 못한다."""
     from ai_server.tools import push_sections as ps
 
     rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1")
-    same = {r["section_uid"]: (r["start_ms"], r["end_ms"], r["fn"]) for r in rows}
+    same = {r["section_uid"]: _remote(r) for r in rows}
     todo, d = ps.diff(rows, same)
     assert todo == [] and d["new"] == 0 and d["changed"] == 0
 
     moved = dict(same)
     k = rows[0]["section_uid"]
-    moved[k] = (moved[k][0], moved[k][1] + 5000, moved[k][2])
+    moved[k] = (moved[k][0], moved[k][1] + 5000, moved[k][2], moved[k][3])
     todo, d = ps.diff(rows, moved)
+    assert d["changed"] == 1 and [r["section_uid"] for r in todo] == [k]
+
+    # 경계는 그대로인데 MySQL 구간 번호만 비어 있는 행. 이것도 다시 보내야 한다 —
+    # 03 마이그레이션으로 되살렸거나 id_map 이 늦게 갖춰진 회차가 이 모양이다.
+    blank = dict(same)
+    blank[k] = (blank[k][0], blank[k][1], blank[k][2], 0)
+    todo, d = ps.diff(rows, blank)
     assert d["changed"] == 1 and [r["section_uid"] for r in todo] == [k]
 
     todo, d = ps.diff(rows, {})
@@ -1703,8 +1751,8 @@ def test_push_sections_audit_spots_orphans():
     from ai_server.tools import push_sections as ps
 
     rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1")
-    remote = {r["section_uid"]: (r["start_ms"], r["end_ms"], r["fn"]) for r in rows}
-    remote["T009999#0"] = (0, 1000, "INTRO")
+    remote = {r["section_uid"]: _remote(r) for r in rows}
+    remote["T009999#0"] = (0, 1000, "INTRO", 0)
     _, d = ps.diff(rows, remote)
     assert d["orphan"] == 1 and "T009999#0" in d["orphan_sample"]
 
