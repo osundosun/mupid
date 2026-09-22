@@ -467,6 +467,12 @@ class MupidClient:
         돌려받는 `music_section_analysis_id` 가 추천 서버의 `id_map` 을 채운다. 이
         번호가 없으면 추천 결과가 곡으로 이어지지 않아 통째로 버려진다.
 
+        **이 한 번의 호출이 MySQL 과 ClickHouse 둘 다에 넣는다** (S15P21A204-435).
+        ClickHouse `track_sections` 가 채워져야 재생 위치가 어느 구간인지 판정되고,
+        비어 있으면 그 곡의 행동 신호가 오류 없이 통째로 버려진다. 배치가 따로 할
+        일은 없다 — 다만 ClickHouse 적재가 실패해도 응답은 200 이므로, 구간이 안
+        보이면 **서버 로그**를 본다.
+
         Args:
             sections: `section_index` · `external_id` · `section_label` ·
                 `start_time_ms` · `end_time_ms` 를 담은 줄. 라벨은 대문자다

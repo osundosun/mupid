@@ -109,13 +109,16 @@ check "DDL 큐 실패 건수" \
   "$(q "$CH1" "SELECT count() FROM system.distributed_ddl_queue WHERE status != 'Finished' OR exception_code != 0")" "0"
 
 echo "==> 4. track_sections (mupid_all 전 노드 복제)"
+# 컬럼은 MySQL `music_section_analysis` 한 행과 같다. `music_section_analysis_id`
+# (두 번째 값)가 그 표의 PK 이고, 스프링이 구간을 적재할 때 함께 넣는다.
 q "$CH1" "INSERT INTO track_sections
-    (track_id, analysis_version, section_index, section_uid, fn, start_ms, end_ms, peak_ms)
+    (track_id, music_section_analysis_id, analysis_version,
+     section_index, section_uid, fn, start_ms, end_ms)
   SETTINGS distributed_foreground_insert = 1
   VALUES
-    (1001,'v1',1,'s1001-intro','INTRO',0,30000,15000),
-    (1001,'v1',2,'s1001-hook','HOOK',30000,60000,45000),
-    (2002,'v1',1,'s2002-intro','INTRO',0,25000,10000)" >/dev/null
+    (1001,90001,'v1',1,'s1001-intro','INTRO',0,30000),
+    (1001,90002,'v1',2,'s1001-hook','HOOK',30000,60000),
+    (2002,90003,'v1',1,'s2002-intro','INTRO',0,25000)" >/dev/null
 # 수동 테스트로 다른 트랙 구간을 넣어도 깨지지 않도록 이 스크립트가 넣은 것만 센다.
 sections="SELECT uniqExact(section_uid) FROM track_sections_local
           WHERE analysis_version = 'v1' AND track_id IN (1001, 2002)"
@@ -131,6 +134,11 @@ for node in "$CH1" "$CH2"; do
 done
 check "구간 밖 조회는 빈 문자열 (MV 필터 조건)" \
   "$(q "$CH1" "SELECT dictGet('dict_track_sections','section_uid', toUInt64(1001), toUInt32(999999)) = ''")" "1"
+# 숫자 PK 가 딕셔너리까지 올라와야 재생 위치에서 MySQL 구간 행으로 바로 갈 수 있다.
+# 문자열 `section_uid` 로 조인하던 길을 대신하는 것이 이 컬럼의 쓰임이다.
+check "dictGet 이 music_section_analysis_id 를 돌려준다" \
+  "$(q "$CH1" "SELECT dictGet('dict_track_sections','music_section_analysis_id', toUInt64(1001), toUInt32(15000))")" \
+  "90001"
 
 echo "==> 6. Kafka -> mv_kafka_to_events -> listen_events"
 # listen_events 는 ReplacingMergeTree 라 같은 event_id 를 다시 넣어도 결과가 같지만,

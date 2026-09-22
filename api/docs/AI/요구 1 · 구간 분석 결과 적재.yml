@@ -175,6 +175,24 @@ docs:
     발급된 `music_section_analysis_id` 를 `external_id` 와 짝지어 돌려줍니다.
     AI 는 이 짝으로 `id_map` 을 만듭니다. **숫자 ID 를 AI 가 만들지 않습니다.**
 
+    ## ClickHouse 에도 함께 들어갑니다 — 2026-09-22 (S15P21A204-435)
+
+    같은 구간이 MySQL `music_section_analysis` 와 ClickHouse `track_sections` 에
+    함께 적재됩니다. 두 표는 컬럼이 1:1 이고, 이름이 다른 것은 셋뿐입니다
+    (`track_id` ← `music_id`, `start_ms` ← `start_time_ms`, `end_ms` ← `end_time_ms`).
+
+    `track_sections` 가 채워져야 `dict_track_sections` 가 재생 위치를 구간으로
+    판정합니다. **비어 있으면 좋아요를 눌러도 `user_section_signals` 에 한 줄도
+    남지 않습니다** — 오류가 아니라 침묵이라 화면만 봐서는 알 수 없습니다.
+
+    `analysis_version` 은 MySQL 에는 저장되지 않고(컬럼이 없습니다) ClickHouse 에만
+    남습니다. `v1` 이 아닌 값을 보내면 표에는 들어가되 딕셔너리가 보지 않아
+    **구간 판정에 전혀 쓰이지 않습니다.**
+
+    ClickHouse 적재가 실패해도 이 API 는 **200 을 돌려줍니다.** 분석 DB 가 죽었다고
+    곡 등록이 멈추면 배치가 곡마다 섭니다. 서버 로그에 곡 번호가 `ERROR` 로 남고,
+    밀린 곡은 `ai_server/tools/push_sections.py` 로 메웁니다.
+
     ## ERD 변경 — 2026-09-16 적용 완료
 
     | 항목 | 제안 시점 | 지금 |

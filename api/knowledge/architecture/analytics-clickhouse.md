@@ -17,7 +17,7 @@ api/clickhouse/
   server/10-macros.xml       macros {shard} {replica} + interserver_http_host
   users/00-profile.xml       profiles.default (쿼리 레벨 설정)
   users/10-mupid-user.xml    앱 계정 mupid
-  verify.sh                  28개 항목 스모크 테스트
+  verify.sh                  29개 항목 스모크 테스트
 ```
 
 기동 정의는 세 벌로 나뉜다.
@@ -28,7 +28,7 @@ api/clickhouse/
 | `api/compose.prod.yml` | `mupid` | 없음. 주석에 "ClickHouse 클러스터…는 이 compose 가 띄우지 않는다", `MUPID_CLICKHOUSE_URL` 을 운영 `.env` 에서 덮어쓰라고 적혀 있다 |
 | `infra/deploy/compose.yml` | `mupid` | 포함하되 profile 로 격리. 실제 배포 엔드포인트(`infra/deploy/receive.sh`)가 쓰는 파일이다 |
 
-Spring 쪽은 `api/src/main/java/com/osundosun/mupid/api/analytics/` 아래 세 갈래다 — 설정 두 파일(`config` · `properties`)과 조회 계층(`repository/ListenAnalyticsRepository` + `dto/`). 조회 계층은 취향 리포트가 처음 들여왔다 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md).
+Spring 쪽은 `api/src/main/java/com/osundosun/mupid/api/analytics/` 아래 세 갈래다 — 설정 두 파일(`config` · `properties`)과 접근 계층(`repository/` + `dto/`). 읽는 쪽은 취향 리포트가 처음 들여왔고 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md), **쓰는 쪽은 구간 적재(`repository/TrackSectionRepository`) 하나뿐이다** (S15P21A204-435).
 
 ## 클러스터 토폴로지
 
@@ -219,7 +219,7 @@ Spring 의 `event` 도메인이 유일한 프로듀서다(`EventKafkaConfig`). `
 ```bash
 cd api
 docker compose up -d --wait        # --wait 없으면 clickhouse-init 완료를 안 기다린다
-./clickhouse/verify.sh             # 28개 항목 스모크 테스트
+./clickhouse/verify.sh             # 29개 항목 스모크 테스트
 ```
 
 | 컨테이너 | 역할 | 호스트 포트 |
@@ -347,9 +347,17 @@ public class SectionStatsService {
 
 MySQL `JdbcTemplate` 이 `@Primary` 이므로 **`@Qualifier` 를 빠뜨리면 조용히 MySQL 이 주입된다.** 컴파일도 기동도 된다. `@RequiredArgsConstructor` 생성자로 `@Qualifier` 가 전달되려면 `api/lombok.config` 가 필요하다.
 
-이 템플릿을 쓰는 곳은 **`analytics/repository/ListenAnalyticsRepository` 하나뿐**이다. 취향 리포트가 처음 들여왔다 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md).
+이 템플릿을 쓰는 곳은 셋이다.
 
-새 조회를 붙일 때 그 클래스가 지키는 것 세 가지를 같이 지킨다.
+| 클래스 | 방향 | 하는 일 |
+|---|---|---|
+| `ListenAnalyticsRepository` | 읽기 | MUBTI·취향 리포트의 판정용 집계. 취향 리포트가 처음 들여왔다 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md) |
+| `UserActivityRepository` | 읽기 | 관리자 화면의 사용자 타임라인 (원본 이벤트 한 줄씩) |
+| `TrackSectionRepository` | **쓰기** | 구간 적재. `MusicSectionServiceImpl.replaceSections` 가 MySQL 커밋 뒤에 부른다 (S15P21A204-435) |
+
+`track_sections` 만 스프링이 쓴다. 행동 데이터는 Kafka 를 거쳐 들어오고 스프링은 손대지 않는다. 쓰기가 실패해도 MySQL 적재를 되돌리지 않는다 — 분석 DB 가 죽었다고 곡 등록이 멈추면 배치가 곡마다 선다. 곡 번호를 `ERROR` 로그에 남기고, 밀린 곡은 `ai_server/tools/push_sections.py` 로 메운다.
+
+새 **조회**를 붙일 때 `ListenAnalyticsRepository` 가 지키는 것 세 가지를 같이 지킨다.
 
 1. **Distributed 테이블(`listen_events`)을 읽는다.** Kafka 적재가 샤딩 키를 타지 않아 한 사용자의 이벤트가 두 샤드에 흩어져 있다. `_local` 을 읽으면 조용히 일부만 나온다.
 2. **`GROUP BY event_id` 로 감싼다.** `ReplacingMergeTree` 의 중복 제거는 병합 시점이고 그 시점을 보장할 수 없다. 합계를 내는 쿼리에서 이걸 빼면 재전송·재소비가 그대로 값 부풀리기가 된다.
@@ -376,7 +384,7 @@ MySQL `JdbcTemplate` 이 `@Primary` 이므로 **`@Qualifier` 를 빠뜨리면 �
 7. 설정 XML 을 추가하면 **서버 레벨(`config.d`)인지 쿼리 레벨(`users.d`)인지부터** 확인하고, compose 의 `volumes` 에 **파일 단위로** 한 줄 추가한다(디렉터리째 마운트 금지). 로컬 `api/compose.yml` 노드 2곳과 운영 `infra/deploy/compose.yml` 을 함께 고친다.
 8. 새 환경변수는 ClickHouse 노드 정체성만 `CH_` 접두사를, 나머지는 `MUPID_` 접두사를 쓴다. `api/.env.example` 과 `infra/deploy/.env.example` 을 함께 갱신한다.
 9. 셸 스크립트는 `#!/usr/bin/env bash` + `git ls-files -s` 기준 `100755` 로 커밋한다.
-10. 마지막에 `docker compose up -d --wait` → `cd api && ./clickhouse/verify.sh` 로 28개 항목이 전부 PASS 인지 확인한다.
+10. 마지막에 `docker compose up -d --wait` → `cd api && ./clickhouse/verify.sh` 로 29개 항목이 전부 PASS 인지 확인한다.
 
 ## 이 영역의 함정
 
