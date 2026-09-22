@@ -41,8 +41,7 @@ REQUIRED = {"MUPID_API_BASE_URL", "MUPID_API_REFRESH_TOKEN"}
 
 # Pinecone 을 켜 두었다면 이 셋도 있어야 한다. 켜 놓고 값을 빼면 추천 서버가
 # 뜨기는 하는데 **모든 검색이 실패**한다 — 켜는 것과 값을 넣는 것을 한 번에 검사한다.
-PINECONE_REQUIRED = {"MUPID_PINECONE_API_KEY", "MUPID_PINECONE_CANDIDATE_INDEX",
-                     "MUPID_PINECONE_RAW_INDEX"}
+PINECONE_REQUIRED = {"MUPID_PINECONE_API_KEY", "MUPID_PINECONE_INDEX"}
 
 
 def fail(message, code=65):

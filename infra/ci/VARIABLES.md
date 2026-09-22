@@ -38,11 +38,16 @@
 > | `MUPID_AI_CATALOG_TIMEOUT` | 아니오 | 호출 하나의 제한 시간(초, 기본 15) |
 > | `MUPID_AI_CATALOG_MIN_COVERAGE` | 아니오 | 색인–카탈로그 최소 일치율 (0~1, 기본 0.5) |
 > | `MUPID_PINECONE_API_KEY` | 켤 때 **예** | Pinecone API 키. 값은 어디에도 찍지 않는다 |
-> | `MUPID_PINECONE_CANDIDATE_INDEX` | 켤 때 **예** | 후보 검색 인덱스 이름 (`normalize(Z - mu)`) |
-> | `MUPID_PINECONE_RAW_INDEX` | 켤 때 **예** | 원본 벡터 인덱스 이름 (DNA·온보딩 평균용) |
+> | `MUPID_PINECONE_INDEX` | 켤 때 **예** | 순간 벡터 인덱스 이름. **하나다** — 평균은 `<namespace>__control` 에 들어간다 |
 > | `MUPID_PINECONE_NAMESPACE` | 아니오 | 환경 + 승인된 임베딩 버전. 예: `prod__mert-v1-95m` |
 > | `MUPID_PINECONE_ENABLED` | 아니오 | 검색을 Pinecone 으로 돌릴지. 비우면 꺼짐 |
 > | `MUPID_PINECONE_TIMEOUT` | 아니오 | 호출 하나의 제한 시간(초, 기본 10) |
+> | `MUPID_AI_SERVER_URL` | 갱신 배치에 **예** | 갱신 배치가 `/health` 로 "서버가 새 μ 를 읽었나" 를 확인할 주소. 확인 못 하면 `READY` 로 넘어가지 않는다 |
+> | `MUPID_AI_SERVER_DIR` | 아니오 | 분석 배치 호스트의 `ai_server` 체크아웃 경로 (기본 `$HOME/mupid_ai_project_dev`) |
+>
+> **분석 배치에도 같은 파일 변수를 쓴다.** JupyterHub 배치는 `deploy-jupyter.py --batch`
+> 가 `MUPID_AI_SERVER_ENV` 를 읽어 **배치 프로세스의 환경으로만** 넘긴다 — 서버
+> 디스크에 쓰지 않고 로그에도 찍지 않는다. 키 이름만 출력한다.
 >
 > `MUPID_PINECONE_ENABLED` 를 켰는데 앞의 셋 중 하나라도 비면 **수신기가 업로드를
 > 거부한다.** 켜 놓고 값을 빼면 추천 서버가 뜨기는 하는데 모든 검색이 실패한다.

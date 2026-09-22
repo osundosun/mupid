@@ -342,13 +342,20 @@ def _svc_mod():
 
 
 def _svc():
-    # 벡터를 갈아 끼우는 동안에는 **분명한 오류**를 돌려준다. 그때 candidate 와
-    # raw 가 서로 어긋나 있어서, 그 상태의 추천은 오류가 아니라 그냥 이상한 결과로
-    # 나온다. 로컬 옛 벡터로 조용히 내려가지도 않는다.
-    paused = pinecone_store.pause_state()
-    if paused is not None:
-        raise ApiError("RELOAD_IN_PROGRESS",
-                       "추천 벡터를 갱신하는 중입니다. 잠시 뒤 다시 시도해 주세요.")
+    # 벡터를 갈아 끼우는 동안에는 **분명한 오류**를 돌려준다. 그때 데이터
+    # namespace 가 비었거나 반쯤 차 있어서, 그 상태의 추천은 오류가 아니라 그냥
+    # 이상한 결과로 나온다. 로컬 옛 벡터로 조용히 내려가지도 않는다.
+    #
+    # 같은 호출이 **새 μ 도 읽어 온다** — 배치가 평균을 갈았는데 서버가 옛 평균으로
+    # 계속 도는 상태를 막는다. 재기동이 필요 없다.
+    if pinecone_store.enabled():
+        try:
+            pinecone_store.serving_center()
+        except pinecone_store.ServingPaused:
+            raise ApiError("RELOAD_IN_PROGRESS",
+                           "추천 벡터를 갱신하는 중입니다. 잠시 뒤 다시 시도해 주세요.")
+        except pinecone_store.PineconeError as e:
+            raise ApiError("INDEX_NOT_READY", f"순간 벡터 저장소를 읽지 못했습니다: {e}")
     svc = _svc_mod()
     if getattr(svc, "CAT", None) is None or len(svc.CAT.pool) == 0:
         raise ApiError("INDEX_NOT_READY", "추천 색인이 아직 준비되지 않았습니다.")

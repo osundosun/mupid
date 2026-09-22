@@ -70,12 +70,17 @@ def check_integrity() -> dict:
     out: dict = {"ok": False, "checks": {}, "errors": []}
     try:
         mom = pd.read_parquet(d / "moments.parquet", columns=["moment_id", "emb_row"])
+        # `moments_emb.npy` 는 **운영 판에 없다.** 순간 벡터의 정본은 Pinecone 이고
+        # 이 파일은 분석 배치의 입력 산출물이다. 있으면 함께 세고, 없어도 실패가
+        # 아니다 — 대신 벡터 쪽 정합은 control namespace 의 세대 검증이 본다.
         rows = {
             "moments": len(mom),
-            "moments_emb": int(np.load(d / "moments_emb.npy", mmap_mode="r").shape[0]),
             "features_v1": int(np.load(d / "features_v1.npz")["X"].shape[0]),
             "stage1_section": int(np.load(d / "stage1_section.npy", mmap_mode="r").shape[0]),
         }
+        emb = d / "moments_emb.npy"
+        if emb.exists():
+            rows["moments_emb"] = int(np.load(emb, mmap_mode="r").shape[0])
         out["checks"]["rows"] = rows
         if len(set(rows.values())) != 1:
             out["errors"].append(f"색인 행 수가 어긋난다: {rows}")
@@ -158,9 +163,12 @@ def _startup() -> None:
     if pinecone_store.enabled():
         try:
             got = pinecone_store.center()
-            # 평균·namespace·판이 **한 묶음**인가. 벡터만 바뀐 재분석도 여기서 걸린다.
-            got.require_snapshot(recommender.current_snapshot())
-            _STATE["vector_search"] = {"backend": "pinecone", **got.stats()}
+            # control 의 세대가 지금 판과 같은가. **저장본이 있을 때만** 다시 잴 수
+            # 있다 — 운영 판에는 없으므로 control 이 적은 값을 그대로 믿는다.
+            if getattr(recommender.CAT, "Z", None) is not None:
+                got.require_snapshot(recommender.current_snapshot())
+            _STATE["vector_search"] = {"backend": "pinecone", **got.stats(),
+                                       **pinecone_store.stats()}
             log(f"벡터 검색 — Pinecone · namespace {got.namespace!r} · 평균 {got.rows}건")
         except Exception as e:
             _STATE["error"] = f"{type(e).__name__}: {e}"
@@ -174,6 +182,21 @@ def _startup() -> None:
     log(f"적재 완료 {_STATE['load_seconds']}초 · "
         f"{recommender.CAT.pool.track_id.nunique()}곡 "
         f"{len(recommender.CAT.pool)}구간")
+
+
+def _generation() -> dict:
+    """서버가 지금 들고 있는 control 세대. **비밀값은 없다.**
+
+    갱신 배치가 이 값을 읽어 "새 μ 가 서버 메모리에 반영됐는가" 를 판정한다.
+    읽는 김에 캐시도 갱신되므로, 배치가 물어보는 행위 자체가 반영을 앞당긴다.
+    """
+    if not pinecone_store.enabled():
+        return {"backend": "local"}
+    try:
+        got = pinecone_store.center(reload=True)
+        return {"backend": "pinecone", **got.stats()}
+    except Exception as e:
+        return {"backend": "pinecone", "error": f"{type(e).__name__}: {e}"}
 
 
 def _refresh_loop(stop: threading.Event) -> None:
@@ -252,8 +275,9 @@ def health() -> dict:
         # 통째로 실패하므로, 설정 여부가 준비 판정과 같은 화면에 있어야 한다.
         "vector_search": {"backend": recommender.vector_backend(),
                           **pinecone_store.settings()},
-        # 갱신 중이면 그 까닭. /health 는 살아 있음만 보므로 여기서 이유를 읽는다.
-        "paused": pinecone_store.pause_state(),
+        # 갱신 중인지, 어느 세대를 들고 있는지. 배치가 "서버가 새 세대를 읽었나" 를
+        # 이 값으로 확인하고 그 뒤에 READY 로 넘어간다.
+        "vector_generation": _generation(),
         "index_contract": _STATE["plate"],
         "catalog_match": _STATE["catalog_match"],
         "integrity": (_STATE["integrity"] or {}).get("checks"),

@@ -254,7 +254,11 @@ class Catalog:
         self.mom = pd.read_parquet(paths.data_dir() / "moments.parquet")
         if "source" not in self.mom.columns:
             self.mom["source"] = "fma"
-        self.Z = np.load(paths.data_dir() / "moments_emb.npy", mmap_mode="r")
+        # **운영 판에는 없다.** 순간 벡터의 정본은 Pinecone 이고, 이 파일은 분석
+        # 배치가 Pinecone 을 채울 때만 읽는 입력 산출물이다. 로컬 갈래(개발·비교)
+        # 에서만 쓰이므로 없으면 None 으로 둔다 — 읽는 자리가 이유를 말한다.
+        emb = paths.data_dir() / "moments_emb.npy"
+        self.Z = np.load(emb, mmap_mode="r") if emb.exists() else None
         self.X, self.idx, self.info = feat.load()
 
         # ── 곡·순간 메타데이터의 정본은 **MySQL** 이다. 색인에는 없다.
@@ -1476,9 +1480,13 @@ def _pool_mean() -> np.ndarray:
     """
     c = CAT
     if vector_backend() == "pinecone":
-        return pinecone_store.center().mu
+        # control 이 들고 있다. **읽을 때마다 상태와 세대를 함께 본다** —
+        # UPDATING 이면 여기서 멈추고, 세대가 바뀌었으면 새 μ 로 갈아 끼운다.
+        # 서버를 다시 띄우지 않아도 새 평균을 쓰게 되는 자리가 여기다.
+        return pinecone_store.serving_center().mu
+    Z = _require_local_vectors("_pool_mean")
     if getattr(c, "_mu_g", None) is None:
-        c._mu_g = np.asarray(c.Z[c.pool_rows], dtype=np.float32).mean(0)
+        c._mu_g = np.asarray(Z[c.pool_rows], dtype=np.float32).mean(0)
     return c._mu_g
 
 
@@ -1495,13 +1503,14 @@ def raw_vectors(moment_ids) -> tuple[np.ndarray, list[str]]:
     if not ids:
         return np.zeros((0, _vector_dim()), np.float32), []
     if vector_backend() == "local":
+        Z = _require_local_vectors("raw_vectors")
         rowmap = CAT.mom.set_index(CAT.mom.moment_id.astype(str)).emb_row
         keep = [i for i in ids if i in rowmap.index]
         if not keep:
             return np.zeros((0, _vector_dim()), np.float32), []
         rows = rowmap.loc[keep].to_numpy()
-        return np.asarray(CAT.Z[rows], dtype=np.float32), keep
-    got = pinecone_store.fetch(ids)
+        return np.asarray(Z[rows], dtype=np.float32), keep
+    got = pinecone_store.fetch_raw(ids)
     keep = [i for i in ids if i in got]          # 부른 차례를 지킨다
     if not keep:
         return np.zeros((0, _vector_dim()), np.float32), []
@@ -1518,7 +1527,8 @@ def candidate_search(query_vector: np.ndarray, top_k: int) -> list[tuple[str, fl
     if vector_backend() == "pinecone":
         return pinecone_store.search(q, top_k)
     c = CAT
-    sim = center(np.asarray(c.Z[c.pool_rows], dtype=np.float32)) @ q
+    Z = _require_local_vectors("candidate_search")
+    sim = center(np.asarray(Z[c.pool_rows], dtype=np.float32)) @ q
     order = np.argsort(-sim)[:top_k]
     return [(str(c.pool.moment_id.iloc[int(i)]), float(sim[int(i)])) for i in order]
 
@@ -1531,7 +1541,8 @@ def current_snapshot() -> str:
     """
     c = CAT
     ids = c.pool.moment_id.astype(str).tolist()
-    Z = np.asarray(c.Z[c.pool_rows], dtype=np.float32)
+    Z = np.asarray(_require_local_vectors("current_snapshot")[c.pool_rows],
+                   dtype=np.float32)
     version = (c.info.get("embedding_version", "mert-v1-95m")
                if isinstance(c.info, dict) else "mert-v1-95m")
     return pinecone_store.snapshot_hash(ids, Z, version, POOL_SOURCES)
@@ -1542,6 +1553,16 @@ def _vector_dim() -> int:
     if c is not None and getattr(c, "Z", None) is not None:
         return int(c.Z.shape[1])
     return pinecone_store.center().dim
+
+
+def _require_local_vectors(what: str):
+    """local 갈래에서만 쓰는 저장본. 운영(Pinecone)에는 없어도 된다."""
+    c = CAT
+    if getattr(c, "Z", None) is None:
+        raise RuntimeError(
+            f"{what}: moments_emb.npy 가 판에 없다. 운영은 Pinecone 을 켜고 "
+            f"돌린다(MUPID_PINECONE_ENABLED) — 로컬 갈래는 개발·비교용이다")
+    return c.Z
 
 
 def center(V: np.ndarray) -> np.ndarray:

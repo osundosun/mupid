@@ -111,10 +111,34 @@ NEVER = {
 # 설정의 기본값은 저장소의 config.example.json 이다 — 그래야 리뷰가 되고 변경
 # 이력이 남는다. 이 파일에는 환경마다 다른 것만 적는다.
 CONFIG_ENV = "MUPID_DATA_ENV"
+# AI 서버·Pinecone 자격. **두 번째 File 변수 하나**로 받는다.
+#
+# `MUPID_DATA_ENV` 에 섞지 않는 이유는 소유가 다르기 때문이다 — 이쪽은 AI 파드와
+# 같은 값이고(`mupid-ai-secrets`), 저쪽은 배치 서버 접속·설정이다. 섞으면 한쪽을
+# 고칠 때 다른 쪽까지 다시 올리게 된다.
+#
+# **파일로 떨구지 않는다.** 배치 프로세스의 환경으로만 넣는다 — 디스크에 남기면
+# 그 서버를 읽을 수 있는 누구나 키를 갖게 된다.
+AI_ENV = "MUPID_AI_SERVER_ENV"
 # 배포 대상. 설정 필드가 아니다.
 CONNECT = {"JUPYTER_BASE_URL", "JUPYTER_USER", "JUPYTER_PASSWORD", "JUPYTER_DIR"}
 # 설정 필드가 아니라 배포 동작을 바꾸는 이름들.
 CONTROL = {"REFRESH_TOKEN", "RESET_TOKEN"}
+
+
+def load_ai_env():
+    """AI 서버·Pinecone 자격을 File 변수 하나에서 읽는다. **값은 찍지 않는다.**
+
+    없으면 빈 dict 다 — 아직 전환하지 않은 환경에서 배치가 실패할 이유가 없고,
+    그때는 `run_batch.sh` 가 `MUPID_PINECONE_ENABLED` 가 없어 동기화를 건너뛴다.
+    """
+    raw = os.environ.get(AI_ENV)
+    if not raw:
+        return {}
+    values = parse_env(read_secret(raw))
+    print(f"{AI_ENV} 에서 {len(values)}개 항목을 배치 환경으로 넘긴다: "
+          f"{', '.join(sorted(values))}")
+    return values
 
 
 def parse_env(text):
@@ -438,12 +462,16 @@ else:
 # 끊겨도 job 이 실패한다. start_new_session 으로 떼어 놓으면 커널이 죽어도
 # 배치는 계속 돈다.
 START_BATCH = r'''
-import pathlib, subprocess, time
+import os, pathlib, subprocess, time
 directory = pathlib.Path.home() / {directory!r}
 logs = directory / "logs"
 logs.mkdir(exist_ok=True)
 pidfile = directory / ".batch.pid"
 statusfile = directory / ".batch.status"
+
+# 배치 프로세스에만 실리는 값. **파일로 쓰지 않는다** — 디스크에 남으면 그 서버를
+# 읽을 수 있는 누구나 키를 갖게 된다. 로그에도 찍지 않는다.
+extra_env = {extra_env!r}
 
 # 이미 돌고 있으면 또 띄우지 않는다. 같은 곡을 두 프로세스가 동시에 올리면
 # registered.json 이 서로를 덮는다.
@@ -459,6 +487,7 @@ statusfile.unlink(missing_ok=True)
 command = "bash run_batch.sh; echo $? > .batch.status"
 with open(log, "wb") as sink:
     child = subprocess.Popen(["bash", "-c", command], cwd=directory,
+                             env={{**os.environ, **extra_env}},
                              stdout=sink, stderr=subprocess.STDOUT,
                              stdin=subprocess.DEVNULL, start_new_session=True)
 pidfile.write_text(str(child.pid))
@@ -531,7 +560,7 @@ print(probe.stdout.strip())
 '''
 
 
-def run_batch(hub, directory, poll_seconds):
+def run_batch(hub, directory, poll_seconds, extra_env=None):
     """서버에서 배치를 띄우고 끝날 때까지 로그를 따라간다.
 
     cron 을 쓰지 않는 이유가 여기 있다 — 그 계정은 cron 스풀에 쓸 권한이 없다
@@ -539,7 +568,8 @@ def run_batch(hub, directory, poll_seconds):
     그래서 "언제" 는 GitLab 파이프라인 스케줄이 정하고, 이 함수가 "한 바퀴" 를
     돌린다.
     """
-    started = hub.run(START_BATCH.format(directory=directory))
+    started = hub.run(START_BATCH.format(directory=directory,
+                                        extra_env=dict(extra_env or {})))
     print(started, end="")
     if started.startswith("ALREADY"):
         print("\n앞선 배치가 아직 돌고 있다. 이번 회차는 건너뛴다 — 같은 곡을 두 "
@@ -622,7 +652,7 @@ def main():
         return 0
 
     if args.batch:
-        return run_batch(hub, directory, args.poll_seconds)
+        return run_batch(hub, directory, args.poll_seconds, load_ai_env())
 
     # 부모부터 만든다. src/music_preprocessing 을 먼저 요청하면 404 다.
     hub.ensure_directory(directory)

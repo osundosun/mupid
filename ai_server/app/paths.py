@@ -98,20 +98,6 @@ def labels_path() -> Path:
     return state_dir() / "labels_service.parquet"
 
 
-def pause_marker() -> Path:
-    """**추천을 멈춘다**는 표시. 04:00 배치가 벡터를 갈아 끼우는 동안 놓는다.
-
-    상태 자리에 둔다 — 배치는 `/state` 에 쓸 수 있고 서빙은 같은 자리를 읽을 수
-    있다. 쿠버네티스 API 권한도 새 CronJob 도 필요 없다.
-
-    **반쯤 적재된 벡터로 추천하지 않으려는 것이다.** 전체 갱신 중에는 candidate 와
-    raw 가 서로 어긋나 있고, 그 상태의 추천은 오류가 아니라 그냥 이상한 결과로
-    나온다. 표시가 남아 있으면 `/internal/ready` 가 실패하고 추천은 분명한 오류를
-    돌려준다 — **적재나 검증이 실패하면 표시가 남으므로 다시 시작되지 않는다.**
-    """
-    return state_dir() / "ai_paused.json"
-
-
 def prefs_path() -> Path:
     return serve_dir() / "prefs.parquet"
 

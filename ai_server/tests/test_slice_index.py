@@ -93,8 +93,6 @@ def test_every_vector_keeps_its_value(sliced):
     before = pd.read_parquet(full / "moments.parquet")
     after = pd.read_parquet(out / "moments.parquet")
 
-    Z_before = np.load(full / "moments_emb.npy")
-    Z_after = np.load(out / "moments_emb.npy")
     X_before = np.load(full / "features_v1.npz")["X"]
     X_after = np.load(out / "features_v1.npz")["X"]
     S_before = np.load(full / "stage1_section.npy")
@@ -103,9 +101,14 @@ def test_every_vector_keeps_its_value(sliced):
     old_row = before.set_index("moment_id").emb_row
     for i, mid in enumerate(after.moment_id):
         j = int(old_row.loc[mid])
-        assert np.array_equal(Z_after[i], Z_before[j]), f"{mid} 임베딩이 바뀌었다"
         assert np.array_equal(X_after[i], X_before[j]), f"{mid} 특징이 바뀌었다"
         assert np.array_equal(S_after[i], S_before[j]), f"{mid} 구간 벡터가 바뀌었다"
+
+    # `moments_emb.npy` 는 **배송에 없다.** 순간 벡터의 정본은 Pinecone 이고, 이
+    # 파일은 분석 배치가 그것을 채울 때만 읽는 입력 산출물이다. 실으면 같은 벡터를
+    # 파일과 인덱스 두 곳에서 관리하게 된다.
+    assert not (out / "moments_emb.npy").exists()
+    assert (full / "moments_emb.npy").exists(), "원본까지 지우면 적재할 근거가 없다"
 
 
 def test_moment_id_order_matches_between_moments_and_features(sliced):

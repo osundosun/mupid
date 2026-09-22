@@ -69,11 +69,55 @@ run batch || failed=1
 #   · 대상은 `~/flow_music_data` 에서 직접 고른다. 요구 5 조회 API 를 부르지 않는다.
 #   · `--limit` 을 주지 않는다 — 주면 남은 곡이 조용히 빠진다.
 MUPID_AI_PY="${MUPID_AI_PY:-$HOME/.conda/envs/mupid-ai/bin/python}"
+analysis_ok=0
 if [ -x "$MUPID_AI_PY" ]; then
-  run analysis --yes --local --segmenter-python "$MUPID_AI_PY" || failed=1
+  if run analysis --yes --local --segmenter-python "$MUPID_AI_PY"; then
+    analysis_ok=1
+  else
+    failed=1
+  fi
 else
   echo "3.10 인터프리터가 없다: $MUPID_AI_PY — 분석 단계를 건너뛴다" >&2
   failed=1
+fi
+
+# 순간 벡터를 Pinecone 으로 올린다. **분석이 성공했을 때만** 돈다 —
+# `moments_emb.npy` 를 방금 만든 것이 그 단계이고, 실패한 판으로 인덱스를 갈아
+# 끼우면 추천이 멈춘 채 잘못된 벡터를 받는다.
+#
+# 이 일을 여기서 하는 이유: 적재 원본이 이 서버에만 있다. AI 서버 배송 색인에는
+# `moments_emb.npy` 가 없어서 그쪽 배치(ai-labeler)에서는 돌 수 없다.
+#
+# 키는 환경에서만 온다(`MUPID_PINECONE_*`). 없으면 조용히 건너뛴다 — 아직 전환하지
+# 않은 환경에서 배치가 실패할 이유가 없다.
+#
+# **`ai_server` 코드는 이 디렉터리에 없다.** deploy-jupyter.py 는 music_preprocessing
+# 만 올린다. 이 호스트의 AI 서버 체크아웃을 가리켜야 한다 — 기본값은 위 주석이
+# 말하는 자리(`mupid_ai_project_dev`)다. 구현을 여기로 복사하지 않는다.
+MUPID_AI_SERVER_DIR="${MUPID_AI_SERVER_DIR:-$HOME/mupid_ai_project_dev}"
+
+case "${MUPID_PINECONE_ENABLED:-}" in
+  1|true|TRUE|yes|YES|on|ON) pinecone_enabled=1 ;;
+  *) pinecone_enabled=0 ;;
+esac
+
+if [ "$analysis_ok" -eq 1 ] && [ "$pinecone_enabled" -eq 1 ]; then
+  echo
+  echo "=== pinecone-sync $(date '+%F %T') ==="
+  if [ -d "$MUPID_AI_SERVER_DIR/ai_server" ]; then
+    # 색인 루트는 위에서 export 한 MUPID_AI_ARTIFACT_DIR 그대로다 —
+    # 방금 analysis 가 moments_emb.npy 를 쓴 그 자리다.
+    ( cd "$MUPID_AI_SERVER_DIR"       && python3 -m ai_server.tools.pinecone_sync --reload )
+    status=$?
+  else
+    echo "ai_server 체크아웃을 찾지 못했다: $MUPID_AI_SERVER_DIR" >&2
+    echo "  MUPID_AI_SERVER_DIR 로 경로를 준다. 구현을 여기로 복사하지 않는다." >&2
+    status=1
+  fi
+  echo "=== pinecone-sync 끝 (종료 $status) ==="
+  [ "$status" -eq 0 ] || failed=1
+elif [ "$analysis_ok" -eq 1 ]; then
+  echo "MUPID_PINECONE_ENABLED 가 활성값이 아니다 — Pinecone 동기화를 건너뛴다"
 fi
 
 # 앞 단계가 실패해도 나머지는 돌린다. catalog 가 실패했다고 이미 등록된 곡의
