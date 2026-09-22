@@ -14,6 +14,10 @@
 등록:
   - config.api_base_url 이 설정돼 있으면 청킹 직후 Mupid API 에 등록한다
   - 등록만 실패한 항목은 다음 실행에서 **재청킹 없이** 등록만 다시 시도한다
+  - 파형도 같다. 서버에 올라간 파형이 어느 음원에서 나왔는지를
+    `registered.waveform_sha256` 으로 적어 두고, 그것이 지금 음원의 해시와
+    어긋나면 재청킹 없이 파형만 다시 올린다 — 음원이 바뀌었는데 파형 교체만
+    실패하면 청크는 새것인데 화면에는 옛 그림이 남기 때문이다
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from .config import ChunkConfig
 from .hasher import compute_sha256
 from .orphans import scan_streams
 from .registrar import Registrar, Registry, SidecarMissingError
+from .waveform import WaveformError, compute_waveform
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +97,19 @@ def run_batch(
         retried = _retry_registrations(
             registrar, processed_log, output_dir, config, registration_errors
         )
+        # 음원이 그대로여도 파형이 낡아 있을 수 있다 — 지난번에 업로드만
+        # 실패했거나, 파형이 생기기 전에 청킹된 곡이다.
+        waveform_errors: list[dict] = []
+        waveform_retried = _retry_waveforms(
+            registrar, processed_log, output_dir, config, waveform_errors
+        )
         logger.info(
-            "처리할 새/변경 파일이 없습니다. (등록 재시도 %d건, 실패 %d건)",
+            "처리할 새/변경 파일이 없습니다. "
+            "(등록 재시도 %d건, 실패 %d건 · 파형 재등록 %d건, 실패 %d건)",
             retried,
             len(registration_errors),
+            waveform_retried,
+            len(waveform_errors),
         )
         return {
             "status": "up_to_date",
@@ -105,6 +119,9 @@ def run_batch(
             "registration_retried": retried,
             "registration_errors": len(registration_errors),
             "registration_error_details": registration_errors,
+            "waveform_retried": waveform_retried,
+            "waveform_errors": len(waveform_errors),
+            "waveform_error_details": waveform_errors,
             "orphans": _scan_orphans(config, registrar, orphan_check, verify_chunks),
         }
 
@@ -188,6 +205,12 @@ def run_batch(
     retried = _retry_registrations(
         registrar, processed_log, output_dir, config, registration_errors
     )
+    # 등록은 됐는데 파형만 낡거나 없는 항목. 방금 처리한 곡도 여기 걸린다 —
+    # 위에서 파형 업로드만 실패했으면 `waveform_sha256` 이 비어 있다.
+    waveform_errors: list[dict] = []
+    waveform_retried = _retry_waveforms(
+        registrar, processed_log, output_dir, config, waveform_errors
+    )
 
     elapsed = time.time() - batch_start
 
@@ -202,6 +225,9 @@ def run_batch(
         ),
         "registration_retried": retried,
         "registration_errors": len(registration_errors),
+        "waveform_retried": waveform_retried,
+        "waveform_errors": len(waveform_errors),
+        "waveform_error_details": waveform_errors,
         "stale_cleaned": stale_count,
         "total_time_sec": round(elapsed, 2),
         "avg_time_per_file_sec": (
@@ -213,12 +239,15 @@ def run_batch(
     }
 
     logger.info(
-        "배치 완료: %d개 성공 (신규 %d, 변경 %d), %d개 실패, 등록 실패 %d개 (%.1f초)",
+        "배치 완료: %d개 성공 (신규 %d, 변경 %d), %d개 실패, 등록 실패 %d개, "
+        "파형 재등록 %d개(실패 %d) (%.1f초)",
         len(results),
         new_count,
         modified_count,
         len(errors),
         len(registration_errors),
+        waveform_retried,
+        len(waveform_errors),
         elapsed,
     )
 
@@ -361,6 +390,100 @@ def _retry_registrations(
 
     _save_processed_log(config.processed_log, processed_log)
     return len(targets)
+
+
+def _waveform_is_stale(entry: dict) -> bool:
+    """서버의 파형이 지금 음원에서 나온 것이 아닌가.
+
+    `registered.waveform_sha256` 은 **올라간 파형이 나온 원본의 해시**다
+    (`Registrar.put_waveform`). 그것이 지금 음원의 해시와 다르면 셋 중 하나다.
+
+    - 파형을 한 번도 못 올렸다 (키가 없다) — 서버가 잠깐 죽었거나, 이 기능이
+      생기기 전에 청킹된 곡이다.
+    - 음원이 바뀌었는데 **파형 교체만 실패했다.** 청크는 새것인데 파형은 옛것이라
+      화면에 옛 그림이 남는다. 이것이 가장 조용한 고장이다.
+    """
+    registered = entry.get("registered")
+    if not isinstance(registered, dict) or not registered.get("music_id"):
+        # 아직 등록 자체가 안 된 항목은 `_retry_registrations` 의 몫이다.
+        return False
+    return registered.get("waveform_sha256") != entry.get("sha256")
+
+
+def _retry_waveforms(
+    registrar: Registrar | None,
+    processed_log: dict,
+    output_dir: Path,
+    config: ChunkConfig,
+    errors: list[dict],
+) -> int:
+    """등록은 됐는데 서버의 파형이 낡거나 없는 곡을 **재청킹 없이** 다시 올린다.
+
+    `_retry_registrations` 와 같은 발상이다 — 무거운 일(청킹)은 끝났고 가벼운
+    일(업로드)만 실패했을 때, 다음 배치가 그것만 다시 한다.
+
+    값은 `metadata.json` 에 남아 있는 것을 먼저 쓴다. 청킹할 때 계산해 둔 것이라
+    지금 음원과 같은 것이 보장된다. 그 키가 없으면(파형이 생기기 전에 청킹된
+    결과물) 원본에서 다시 계산한다 — 여기서만 ffmpeg 가 다시 돈다.
+
+    Returns:
+        다시 시도한 항목 수 (성공·실패 합계)
+    """
+    if registrar is None:
+        return 0
+
+    targets = [
+        (Path(key), entry)
+        for key, entry in processed_log.items()
+        if _waveform_is_stale(entry)
+    ]
+    if not targets:
+        return 0
+
+    logger.info("파형 재등록 대상 %d건", len(targets))
+
+    for audio_path, entry in targets:
+        registered = entry["registered"]
+        try:
+            values = _waveform_values(output_dir, entry, audio_path, config)
+            if not values:
+                # 원본이 없으면 계산도 못 한다. 다음 실행에서 다시 본다.
+                continue
+            done = registrar.put_waveform(
+                registered["music_id"], values, entry.get("sha256"), audio_path
+            )
+            if done:
+                registered["waveform_sha256"] = done
+            else:
+                errors.append(
+                    {"file": str(audio_path), "error": "파형 등록에 실패했습니다."}
+                )
+        except Exception as e:  # noqa: BLE001 — 한 곡 때문에 배치를 멈추지 않는다
+            logger.warning("파형 재등록 실패: %s — %s", audio_path.name, e)
+            errors.append({"file": str(audio_path), "error": str(e)})
+
+    _save_processed_log(config.processed_log, processed_log)
+    return len(targets)
+
+
+def _waveform_values(
+    output_dir: Path, entry: dict, audio_path: Path, config: ChunkConfig
+) -> list[float] | None:
+    """올릴 파형. 청킹 결과에 있으면 그것, 없으면 원본에서 다시 계산한다."""
+    metadata = _load_chunk_metadata(output_dir, entry, audio_path)
+    if metadata and metadata.get("waveform"):
+        return metadata["waveform"]
+
+    if not audio_path.exists():
+        logger.warning("원본이 없어 파형을 만들지 못했습니다: %s", audio_path)
+        return None
+
+    logger.info("청킹 결과에 파형이 없어 원본에서 계산합니다: %s", audio_path.name)
+    try:
+        return compute_waveform(audio_path, ffmpeg_threads=config.ffmpeg_threads)
+    except WaveformError as e:
+        logger.warning("파형 계산 실패: %s — %s", audio_path.name, e)
+        return None
 
 
 def _load_chunk_metadata(

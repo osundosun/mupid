@@ -1,5 +1,13 @@
-/** 사용자 기기에서 음원 청크를 디코딩하고 계산한 부분부터 파형을 표시한다.
- * 서버 파형·배포 JSON·이전 세션의 저장된 파형은 사용하지 않는다. */
+/** 곡의 파형을 구한다 — **서버에 있으면 그걸 쓰고, 없을 때만 기기에서 계산한다.**
+ *
+ * 서버 파형은 배치가 청킹할 때 원본에서 뽑아 올려 둔 것이다
+ * (`GET /api/v1/music/{id}/waveform`). 한 번 받으면 끝이라 곡을 열자마자 그려진다.
+ *
+ * 없으면 예전 경로로 내려간다 — 청크를 전부 내려받아 Opus 로 풀고 RMS 를 센다.
+ * 아직 배치가 닿지 않은 곡, 로컬 데모 음원, 파형 계산이 실패한 곡이 그렇다.
+ * 이 폴백이 남아 있어서 **서버에 파형이 하나도 없어도 화면은 지금과 똑같이 돈다.**
+ *
+ * 배포 JSON 이나 이전 세션에 저장해 둔 파형은 여전히 쓰지 않는다. */
 import { useEffect, useState } from 'react';
 import { api } from './api/session';
 import { WAVEFORM_SAMPLES } from './api/endpoints';
@@ -88,10 +96,34 @@ async function computeFromLocal(url: string): Promise<number[]> {
   return heights.map(h => Math.max(0, Math.min(1, (h - 4) / 88)));
 }
 
-/** 매 호출마다 현재 기기에서 새로 분석한다. */
+/** 서버 파형. 없거나(404) 모양이 이상하면 null 이고, 그때는 부르는 쪽이 직접 계산한다. */
+async function fetchServed(musicId: number, signal: AbortSignal): Promise<number[] | null> {
+  let data;
+  try {
+    data = await api.music.waveform(musicId, signal);
+  } catch {
+    // 파형이 없는 곡은 404 다. 그것이 정상이라 여기서 오류를 올리지 않는다.
+    // 취소는 아래 `signal.aborted` 검사가 본래 오류로 되돌린다.
+    return null;
+  }
+  const values = data?.values;
+  if (!Array.isArray(values) || values.length < 2) return null;
+  // 서버가 0~1 로 가둬 보내지만, 그리는 쪽이 값을 그대로 높이로 쓰므로 한 번 더 막는다.
+  return values.map(v => Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0);
+}
+
+/** 서버 파형을 먼저 찾고, 없으면 현재 기기에서 분석한다. */
 export async function loadTrackWaveform(track: Track, signal: AbortSignal, onProgress: (value: WaveformProgress) => void = () => {}): Promise<number[] | null> {
   if (signal.aborted) throw new DOMException('aborted', 'AbortError');
-  if (track.musicId !== undefined) return computeFromChunks(track, onProgress, signal);
+  if (track.musicId !== undefined) {
+    const served = await fetchServed(track.musicId, signal);
+    if (signal.aborted) throw new DOMException('aborted', 'AbortError');
+    // 받았으면 그대로 끝이다. 진행률을 따로 알리지 않는 것은 부르는 쪽이
+    // 성공 시 `progress: 1` 로 덮기 때문이다 — 여기서 0.5 를 한 번 보내면
+    // 막대가 잠깐 나타났다 사라진다.
+    if (served) return served;
+    return computeFromChunks(track, onProgress, signal);
+  }
   if (track.localAudio) return computeFromLocal(track.localAudio);
   return null;
 }

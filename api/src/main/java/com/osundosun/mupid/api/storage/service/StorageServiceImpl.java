@@ -90,6 +90,22 @@ public class StorageServiceImpl implements StorageService {
     }
 
     @Override
+    public ObjectStorageFile uploadBytes(
+        FileType fileType, FileCategory category, String key,
+        String originalFileName, String mime, byte[] data
+    ) {
+        PutObjectRequest request = PutObjectRequest.builder()
+            .bucket(props.bucketName())
+            .key(key)
+            .contentType(mime)
+            .contentLength((long)data.length)
+            .build();
+        s3Client.putObject(request, RequestBody.fromBytes(data));
+
+        return registerFile(fileType, category, key, originalFileName, mime, data.length);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public Optional<StorageObjectStat> statObject(String key) {
         HeadObjectRequest request = HeadObjectRequest.builder()

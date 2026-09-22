@@ -21,9 +21,15 @@
 ## `MupidService` 를 거치지 않는 화면
 
 전부 `MupidService` 로 흘러야 하는 것은 아닙니다. 가사(`lyrics.tsx`)와 **취향
-리포트**는 `lib/api/session` 의 `api` 를 직접 부릅니다. 서버 응답이 곧 화면이라
-데모 저장소에 대응물이 없고, `MupidService` 의 스냅샷 계약(`savePreferences`)에
-넣을 것도 없기 때문입니다.
+리포트**, **파형**(`lib/track-waveform.ts`)은 `lib/api/session` 의 `api` 를 직접
+부릅니다. 서버 응답이 곧 화면이라 데모 저장소에 대응물이 없고, `MupidService` 의
+스냅샷 계약(`savePreferences`)에 넣을 것도 없기 때문입니다.
+
+파형은 그중에서도 **실패가 정상인 호출**입니다. `GET /api/v1/music/{id}/waveform`
+은 배치가 아직 닿지 않은 곡에 404 를 주고, 그때 화면은 청크를 내려받아 기기에서
+직접 계산합니다. 그래서 이 404 를 오류로 올리지 않고 삼킵니다 — 서버에 파형이
+하나도 없어도 화면은 예전과 똑같이 돕니다
+(`api/knowledge/decision/0026-waveform-is-precomputed-by-batch.md`).
 
 취향 리포트(`lib/report.ts`)가 그 화면들과 다른 점은 **계속 다시 받는다**는 것입니다.
 

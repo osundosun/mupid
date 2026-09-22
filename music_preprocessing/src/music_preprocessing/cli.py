@@ -66,6 +66,8 @@ from .genre_mood import run as run_classify
 from .logging_setup import default_log_path, setup_logging
 from .lyrics import LyricRegistrar, LyricSheet, load_lyrics
 from .registrar import Registry
+from .waveform import WAVEFORM_SAMPLES
+from .waveform_backfill import WaveformBackfiller, collect_audio
 
 logger = logging.getLogger(__name__)
 
@@ -375,6 +377,105 @@ def lyrics(
         if result[key]:
             hint = " — `catalog` 를 먼저 돌리세요" if key == "songs_unregistered" else ""
             console.print(f"[yellow]{message} {result[key]}개[/]{hint}")
+
+    _report_errors(console, result)
+
+
+@app.command()
+def waveform(
+    config: ConfigOpt = None,
+    input_dir: Annotated[
+        Path | None,
+        typer.Option("--input-dir", "-I", help="원본 음원 디렉터리", show_default=False),
+    ] = None,
+    api_base_url: Annotated[
+        str | None, typer.Option(help="Mupid API 루트", show_default=False)
+    ] = None,
+    samples: Annotated[
+        int, typer.Option(help="파형 칸 수. 화면이 그리는 막대는 많아야 160개다")
+    ] = WAVEFORM_SAMPLES,
+    ffmpeg_threads: Annotated[int, typer.Option(help="파일당 FFMPEG 스레드 수")] = 2,
+    limit: Annotated[
+        int | None,
+        typer.Option(help="앞에서 N곡만 올린다. 시험용", show_default=False),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="이미 파형이 있는 곡도 다시 계산해 올린다")
+    ] = False,
+    dry_run: DryRunOpt = False,
+    yes: YesOpt = False,
+    show_progress: ProgressOpt = True,
+    log_file: LogFileOpt = None,
+    no_log_file: NoLogOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """이미 등록된 곡의 파형만 채운다. [b]청킹은 하지 않는다.[/]"""
+    console = _start("waveform", log_file, no_log_file, config, verbose)
+
+    if config:
+        cfg = ChunkConfig.from_file(str(config))
+    else:
+        cfg = ChunkConfig(ffmpeg_threads=ffmpeg_threads)
+    if input_dir:
+        cfg.input_dir = str(input_dir)
+    if api_base_url:
+        cfg.api_base_url = api_base_url
+
+    source = Path(cfg.input_dir)
+    if not source.is_dir():
+        console.print(f"[red]✖[/] 입력 디렉터리가 없습니다: [cyan]{source}[/]")
+        raise typer.Exit(1)
+
+    audio_paths = collect_audio(source)
+    if limit:
+        audio_paths = audio_paths[:limit]
+    if not audio_paths:
+        console.print(f"[yellow]음원이 없습니다: {source}[/]")
+        return
+
+    info = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    info.add_row("음원", f"[cyan]{source}[/]")
+    info.add_row(
+        "등록 대상",
+        "[dim]없음 (dry-run)[/]" if dry_run else f"[cyan]{cfg.api_base_url}[/]",
+    )
+    info.add_row("규모", f"곡 {len(audio_paths)} · 칸 {samples}")
+    console.print(info)
+    if force:
+        console.print("[yellow]--force[/] — 이미 파형이 있는 곡도 전부 다시 올린다")
+    if dry_run:
+        console.print("[yellow]dry-run[/] — 서버에 붙지 않아 이미 올라간 곡을 가리지 못합니다.")
+
+    _confirm(
+        console,
+        yes,
+        dry_run,
+        f"곡 {len(audio_paths)}개의 파형을 {cfg.api_base_url} 에 올립니다.",
+    )
+
+    with _progress_bar(console, show_progress and not console.is_jupyter) as bar:
+        backfiller = WaveformBackfiller(
+            client=None if dry_run else _client(cfg),
+            registry=Registry(cfg.api_registry_log),
+            samples=samples,
+            ffmpeg_threads=cfg.ffmpeg_threads,
+            dry_run=dry_run,
+            progress=RichProgress(bar),
+        )
+        result = backfiller.run(audio_paths, force=force)
+
+    table = Table(title="파형 등록" + (" (dry-run)" if dry_run else ""), title_style="bold")
+    table.add_column("항목")
+    table.add_column("값", justify="right")
+    table.add_row("올린 곡", str(result["uploaded"]))
+    table.add_row("이미 있어 건너뜀", str(result["skipped_present"]))
+    console.print(table)
+
+    if result["skipped_unregistered"]:
+        console.print(
+            f"[yellow]미등록이라 건너뜀 {result['skipped_unregistered']}개[/]"
+            " — `catalog` · `batch` 를 먼저 돌리세요"
+        )
 
     _report_errors(console, result)
 
@@ -1026,6 +1127,8 @@ def batch(
         table.add_row("처리할 파일", "없음")
         table.add_row("등록 재시도", str(result.get("registration_retried", 0)))
         table.add_row("등록 실패", str(result.get("registration_errors", 0)))
+        table.add_row("파형 재등록", str(result.get("waveform_retried", 0)))
+        table.add_row("파형 실패", str(result.get("waveform_errors", 0)))
         table.add_row("정리(삭제)", str(result.get("stale_cleaned", 0)))
     else:
         table.add_row("성공", f"{result['processed']}")
@@ -1034,6 +1137,8 @@ def batch(
         table.add_row("실패", str(result["errors"]))
         table.add_row("등록 완료", str(result.get("registered", 0)))
         table.add_row("등록 실패", str(result.get("registration_errors", 0)))
+        table.add_row("파형 재등록", str(result.get("waveform_retried", 0)))
+        table.add_row("파형 실패", str(result.get("waveform_errors", 0)))
         table.add_row("정리(삭제)", str(result.get("stale_cleaned", 0)))
         table.add_row("총 소요", f"{result['total_time_sec']}초")
         table.add_row("평균", f"{result['avg_time_per_file_sec']}초/파일")
@@ -1045,6 +1150,10 @@ def batch(
         *(
             {"key": e["file"], "error": e["error"]}
             for e in result.get("registration_error_details", [])
+        ),
+        *(
+            {"key": e["file"], "error": e["error"]}
+            for e in result.get("waveform_error_details", [])
         ),
     ]
     _report_errors(console, {"errors": failures})
