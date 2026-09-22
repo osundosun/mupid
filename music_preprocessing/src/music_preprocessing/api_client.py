@@ -36,6 +36,15 @@ GONE_CODE = "MUPID_MUSIC_GONE"
 #: 곡은 있는데 파형만 아직 없을 때의 오류 코드. 곡이 없는 404 와 나눠 쓴다.
 WAVEFORM_MISSING_CODE = "MUPID_WAVEFORM_NOT_FOUND"
 
+
+def is_music_gone(error: "MupidApiError") -> bool:
+    """서버에서 삭제된 곡이라는 응답인가.
+
+    상태코드가 일차 기준이지만 코드로도 본다 — nginx `auth_request` 를 거치는
+    배포에서는 4xx 가 500 으로 접히고 사유가 헤더에만 온다.
+    """
+    return error.status == GONE_STATUS or error.code == GONE_CODE
+
 # 액세스 토큰이 이 시간 안에 만료되면 미리 갱신한다.
 # 업로드 한 번이 오래 걸려도 도중에 만료되지 않도록 넉넉히 잡는다.
 _TOKEN_REFRESH_MARGIN_SEC = 120
@@ -555,7 +564,8 @@ class MupidClient:
 
         파형이 없는 것은 정상이라 `waveform` 명령이 이걸로 대상을 가린다.
         곡 자체가 없거나 삭제된 경우는 그대로 예외로 올라간다 — 그때는 코드가
-        `MUPID_MUSIC_NOT_FOUND` · `MUPID_MUSIC_GONE` 이다.
+        `MUPID_MUSIC_NOT_FOUND` · `MUPID_MUSIC_GONE` 이고, 부르는 쪽이
+        `is_music_gone` 으로 갈라 본다.
         """
         try:
             body = self._request("GET", f"/api/v1/music/{music_id}/waveform")

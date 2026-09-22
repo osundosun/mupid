@@ -43,7 +43,7 @@ import logging
 import re
 from pathlib import Path
 
-from .api_client import MupidApiError, MupidClient
+from .api_client import MupidApiError, MupidClient, is_music_gone
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,18 @@ class SidecarMissingError(RegistrationError):
 
     다시 시도해도 사람이 파일을 놓기 전까지는 결과가 같다. 그래서 배치는 이
     경우를 실패가 아니라 건너뜀으로 처리하고 종료 코드를 더럽히지 않는다.
+    """
+
+
+class MusicGoneError(RegistrationError):
+    """서버에서 삭제된 곡이다 (410 Gone).
+
+    **고칠 수 없는 것이라 실패가 아니다.** 삭제된 곡은 수정도 메타데이터 등록도
+    받지 않으므로 다시 시도해도 같고, 실패로 세면 배치가 매일 붉어진다 —
+    사이드카가 없는 경우와 같은 부류다.
+
+    되살릴지 원본을 지울지는 사람이 정한다. 그 판단을 돕는 표식은 `catalog` 의
+    서버 대조가 `registered.json` 에 남긴다 (`audit.EXEMPT_KEY`).
     """
 
 
@@ -285,9 +297,17 @@ class Registrar:
         # 대신 **성공했을 때만** 원본 해시를 적어 둔다. 이 값이 `processed.json` 의
         # `sha256` 과 어긋나 있으면 서버의 파형이 낡은 것이고, 다음 배치가
         # 재청킹 없이 그것만 다시 올린다 (`batch._retry_waveforms`).
-        waveform_sha256 = self.put_waveform(
-            music_id, metadata.get("waveform"), metadata.get("sha256"), audio_path
-        )
+        #
+        # 삭제된 곡이면 건너뛴다. 여기까지 왔다는 것은 스트림 등록은 통과했다는
+        # 뜻이라 흔치 않지만(그 곡은 위에서 이미 410 을 맞는다), 스트림과 곡의
+        # 상태가 어긋난 순간에 올 수 있다.
+        try:
+            waveform_sha256 = self.put_waveform(
+                music_id, metadata.get("waveform"), metadata.get("sha256"), audio_path
+            )
+        except MusicGoneError as e:
+            logger.info("파형 건너뜀(서버에서 삭제된 곡): %s — %s", audio_path.name, e)
+            waveform_sha256 = None
 
         entry = {
             "music_id": music_id,
@@ -328,12 +348,29 @@ class Registrar:
         실패는 `None` 이다. 예외를 올리지 않는 것은 파형이 없어도 재생에 지장이
         없기 때문이고, `None` 을 적지 않고 **키를 비워 두면** 다음 배치가 자연히
         다시 시도한다.
+
+        Raises:
+            MusicGoneError: 서버에서 삭제된 곡. 이것만 예외로 올린다 — 다시
+                시도해도 같고, **실패로 세면 배치가 붉어진다.** 부르는 쪽이
+                건너뜀으로 센다.
         """
         if not values:
             logger.info("파형 없이 등록한다: %s", audio_path.name)
             return None
         try:
             self.client.put_waveform(music_id, values)
+        except MupidApiError as e:
+            if is_music_gone(e):
+                raise MusicGoneError(
+                    f"서버에서 삭제된 곡입니다 (music_id={music_id})"
+                ) from e
+            logger.warning(
+                "파형 등록 실패 (스트림은 그대로 둔다): %s music_id=%d — %s",
+                audio_path.name,
+                music_id,
+                e,
+            )
+            return None
         except Exception as e:  # noqa: BLE001 — 파형 실패가 등록 실패는 아니다
             logger.warning(
                 "파형 등록 실패 (스트림은 그대로 둔다): %s music_id=%d — %s",

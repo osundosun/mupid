@@ -30,11 +30,12 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from .api_client import MupidClient
+from .audit import exempt_track_ids
 from .chunker import process_file
 from .config import ChunkConfig
 from .hasher import compute_sha256
 from .orphans import scan_streams
-from .registrar import Registrar, Registry, SidecarMissingError
+from .registrar import MusicGoneError, Registrar, Registry, SidecarMissingError
 from .waveform import WaveformError, compute_waveform
 
 logger = logging.getLogger(__name__)
@@ -426,17 +427,35 @@ def _retry_waveforms(
     지금 음원과 같은 것이 보장된다. 그 키가 없으면(파형이 생기기 전에 청킹된
     결과물) 원본에서 다시 계산한다 — 여기서만 ffmpeg 가 다시 돈다.
 
+    **서버에서 삭제된 곡은 건드리지 않는다.** 삭제된 곡은 수정도 메타데이터 등록도
+    받지 않아 410 Gone 이 오고, 다시 시도해도 같다. `catalog` 의 서버 대조가
+    남긴 표식을 먼저 보고 거른다 — `lyrics` · `classify` 가 쓰는 것과 같은 표식이다
+    (`audit.exempt_track_ids`). 표식보다 삭제가 빠른 경우를 위해 410 자체도
+    건너뜀으로 센다.
+
     Returns:
-        다시 시도한 항목 수 (성공·실패 합계)
+        다시 시도한 항목 수 (성공·실패 합계, 건너뛴 것은 빼고)
     """
     if registrar is None:
         return 0
 
-    targets = [
-        (Path(key), entry)
-        for key, entry in processed_log.items()
-        if _waveform_is_stale(entry)
-    ]
+    # 표식은 `catalog` 이 남긴 것이라 여기서는 읽기만 한다. 대상에서 미리 빼는
+    # 것은 410 을 피하려는 것만이 아니다 — 파형이 없는 옛 곡이면 `_waveform_values`
+    # 가 ffmpeg 를 한 번 돌리는데, 삭제된 곡에 그 1초를 매일 쓸 이유가 없다.
+    exempt = exempt_track_ids(registrar.registry)
+
+    targets, skipped = [], 0
+    for key, entry in processed_log.items():
+        if not _waveform_is_stale(entry):
+            continue
+        audio_path = Path(key)
+        if audio_path.stem in exempt:
+            skipped += 1
+            continue
+        targets.append((audio_path, entry))
+
+    if skipped:
+        logger.info("파형 건너뜀(서버에서 삭제된 곡) %d건", skipped)
     if not targets:
         return 0
 
@@ -458,6 +477,10 @@ def _retry_waveforms(
                 errors.append(
                     {"file": str(audio_path), "error": "파형 등록에 실패했습니다."}
                 )
+        except MusicGoneError as e:
+            # 표식이 아직 없는 곡이다. 다음 `catalog` 이 표식을 남기면 위에서
+            # 걸러진다. 실패가 아니므로 종료 코드를 더럽히지 않는다.
+            logger.info("파형 건너뜀(서버에서 삭제된 곡): %s — %s", audio_path.name, e)
         except Exception as e:  # noqa: BLE001 — 한 곡 때문에 배치를 멈추지 않는다
             logger.warning("파형 재등록 실패: %s — %s", audio_path.name, e)
             errors.append({"file": str(audio_path), "error": str(e)})
