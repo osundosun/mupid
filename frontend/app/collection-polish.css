@@ -1,4 +1,12 @@
 .collection-page { max-width: 1160px; margin-inline: auto; }
+.mupid-shell .report-card.keyword-card > .keyword-description {
+  margin: 18px 0 0;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
 .collection-page .sky-tabs > [role='tablist'] {
   background: transparent; border: 0; box-shadow: none;
   border-bottom: 1px solid #dce6f4; border-radius: 0;

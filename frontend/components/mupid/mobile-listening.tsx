@@ -6,7 +6,6 @@ import { Slider } from '@/components/ui/slider';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { formatTime } from '@/lib/mupid-data';
 import { EmptyState, LikeButton, PlayerControls } from './primitives';
-import { PlaybackStatus } from './playback-status';
 
 export function MobileListening({ model: m }: { model: MupidModel }) {
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
@@ -14,15 +13,6 @@ export function MobileListening({ model: m }: { model: MupidModel }) {
   if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
   return (
     <section className="mobile-listening" aria-label="지금 듣는 음악">
-{/* 재생 중일 때만 표시한다. 플레이어는 하단 탭과 레코드 탭으로 갈 수 있다. */}
-      {m.playing && (
-        <div className="mobile-listening-topline">
-          <span>
-            <PlaybackStatus playing />
-            지금 재생 중
-          </span>
-        </div>
-      )}
       <button
         className="mobile-record-stage"
         aria-label={`${active.title} 플레이어 열기`}

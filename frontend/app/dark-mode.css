@@ -350,9 +350,7 @@ html.dark .mupid-shell .desktop-moment-button {
   box-shadow: none;
 }
 html.dark .mupid-shell .desktop-moment-button:hover { background: #282d34 !important; }
-html.dark .mupid-shell .desktop-seek { background: transparent !important; }
-html.dark .mupid-shell .desktop-seek::-webkit-slider-runnable-track { background: #32373f; }
-html.dark .mupid-shell .desktop-seek::-moz-range-track { background: #32373f; }
+html.dark .mupid-shell .desktop-seek { background: transparent !important; --seek-track: #32373f; }
 html.dark .mupid-shell .track-row:is(.is-playing,.is-selected,:hover) {
   background: #20242a !important;
   border-color: #30363e !important;

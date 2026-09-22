@@ -81,7 +81,6 @@ export function HomeView({ model: m }: { model: MupidModel }) {
             <h2>아직 들을 곡이 없어요</h2>
             <p>음악이 등록되면 여기에서 바로 들을 수 있어요.</p>
           </section> : <section className="now-card">
-            {m.playing && <span className="eyebrow">지금 재생 중</span>}
             <VinylRecord
               playing={m.playing}
               track={m.active}
