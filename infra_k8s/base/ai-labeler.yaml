@@ -1,9 +1,20 @@
-# 선호 라벨 야간 배치.
+# 야간 배치 — 선호 라벨 + 순간 벡터 전체 갱신.
 #
 # 라벨이 없으면 **오류 없이 모든 사용자가 콜드스타트**가 된다. 서버는 정상으로 보이고
 # 개인화만 없다 — 그래서 이 작업은 반드시 주기적으로 돌아야 한다.
 #
 #   listen_events ──(pull_signals)──> events_service.jsonl ──(labeler)──> section_labels
+#   moments_emb.npy ──(pinecone_sync --reload)──> Pinecone candidate·raw
+#
+# ## 세 번째 단계가 추천을 잠시 멈춘다
+#
+# 벡터를 갈아 끼우는 동안에는 candidate 와 raw 가 서로 어긋나 있다. 그 상태의
+# 추천은 오류가 아니라 그냥 이상한 결과로 나온다. 그래서 `--reload` 가 `/state` 에
+# 멈춤 표시를 놓고, 서빙 파드는 그것을 읽어 `/internal/ready` 를 실패로 둔다.
+#
+# **검증이 전부 통과할 때만 표시를 지운다.** 실패하면 표시가 남아 추천이 재개되지
+# 않는다 — 반쯤 적재된 벡터로 추천하지 않기 위한 것이다. 일정은 아래 `schedule` 하나다;
+# 별도 CronJob 을 만들지 않는다.
 #
 # 추천 서버와 **같은 이미지**를 쓴다. 배치가 쓰는 코드가 서빙이 쓰는 코드와 갈리면
 # 라벨의 의미가 달라진다 — 등급 판정은 한 곳에서만 해야 한다(labeler 문서).
@@ -81,6 +92,13 @@ spec:
                   set -e
                   python -m ai_server.tools.pull_signals
                   python -m ai_server.tools.run_labeler --json
+                  python -m ai_server.tools.pinecone_sync --reload
+              # Spring 카탈로그 자격과 Pinecone 키. 서빙 파드와 **같은 Secret** 을 읽는다.
+              #
+              # 카탈로그 자격은 Pinecone 이전에도 필요하다 — `pull_signals` 가 숫자 ID
+              # 환산을 `app/ids.py` 로 하고, 그쪽 근거가 Spring 내부 카탈로그 API 다.
+              envFrom:
+                - secretRef: {name: mupid-ai-secrets, optional: true}
               env:
                 - {name: MUPID_AI_ARTIFACT_DIR, value: /artifacts/current}
                 # 배치가 쓰는 자리. 색인과 나뉘어 있다.
