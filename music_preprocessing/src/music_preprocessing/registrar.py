@@ -280,20 +280,14 @@ class Registrar:
         #
         # **실패해도 스트림을 되돌리지 않는다.** 파형이 없으면 화면이 기기에서
         # 직접 계산하므로 재생에는 지장이 없다 — 곡을 통째로 다시 올리게 만드는
-        # 쪽이 손해다. 빠진 곡은 `waveform` 명령이 나중에 채운다.
-        waveform = metadata.get("waveform")
-        if waveform:
-            try:
-                self.client.put_waveform(music_id, waveform)
-            except Exception as e:
-                logger.warning(
-                    "파형 등록 실패 (스트림은 그대로 둔다): %s music_id=%d — %s",
-                    audio_path.name,
-                    music_id,
-                    e,
-                )
-        else:
-            logger.info("파형 없이 등록한다: %s", audio_path.name)
+        # 쪽이 손해다.
+        #
+        # 대신 **성공했을 때만** 원본 해시를 적어 둔다. 이 값이 `processed.json` 의
+        # `sha256` 과 어긋나 있으면 서버의 파형이 낡은 것이고, 다음 배치가
+        # 재청킹 없이 그것만 다시 올린다 (`batch._retry_waveforms`).
+        waveform_sha256 = self.put_waveform(
+            music_id, metadata.get("waveform"), metadata.get("sha256"), audio_path
+        )
 
         entry = {
             "music_id": music_id,
@@ -303,8 +297,9 @@ class Registrar:
             "codec": CODEC,
             "bitrate_kbps": bitrate_kbps,
             "chunk_count": metadata["chunk_count"],
-            "waveform": bool(waveform),
         }
+        if waveform_sha256:
+            entry["waveform_sha256"] = waveform_sha256
         self.registry.put_track(audio_path, entry)
         self.registry.save()
 
@@ -316,6 +311,38 @@ class Registrar:
             metadata["chunk_count"],
         )
         return entry
+
+    def put_waveform(
+        self,
+        music_id: int,
+        values: list[float] | None,
+        source_sha256: str | None,
+        audio_path: Path,
+    ) -> str | None:
+        """파형을 올리고, 성공하면 그 파형이 나온 **원본 해시**를 돌려준다.
+
+        돌려준 값을 `processed.json` 에 적어 두면 "서버에 올라간 파형이 어느
+        음원에서 나왔는지" 를 알 수 있다. 음원이 바뀌면 그 해시가 어긋나므로
+        낡은 파형을 찾아낼 수 있다.
+
+        실패는 `None` 이다. 예외를 올리지 않는 것은 파형이 없어도 재생에 지장이
+        없기 때문이고, `None` 을 적지 않고 **키를 비워 두면** 다음 배치가 자연히
+        다시 시도한다.
+        """
+        if not values:
+            logger.info("파형 없이 등록한다: %s", audio_path.name)
+            return None
+        try:
+            self.client.put_waveform(music_id, values)
+        except Exception as e:  # noqa: BLE001 — 파형 실패가 등록 실패는 아니다
+            logger.warning(
+                "파형 등록 실패 (스트림은 그대로 둔다): %s music_id=%d — %s",
+                audio_path.name,
+                music_id,
+                e,
+            )
+            return None
+        return source_sha256
 
     # ── 단계별 ──
 

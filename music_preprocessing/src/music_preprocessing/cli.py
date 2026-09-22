@@ -1127,6 +1127,8 @@ def batch(
         table.add_row("처리할 파일", "없음")
         table.add_row("등록 재시도", str(result.get("registration_retried", 0)))
         table.add_row("등록 실패", str(result.get("registration_errors", 0)))
+        table.add_row("파형 재등록", str(result.get("waveform_retried", 0)))
+        table.add_row("파형 실패", str(result.get("waveform_errors", 0)))
         table.add_row("정리(삭제)", str(result.get("stale_cleaned", 0)))
     else:
         table.add_row("성공", f"{result['processed']}")
@@ -1135,6 +1137,8 @@ def batch(
         table.add_row("실패", str(result["errors"]))
         table.add_row("등록 완료", str(result.get("registered", 0)))
         table.add_row("등록 실패", str(result.get("registration_errors", 0)))
+        table.add_row("파형 재등록", str(result.get("waveform_retried", 0)))
+        table.add_row("파형 실패", str(result.get("waveform_errors", 0)))
         table.add_row("정리(삭제)", str(result.get("stale_cleaned", 0)))
         table.add_row("총 소요", f"{result['total_time_sec']}초")
         table.add_row("평균", f"{result['avg_time_per_file_sec']}초/파일")
@@ -1146,6 +1150,10 @@ def batch(
         *(
             {"key": e["file"], "error": e["error"]}
             for e in result.get("registration_error_details", [])
+        ),
+        *(
+            {"key": e["file"], "error": e["error"]}
+            for e in result.get("waveform_error_details", [])
         ),
     ]
     _report_errors(console, {"errors": failures})
