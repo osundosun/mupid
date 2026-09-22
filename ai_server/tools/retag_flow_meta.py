@@ -3,6 +3,21 @@
     MUPID_AI_ARTIFACT_DIR=/경로 python -m ai_server.tools.retag_flow_meta \
         --plate data/proc/mupid_v<stamp> --snapshot C:/…/mupid-db-snapshot
 
+## 서빙에는 더 이상 필요하지 않다 (S15P21A204-416)
+
+장르·무드·`music_id` 는 이제 **Spring 내부 카탈로그 API** 가 준다
+(`app/catalog_api.py`). 서빙용 배송 묶음에는 `flow_meta.parquet` 이 아예 들어가지
+않고(`tools/slice_index.py` 의 `NOT_SHIPPED`), 숫자 환산 근거도 이 파일이 아니라
+MySQL 이다.
+
+**그래도 파일과 도구를 남겨 둔다.** 전체 색인 쪽 `flow_meta.parquet` 은 특징을 다시
+굽는 오프라인 경로와 `track_features.parquet` 을 뽑는 자리가 계속 읽는다. 다만 거기서
+쓰는 것은 `language`·`category`·`bpm_lo`·`bpm_hi`·`sound_raw` 뿐이고, **아래가 채우는
+`genre_code`·`mood_codes`·`music_id` 는 이제 아무도 읽지 않는다.**
+
+그러니 새로 돌릴 이유가 없다. DB 코드표가 바뀌어도 추천은 API 로 즉시 따라간다 —
+색인을 다시 굽지 않아도 된다는 것이 이번 변경의 요점이다.
+
 ## 변환표를 만들지 않는다
 
 예전에는 카탈로그가 제 어휘(`Electronic---Ambient` · `relaxing`)를 쓰고, 온보딩이

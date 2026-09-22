@@ -59,7 +59,8 @@ def preflight() -> tuple[bool, list[str]]:
 
     돌려주는 것은 (치명적인 문제가 없는가, 사람이 읽을 줄들).
     """
-    from ai_server.app import clickhouse, main, paths, recommender
+    from ai_server.app import (catalog_api, clickhouse, index_contract, main,
+                               paths, recommender)
 
     lines: list[str] = []
     fatal = False
@@ -69,6 +70,19 @@ def preflight() -> tuple[bool, list[str]]:
     if not paths.data_dir().is_dir():
         lines.append("  ✗ data/proc/mupid 가 없다 — MUPID_AI_ARTIFACT_DIR 을 확인한다")
         return False, lines
+
+    # 판의 계약 표식을 **값을 읽기 전에** 본다. 옛 판(장르·무드를 색인 안에 들고
+    # 있던 판)과 새 코드가 섞이면 오류 없이 그 축이 통째로 빈다.
+    plate = index_contract.check_plate()
+    if plate["ok"]:
+        lines.append(f"색인 계약  v{plate['contract']} · {plate['catalog_source']}"
+                     + (f"  ({plate['built_at']})" if plate.get("built_at") else ""))
+    else:
+        fatal = True
+        for err in plate["errors"]:
+            lines.append(f"  ✗ {err}")
+    for warn in plate["warnings"]:
+        lines.append(f"  ! {warn}")
 
     integrity = main.check_integrity()
     if integrity["ok"]:
@@ -89,6 +103,23 @@ def preflight() -> tuple[bool, list[str]]:
     for name, why in cost.items():
         if not status["files"].get(name, {}).get("exists"):
             lines.append(f"  ! {name} 없음 — {why}")
+
+    # 곡·순간 메타데이터. **없으면 뜨지 못한다** — 장르·무드·보컬·악기 조건이
+    # 통째로 빈 채 추천이 나가는 상태를 기동에서 막아 두었기 때문이다.
+    if catalog_api.configured():
+        try:
+            snap = catalog_api.load()
+            lines.append(f"카탈로그  {len(snap.tracks):,}곡 {len(snap.sections):,}구간 "
+                         f"✓ (MySQL, Spring 내부 API)")
+        except Exception as e:
+            fatal = True
+            lines.append(f"카탈로그  ✗ {type(e).__name__}: {e}")
+            lines.append("  ✗ 곡명·장르·무드·보컬·악기가 통째로 빈다 — 뜨지 않는다")
+    else:
+        fatal = True
+        lines.append("카탈로그  ✗ 미설정 "
+                     "(MUPID_API_BASE_URL · MUPID_API_REFRESH_TOKEN)")
+        lines.append("  ✗ 색인에는 메타데이터가 없다. 이 값 없이는 추천할 수 없다")
 
     if clickhouse.configured():
         try:

@@ -173,19 +173,31 @@ ls -l /usr/local/sbin/mupid-ssh-entrypoint-k8s /usr/local/sbin/mupid-receive-*
 /usr/local/sbin/mupid-receive-apk         ← /etc/sudoers.d/mupid-deploy-apk
 /usr/local/sbin/mupid-receive-web         ← /etc/sudoers.d/mupid-deploy-web   (이번에 늘었다)
 /usr/local/sbin/mupid-receive-env         ← /etc/sudoers.d/mupid-deploy-env
+/usr/local/sbin/mupid-receive-ai-env      ← /etc/sudoers.d/mupid-deploy-ai-env  (S15P21A204-416)
 /usr/local/sbin/mupid-receive-manifests   ← /etc/sudoers.d/mupid-deploy-manifests
 ```
 
 `/usr/local/sbin/mupid-receive-index` 는 여기 없다 — 그 동사는 **다른 노드**(추천
 서버가 뜨는 node-b)로 가고 그쪽 sudoers 를 쓴다.
 
-없는 것만 넣는다. 새로 넣을 것은 이번의 `mupid-receive-web` 하나다:
+`mupid-receive-ai-env` 는 **이 노드**다. 추천 서버 파드는 node-b 에 뜨지만 Secret 을
+갈아 끼우는 것은 kubectl 이라 클러스터 어디서 해도 같고, 나머지 env 수신기와 같은
+자리에 두는 편이 설치 절차가 하나로 남는다.
+
+없는 것만 넣는다. 새로 넣을 것은 `mupid-receive-web` 과 `mupid-receive-ai-env` 다:
 
 ```bash
 # 노드에서, root 로
 printf '%s\n' \
   'mupid-deploy-k8s ALL=(root) NOPASSWD: /usr/local/sbin/mupid-receive-web' \
   | install -o root -g root -m 440 /dev/stdin /etc/sudoers.d/mupid-deploy-web
+
+printf '%s\n' \
+  'mupid-deploy-k8s ALL=(root) NOPASSWD: /usr/local/sbin/mupid-receive-ai-env' \
+  | install -o root -g root -m 440 /dev/stdin /etc/sudoers.d/mupid-deploy-ai-env
+
+# 수신기 자신도 함께 넣는다. 규칙만 있고 파일이 없으면 sudo 가 통과한 뒤에 깨진다.
+install -o root -g root -m 755 receive-ai-env.py /usr/local/sbin/mupid-receive-ai-env
 
 # **반드시 문법을 검사한다.** sudoers 가 깨지면 sudo 자체가 막혀 배포가 전부
 # 멈춘다 — 이 검사가 그것을 막는다.

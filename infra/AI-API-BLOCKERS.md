@@ -67,6 +67,30 @@ ALTER TABLE music_section_analysis
 |---|---|---|---|
 | `daily_recommendation_tracks.music_section_id` | **컬럼 없음** | 추가 (NULL 허용) | 없으면 "오늘의 추천" 이 **곡 단위로만** 남는다. 구간 추천이 이 프로젝트의 핵심인데 그 축이 사라진다 |
 | `daily_recommendations.mood_code_id` | `NOT NULL` | 유지하되 값을 정할 주체 필요 | AI 가 묶음 분위기를 고르지 않으면 넣을 값이 없다 |
+| `music.language` (가칭) | **컬럼 없음** | 추가 | 추천이 **하드 게이트로 쓰는 축**이다(`filter_query_pool`·온보딩 `track_ok`). 옮길 자리가 없어 색인에 남겨 두었다 |
+| `music.category`/`style` (가칭) | **컬럼 없음** | 추가 | 같음. `genre` 게이트가 장르 코드와 **함께** 이 값을 본다 |
+| `music_analysis.bpm` (가칭) | **컬럼 없음** | 추가 | 템포 게이트·`tempo_direction`·이어 듣기 감점이 전부 이 값을 쓴다 |
+
+#### language·style·bpm 을 색인에 남겨 둔 이유 (S15P21A204-416)
+
+곡·순간 메타데이터의 정본을 MySQL 로 옮기면서 제목·장르·무드·보컬·악기·순간
+메타데이터는 전부 내부 카탈로그 API(`GET /api/v1/internal/ai/catalog`)로 옮겼다.
+그런데 위 세 축은 `erd.sql` 에 **컬럼 자체가 없어** 옮길 자리가 없었다.
+
+  · `music` — `title`·`album_id`·`artist_id`·`release_date`·재생수·좋아요 수뿐
+  · `music_analysis` — `has_vocal`·`vocal_gender` 둘뿐
+
+그래서 이 셋과 `dur_sec`·`bpm_lo`·`bpm_hi`·`sound_raw` 만 색인의
+`track_features.parquet` 에 남겼다. **오디오에서 잰 값이거나 곡을 만들 때의 생성
+조건**이라 성격도 DB 메타데이터와 다르다.
+
+**ERD 는 건드리지 않았다.** 컬럼이 생기면 카탈로그 응답에 실어 보내고
+`track_features.parquet` 에서 그만큼 빼면 된다 — 받는 쪽은 열 이름을 한 곳
+(`app/recommender.py` 의 `META_FROM_FEATURES`)에 모아 두었다.
+
+지금 당장 막히는 것은 없다. 추천은 색인 값으로 정상 동작한다. 담당은 DB·BE 다.
+
+---
 
 `mood_code_id` 는 ERD 를 바꾸기보다 **AI 가 무엇을 넣을지 정하는 쪽**이 맞아 보인다.
 지금 AI 는 구간 단위 mood 태그를 갖고 있지만 묶음 전체의 분위기 코드를 고르는 규칙이
