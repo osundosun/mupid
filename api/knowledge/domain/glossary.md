@@ -11,7 +11,7 @@
 | `section_uid` | 구간의 고유 키. 신호·추천·커버리지가 전부 이 키로 연결된다 | 전 분석 테이블 |
 | `analysis_version` | 구간 분석 버전. 버전이 다르면 구간 정의가 다르다 | `track_sections`, 현재 `'v1'` |
 | **Play** | 재생 한 번. `play_id`(UUID)로 묶인다 | `listen_events.play_id` |
-| `entry_path` | 이 재생에 어떻게 들어왔는가 (예: `RECOMMEND`) | `listen_events`, `PLAY_START` 에 기록 |
+| `entry_path` | 이 재생에 어떻게 들어왔는가. `RECOMMEND` · `SEARCH` · `PLAYLIST` · `QUEUE` · `RECENT` · `ARTIST`. **`RECOMMEND` 는 기본값이 아니다** — 추천 성과는 `rec_id` 와 함께 센다 | `listen_events`, 재생의 **모든** 이벤트에 기록 |
 | **Signal (신호)** | 행동에 가중치를 붙인 선호 표현 | `user_section_signals` |
 | **Impression (노출)** | 추천을 사용자에게 보여준 기록 | `rec_impressions` |
 | `rec_id` | 추천 한 묶음의 식별자. 노출↔반응을 잇는다 | `listen_events.rec_id`, `rec_impressions.rec_id` |

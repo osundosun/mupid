@@ -70,9 +70,17 @@ function ArtistContent({ model: m }: { model: MupidModel }) {
   const image = profileImage ?? catalogImage;
   const albums = [...new Set(tracks.map(track => track.album))];
   const genres = [...new Set(tracks.map(track => track.genre).filter(Boolean))];
+  /*
+   * 아티스트의 다른 곡을 찾아 듣는 것은 그 자체로 하나의 탐색 경로다(`ARTIST`).
+   *
+   * **출처를 직접 넘기는 것이 중요하다.** 이 패널은 모든 곡 줄의 아티스트명에서 열리므로
+   * 화면으로 갈음하면 같은 행동이 `RECOMMEND`·`SEARCH`·`PLAYLIST` 로 흩어졌다. 게다가
+   * `go('player')` 가 `play()` **뒤에** 있어서, 두 줄의 순서를 바꾸는 것만으로 값이
+   * 조용히 바뀌었다 — 이제 순서와 무관하다.
+   */
   const song = (track: Track) => <button className="artist-song" key={track.id} onClick={() => {
     m.setSelectedArtist(null);
-    if (m.active?.id !== track.id || !m.playing) m.play(track);
+    if (m.active?.id !== track.id || !m.playing) m.play(track, false, undefined, 'ARTIST');
     m.go('player');
   }}>
     <AlbumArt track={track} /><span>{track.title}</span><ChevronRight size={18} aria-hidden="true" />

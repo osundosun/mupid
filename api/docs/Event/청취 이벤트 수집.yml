@@ -161,7 +161,7 @@ docs: |-
   | `occurred_at` | string(ISO-8601) | O | **발생 시각**. 전송 시각이 아닙니다 |
   | `track_id` | int | | 대상 곡 |
   | `play_id` | string(UUID) | | 재생 1회를 묶는 키. `PLAY_START` 에서 발급 |
-  | `entry_path` | string | | `RECOMMEND` / `SEARCH` / `PLAYLIST` |
+  | `entry_path` | string | | `RECOMMEND` / `SEARCH` / `PLAYLIST` / `QUEUE` / `RECENT` / `ARTIST`. 모르는 값은 거절하지 않고 빈 값으로 떨어집니다 |
   | `rec_id`, `rec_type`, `rec_rank` | string, string, int | | 추천 유입일 때. `rec_type` 은 `HOME` / `SECTION` / `CUSTOM` |
   | `position_ms` | int | | 현재 재생 위치 |
   | `from_ms` | int | | `SEEK_*` 는 seek 직전 위치, `PLAY_PROGRESS` 는 직전 하트비트 위치 |

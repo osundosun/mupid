@@ -42,6 +42,10 @@ user_section_signals(user_id, section_uid, track_id, signal,
 
 `v_track_skips` 가 부정 가중치를 **추천 유입(`entry_path = 'RECOMMEND'`)일 때만** 강하게 주는 것도 같은 맥락이다 — 사용자가 직접 검색해 튼 곡의 반응을 추천 성적에 넣으면 평가가 왜곡된다.
 
+> **이 필터가 거르는 범위가 넓어졌다** (2026-09-22, [decision/0014](../decision/0014-event-collector-in-api.md)). `entry_path` 에 `QUEUE` · `RECENT` · `ARTIST` 가 생기면서, 예전에 화면 때문에 `RECOMMEND` 로 떨어지던 재생 — 재생 목록에서 되꺼낸 곡, 최근 들은 곡, 아티스트 패널에서 찾은 곡 — 이 모두 빠졌다. **내가 담아 둔 곡을 넘긴 것으로 추천기를 벌하지 않게 된 것**이라 옳은 방향이지만, 배포 후 스킵 감점량이 눈에 띄게 줄어든다. 원인을 모르면 한참 헤맬 변화다.
+>
+> `ai_server` 쪽 `SURFACE` 매핑(`app/clickhouse.py` · `tools/pull_signals.py`)에는 세 값이 아직 없다. 전자는 `""` 로, 후자는 `"queue"` 처럼 소문자로 통과시켜 **두 수집 경로가 서로 다른 값을 만든다.** `BEH_REC_SURFACES` 정책이라 AI 담당이 정할 일이다.
+
 스킵 해석 규칙(끝까지 듣고 넘기면 긍정, 익숙한 구간을 넘기면 중립)은 [listening-events.md](listening-events.md) 참고.
 
 ## 아직 없는 것
