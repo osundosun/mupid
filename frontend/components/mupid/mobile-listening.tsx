@@ -10,7 +10,7 @@ import { EmptyState, LikeButton, PlayerControls } from './primitives';
 export function MobileListening({ model: m }: { model: MupidModel }) {
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
-  if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
+  if (!active) return <EmptyState title="듣고 싶은 음악을 골라보세요" description="추천 음악이나 탐색에서 곡을 선택하면 재생이 시작돼요."><button className="primary-button" onClick={() => m.go('search')}>음악 둘러보기</button></EmptyState>;
   return (
     <section className="mobile-listening" aria-label="지금 듣는 음악">
       <button

@@ -21,7 +21,8 @@ test('both home layouts share a user-controlled carousel without timers or autom
   assert.ok(deck.includes('loop: false'));
   assert.ok(deck.includes('onClick={() => api?.scrollTo(i, reducedMotion)}'));
   assert.ok(deck.includes('onClick={() => m.play(selected)}'));
-  assert.ok(deck.includes('onClick={() => m.openTrack(selected)}'));
+  assert.ok(deck.includes('<RowPlaybackArea onPlay={() => m.play(selected)} />'));
+  assert.ok(!deck.includes('ArrowUpRight'), 'QA: redundant detail arrow is removed');
   assert.ok(!deck.includes('startPlayback'));
 });
 

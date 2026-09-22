@@ -7,7 +7,7 @@
   background: radial-gradient(ellipse at 50% 32%, #e0edffb0, transparent 64%);
 }
 .album-deck [data-slot='carousel-content'] {
-  padding-block: 20px 24px;
+  padding-block: 12px;
   touch-action: pan-y pinch-zoom;
 }
 .album-deck-track {
@@ -15,8 +15,8 @@
   align-items: center;
 }
 .album-deck-slide {
-  flex: 0 0 64%;
-  padding: 0 12px;
+  flex: 0 0 min(64%, 256px);
+  padding: 0 8px;
   min-width: 0;
 }
 .album-deck-pick {
@@ -94,8 +94,7 @@
 .album-deck-play:hover {
   background: #4569ac;
 }
-.album-deck-play svg,
-.album-deck-open svg {
+.album-deck-play svg {
   width: 18px;
   height: 18px;
 }
@@ -116,8 +115,8 @@
 }
 @media (max-width: 767px) {
   .album-deck-slide {
-    flex-basis: 68%;
-    padding-inline: 10px;
+    flex-basis: min(68%, 236px);
+    padding-inline: 8px;
   }
   .album-deck-pick {
     max-width: 220px;

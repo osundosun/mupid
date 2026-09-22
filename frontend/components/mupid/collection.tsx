@@ -583,6 +583,7 @@ export function ReportView({ model: m }: { model: MupidModel }) {
       {error && <p className="demo-note" role="alert">{error}</p>}
       <div className="report-grid">
         <DailyAlbumTreemap
+          model={m}
           tracks={report?.tracks ?? []}
           totalMs={report?.total_listening_ms ?? 0}
           loading={loading}
@@ -809,9 +810,10 @@ export function WelcomeView({ model: m }: { model: MupidModel }) {
   // 고른 것은 검색과 무관하게 남긴다 — 검색어를 바꿨다고 고른 것이 사라지면
   // 무엇을 골랐는지 확인할 방법이 없다.
   const query = genreQuery.trim().toLowerCase();
-  const visibleGenres = query
+  const visibleGenres = (query
     ? options.genres.filter((genre) => genre.toLowerCase().includes(query))
-    : options.genres;
+    : [...options.genres])
+    .sort((a, b) => a.localeCompare(b, 'ko'));
   return (
     <div className={`welcome-page${m.demoSession && !m.onboardingSubmitted ? ' is-onboarding' : ''}`}>
       {(step > 0 || m.onboardingSubmitted) && <button

@@ -75,11 +75,12 @@ export function HomeView({ model: m }: { model: MupidModel }) {
           </div>
         </div>
         <aside className="now-sidebar">
-          {/* 들을 곡이 없으면 이 카드 대신 그 사실만 알린다. */}
+          {/* 곡을 고르기 전에는 탐색을 안내한다. */}
           {!m.active ? <section className="now-card">
             <MupidMascot size={96} />
-            <h2>아직 들을 곡이 없어요</h2>
-            <p>음악이 등록되면 여기에서 바로 들을 수 있어요.</p>
+            <h2>듣고 싶은 음악을 골라보세요</h2>
+            <p>추천 음악이나 탐색에서 곡을 선택하면 재생이 시작돼요.</p>
+            <button className="primary-button" onClick={() => m.go('search')}>음악 둘러보기</button>
           </section> : <section className="now-card">
             <VinylRecord
               playing={m.playing}

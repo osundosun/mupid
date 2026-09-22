@@ -104,6 +104,7 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
         </DialogHeader>
         <form
           ref={form}
+          noValidate
           // 어느 입력란에 커서가 가든 그 자리를 다시 보이게 한다 (S15P21A204-389).
           // 입력란마다 `onFocus` 를 다는 대신 폼 하나에서 받는다 — 회원가입으로
           // 넘어가면 입력란이 한꺼번에 생기는데, 그때마다 손으로 붙이면 하나를
@@ -112,19 +113,45 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
           onSubmit={async (event) => {
             event.preventDefault();
             if (busy) return;
-            const passwordValue = form.current?.querySelector<HTMLInputElement>('#demo-login-password')?.value || '';
             setMessage('');
+            const invalid = Array.from(event.currentTarget.querySelectorAll<HTMLInputElement>('input'))
+              .find((field) => !field.validity.valid || (field.required && field.type !== 'password' && !field.value.trim()));
+            if (invalid) {
+              const missingMessages: Record<string, string> = {
+                'demo-login-name': '이메일을 입력해 주세요.',
+                'demo-login-password': '비밀번호를 입력해 주세요.',
+                'signup-confirm': '비밀번호 확인을 입력해 주세요.',
+                'signup-nickname': '닉네임을 입력해 주세요.',
+                'signup-birth-year': '출생 연도를 입력해 주세요.',
+              };
+              const missing = invalid.validity.valueMissing || !invalid.value.trim();
+              const message = invalid.name === 'gender'
+                ? '성별을 선택해 주세요.'
+                : missing
+                  ? missingMessages[invalid.id] || '필수 항목을 입력해 주세요.'
+                  : invalid.type === 'email'
+                    ? '올바른 이메일 형식으로 입력해 주세요.'
+                    : invalid.validationMessage;
+              setMessage(message);
+              window.alert(message);
+              invalid.focus();
+              return;
+            }
+            const passwordValue = form.current?.querySelector<HTMLInputElement>('#demo-login-password')?.value || '';
             if (signup) {
               const password = form.current?.querySelector<HTMLInputElement>('#demo-login-password');
               const confirm = form.current?.querySelector<HTMLInputElement>('#signup-confirm');
               if (password?.value !== confirm?.value) {
                 setMessage('비밀번호가 일치하지 않아요.');
+                window.alert('비밀번호가 일치하지 않아요.');
                 confirm?.focus();
                 return;
               }
               const fields = new FormData(form.current!);
               if (verificationId === null || !verified) {
                 setMessage('이메일 인증을 먼저 완료해 주세요.');
+                window.alert('이메일 인증을 먼저 완료해 주세요.');
+                input.current?.focus();
                 return;
               }
               setBusy(true);
@@ -237,7 +264,7 @@ export function DemoLoginDialog({ model: m }: { model: MupidModel }) {
           <button
             className="primary-button wide"
             type="submit"
-            disabled={busy || !name.trim()}
+            disabled={busy}
           >
             <LogIn /> {busy ? '처리 중…' : signup ? '회원가입' : '로그인'}
           </button>

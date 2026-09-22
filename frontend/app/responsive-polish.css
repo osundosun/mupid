@@ -295,7 +295,21 @@
 .mupid-shell .page-heading { grid-template-columns: 44px minmax(0, 1fr) minmax(44px, auto); }
 .mupid-shell .page-heading > div:last-child { gap: 4px; }
 /* 고른 구간 줄: 미리듣기 버튼 옆에 빼기 버튼을 붙인다. */
-.mupid-shell .moment-part-row { display: flex; align-items: center; gap: 4px; }
+.mupid-shell .moment-part-list {
+  margin-top: 20px;
+  padding: 16px 24px 20px 12px;
+  gap: 12px;
+  scroll-padding-block: 16px;
+}
+.mupid-shell .moment-part-row { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+@media (max-width: 600px) {
+  .mupid-shell .moment-part-list {
+    margin-top: 16px;
+    padding: 12px 20px 16px 4px;
+    gap: 8px;
+  }
+  .mupid-shell .moment-part-row { gap: 8px; }
+}
 .mupid-shell .moment-part-row > button:first-child {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 14px;
@@ -603,7 +617,7 @@
   }
 
   .mupid-shell .home-feed .album-deck-slide {
-    flex-basis: 48%;
+    flex-basis: min(48%, 164px);
     padding-inline: 8px;
   }
 
@@ -885,14 +899,16 @@
  * 제자리에 흐르게 둔다. 대화상자는 `body` 에 붙어 `.mupid-shell` 밖이라 위 규칙들을
  * `:is()` 로 함께 받는다.
  */
-.moment-comment-dialog .selected-moment-popover { margin: 12px 0 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; animation: none; }
+.moment-comment-dialog .selected-moment-popover { margin: 12px 0 0; padding: 4px; max-height: none; overflow: visible; border: 0; border-radius: 0; background: transparent; box-shadow: none; animation: none; }
 .moment-comment-dialog .wave-comment-popover-head { display: none; }
-.moment-comment-dialog .selected-moment-messages { max-height: min(42dvh, 340px); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.moment-comment-dialog .selected-moment-messages { max-height: min(42dvh, 340px); overflow-y: auto; overscroll-behavior: contain; padding: 8px 24px 8px 0; margin-bottom: 12px; scrollbar-color: #bdcfe5 transparent; }
 .moment-comment-dialog .selected-moment-popover form.wave-comment-composer { position: static; width: 100%; max-width: none; left: auto; top: auto; animation: none; }
 .moment-comment-dialog .selected-moment-popover form.wave-comment-composer::before { display: none; }
 .moment-comment-dialog .wave-comment-composer textarea { width: 100%; box-sizing: border-box; min-height: 64px; max-height: 120px; margin: 8px 0 10px; padding: 10px 12px; resize: none; line-height: 1.5; font-size: 15px; border: 1px solid #dce6f5; border-radius: 12px; }
 .moment-comment-dialog .wave-comment-composer label { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: #6a84ad; }
 .moment-comment-dialog .wave-comment-composer footer { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
+.moment-comment-dialog .wave-comment-composer footer { flex-wrap: wrap; padding-bottom: 4px; }
+.moment-comment-dialog .wave-comment-composer textarea:focus-visible { outline-offset: -2px; }
 .moment-comment-dialog .wave-comment-composer footer > span { margin-right: auto; font-size: 13px; color: #9aa9c0; font-variant-numeric: tabular-nums; }
 .moment-comment-dialog .wave-comment-composer .primary-button { min-height: 38px; padding: 8px 16px; border-radius: 999px; font-size: 15px; }
 :is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .moment-popup-empty { margin: 0; padding: 20px 8px; text-align: center; font-size: 14px; }
@@ -1922,10 +1938,10 @@
 .profile-settings-card .primary-button:disabled { background: #e8eef7; color: #95a7c0; opacity: 1; }
 
 /* Exact-time hearts keep their horizontal position even in crowded moments. */
-.moment-heart-scroll { max-height: 44px; overflow-y: hidden; overflow-x: hidden; padding-inline: 22px; margin-inline: -22px; scrollbar-width: thin; overscroll-behavior: contain; }
+.moment-heart-scroll { max-height: 44px; overflow: visible; padding-inline: 22px; margin-inline: -22px; }
 .moment-heart-rail { position: relative; width: 100%; }
 .moment-heart-marker { position: absolute; transform: translateX(-50%); width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; color: #d991b5; cursor: pointer; }
-.moment-heart-marker:hover, .moment-heart-marker[aria-expanded='true'] { color: #c96096; }
+.moment-heart-marker:hover, .moment-heart-marker:focus-visible, .moment-heart-marker[aria-expanded='true'] { color: #c96096; z-index: 2; }
 /* 흰 테두리를 둘러 파형 위에서도 표식이 배경과 섞이지 않게 한다. */
 .moment-heart-marker .moment-author-avatar { width: 28px; height: 28px; box-shadow: 0 0 0 2px #fff, 0 2px 6px #607ba626; }
 .moment-heart-marker[aria-expanded='true'] .moment-author-avatar { box-shadow: 0 0 0 2px #7aa3d6, 0 2px 7px #607ba633; }
@@ -2228,4 +2244,135 @@ html.dark .mupid-shell .chat-panel .chat-messages { background: #171717; }
 .mupid-shell .explore-filter-sidebar .category-selected > * {
   flex-shrink: 0;
   white-space: nowrap;
+}
+/* 가사가 없을 때도 오른쪽 조작부가 LP 높이에 맞춰 여유 있게 놓인다. */
+@media (min-width: 768px) {
+  .mupid-shell.page-player .player-detail:has(.player-lyrics-inline .song-lyrics[data-empty='true']) {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding-block: clamp(20px, 4vh, 48px);
+  }
+  .mupid-shell.page-player .player-lyrics-inline:has(.song-lyrics[data-empty='true']) {
+    margin-bottom: clamp(28px, 5vh, 56px);
+  }
+  .mupid-shell.page-player .player-lyrics-inline .song-lyrics[data-empty='true'] {
+    min-height: clamp(120px, 18vh, 200px);
+    max-height: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 16px;
+    overflow: visible;
+  }
+  .mupid-shell.page-player .player-detail:has(.song-lyrics[data-empty='true']) .player-controls-row {
+    margin-block: 24px 28px;
+  }
+  .mupid-shell.page-player .player-detail:has(.song-lyrics[data-empty='true']) .player-quick-actions {
+    margin-top: 20px;
+    padding-bottom: 12px;
+  }
+}
+/* 댓글 작성 하단의 두 동작은 같은 높이와 기준선으로 맞춘다. */
+:is(.mupid-shell .track-comments, .moment-comment-dialog) .wave-comment-composer footer > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 44px;
+  min-height: 44px;
+  min-width: 80px;
+  margin: 0;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+:is(.mupid-shell .track-comments, .moment-comment-dialog) .wave-comment-composer footer > .comment-cancel {
+  border: 1px solid #cfddf0;
+  background: transparent;
+  color: #6a84ad;
+  box-shadow: none;
+}
+:is(.mupid-shell .track-comments, .moment-comment-dialog) .wave-comment-composer footer > .comment-cancel:hover:not(:disabled) {
+  background: #edf3fb;
+}
+/* 파란 선은 실제 재생 위치, 분홍 손잡이는 저장할 구간이다. */
+.moment-wave-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #527fba;
+  transform: translateX(-50%);
+  z-index: 3;
+  pointer-events: none;
+}
+.moment-wave-playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: inherit;
+  transform: translate(-50%, -50%);
+}
+.daily-album-cell .daily-album-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: #17294138;
+  opacity: 0;
+  pointer-events: none;
+}
+.daily-album-play svg {
+  width: clamp(18px, 3vw, 36px);
+  height: auto;
+  max-width: 65%;
+  max-height: 65%;
+  filter: drop-shadow(0 2px 5px #17294180);
+}
+.daily-album-cell:hover .daily-album-play,
+.daily-album-cell:focus-visible .daily-album-play,
+.daily-album-cell[data-playing='true'] .daily-album-play { opacity: 1; }
+.comment-error-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 16px 20px;
+  border: 1px solid #dce6f5;
+  border-radius: 16px;
+  background: #edf3fb;
+  color: #526d94;
+  text-align: left;
+}
+.comment-error-notice p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.comment-error-notice .secondary-button {
+  min-height: 40px;
+  padding: 8px 16px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+html.dark .comment-error-notice {
+  background: #202833;
+  border-color: #36465c;
+  color: #b5c8e3;
+}
+@media (hover: none), (pointer: coarse) {
+  .daily-album-cell .daily-album-play { opacity: 1; }
 }

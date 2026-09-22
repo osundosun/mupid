@@ -2,7 +2,7 @@
 import { Bookmark, ChevronRight, Pause, Play } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import { formatTime, getSongSectionAt, type Track } from '@/lib/mupid-data';
-import { AlbumArt } from './primitives';
+import { RowPlaybackArea, AlbumArt } from './primitives';
 
 /**
  * 오늘의 Moment 에 보여 줄 곡.
@@ -71,7 +71,8 @@ export function TodayMoment({ model: m }: { model: MupidModel }) {
           const playing =
             m.active?.id === track.id && m.playing;
           return (
-            <article className={`today-moment-row ${playing ? 'is-current' : ''}`} key={track.id}>
+            <article data-playable-row className={`today-moment-row ${playing ? 'is-current' : ''}`} key={track.id}>
+              <RowPlaybackArea onPlay={() => playing ? m.play() : m.play(track, true)} />
               <button
                 className="today-moment-open"
                 aria-label={`${track.title} ${formatTime(section.start)} 추천 순간 듣기`}

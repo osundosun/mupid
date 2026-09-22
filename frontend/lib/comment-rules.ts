@@ -11,6 +11,12 @@ import type { Track } from './mupid-data';
 /** `music_comments.content` 가 varchar(100) 이다. 서버도 같은 값으로 막는다. */
 export const COMMENT_MAX_LENGTH = 100;
 
+/** 화면에 표시한 초와 저장하는 시점을 일치시킨다. */
+export function captureCommentTime(position: number, duration: number): number {
+  if (!Number.isFinite(position) || !Number.isFinite(duration)) return 0;
+  return Math.floor(Math.min(Math.max(0, duration), Math.max(0, position)));
+}
+
 export function validateComment(body: string, at: number, duration: number) {
   const trimmed = body.trim();
   return (
