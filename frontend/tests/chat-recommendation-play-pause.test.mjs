@@ -251,8 +251,8 @@ void test('다른 곡을 듣던 중 추천 줄을 누르면 추천 구간 시작
   );
   assert.equal(
     refs.previewEnd.current,
-    track.recommended.end,
-    '구간 끝을 걸지 않았다 — 다음 구간까지 흘러간다',
+    null,
+    '추천 재생에 자동 정지 지점이 설정됐다',
   );
   assert.deepEqual(calls.lift, [track.id], '목록 밖에서 튼 곡이 큐에 자리를 얻지 못했다');
   assert.deepEqual(calls.skip, ['OTHER_TRACK']);
@@ -270,7 +270,7 @@ void test('앱을 막 열어 active 이기만 한 곡도 추천 구간 시작점
   assert.equal(calls.resume, 0);
   assert.equal(calls.startPlayback.length, 1);
   assert.equal(calls.startPlayback[0].start, track.recommended.start);
-  assert.equal(refs.previewEnd.current, track.recommended.end);
+  assert.equal(refs.previewEnd.current, null);
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -363,4 +363,52 @@ void test('토글 조건이 fromMoment 에 다시 매달리지 않는다', () =>
     false,
     'willToggle 이 다시 fromMoment 를 본다 — 422 가 되살아난다',
   );
+});
+
+// 실제 상태 구독을 실행해 추천 끝(67초)과 1분 이후에도 pause가 호출되지 않는지 확인한다.
+const subscriptionStart = hook.indexOf('  useEffect(() => {\n    const player = getPlayer();', hook.indexOf('const onEndedRef'));
+const subscriptionEnd = hook.indexOf('\n  }, []);', subscriptionStart) + '\n  }, []);'.length;
+const subscriptionJs = ts.transpileModule(`export function subscribe(deps: any) {
+ const {getPlayer, previewEnd, momentSequence, activeRef} = deps;
+ const useEffect = (fn: any) => fn();
+ const setBuffering = () => {}, setPlaying = () => {}, setTime = () => {};
+ const setToast = () => {}, setSavedMomentPlayback = () => {};
+ const notifiedError = {current: null}, endedFor = {current: null};
+ const onEndedRef = {current: () => {}};
+ ${hook.slice(subscriptionStart, subscriptionEnd)}
+}`, {compilerOptions: {target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext}}).outputText;
+const {subscribe} = await import('data:text/javascript;base64,' + Buffer.from(subscriptionJs).toString('base64'));
+
+function advancePlayback(refs, positions) {
+ let listener;
+ let pauses = 0;
+ const state = {status: 'playing', positionSec: 0, musicId: 101, error: null};
+ const player = {
+  store: {get: () => state, subscribe: fn => {listener = fn; return () => {}; }},
+  pause: () => {pauses++; state.status = 'paused';},
+ };
+ subscribe({...refs, getPlayer: () => player});
+ for (const position of positions) {state.positionSec = position; listener();}
+ return {pauses, status: state.status};
+}
+
+void test('추천 재생은 67초 구간 끝과 90초를 넘어도 자동 일시정지하지 않는다', () => {
+ const track = {...recommendedTrack(), recommended: {start: 30, end: 67}};
+ const {play, refs} = harness({active: track});
+ play(track, true);
+ assert.deepEqual(advancePlayback(refs, [30, 59, 60, 67, 73, 90]), {pauses: 0, status: 'playing'});
+});
+
+void test('명시적인 구간 미리듣기는 지정한 끝에서 한 번만 멈춘다', () => {
+ const {refs} = harness({active: recommendedTrack(), previewEnd: 67});
+ refs.momentSequence.current = null;
+ assert.deepEqual(advancePlayback(refs, [60, 66, 67, 68]), {pauses: 1, status: 'paused'});
+});
+
+void test('PC와 모바일 오늘의 Moment는 저장 구간 미리듣기 대신 추천 재생을 사용한다', async () => {
+ for (const file of ['desktop-home.tsx', 'today-moment.tsx']) {
+  const source = await read('components/mupid/' + file);
+  assert.ok(source.includes('m.play(track, true)'));
+  assert.ok(!source.includes('m.playSavedMoment('));
+ }
 });

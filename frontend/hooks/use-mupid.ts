@@ -280,6 +280,7 @@ export function useMupid(bootstrap: Bootstrap) {
   // 한 바퀴에 한 번만 울린다.
   const playedInCycle = useRef<Set<string>>(new Set());
   const requestId = useRef(0);
+  const playbackSeek = useRef<Promise<void>>(Promise.resolve());
   const messageEndRef = useRef<HTMLDivElement>(null);
   /**
    * 대화 스크롤 영역(`.chat-messages`) 자체. 새 말이 오면 여기를 끝으로 내린다.
@@ -845,11 +846,27 @@ export function useMupid(bootstrap: Bootstrap) {
     if (!player) return;
     try {
       if (track.localAudio) await player.loadLocal(track.id, track.localAudio, track.duration);
-      else await player.load(track.musicId!, { autoplay: true });
+      else {
+        // 구간 재생은 이전 위치에서 재생 상태를 내보내면 새 구간의 종료 조건에
+        // 걸릴 수 있다. 먼저 멈춘 채 목적지로 옮긴 뒤 재생한다.
+        if (start !== undefined) player.pause();
+        await player.load(track.musicId!, { autoplay: start === undefined });
+      }
       if (id !== requestId.current) return;
       // 같은 곡의 뒤쪽 순간에서 도입(0초)으로 돌아가는 경우에도 반드시 이동한다.
       // 0초를 생략하면 player.load가 같은 음원을 유지할 때 기존 위치에서 계속 재생된다.
-      if (start !== undefined) await player.seek(start);
+      if (start !== undefined) {
+        // 빠른 구간 전환은 이전 seek가 끝난 다음 처리한다. 엔진의 진행 중인
+        // seek가 뒤늦게 paused를 내보내 새 재생을 멈추지 않도록 한다.
+        const pending = playbackSeek.current.catch(() => {}).then(async () => {
+          if (id !== requestId.current) return;
+          await player.seek(start);
+        });
+        playbackSeek.current = pending;
+        await pending;
+        if (id !== requestId.current) return;
+        await player.play();
+      }
     } catch {
       if (id === requestId.current && mountedRef.current) {
         setToast('음원을 불러오지 못했어요. 다시 재생해 주세요.');
@@ -994,9 +1011,8 @@ export function useMupid(bootstrap: Bootstrap) {
       analytics.skip(positionMs(), 'OTHER_TRACK');
     }
     if (fromMoment && track.recommended) {
-      // 서버가 고른 구간이다. 시작만 맞추고 끝을 두지 않으면 다음 구간까지 흘러
-      // "이 구간을 권한다" 는 말과 들리는 것이 달라진다.
-      previewEnd.current = track.recommended.end;
+      // 추천은 시작 위치만 안내한다. 종료 제한을 두면 홈과 전체 플레이어에서도
+      // 갑자기 일시정지된다. 구간 끝 정지는 명시적인 순간 미리듣기에만 둔다.
       void startPlayback(track, track.recommended.start, picked, from);
       return;
     }
@@ -1400,9 +1416,9 @@ export function useMupid(bootstrap: Bootstrap) {
     void startPlayback(activeRef.current, momentRange[0]);
   };
   const playSavedMoment = (moment: SavedMoment) => {
-    playSavedMoments([moment], moment);
+    playSavedMoments([moment], moment, false);
   };
-  const playSavedMoments = (momentsToPlay: SavedMoment[], startAt?: SavedMoment) => {
+  const playSavedMoments = (momentsToPlay: SavedMoment[], startAt?: SavedMoment, toggle = true) => {
     if (!momentsToPlay.length) return;
     const mode = startAt ? 'single' : 'all';
     const ranges = momentPlaybackRanges(momentsToPlay, startAt);
@@ -1410,6 +1426,7 @@ export function useMupid(bootstrap: Bootstrap) {
     const player = getPlayer();
     // 같은 곡의 같은 구간 묶음을 다시 누르면 멈춘다.
     if (
+      toggle &&
       activeRef.current?.id === first.track.id &&
       momentSequence.current?.trackId === first.track.id &&
       momentSequence.current.mode === mode &&

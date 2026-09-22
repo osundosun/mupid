@@ -317,6 +317,8 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
               // 다른 순간의 범위에 이미 걸린 구간을 누르면 새로 더하지 않고 그 순간을 손보는 대상으로 삼는다.
               setHinted(i);
               const within = !selected.includes(i) ? partAt(part.start + (part.end - part.start) / 2) : -1;
+              const preview = within >= 0 ? parts[within] : { ...part, ...trimmed[i] };
+              m.playSavedMoment({ id: preview.start, track: active, start: preview.start, end: preview.end, section: preview.label });
               if (within >= 0) { focus(within); return; }
               setSelected(ids => ids.includes(i) ? ids.filter(id => id !== i) : [...ids, i]);
               setSaved(false);
@@ -328,8 +330,14 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
           <MomentWaveEditor track={active} range={focusedPart} others={parts.slice(0, -1)} onSelect={time => {
             // 이미 고른 순간 안을 누르면 그 순간을 손보는 대상으로. 바깥이면 그 구간을 새로 고른다.
             const within = partAt(time);
-            if (within >= 0) { focus(within); return; }
             const index = sections.findIndex(part => time >= part.start && time < part.end);
+            const preview = within >= 0 ? parts[within] : sections[index];
+            // 선택 상태 갱신을 기다리지 않고 클릭한 위치에서 해당 순간을 미리 듣는다.
+            // 선택 범위 자체는 유지하고, 재생 시작점만 클릭 위치로 지정한다.
+            if (preview) m.playSavedMoment({
+              id: time, track: active, start: time, end: preview.end, section: preview.label,
+            });
+            if (within >= 0) { focus(within); return; }
             if (index >= 0) { setHinted(index); setSelected(ids => [...ids.filter(id => id !== index), index]); }
             setSaved(false);
           }} onTrim={(start, end) => {
