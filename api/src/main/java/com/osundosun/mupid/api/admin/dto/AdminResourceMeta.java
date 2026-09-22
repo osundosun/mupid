@@ -96,6 +96,22 @@ public class AdminResourceMeta {
     @Builder.Default
     private List<AdminTimelineAxis> timelineAxes = List.of();
 
+    /**
+     * 이 자원의 행에 **행동 타임라인**이 있는가 (S15P21A204-430).
+     *
+     * <p>{@link #timelineAxes} 와 닮았지만 가리키는 것이 다르다. 그쪽은 <b>관리 자원</b>을
+     * 축으로 늘어놓는 것이라 밴드 선언이 필요하지만, 이쪽이 그리는 것은 ClickHouse 의
+     * 이벤트 스트림이라 관리 자원이 아니다 — 선언할 축이 없고 <b>이 자원에 그 화면이
+     * 있는가</b> 하나만 있으면 된다.
+     *
+     * <p>그래도 화면이 아니라 서버가 정한다. 화면이 `"user" 면 행동 타임라인` 이라고
+     * 알고 있으면 대상이 늘 때마다 템플릿을 고쳐야 한다 — {@code CHILD_LINKS}·
+     * {@code TIMELINES} 를 표로 둔 것과 같은 규칙이다.
+     */
+    @Setter
+    @Builder.Default
+    private boolean eventTimeline = false;
+
     public AdminAttribute attribute(String fieldName) {
         return attributes.get(fieldName);
     }

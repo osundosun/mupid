@@ -44,6 +44,11 @@
 `entry_path` 가 `RECOMMEND` 면 `selector = AI`, 아니면 `USER` 다. 추천 사유는
 `reason` 을 100자로 잘라 넣는다.
 
+> 이 판정은 `entry_path` 에 `QUEUE` · `RECENT` · `ARTIST` 가 생기면서 **더 정확해졌다**
+> (2026-09-22, [0014](0014-event-collector-in-api.md)). 예전에는 홈에서 최근 들은 곡을
+> 다시 틀어도 화면이 홈이라 `RECOMMEND` 였고, 사용자가 고른 재생이 `AI` 로 기록됐다.
+> 지금은 그 셋이 모두 `USER` 로 떨어진다.
+
 ### 추천 사유는 이벤트에 없어서 따로 들고 있다 (2026-09-20 보강)
 
 위 문장은 "추천 사유는 `reason` 을 100자로 잘라 넣는다" 고 적었지만, **그 `reason` 은
@@ -73,11 +78,24 @@
   ([0022](0022-play-queue-in-redis.md) 와 같은 지적). 수집기가 받아 주는 과거 한도
   (기본 72시간)보다 길어야 늦게 도착한 재생도 사유를 찾는다.
 
-**남은 한계** — 「오늘의 모먼트」는 저장 경로라 상관 키를 되돌려받지 못한다. 그 곡을
-재생하면 진입 경로가 `RECOMMEND` 인데 `rec_id` 가 비어 사유가 붙지 않는다. 그쪽까지
-채우려면 화면이 `daily_recommendation_tracks` 의 사유에 상관 키를 싣거나, 배치 사유를
-`music_id` 로도 되짚을 수 있어야 한다. 티켓 [S15P21A204-386] 은 이어 듣기 경로를 고쳤고,
-그 한계는 [failure/frontend.md](../failure/frontend.md) 에 적어 두었다.
+**~~남은 한계~~ — 해소됨 (2026-09-22)** — 「오늘의 모먼트」는 저장 경로라 상관 키를
+되돌려받지 못한다고 적혀 있었다. 실제로는 **서버가 이미 주고 있었고**
+(`DailyRecommendationResult.groups[].recommendation_id`) 프론트가 버리고 있었다 —
+오늘의 추천에 *구간*을 저장하지 않기로 하면서(`open-questions.md` B7) `recommended`
+객체를 통째로 떼어 냈고, 그 안에 있던 상관 키까지 함께 떨어져 나갔다.
+
+구간이 없는 추천이라 `recommended` 에 되돌릴 수는 없다 — 그쪽은 "어느 구간을 왜
+골랐는가" 이고, 억지로 담으면 플레이어가 없는 구간을 그리고 `play(track, true)` 가
+`undefined` 지점으로 재생을 건다. 그래서 `Track.recSource` 라는 상관 키 전용 자리를
+두고 `startPlayback` 이 구간 추천 다음 순서로 읽는다. `rec_type` 은 `HOME` 이다.
+
+**단, 폴백 묶음은 여전히 붙지 않는다.** 배치가 한 번도 돌지 않은 사람에게 그 자리에서
+골라 내려주는 묶음은 저장되지 않아 `recommendation_id` 가 `0` 이다
+([api-todo.md](../api-todo.md)). `0` 은 가리킬 대상이 없는 번호라 싣지 않는다 — 실으면
+없는 추천 번호로 재생이 기록돼 사유를 되짚지도 못하면서 추천 성과에는 잡힌다.
+
+티켓 [S15P21A204-386] 은 이어 듣기 경로를 고쳤고, 그 한계는
+[failure/frontend.md](../failure/frontend.md) 에 적어 두었다.
 
 
 ## 따라온 것

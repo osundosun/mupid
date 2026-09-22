@@ -122,7 +122,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
             meta.getIdFieldNames(),
             meta.fields(),
             meta.getChildLinks(),
-            meta.getTimelineAxes()
+            meta.getTimelineAxes(),
+            meta.isEventTimeline()
         );
     }
 

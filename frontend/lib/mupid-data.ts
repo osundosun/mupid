@@ -1,3 +1,6 @@
+// 타입만 가져온다 — 값을 import 하면 화면 데이터 모듈이 수집 SDK 에 묶인다.
+import type { RecType } from './analytics/types';
+
 export type SongSection = {
   label: string;
   start: number;
@@ -67,6 +70,16 @@ export type Track = {
   sections: SongSection[];
   /** 추천으로 온 곡일 때만 채워진다. 카탈로그에서 온 곡에는 없다. */
   recommended?: TrackRecommendation;
+  /**
+   * 구간 없이 **곡만** 권한 추천의 상관 키. 재생 이벤트의 `rec_id` · `rec_type` ·
+   * `rec_rank` 로 되돌려 싣는다.
+   *
+   * `recommended` 와 나눠 둔 것은 그쪽이 "어느 구간을 왜 골랐는가" 이기 때문이다.
+   * 오늘의 Moment 는 구간을 주지 않으므로(`open-questions.md` B7) 거기에 담으면
+   * 화면이 **없는 구간을 그린다** — 플레이어의 추천 구간 표시와 구간 이름이 빈 값으로
+   * 뜨고, `play(track, true)` 가 `undefined` 지점으로 재생을 건다.
+   */
+  recSource?: { id: number; type: RecType; rank: number };
   recommendationReason?: string;
 };
 

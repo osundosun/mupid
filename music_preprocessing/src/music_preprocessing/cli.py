@@ -469,6 +469,8 @@ def waveform(
     table.add_column("값", justify="right")
     table.add_row("올린 곡", str(result["uploaded"]))
     table.add_row("이미 있어 건너뜀", str(result["skipped_present"]))
+    if result["skipped_gone"]:
+        table.add_row("서버에 없어 건너뜀", str(result["skipped_gone"]))
     console.print(table)
 
     if result["skipped_unregistered"]:

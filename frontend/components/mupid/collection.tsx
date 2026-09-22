@@ -745,7 +745,14 @@ export function ProfileView({ model: m }: { model: MupidModel }) {
       <section className="profile-settings-card profile-list-card" aria-label="최근 들은 음악">
       <h2>최근 들은 음악 <span className="profile-section-count">{historyTracks.length}곡</span></h2>
       <section className="track-list profile-history" aria-label="최근 들은 음악 목록">
-        {historyTracks.map(track => <TrackRow key={track.id} track={track} model={m} showDetail={false} />)}
+        {/* 홈의 '최근 들은 음악' 과 같은 뜻이다. 화면이 달라도 경로는 `RECENT` 하나다. */}
+        {historyTracks.map(track => <TrackRow
+          key={track.id}
+          track={track}
+          model={m}
+          showDetail={false}
+          onPlay={() => m.play(track, false, undefined, 'RECENT')}
+        />)}
         {!historyTracks.length && <p className="listening-history-empty">아직 감상 기록이 없어요.<span>음악을 들으면 여기에 차곡차곡 모아둘게요.</span></p>}
       </section>
       </section>

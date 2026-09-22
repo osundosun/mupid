@@ -74,6 +74,11 @@ function withSection(
  * **곡 목록만 온다.** 오늘의 추천에 구간을 저장하지 않기로 했기 때문이다
  * (`open-questions.md` B7). 그래서 `recommended` 를 붙이지 않고, 화면은 분석 결과에서
  * 위치로 구간을 찾는다 — 서버가 고른 그 구간은 아니다.
+ *
+ * **다만 상관 키는 버리지 않는다.** 구간을 안 붙이면서 `recommendation_id` 까지 함께
+ * 떨어져 나가, 홈 전면에 걸리는 이 추천만 성과를 잴 수 없었다. 구간이 없는 추천이라
+ * `recommended` 가 아니라 `recSource` 에 담는다 — 그쪽에 담으면 화면이 없는 구간을
+ * 그린다.
  */
 export async function fetchTodayMoments(
   signal?: AbortSignal,
@@ -93,6 +98,18 @@ export async function fetchTodayMoments(
       // 묶음의 무드도 코드 이름(영문)으로 온다.
       mood: moodLabel(group.mood || ''),
       reason: row.reason ?? '',
+      /*
+       * 구간 추천이 아니라 홈에 거는 하루치 묶음이라 `HOME` 이다.
+       *
+       * **`0` 은 상관 키가 아니다.** 배치가 한 번도 돌지 않은 사람에게는 그 자리에서
+       * 고른 폴백 묶음이 내려오는데, 저장하지 않으므로 가리킬 번호가 없어 계약상
+       * `0` 이 온다(`api/knowledge/api-todo.md`). 그대로 실으면 존재하지 않는 추천
+       * 번호로 재생이 기록돼, 사유를 되짚지도 못하면서 추천 성과에는 잡힌다.
+       */
+      recSource:
+        group.recommendation_id > 0
+          ? { id: group.recommendation_id, type: 'HOME' as const, rank: row.rank }
+          : undefined,
       recommendationReason: row.reason?.trim() || group.reason?.trim() || undefined,
     })),
   };

@@ -145,6 +145,24 @@ public class AdminResourceRegistry {
     );
 
     /**
+     * **행동 타임라인**이 붙는 자원 (S15P21A204-430).
+     *
+     * <p>{@link #TIMELINES} 와 달리 축을 적지 않는다. 그쪽이 늘어놓는 것은 관리 자원
+     * (`lyric`·`musicSectionAnalysis`)이라 어느 자원을 어느 컬럼으로 놓을지 선언해야
+     * 하지만, 여기가 그리는 것은 <b>ClickHouse 의 이벤트 스트림</b>이다 — 관리 자원이
+     * 아니고 JPA 메타모델에도 없으므로 선언할 축이 없다. 밴드 구성은
+     * {@code AdminUserEventGroup} 이 정한다.
+     *
+     * <p>그래도 표로 둔 이유는 {@link #CHILD_LINKS}·{@link #TIMELINES} 와 같다 —
+     * <b>화면이 자원 이름을 보고 판단하지 않게</b> 하려는 것이다. 화면이
+     * "`user` 면 행동 타임라인" 이라고 알고 있으면 대상이 늘 때마다 템플릿을 고쳐야 한다.
+     *
+     * <p>키는 <b>엔티티 이름</b>(`User`)이다. 자원 이름(`user`)은 첫 글자를 내린 것이라
+     * 여기서 만들어 찾는다 — {@link #validateChildLinks} 가 같은 함정을 이미 밟았다.
+     */
+    private static final Set<String> EVENT_TIMELINES = Set.of("User");
+
+    /**
      * 타임라인 축 하나의 선언. {@link AdminTimelineAxis} 로 나가기 전의 모양이다.
      *
      * <p><b>시간 필드는 언제나 "시간을 가진 자원"의 필드다.</b> 밴드가 자기 시간 컬럼을
@@ -281,6 +299,26 @@ public class AdminResourceRegistry {
         // 400 으로 떨어지는 것보다, 기동할 때 로그를 남기고 링크를 안 그리는 편이 정직하다.
         validateChildLinks();
         validateTimelines();
+        markEventTimelines();
+    }
+
+    /**
+     * 행동 타임라인이 붙는 자원에 표시를 남긴다 (S15P21A204-430).
+     *
+     * <p>{@link #validateTimelines} 처럼 검증할 것이 없다 — 늘어놓을 자식 자원도, 맞춰 볼
+     * 시간 컬럼도 없기 때문이다. 확인하는 것은 <b>그 자원이 실제로 있는가</b> 하나뿐이고,
+     * 없으면 표시를 붙이지 않고 로그를 남긴다. 화면에 단추가 떴는데 조회가 404 로 떨어지는
+     * 것보다 단추가 안 나오고 서버 로그에 이유가 남는 편이 정직하다.
+     */
+    private void markEventTimelines() {
+        for (String entityName : EVENT_TIMELINES) {
+            AdminResourceMeta meta = byName.get(resourceName(entityName));
+            if (meta == null) {
+                log.error("관리자 화면: 행동 타임라인의 자원이 없습니다 — {}", entityName);
+                continue;
+            }
+            meta.setEventTimeline(true);
+        }
     }
 
     /**
