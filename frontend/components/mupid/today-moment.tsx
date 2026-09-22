@@ -69,14 +69,13 @@ export function TodayMoment({ model: m }: { model: MupidModel }) {
         {moments.map((track) => {
           const section = getSongSectionAt(track, track.moment);
           const playing =
-            m.active?.id === track.id && m.playing && m.time >= section.start && m.time < section.end;
-          const moment = { id: track.id, track, start: section.start, end: section.end, section: section.label };
+            m.active?.id === track.id && m.playing;
           return (
             <article className={`today-moment-row ${playing ? 'is-current' : ''}`} key={track.id}>
               <button
                 className="today-moment-open"
                 aria-label={`${track.title} ${formatTime(section.start)} 추천 순간 듣기`}
-                onClick={() => m.playSavedMoment(moment)}
+                onClick={() => m.play(track, true)}
               >
                 <AlbumArt track={track} />
                 <span>
@@ -87,7 +86,7 @@ export function TodayMoment({ model: m }: { model: MupidModel }) {
               <button
                 className="icon-button"
                 aria-label={`${track.title} 추천 순간 ${playing ? '일시정지' : '재생'}`}
-                onClick={() => (playing ? m.play() : m.playSavedMoment(moment))}
+                onClick={() => (playing ? m.play() : m.play(track, true))}
               >
                 {playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
               </button>

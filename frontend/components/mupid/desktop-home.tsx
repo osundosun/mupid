@@ -119,13 +119,13 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
           <div className="desktop-playlist-list">
             {todayMoments.map(track => {
               const section = getSongSectionAt(track, track.moment);
-              const playing = m.active?.id === track.id && m.playing && m.time >= section.start && m.time < section.end;
+              const playing = m.active?.id === track.id && m.playing;
               return <article className={`desktop-playlist-row ${playing ? 'is-current' : ''}`} key={track.id}>
-                <button className="desktop-playlist-open" aria-label={`${track.title} ${formatTime(section.start)} 추천 순간 듣기`} onClick={() => m.playSavedMoment({id: track.id, track, start: section.start, end: section.end, section: section.label})}>
+                <button className="desktop-playlist-open" aria-label={`${track.title} ${formatTime(section.start)} 추천 순간 듣기`} onClick={() => m.play(track, true)}>
                   <AlbumArt track={track} />
                   <span><strong>{track.title}</strong><small>{track.artist}</small></span>
                 </button>
-                <button className="icon-button" aria-label={`${track.title} 추천 순간 ${playing ? '일시정지' : '재생'}`} onClick={() => playing ? m.play() : m.playSavedMoment({id: track.id, track, start: section.start, end: section.end, section: section.label})}>{playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button>
+                <button className="icon-button" aria-label={`${track.title} 추천 순간 ${playing ? '일시정지' : '재생'}`} onClick={() => playing ? m.play() : m.play(track, true)}>{playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button>
               </article>;
             })}
             {!todayMoments.length && <p className="desktop-section-empty">지금 추천할 수 있는 곡이 없어요. 탐색에서 다른 음악을 만나보세요.</p>}

@@ -421,7 +421,7 @@ export class PlayerEngine {
 
   pause() {
     if (this.localAudio) { this.localAudio.pause(); return; }
-    if (this.store.get().status !== 'playing') return;
+    if (this.store.get().status !== 'playing' && this.store.get().status !== 'buffering') return;
     this.anchorPosition = this.currentPosition();
     this.stopSources();
     this.stopTicker();
