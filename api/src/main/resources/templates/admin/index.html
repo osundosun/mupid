@@ -382,6 +382,79 @@
         /* 저장이 실패해 원위치로 되돌린 항목. 왜 돌아왔는지는 토스트가 말한다. */
         .item.reverted { border-color: var(--danger); }
 
+        /* --------------------------------------- 사용자 행동 타임라인 (430) */
+
+        /* 날짜 막대. 창의 **모든 날**이 한 칸씩이고 높이가 그날 이벤트 수다.
+           표로 나열하면 "언제 활발했나" 가 안 보인다 — 어느 날을 펼칠지 여기서 고른다. */
+        .day-strip {
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            height: 88px;
+            padding: 8px;
+            background: var(--panel-2);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+
+        .day {
+            display: flex;
+            flex: 1 1 0;
+            min-width: 3px;
+            align-items: flex-end;
+            height: 100%;
+            padding: 0;
+            background: none;
+            border: 0;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .day:hover { background: rgba(255, 255, 255, 0.06); }
+
+        /* 기록이 없는 날도 **자리를 차지한다.** 빼면 날짜 축에 구멍이 생겨 "그날은
+           아무것도 안 했다" 와 "그날은 범위 밖" 이 구분되지 않는다. 그런 날은 바닥에
+           얇은 선만 남는다 — 0 을 아예 안 그리면 칸이 비어 로딩 중처럼 보인다. */
+        .day .bar {
+            width: 100%;
+            min-height: 2px;
+            background: var(--accent);
+            border-radius: 3px 3px 0 0;
+            opacity: 0.55;
+        }
+
+        .day:hover .bar { opacity: 0.9; }
+        .day.none .bar { background: var(--line); opacity: 1; }
+        .day.selected { background: rgba(86, 211, 100, 0.12); }
+        .day.selected .bar { background: var(--ok); opacity: 1; }
+
+        .day-axis {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* 밴드마다 색이 다르다. 네 줄이 같은 색이면 세로로 훑을 때 어느 줄을 보고
+           있는지 놓친다. 색은 밴드 이름표(`data-group`)가 정한다 — 항목마다 색을
+           적어 보내면 응답이 그만큼 커지고, 화면이 이벤트 종류를 알아야 하게 된다. */
+        .band[data-group="SESSION"] .item {
+            background: rgba(122, 162, 255, 0.20);
+            border-color: rgba(122, 162, 255, 0.55);
+        }
+
+        .band[data-group="PLAYBACK"] .item { background: rgba(122, 162, 255, 0.14); border-left-color: var(--accent); }
+        .band[data-group="NAVIGATION"] .item { background: rgba(227, 179, 65, 0.16); border-left-color: var(--warn); }
+        .band[data-group="FEEDBACK"] .item { background: rgba(86, 211, 100, 0.16); border-left-color: var(--ok); }
+        .band[data-group="OTHER"] .item { background: rgba(139, 147, 167, 0.18); border-left-color: var(--muted); }
+
+        /* 이 화면의 항목은 **고칠 수 없다** — 이벤트 원본은 쌓기만 하는 자료다.
+           손 모양 커서를 두면 눌러도 아무 일이 없는 자리가 되어, 380-B 의 편집 가능한
+           항목과 구분되지 않는다. */
+        .band[data-group] .item { cursor: default; }
+
         .pager { display: flex; align-items: center; gap: 10px; justify-content: flex-end; margin-top: 12px; color: var(--muted); }
 
         /* ------------------------------------------------------------------ 모달 */
@@ -526,6 +599,18 @@
         /** 가사·구간 타임라인 응답과 그 곡 번호 (S15P21A204-380-B). */
         timeline: null,
         timelineMusicId: null,
+        /**
+         * 사용자 행동 타임라인 (S15P21A204-430).
+         *
+         * <p>창(`userFrom`·`userTo`)과 펼친 날(`userDate`)을 **응답에서 받아 둔다.**
+         * 화면이 기본값을 따로 계산하면 다음 요청이 서버가 그려 준 것과 다른 창을 묻게
+         * 되고, 날짜 막대와 시간축이 서로 다른 기간을 가리킨다.
+         */
+        userTimeline: null,
+        userTimelineUserId: null,
+        userFrom: null,
+        userTo: null,
+        userDate: null,
         page: 0,
         size: DEFAULT_SIZE,
         sort: null,
@@ -705,7 +790,11 @@
             + '<button class="nav-item" data-view="clickhouse" aria-current="'
             + (state.view === 'clickhouse') + '">'
             + '<span><strong>ClickHouse 콘솔</strong>'
-            + '<span class="table-name">쿼리 · 차트</span></span></button>';
+            + '<span class="table-name">쿼리 · 차트</span></span></button>'
+            + '<button class="nav-item" data-view="userTimeline" aria-current="'
+            + (state.view === 'userTimeline') + '">'
+            + '<span><strong>사용자 행동 타임라인</strong>'
+            + '<span class="table-name">날짜 · 하루 24시간</span></span></button>';
 
         var category = null;
         state.resources.forEach(function (resource) {
@@ -974,6 +1063,7 @@
             // 이름을 보고 판단하지 않는다 (`schema.timeline_axes`).
             html += '<td class="actions">'
                 + timelineButton(row)
+                + userTimelineButton(row)
                 + childLinks(row)
                 + ' <button class="btn ghost small" data-edit="' + escape(row._id) + '">편집</button> '
                 + '<button class="btn ghost small" data-delete="' + escape(row._id) + '">삭제</button>'
@@ -1393,6 +1483,21 @@
         }
         return '<button class="btn ghost small" data-timeline-id="' + attr(row._id) + '">'
             + '가사·구간</button> ';
+    }
+
+    /**
+     * 이 행의 행동 타임라인으로 가는 단추 (S15P21A204-430).
+     *
+     * 스키마가 그렇다고 한 자원에만 나온다(`schema.event_timeline`). 화면이 "회원이면
+     * 행동" 이라고 판단하지 않는다 — 그 판단은 서버의 `EVENT_TIMELINES` 선언에 있고,
+     * 대상이 늘어도 이 함수는 그대로다 (`timelineButton` 과 같은 규칙).
+     */
+    function userTimelineButton(row) {
+        if (!state.schema.event_timeline) {
+            return '';
+        }
+        return '<button class="btn ghost small" data-user-timeline-id="' + attr(row._id) + '">'
+            + '행동</button> ';
     }
 
     /**
@@ -2230,6 +2335,10 @@
             consoleTab: state.consoleTab,
             resource: state.resource,
             timelineMusicId: state.timelineMusicId,
+            userTimelineUserId: state.userTimelineUserId,
+            userFrom: state.userFrom,
+            userTo: state.userTo,
+            userDate: state.userDate,
             page: state.page,
             size: state.size,
             sort: state.sort,
@@ -2248,6 +2357,22 @@
         }
         if (snap.view === 'timeline') {
             params.set('music', snap.timelineMusicId);
+        }
+        if (snap.view === 'userTimeline') {
+            // 회원을 아직 안 골랐으면 적지 않는다. 빈 값을 적으면 F5 로 돌아왔을 때
+            // "번호가 빈 회원" 을 조회하게 된다.
+            if (snap.userTimelineUserId) {
+                params.set('user', snap.userTimelineUserId);
+            }
+            // 창과 날은 **서버가 정해 준 값**이라 언제나 적는다. 안 적으면 새로고침할
+            // 때마다 기본 창(오늘로 끝나는 30일)으로 되돌아가, 보던 기간이 사라진다.
+            if (snap.userFrom && snap.userTo) {
+                params.set('from', snap.userFrom);
+                params.set('to', snap.userTo);
+            }
+            if (snap.userDate) {
+                params.set('date', snap.userDate);
+            }
         }
         // 타임라인에도 목록 맥락을 같이 적는다. 그래야 F5 로 타임라인에 바로 들어와도
         // "목록으로" 가 어느 목록의 몇 페이지로 돌아갈지 안다.
@@ -2286,12 +2411,17 @@
         var params = new URLSearchParams(search);
         var view = params.get('view');
         var size = Number(params.get('size'));
-        var known = view === 'resource' || view === 'clickhouse' || view === 'timeline';
+        var known = view === 'resource' || view === 'clickhouse' || view === 'timeline'
+            || view === 'userTimeline';
         var snap = {
             view: known ? view : 'dashboard',
             consoleTab: params.get('tab') === 'dashboard' ? 'dashboard' : 'play',
             resource: params.get('resource'),
             timelineMusicId: params.get('music'),
+            userTimelineUserId: params.get('user'),
+            userFrom: params.get('from'),
+            userTo: params.get('to'),
+            userDate: params.get('date'),
             page: Math.max(Math.floor(Number(params.get('page')) || 0), 0),
             size: PAGE_SIZES.indexOf(size) >= 0 ? size : DEFAULT_SIZE,
             sort: params.get('sort'),
@@ -2367,6 +2497,12 @@
             state.keyword = snap.keyword;
             state.filters = Object.assign({}, snap.filters);
             openTimeline(snap.timelineMusicId);
+            return;
+        }
+        if (snap.view === 'userTimeline') {
+            // 회원 번호가 없어도 연다. 고르는 자리가 화면 안에 있어서 빈 화면이 되지
+            // 않는다 — 대시보드로 떨어뜨리면 주소를 공유받은 사람이 엉뚱한 곳에 선다.
+            openUserTimeline(snap.userTimelineUserId, snap);
             return;
         }
         if (snap.view === 'resource' && snap.resource) {
@@ -2504,6 +2640,444 @@
             });
     }
 
+    // ----------------------------------------- 사용자 행동 타임라인 (430)
+
+    /**
+     * 하루의 길이(ms). 사용자 행동 타임라인의 **가로축 최대값**이다.
+     *
+     * 가사·구간 타임라인과 달리 서버에서 받지 않는다. 날마다 같은 값이라 보낼 이유가
+     * 없고, 보내면 화면이 그것을 "언젠가 달라질 수 있는 값" 으로 다루게 된다.
+     *
+     * **그날 데이터에서 유도하지 않는 것이 핵심이다.** 유도하면 새벽에만 쓴 날과
+     * 온종일 쓴 날의 눈금이 달라져, 날짜를 바꿀 때마다 같은 가로 위치가 다른 시각을
+     * 뜻하게 된다 — 그 순간 타임라인끼리 비교할 수 없게 된다.
+     */
+    var DAY_MS = 24 * 60 * 60 * 1000;
+
+    /** 기간 단추. 창의 **길이**이고, 끝(`to`)은 그대로 두고 시작만 옮긴다. */
+    var RANGE_PRESETS = [7, 30, 90];
+
+    /**
+     * 회원 하나의 행동을 **두 층으로** 그린다 (S15P21A204-430).
+     *
+     * <p>위는 날짜 막대(창 전체), 아래는 그중 하루의 24시간 시간축이다. 하나만으로는
+     * 요구가 되지 않는다 — 막대만 있으면 그날 무엇을 했는지가 없고, 시간축만 있으면
+     * **어느 날을 봐야 하는지 알 방법이 없다.**
+     *
+     * <p>회원을 아직 안 골랐어도 화면은 열린다. 고르는 자리가 이 화면 안에 있어야
+     * 왼쪽 목록에서 바로 들어올 수 있다.
+     */
+    function openUserTimeline(userId, saved) {
+        state.view = 'userTimeline';
+        state.resource = null;
+        state.userTimelineUserId = userId || null;
+        state.userTimeline = null;
+        state.userFrom = saved ? saved.userFrom : null;
+        state.userTo = saved ? saved.userTo : null;
+        state.userDate = saved ? saved.userDate : null;
+        renderNav();
+
+        if (!state.userTimelineUserId) {
+            renderUserTimeline();
+            return Promise.resolve();
+        }
+        el('content').innerHTML = '<div class="empty">행동 기록을 불러오는 중…</div>';
+        return loadUserTimeline();
+    }
+
+    /**
+     * (다시) 불러온다. 창이나 날을 바꿀 때도 이것을 부른다 — 화면에서 날짜만 바꿔
+     * 그리면 막대와 시간축이 서로 다른 날을 가리키게 된다.
+     */
+    function loadUserTimeline() {
+        var asked = state.userTimelineUserId;
+        if (!asked) {
+            return Promise.resolve();
+        }
+
+        var params = new URLSearchParams();
+        // **창은 둘 다 보내거나 둘 다 안 보낸다.** 한쪽만 보내면 서버가 400 이다 —
+        // 나머지를 서버가 지어내면 화면은 자기가 요청한 창을 받았다고 믿게 된다.
+        if (state.userFrom && state.userTo) {
+            params.set('from', state.userFrom);
+            params.set('to', state.userTo);
+        }
+        if (state.userDate) {
+            params.set('date', state.userDate);
+        }
+        var query = params.toString();
+
+        return request('/resource/user/' + encodeURIComponent(asked) + '/timeline'
+                + (query ? '?' + query : ''))
+            .then(function (data) {
+                // 늦게 온 응답이 다른 화면이나 다른 회원을 덮어쓰지 않게 막는다.
+                if (state.view !== 'userTimeline' || state.userTimelineUserId !== asked) {
+                    return;
+                }
+                state.userTimeline = data;
+                // 서버가 정한 창과 날을 그대로 받아 둔다. 기본값(30일·마지막 활동일)은
+                // 서버만 알 수 있고, 화면이 따로 계산하면 다음 요청이 어긋난다.
+                state.userFrom = data.from;
+                state.userTo = data.to;
+                state.userDate = data.date;
+                renderUserTimeline();
+                syncHistory();
+            })
+            .catch(function (error) {
+                fail(error);
+                if (state.view !== 'userTimeline' || state.userTimelineUserId !== asked) {
+                    return;
+                }
+                // 고르는 자리는 남겨 둔다. 통째로 오류 문구로 덮으면 다른 회원이나 다른
+                // 기간으로 바꿔 볼 방법이 사라져 새로고침밖에 할 수 없다.
+                el('content').innerHTML = '<h2>사용자 행동 타임라인</h2>'
+                    + userPickerHtml()
+                    + '<div class="empty">'
+                    + escape((error && error.message) || '행동 기록을 불러오지 못했습니다.')
+                    + '</div>';
+            });
+    }
+
+    function renderUserTimeline() {
+        var data = state.userTimeline;
+        var html = '<h2>사용자 행동 타임라인</h2>';
+
+        if (!state.userTimelineUserId) {
+            html += '<p class="sub">회원을 고르면 그 사람의 행동을 날짜별로, 그리고 하루'
+                + ' 시간축 위에 그립니다. 회원 목록의 <strong>행동</strong> 단추로도 들어올 수'
+                + ' 있습니다.</p>' + userPickerHtml();
+            el('content').innerHTML = html;
+            return;
+        }
+        if (!data) {
+            el('content').innerHTML = html + userPickerHtml()
+                + '<div class="empty">불러오는 중…</div>';
+            return;
+        }
+
+        html += '<p class="sub">' + escape(data.email) + ' · ' + escape(data.nickname)
+            + ' · 회원 #' + escape(data.user_id)
+            // 탈퇴한 계정도 이벤트는 남아 있어 조회된다. 말해 두지 않으면 보는 사람이
+            // 활동 중인 회원으로 읽는다.
+            + (data.status ? ' · <span class="muted">' + escape(data.status) + '</span>' : '')
+            + ' · 날짜 기준 ' + escape(data.time_zone) + '</p>';
+
+        html += userPickerHtml();
+
+        if (!data.has_activity) {
+            // 빈 막대와 빈 시간축만 그리면 불러오기에 실패한 것처럼 보인다.
+            html += '<p class="sub">이 기간에는 남은 행동 기록이 없습니다. 기간을 넓혀 보세요.</p>';
+        }
+
+        html += '<h3>날짜별 활동</h3>' + dayStripHtml(data);
+        html += daySummaryHtml(data);
+
+        html += '<div class="timeline">';
+        (data.bands || []).forEach(function (band) {
+            html += userBandHtml(band);
+        });
+        html += '</div>';
+
+        el('content').innerHTML = html;
+    }
+
+    /**
+     * 회원과 기간을 고르는 자리. **화면이 열려 있는 동안 늘 붙어 있다** — 오류가 났을
+     * 때도 마찬가지다.
+     */
+    function userPickerHtml() {
+        var html = '<div class="toolbar">'
+            + '<input id="user-timeline-id" class="field" style="width:130px" placeholder="회원 번호"'
+            + ' value="' + attr(state.userTimelineUserId === null ? '' : state.userTimelineUserId) + '"'
+            + ' inputmode="numeric" autocomplete="off">'
+            + '<button class="btn small" id="user-timeline-load">조회</button>';
+
+        html += '<span class="muted">기간</span>';
+        RANGE_PRESETS.forEach(function (days) {
+            html += '<button class="btn ghost small" data-user-range="' + days + '">'
+                + days + '일</button>';
+        });
+
+        html += '<input id="user-from" class="field" type="date" value="'
+            + attr(state.userFrom || '') + '">'
+            + '<span class="muted">~</span>'
+            + '<input id="user-to" class="field" type="date" value="'
+            + attr(state.userTo || '') + '">'
+            + '<span class="grow"></span>'
+            + '<button class="btn ghost small" data-user-refresh="true">새로고침</button>'
+            + '</div>';
+        return html;
+    }
+
+    /**
+     * 날짜 막대. 높이는 **그 창 안의 최댓값에 대한 비율**이다.
+     *
+     * 절대 눈금을 두지 않는 이유는, 사람마다 하루 이벤트 수가 열 배씩 차이 나서 고정
+     * 눈금으로는 대부분의 사용자가 바닥에 붙은 선으로만 보이기 때문이다. 여기서 읽을
+     * 것은 "이 사람의 어느 날이 활발했나" 이고, 실제 수는 각 칸의 설명(title)과 아래
+     * 요약이 말한다.
+     */
+    function dayStripHtml(data) {
+        var days = data.days || [];
+        var max = 0;
+        days.forEach(function (day) {
+            if (day.events > max) {
+                max = day.events;
+            }
+        });
+
+        var html = '<div class="day-strip">';
+        days.forEach(function (day) {
+            var height = max > 0 ? Math.max(3, (day.events / max) * 100) : 0;
+            html += '<button class="day' + (day.selected ? ' selected' : '')
+                + (day.events > 0 ? '' : ' none') + '"'
+                + ' data-user-day="' + attr(day.date) + '"'
+                + ' title="' + attr(dayTitle(day)) + '">'
+                + '<span class="bar" style="height:'
+                + (day.events > 0 ? height.toFixed(2) : '0') + '%"></span>'
+                + '</button>';
+        });
+        html += '</div>';
+
+        return html + '<div class="day-axis"><span>' + escape(data.from) + '</span>'
+            + '<span>' + escape(data.to) + '</span></div>';
+    }
+
+    function dayTitle(day) {
+        return day.date + '\n이벤트 ' + number(day.events) + '건'
+            + ' · 재생 ' + number(day.plays) + '회'
+            + ' · 곡 ' + number(day.tracks) + '개'
+            + ' · 청취 ' + span(day.listened_ms);
+    }
+
+    function daySummaryHtml(data) {
+        var html = '<h3>' + escape(data.date) + ' 하루</h3>'
+            + '<div class="grid">'
+            + stat('이벤트', number(data.day_events) + '건')
+            + stat('청취 시간', span(data.day_listened_ms))
+            + '</div>';
+
+        if (data.heartbeat_events > 0) {
+            // **감춘 것이 아니라 접은 것이다.** 말해 두지 않으면 위의 이벤트 수와
+            // 시간축의 항목 수가 크게 어긋나 보여, 보는 사람이 화면을 의심하게 된다.
+            html += '<p class="sub">5초 하트비트(PLAY_PROGRESS) '
+                + number(data.heartbeat_events)
+                + '건은 점으로 그리지 않고 <strong>재생 세션</strong> 막대로 묶었습니다.'
+                + ' 막대의 길이는 걸린 시간이고, 실제 들은 시간은 각 막대의 설명에 있습니다.</p>';
+        }
+        return html;
+    }
+
+    /**
+     * 밴드 하나 = 한 줄.
+     *
+     * 가사·구간 타임라인의 `bandHtml` 과 합치지 않았다. 그쪽 항목은 **고칠 수 있어야**
+     * 해서 자원 이름·식별자·드래그 속성이 붙는데, 여기 항목은 ClickHouse 의 이벤트라
+     * 고칠 대상이 아니다. 한 함수로 합치면 "편집 가능한 자원" 자리가 비어 있는 갈래가
+     * 생기고, 380-C 의 드래그가 그 빈 자리를 집게 된다.
+     */
+    function userBandHtml(band) {
+        var rows = band.rows || [];
+        var range = band.kind === 'RANGE';
+
+        var html = '<div class="band" data-group="' + attr(band.group) + '"><div class="band-head">'
+            + '<strong>' + escape(band.label) + '</strong>'
+            + '<span class="muted">' + number(rows.length) + '개</span>';
+        if (band.truncated) {
+            // 조용히 자르면 "이 사람은 그날 이것밖에 안 했다" 는 거짓말이 된다.
+            html += ' <span class="pill down">앞 ' + number(rows.length) + '개만 표시 (전체 '
+                + number(band.total) + '개)</span>';
+        }
+        html += '</div>';
+
+        if (rows.length === 0) {
+            return html + '<p class="empty">이 날에는 없습니다.</p></div>';
+        }
+
+        html += '<div class="track">';
+        // 눈금은 두 시간마다. 하루는 축 최대값이 언제나 같으므로 **시각에 대응하는
+        // 눈금**을 그릴 수 있다 — 곡 타임라인의 10% 눈금과 다른 점이 이것이다.
+        for (var hour = 2; hour < 24; hour += 2) {
+            html += '<div class="grid-line" style="left:' + ((hour / 24) * 100).toFixed(4) + '%"></div>';
+        }
+        rows.forEach(function (row) {
+            html += userItemHtml(row, range);
+        });
+        html += '</div>';
+
+        html += '<div class="axis-label"><span>00:00</span><span>06:00</span>'
+            + '<span>12:00</span><span>18:00</span><span>24:00</span></div>';
+        return html + '</div>';
+    }
+
+    /**
+     * 항목 하나.
+     *
+     * 위치는 서버가 준 **하루 안의 ms**(`at_ms`)에서 나온다. 시각 문자열을 화면이 다시
+     * 파싱하면 그 계산이 브라우저 시간대를 타서 항목이 몇 시간씩 밀린다 — 서버는
+     * `Asia/Seoul` 자정을 기준으로 이미 계산해 두었다.
+     */
+    function userItemHtml(row, range) {
+        var start = Number(row.at_ms);
+        if (!isFinite(start)) {
+            start = 0;
+        }
+        var percent = Math.min(100, Math.max(0, (start / DAY_MS) * 100));
+
+        var style = ' style="left:' + percent.toFixed(4) + '%';
+        if (range) {
+            var end = Number(row.end_ms);
+            if (!isFinite(end) || end < start) {
+                end = start;
+            }
+            // 아주 짧은 재생(바로 넘긴 곡)도 보이게 최소 폭을 준다. 0 으로 두면 막대가
+            // 사라져 "그 재생은 없었다" 가 된다.
+            var width = Math.max(0.5, ((end - start) / DAY_MS) * 100);
+            style += ';width:' + Math.min(width, 100 - percent).toFixed(4) + '%';
+        }
+        style += '"';
+
+        return '<div class="item ' + (range ? 'range' : 'point') + '"' + style
+            + ' title="' + attr(userItemTitle(row, range)) + '">'
+            + '<span class="at">' + escape(row.at) + '</span>'
+            + escape(userItemLabel(row, range)) + '</div>';
+    }
+
+    /**
+     * 항목에 보일 한 줄. **곡이 있으면 곡이 먼저다** — 관리자가 이 화면에서 찾는 것은
+     * 대개 "무엇에 대한 행동이었나" 이고, 종류는 밴드 색과 설명이 이미 말한다.
+     */
+    function userItemLabel(row, range) {
+        var track = trackName(row);
+        if (range) {
+            return track || '재생';
+        }
+        var parts = [row.label];
+        if (track) {
+            parts.push(track);
+        }
+        if (row.detail) {
+            parts.push(row.detail);
+        }
+        return parts.join(' · ');
+    }
+
+    /**
+     * 마우스를 올렸을 때 보이는 전부. 좁은 항목은 글자가 잘리므로 **여기가 유일하게
+     * 전체를 읽을 수 있는 자리**다.
+     */
+    function userItemTitle(row, range) {
+        var lines = [row.at + '  ' + row.label];
+        var track = trackName(row);
+        if (track) {
+            lines.push('곡: ' + track);
+        }
+        if (row.position_ms !== null && row.position_ms !== undefined) {
+            lines.push('재생 위치: ' + formatMs(row.position_ms));
+        }
+        if (row.entry_path) {
+            lines.push('진입: ' + row.entry_path);
+        }
+        if (row.detail) {
+            lines.push(row.detail);
+        }
+        if (range) {
+            lines.push('이벤트 ' + number(row.events) + '건');
+            // 막대 길이(걸린 시간)와 실제 들은 시간은 다르다 — 일시정지와 앞으로감기가
+            // 그 차이다. 둘을 함께 보여 주지 않으면 막대가 청취 시간으로 읽힌다.
+            lines.push('실제 청취: ' + span(row.listened_ms));
+        }
+        lines.push('event_type: ' + row.event_type);
+        return lines.join('\n');
+    }
+
+    /** 곡 이름. 제목을 못 찾았어도 **번호는 남긴다** — 둘 다 지우면 대상이 사라진다. */
+    function trackName(row) {
+        if (row.track_id === null || row.track_id === undefined) {
+            return '';
+        }
+        return row.track_title
+            ? row.track_title + ' (#' + row.track_id + ')'
+            : '곡 #' + row.track_id;
+    }
+
+    /** 사람이 읽는 길이. `duration()` 은 초 단위라 ms 를 그대로 넘길 수 없다. */
+    function span(ms) {
+        var total = Math.floor(Number(ms) / 1000);
+        if (!isFinite(total) || total <= 0) {
+            return '0초';
+        }
+        var hours = Math.floor(total / 3600);
+        var minutes = Math.floor((total % 3600) / 60);
+        var seconds = total % 60;
+        if (hours > 0) {
+            return hours + '시간 ' + minutes + '분';
+        }
+        if (minutes > 0) {
+            return minutes + '분 ' + seconds + '초';
+        }
+        return seconds + '초';
+    }
+
+    /**
+     * 기간 단추. 창의 **끝은 그대로 두고 시작만** 옮긴다.
+     *
+     * "오늘" 을 화면에서 만들지 않는 것이 핵심이다. 서버의 오늘은 `Asia/Seoul` 기준인데
+     * 브라우저는 다른 시간대일 수 있고, 그러면 미래 날짜를 보내 400 이 된다. 이미 받아
+     * 둔 창의 끝을 기준점으로 쓰면 그 문제가 생기지 않는다.
+     */
+    function applyUserRange(days) {
+        if (!state.userTo) {
+            // 아직 한 번도 안 받아 왔다. 서버 기본 창으로 먼저 열고 나면 기준점이 생긴다.
+            loadUserTimeline();
+            return;
+        }
+        var from = shiftDate(state.userTo, -(days - 1));
+        state.userFrom = from;
+        if (state.userDate && state.userDate < from) {
+            // 창 밖의 날을 그대로 보내면 서버가 거절한다. 어느 날을 펼칠지는 서버가
+            // 다시 고르게 둔다 — 새 창 안에서 활동이 있었던 가장 최근 날이다.
+            state.userDate = null;
+        }
+        loadUserTimeline();
+    }
+
+    /**
+     * `YYYY-MM-DD` 를 며칠 옮긴다.
+     *
+     * **UTC 로 계산한다.** 현지 시간으로 `Date` 를 만들면 서머타임이나 시간대 경계에서
+     * 하루가 밀리는 날이 생긴다. 여기서 다루는 것은 시각이 아니라 날짜 문자열이므로
+     * 시간대가 끼어들 이유가 없다.
+     */
+    function shiftDate(iso, days) {
+        var parts = String(iso).split('-');
+        var date = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])));
+        date.setUTCDate(date.getUTCDate() + days);
+        return date.toISOString().slice(0, 10);
+    }
+
+    /**
+     * 입력칸의 회원 번호로 연다.
+     *
+     * <p>같은 회원이면 히스토리 항목을 쌓지 않는다 — "조회" 를 두 번 누른 뒤의
+     * 뒤로가기가 같은 화면으로 되돌아가면 뒤로가기가 안 먹는 것처럼 보인다.
+     */
+    function openUserTimelineFromInput() {
+        var input = el('user-timeline-id');
+        var value = input ? input.value.trim() : '';
+        if (!value) {
+            fail(new Error('회원 번호를 입력해 주세요.'));
+            return;
+        }
+        if (value === state.userTimelineUserId) {
+            loadUserTimeline();
+            return;
+        }
+        navigate(function () {
+            return openUserTimeline(value, null);
+        });
+    }
+
     // ---------------------------------------------------------------- 이벤트
 
     var searchTimer = null;
@@ -2571,7 +3145,9 @@
             + ' [data-edit], [data-delete], [data-sort], [data-console-tab],'
             + ' [data-child-resource], [data-timeline-id], [data-timeline-back],'
             + ' [data-timeline-refresh], [data-edit-time],'
-            + ' #prev, #next, #create, #clear-filters, #console-reopen');
+            + ' [data-user-timeline-id], [data-user-day], [data-user-range],'
+            + ' [data-user-refresh],'
+            + ' #prev, #next, #create, #clear-filters, #console-reopen, #user-timeline-load');
         if (!target) {
             return;
         }
@@ -2598,6 +3174,47 @@
         }
         if (target.id === 'console-reopen') {
             openConsole();
+            return;
+        }
+        if (target.dataset.view === 'userTimeline') {
+            // 왼쪽 목록에서 들어올 때는 보던 회원을 이어서 연다. 매번 비우면 다른 화면에
+            // 다녀올 때마다 회원 번호를 다시 쳐야 한다.
+            var keptUser = state.userTimelineUserId;
+            var keptRange = snapshot();
+            navigate(function () {
+                return openUserTimeline(keptUser, keptRange);
+            });
+            return;
+        }
+        if (target.dataset.userTimelineId) {
+            // 회원 행의 "행동" — 그 사람의 타임라인으로 간다 (S15P21A204-430).
+            // 창은 물려주지 않는다. 다른 사람에게 옮겨 갈 때 남의 활동 기간을 그대로
+            // 들고 가면 대개 빈 화면이 열린다 — 서버가 그 사람의 최근 활동일을 고른다.
+            event.preventDefault();
+            var userTimelineId = target.dataset.userTimelineId;
+            navigate(function () {
+                return openUserTimeline(userTimelineId, null);
+            });
+            return;
+        }
+        if (target.dataset.userDay) {
+            // 날짜 막대를 눌러 그날을 펼친다. 히스토리 항목은 쌓지 않는다 — 같은 화면
+            // 안의 이동이라 덮어쓰기로 충분하고, 그래야 뒤로가기가 이 화면을 나가는
+            // 동작으로 남는다 (콘솔 탭 전환과 같은 판단).
+            state.userDate = target.dataset.userDay;
+            loadUserTimeline();
+            return;
+        }
+        if (target.dataset.userRange) {
+            applyUserRange(Number(target.dataset.userRange));
+            return;
+        }
+        if (target.dataset.userRefresh) {
+            loadUserTimeline();
+            return;
+        }
+        if (target.id === 'user-timeline-load') {
+            openUserTimelineFromInput();
             return;
         }
         if (target.dataset.resource) {
@@ -2751,7 +3368,36 @@
             state.size = Number(event.target.value);
             state.page = 0;
             loadRows();
+            return;
         }
+        if (event.target.id === 'user-from' || event.target.id === 'user-to') {
+            var from = el('user-from').value;
+            var to = el('user-to').value;
+            if (!from || !to) {
+                // 한쪽만 보내면 서버가 400 이다. 나머지를 채울 때까지 기다린다 —
+                // 여기서 한쪽을 지어내면 화면은 자기가 고른 창을 받았다고 믿게 된다.
+                return;
+            }
+            state.userFrom = from;
+            state.userTo = to;
+            if (state.userDate && (state.userDate < from || state.userDate > to)) {
+                // 창 밖의 날은 서버가 거절한다. 어느 날을 펼칠지는 서버가 다시 고른다.
+                state.userDate = null;
+            }
+            loadUserTimeline();
+        }
+    });
+
+    /**
+     * 회원 번호 칸에서 엔터. 단추를 누르는 것과 같게 한다 — 번호를 치고 엔터를 눌렀는데
+     * 아무 일도 안 일어나면 화면이 멈춘 것으로 읽힌다.
+     */
+    document.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter' || !event.target || event.target.id !== 'user-timeline-id') {
+            return;
+        }
+        event.preventDefault();
+        openUserTimelineFromInput();
     });
 
     /**
@@ -2767,6 +3413,10 @@
             loadDashboard();
         } else if (state.view === 'clickhouse') {
             openConsole();
+        } else if (state.view === 'userTimeline') {
+            loadUserTimeline();
+        } else if (state.view === 'timeline') {
+            loadTimeline(state.timelineMusicId);
         } else {
             loadResources();
             loadRows();
