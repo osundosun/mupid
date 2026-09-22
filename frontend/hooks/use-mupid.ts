@@ -867,7 +867,6 @@ export function useMupid(bootstrap: Bootstrap) {
   ) => {
     // 곡이 하나도 없으면 누를 것도 없다.
     if (!track) return;
-    previewEnd.current = null;
     // 목록 밖의 곡을 고르면 그 곡을 맨 앞에 두고 상한까지만 다시 채운다.
     // **담겨 있던 자리를 먼저 잇는다.** 예전에는 카탈로그 순서로 큐를 통째로
     // 새로 만들어서, 애써 끌어 바꿔 둔 재생 목록 순서가 목록 밖 곡을 한 번
@@ -897,16 +896,31 @@ export function useMupid(bootstrap: Bootstrap) {
      * 맨 위로 올라오지도 담기지도 않았다.
      *
      * 실제로 재생기가 그 곡을 들고 있을 때만 토글이다.
+     *
+     * **`fromMoment` 도 토글인지 아닌지를 가르지 않는다.** 예전에는 이 조건에
+     * `!fromMoment` 가 붙어 있었다. 그런데 챗봇 추천 곡 줄은 구간 시작점에서
+     * 틀려고 **늘** `fromMoment` 로 부른다. 그래서 그 줄의 재생 버튼은 토글
+     * 경로에 영영 들어오지 못했고, 울리는 곡을 다시 눌러도 멈추는 대신 구간
+     * 처음부터 다시 틀었다 — 버튼은 Pause 모양인데 동작은 재시작이었다
+     * (S15P21A204-422).
+     *
+     * 가르는 것은 **재생기가 지금 이 곡을 들고 있는가** 하나다. 들고 있지 않으면
+     * (앱을 막 열어 `active` 이기만 한 곡, 다른 곡) 아래에서 새로 튼다 — 추천
+     * 으로 들어온 길이면 구간 시작점에서.
      */
     const status = getPlayer()?.store.get().status;
     const willToggle =
-      !fromMoment &&
       sameTrack &&
       (status === 'playing' || status === 'buffering' || status === 'paused');
 
     // 하단 플레이어에서 일시정지·재개할 때는 저장 순간 시퀀스를 보존한다.
     // 새 재생을 시작할 때만 기존 전체/순간별 재생 모드를 끝낸다.
+    //
+    // **미리듣기 구간의 끝도 같이 보존한다.** 멈췄다 다시 트는 것뿐인데 끝을
+    // 잃으면, 추천 구간을 듣다 한 번 멈춘 것만으로 곡이 끝까지 흘러간다.
+    // 큐를 건드리지 않는 것과 같은 이유다 — 이 길은 아무것도 새로 정하지 않는다.
     if (!willToggle) {
+      previewEnd.current = null;
       momentSequence.current = null;
       setSavedMomentPlayback(null);
     }
@@ -926,17 +940,12 @@ export function useMupid(bootstrap: Bootstrap) {
       }
     }
     const player = getPlayer();
-    // 지금 울리는 곡을 다시 누르면 멈춘다. 멈춘 곡을 누르면 이어서 튼다.
-    if (!fromMoment && activeRef.current?.id === track.id && player) {
-      const status = player.store.get().status;
-      if (status === 'playing' || status === 'buffering') {
-        player.pause();
-        return;
-      }
-      if (status === 'paused') {
-        void player.play();
-        return;
-      }
+    // 지금 울리는 곡을 다시 누르면 멈춘다. 멈춘 곡을 누르면 **멈춘 자리에서**
+    // 이어서 튼다 — 구간 처음으로 되감지 않는다.
+    if (willToggle && player) {
+      if (status === 'paused') void player.play();
+      else player.pause();
+      return;
     }
     // 듣던 곡을 두고 다른 곡을 고른 것은 그 곡을 넘긴 것이다. 다음곡 버튼으로 넘긴
     // 것과 구분해 `OTHER_TRACK` 으로 남긴다 — 분류는 ClickHouse 가 쿼리 시점에 한다.
