@@ -2797,3 +2797,112 @@ def test_pull_signals_seoul_string_with_z_would_be_read_as_future(tmp_path, monk
     # 고친 쪽은 같은 사건을 제대로 읽는다.
     ok = _behavior_for([ev], ev["user_ref"], NOW, tmp_path, monkeypatch)
     assert ev["track_id"] not in ok["recent_play"]
+
+
+# ---------------------------------------- 매핑 근거가 색인 안에 있다 (파일 없이)
+
+def _plate_with_music_id(root, pairs, *, with_col=True):
+    """`flow_meta.parquet` 만 있는 판 하나. `pairs` 는 (track_id, music_id) 다."""
+    import pandas as pd
+
+    data = root / "data" / "proc" / "mupid"
+    data.mkdir(parents=True, exist_ok=True)
+    frame = {"track_id": [t for t, _ in pairs], "title": ["x"] * len(pairs)}
+    if with_col:
+        frame["music_id"] = pd.array([m for _, m in pairs], dtype="Int64")
+    pd.DataFrame(frame).to_parquet(data / "flow_meta.parquet", index=False)
+    return data
+
+
+def test_id_map_falls_back_to_the_index(clean_env, tmp_path, monkeypatch):
+    """별도 매핑 파일을 두지 않는다 — 근거는 `flow_meta.music_id` 다.
+
+    숫자를 쓰는 곳은 배치 도구 둘뿐이고 둘 다 곡 수준만 쓴다. 그 값은 색인과 함께
+    버전이 매겨져 배포되므로 판과 매핑이 어긋날 자리가 없다.
+    """
+    monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
+    from ai_server.app import ids as idsmod
+
+    _plate_with_music_id(tmp_path, [("T000001", 1), ("T000002", 2)])
+    im = idsmod.IdMap(strict=True)
+
+    assert im.loaded and im.stats()["source"] == "flow_meta"
+    assert im.music_id("T000001") == 1
+    assert im.source_track_id(2) == "T000002"
+
+
+def test_section_conversion_stays_unavailable(clean_env, tmp_path, monkeypatch):
+    """구간 PK 를 환산하는 코드는 저장소에 없다. 없는 채로 두고 오류를 낸다."""
+    monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
+    from ai_server.app import ids as idsmod
+
+    _plate_with_music_id(tmp_path, [("T000001", 1)])
+    im = idsmod.IdMap(strict=True)
+
+    assert im.stats()["sections"] == 0
+    with pytest.raises(idsmod.MappingError):
+        im.music_section_analysis_id("T000001#0")
+
+
+def test_missing_music_id_column_is_not_guessed(clean_env, tmp_path, monkeypatch):
+    """`T000001` 에서 1 을 뽑지 않는다.
+
+    시딩이 그렇게 만들었을 뿐 계약이 아니다 — `T000847_1` 처럼 규칙 밖 값이 실제로
+    있었다. 어긋나면 오류 없이 엉뚱한 곡을 추천하게 된다.
+    """
+    monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
+    from ai_server.app import ids as idsmod
+
+    _plate_with_music_id(tmp_path, [("T000001", 1)], with_col=False)
+    im = idsmod.IdMap(strict=False)
+
+    assert not im.loaded
+    assert "music_id" in (im.error or "")
+    with pytest.raises(idsmod.MappingError):
+        im.music_id("T000001")
+
+
+def test_an_existing_map_file_still_wins(clean_env, tmp_path, monkeypatch):
+    """옮겨 가는 동안 둘이 공존할 수 있어야 한다. 표는 구간까지 들고 있어 더 넓다."""
+    import pandas as pd
+
+    monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
+    from ai_server.app import ids as idsmod
+
+    data = _plate_with_music_id(tmp_path, [("T000001", 999)])
+    pd.DataFrame({"source_track_id": ["T000001"], "music_id": [1],
+                  "external_id": ["T000001#0"],
+                  "music_section_analysis_id": [9330]}
+                 ).to_parquet(data / "id_map.parquet", index=False)
+
+    im = idsmod.IdMap(strict=True)
+    assert im.stats()["source"] == "id_map"
+    assert im.music_id("T000001") == 1              # 999 가 아니다
+    assert im.music_section_analysis_id("T000001#0") == 9330
+
+
+def test_retag_puts_music_id_in_the_index(tmp_path):
+    """`retag_flow_meta` 가 DB 표의 열을 그대로 싣는다 — 쪼개서 만들지 않는다."""
+    import pandas as pd
+    from ai_server.tools import retag_flow_meta as rt
+
+    snap, plate = tmp_path / "snap", tmp_path / "plate"
+    snap.mkdir(); plate.mkdir()
+    pd.DataFrame({"code_id": [49, 40], "code_type": ["GENRE", "MOOD"],
+                  "code_name": ["ambient", "calm"]}).to_parquet(snap / "codes.parquet")
+    pd.DataFrame({"external_id": ["T000001#0", "T000847_1#0"],
+                  "music_id": [1, 847]}).to_parquet(
+        snap / "music_section_analysis.parquet")
+    pd.DataFrame({"music_id": [1], "genre_code_id": [49]}).to_parquet(
+        snap / "music_genres.parquet")
+    pd.DataFrame({"music_id": [1], "mood_code_id": [40]}).to_parquet(
+        snap / "music_moods.parquet")
+    pd.DataFrame({"track_id": ["T000001", "T000847_1"],
+                  "genre_top1": ["x", "y"]}).to_parquet(plate / "flow_meta.parquet")
+
+    rt.build(plate, snap)
+    out = pd.read_parquet(plate / "flow_meta.parquet")
+
+    assert list(out.music_id) == [1, 847]
+    # 규칙 밖 이름도 표를 통해 제 번호를 받는다 — 쪼갰다면 847 이 나올 수 없다
+    assert out.loc[out.track_id == "T000847_1", "music_id"].iloc[0] == 847

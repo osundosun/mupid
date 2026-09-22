@@ -11,7 +11,21 @@
 이 프로젝트가 색인 불일치로 두 번 겪은 실패와 같은 형태다. 그래서 여기서는 **매핑이 없으면
 만들지 않고 오류를 낸다.**
 
-매핑표 파일: `data/proc/mupid/id_map.parquet`
+## 근거는 색인 안에 있다
+
+**별도 매핑 파일을 두지 않는다**(팀 규칙). `flow_meta.parquet` 의 `music_id` 열이
+근거다 — `retag_flow_meta` 가 DB 표(`music_section_analysis.music_id`)를 그대로 읽어
+싣는다. 색인과 함께 버전이 매겨져 함께 배포되므로 판과 매핑이 어긋날 자리가 없다.
+
+숫자가 필요한 곳은 배치 도구 둘뿐이고 둘 다 **곡 수준만** 쓴다 — `push_sections` 의
+`im.music_id(tid)` 와 `pull_signals` 의 `im.source_track_id(...)`. 구간 PK
+(`music_section_analysis_id`)를 환산하는 코드는 저장소에 하나도 없다. 서빙은 아예
+숫자를 다루지 않는다 — 계약이 문자열 `external_id` 이고 환산은 Spring 이 한다.
+
+옛 매핑표(`id_map.parquet`)가 있으면 **그쪽이 이긴다.** 구간 열까지 들고 있어 더
+넓기 때문이고, 옮겨 가는 동안 둘이 공존할 수 있어야 한다.
+
+매핑표 파일(선택): `data/proc/mupid/id_map.parquet`
     source_track_id   문자열 곡 ID (예: JAMENDO_1083659)
     music_id          MySQL music.music_id
     external_id       문자열 순간 ID (예: JAMENDO_1083659#3)
@@ -66,14 +80,15 @@ class IdMap:
         self.num_to_sec: dict[int, str] = {}
         self.loaded = False
         self.error: Optional[str] = None
+        self.source = "id_map"
         self.reload()
 
     def reload(self) -> None:
         self.track_to_num, self.num_to_track = {}, {}
         self.sec_to_num, self.num_to_sec = {}, {}
-        self.loaded, self.error = False, None
+        self.loaded, self.error, self.source = False, None, "id_map"
         if not self.path.exists():
-            self.error = f"매핑표 없음: {self.path}"
+            self._from_flow_meta()
             return
         try:
             df = pd.read_parquet(self.path)
@@ -96,6 +111,42 @@ class IdMap:
             self.sec_to_num, self.num_to_sec = {}, {}
             if self.strict:
                 raise
+            return
+        self.loaded = True
+
+    def _from_flow_meta(self) -> None:
+        """색인의 `flow_meta.music_id` 로 곡 수준 매핑을 만든다.
+
+        **지어내지 않는다.** `music_id` 열이 없으면 빈 채로 둔다 — `T000001` 에서
+        1 을 뽑는 식의 규칙은 시딩이 그렇게 만들었을 뿐 계약이 아니고, 실제로
+        `T000847_1` 처럼 규칙 밖 값이 있었다. 어긋난 순간 오류 없이 엉뚱한 곡을
+        추천하게 된다.
+
+        구간 매핑은 만들지 않는다. 쓰는 코드가 없다.
+        """
+        meta = paths.data_dir() / "flow_meta.parquet"
+        self.source = "flow_meta"
+        if not meta.exists():
+            self.error = f"매핑 근거가 없다 — {self.path} 도 {meta} 도 없다"
+            return
+        try:
+            df = pd.read_parquet(meta, columns=["track_id", "music_id"])
+        except Exception as e:
+            self.error = (f"{meta} 에 music_id 열이 없다 — retag_flow_meta 를 다시 "
+                          f"돌려야 한다 ({type(e).__name__})")
+            return
+        try:
+            self._ingest(df.assign(external_id=pd.NA,
+                                   music_section_analysis_id=pd.NA)
+                           .rename(columns={"track_id": "source_track_id"}))
+        except MapIntegrityError as e:
+            self.error = str(e)
+            self.track_to_num, self.num_to_track = {}, {}
+            if self.strict:
+                raise
+            return
+        if not self.track_to_num:
+            self.error = f"{meta} 의 music_id 가 전부 비어 있다"
             return
         self.loaded = True
 
@@ -188,7 +239,8 @@ class IdMap:
         return v
 
     def stats(self) -> dict:
-        return {"path": str(self.path), "loaded": self.loaded, "error": self.error,
+        return {"path": str(self.path), "source": self.source,
+                "loaded": self.loaded, "error": self.error,
                 "tracks": len(self.track_to_num), "sections": len(self.sec_to_num)}
 
     def readiness(self, pool_track_ids, pool_section_uids) -> dict:

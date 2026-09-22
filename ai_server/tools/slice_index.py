@@ -152,7 +152,7 @@ def slice_index(src: Path, dst: Path, *, src_data: Path | None = None) -> dict:
         if (data / name).exists():
             shutil.copy2(data / name, out / name)
     _restamp_features_info(out, len(sliced))
-    id_map_note = _note_id_map(data)
+    id_map_note = _note_id_map(data, out)
 
     report = _verify(out)
     report["id_map"] = id_map_note
@@ -188,38 +188,40 @@ def _slice_clap(data: Path, out: Path, moments: set[str]) -> None:
                  moment_ids=d["moment_ids"][pick], embeddings=d["embeddings"][pick])
 
 
-def _note_id_map(data: Path) -> dict:
-    """매핑표를 묶음에 **넣지 않는다.** 어디로 가야 하는지만 말한다.
+def _note_id_map(data: Path, out: Path) -> dict:
+    """숫자 환산의 근거가 묶음 안에 있는지 확인한다.
 
-    한 번 넣게 고쳤다가 되돌렸다. 두 가지가 막는다.
+    **별도 매핑 파일을 두지 않는다**(팀 규칙). 근거는 `flow_meta.music_id` 이고
+    `retag_flow_meta` 가 DB 표를 그대로 읽어 싣는다. 색인과 함께 버전이 매겨져
+    함께 배포되므로 판과 매핑이 어긋날 자리가 없다.
 
-    1. 받는 쪽의 허용 목록에 그 이름이 없다 — `infra_k8s/deploy/receive-index.py`
-       의 `ALLOWED` 는 색인 파일 13종만 받고, 하나라도 섞이면 **묶음 전체를 exit 65
-       로 거부한다.** 그 목록은 "이 엔드포인트로 노드에 임의의 파일을 놓을 수 있으면
-       안 된다" 는 보안 경계라 색인 도구가 우회할 것이 아니다.
-    2. 매핑표는 운영 MySQL 에서 나온다. 러너도 배포 키도 MySQL 에 닿지 못한다
-       (Service 가 ClusterIP 이고 강제 명령에 조회 결과를 내보내는 동사가 없다).
-       만들 수 있는 것은 **네임스페이스 안에서 도는 Job** 뿐이고, 그 Job 은
-       읽기 전용인 `/artifacts` 에 쓸 수 없다.
+    옛 `id_map.parquet` 은 묶음에 넣지 않는다. 받는 쪽 `ALLOWED`
+    (`infra_k8s/deploy/receive-index.py`) 밖의 이름이라 섞이면 묶음 전체가 exit 65
+    로 거부된다.
 
-    그래서 자리는 `/state` 다. `MUPID_AI_STATE_DIR` 가 가리키는 쓰기 가능한
-    hostPath 이고 `ai`·`ai-labeler` 양쪽이 이미 마운트한다. 매니페스트에
-    `MUPID_ID_MAP=/state/id_map.parquet` 를 주면 `paths.id_map_path()` 가 그쪽을
-    본다(`ai_server/app/paths.py`).
-
-    이게 비면 조용히 무너진다 — `pull_signals` 는 재생신호를 **전부** 버리고
-    (`source_track_id` 가 `MappingError`), `push_sections` 는 아무것도 올리지 못해
-    `track_sections` 가 비고, 그러면 `mv_user_section_signals` 가 행동 이벤트를
-    통째로 버린다. 2026-09-18 이후 운영에서 실제로 그랬다. 그래서 **말은 한다.**
+    `music_id` 가 비면 조용히 무너진다 — `pull_signals` 는 재생신호를 **전부**
+    버리고, `push_sections` 는 아무것도 올리지 못해 `track_sections` 가 비고,
+    그러면 `mv_user_section_signals` 가 행동 이벤트를 통째로 버린다.
+    2026-09-18 이후 운영에서 실제로 그랬다. 그래서 **세어서 말한다.**
     """
-    src = data / "id_map.parquet"
-    print("[id_map] 묶음에 넣지 않는다 — 받는 쪽 허용 목록 밖이고, 운영 매핑표는 "
-          "클러스터 안 Job 만 만들 수 있다. 자리는 /state 이고 매니페스트에 "
-          "MUPID_ID_MAP=/state/id_map.parquet 가 있어야 한다.", file=sys.stderr)
-    if not src.exists():
-        return {"shipped": False, "in_source_plate": False}
-    return {"shipped": False, "in_source_plate": True,
-            "rows": int(len(pd.read_parquet(src, columns=["external_id"])))}
+    meta = out / "flow_meta.parquet"
+    if not meta.exists():
+        print("[경고] flow_meta.parquet 이 없다 — 숫자 환산 근거가 통째로 빠진다.",
+              file=sys.stderr)
+        return {"source": None, "tracks": 0}
+    fm = pd.read_parquet(meta)
+    if "music_id" not in fm.columns:
+        print("[경고] flow_meta 에 music_id 열이 없다 — retag_flow_meta 를 다시 "
+              "돌려야 한다. 이대로 올리면 행동 데이터가 전부 버려진다 "
+              "(pull_signals 제외 · push_sections 0건).", file=sys.stderr)
+        return {"source": "flow_meta", "tracks": 0, "missing_column": True}
+    n = int(fm.music_id.notna().sum())
+    blank = int(len(fm) - n)
+    if blank:
+        print(f"[경고] music_id 가 빈 곡 {blank}건 — 그 곡의 청취는 버려진다.",
+              file=sys.stderr)
+    print(f"[매핑] flow_meta.music_id {n}곡 — 별도 파일 없음")
+    return {"source": "flow_meta", "tracks": n, "blank": blank}
 
 
 def _restamp_features_info(out: Path, rows: int) -> None:

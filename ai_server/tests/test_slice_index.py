@@ -196,11 +196,11 @@ def test_features_info_row_count_follows_the_slice(sliced):
     assert info["version"] == "feat-v1"          # 기저 항목은 그대로
 
 
-def test_id_map_never_ships(tmp_path, monkeypatch):
-    """매핑표는 묶음에 들어가면 **안 된다.**
+def test_id_map_file_never_ships(tmp_path, monkeypatch):
+    """옛 매핑 파일은 묶음에 들어가면 **안 된다.**
 
-    한 번 넣게 고쳤다가 되돌렸다. 받는 쪽 `ALLOWED` 밖의 이름이 섞이면 묶음 전체가
-    exit 65 로 거부된다. 자리는 `/state` 이고 `MUPID_ID_MAP` 이 가리킨다.
+    받는 쪽 `ALLOWED` 밖의 이름이 섞이면 묶음 전체가 exit 65 로 거부된다.
+    근거는 파일이 아니라 `flow_meta.music_id` 다.
     """
     monkeypatch.setenv("MUPID_POOL", "flow")
     from ai_server.tools import slice_index
@@ -211,12 +211,42 @@ def test_id_map_never_ships(tmp_path, monkeypatch):
                   "external_id": ["T0#0"], "music_section_analysis_id": [9330]}
                  ).to_parquet(data / "id_map.parquet", index=False)
 
-    report = slice_index.slice_index(src, dst)
-    out = dst / "data" / "proc" / "mupid"
+    slice_index.slice_index(src, dst)
+    assert not (dst / "data" / "proc" / "mupid" / "id_map.parquet").exists()
 
-    assert not (out / "id_map.parquet").exists()
-    assert report["id_map"]["shipped"] is False
-    assert report["id_map"]["in_source_plate"] is True
+
+def test_bundle_reports_the_mapping_it_carries(tmp_path, monkeypatch, capsys):
+    """숫자 환산 근거는 `flow_meta.music_id` 다. 몇 곡분인지 세어서 말한다."""
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    data = _build(src)
+    fm = pd.read_parquet(data / "content.parquet")[["track_id"]].copy()
+    fm["music_id"] = pd.array(range(1, len(fm) + 1), dtype="Int64")
+    fm.to_parquet(data / "flow_meta.parquet", index=False)
+
+    report = slice_index.slice_index(src, dst)
+
+    assert report["id_map"]["source"] == "flow_meta"
+    assert report["id_map"]["tracks"] > 0
+    assert "flow_meta.music_id" in capsys.readouterr().out
+
+
+def test_missing_music_id_is_reported_not_swallowed(tmp_path, monkeypatch, capsys):
+    """비면 조용히 무너진다 — pull_signals 가 재생신호를 전부 버린다. 말은 한다."""
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    data = _build(src)
+    pd.read_parquet(data / "content.parquet")[["track_id"]].to_parquet(
+        data / "flow_meta.parquet", index=False)          # music_id 열이 없다
+
+    report = slice_index.slice_index(src, dst)
+
+    assert report["id_map"].get("missing_column") is True
+    assert "music_id 열이 없다" in capsys.readouterr().err
 
 
 def test_every_shipped_file_is_one_the_receiver_accepts(sliced):
