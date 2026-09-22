@@ -1,4 +1,5 @@
 'use client';
+import type { CSSProperties } from 'react';
 import { VinylRecord } from './vinyl-record';
 import {
   AudioWaveform,
@@ -16,6 +17,7 @@ import { VolumeSlider } from './volume-slider';
 import { formatTime, getSongSectionAt } from '@/lib/mupid-data';
 import { AlbumArt, LikeButton, PlayerControls, TrackRow } from './primitives';
 import { AlbumDeck } from './album-deck';
+import { GenreName } from './genre-name';
 
 export function DesktopHome({ model: m }: { model: MupidModel }) {
   const tracks = m.tracks;
@@ -42,18 +44,6 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
               alt="하늘빛 라벨이 담긴 LP 레코드"
             />
           </div>
-          <button
-            className="desktop-record-caption"
-            onClick={() => m.go('player')}
-          >
-            <span
-              className={
-                m.playing ? 'record-status is-playing' : 'record-status'
-              }
-              aria-hidden="true"
-            />
-            {m.playing ? '지금 재생 중' : '재생 준비'} <ChevronRight />
-          </button>
         </div>
         <section className="desktop-song" aria-label="현재 곡">
           <p className="desktop-song-kicker">지금, 당신의 음악</p>
@@ -65,7 +55,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
           <h1>{m.active.title}</h1>
           <button className="desktop-song-artist track-artist-link" onClick={() => m.setSelectedArtist(m.active!.artist)}>{m.active.artist}</button>
           <p className="desktop-song-meta">
-            {m.active.album} <span>·</span> {m.active.genre}
+            {m.active.album} <span>·</span> <GenreName genre={m.active.genre} />
           </p>
           <button
             className="text-link desktop-song-detail"
@@ -82,6 +72,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
               max={m.active.duration}
               step={1}
               value={m.time}
+              style={{ '--seek-progress': `${m.active.duration > 0 ? Math.min(100, Math.max(0, m.time / m.active.duration * 100)) : 0}%` } as CSSProperties}
               aria-label="현재 곡 재생 위치"
               aria-valuetext={`${formatTime(m.time)} / ${formatTime(m.active.duration)}`}
               onChange={(e) => m.seek(Number(e.target.value))}

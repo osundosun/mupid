@@ -145,6 +145,40 @@
     margin: 0;
     cursor: pointer;
     accent-color: var(--home-accent);
+    appearance: none;
+    background: transparent;
+    --seek-track: #dce5f1;
+  }
+  .desktop-seek::-webkit-slider-runnable-track {
+    height: 5px;
+    border-radius: 999px;
+    background: linear-gradient(to right, var(--home-accent) var(--seek-progress, 0%), var(--seek-track) var(--seek-progress, 0%));
+  }
+  .desktop-seek::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -4.5px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--home-accent);
+  }
+  .desktop-seek::-moz-range-track {
+    height: 5px;
+    border-radius: 999px;
+    background: var(--seek-track);
+  }
+  .desktop-seek::-moz-range-progress {
+    height: 5px;
+    border-radius: 999px;
+    background: var(--home-accent);
+  }
+  .desktop-seek::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--home-accent);
   }
   .desktop-song .time-labels {
     font-size: 0.8125rem;

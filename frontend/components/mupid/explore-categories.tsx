@@ -48,7 +48,7 @@ export function ExploreCategories({ options, loading, error, selected, onChange:
         <div className="category-groups"><fieldset><legend>{category.title}</legend><div>
           {category.options.map((option) => <button type="button" key={option.key} aria-pressed={selected.includes(option.key)} onClick={() => toggle(option.key)}>{option.label}</button>)}
         </div></fieldset></div>}
-      {selected.length > 0 && <div className="category-selected" aria-label="선택한 조건"><span>{selected.length}개 선택</span>{selected.map((key) => <button key={key} aria-label={`${labels.get(key) ?? key} 선택 해제`} onClick={() => toggle(key)}>{labels.get(key) ?? key}<X size={13} /></button>)}</div>}
+      {<div className="category-selected" aria-label="선택한 조건"><span>{selected.length}개 선택</span>{selected.map((key) => <button key={key} aria-label={`${labels.get(key) ?? key} 선택 해제`} onClick={() => toggle(key)}>{labels.get(key) ?? key}<X size={13} /></button>)}</div>}
     </section>
     <div className="category-search-action"><button type="button" className="primary-button" disabled={loading || Boolean(error)} onClick={onSearch}>검색하기</button></div>
   </section>;

@@ -563,3 +563,15 @@
 .queue-item.is-selected:hover {
   background: #e6eeff;
 }
+
+/* The full player has no mini-player: anchor its queue to the viewport itself. */
+@media (min-width: 768px) {
+  .mupid-shell.page-player .queue-dock {
+    bottom: max(24px, var(--safe-area-inset-bottom));
+    right: max(24px, var(--safe-area-inset-right));
+    width: min(520px, calc(100% - 48px));
+    max-height: min(680px, calc(100dvh - 140px));
+  }
+}
+.queue-dock-body { min-height: 0; }
+.queue-dock-head { flex-shrink: 0; }

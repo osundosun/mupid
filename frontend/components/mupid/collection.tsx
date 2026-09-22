@@ -649,6 +649,9 @@ export function ReportView({ model: m }: { model: MupidModel }) {
                   : '음악을 들으면 오늘의 키워드가 모여요.'}
               </p>
             )}
+            {!!report?.keywords.length && (
+              <p className="keyword-description">지금까지 들은 음악을 바탕으로 정해진 키워드예요.</p>
+            )}
           </section>
         </div>
       </div>
