@@ -11,8 +11,15 @@
 
 읽기 전용 원칙의 예외
     AI 는 어떤 DB 에도 쓰지 않는다(decision/0011). 다만 `track_sections` 는 **AI 만이
-    만들 수 있는 분석 결과**이고 Spring 을 거칠 이유가 없어 여기서 직접 넣는다.
+    만들 수 있는 분석 결과**라 여기서 직접 넣는다.
     행동 데이터(`listen_events`·`user_section_signals`)는 **읽기만** 한다.
+
+이제 이 표를 쓰는 곳이 둘이다
+    2026-09-22(S15P21A204-435)부터 스프링도 같은 표에 넣는다 — 전처리 배치가 부르는
+    `PUT /api/v1/music/{musicId}/section` 이 MySQL 과 ClickHouse 양쪽에 적재한다.
+    배치가 도는 경로에서는 그쪽이 정상 경로이고, **이 도구는 일괄 시드와 복구용**이다
+    (`--full`, 03 마이그레이션 뒤 되채우기, `--audit`). 컬럼은 같은 모양이라 어느 쪽이
+    넣어도 결과가 같고, `ReplacingMergeTree` 라 나중 것이 남는다.
 
 숫자 ID 를 지어내지 않는다
     `track_id` 는 MySQL 이 발급한 숫자다. `id_map.parquet` 에 없는 곡은 넣지 않고 센다.
@@ -100,7 +107,7 @@ def build_rows(mom: pd.DataFrame, im, version: str,
     `created_at` 은 호출자가 **서버에서 받아** 넘긴다 (`server_now()`). 비우면 아예
     싣지 않아 ClickHouse 의 `DEFAULT now()` 가 채운다 — 어느 쪽이든 서버 시계다.
     """
-    stat = {"unmapped_track": 0, "unknown_label": 0, "bad_range": 0}
+    stat = {"unmapped_track": 0, "unmapped_section": 0, "unknown_label": 0, "bad_range": 0}
     unmapped: set[str] = set()
     rows = []
     for r in mom.itertuples():
@@ -119,17 +126,27 @@ def build_rows(mom: pd.DataFrame, im, version: str,
         if e_ms <= s_ms:
             stat["bad_range"] += 1
             continue
+        uid = str(r.moment_id)
+        try:
+            sec_id = im.music_section_analysis_id(uid)
+        except Exception:
+            # 곡과 달리 **구간은 매핑이 없어도 넣는다.** 이 표의 첫 번째 쓰임은
+            # `dictGet` 으로 재생 위치를 구간에 붙이는 것이고, 거기에는 `section_uid`
+            # 면 충분하다. 빼 버리면 그 구간의 이벤트가 통째로 버려진다 — 이 도구가
+            # 막으려는 바로 그 침묵이다. 숫자만 비워 두고 센다.
+            stat["unmapped_section"] += 1
+            sec_id = 0
         row = {
             "track_id": int(num),
+            # MySQL `music_section_analysis` 의 PK. 스프링이 구간을 적재할 때 함께
+            # 넣는 값이고(S15P21A204-435), 여기서는 `id_map` 이 그것을 알고 있다.
+            "music_section_analysis_id": int(sec_id),
             "analysis_version": version,
             "section_index": int(r.section_idx),
-            "section_uid": str(r.moment_id),
+            "section_uid": uid,
             "fn": fn,
             "start_ms": s_ms,
             "end_ms": e_ms,
-            # 구간 안 최대 에너지 지점을 아직 산출하지 않는다. 0 은 "구간 밖" 과
-            # 구분이 안 되므로 시작점을 넣는다 — 추천도 구간 시작부터 튼다.
-            "peak_ms": s_ms,
         }
         if created_at:
             row["created_at"] = created_at
@@ -139,15 +156,22 @@ def build_rows(mom: pd.DataFrame, im, version: str,
 
 
 def remote_state() -> dict:
-    """ClickHouse 에 이미 있는 구간. 키는 section_uid, 값은 (시작·끝·라벨)."""
-    sql = ("SELECT section_uid, start_ms, end_ms, fn FROM track_sections "
-           f"WHERE analysis_version = '{DICT_VERSION}' FORMAT JSONEachRow")
+    """ClickHouse 에 이미 있는 구간. 키는 section_uid, 값은 (시작·끝·라벨·구간번호).
+
+    `music_section_analysis_id` 까지 비교해야 **숫자만 비어 있는 행**이 다시 채워진다.
+    `id_map` 이 늦게 갖춰진 회차나 03 마이그레이션으로 되살린 행이 0 으로 남아 있는데,
+    셋만 보면 "바뀐 것 없음" 으로 지나가 영영 0 인 채로 남는다.
+    """
+    sql = ("SELECT section_uid, start_ms, end_ms, fn, music_section_analysis_id "
+           f"FROM track_sections WHERE analysis_version = '{DICT_VERSION}' "
+           "FORMAT JSONEachRow")
     out = {}
     for ln in query(sql).splitlines():
         if not ln.strip():
             continue
         r = json.loads(ln)
-        out[str(r["section_uid"])] = (int(r["start_ms"]), int(r["end_ms"]), str(r["fn"]))
+        out[str(r["section_uid"])] = (int(r["start_ms"]), int(r["end_ms"]), str(r["fn"]),
+                                      int(r["music_section_analysis_id"]))
     return out
 
 
@@ -162,7 +186,7 @@ def diff(rows: list[dict], remote: dict) -> tuple[list[dict], dict]:
         cur = remote.get(r["section_uid"])
         if cur is None:
             add.append(r)
-        elif cur != (r["start_ms"], r["end_ms"], r["fn"]):
+        elif cur != (r["start_ms"], r["end_ms"], r["fn"], r["music_section_analysis_id"]):
             changed.append(r)
     local_uids = {r["section_uid"] for r in rows}
     orphan = sorted(set(remote) - local_uids)

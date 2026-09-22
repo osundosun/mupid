@@ -618,7 +618,12 @@ MUPID_API_REFRESH_TOKEN=     # ROLE_SYSTEM 계정의 리프레시 토큰
 `user_section_signals` 에 한 줄도 안 남았고, 구간 1건을 넣자 바로 통과했다.
 
 읽기 전용 원칙(Q8)의 유일한 예외다. `track_sections` 는 **AI 만이 만들 수 있는 분석
-결과**이고 Spring 을 거칠 이유가 없다. 행동 데이터는 여전히 읽기만 한다.
+결과**다. 행동 데이터는 여전히 읽기만 한다.
+
+**2026-09-22(S15P21A204-435)부터 이 표를 쓰는 곳이 둘이다.** 전처리 배치가 부르는
+요구 1(`PUT /api/v1/music/{musicId}/section`)이 MySQL 과 `track_sections` 에 함께
+적재한다. 배치가 도는 경로에서는 그쪽이 정상 경로이고, 아래 도구는 **일괄 시드와
+복구용**이다. 컬럼이 같은 모양이라 어느 쪽이 넣어도 결과가 같다.
 
 ```
 moments.parquet ──(id_map)──> track_sections ──> dict_track_sections
@@ -634,7 +639,10 @@ moments.parquet ──(id_map)──> track_sections ──> dict_track_sections
 | `section_uid` | 문자열 구간 ID(`T001001#3`). MySQL `external_id` 와 같은 값이다 |
 | `analysis_version` | **`v1` 고정.** `v_track_sections_current` 가 이 값만 고른다 |
 | `fn` | MySQL `section_label` ENUM 어휘만. 밖의 라벨은 제외하고 센다 |
-| `peak_ms` | 구간 안 최대 에너지 지점을 아직 산출하지 않아 **시작점을 넣는다** |
+| `music_section_analysis_id` | MySQL 구간 PK. `id_map` 에 없으면 **0 으로 두고 센다** — 곡과 달리 구간은 번호를 몰라도 넣는다. `dictGet` 에는 `section_uid` 면 충분하고, 빼면 그 구간의 이벤트가 통째로 버려진다 |
+
+`peak_ms` 는 2026-09-22 에 없앴다. MySQL 에 대응 컬럼이 없고 구간 안 정점을 산출한 적도
+없어 줄곧 시작점이 들어가 있었다.
 
 넣은 뒤 **두 노드 모두** 딕셔너리를 갱신해야 한다(`ON CLUSTER mupid_all`). 한쪽만 하면
 그 샤드로 간 조회가 구간을 못 찾는다 — 초기화 직후 ch-02 만 `NOT_LOADED` 였다.

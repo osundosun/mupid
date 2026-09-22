@@ -1,0 +1,109 @@
+-- track_sections 를 MySQL `music_section_analysis` 에 맞춘다 (S15P21A204-435).
+--
+-- 배경
+--   구간 표는 AI 가 ClickHouse 에 직접 넣던 시절의 모양 그대로였다. 이제 같은 구간이
+--   `PUT /api/v1/music/{musicId}/section` 한 번으로 MySQL 과 ClickHouse 양쪽에
+--   들어가므로(요구 1), 두 표의 컬럼이 어긋나 있으면 어느 쪽이 맞는지 알 수 없다.
+--
+--   바뀌는 것
+--     + music_section_analysis_id  UInt32   MySQL PK. 지금까지 ClickHouse 에는
+--                                           문자열 `section_uid` 밖에 없었다
+--     - peak_ms                             MySQL 에 대응이 없다. 산출한 적도 없어
+--                                           줄곧 구간 시작점이 들어가 있었다
+--     ~ section_index  UInt8 → UInt32       MySQL `index` 가 INT 다. UInt8 은 256번째
+--                                           구간부터 **조용히 되감긴다**
+--
+--   이름만 다르고 값이 같은 것들(track_id ← music_id, start_ms ← start_time_ms,
+--   end_ms ← end_time_ms, section_uid ← external_id, fn ← section_label)은 그대로 둔다.
+--   MySQL 에 대응이 없는 `analysis_version` · `created_at` 도 남긴다 — 앞의 것은
+--   현재 버전을 고르는 근거이고 뒤의 것은 ReplacingMergeTree 의 버전 컬럼이다.
+--
+-- 왜 ALTER 가 아니라 다시 만드는가
+--   `section_index` 가 ORDER BY 키다. ClickHouse 는 정렬 키 컬럼의 타입을 바꾸는
+--   ALTER 를 허용하지 않는다. 컬럼 추가·삭제만이라면 ALTER 로 끝났겠지만 타입까지
+--   맞추려면 표를 다시 만드는 수밖에 없다.
+--
+-- 되돌리기
+--   §0 의 백업을 남겼다면 그것으로 되돌린다. 남기지 않았다면 배치를 다시 돌린다 —
+--   구간 표는 분석 산출물이라 언제든 다시 만들 수 있다.
+--
+-- 적용 시점과 절차는 사람이 정한다. `init/` 밖에 있으므로 `apply-ddl.sh` 가 자동으로
+-- 실행하지 않는다. 2026-09-22 기준 운영 배포에는 ClickHouse 자체가 아직 없고
+-- (`infra/deploy/compose.yml`), 로컬은 `docker compose down -v` 로 새로 만드는 편이 빠르다.
+-- 이 파일은 **이미 데이터가 쌓인 클러스터**를 위한 것이다.
+
+-- ---------------------------------------------------------------- 0. 백업 (선택)
+-- 옛 행을 잃고 싶지 않을 때만. 새 표는 배치가 다시 채우므로 대개 필요 없다.
+--
+-- CREATE TABLE track_sections_backup_20260922 ON CLUSTER mupid_all
+-- ENGINE = MergeTree ORDER BY (analysis_version, track_id, section_index)
+-- AS SELECT * FROM track_sections_local;
+--
+-- SELECT count() FROM track_sections_backup_20260922;   -- 옮긴 행 수를 적어 둘 것
+
+-- ---------------------------------------------------------------- 1. 파생 객체부터
+-- 딕셔너리 → 뷰 → Distributed → local 순서다. 거꾸로 지우면 남은 쪽이 없는 표를
+-- 가리킨 채 남아 `dictGet` 이 빈 문자열을 돌려주고, 그 상태에서도 서비스는 정상처럼 뜬다.
+DROP DICTIONARY IF EXISTS dict_track_sections ON CLUSTER mupid_all;
+DROP VIEW IF EXISTS v_track_sections_current ON CLUSTER mupid_all;
+DROP TABLE IF EXISTS track_sections ON CLUSTER mupid_all;
+
+-- `SYNC` 가 핵심이다. 빼면 Keeper 의 복제 경로(`/clickhouse/tables/track_sections`)가
+-- 곧바로 정리되지 않아, 같은 경로로 다시 만드는 §2 가 `REPLICA_ALREADY_EXISTS` 로
+-- 실패한다. 경로는 init 스키마와 같아야 하므로 바꿔서 피해 갈 수 없다.
+DROP TABLE IF EXISTS track_sections_local ON CLUSTER mupid_all SYNC;
+
+-- ---------------------------------------------------------------- 2. 새 구조로 다시
+-- init/01-schema.sql 을 그대로 다시 적용한다. 전부 `IF NOT EXISTS` / `OR REPLACE` 라
+-- 나머지 표는 손대지 않고 방금 지운 넷만 새 구조로 만들어진다.
+--
+--   cd api && docker compose up --force-recreate clickhouse-init
+--
+-- 컨테이너 없이 직접 적용한다면 `clickhouse/init/apply-ddl.sh` 를 쓴다.
+-- 아래는 이 마이그레이션이 만들려는 모양이다 (원본은 init/01-schema.sql 이고,
+-- **여기를 고쳐도 반영되지 않는다** — 확인용으로만 본다).
+--
+-- CREATE TABLE IF NOT EXISTS track_sections_local ON CLUSTER mupid_all
+-- (
+--     track_id                   UInt32,
+--     music_section_analysis_id  UInt32,
+--     analysis_version           LowCardinality(String),
+--     section_index              UInt32,
+--     section_uid                String,
+--     fn                         LowCardinality(String),
+--     start_ms                   UInt32,
+--     end_ms                     UInt32,
+--     created_at                 DateTime DEFAULT now()
+-- )
+-- ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/track_sections', '{replica}', created_at)
+-- ORDER BY (analysis_version, track_id, section_index);
+
+-- ---------------------------------------------------------------- 3. 다시 채운다
+-- 셋 중 하나를 고른다.
+--
+--   (a) 배치를 다시 돌린다 — 권장. `music_section_analysis_id` 까지 제대로 채워진다.
+--       전처리 배치가 `PUT /api/v1/music/{musicId}/section` 을 다시 부르면 스프링이
+--       MySQL 과 ClickHouse 양쪽에 넣는다.
+--
+--   (b) MySQL 에서 직접 옮긴다 — 곡을 다시 분석할 수 없을 때. `music_section_analysis`
+--       를 그대로 읽어 넣으면 되고, 컬럼 대응은 이 파일 맨 위와 같다.
+--
+--   (c) §0 의 백업에서 되살린다. `music_section_analysis_id` 는 백업에 없으므로 0 이
+--       된다 — MySQL 로 되짚는 조인은 그만큼 비어 있게 된다.
+--
+-- INSERT INTO track_sections_local
+--     (track_id, music_section_analysis_id, analysis_version,
+--      section_index, section_uid, fn, start_ms, end_ms, created_at)
+-- SELECT track_id, 0, analysis_version,
+--        section_index, section_uid, fn, start_ms, end_ms, created_at
+-- FROM track_sections_backup_20260922;
+
+-- ---------------------------------------------------------------- 4. 확인
+-- SELECT count() FROM track_sections;                                  -- §0 에 적어 둔 수와 비교
+-- SELECT countIf(music_section_analysis_id = 0) FROM track_sections;   -- (a) 로 채웠다면 0
+-- SELECT max(section_index) FROM track_sections;                       -- 255 를 넘어도 되는지 확인
+-- SYSTEM RELOAD DICTIONARY ON CLUSTER mupid_all default.dict_track_sections;
+-- SELECT dictGet('dict_track_sections', 'section_uid',
+--                toUInt64(<곡 번호>), toUInt32(<재생 위치 ms>));       -- 빈 문자열이면 안 된다
+--
+-- 마지막으로 `api/clickhouse/verify.sh` 를 돌려 파이프라인 전체를 확인한다.

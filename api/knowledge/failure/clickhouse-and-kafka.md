@@ -1,6 +1,6 @@
 # ClickHouse · Kafka
 
-23건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
+28건. 증상으로 찾고, **원인 / 해결 / 근거** 순으로 읽는다. 새로 밟은 함정은 이 파일에 같은 형식으로 추가한다.
 
 [← 함정 목록](README.md) · [지식 저장소](../README.md)
 
@@ -177,3 +177,19 @@
 - **⚠ 이미 띄운 클러스터에는 반영되지 않는다.** DDL 이 `CREATE TABLE IF NOT EXISTS` 라 기존 테이블은 그대로다. 로컬은 볼륨을 지우고 다시 초기화하고, 이미 만들어진 환경은 `DROP TABLE … ON CLUSTER` 후 재생성하거나 `ALTER TABLE … MODIFY COLUMN` 한다. `mv_kafka_to_events`·`mv_user_section_signals` 는 생성 시점 정의로 고정되므로 함께 재생성한다.
 - **이어서**: `playlist_id`·`comment_id` 도 `UInt32` 로 맞췄다. 대응하는 MySQL 엔티티가 아직 없으므로, 플레이리스트·댓글 도메인을 만들 때 PK 를 다른 타입으로 두면 다시 어긋난다. 이 저장소의 엔티티 PK 는 전부 `Integer` 다.
 - **근거**: `api/clickhouse/init/01-schema.sql`, `api/src/main/java/com/osundosun/mupid/api/user/entity/User.java`
+
+---
+
+### JDBC 로 `INSERT … SETTINGS … VALUES (?)` 를 넣으면 `ArrayIndexOutOfBoundsException` 이다 — 해소됨
+
+- **증상**: `JdbcTemplate.batchUpdate` 가 `java.lang.ArrayIndexOutOfBoundsException: Index 0 out of bounds for length 0` 으로 터진다. 스택은 `com.clickhouse.jdbc.PreparedStatementImpl.setObject` 에서 시작해 SQL 이 왜 틀렸는지는 한 글자도 말하지 않는다. 진짜 이유는 stderr 한 줄에만 있다 — `line 4:0 mismatched input 'SETTINGS' expecting {FORMAT, SELECT, VALUES, WITH, '('}`.
+- **원인**: `clickhouse-jdbc:0.9.0` 의 **v2 드라이버**가 SQL 을 ANTLR 로 직접 파싱해 자리표시자를 찾는데, `VALUES` 앞의 `SETTINGS` 절을 문법에 두지 않았다. 파싱이 깨져도 예외를 던지지 않고 **자리표시자 0개**로 넘어가므로, 첫 `setObject(1, …)` 에서 빈 배열을 건드린다.
+- **해결**: JDBC 로 넣을 때는 `SETTINGS` 를 쓰지 않는다. `track_sections` 는 `mupid_all`(1 샤드 × 2 레플리카)이라 샤딩이 없어 `track_sections_local` 에 바로 넣으면 `distributed_foreground_insert` 자체가 필요 없다 (`analytics/repository/TrackSectionRepository`). `ALTER TABLE … SETTINGS mutations_sync = 1` 은 자리표시자가 없어 `execute()` 로 그대로 나간다 — 막히는 것은 **PreparedStatement** 뿐이다.
+- **이어서**: HTTP 인터페이스로 넣는 `verify.sh` 와 `ai_server/tools/push_sections.py` 에는 이 제약이 없다. 그 두 곳의 SQL 을 JDBC 로 옮겨 붙일 때 이 함정을 다시 밟는다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/analytics/repository/TrackSectionRepository.java`, `api/src/test/java/com/osundosun/mupid/api/analytics/TrackSectionReplaceTest.java`
+
+### 구간을 다시 올렸는데 없어진 구간이 ClickHouse 에 남는다 — 해소됨
+
+- **원인**: `track_sections_local` 이 `ReplacingMergeTree` 라 같은 `(analysis_version, track_id, section_index)` 는 덮인다. 그래서 "통째 교체" 를 INSERT 만으로 해도 대개 맞는데, **재분석으로 구간 수가 줄면** 새 분석에 없는 순번이 덮이지 않고 살아남는다. 그 행을 `dict_track_sections` 가 그대로 읽어 그 범위의 재생 위치를 **없어진 구간**으로 판정하고, 추천이 곡에 없는 구간을 내놓는다. 오류는 나지 않는다.
+- **해결**: 넣기 **전에** 남아 있는 `section_index` 를 읽어 두고, 새 목록에 없는 것만 `ALTER TABLE … DELETE` 로 지운다. 곡마다 무조건 지우지 않는 것이 중요하다 — mutation 은 파트를 다시 쓰므로 1,000곡 배치가 1,000번 재기록하게 된다. 구간 수가 같거나 늘어난 평소 경로에서는 SELECT 한 번과 INSERT 한 번으로 끝난다.
+- **근거**: `api/src/main/java/com/osundosun/mupid/api/analytics/repository/TrackSectionRepository.java`

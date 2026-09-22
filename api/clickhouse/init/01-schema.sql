@@ -55,17 +55,37 @@ AS listen_events_local
 ENGINE = Distributed(mupid, currentDatabase(), listen_events_local, cityHash64(user_id));
 
 
+-- 컬럼은 MySQL `music_section_analysis` 한 행을 그대로 옮긴 것이다. 이 표를 채우는
+-- 것은 배치가 부르는 `PUT /api/v1/music/{musicId}/section` 이고, 같은 요청이
+-- MySQL 과 여기에 함께 들어간다 (`analytics/repository/TrackSectionRepository`).
+-- 이름이 다른 것은 아래 셋뿐이고, 나머지는 MySQL 쪽 이름을 그대로 쓴다.
+--
+--   track_id      ← music_id       ClickHouse 는 FK 를 두지 않으므로 값만 옮긴다
+--   start_ms      ← start_time_ms
+--   end_ms        ← end_time_ms
+--
+-- `music_section_analysis_id` 를 함께 싣는 것이 이 표의 쓰임을 바꾼다. 지금까지
+-- ClickHouse 쪽에서 구간을 가리키는 값은 `section_uid`(= MySQL `external_id`)
+-- 문자열뿐이라 MySQL 로 되짚으려면 문자열 조인이 필요했다. 숫자 PK 가 함께 있으면
+-- 분석 결과를 MySQL 구간 행에 바로 붙일 수 있다.
+--
+-- `peak_ms` 는 없앴다. MySQL 에 대응 컬럼이 없고, 산출한 적도 없어 줄곧 구간
+-- 시작점이 그대로 들어가 있었다 (`ai_server/tools/push_sections.py`).
+--
+-- `analysis_version` · `created_at` 은 MySQL 에 없지만 남긴다. 앞의 것은
+-- `v_track_sections_current` 가 현재 버전만 고르는 근거이고, 뒤의 것은
+-- ReplacingMergeTree 의 버전 컬럼이다. 둘 중 하나라도 빼면 표가 동작하지 않는다.
 CREATE TABLE IF NOT EXISTS track_sections_local ON CLUSTER mupid_all
 (
-    track_id          UInt32,
-    analysis_version  LowCardinality(String),
-    section_index     UInt8,
-    section_uid       String,
-    fn                LowCardinality(String),
-    start_ms          UInt32,
-    end_ms            UInt32,
-    peak_ms           UInt32,
-    created_at        DateTime DEFAULT now()
+    track_id                   UInt32,
+    music_section_analysis_id  UInt32,
+    analysis_version           LowCardinality(String),
+    section_index              UInt32,
+    section_uid                String,
+    fn                         LowCardinality(String),
+    start_ms                   UInt32,
+    end_ms                     UInt32,
+    created_at                 DateTime DEFAULT now()
 )
 ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/track_sections', '{replica}', created_at)
 ORDER BY (analysis_version, track_id, section_index);
@@ -77,19 +97,19 @@ ENGINE = Distributed(mupid_all, currentDatabase(), track_sections_local);
 
 
 CREATE OR REPLACE VIEW v_track_sections_current ON CLUSTER mupid_all AS
-SELECT track_id, start_ms, end_ms, section_uid, fn, peak_ms
+SELECT track_id, music_section_analysis_id, start_ms, end_ms, section_uid, fn
 FROM track_sections_local
 WHERE analysis_version = 'v1';
 
 
 CREATE DICTIONARY IF NOT EXISTS dict_track_sections ON CLUSTER mupid_all
 (
-    track_id    UInt32,
-    start_ms    UInt32,
-    end_ms      UInt32,
-    section_uid String,
-    fn          String,
-    peak_ms     UInt32
+    track_id                   UInt32,
+    music_section_analysis_id  UInt32,
+    start_ms                   UInt32,
+    end_ms                     UInt32,
+    section_uid                String,
+    fn                         String
 )
 PRIMARY KEY track_id
 SOURCE(CLICKHOUSE(TABLE 'v_track_sections_current'))

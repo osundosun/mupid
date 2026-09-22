@@ -13,7 +13,7 @@
 | [auth-and-api.md](auth-and-api.md) | 47 | JWT·쿠키·필터, 이메일 인증, 오류 응답 규약 위반 |
 | [config-and-env.md](config-and-env.md) | 11 | `MUPID_` 접두사, `.env` 주입 경로, 값이 컨테이너에서만 안 잡히는 경우 |
 | [docker-and-nginx.md](docker-and-nginx.md) | 18 | 베이스 이미지 차이, 레이어 캐싱, compose 파일 혼동, envsubst 치환 |
-| [clickhouse-and-kafka.md](clickhouse-and-kafka.md) | 26 | 클러스터·Keeper, 스키마 변경, Kafka 엔진 연동, 로컬 기동 |
+| [clickhouse-and-kafka.md](clickhouse-and-kafka.md) | 28 | 클러스터·Keeper, 스키마 변경, Kafka 엔진 연동, 로컬 기동 |
 | [integrations.md](integrations.md) | 13 | S3 호환 스토리지, Gmail API 인증, 메일 템플릿 |
 | [windows-gitbash.md](windows-gitbash.md) | 7 | 경로 자동 변환, 포트 점유, `NODE_ENV` 때문에 devDependency 가 빠지는 경우 |
 | [cicd-and-ops.md](cicd-and-ops.md) | 21 | GitLab CI, 배포·롤백, 백업, 러너 |

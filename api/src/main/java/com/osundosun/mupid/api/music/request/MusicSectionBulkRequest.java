@@ -24,10 +24,13 @@ public record MusicSectionBulkRequest(
     /**
      * 분석 버전. 현재 `v1`.
      *
-     * **저장하지 않고 응답으로 되돌려주기만 한다.** `music_section_analysis` 에
-     * 버전 컬럼이 없기 때문이다. 계약(`api/docs/AI/요구 1`)이 이 필드를 요구하고
-     * 있어 받기는 하되, 어디에도 남지 않는다는 것을 여기 적어 둔다. 실제로
-     * 기록하려면 ERD 변경이 선행이다.
+     * **MySQL 에는 남지 않는다.** `music_section_analysis` 에 버전 컬럼이 없기
+     * 때문이다. 실제로 기록하려면 ERD 변경이 선행이다.
+     *
+     * 반면 ClickHouse `track_sections` 에는 컬럼이 있어 그대로 들어간다
+     * (S15P21A204-435). 그리고 `v_track_sections_current` 가 **`v1` 만** 고르므로,
+     * 다른 값을 보내면 표에는 들어가되 딕셔너리가 보지 않아 구간 판정에 전혀 쓰이지
+     * 않는다 — 오류 없이 그 곡의 행동 신호만 조용히 사라진다.
      */
     @NotBlank(message = "분석 버전이 입력되지 않았습니다.")
     @Size(max = 20, message = "분석 버전은 20자를 넘을 수 없습니다.")
