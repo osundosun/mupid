@@ -13,7 +13,15 @@ export function InnerScrollbars() {
       frame = 0;
       if (!media.matches) { tracked.forEach(el => el.classList.remove('custom-inner-scroll')); tracked.clear(); setBars([]); return; }
       const next: Bar[] = [];
-      const menuBounds = Array.from(document.querySelectorAll<HTMLElement>('.nav-account-panel, .recent-search-panel, .chat-panel'))
+      // 스크롤바는 body 포털이므로 모달 뒤의 영역도 위에 그려질 수 있다.
+      // 가장 위에 열린 대화상자 안의 스크롤만 노출한다.
+      const dialogs = Array.from(document.querySelectorAll<HTMLElement>(
+        '[data-slot="dialog-content"][data-open], [data-slot="alert-dialog-content"][data-open]',
+      )).filter(el => el.getClientRects().length > 0 && !el.closest('[aria-hidden="true"], [inert]'));
+      const topDialog = dialogs.sort((a, b) =>
+        (Number.parseInt(getComputedStyle(a).zIndex) || 0) - (Number.parseInt(getComputedStyle(b).zIndex) || 0),
+      ).at(-1);
+      const menuBounds = Array.from(document.querySelectorAll<HTMLElement>('.nav-account-panel, .recent-search-panel, .chat-panel, .queue-dock, .queue-dock-scrim'))
         .filter(menu => menu.getClientRects().length > 0)
         .map(menu => ({ element: menu, bounds: menu.getBoundingClientRect() }));
       tracked.forEach(el => { if (!el.isConnected) { resize.unobserve(el); tracked.delete(el); } });
@@ -24,12 +32,19 @@ export function InnerScrollbars() {
         const horizontal = /auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1;
         if (!vertical && !horizontal) { el.classList.remove('custom-inner-scroll'); tracked.delete(el); return; }
         el.classList.add('custom-inner-scroll'); if (!tracked.has(el)) resize.observe(el); tracked.add(el);
+        if (topDialog && !topDialog.contains(el)) return;
+        if (el.closest('[aria-hidden="true"], [inert]')) return;
         const rect = el.getBoundingClientRect();
         if (!rect.width || !rect.height || style.visibility === 'hidden') return;
         let top = Math.max(0, rect.top), bottom = Math.min(innerHeight, rect.bottom);
         let left = Math.max(0, rect.left), right = Math.min(innerWidth, rect.right);
+        if (el.matches('.selected-moment-messages')) {
+          top = Math.max(top, rect.top + 10);
+          bottom = Math.min(bottom, rect.bottom - 10);
+          right = Math.min(right, rect.right - 4);
+        }
         // Portal scrollbars must stay inside the dialog's rounded corners.
-        if (el.matches('.demo-login-dialog')) {
+        if (el.matches('.demo-login-dialog, .moment-comment-dialog, .explore-category-card, .explore-filter-sidebar')) {
           const inset = Math.max(16, parseFloat(style.borderTopRightRadius) || 0,
             parseFloat(style.borderBottomRightRadius) || 0);
           top = Math.max(top, rect.top + inset);
@@ -68,6 +83,7 @@ export function InnerScrollbars() {
           const x = h ? left : right - 10;
           const y = h ? bottom - 10 : top;
           if (menuBounds.some(({ element, bounds: menu }) => !element.contains(el) &&
+            !(element.matches('.queue-dock-scrim') && el.closest('.queue-dock')) &&
             x < menu.right && x + (h ? length : 10) > menu.left &&
             y < menu.bottom && y + (h ? 10 : length) > menu.top)) continue;
           const size = h ? el.clientWidth : el.clientHeight;
@@ -83,16 +99,17 @@ export function InnerScrollbars() {
     const observer = new MutationObserver(records => {
       if (records.some(r => !(r.target instanceof Element && r.target.closest('[data-custom-scrollbar]')))) schedule();
     });
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-open', 'data-closed', 'aria-hidden', 'inert'] });
     const resize = new ResizeObserver(schedule); resize.observe(document.body);
     document.addEventListener('scroll', schedule, true);
     window.addEventListener('resize', schedule);
+    document.addEventListener('animationend', schedule, true);
     document.addEventListener('pointerover', schedule, { passive: true });
     media.addEventListener('change', schedule);
     schedule();
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); resize.disconnect(); tracked.forEach(el => el.classList.remove('custom-inner-scroll')); document.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule); document.removeEventListener('pointerover', schedule); media.removeEventListener('change', schedule); };
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); resize.disconnect(); tracked.forEach(el => el.classList.remove('custom-inner-scroll')); document.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule); document.removeEventListener('animationend', schedule, true); document.removeEventListener('pointerover', schedule); media.removeEventListener('change', schedule); };
   }, []);
-  return <>{bars.map((bar, i) => createPortal(<div data-custom-scrollbar="" data-chat-scroll={bar.el.closest('.chat-panel') ? 'true' : undefined} className="inner-scrollbar" style={{ left: bar.x, top: bar.y, width: bar.horizontal ? bar.length : 10, height: bar.horizontal ? 10 : bar.length }}
+  return <>{bars.map((bar, i) => createPortal(<div data-custom-scrollbar="" data-filter-scroll={bar.el.closest('.explore-filter-sidebar, .moment-comment-dialog') ? 'true' : undefined} data-chat-scroll={bar.el.closest('.chat-panel') ? 'true' : undefined} className="inner-scrollbar" style={{ left: bar.x, top: bar.y, width: bar.horizontal ? bar.length : 10, height: bar.horizontal ? 10 : bar.length }}
     ref={node => {
       if (!node) return;
       const wheel = (event: WheelEvent) => { event.preventDefault(); event.stopPropagation(); const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bar.length : 1; bar.el.scrollBy({ top: bar.horizontal ? 0 : event.deltaY * scale, left: (bar.horizontal ? event.deltaY || event.deltaX : event.deltaX) * scale, behavior: 'instant' }); };
@@ -113,5 +130,5 @@ export function InnerScrollbars() {
       track.addEventListener('pointermove',move); track.addEventListener('pointerup',end); track.addEventListener('pointercancel',end); track.addEventListener('lostpointercapture',end);
     }}><div role="scrollbar" aria-label="영역 스크롤" aria-orientation={bar.horizontal ? 'horizontal' : 'vertical'} aria-valuemin={0} aria-valuemax={Math.round(bar.max)} aria-valuenow={Math.round(bar.value)} tabIndex={0}
     onKeyDown={event => { const delta = ['ArrowDown','ArrowRight'].includes(event.key) ? 40 : ['ArrowUp','ArrowLeft'].includes(event.key) ? -40 : 0; if (delta) { event.preventDefault(); bar.el.scrollBy(bar.horizontal ? {left:delta} : {top:delta}); } }}
-    style={{ position:'absolute', borderRadius:999, background:'#8daee0', left:bar.horizontal?bar.offset:2, top:bar.horizontal?2:bar.offset, width:bar.horizontal?bar.thumb:6, height:bar.horizontal?6:bar.thumb }} /></div>, document.body, String(i)))}</>;
+    style={{ position:'absolute', borderRadius:999, background:'var(--inner-scroll-thumb, #8daee0)', left:bar.horizontal?bar.offset:bar.el.closest('.explore-filter-sidebar, .moment-comment-dialog')?3:2, top:bar.horizontal?(bar.el.closest('.explore-filter-sidebar, .moment-comment-dialog')?3:2):bar.offset, width:bar.horizontal?bar.thumb:bar.el.closest('.explore-filter-sidebar, .moment-comment-dialog')?4:6, height:bar.horizontal?(bar.el.closest('.explore-filter-sidebar, .moment-comment-dialog')?4:6):bar.thumb }} /></div>, document.body, String(i)))}</>;
 }

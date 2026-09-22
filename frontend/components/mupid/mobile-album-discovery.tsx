@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { Play, Pause } from 'lucide-react';
 import type { MupidModel } from '@/hooks/use-mupid';
 import type { Track } from '@/lib/mupid-data';
-import { AlbumArt } from './primitives';
+import { RowPlaybackArea, AlbumArt } from './primitives';
 import { FadeContent } from './fade-content';
 import { GenreName } from './genre-name';
 
@@ -34,7 +34,7 @@ export function MobileAlbumDiscovery({ tracks, model: m }: { tracks: Track[]; mo
         <AlbumArt track={track} />
       </button>)}
     </div>
-    <div className="discovery-feature-info">
+    <div className="discovery-feature-info" data-playable-row><RowPlaybackArea onPlay={() => m.play(selected)} />
       <FadeContent contentKey={String(selected.id)}><div className="discovery-feature-copy">
         <span>{selected.mood} · <GenreName genre={selected.genre} /></span><h3>{selected.title}</h3><p>{selected.artist}</p>
       </div></FadeContent>

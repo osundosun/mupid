@@ -152,7 +152,7 @@ export function useMupid(bootstrap: Bootstrap) {
   // 마지막으로 들은 곡을 기억해 미니 플레이어를 계속 띄워 둔다. 한 곡도 듣지 않았다면 null.
   const [lastPlayedId, setLastPlayedId] = useState<number | null>(initial.lastPlayedId ?? null);
   const [active, setActive] = useState<Track | null>(
-    tracks.find((t) => t.id === initial.lastPlayedId) ?? tracks[0] ?? null,
+    tracks.find((t) => t.id === initial.lastPlayedId) ?? null,
   );
   const [playing, setPlaying] = useState(false);
   // 청크를 기다리는 중. 화면은 이 값으로 스피너를 띄운다.
@@ -245,6 +245,8 @@ export function useMupid(bootstrap: Bootstrap) {
    */
   const chatSessionRef = useRef<number | null>(null);
   const [momentRange, setMomentRange] = useState<number[]>([70, 92]);
+  const [momentAnchorTime, setMomentAnchorTime] = useState(0);
+  const [momentOpenRevision, setMomentOpenRevision] = useState(0);
   // 저장한 순간을 열어 고치는 중이면 그 id를 담는다. 새로 만들 때는 null.
   const [editingMomentId, setEditingMomentId] = useState<number | null>(null);
   const [momentSection, setMomentSection] = useState('코러스 2');
@@ -307,6 +309,17 @@ export function useMupid(bootstrap: Bootstrap) {
     // URL 직접 이동과 UI 이동 모두 같은 조건으로 보호한다. 실제 접근 권한 검증은 서버 책임이다.
     router.push(guardPath(pagePaths[next], !!sessionRef.current, onboardingRef.current));
   };
+  const previousPlaybackPath = useRef(pathname);
+  useEffect(() => {
+    const previous = previousPlaybackPath.current;
+    previousPlaybackPath.current = pathname;
+    if (previous === pagePaths.moment && pathname !== pagePaths.moment) {
+      // 편집 화면의 미리듣기 종료 조건이 일반 재생을 중간에 멈추지 않게 한다.
+      previewEnd.current = null;
+      momentSequence.current = null;
+      setSavedMomentPlayback(null);
+    }
+  }, [pathname]);
   useEffect(() => {
     // 로그인 여부를 알기 전에는 판정하지 않는다. 알기도 전에 보내면 주소를 잃는다.
     if (!authChecked) return;
@@ -598,6 +611,15 @@ export function useMupid(bootstrap: Bootstrap) {
     setQueue(toQueueEntries(saved.ids));
     savedQueue.current = { ids: saved.ids, currentId: savedQueue.current?.currentId ?? null };
   };
+  const resetUnplayedAccount = () => {
+    getPlayer()?.stop();
+    activeRef.current = null;
+    setActive(null);
+    setLastPlayedId(null);
+    setPlaying(false);
+    setBuffering(false);
+    setTime(0);
+  };
   /**
    * 세션 복원.
    *
@@ -615,6 +637,7 @@ export function useMupid(bootstrap: Bootstrap) {
       .then(async (session) => {
         if (abort.signal.aborted || session.status !== 'authenticated' || !session.user) return;
         const submitted = session.user.onboarding_submitted;
+        if (!submitted) resetUnplayedAccount();
         const restored: AccountSession = { kind: 'authenticated', nickname: session.user.nickname, userId: session.user.user_id, onboardingSubmitted: submitted };
         // sessionRef 를 채워야 설정 저장과 온보딩 제출이 열린다.
         sessionRef.current = restored;
@@ -638,6 +661,7 @@ export function useMupid(bootstrap: Bootstrap) {
     // 온보딩 여부는 계정이 기준이다. 예전에는 서버가 주지 않아 이 기기에 남은
     // 값을 썼고, 그래서 다른 기기에서 마친 사람이 설문을 다시 봤다.
     const submitted = user.onboarding_submitted;
+    if (!submitted) resetUnplayedAccount();
     const session: AccountSession = { kind: 'authenticated', nickname: user.nickname, userId: user.user_id, onboardingSubmitted: submitted };
     sessionRef.current = session;
     setOnboardingSubmitted(submitted);
@@ -724,15 +748,17 @@ export function useMupid(bootstrap: Bootstrap) {
     return () => abort.abort();
   }, [active?.id]);
   /*
-   * 로그인 뒤에 곡 목록이 들어오면 고를 곡을 잡아 둔다.
+   * 로그인 뒤에 곡 목록이 들어오면 마지막으로 들었던 곡만 복원한다.
    *
    * 목록은 로그인한 사람만 받을 수 있어서, 비로그인으로 앱이 열릴 때는 비어
    * 있다가 로그인 뒤에 채워진다. `active` 는 처음 한 번만 정해지므로 여기서
-   * 뒤늦게 들어온 목록을 받아 준다. 재생을 시작하지는 않는다.
+   * 뒤늦게 들어온 목록을 받아 준다. 재생 이력이 없으면 빈 상태를 유지한다.
+   * 복원하더라도 재생을 시작하지는 않는다.
    */
   useEffect(() => {
     if (active || !tracks.length) return;
-    const pick = tracks.find((t) => t.id === lastPlayedId) ?? tracks[0];
+    const pick = tracks.find((t) => t.id === lastPlayedId);
+    if (!pick) return;
     activeRef.current = pick;
     setActive(pick);
   }, [tracks, active, lastPlayedId]);
@@ -1389,6 +1415,13 @@ export function useMupid(bootstrap: Bootstrap) {
   }, [pathname, tracks]);
   const openMoment = (track: Track | null = activeRef.current, editing: SavedMoment | null = null) => {
     if (!track) return;
+    const state = getPlayer()?.store.get();
+    const position = activeRef.current?.id === track.id
+      ? (state?.musicId === track.musicId ? state?.positionSec ?? time : time)
+      : track.moment;
+    const anchor = Math.max(0, Math.min(position, track.duration));
+    setMomentAnchorTime(anchor);
+    setMomentOpenRevision(value => value + 1);
     previewEnd.current = null;
     momentSequence.current = null;
     setSavedMomentPlayback(null);
@@ -1402,7 +1435,7 @@ export function useMupid(bootstrap: Bootstrap) {
     }
     const part = getSongSectionAt(
       track,
-      Math.min(activeRef.current?.id === track.id ? time : track.moment, track.duration),
+      anchor,
     );
     setMomentRange([part.start, part.end]);
     setMomentSection(part.label);
@@ -1935,6 +1968,8 @@ export function useMupid(bootstrap: Bootstrap) {
     editingMomentId,
     setEditingMomentId,
     momentRange,
+    momentAnchorTime,
+    momentOpenRevision,
     setMomentRange,
     momentSection,
     setMomentSection,

@@ -431,6 +431,7 @@ h1 {
   gap: 10px;
 }
 .track-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 13px;
@@ -439,6 +440,30 @@ h1 {
   padding: 12px;
   border-radius: 16px;
   min-width: 0;
+}
+/* 빈 공간은 재생 버튼으로, 개별 조작은 그 위에서 받는다. */
+[data-playable-row] {
+  position: relative;
+  isolation: isolate;
+}
+[data-playable-row] button:not(.track-row-hitarea) {
+  position: relative;
+  z-index: 2;
+}
+.track-row-hitarea {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: inherit;
+}
+.track-row > button:not(.track-row-hitarea),
+.track-row > a,
+.track-row .track-info button {
+  position: relative;
+  z-index: 2;
 }
 .track-row .album-art {
   width: 58px;

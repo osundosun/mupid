@@ -84,7 +84,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
   useDismissableOverlay(confirmUnsave, () => setConfirmUnsave(false));
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
-  if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
+  if (!active) return <EmptyState title="듣고 싶은 음악을 골라보세요" description="추천 음악이나 탐색에서 곡을 선택하면 재생이 시작돼요."><button className="primary-button" onClick={() => m.go('search')}>음악 둘러보기</button></EmptyState>;
   const recommendationReason = active.recommended?.reason?.trim() || active.recommendationReason?.trim();
   const part = getSongSectionAt(active, m.time || active.moment);
   // 지금 재생 중인 순간이 이미 저장돼 있는지 본다. 저장했다면 여기서 바로 해제할 수 있다.
@@ -223,12 +223,12 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
   );
 }
 export function MomentView({ model: m }: { model: MupidModel }) {
-  return <MomentSelection key={`${m.active?.id ?? 0}:${m.editingMomentId ?? 'new'}`} model={m} />;
+  return <MomentSelection key={`${m.active?.id ?? 0}:${m.editingMomentId ?? 'new'}:${m.momentOpenRevision}`} model={m} />;
 }
 function MomentSelection({ model: m }: { model: MupidModel }) {
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
   const active = m.active;
-  if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
+  if (!active) return <EmptyState title="듣고 싶은 음악을 골라보세요" description="추천 음악이나 탐색에서 곡을 선택하면 재생이 시작돼요."><button className="primary-button" onClick={() => m.go('search')}>음악 둘러보기</button></EmptyState>;
   const editing = m.editingMomentId !== null;
   // Keep preview sections local to the editor; never send them as AI analysis.
   const previewSections = active.sections.length === 0;
@@ -246,7 +246,11 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
         (section) => moment.start >= section.start && moment.start < section.end,
       )).filter((index) => index >= 0))];
     }
-    return [];
+    const index = sections.findIndex((section, i) =>
+      m.momentAnchorTime >= section.start &&
+      (m.momentAnchorTime < section.end || (i === sections.length - 1 && m.momentAnchorTime === section.end)),
+    );
+    return index >= 0 ? [index] : [];
   });
   const [saved, setSaved] = useState(false);
   // 마지막에 만진 구간. 폰은 마우스를 올릴 수 없어 툴팁이 뜨지 않으니, 그 구간의
@@ -327,15 +331,15 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
           {hinted !== null && sections[hinted] && sectionHint(sections[hinted].label) && (
             <p className="song-parts-hint" role="status"><strong>{sections[hinted].label}</strong> {sectionHint(sections[hinted].label)}</p>
           )}
-          <MomentWaveEditor track={active} range={focusedPart} others={parts.slice(0, -1)} onSelect={time => {
+          <MomentWaveEditor track={active} time={m.time} range={focusedPart} others={parts.slice(0, -1)} onSelect={time => {
             // 이미 고른 순간 안을 누르면 그 순간을 손보는 대상으로. 바깥이면 그 구간을 새로 고른다.
             const within = partAt(time);
             const index = sections.findIndex(part => time >= part.start && time < part.end);
+            if (index >= 0) setHinted(index);
             const preview = within >= 0 ? parts[within] : sections[index];
-            // 선택 상태 갱신을 기다리지 않고 클릭한 위치에서 해당 순간을 미리 듣는다.
-            // 선택 범위 자체는 유지하고, 재생 시작점만 클릭 위치로 지정한다.
+            // 파형 클릭은 구간 선택이다. 표시된 구간의 시작부터 미리 듣는다.
             if (preview) m.playSavedMoment({
-              id: time, track: active, start: time, end: preview.end, section: preview.label,
+              id: preview.start, track: active, start: preview.start, end: preview.end, section: preview.label,
             });
             if (within >= 0) { focus(within); return; }
             if (index >= 0) { setHinted(index); setSelected(ids => [...ids.filter(id => id !== index), index]); }
@@ -344,7 +348,7 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
             trimFocused(start, end);
             setSaved(false);
           }} />
-          <div className="time-labels"><span>00:00</span><span>{formatTime(active.duration)}</span></div>
+          <div className="time-labels"><span aria-label="현재 재생 시간">{formatTime(m.time)}</span><span>{formatTime(active.duration)}</span></div>
           {/* 고른 순간은 여기서 바로 빼는 게 빠르다. 위 칩을 다시 찾아 누를 필요가 없다. */}
           <div className="track-menu-options moment-part-list">
             {parts.map((part, partIndex) => {
@@ -434,7 +438,7 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
   }, [musicId, sectionId, loadSimilarSections]);
 
   // 들을 곡이 없으면 이 화면은 보여 줄 것이 없다. 앱의 다른 화면은 그대로 쓴다.
-  if (!active) return <EmptyState title="아직 들을 곡이 없어요" description="음악이 등록되면 여기에서 바로 들을 수 있어요." />;
+  if (!active) return <EmptyState title="듣고 싶은 음악을 골라보세요" description="추천 음악이나 탐색에서 곡을 선택하면 재생이 시작돼요."><button className="primary-button" onClick={() => m.go('search')}>음악 둘러보기</button></EmptyState>;
   const answered = answer.key === askKey;
   const asking = Boolean(askKey) && !answered;
   const tracks = m.tracks;

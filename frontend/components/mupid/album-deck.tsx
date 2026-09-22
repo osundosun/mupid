@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, Pause, Play } from 'lucide-react';
+import { Pause, Play } from 'lucide-react';
 import {
   Carousel,
   CarouselContent,
@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/carousel';
 import type { MupidModel } from '@/hooks/use-mupid';
 import type { Track } from '@/lib/mupid-data';
-import { AlbumArt } from './primitives';
+import { RowPlaybackArea, AlbumArt } from './primitives';
 
 export function AlbumDeck({
   model: m,
@@ -87,7 +87,7 @@ export function AlbumDeck({
           </CarouselItem>
         ))}
       </CarouselContent>
-      <div className="album-deck-detail">
+      <div className="album-deck-detail" data-playable-row><RowPlaybackArea onPlay={() => m.play(selected)} />
         <div className="album-deck-copy" key={selected.id}>
           <span className="album-deck-mood">{selected.mood}</span>
           <h3>{selected.title}</h3>
@@ -103,13 +103,6 @@ export function AlbumDeck({
           ) : (
             <Play fill="currentColor" />
           )}
-        </button>
-        <button
-          className="icon-button album-deck-open"
-          aria-label={`${selected.title} 곡 자세히 보기`}
-          onClick={() => m.openTrack(selected)}
-        >
-          <ArrowUpRight />
         </button>
       </div>
     </Carousel>

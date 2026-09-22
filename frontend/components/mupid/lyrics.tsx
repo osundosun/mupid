@@ -82,7 +82,7 @@ export function Lyrics({ track, time = 0, expanded = false, onSeek }: { track: T
     if (Math.abs(box.scrollTop - target) < 1) return;
     box.scrollTo({ top: target, behavior: gentle ? 'smooth' : 'auto' });
   }, [activeId, expanded, track.id]);
-  return <section className="song-lyrics" key={track.id} aria-label={`${track.title} 가사`}>
+  return <section className="song-lyrics" key={track.id} data-empty={!error && displayedLines?.length === 0 ? 'true' : undefined} aria-label={`${track.title} 가사`}>
     <h3>{track.title}</h3>
     {note && <p className="song-lyrics-empty" role={error ? 'alert' : 'status'}>{note}</p>}
     {previewLines?.map((line) => {

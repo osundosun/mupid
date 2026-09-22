@@ -52,7 +52,7 @@
   display: flex;
   flex-direction: column;
   max-height: min(60vh, 560px);
-  background: #fbfdfff2;
+  background: #fbfdff;
   border: 1px solid #dfe9f9;
   box-shadow: 0 3px 28px #3059941a;
   border-radius: 16px;

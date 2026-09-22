@@ -145,6 +145,11 @@ export function PageHeader({
 const sectionNameOf = (track: Track): string =>
   track.recommended?.sectionLabel || getSongSectionAt(track, track.moment).label;
 
+export function RowPlaybackArea({ onPlay }: { onPlay: () => void }) {
+  // 키보드·스크린리더는 기존 재생 버튼을 사용한다.
+  return <button type="button" className="track-row-hitarea" aria-hidden="true" tabIndex={-1} onClick={onPlay} />;
+}
+
 export function TrackRow({
   track,
   model: m,
@@ -184,10 +189,12 @@ export function TrackRow({
 }) {
   const playing = playingOverride ?? (m.playing && m.active?.id === track.id);
   const picking = !!onSelect;
+  const handlePlay = onPlay ?? (() => m.play(track));
   return (
     <article
       className={`track-row ${playing ? 'is-playing' : ''} ${picking ? 'is-selectable' : ''} ${selected ? 'is-selected' : ''}`}
     >
+      {!picking && <RowPlaybackArea onPlay={handlePlay} />}
       {picking && showCheck && (
         <input
           type="checkbox"
@@ -223,7 +230,7 @@ export function TrackRow({
         <button
           className="icon-button play-small"
           aria-label={`${track.title} ${playing ? '일시정지' : '재생'}`}
-          onClick={onPlay ?? (() => m.play(track))}
+          onClick={handlePlay}
         >
           {playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
         </button>
