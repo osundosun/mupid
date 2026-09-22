@@ -163,9 +163,9 @@ def test_mysql_owned_metadata_never_ships(sliced):
 
     # 곡 축에는 DB 에 컬럼이 없는 것만 남는다.
     features = pd.read_parquet(out / "track_features.parquet")
+    # 읽는 곳이 있는 열만 남는다. `dur_sec`(곡)·`sound_raw` 는 뺐다.
     assert set(features.columns) == {
-        "track_id", "bpm", "dur_sec", "language", "category",
-        "bpm_lo", "bpm_hi", "sound_raw"}
+        "track_id", "bpm", "language", "category", "bpm_lo", "bpm_hi"}
 
     # 구간 축에서도 MySQL 이 정본인 열은 떨어져 나간다.
     mom = pd.read_parquet(out / "moments.parquet")
@@ -284,7 +284,7 @@ def test_empty_track_axes_are_reported_not_swallowed(tmp_path, monkeypatch, caps
     report = slice_index.slice_index(src, dst)
 
     assert set(report["track_features"]["empty_axes"]) == {
-        "language", "category", "bpm_lo", "bpm_hi", "sound_raw"}
+        "language", "category", "bpm_lo", "bpm_hi"}
     assert "곡 수준 축이 비었다" in capsys.readouterr().err
 
 

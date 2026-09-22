@@ -90,9 +90,8 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
     tids = sorted(mom.track_id.unique())
     pd.DataFrame([{
         "track_id": t, "bpm": float(rng.uniform(70, 150)),
-        "dur_sec": float(per_track * 30),
         "language": ["ko", "en"][i % 2], "category": GENRES[i % 3],
-        "bpm_lo": 80.0, "bpm_hi": 120.0, "sound_raw": "",
+        "bpm_lo": 80.0, "bpm_hi": 120.0,
     } for i, t in enumerate(tids)]).to_parquet(d / "track_features.parquet", index=False)
 
     (d / "index_meta.json").write_text(json.dumps(

@@ -107,8 +107,8 @@ MOMENT_DROP = ("section_label", "section_idx", "start_sec", "end_sec", "dur_sec"
 # `track_features.parquet` 에 담는 곡 수준 축. **MySQL 에 컬럼 자체가 없다** —
 # BPM 은 오디오에서 잰 값이고 언어·스타일은 생성 조건이다. ERD 에 자리가 생기면
 # 그때 API 로 옮긴다 (`infra/AI-API-BLOCKERS.md`).
-FEATURE_FROM_CONTENT = ("bpm", "dur_sec")
-FEATURE_FROM_FLOW_META = ("language", "category", "bpm_lo", "bpm_hi", "sound_raw")
+FEATURE_FROM_CONTENT = ("bpm",)
+FEATURE_FROM_FLOW_META = ("language", "category", "bpm_lo", "bpm_hi")
 
 
 def pool_sources() -> set[str]:
