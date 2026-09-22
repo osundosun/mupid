@@ -62,7 +62,7 @@ class AiRecommendToolDeclarationTest {
 
     /** 추천 서버만 죽은 툴. 나머지 협력자는 선언 경로에서 쓰이지 않으므로 null 이다. */
     private AiRecommendToolImpl tool(String baseUrl) {
-        return new AiRecommendToolImpl(client(baseUrl), null, null, null, null);
+        return new AiRecommendToolImpl(client(baseUrl), null, null, null, null, null);
     }
 
     /** 정해진 (상태, 본문) 을 돌려주는 대역 서버를 띄우고 그 주소의 툴을 준다. */

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import ts from 'typescript';
+
+import { aiChat } from './fixtures/ai-chat-module.mjs';
 
 /*
  * "3곡 추천했다" 고 말하면서 2곡만 그리는 화면 (S15P21A204-421).
@@ -11,10 +12,13 @@ import ts from 'typescript';
  * 챗봇은 "3곡 골라뒀어요" 라고 답하고, 툴 호출 기록 줄에도 `곡 3건` 이 찍혔다. 그런데
  * 곡 카드는 2장이었다. 곡이 **말없이** 사라지는 자리가 둘이다.
  *
- *   1) `lib/ai-chat.ts` 의 `resolve()` — 추천된 곡이 화면 카탈로그에 없으면 버린다.
- *      눌러도 재생되지 않는 줄을 만들지 않으려는 것이라 **버리는 판단 자체는 옳다.**
+ *   1) `lib/ai-chat.ts` 의 `resolve()` — 아직 재생할 수 없는 곡(`playable` false)을
+ *      버린다. 눌러도 재생되지 않는 줄을 만들지 않으려는 것이라 **판단 자체는 옳다.**
  *   2) `components/mupid/chat.tsx` 의 곡 목록 — 답변이 온 뒤 사용자가 '관심 없음' 으로
  *      표시한 곡을 가린다.
+ *
+ * 세 번째 자리가 있었다: 화면 카탈로그(앞쪽 100곡)에 없어서 버리던 것. 서버가 곡을
+ * 통째로 실어 주게 되면서 **없어졌다** (S15P21A204-424).
  *
  * 둘 다 사용자에게는 똑같이 보인다: 한 곡이 아무 말 없이 없어졌다. 이 저장소가 반복해
  * 겪은 **조용한 실패**다(`chat-tool-calls.tsx`·`ai-chat.ts` 주석에 이력이 있다).
@@ -35,23 +39,7 @@ import ts from 'typescript';
  * 렌더하려면 React·DOM 전체가 필요하다.
  */
 
-const inline = (source) =>
-  'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
-
-const sessionStub = inline(`
-  export const api = { ai: { chat: async () => ({ reply: '', tracks: [] }) } };
-`);
-const clientStub = inline(`export class ApiError extends Error {}`);
-
-const source = await readFile(new URL('../lib/ai-chat.ts', import.meta.url), 'utf8');
-const js = ts
-  .transpileModule(source, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-  })
-  .outputText.replace("'./api/session'", JSON.stringify(sessionStub))
-  .replace("'./api/client'", JSON.stringify(clientStub));
-
-const { missingTracksNotice } = await import(inline(js));
+const { missingTracksNotice } = aiChat;
 
 /** 화면에 그려진 곡 한 줄. 세는 데 필요한 것은 `id` 뿐이다. */
 const track = (id) => ({ id, musicId: id, title: `곡 ${id}`, artist: '테스트' });
@@ -71,7 +59,7 @@ const call = (trackCount, extra = {}) => ({
 // 1) 이 티켓의 본체
 // ─────────────────────────────────────────────────────────────
 
-void test('추천 3건 중 1건이 카탈로그에 없으면 화면이 그 차이를 말한다', () => {
+void test('추천 3건 중 1건이 재생 불가로 빠지면 화면이 그 차이를 말한다', () => {
   // `resolve()` 가 하나를 버려 화면에는 2곡만 남은 상태.
   const notice = missingTracksNotice([call(3)], [track(1), track(2)], []);
   assert.ok(notice, '한 곡이 말없이 사라졌는데 화면이 아무 말도 하지 않는다');
@@ -171,10 +159,10 @@ void test('문구는 사용자용이다 — 내부 이름이 새지 않는다', 
 });
 
 void test('두 이유가 겹치면 한 줄에 둘 다 적는다', () => {
-  // 3건 추천 → 하나는 카탈로그에 없어 버려지고, 남은 둘 중 하나는 숨긴 곡이다.
+  // 3건 추천 → 하나는 아직 재생할 수 없어 버려지고, 남은 둘 중 하나는 숨긴 곡이다.
   const notice = missingTracksNotice([call(3)], [track(1), track(2)], [2]);
   assert.ok(notice);
-  assert.match(notice, /목록에 없어/);
+  assert.match(notice, /재생할 수 없어/);
   assert.match(notice, /관심 없음/);
 });
 

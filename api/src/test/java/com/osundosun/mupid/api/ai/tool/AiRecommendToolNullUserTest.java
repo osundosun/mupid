@@ -44,7 +44,7 @@ class AiRecommendToolNullUserTest {
 
     /** 조건이 없으면 {@code next} 경로다. 지금 곡도 없으면 협력자를 하나도 건드리지 않는다. */
     private AiRecommendToolImpl tool(RecommenderClient recommender) {
-        return new AiRecommendToolImpl(recommender, null, null, null,
+        return new AiRecommendToolImpl(recommender, null, null, null, null,
             mock(RecommendationReasonCache.class));
     }
 
