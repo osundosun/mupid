@@ -66,6 +66,10 @@ const toTurns = (messages: ChatMessage[]): AiChatTurn[] =>
  * **카탈로그에 없는 곡은 버린다.** 서버가 준 제목·아티스트만으로 줄을 그리면
  * 눌러도 재생되지 않는 곡이 목록에 남는다. 서버 쪽 추천이 목업인 동안에는
  * 대부분 버려지고 답변만 남는다 — 빈 목록이지 오류가 아니다.
+ *
+ * **버리는 것은 맞지만, 버렸다는 사실을 숨기지는 않는다** (S15P21A204-421). 여기서
+ * 조용히 줄어든 개수 때문에 화면이 "3곡 골라뒀어요" 라고 말하면서 카드는 2장만
+ * 그리는 일이 있었다. 차이를 사용자 문구로 옮기는 것은 `missingTracksNotice` 다.
  */
 /** 서버 enum → 화면 이름. 모르는 값은 그대로 보여준다 (코드는 늘 수 있다). */
 const SECTION_LABELS: Record<string, string> = {
@@ -112,6 +116,73 @@ const resolve = (
       },
     ];
   });
+
+/**
+ * 서버가 **추천했다고 말한** 곡 수. 툴 호출 기록(`trackCount`)에서 읽는다.
+ *
+ * **합치지 않고 가장 큰 한 건을 쓴다.** 모델은 한 턴에 같은 도구를 여러 번 부른다
+ * (`ai.max-tool-rounds`) — 추천 서버가 흔들리면 말을 조금 바꿔 다시 부르는 것이
+ * 실측으로 확인돼 있다(`chat-tool-calls.tsx` 주석). 그 3번을 더하면 9곡이 되고,
+ * 화면은 "9곡 중 7곡이 빠졌어요" 라는 **새로운 거짓말**을 하게 된다. 한 번의 호출이
+ * 돌려준 최대 건수는 사용자가 기록 줄에서 실제로 읽는 숫자(`곡 3건`)와도 맞는다.
+ *
+ * 실패한 호출은 세지 않는다. 사유는 기록 줄이 이미 보여 주고 있어, 여기서 한 번 더
+ * 경고를 얹으면 같은 말이 두 줄이 된다.
+ */
+const recommendedCount = (calls: ChatToolCall[] | undefined): number =>
+  (calls ?? []).reduce(
+    (most, call) => (call.succeeded ? Math.max(most, call.trackCount) : most),
+    0,
+  );
+
+/**
+ * 추천 건수와 화면에 그려진 곡 수가 다르면, 그 차이를 사용자 문구로 옮긴다
+ * (S15P21A204-421).
+ *
+ * ## 왜 필요한가
+ *
+ * 곡이 말없이 사라지는 자리가 둘이다.
+ *   1) `resolve()` — 추천된 곡이 화면 카탈로그에 없으면 버린다. 눌러도 재생되지 않는
+ *      줄을 만들지 않으려는 것이라 **버리는 판단 자체는 옳다.**
+ *   2) 채팅의 곡 목록 — 답변이 온 뒤 사용자가 '관심 없음' 으로 표시한 곡을 가린다.
+ *
+ * 둘 다 결과만 보면 똑같다: 답변은 "3곡 골라뒀어요" 인데 카드는 2장이다. 한 곡이
+ * 어디로 갔는지 화면 어디에도 없었다. 이 저장소가 반복해 겪은 조용한 실패다.
+ *
+ * ## 무엇을 하지 않는가
+ *
+ * 서버를 다시 부르지 않는다. 근거는 이미 화면에 들어와 있는 툴 호출 기록뿐이다.
+ * 재생할 수 없는 곡을 목록에 되살리지도 않는다 — 빠진 **이유**만 말한다.
+ *
+ * ## 아무 줄도 더하지 않는 경우
+ *
+ * 추천이 원래 0건인 턴, 툴 호출이 아예 없던 순수 대화 턴, 그리고 빠진 곡이 없는 턴은
+ * `null` 이다. 멀쩡한 답변 밑에 군더더기 한 줄을 붙이지 않는다.
+ *
+ * 문구는 **사용자용**이다. 내부 이름을 쓰지 않는다(`chat-tool-calls.tsx` 의 문구 원칙).
+ * 카탈로그에 없어서 버린 곡과 사용자가 오기 전에 숨겨 둔 곡은 화면에서 구별되지
+ * 않으므로("숨긴 곡" 은 요청 단계에서 카탈로그에서 빠진다), 둘 다 참인 말로 적는다 —
+ * "지금 재생할 수 있는 목록에 없어" 다.
+ */
+export function missingTracksNotice(
+  toolCalls: ChatToolCall[] | undefined,
+  tracks: Track[] | undefined,
+  ignored: number[],
+): string | null {
+  const recommended = recommendedCount(toolCalls);
+  // 추천이 없던 턴에는 견줄 대상이 없다.
+  if (recommended === 0) return null;
+  const resolved = tracks?.length ?? 0;
+  const shown = (tracks ?? []).filter((track) => !ignored.includes(track.id)).length;
+  // 서버가 센 것보다 많이 그렸다면(같은 곡이 두 번 추천되는 등) 할 말이 없다. 0 으로 묶는다.
+  const unplayable = Math.max(0, recommended - resolved);
+  const hidden = Math.max(0, resolved - shown);
+  if (unplayable === 0 && hidden === 0) return null;
+  const parts: string[] = [];
+  if (unplayable > 0) parts.push(`${unplayable}곡은 지금 재생할 수 있는 목록에 없어 빼뒀`);
+  if (hidden > 0) parts.push(`${hidden}곡은 관심 없음으로 표시해 가려뒀`);
+  return `추천받은 ${recommended}곡 중 ${parts.join('고, ')}어요.`;
+}
 
 /**
  * 서버의 툴 호출 기록을 화면 모양으로 옮긴다 (S15P21A204-409).
