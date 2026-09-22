@@ -33,6 +33,7 @@
 | [0023](0023-queue-insert-position-is-a-user-choice.md) | 담을 자리는 사용자가 고르고, 큐에 같은 곡은 한 번만 둔다 | 채택 |
 | [0024](0024-mysql-ngram-fulltext-for-catalog-search.md) | 카탈로그 통합 검색은 MySQL ngram FULLTEXT 로 시작한다 | 채택 |
 | [0025](0025-mood-codes-32-48-are-frozen.md) | 무드 코드 `code_id` 32~48 을 동결하고 FE·BE 는 이 구간만 쓴다 | 채택 · **동결 규약 · 변경 전 확인 필수** |
+| [0026](0026-waveform-is-precomputed-by-batch.md) | 파형은 배치가 미리 계산하고, 기기 계산은 폴백으로 남긴다 | 채택 |
 
 ## 먼저 볼 것
 

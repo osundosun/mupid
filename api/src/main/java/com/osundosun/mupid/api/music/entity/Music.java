@@ -95,6 +95,21 @@ public class Music {
     private ObjectStorageFile imageFile;
 
     /**
+     * 파형 JSON 파일. **없을 수 있다.**
+     *
+     * 곡의 진폭 포락선을 담은 작은 JSON 이고, 배치가 청킹할 때 계산해 올린다
+     * (`WaveformService`). 비어 있는 것은 오류가 아니다 — 아직 배치가 닿지 않은
+     * 곡이고, 그때 화면은 기기에서 청크를 디코딩해 직접 그린다.
+     *
+     * <p>키가 `music/{musicId}/waveform.json` 이라 컬럼 없이도 찾을 수 있지만,
+     * "파형 없는 곡" 을 SQL 로 뽑아야 하는 곳이 있어 참조를 둔다
+     * (domain/erd.md 의 "2026-09-22 — 파형").
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "waveform_file_id")
+    private ObjectStorageFile waveformFile;
+
+    /**
      * 삭제 여부
      */
     @Column(nullable = false)

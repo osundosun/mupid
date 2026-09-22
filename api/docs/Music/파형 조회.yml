@@ -1,0 +1,130 @@
+info:
+  name: 파형 조회
+  type: http
+  seq: 22
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/waveform"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MUSIC_ID
+      value: "1"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "music_id": 1,
+              "sample_count": 160,
+              "values": [0.0412, 0.1875, 0.6231, 1.0, 0.8842, 0.2109]
+            }
+          }
+  - name: 404 파형 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_WAVEFORM_NOT_FOUND",
+            "message": "요청한 곡의 파형이 없습니다.",
+            "error_details": null
+          }
+  - name: 404 음악 없음
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_MUSIC_NOT_FOUND",
+            "message": "요청한 음악을 찾을 수 없습니다.",
+            "error_details": null
+          }
+  - name: 410 삭제된 음악
+    response:
+      status: 410
+      statusText: Gone
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_MUSIC_GONE",
+            "message": "요청한 음악은 삭제되었습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 파형 조회
+
+  `GET /api/v1/music/{musicId}/waveform` · **액세스 토큰 필요**
+
+  곡의 진폭 포락선입니다. 화면의 탐색 막대가 이걸 그립니다.
+
+  ## 응답
+
+  | 필드 | 타입 | 설명 |
+  | --- | --- | --- |
+  | `music_id` | int | 곡 번호 |
+  | `sample_count` | int | `values` 의 길이. 편의 값입니다 |
+  | `values` | number[] | 칸별 값. **0~1**, 시간 오름차순, 소수 넷째 자리까지 |
+
+  값은 칸마다의 RMS 를 **그 곡 전체의 최댓값으로 나눈 것**입니다. 그래서 어떤
+  곡이든 가장 큰 칸이 1.0 입니다 — 곡 사이의 음량을 비교하는 값이 아닙니다.
+
+  **`sample_count` 를 길이로 가정하지 마세요.** 지금 배치는 160칸을 보내지만
+  칸 수는 바뀔 수 있고, 화면은 그리는 막대 수(160 또는 64)에 맞춰 다시 표본합니다
+  (`frontend/lib/waveform-display.ts` 의 `resampleWaveform`).
+
+  ## 파형이 없으면 404 입니다
+
+  **가사와 다릅니다.** 가사는 원래 없는 곡이 흔해서 빈 배열이 정상이지만, 파형이
+  없다는 것은 "이 곡은 아직 배치가 닿지 않았다" 는 뜻이라 화면이 **다른 경로로
+  갈아타야** 합니다 — 기기가 청크를 내려받아 직접 계산합니다. 빈 배열로 주면
+  화면이 그 분기를 만들 수 없습니다.
+
+  곡 자체가 없으면 `MUPID_MUSIC_NOT_FOUND`, 삭제된 곡이면 410 입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_WAVEFORM_NOT_FOUND` | 404 | 곡은 있으나 파형이 아직 없음 (정상 상태) |
+  | `MUPID_MUSIC_NOT_FOUND` | 404 | 곡 없음 |
+  | `MUPID_MUSIC_GONE` | 410 | 곡이 삭제됨 |
+  | `MUPID_WAVEFORM_UNREADABLE` | 500 | 참조는 있으나 오브젝트가 없거나 JSON 이 깨짐 |

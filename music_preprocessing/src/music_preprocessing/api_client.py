@@ -33,6 +33,9 @@ GONE_STATUS = 410
 #: 소프트 삭제된 곡의 오류 코드. 상태코드가 프록시에 접혀도 이 값은 헤더로 온다.
 GONE_CODE = "MUPID_MUSIC_GONE"
 
+#: 곡은 있는데 파형만 아직 없을 때의 오류 코드. 곡이 없는 404 와 나눠 쓴다.
+WAVEFORM_MISSING_CODE = "MUPID_WAVEFORM_NOT_FOUND"
+
 # 액세스 토큰이 이 시간 안에 만료되면 미리 갱신한다.
 # 업로드 한 번이 오래 걸려도 도중에 만료되지 않도록 넉넉히 잡는다.
 _TOKEN_REFRESH_MARGIN_SEC = 120
@@ -532,6 +535,35 @@ class MupidClient:
             },
         )
         return body["data"]
+
+    def put_waveform(self, music_id: int, values: list[float]) -> dict:
+        """한 곡의 파형을 통째로 갈아 끼운다.
+
+        같은 본문을 두 번 보내면 결과가 같다. 서버가 0~1 로 가두고 소수 넷째
+        자리에서 반올림해 다시 직렬화하므로, 여기서 보내는 값의 자릿수는
+        그대로 저장되는 것이 아니다.
+        """
+        body = self._request(
+            "PUT",
+            f"/api/v1/music/{music_id}/waveform",
+            json_body={"values": values},
+        )
+        return body["data"]
+
+    def get_waveform(self, music_id: int) -> list[float] | None:
+        """곡의 파형. **아직 없으면 `None` 이다** (404 를 오류로 올리지 않는다).
+
+        파형이 없는 것은 정상이라 `waveform` 명령이 이걸로 대상을 가린다.
+        곡 자체가 없거나 삭제된 경우는 그대로 예외로 올라간다 — 그때는 코드가
+        `MUPID_MUSIC_NOT_FOUND` · `MUPID_MUSIC_GONE` 이다.
+        """
+        try:
+            body = self._request("GET", f"/api/v1/music/{music_id}/waveform")
+        except MupidApiError as e:
+            if e.code == WAVEFORM_MISSING_CODE:
+                return None
+            raise
+        return body["data"]["values"]
 
     def get_streams(self, music_id: int) -> list[dict]:
         """곡에 달린 스트림 목록.

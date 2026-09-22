@@ -182,6 +182,22 @@ export type MusicSummary = {
 /** 기기에서 계산하는 파형 배열의 길이. `Waveform` 이 그리는 막대 수와 다르면 다시 표본한다. */
 export const WAVEFORM_SAMPLES = 160;
 
+/**
+ * 서버가 들고 있는 곡 파형.
+ *
+ * 배치가 청킹할 때 원본에서 뽑아 올려 둔 것이다. `values` 는 0~1 이고 시간
+ * 오름차순이며, 가장 큰 칸이 1.0 이다 — **곡 사이의 음량 비교가 아니다.**
+ *
+ * `sample_count` 를 길이로 가정하지 않는다. 지금 배치는 `WAVEFORM_SAMPLES` 와
+ * 같은 160칸을 보내지만 칸 수는 바뀔 수 있고, 그리는 쪽이 `resampleWaveform` 으로
+ * 막대 수에 맞춘다.
+ */
+export type WaveformData = {
+  music_id: number;
+  sample_count: number;
+  values: number[];
+};
+
 export type MusicPage = {
   items: MusicSummary[];
   page: number;
@@ -840,6 +856,18 @@ export function createEndpoints(client: ApiClient) {
       get: (musicId: number, signal?: AbortSignal) =>
         client.request<MusicSummary>({
           path: `/api/v1/music/${musicId}`,
+          signal,
+        }),
+      /**
+       * 서버가 들고 있는 파형. **곡에 파형이 없으면 404 라 에러가 난다.**
+       *
+       * 빈 배열이 아니라 404 인 것은 부르는 쪽이 갈라져야 하기 때문이다 —
+       * 없으면 기기에서 청크를 풀어 직접 계산한다(`lib/track-waveform.ts`).
+       * 그래서 이 호출의 실패는 정상적인 경우가 있고, 부르는 쪽이 삼킨다.
+       */
+      waveform: (musicId: number, signal?: AbortSignal) =>
+        client.request<WaveformData>({
+          path: `/api/v1/music/${musicId}/waveform`,
           signal,
         }),
       /**

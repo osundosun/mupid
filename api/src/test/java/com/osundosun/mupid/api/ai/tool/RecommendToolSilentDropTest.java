@@ -127,7 +127,7 @@ class RecommendToolSilentDropTest {
 
         assertThat(tracks).isEmpty();
         assertThat(warnings()).anySatisfy(w ->
-            assertThat(w).contains("추천 2건 중 2건을 DB 에서 찾지 못해 버렸다")
+            assertThat(w).contains("추천 2건 중 2건을 버렸다")
                 .contains("구간 없음=2")
                 .contains("남은 곡 0건"));
     }
@@ -144,7 +144,7 @@ class RecommendToolSilentDropTest {
         assertThat(tracks).hasSize(1);
         assertThat(tracks.getFirst().music().title()).isEqualTo("살아남은 곡");
         assertThat(warnings()).anySatisfy(w ->
-            assertThat(w).contains("추천 2건 중 1건을 DB 에서 찾지 못해 버렸다")
+            assertThat(w).contains("추천 2건 중 1건을 버렸다")
                 .contains("남은 곡 1건"));
     }
 
@@ -158,6 +158,6 @@ class RecommendToolSilentDropTest {
             List.of(found));
 
         assertThat(tracks).hasSize(1);
-        assertThat(warnings()).noneSatisfy(w -> assertThat(w).contains("못해 버렸다"));
+        assertThat(warnings()).noneSatisfy(w -> assertThat(w).contains("건을 버렸다"));
     }
 }

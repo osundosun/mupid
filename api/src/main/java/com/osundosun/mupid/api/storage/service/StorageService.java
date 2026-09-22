@@ -22,6 +22,20 @@ public interface StorageService {
     ObjectStorageFile uploadFile(FileType fileType, FileCategory category, String key, MultipartFile file, String mime);
 
     /**
+     * 서버가 만든 바이트를 그대로 올린다. {@link MultipartFile} 이 없는 경로용이다.
+     *
+     * <p>{@code uploadFile} 은 사람이 올린 파일을 받는 자리라 {@code MultipartFile} 을
+     * 받는다. 파형 JSON 처럼 <b>서버가 직렬화한 바이트</b>에는 그 그릇이 없고, 흉내
+     * 내려면 {@code MultipartFile} 구현을 하나 더 들고 다녀야 한다.
+     *
+     * <p>{@code uploadFile} 과 같은 규칙을 따른다 — 같은 키면 기존 행을 갱신하고,
+     * 없으면 새 행을 만든다. 그래서 다시 올려도 {@code fileId} 가 유지된다.
+     */
+    ObjectStorageFile uploadBytes(
+        FileType fileType, FileCategory category, String key,
+        String originalFileName, String mime, byte[] data);
+
+    /**
      * 오브젝트가 실제로 있는지 HEAD 로만 확인한다. 본문은 받지 않는다.
      * 스프링을 거치지 않고 올라온 파일(nginx → 스토리지 직행)을 검증할 때 쓴다.
      */

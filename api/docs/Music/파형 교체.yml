@@ -1,0 +1,174 @@
+info:
+  name: 파형 교체
+  type: http
+  seq: 23
+
+http:
+  method: PUT
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/waveform"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "values": [
+          0.02, 0.05, 0.11, 0.24, 0.38, 0.51, 0.63, 0.72,
+          0.81, 0.88, 0.94, 1.00, 0.91, 0.66, 0.31, 0.08
+        ]
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MUSIC_ID
+      value: "1"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 교체 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "파형이 등록되었습니다.",
+            "data": {
+              "music_id": 1,
+              "sample_count": 16,
+              "file_id": 4821
+            }
+          }
+  - name: 400 칸 수 부족
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_REQUEST_BODY",
+            "message": "데이터가 잘못 입력되었습니다.",
+            "error_details": {
+              "values": "파형은 16칸 이상 4096칸 이하여야 합니다."
+            }
+          }
+  - name: 400 값 범위 초과
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_REQUEST_BODY",
+            "message": "데이터가 잘못 입력되었습니다.",
+            "error_details": {
+              "values[3]": "파형 값은 1 이하여야 합니다."
+            }
+          }
+  - name: 400 전부 0
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_WAVEFORM",
+            "message": "파형 값이 모두 0 입니다.",
+            "error_details": null
+          }
+  - name: 403 권한 없음
+    response:
+      status: 403
+      statusText: Forbidden
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_FORBIDDEN",
+            "message": "접근 권한이 없습니다.",
+            "errorDetails": null
+          }
+
+docs: |-
+  # 파형 교체
+
+  `PUT /api/v1/music/{musicId}/waveform` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  한 곡의 파형을 **통째로 갈아 끼웁니다.** 청킹 배치
+  (`music_preprocessing`)가 부르는 길입니다.
+
+  같은 본문을 두 번 보내면 결과가 같아서 `PUT` 입니다 — 배치가 하는 일이 정확히
+  "이 곡의 파형은 이 값들이다" 이고, 중간에 끊긴 배치를 그대로 다시 돌릴 수
+  있어야 합니다.
+
+  ## 요청 본문
+
+  | 필드 | 타입 | 필수 | 설명 |
+  | --- | --- | --- | --- |
+  | `values` | number[] | ✅ | 칸별 값. **16~4096개**, 각 값은 **0.0~1.0** |
+
+  값은 칸마다의 RMS 를 **그 곡 전체의 최댓값으로 나눈 것**입니다. 배치는 160칸을
+  보냅니다 (프런트의 `WAVEFORM_SAMPLES` 와 같은 수). 칸 수를 더 잘게 보내도
+  받지만, 화면이 그리는 막대는 많아야 160개라 얻는 것이 없습니다.
+
+  **전부 0 인 배열은 400 입니다.** 형식은 맞지만 계산이 실패한 배치가 올린
+  것으로 봅니다. 받아 두면 화면이 폴백하지 않고 평평한 선을 그려서, 고장이
+  고장처럼 보이지 않게 됩니다.
+
+  ## 서버가 다시 직렬화합니다
+
+  보낸 숫자를 그대로 적지 않고 서버가 **0~1 로 가두고 소수 넷째 자리에서
+  반올림해** 다시 씁니다. 파일 모양을 정하는 곳이 한 군데여야 나중에 형식을
+  바꿀 때 올린 쪽을 찾아다니지 않습니다.
+
+  ## 어디에 저장되나
+
+  오브젝트 스토리지에 JSON 한 파일로 올라갑니다 —
+  키는 `music/{musicId}/waveform.json` 이고, `object_storage_files` 에
+  `file_type = WAVEFORM` · `category = WAVEFORM` 행이 하나 생깁니다.
+  `music.waveform_file_id` 가 그 행을 가리킵니다.
+
+  **다시 올려도 `file_id` 는 바뀌지 않습니다.** 같은 키면 기존 행을 갱신합니다.
+
+  청크와 달리 **nginx 를 거치지 않습니다.** 청크는 곡당 100KB 짜리가 수십 개라
+  바이트가 JVM 을 지나가면 안 되지만, 파형은 곡당 1~2KB 입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_UNAUTHORIZED` | 401 | 액세스 토큰이 없거나 유효하지 않음 |
+  | `MUPID_FORBIDDEN` | 403 | SYSTEM/ADMIN 이 아닌 토큰 |
+  | `MUPID_INVALID_REQUEST_BODY` | 400 | 칸 수·값 범위 검증 실패 |
+  | `MUPID_INVALID_WAVEFORM` | 400 | 값이 전부 0 |
+  | `MUPID_MUSIC_NOT_FOUND` | 404 | 곡 없음 |
+  | `MUPID_MUSIC_GONE` | 410 | 곡이 삭제됨 |
