@@ -2862,22 +2862,42 @@ def test_missing_music_id_column_is_not_guessed(clean_env, tmp_path, monkeypatch
         im.music_id("T000001")
 
 
-def test_an_existing_map_file_still_wins(clean_env, tmp_path, monkeypatch):
-    """옮겨 가는 동안 둘이 공존할 수 있어야 한다. 표는 구간까지 들고 있어 더 넓다."""
+def test_a_stray_map_file_is_ignored_not_obeyed(clean_env, tmp_path, monkeypatch,
+                                                capsys):
+    """판 자리의 매핑표는 규칙상 없어야 한다. 있어도 읽지 않는다.
+
+    조용히 그쪽이 이기면 낡은 표가 색인을 덮어 **오류 없이** 엉뚱한 곡을 가리킨다.
+    """
     import pandas as pd
 
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
     from ai_server.app import ids as idsmod
 
-    data = _plate_with_music_id(tmp_path, [("T000001", 999)])
-    pd.DataFrame({"source_track_id": ["T000001"], "music_id": [1],
+    data = _plate_with_music_id(tmp_path, [("T000001", 1)])
+    pd.DataFrame({"source_track_id": ["T000001"], "music_id": [999],
                   "external_id": ["T000001#0"],
                   "music_section_analysis_id": [9330]}
                  ).to_parquet(data / "id_map.parquet", index=False)
 
     im = idsmod.IdMap(strict=True)
+
+    assert im.stats()["source"] == "flow_meta"
+    assert im.music_id("T000001") == 1              # 표의 999 가 아니다
+    assert "규칙상 없어야 할 매핑표" in capsys.readouterr().err
+
+
+def test_an_explicitly_given_path_is_still_read(clean_env, tmp_path):
+    """도구가 만든 표를 그 자리에서 검사하는 길은 남는다 — `build_id_map` 이 쓴다."""
+    import pandas as pd
+    from ai_server.app import ids as idsmod
+
+    out = tmp_path / "made.parquet"
+    pd.DataFrame({"source_track_id": ["T000001"], "music_id": [1],
+                  "external_id": ["T000001#0"],
+                  "music_section_analysis_id": [9330]}).to_parquet(out, index=False)
+
+    im = idsmod.IdMap(path=out, strict=True)
     assert im.stats()["source"] == "id_map"
-    assert im.music_id("T000001") == 1              # 999 가 아니다
     assert im.music_section_analysis_id("T000001#0") == 9330
 
 

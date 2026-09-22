@@ -22,10 +22,12 @@
 (`music_section_analysis_id`)를 환산하는 코드는 저장소에 하나도 없다. 서빙은 아예
 숫자를 다루지 않는다 — 계약이 문자열 `external_id` 이고 환산은 Spring 이 한다.
 
-옛 매핑표(`id_map.parquet`)가 있으면 **그쪽이 이긴다.** 구간 열까지 들고 있어 더
-넓기 때문이고, 옮겨 가는 동안 둘이 공존할 수 있어야 한다.
+판 자리(`data/proc/mupid/id_map.parquet`)에 옛 매핑표가 있어도 **쓰지 않는다.**
+있다는 사실만 알린다 — 규칙상 없어야 할 파일이고, 조용히 그쪽이 이기면 낡은 표가
+색인을 덮어 오류 없이 엉뚱한 곡을 가리킬 수 있다.
 
-매핑표 파일(선택): `data/proc/mupid/id_map.parquet`
+경로를 **직접 준 경우**(`IdMap(path=...)`)는 다르다. 도구가 만든 표를 그 자리에서
+검사하는 길이라 그 파일을 읽는다 — `build_id_map` 이 그렇게 쓴다.
     source_track_id   문자열 곡 ID (예: JAMENDO_1083659)
     music_id          MySQL music.music_id
     external_id       문자열 순간 ID (예: JAMENDO_1083659#3)
@@ -36,6 +38,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -72,6 +75,7 @@ class IdMap:
     def __init__(self, path: Optional[Path] = None, strict: bool = True):
         # 경로를 만들 때 읽는다. 기본값으로 굳히면 import 순서에 따라 환경변수 설정 전의
         # 값이 박힌다.
+        self.explicit_path = path is not None
         self.path = Path(path) if path is not None else paths.id_map_path()
         self.strict = strict
         self.track_to_num: dict[str, int] = {}
@@ -87,7 +91,12 @@ class IdMap:
         self.track_to_num, self.num_to_track = {}, {}
         self.sec_to_num, self.num_to_sec = {}, {}
         self.loaded, self.error, self.source = False, None, "id_map"
-        if not self.path.exists():
+        # 판 자리의 매핑표는 규칙상 없어야 한다. 있어도 읽지 않고 알리기만 한다 —
+        # 조용히 이기면 낡은 표가 색인을 덮는다. 경로를 직접 준 경우만 읽는다.
+        if not self.explicit_path or not self.path.exists():
+            if self.path.exists():
+                print(f"[ids] 규칙상 없어야 할 매핑표가 있다(무시): {self.path}",
+                      file=sys.stderr)
             self._from_flow_meta()
             return
         try:
