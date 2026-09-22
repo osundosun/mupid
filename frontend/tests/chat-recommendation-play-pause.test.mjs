@@ -27,7 +27,15 @@ import ts from 'typescript';
  * 바뀌면 아래 추출이 먼저 깨지므로, 조용히 통과하지는 않는다.
  */
 
-const read = (path) => readFile(new URL('../' + path, import.meta.url), 'utf8');
+/*
+ * 줄끝은 **읽을 때 LF 로 맞춘다.** 아래의 추출 경계가 `\n` 으로 적혀 있어,
+ * CRLF 로 체크아웃되는 윈도우에서는 경계를 못 찾고 시험이 통째로 멈췄다
+ * (`core.autocrlf` 가 기본인 환경). 잘라 내는 위치는 바뀌지 않는다.
+ */
+const read = (path) =>
+  readFile(new URL('../' + path, import.meta.url), 'utf8').then((text) =>
+    text.replace(/\r\n/g, '\n'),
+  );
 
 const hook = await read('hooks/use-mupid.ts');
 const chatTsx = await read('components/mupid/chat.tsx');
@@ -56,7 +64,7 @@ type Track = any;
 export const makePlay = (deps: any) => {
   const {
     activeRef, previewEnd, queue, getPlayer, momentSequence, setSavedMomentPlayback,
-    liftToQueueTop, currentUidRef, setCurrentUid, analytics, positionMs, startPlayback,
+    placePlayedTrack, currentUidRef, setCurrentUid, analytics, positionMs, startPlayback,
   } = deps;
 ${playSource}
   return play;
@@ -113,7 +121,7 @@ const harness = ({ status = 'idle', active = null, queue = [], previewEnd = null
     queue,
     getPlayer: () => player,
     setSavedMomentPlayback: () => {},
-    liftToQueueTop: (track) => {
+    placePlayedTrack: (track) => {
       calls.lift.push(track.id);
       const uid = `u${(nextUid += 1)}`;
       return { uid, entries: [{ uid, trackId: track.id }, ...queue] };
@@ -246,7 +254,7 @@ void test('다른 곡을 듣던 중 추천 줄을 누르면 추천 구간 시작
     track.recommended.end,
     '구간 끝을 걸지 않았다 — 다음 구간까지 흘러간다',
   );
-  assert.deepEqual(calls.lift, [track.id], '목록 밖에서 튼 곡이 큐 맨 위로 오지 않았다');
+  assert.deepEqual(calls.lift, [track.id], '목록 밖에서 튼 곡이 큐에 자리를 얻지 못했다');
   assert.deepEqual(calls.skip, ['OTHER_TRACK']);
   assert.equal(calls.pause, 0);
 });
@@ -290,7 +298,7 @@ void test('하단 플레이어(fromMoment 없음)의 일시정지·재개는 그
   assert.deepEqual(pausedOne.calls.startPlayback, []);
 });
 
-void test('재생 목록에서 고른 줄은 그 자리를 그대로 튼다 — 맨 위로 튀어 오르지 않는다', () => {
+void test('재생 목록에서 고른 줄은 그 자리를 그대로 튼다 — 자리를 옮기지 않는다', () => {
   const other = { id: 9, musicId: 109, title: '듣던 곡', moment: 5 };
   const track = { id: 4, musicId: 104, title: '곡 4', moment: 8 };
   const { play, calls } = harness({

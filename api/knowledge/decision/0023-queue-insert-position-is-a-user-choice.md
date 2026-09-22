@@ -1,6 +1,6 @@
 # 0023. 담을 자리는 사용자가 고르고, 큐에 같은 곡은 한 번만 둔다
 
-**상태** 채택 · [0022](0022-play-queue-in-redis.md) 의 규칙 1~5 를 대체
+**상태** 채택 · **규칙 3 의 재생 자리 표는 [0027](0027-played-track-follows-the-chosen-insert-position.md) 으로 대체됨** · [0022](0022-play-queue-in-redis.md) 의 규칙 1~5 를 대체
 
 ## 맥락
 

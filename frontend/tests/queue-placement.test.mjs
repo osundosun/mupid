@@ -41,6 +41,42 @@ test('듣던 자리가 큐에서 빠진 뒤여도 맨 아래로 내려간다', (
   assert.deepEqual(ids(placed), [1, 2, 3, 9]);
 });
 
+test('지금 듣는 곡을 재생 중인 곡 다음에 담으면 제자리다 — 맨 아래로 내려가지 않는다', () => {
+  // 플레이어의 곡 더보기로 담으면 대상이 언제나 듣고 있는 곡이라 늘 이 길이다.
+  const queue = toQueueEntries([1, 2, 3]);
+  const current = queue[1].uid; // 2번 곡을 듣는 중
+  const placed = placeInQueue(queue, 2, 'afterCurrent', current, 100);
+
+  assert.deepEqual(ids(placed), [1, 2, 3], '자기 다음은 곧 제자리다');
+  assert.equal(placed.stayed, true, '옮겼다고 알리면 거짓말이 된다');
+  assert.equal(placed.fellBack, false, '듣는 곡이 없다고 읽으면 안 된다 — 그 곡이 듣는 곡이다');
+  assert.equal(placed.replacedCurrent, true, '재생 커서를 새 자리 번호로 옮겨야 한다');
+  assert.equal(placed.entries[1].uid, placed.uid, '제자리에 놓인 것이 방금 만든 자리다');
+});
+
+test('지금 듣는 곡을 맨 위·맨 아래로 담으면 그대로 옮겨진다', () => {
+  const queue = toQueueEntries([1, 2, 3]);
+  const current = queue[1].uid;
+
+  const top = placeInQueue(queue, 2, 'top', current, 100);
+  assert.deepEqual(ids(top), [2, 1, 3]);
+  assert.equal(top.stayed, false);
+  assert.equal(top.replacedCurrent, true);
+
+  const bottom = placeInQueue(queue, 2, 'bottom', current, 100);
+  assert.deepEqual(ids(bottom), [1, 3, 2]);
+  assert.equal(bottom.stayed, false);
+  assert.equal(bottom.replacedCurrent, true);
+});
+
+test('듣고 있지 않은 곡을 담을 때는 재생 커서를 건드리지 않는다', () => {
+  const queue = toQueueEntries([1, 2, 3]);
+  const current = queue[1].uid; // 2번 곡을 듣는 중인데 담는 것은 9번이다
+
+  assert.equal(placeInQueue(queue, 9, 'afterCurrent', current, 100).replacedCurrent, false);
+  assert.equal(placeInQueue(queue, 3, 'top', current, 100).replacedCurrent, false);
+});
+
 test('같은 곡을 두 번 담지 않는다 — 대신 새 자리로 옮긴다', () => {
   const queue = toQueueEntries([1, 2, 3]);
   const placed = placeInQueue(queue, 1, 'bottom', null, 100);
@@ -114,9 +150,19 @@ test('원래 배열을 건드리지 않는다', () => {
   assert.deepEqual(queue.map((e) => e.trackId), [1, 2, 3]);
 });
 
-// 재생한 곡은 큐 맨 위로 온다 (`use-mupid` 의 `play`). 그 동작이 기대는 규칙을
-// 여기서 함께 고정한다 — 중복을 만들지 않고, 자리만 맨 위로 옮긴다.
-test('이미 담긴 곡을 재생하면 맨 위로 올라온다', () => {
+// 목록 밖에서 튼 곡도 큐에 남는다 (`use-mupid` 의 `placePlayedTrack`). 그 자리는
+// **담기와 같은 설정**을 따른다 — 예전에는 이 길에만 `'top'` 이 박혀 있어서
+// 맨 아래를 골라 두어도 새 곡이 늘 맨 위에 나타났다 (decision/0027).
+test('목록 밖에서 튼 곡도 고른 자리로 간다 — 맨 아래를 골랐으면 맨 아래다', () => {
+  const queue = toQueueEntries([1, 2, 3]);
+  const current = queue[0].uid; // 1번 곡을 듣다가 목록 밖에서 9번을 눌렀다
+
+  assert.deepEqual(ids(placeInQueue(queue, 9, 'bottom', current, 100)), [1, 2, 3, 9]);
+  assert.deepEqual(ids(placeInQueue(queue, 9, 'afterCurrent', current, 100)), [1, 9, 2, 3]);
+  assert.deepEqual(ids(placeInQueue(queue, 9, 'top', current, 100)), [9, 1, 2, 3]);
+});
+
+test('이미 담긴 곡을 재생하면 중복 없이 고른 자리로 옮겨진다', () => {
   const queue = toQueueEntries([1, 2, 3, 4]);
   const placed = placeInQueue(queue, 3, 'top', null, 100);
 
@@ -125,7 +171,7 @@ test('이미 담긴 곡을 재생하면 맨 위로 올라온다', () => {
   assert.equal(new Set(ids(placed)).size, 4, '재생했다고 같은 곡이 두 줄이 되면 안 된다');
 });
 
-test('재생으로 맨 위에 올릴 때도 재생 중인 자리는 밀려나지 않는다', () => {
+test('재생으로 자리를 옮길 때도 재생 중인 자리는 밀려나지 않는다', () => {
   const queue = toQueueEntries([1, 2, 3]);
   const current = queue[2].uid; // 맨 아래를 듣는 중 — 위로 담으면 그쪽이 퇴출 대상이다
   const placed = placeInQueue(queue, 9, 'top', current, 3);

@@ -108,6 +108,20 @@ export type QueuePlacement = {
   moved: boolean;
   /** `afterCurrent` 인데 듣고 있는 자리가 없어 맨 아래로 내려갔다. */
   fellBack: boolean;
+  /**
+   * 걷어 낸 자리가 **지금 듣고 있던 자리**다.
+   *
+   * 자리를 옮기면 번호가 새로 붙으므로(`uid`) 호출부는 **재생 커서를 새 번호로
+   * 옮겨야 한다.** 그러지 않으면 듣고 있는 곡을 다시 담은 것만으로 화면이 울리는
+   * 줄을 잃고(`currentQueueUid` 가 없는 번호를 가리킨다), 다음 곡 계산도 목록
+   * 맨 앞에서 다시 시작한다.
+   */
+  replacedCurrent: boolean;
+  /**
+   * 제자리에 다시 놓았다 — `afterCurrent` 인데 담는 곡이 **곧 지금 듣는 곡**인
+   * 경우다. 옮겼다고 알리면 거짓말이 되므로 호출부가 문구를 가른다.
+   */
+  stayed: boolean;
   /** 상한이 차서 밀려난 곡. 없으면 null. */
   evictedTrackId: number | null;
   /** 새로 놓인 자리의 번호. */
@@ -126,6 +140,12 @@ export type QueuePlacement = {
  * `afterCurrent` 는 가운데로 들어오므로 재생 커서에서 가장 먼 아래쪽을 뺀다.
  * 지금 울리는 자리와 방금 놓은 자리는 건너뛴다 — 방금 놓은 것을 도로 빼면
  * 담기 버튼이 아무 일도 하지 않는 것처럼 보인다.
+ *
+ * **담는 곡이 지금 듣는 곡 자신이면 `afterCurrent` 의 기준점은 그 곡이다.**
+ * 그 자리를 걷어 낸 뒤에 기준점을 찾으면 없으므로, 예전에는 "재생 중인 곡이
+ * 없다" 로 읽어 맨 아래로 내리고 그렇게 알렸다 — 플레이어의 곡 더보기로 담으면
+ * 담는 대상이 언제나 듣고 있는 곡이라 **늘 그 길로 빠졌다.** 자기 다음은 곧
+ * 제자리이므로 걷어 낸 그 칸에 다시 놓는다 (S15P21A204-429).
  */
 export function placeInQueue(
   entries: QueueEntry[],
@@ -138,12 +158,27 @@ export function placeInQueue(
   const rest = entries.filter((entry) => entry.trackId !== trackId);
   const placed = queueEntry(trackId);
 
+  /*
+   * 걷어 낸 자리 가운데 지금 듣던 자리가 있는가. 있으면 `rest` 에서 그 칸이
+   * 몇 번째였는지 함께 센다 — 같은 곡이 여러 자리에 있던 큐(예전 저장본)에서도
+   * 칸이 어긋나지 않게 앞쪽에서 빠진 수를 덜어 낸다.
+   */
+  const heldIndex = currentUid
+    ? entries.findIndex((entry) => entry.uid === currentUid && entry.trackId === trackId)
+    : -1;
+  const replacedCurrent = heldIndex >= 0;
+  const heldRestIndex = replacedCurrent
+    ? heldIndex - entries.slice(0, heldIndex).filter((entry) => entry.trackId === trackId).length
+    : -1;
+
   const currentIndex = currentUid ? rest.findIndex((entry) => entry.uid === currentUid) : -1;
-  const fellBack = position === 'afterCurrent' && currentIndex < 0;
+  const stayed = position === 'afterCurrent' && replacedCurrent;
+  const fellBack = position === 'afterCurrent' && currentIndex < 0 && !stayed;
   const at =
     position === 'top' ? 0
-      : position === 'afterCurrent' && currentIndex >= 0 ? currentIndex + 1
-        : rest.length;
+      : stayed ? heldRestIndex
+        : position === 'afterCurrent' && currentIndex >= 0 ? currentIndex + 1
+          : rest.length;
 
   const next = [...rest.slice(0, at), placed, ...rest.slice(at)];
 
@@ -162,7 +197,15 @@ export function placeInQueue(
     }
   }
 
-  return { entries: next, moved, fellBack, evictedTrackId, uid: placed.uid };
+  return {
+    entries: next,
+    moved,
+    fellBack,
+    replacedCurrent,
+    stayed,
+    evictedTrackId,
+    uid: placed.uid,
+  };
 }
 
 /** 자동 스크롤이 반응하는 위아래 가장자리 폭(px). */
