@@ -1,10 +1,12 @@
 package com.osundosun.mupid.api.admin.controller;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
@@ -20,17 +22,21 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.osundosun.mupid.api.admin.dto.AdminConsoleTicket;
+import com.osundosun.mupid.api.admin.dto.AdminUserTimelineRange;
 import com.osundosun.mupid.api.admin.response.AdminClickHouseConsoleResponse;
 import com.osundosun.mupid.api.admin.response.AdminDashboardResponse;
 import com.osundosun.mupid.api.admin.response.AdminMusicTimelineResponse;
 import com.osundosun.mupid.api.admin.response.AdminResourceSummary;
 import com.osundosun.mupid.api.admin.response.AdminRowPageResponse;
 import com.osundosun.mupid.api.admin.response.AdminSchemaResponse;
+import com.osundosun.mupid.api.admin.response.AdminUserTimelineResponse;
 import com.osundosun.mupid.api.admin.service.AdminClickHouseConsoleService;
 import com.osundosun.mupid.api.admin.service.AdminClickHouseConsoleServiceImpl;
 import com.osundosun.mupid.api.admin.service.AdminDashboardService;
 import com.osundosun.mupid.api.admin.service.AdminResourceService;
 import com.osundosun.mupid.api.admin.service.AdminTimelineService;
+import com.osundosun.mupid.api.admin.service.AdminUserTimelineService;
+import com.osundosun.mupid.api.admin.service.AdminUserTimelineServiceImpl;
 import com.osundosun.mupid.api.common.annotation.AdminRole;
 import com.osundosun.mupid.api.common.response.BaseResponse;
 
@@ -64,6 +70,7 @@ public class AdminApiController {
     private final AdminDashboardService adminDashboardService;
     private final AdminClickHouseConsoleService consoleService;
     private final AdminTimelineService adminTimelineService;
+    private final AdminUserTimelineService adminUserTimelineService;
 
     @GetMapping("/dashboard")
     public ResponseEntity<BaseResponse<AdminDashboardResponse>> dashboard() {
@@ -176,6 +183,45 @@ public class AdminApiController {
     ) {
         return ResponseEntity.ok(
             BaseResponse.of(adminTimelineService.timeline(id))
+        );
+    }
+
+    /**
+     * 회원 하나의 **행동 타임라인** (S15P21A204-430).
+     *
+     * <p>왜 자원 목록 조회로는 안 되는가. 요구가 말하는 "행동 데이터" 는 MySQL 에 없다 —
+     * 재생·스킵·되감기·좋아요는 전부 ClickHouse 의 {@code listen_events} 한 스트림이고,
+     * 그 표는 엔티티가 아니라 관리 자원으로 올라오지도 않는다.
+     *
+     * <p>곡 타임라인과 <b>경로 모양만</b> 같고 성격은 다르다. 그쪽은 축이 곡 안의 ms 이고
+     * 행을 그 자리에서 고칠 수 있지만, 이쪽은 축이 하루이고 <b>조회 전용</b>이다 —
+     * 이벤트 원본은 고치지 않고 쌓기만 한다는 수집 설계 그대로다.
+     *
+     * @param from 창의 시작일(`YYYY-MM-DD`). 포함. {@code to} 와 <b>둘 다 주거나 둘 다
+     *             생략한다</b> — 한쪽만 주면 나머지를 서버가 지어내게 되고, 화면은 자기가
+     *             요청한 창을 받았다고 믿는다. 둘 다 없으면 오늘로 끝나는 30일이다
+     * @param to   창의 종료일. 포함
+     * @param date 시간축에 펼칠 하루. 생략하면 <b>창 안에서 활동이 있었던 가장 최근 날</b>
+     *             이다 — 마지막 날을 그냥 쓰면 어제까지만 쓴 사용자에게 빈 화면이 열린다
+     * @return 404 {@code MUPID_RECORD_NOT_FOUND} — 그 회원이 없을 때. 탈퇴 계정은
+     *         <b>404 가 아니다</b>. 400 {@code MUPID_INVALID_DATE_RANGE} — 창이 뒤집혔거나
+     *         미래를 포함하거나 상한(92일)을 넘거나 {@code date} 가 창 밖일 때.
+     *         503 {@code MUPID_ANALYTICS_UNAVAILABLE} — ClickHouse 를 못 읽을 때
+     */
+    @GetMapping("/resource/user/{id}/timeline")
+    public ResponseEntity<BaseResponse<AdminUserTimelineResponse>> userTimeline(
+        @PathVariable int id,
+        @RequestParam(required = false)
+        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+        @RequestParam(required = false)
+        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+        @RequestParam(required = false)
+        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date
+    ) {
+        AdminUserTimelineRange range = AdminUserTimelineRange.of(
+            from, to, date, LocalDate.now(AdminUserTimelineServiceImpl.ZONE));
+        return ResponseEntity.ok(
+            BaseResponse.of(adminUserTimelineService.timeline(id, range))
         );
     }
 
