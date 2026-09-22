@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
-from . import catalog_api, labels_store, metrics, paths, stage1_np
+from . import catalog_api, labels_store, metrics, paths, pinecone_store, stage1_np
 from .log import log
 
 warnings.filterwarnings("ignore")
@@ -130,6 +130,13 @@ LAMBDA_USER_RESIDUAL = 0.5
 HALF_LIFE_DAYS = 14.0          # 히스토리 반감기(일). 스윕 최적값. 0 = 감쇠 없음
 ONBOARD_MIN_MATCH = 12         # 조사 결과로 고른 구간이 이보다 적으면 조건을 단계적으로 완화
 ONBOARD_SEEDS = 3              # 조사에서 만드는 씨앗 질의 벡터 개수 상한
+# 닮은 구간은 **곡당 하나**만 남긴다. 한 곡이 구간 여럿으로 상위를 채우면 그만큼
+# 곡 수가 모자라므로 넉넉히 받아 온다.
+SIMILAR_OVERFETCH = 8
+# DNA 중심 하나당 받아 올 후보 수. 중심이 최대 7개(DNA_MAX)라 상한은 그 곱이다.
+# 여기서 받은 것만 점수를 매기므로 너무 좁으면 후보가 마르고, 너무 넓으면 요청마다
+# 원본 벡터를 그만큼 가져오게 된다.
+DNA_CANDIDATES_PER_SEED = 200
 # ------------------------------------------------------------------------
 
 
@@ -143,10 +150,15 @@ def now_iso() -> str:
 # 필터·후보 생성·랭킹에는 손대지 않는다. 그래서 여기서 이름을 맞춰 둔다.
 
 # 색인이 계속 들고 있는 곡 수준 축. MySQL 에 컬럼 자체가 없어 API 로 옮길 수 없다.
-TRACK_FEATURE_COLS = ("bpm", "dur_sec", "language", "category",
-                      "bpm_lo", "bpm_hi", "sound_raw")
+# 색인이 계속 들고 있는 곡 수준 축. **읽는 곳이 있는 것만** 남긴다.
+#   bpm            템포 게이트 · tempo_direction · _flow_penalty
+#   bpm_lo/bpm_hi  bpm_requested → catalog_facets 가 측정 BPM 보다 우선 사용
+#   language       filter_query_pool 게이트 · 온보딩 track_ok
+#   category       parse_style() → style 게이트
+# `dur_sec`(곡)·`sound_raw` 는 track_info dict 에 담기기만 하고 읽는 곳이 없어 뺐다.
+TRACK_FEATURE_COLS = ("bpm", "language", "category", "bpm_lo", "bpm_hi")
 # `flow_meta` 가 하던 일 가운데 색인에 남는 몫. 나머지(제목·장르·무드·보컬)는 카탈로그다.
-META_FROM_FEATURES = ("language", "category", "bpm_lo", "bpm_hi", "sound_raw")
+META_FROM_FEATURES = ("language", "category", "bpm_lo", "bpm_hi")
 
 
 def _track_features() -> pd.DataFrame:
@@ -265,7 +277,7 @@ class Catalog:
         self.catalog_stats = snap.stats()
 
         features = _track_features()
-        self.content = features                    # bpm · dur_sec 를 읽는 자리
+        self.content = features                    # bpm 을 읽는 자리
         self.meta = _merge_track_meta(snap, features)
         self.mom = _attach_section_meta(self.mom, snap)
 
@@ -392,8 +404,6 @@ class Catalog:
             "language": _text(m.get("language")),
             "bpm": round(float(c.get("bpm", 0.0)), 1),
             "bpm_requested": [m.get("bpm_lo"), m.get("bpm_hi")],
-            "dur_sec": round(float(c.get("dur_sec", 0.0)), 1),
-            "sound_raw": m.get("sound_raw", ""),
             **_catalog_tags(m),
             **{k: v for k, v in jamendo_row(tid).items()
                if k in ("source", "artist_name", "audio_url", "image_url",
@@ -681,7 +691,7 @@ def onboarding_seeds(user: str,
     c = CAT
     ans = onboarding_of(user, injected)
     if not ans:
-        return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
+        return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
     # ── 필터 축이 **전부** 비면 씨앗을 만들지 않는다.
     #
     # `track_ok` 의 조건은 하나같이 `want_X and …` 라, 빈 축은 그냥 건너뛴다.
@@ -693,7 +703,7 @@ def onboarding_seeds(user: str,
     #
     # 원문이 왔다는 것만으로는 근거가 아니다. **어휘로 옮겨진 것이 있어야** 근거다.
     if not any(ans.get(axis) for axis in ONB_FILTER_AXES):
-        return (np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0),
+        return (np.zeros((0, _vector_dim()), np.float32), np.zeros(0),
                 [{"onboarding_source": "empty_after_mapping",
                   "note": "원문은 왔지만 어휘로 옮겨진 축이 하나도 없다 — "
                           "씨앗을 만들지 않는다",
@@ -741,15 +751,22 @@ def onboarding_seeds(user: str,
         if len(pool) >= ONBOARD_MIN_MATCH:
             break
     if pool.empty:
-        return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
+        return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
 
-    V = center(np.asarray(c.Z[pool.emb_row.to_numpy()], dtype=np.float32))
+    # **원본 벡터를 읽어 여기서 중심화한다.** 조건에 맞는 구간들의 평균이라
+    # ANN 질의로 표현되지 않는다 — 그래서 원본 인덱스에서 id 로 가져온다.
+    V0, found = raw_vectors(pool.moment_id.astype(str).tolist())
+    if not found:
+        return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
+    pool = pool[pool.moment_id.astype(str).isin(found)]
+    V = center(V0)
     # 구간 라벨별로 씨앗을 나눈다 (하나로 평균 내지 않는다)
     seeds, W, meta = [], [], []
     groups = list(pool.groupby("section_label", sort=False))
     groups.sort(key=lambda kv: -len(kv[1]))
+    place = {m: i for i, m in enumerate(found)}
     for lab, g in groups[:ONBOARD_SEEDS]:
-        idx = [pool.index.get_loc(i) for i in g.index]
+        idx = [place[str(m)] for m in g.moment_id]
         v = V[idx].mean(0)
         v /= max(np.linalg.norm(v), 1e-9)
         seeds.append(v)
@@ -1435,11 +1452,96 @@ def user_positives(user: str) -> pd.DataFrame:
     return pos
 
 
+# ------------------------------------------------- 순간 벡터를 어디서 읽는가
+#
+# 두 갈래가 있고, **고르는 것은 설정이지 실패가 아니다.**
+#
+#   local     `moments_emb.npy` 를 읽는다. Pinecone 전환 전의 동작이다
+#   pinecone  후보는 후보 인덱스에서 찾고, 원본 벡터는 원본 인덱스에서 가져온다
+#
+# Pinecone 을 켜 둔 배포에서 Pinecone 이 **실패하면 local 로 내려가지 않는다.**
+# 내려가면 노드에 남은 옛 벡터로 조용히 다른 추천이 나가고, 그 사실이 응답 어디에도
+# 드러나지 않는다. 실패는 예외로 올려 `/internal/ready` 와 오류로 보이게 한다.
+
+def vector_backend() -> str:
+    return "pinecone" if pinecone_store.enabled() else "local"
+
+
 def _pool_mean() -> np.ndarray:
+    """중심화에 쓰는 풀 평균.
+
+    Pinecone 을 켜면 **판에 고정된 평균**을 쓴다. 요청마다 풀에서 다시 재면 적재
+    때와 다른 공간으로 질의가 나가 유사도가 통째로 내려앉는다 — 오류 없이 품질만
+    나빠지는 종류다. 고정본이 없으면 멈춘다(지어내지 않는다).
+    """
     c = CAT
+    if vector_backend() == "pinecone":
+        return pinecone_store.center().mu
     if getattr(c, "_mu_g", None) is None:
         c._mu_g = np.asarray(c.Z[c.pool_rows], dtype=np.float32).mean(0)
     return c._mu_g
+
+
+def raw_vectors(moment_ids) -> tuple[np.ndarray, list[str]]:
+    """원본 Z 를 `external_id` 로 읽는다. **변환 벡터를 쓰지 않는다.**
+
+    DNA 군집과 온보딩 조건별 평균이 부른다. 둘 다 "닮은 것 찾기" 가 아니라 "이
+    구간들의 평균" 이라 ANN 질의로 표현되지 않는다 — 그래서 원본 인덱스가 따로 있다.
+
+    돌려주는 것은 (벡터, 실제로 찾은 id) 다. 없는 id 는 빠지므로 부르는 쪽이 수를
+    세어 판단한다.
+    """
+    ids = [str(m) for m in moment_ids]
+    if not ids:
+        return np.zeros((0, _vector_dim()), np.float32), []
+    if vector_backend() == "local":
+        rowmap = CAT.mom.set_index(CAT.mom.moment_id.astype(str)).emb_row
+        keep = [i for i in ids if i in rowmap.index]
+        if not keep:
+            return np.zeros((0, _vector_dim()), np.float32), []
+        rows = rowmap.loc[keep].to_numpy()
+        return np.asarray(CAT.Z[rows], dtype=np.float32), keep
+    got = pinecone_store.fetch(ids)
+    keep = [i for i in ids if i in got]          # 부른 차례를 지킨다
+    if not keep:
+        return np.zeros((0, _vector_dim()), np.float32), []
+    return np.asarray([got[i] for i in keep], dtype=np.float32), keep
+
+
+def candidate_search(query_vector: np.ndarray, top_k: int) -> list[tuple[str, float]]:
+    """닮은 순간 후보. 질의는 **이미 중심화된** 벡터여야 한다.
+
+    Pinecone 갈래는 후보 인덱스만 본다(저장값이 `normalize(Z - mu)` 라 같은 공간이다).
+    local 갈래는 오늘처럼 풀 전체와 내적해 상위만 남긴다 — 같은 값이 나온다.
+    """
+    q = np.asarray(query_vector, dtype=np.float32).reshape(-1)
+    if vector_backend() == "pinecone":
+        return pinecone_store.search(q, top_k)
+    c = CAT
+    sim = center(np.asarray(c.Z[c.pool_rows], dtype=np.float32)) @ q
+    order = np.argsort(-sim)[:top_k]
+    return [(str(c.pool.moment_id.iloc[int(i)]), float(sim[int(i)])) for i in order]
+
+
+def current_snapshot() -> str:
+    """지금 판의 적재본 지문. 배치가 굳힌 평균과 대조하는 값이다.
+
+    풀 전체 벡터를 한 번 훑는다(mmap). 기동에서 한 번뿐이고, 이 한 번이 "평균만
+    옛 것" 인 상태를 잡는다 — 그 상태는 오류가 아니라 유사도 저하로만 드러난다.
+    """
+    c = CAT
+    ids = c.pool.moment_id.astype(str).tolist()
+    Z = np.asarray(c.Z[c.pool_rows], dtype=np.float32)
+    version = (c.info.get("embedding_version", "mert-v1-95m")
+               if isinstance(c.info, dict) else "mert-v1-95m")
+    return pinecone_store.snapshot_hash(ids, Z, version, POOL_SOURCES)
+
+
+def _vector_dim() -> int:
+    c = CAT
+    if c is not None and getattr(c, "Z", None) is not None:
+        return int(c.Z.shape[1])
+    return pinecone_store.center().dim
 
 
 def center(V: np.ndarray) -> np.ndarray:
@@ -1469,30 +1571,41 @@ def similar_moments(moment_id: str, n: int, exclude_tracks: set[str] | None = No
     i0 = int(hit[0])
     src_track = str(c.pool.track_id.iloc[i0])
 
-    q = center(np.asarray(c.Z[int(c.pool.emb_row.iloc[i0])], dtype=np.float32))[0]
-    V = center(np.asarray(c.Z[c.pool_rows], dtype=np.float32))
-    sim = V @ q
+    # 질의 벡터는 **원본**에서 만들어 중심화한다. 저장된 후보가 같은 변환을 거친
+    # 것이라 이래야 같은 공간이다.
+    V0, found = raw_vectors([str(moment_id)])
+    if not found:
+        return []
+    q = center(V0)[0]
 
     drop = set(exclude_tracks or ())
     if not same_track:
         drop.add(src_track)
 
+    # 곡당 하나만 남기므로 넉넉히 받아 온다. 한 곡이 구간 여럿으로 상위를 채우면
+    # 그만큼 곡 수가 줄어든다.
+    want = max(n * SIMILAR_OVERFETCH, n + 1)
+    by_moment = dict(candidate_search(q, want))
+
+    # **카탈로그에 있는 순간만** 남긴다. Pinecone 에 남아 있어도 MySQL 에서
+    # 지워졌으면 화면이 그 줄을 열지 못한다.
+    pool_by_id = c.pool.set_index(c.pool.moment_id.astype(str))
+
     out: list[dict] = []
     seen: set[str] = set()
-    for i in np.argsort(-sim):
-        i = int(i)
-        if i == i0:
+    for mid, score in sorted(by_moment.items(), key=lambda kv: -kv[1]):
+        if mid == str(moment_id) or mid not in pool_by_id.index:
             continue
-        r = c.pool.iloc[i]
+        r = pool_by_id.loc[mid]
         t = str(r.track_id)
         if t in drop or t in seen:
             continue
         seen.add(t)
-        out.append({"rank": len(out) + 1, "track_id": t, "moment_id": str(r.moment_id),
+        out.append({"rank": len(out) + 1, "track_id": t, "moment_id": mid,
                     "section_label": str(r.section_label),
                     "start_sec": round(float(r.start_sec), 2),
                     "end_sec": round(float(r.end_sec), 2),
-                    "similarity": round(float(sim[i]), 6)})
+                    "similarity": round(float(score), 6)})
         if len(out) >= n:
             break
     return out
@@ -1523,13 +1636,12 @@ def build_dna(user: str, query_plan: Optional[dict] = None,
             matched = matched.iloc[0:0]
         pos = pos[pos.section_key.isin(matched.moment_id)]
     if pos.empty:
-        return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
-    rowmap = c.mom.set_index("moment_id").emb_row
-    keys = [k for k in pos.section_key if k in rowmap.index][:DNA_TOP_N]
+        return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
+    # **원본 벡터로 군집한다.** 변환 벡터로 평균을 내면 중심이 어긋난 공간에 놓이고,
+    # 그 뒤 `center()` 를 한 번 더 먹여 두 번 중심화된다 — 오류는 나지 않는다.
+    V0, keys = raw_vectors(list(pos.section_key)[:DNA_TOP_N])   # 원공간 (이미 L2)
     if not keys:
-        return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
-    rows = rowmap.loc[keys].to_numpy()
-    V0 = np.asarray(c.Z[rows], dtype=np.float32)          # 원공간 (이미 L2)
+        return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
     dw = decay_weights(pos[pos.section_key.isin(keys)].set_index("section_key").loc[keys]
                        .reset_index())
 
@@ -1547,9 +1659,9 @@ def build_dna(user: str, query_plan: Optional[dict] = None,
     if query_plan is None:
         o = other_positives(user)
         if not o.empty:
-            ok = [k for k in o.section_key if k in rowmap.index]
+            OW, ok = raw_vectors(list(o.section_key))
             if ok:
-                OV = center(np.asarray(c.Z[rowmap.loc[ok].to_numpy()], dtype=np.float32)).mean(0)
+                OV = center(OW).mean(0)
 
     C, W, meta = [], [], []
     for cid in ids:
@@ -1993,6 +2105,29 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     if query_plan is not None:
         pool, qdiag = filter_query_pool(pool, query_plan, current_track_id, current_moment_id)
         diag["nlp"] = qdiag
+    # ── 후보 검색. Pinecone 갈래는 **여기서** 후보를 좁힌다.
+    #
+    # DNA 중심마다 닮은 순간을 받아 그 합집합만 남긴다. 좁힌 뒤의 점수 계산은 아래가
+    # 그대로 한다 — Pinecone 은 후보를 고르는 일만 하고 최종 순위는 맡지 않는다.
+    #
+    # 좁힌 뒤 **원본 벡터를 다시 가져와 여기서 중심화한다.** 검색 점수를 그대로
+    # 쓰지 않는 이유는, 중심마다 상위 K 밖의 값을 모르는 채로 행렬을 채우면 그
+    # 빈자리가 점수에 섞이기 때문이다. 원본을 가져오면 좁히기 전과 **같은 값**이 된다.
+    if vector_backend() == "pinecone" and len(C):
+        found: dict = {}
+        for j, cv in enumerate(C):
+            for mid, _score in candidate_search(cv, DNA_CANDIDATES_PER_SEED):
+                found.setdefault(mid, j)
+        before = len(pool)
+        pool = pool[pool.moment_id.astype(str).isin(found)].reset_index(drop=True)
+        diag["vector_search"] = {"backend": "pinecone", "seeds": int(len(C)),
+                                 "per_seed": DNA_CANDIDATES_PER_SEED,
+                                 "retrieved": len(found),
+                                 "kept_after_catalog_gate": len(pool),
+                                 "dropped_from_pool": int(before - len(pool))}
+    else:
+        diag["vector_search"] = {"backend": vector_backend(), "seeds": int(len(C))}
+
     diag["candidates"] = len(pool)
     if pool.empty:
         why = (diag.get("nlp") or {}).get("reason") or "후보 없음"
@@ -2025,8 +2160,19 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
                                "matched": int((mood_match > 0).sum()),
                                "candidates": len(pool)}
 
-    rows = pool.emb_row.to_numpy()
-    V = center(np.asarray(c.Z[rows], dtype=np.float32))   # 질의와 동일 변환
+    # 질의와 동일 변환. 원본을 읽어 여기서 중심화하므로 두 갈래의 값이 같다.
+    V0, kept = raw_vectors(pool.moment_id.astype(str).tolist())
+    if len(kept) != len(pool):
+        # 카탈로그에는 있는데 벡터가 없는 순간. 점수를 지어내지 않고 후보에서 뺀다.
+        pool = pool[pool.moment_id.astype(str).isin(kept)].reset_index(drop=True)
+        diag["missing_vectors"] = int(diag["candidates"] - len(pool))
+        if pool.empty:
+            return {"results": [], "diagnostics": {**diag, "reason": "후보 벡터가 없다"}}
+        clap_score = clap_score[:len(pool)]
+        clap_pct = clap_pct[:len(pool)]
+        if mood_match is not None:
+            mood_match = mood_match[:len(pool)]
+    V = center(V0)
     n_pairs = 0
     if len(C):
         S = V @ C.T * W[None, :]

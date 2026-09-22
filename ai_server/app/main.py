@@ -16,7 +16,8 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 
-from . import catalog_api, index_contract, internal_api, labels_store, paths, recommender
+from . import (catalog_api, index_contract, internal_api, labels_store, paths,
+               pinecone_store, recommender)
 from .log import log
 
 _STARTED = time.time()
@@ -151,6 +152,23 @@ def _startup() -> None:
         log(f"카탈로그에 없는 색인 구간 {match['moments_unmatched']}건 — 후보에서 뺐다 "
             f"(예: {', '.join(match['sample_unmatched'])})")
 
+    # ④ 벡터 검색 갈래. Pinecone 을 켜 두었으면 **평균·namespace·판이 한 묶음인지**
+    #    기동에서 본다. 하나만 갈아 끼운 상태는 오류가 아니라 유사도 저하로만
+    #    드러나므로 요청을 받기 전에 잡아야 한다.
+    if pinecone_store.enabled():
+        try:
+            got = pinecone_store.center()
+            # 평균·namespace·판이 **한 묶음**인가. 벡터만 바뀐 재분석도 여기서 걸린다.
+            got.require_snapshot(recommender.current_snapshot())
+            _STATE["vector_search"] = {"backend": "pinecone", **got.stats()}
+            log(f"벡터 검색 — Pinecone · namespace {got.namespace!r} · 평균 {got.rows}건")
+        except Exception as e:
+            _STATE["error"] = f"{type(e).__name__}: {e}"
+            log(f"벡터 검색 준비 실패 — {_STATE['error']}")
+            return
+    else:
+        _STATE["vector_search"] = {"backend": "local"}
+
     _STATE["loaded"] = True
     _STATE["load_seconds"] = round(time.time() - t0, 3)
     log(f"적재 완료 {_STATE['load_seconds']}초 · "
@@ -230,6 +248,12 @@ def health() -> dict:
                     if cat is not None else None),
         # 곡·순간 메타데이터의 출처. **여기가 비면 장르·무드 축이 통째로 빈다.**
         "metadata_source": catalog_api.status(),
+        # 순간 벡터를 어디서 읽는가. Pinecone 을 켜 두었는데 값이 비면 검색이
+        # 통째로 실패하므로, 설정 여부가 준비 판정과 같은 화면에 있어야 한다.
+        "vector_search": {"backend": recommender.vector_backend(),
+                          **pinecone_store.settings()},
+        # 갱신 중이면 그 까닭. /health 는 살아 있음만 보므로 여기서 이유를 읽는다.
+        "paused": pinecone_store.pause_state(),
         "index_contract": _STATE["plate"],
         "catalog_match": _STATE["catalog_match"],
         "integrity": (_STATE["integrity"] or {}).get("checks"),

@@ -26,7 +26,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
-from . import catalog_api, clickhouse, metrics, onboarding as onb, paths
+from . import (catalog_api, clickhouse, metrics, onboarding as onb, paths,
+               pinecone_store)
 from .log import log
 
 PREFIX = "/internal"
@@ -341,6 +342,13 @@ def _svc_mod():
 
 
 def _svc():
+    # 벡터를 갈아 끼우는 동안에는 **분명한 오류**를 돌려준다. 그때 candidate 와
+    # raw 가 서로 어긋나 있어서, 그 상태의 추천은 오류가 아니라 그냥 이상한 결과로
+    # 나온다. 로컬 옛 벡터로 조용히 내려가지도 않는다.
+    paused = pinecone_store.pause_state()
+    if paused is not None:
+        raise ApiError("RELOAD_IN_PROGRESS",
+                       "추천 벡터를 갱신하는 중입니다. 잠시 뒤 다시 시도해 주세요.")
     svc = _svc_mod()
     if getattr(svc, "CAT", None) is None or len(svc.CAT.pool) == 0:
         raise ApiError("INDEX_NOT_READY", "추천 색인이 아직 준비되지 않았습니다.")
@@ -640,6 +648,9 @@ def ready() -> dict:
     빠진 콜드스타트 추천이 나가지만 추천 자체는 된다. 그때 준비 완료를 거두면 모든
     파드가 한꺼번에 빠져 품질 저하가 장애로 번진다.
     """
+    # 갱신 중이면 여기서 RELOAD_IN_PROGRESS(503) 로 나간다 — readinessProbe 가
+    # 그것을 보고 파드를 엔드포인트에서 뺀다. 재개는 배치가 검증을 통과한 뒤에만
+    # 표시를 지우면서 일어난다.
     svc = _svc()                       # 색인 미적재면 INDEX_NOT_READY (503)
     return {"ready": True,
             "tracks": int(svc.CAT.pool.track_id.nunique()),
@@ -647,6 +658,10 @@ def ready() -> dict:
             # 곡·순간 메타데이터의 출처. 이것이 비면 장르·무드·보컬 조건이
             # 통째로 빈 채 추천이 나가므로, 준비 판정을 보는 자리에서 함께 읽는다.
             "metadata_source": catalog_api.status(),
+            # 벡터 검색 갈래. Pinecone 장애는 여기서 드러나야 하고, 로컬 옛 벡터로
+            # 조용히 내려가지 않는다.
+            "vector_search": {"backend": svc.vector_backend(),
+                              **pinecone_store.settings()},
             "behavior_store": behavior_store_status(),
             "paths": paths.check()}
 
@@ -735,6 +750,7 @@ def install(app: FastAPI, service_module=None) -> None:
     @app.exception_handler(ApiError)
     async def _api(request: Request, exc: ApiError):
         status = {"NO_CANDIDATES": 404, "INDEX_NOT_READY": 503,
+                  "RELOAD_IN_PROGRESS": 503,
                   "SEARCH_NOT_CONFIGURED": 501, "INTERNAL_ERROR": 500}.get(exc.code, 400)
         return _err(exc.code, exc.message, status)
 
