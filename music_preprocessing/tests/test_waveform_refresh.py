@@ -14,6 +14,11 @@
    원본에서 다시 계산해 채우는가
 5. 이미 최신인 곡은 **아무것도 하지 않는가.** 매일 도는 배치라 여기서 매번
    올리면 1060곡에 쓸데없는 PUT 이 매일 나간다
+6. **서버에서 삭제된 곡이 배치를 실패시키지 않는가.** 2026-09-22 파이프라인이
+   여기서 붉어졌다 — 삭제된 곡 22개에 파형을 올리려다 410 Gone 을 맞고 전부
+   실패로 세어졌다. 삭제된 곡은 수정도 메타데이터 등록도 받지 않으므로 다시
+   시도해도 같다. `lyrics` · `classify` 와 같은 표식으로 미리 거르고, 표식보다
+   삭제가 빨랐던 경우는 410 자체를 건너뜀으로 센다
 """
 import json
 import shutil
@@ -21,9 +26,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from music_preprocessing.api_client import MupidApiError
+from music_preprocessing.audit import EXEMPT_KEY
 from music_preprocessing.batch import _retry_waveforms, _waveform_is_stale
 from music_preprocessing.config import ChunkConfig
-from music_preprocessing.registrar import Registrar, Registry
+from music_preprocessing.registrar import MusicGoneError, Registrar, Registry
 
 from test_waveform import HAS_FFMPEG, write_wav
 
@@ -31,12 +38,20 @@ SOURCE_HASH = "a" * 64
 OLD_HASH = "b" * 64
 
 
+def gone_error() -> MupidApiError:
+    """서버가 삭제된 곡에 주는 응답 (2026-09-22 배치 실패의 실제 모양)."""
+    return MupidApiError(410, "MUPID_MUSIC_GONE", "요청한 음악은 삭제되었습니다.")
+
+
 class StubClient:
-    def __init__(self, fail: bool = False):
+    def __init__(self, fail: bool = False, gone: bool = False):
         self.fail = fail
+        self.gone = gone
         self.uploaded: list[tuple[int, list[float]]] = []
 
     def put_waveform(self, music_id: int, values: list[float]):
+        if self.gone:
+            raise gone_error()
         if self.fail:
             raise RuntimeError("서버가 받지 않았다")
         self.uploaded.append((music_id, values))
@@ -89,6 +104,12 @@ class RegistrarWaveformMarkTest(unittest.TestCase):
         marked = registrar.put_waveform(42, [0.5] * 16, SOURCE_HASH, Path("a.mp3"))
 
         self.assertIsNone(marked)
+
+    def test_삭제된_곡은_실패가_아니라_전용_예외다(self):
+        registrar = Registrar(StubClient(gone=True), self.registry)
+
+        with self.assertRaises(MusicGoneError):
+            registrar.put_waveform(42, [0.5] * 16, SOURCE_HASH, Path("a.mp3"))
 
     def test_파형이_없으면_부르지도_않는다(self):
         client = StubClient()
@@ -212,6 +233,34 @@ class RetryWaveformsTest(unittest.TestCase):
         self.assertEqual(
             SOURCE_HASH,
             processed_log[str(self.audio)]["registered"]["waveform_sha256"],
+        )
+
+    def test_삭제된_곡은_표식을_보고_건드리지_않는다(self):
+        # `catalog` 의 서버 대조가 남긴 표식. `lyrics`·`classify` 가 쓰는 것과 같다.
+        # 표식을 보고 미리 빼야 ffmpeg 도 안 돌고 410 도 안 맞는다.
+        self._metadata(None)
+        self.registry.put_catalog_entry("tracks", "T000567", {"music_id": 42, EXEMPT_KEY: True})
+        client = StubClient()
+
+        count, errors = self._run(client, self._log(None))
+
+        self.assertEqual(0, count)
+        self.assertEqual([], errors)
+        self.assertEqual([], client.uploaded)
+
+    def test_표식이_아직_없어_410_을_맞아도_실패가_아니다(self):
+        # 2026-09-22 배치가 붉어진 경로다. 곡 22개가 여기서 실패로 세어졌다.
+        self._metadata([0.25] * 16)
+        processed_log = self._log(None)
+
+        count, errors = self._run(StubClient(gone=True), processed_log)
+
+        self.assertEqual(1, count)
+        # 실패가 아니다 — 고칠 수 없는 것이라 배치 종료 코드를 더럽히지 않는다.
+        self.assertEqual([], errors)
+        # 성공 표시도 남기지 않는다. 곡이 되살아나면 그때 올라가야 한다.
+        self.assertNotIn(
+            "waveform_sha256", processed_log[str(self.audio)]["registered"]
         )
 
     def test_원본도_파형도_없으면_조용히_넘어간다(self):

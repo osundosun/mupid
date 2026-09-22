@@ -14,8 +14,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from .api_client import MupidApiError, MupidClient, is_music_gone
+from .audit import exempt_track_ids
 from .catalog import ProgressReporter
-from .api_client import MupidClient
 from .registrar import Registry
 from .waveform import WAVEFORM_SAMPLES, compute_waveform
 
@@ -52,19 +53,37 @@ class WaveformBackfiller:
             force: 이미 파형이 있는 곡도 다시 올린다
 
         Returns:
-            `{"uploaded", "skipped_present", "skipped_unregistered", "errors"}`
+            `{"uploaded", "skipped_present", "skipped_unregistered",
+              "skipped_gone", "errors"}`
         """
         result = {
             "uploaded": 0,
             "skipped_present": 0,
             "skipped_unregistered": 0,
+            "skipped_gone": 0,
             "errors": [],
         }
+
+        # 서버에서 삭제된 곡. `PUT /waveform` 은 410 Gone 이라 그대로 부르면
+        # 배치가 실패한다 — `lyrics` · `classify` 가 같은 표식으로 거른다.
+        # 표식은 `catalog` 의 서버 대조가 남긴 것이라 여기서는 읽기만 한다.
+        exempt = exempt_track_ids(self.registry)
 
         self.progress.phase("파형", len(audio_paths))
         for audio_path in audio_paths:
             try:
+                if audio_path.stem in exempt:
+                    logger.info("파형 건너뜀(서버에 없는 곡): %s", audio_path.stem)
+                    result["skipped_gone"] += 1
+                    continue
                 self._one(audio_path, force, result)
+            except MupidApiError as e:
+                # 표식보다 삭제가 빠른 경우다. 다음 `catalog` 이 표식을 남기면
+                # 위에서 걸러진다. 고칠 수 없는 것이라 실패로 세지 않는다.
+                if not is_music_gone(e):
+                    raise
+                logger.info("파형 건너뜀(서버에서 삭제된 곡): %s — %s", audio_path.name, e)
+                result["skipped_gone"] += 1
             except Exception as e:  # noqa: BLE001 — 한 곡의 실패로 배치를 멈추지 않는다
                 logger.warning("파형 채우기 실패: %s — %s", audio_path.name, e)
                 result["errors"].append({"key": audio_path.name, "error": str(e)})
