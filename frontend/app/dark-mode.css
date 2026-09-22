@@ -180,6 +180,56 @@ html.dark .mupid-shell .profile-photo-editor:not(.has-photo) .profile-photo-fram
   filter: brightness(.6) saturate(.8);
 }
 html.dark .mupid-shell .profile-photo-editor :is(small,output) { color: #959aa3; }
+/* Account controls need explicit states: light disabled/summary rules override
+   the shared buttons, and the disclosure is a summary rather than a button. */
+html.dark .mupid-shell .profile-settings-card .profile-password {
+  border-color: var(--border);
+}
+html.dark .mupid-shell .profile-settings-card .profile-password > summary {
+  padding: 10px 14px;
+  border: 1px solid #465b79;
+  border-radius: 12px;
+  background: #1b283b;
+  color: #abc7ef;
+}
+html.dark .mupid-shell .profile-settings-card .profile-password > summary:hover,
+html.dark .mupid-shell .profile-settings-card .profile-password[open] > summary {
+  background: #273c59;
+  border-color: #7098d2;
+}
+html.dark .mupid-shell .profile-settings-card .profile-password > summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+html.dark .mupid-shell .profile-settings-card .primary-button {
+  background: #456698;
+  color: #d0dff5;
+  border: 1px solid #6b8ab8;
+  box-shadow: none;
+}
+html.dark .mupid-shell .profile-settings-card .primary-button:hover:not(:disabled) {
+  background: #5278ad;
+  border-color: #91afe0;
+}
+html.dark .mupid-shell .profile-settings-card .primary-button:disabled {
+  background: #202630;
+  color: #8c97a8;
+  border-color: #394250;
+  opacity: 1;
+  cursor: not-allowed;
+}
+html.dark .mupid-shell .profile-settings-card .profile-password form label {
+  color: var(--foreground);
+}
+html.dark .mupid-shell .profile-ignored-card button.text-link {
+  background: #1b283b;
+  color: #abc7ef;
+  border-color: #465b79;
+}
+html.dark .mupid-shell .profile-ignored-card button.text-link:hover {
+  background: #273c59;
+  color: #b9d3fa;
+}
 html.dark .mupid-shell .collection-page .sky-tabs > [role='tablist'] {
   display: flex;
   gap: 6px;
