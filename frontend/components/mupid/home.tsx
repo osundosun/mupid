@@ -60,7 +60,17 @@ export function HomeView({ model: m }: { model: MupidModel }) {
               .map((id) => tracks.find((t) => t.id === id)!)
               .filter(Boolean)
               .map((t) => (
-                <TrackRow key={t.id} track={t} model={m} showDetail={false} />
+                /*
+                 * 다시 듣기는 추천이 아니다. 홈에 있다는 이유로 `RECOMMEND` 로 세면
+                 * 이미 아는 곡을 되꺼낸 것이 추천 성과로 잡힌다.
+                 */
+                <TrackRow
+                  key={t.id}
+                  track={t}
+                  model={m}
+                  showDetail={false}
+                  onPlay={() => m.play(t, false, undefined, 'RECENT')}
+                />
               ))}
           </div>
         </div>

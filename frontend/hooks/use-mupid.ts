@@ -745,11 +745,15 @@ export function useMupid(bootstrap: Bootstrap) {
   /**
    * 이 재생이 어디서 왔는가. 청취 이벤트의 `entry_path` 다.
    *
-   * 정확한 출처를 따로 들고 다니지 않으므로 지금 보고 있는 화면으로 갈음한다.
-   * 인플레이어 다음곡 추천이 없어서 검색 결과를 이어 듣는 것도 `SEARCH` 다
-   * (decision/0014).
+   * **부른 쪽이 출처를 알면 그 값이 이긴다.** 재생 목록(`QUEUE`)과 최근 들은
+   * 음악(`RECENT`)은 어느 화면에서 눌러도 뜻이 같아 화면으로 갈음하면 안 된다 —
+   * 이미 아는 곡을 스스로 다시 꺼낸 것을 추천 성과(`RECOMMEND`)로 세게 된다.
+   *
+   * 출처를 모르는 나머지만 지금 보고 있는 화면으로 갈음한다. 인플레이어 다음곡
+   * 추천이 없어서 검색 결과를 이어 듣는 것도 `SEARCH` 다 (decision/0014).
    */
-  const entryPathOf = (): EntryPath => {
+  const entryPathOf = (from?: EntryPath): EntryPath => {
+    if (from) return from;
     if (page === 'search') return 'SEARCH';
     if (page === 'library') return 'PLAYLIST';
     return 'RECOMMEND';
@@ -800,22 +804,35 @@ export function useMupid(bootstrap: Bootstrap) {
     if (staying) return currentUidRef.current;
     return queue.find((entry) => entry.trackId === track.id)?.uid ?? null;
   };
-  const startPlayback = async (track: Track, start?: number, uid?: string | null) => {
+  const startPlayback = async (
+    track: Track,
+    start?: number,
+    uid?: string | null,
+    from?: EntryPath,
+  ) => {
     if (typeof track.musicId !== 'number' && !track.localAudio) return;
     // 추천으로 시작한 재생이면 그 사실을 함께 남긴다. 이게 없으면 "이 추천으로 튼
     // 곡을 끝까지 들었는가" 를 물어볼 수 없어 추천 성과를 잴 방법이 없다.
+    // 구간을 권한 추천이 먼저다. 구간 없이 곡만 권한 추천(오늘의 Moment)은 `recSource`
+    // 에 온다 — 둘을 한 자리에 담으면 화면이 없는 구간을 그린다 (mupid-data.ts).
     const rec = track.recommended?.recommendationId
       ? {
           id: String(track.recommended.recommendationId),
           type: 'SECTION' as const,
           rank: track.recommended.rank,
         }
-      : undefined;
+      : track.recSource
+        ? {
+            id: String(track.recSource.id),
+            type: track.recSource.type,
+            rank: track.recSource.rank,
+          }
+        : undefined;
     const slot = resolveQueueUid(track, uid);
     currentUidRef.current = slot;
     setCurrentUid(slot);
     if (typeof track.musicId === 'number') analytics.startPlay(
-      { trackId: track.musicId, entryPath: entryPathOf(), rec },
+      { trackId: track.musicId, entryPath: entryPathOf(from), rec },
       start ?? 0,
     );
     const id = ++requestId.current;
@@ -864,6 +881,11 @@ export function useMupid(bootstrap: Bootstrap) {
     track: Track | null = activeRef.current,
     fromMoment = false,
     queueUid?: string,
+    /*
+     * 이 재생의 출처(`entry_path`). 누른 자리가 화면과 무관하게 뜻이 정해져 있을 때만
+     * 넘긴다 — 재생 목록은 `QUEUE`, 최근 들은 음악은 `RECENT`. 빠지면 화면으로 갈음한다.
+     */
+    from?: EntryPath,
   ) => {
     // 곡이 하나도 없으면 누를 것도 없다.
     if (!track) return;
@@ -956,10 +978,10 @@ export function useMupid(bootstrap: Bootstrap) {
       // 서버가 고른 구간이다. 시작만 맞추고 끝을 두지 않으면 다음 구간까지 흘러
       // "이 구간을 권한다" 는 말과 들리는 것이 달라진다.
       previewEnd.current = track.recommended.end;
-      void startPlayback(track, track.recommended.start, picked);
+      void startPlayback(track, track.recommended.start, picked, from);
       return;
     }
-    void startPlayback(track, fromMoment ? track.moment : undefined, picked);
+    void startPlayback(track, fromMoment ? track.moment : undefined, picked, from);
   };
   const next = (direction = 1) => {
     previewEnd.current = null;
@@ -977,7 +999,9 @@ export function useMupid(bootstrap: Bootstrap) {
     // 넘길 곡이 실제로 정해진 뒤에 남긴다. 이전·다음 어느 쪽이든 지금 곡을 끝까지
     // 듣지 않고 떠난 것이므로 스킵이다.
     analytics.skip(positionMs(), 'NEXT_BUTTON');
-    void startPlayback(target, 0, target.uid);
+    // 다음 곡은 재생 목록이 고른다. 어느 화면에서 눌렀든 출처는 목록이다 — 이걸
+    // 화면으로 갈음하면 같은 목록을 쭉 듣는 동안 곡마다 경로가 달라진다.
+    void startPlayback(target, 0, target.uid, 'QUEUE');
   };
   /**
    * 화면에 보이는 재생 목록. 큐의 자리 순서 그대로이고, 건너뛴 곡과 카탈로그에서
@@ -1291,7 +1315,8 @@ export function useMupid(bootstrap: Bootstrap) {
     }
     const current = activeRef.current;
     if (!current) return;
-    if (repeatMode === 'one') { void startPlayback(current, 0); return; }
+    // 자동으로 이어지는 재생은 전부 재생 목록이 고른 것이다(한곡 반복 포함).
+    if (repeatMode === 'one') { void startPlayback(current, 0, undefined, 'QUEUE'); return; }
     const uid = currentUidRef.current;
     if (uid) playedInCycle.current.add(uid);
     const pool = queueTracks;
@@ -1309,7 +1334,7 @@ export function useMupid(bootstrap: Bootstrap) {
     const target = shuffle ? remaining[Math.floor(Math.random() * remaining.length)] : stepQueue(pool, uid, 1);
     if (!target) { getPlayer()?.pause(); setPlaying(false); return; }
     playedInCycle.current.add(target.uid);
-    void startPlayback(target, 0, target.uid);
+    void startPlayback(target, 0, target.uid, 'QUEUE');
   };
   // 구독자는 한 번만 등록되므로 최신 규칙을 참조로 넘긴다.
   onEndedRef.current = onEnded;

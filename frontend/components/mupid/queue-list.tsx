@@ -254,7 +254,9 @@ export function QueueList({
              * 넘겨 그 줄을 그대로 튼다 — 고른 줄이 누르자마자 맨 위로 튀어 오르면
              * 방금 어디를 눌렀는지 놓친다. 맨 위로 올리는 것은 목록 밖에서 튼 곡뿐이다.
              */
-            onPlay={() => m.play(track, false, track.uid)}
+            // 재생 목록에서 튼 곡은 어느 화면에서 독을 열었든 `QUEUE` 로 남는다.
+            // 이미 담아 둔 곡을 다시 꺼낸 것이지 추천을 보고 고른 것이 아니다.
+            onPlay={() => m.play(track, false, track.uid, 'QUEUE')}
             action={
               <button
                 className="icon-button"

@@ -34,8 +34,30 @@ export type EventType =
   | 'COMMENT_DELETE'
   | 'SEARCH';
 
-/** `AUTOPLAY` 는 없다. 인플레이어 다음곡 추천이 없어서, 검색 결과를 이어 듣는 것도 SEARCH 로 남긴다. */
-export type EntryPath = 'RECOMMEND' | 'SEARCH' | 'PLAYLIST';
+/**
+ * 이 재생이 어디서 왔는가.
+ *
+ * `RECOMMEND` 는 **추천을 보고 골랐다** 는 뜻이지 화면의 기본값이 아니다. 재생 목록에서
+ * 다시 꺼낸 곡(`QUEUE`)과 최근 들은 음악에서 다시 튼 곡(`RECENT`)까지 `RECOMMEND` 로
+ * 세면, 추천이 한 일과 사용자가 이미 알던 곡을 되꺼낸 일이 한 통에 섞여 추천 성과가
+ * 부풀려진다. 그 둘은 어느 화면에서 눌러도 뜻이 같아 화면으로 갈음할 수 없다.
+ *
+ * `ARTIST` 는 아티스트 정보 패널에서 그 아티스트의 다른 곡을 찾아 튼 재생이다. 패널이
+ * 모든 곡 줄에서 열려 화면으로 갈음하면 같은 행동이 세 값으로 흩어졌다. 패널은 안에서
+ * 검색 API 를 쓰지만 **사용자가 검색한 것이 아니라** 아티스트를 누른 것이므로 `SEARCH`
+ * 도 아니다.
+ *
+ * `AUTOPLAY` 는 없다. 인플레이어 다음곡 추천이 없어서, 검색 결과를 이어 듣는 것도
+ * `SEARCH` 로 남긴다. 큐가 알아서 넘어간 재생은 `QUEUE` 다 — 그 순서를 만든 것도
+ * 사용자이고, 추천이 한 선택이 아니다.
+ */
+export type EntryPath =
+  | 'RECOMMEND'
+  | 'SEARCH'
+  | 'PLAYLIST'
+  | 'QUEUE'
+  | 'RECENT'
+  | 'ARTIST';
 export type SkipTrigger = 'NEXT_BUTTON' | 'OTHER_TRACK';
 export type FeedbackTarget = 'TRACK' | 'SECTION';
 export type RecType = 'HOME' | 'SECTION' | 'CUSTOM';
