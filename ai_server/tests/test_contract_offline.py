@@ -335,14 +335,21 @@ def test_missing_markers_are_still_dropped_from_instruments():
     assert got == ["드럼"]
 
 
-def test_vocal_other_is_a_different_axis_and_survives():
-    """악기 필터가 보컬 성별 `other` 까지 지우면 성별 ETC 가 통째로 사라진다."""
+def test_instrument_other_never_touches_the_gender_axis():
+    """악기 `other` 와 보컬 성별은 **다른 축이다.** 한 집합으로 합치면 안 된다.
+
+    예전에는 성별 어휘에도 `other`(값 `ETC`)가 있어서 두 축이 이름으로 충돌했다.
+    S15P21A204-402 이후 성별은 서버 enum 과 같은 `M`·`F`·`MIX` 뿐이라 그 충돌은
+    구조적으로 사라졌다 — 그래서 특정 키를 검사하지 않고 **교집합이 비어 있는지**를
+    본다. 어휘가 또 바뀌어도 이 시험은 그대로 뜻을 지킨다.
+    """
     from ai_server.app import recommender
 
-    assert recommender._VOCAL_GENDER["other"] == "ETC"
-    tags = recommender._catalog_tags({"has_vocal": True, "vocal_gender": "ETC",
+    assert not (recommender._NONSPECIFIC_INSTRUMENTS
+                & set(recommender._VOCAL_GENDER)), "두 축이 이름으로 겹친다"
+    tags = recommender._catalog_tags({"has_vocal": True, "gender_label": "mixed",
                                       "instrument_tags": ["other", "드럼"]})
-    assert tags["vocal_gender"] == "ETC", "축을 섞었다"
+    assert tags["vocal_gender"] == "MIX", "축을 섞었다"
     assert tags["instruments"] == ["드럼"]
 
 

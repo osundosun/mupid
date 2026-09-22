@@ -307,8 +307,10 @@ _VOCAL_GENDER = {
 # 전후 어느 한쪽에서 필터가 통째로 풀린다 — 실측 9,292행(`music_analysis_instruments`
 # 의 31%)이 "구체적인 악기" 로 검색에 노출된다. 오류는 나지 않고 결과만 나빠진다.
 #
-# 이름이 같은 `_VOCAL_GENDER["other"]` 와는 **다른 축이다.** 저쪽은 보컬 성별이고
-# 값이 `ETC` 다. 한 집합으로 합치면 성별 `other` 까지 같이 지워진다.
+# 보컬 성별과는 **다른 축이다.** 예전에는 성별 어휘에도 `other`(값 `ETC`)가 있어
+# 이름으로 겹쳤고, 한 집합으로 합치면 성별까지 같이 지워졌다. S15P21A204-402 로
+# 성별이 서버 enum 과 같은 `M`·`F`·`MIX` 만 남아 그 충돌은 사라졌다 — 다시 겹치지
+# 않는지는 `test_instrument_other_never_touches_the_gender_axis` 가 지킨다.
 _NONSPECIFIC_INSTRUMENTS = {"other", "그 외 악기", "그외 악기"}
 
 
