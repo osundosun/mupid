@@ -583,3 +583,71 @@ def test_query_gate_result_is_unchanged_by_the_cache(svc):
     b_pool, b_diag = svc.filter_query_pool(svc.CAT.pool, dict(plan), None, None)
     assert a_diag == b_diag
     assert a_pool.moment_id.tolist() == b_pool.moment_id.tolist()
+
+
+# ------------------------------------- 메타데이터의 정본은 MySQL 이다 (색인이 아니다)
+
+def test_catalog_axes_actually_gate_candidates(svc):
+    """내부 API 가 준 장르·무드·보컬·악기가 **실제로 후보를 거른다.**
+
+    한 축이 안 실리면 오류가 아니라 "조건을 걸었는데 아무 곡도 안 걸러진" 결과가
+    나온다. 그래서 축마다 걸러진 수가 0보다 큰지 본다.
+    """
+    full = len(svc.CAT.pool)
+    for axis, value in (("genre", GENRES[0]), ("vocal", "female"),
+                        ("instrument", INSTRUMENTS[0])):
+        pool, diag = svc.filter_query_pool(
+            svc.CAT.pool, {"filters": {axis: [value]}}, None, None)
+        assert f"filters.{axis}" in diag["applied"], f"{axis} 축이 게이트에 안 걸렸다"
+        assert 0 < len(pool) < full, f"{axis}={value} 가 아무것도 거르지 않았다"
+
+    # 무드는 **거르지 않고 재정렬만** 한다(`MOOD_WEIGHT`) — 추론 가능성이 커서
+    # 그렇게 둔 것이다. 그래서 값이 실렸는지는 빼는 쪽으로 확인한다.
+    pool, diag = svc.filter_query_pool(
+        svc.CAT.pool, {"exclude": {"mood": [MOODS[0]]}}, None, None)
+    assert "exclude.mood" in diag["applied"], "무드 축이 카탈로그에서 안 실렸다"
+    assert 0 < len(pool) < full
+
+
+def test_moment_metadata_comes_from_the_catalog_not_the_index(svc):
+    """구간 종류·시각·악기는 색인에 없고 카탈로그에서 붙는다."""
+    mom = svc.CAT.mom.set_index(svc.CAT.mom.moment_id.astype(str))
+    row = mom.loc["T000000#2"]
+
+    assert row.section_label == "chorus", "MySQL ENUM 이 추천 어휘로 안 바뀌었다"
+    assert float(row.start_sec) == 60.0 and float(row.end_sec) == 88.0
+    assert float(row.dur_sec) == 28.0, "길이는 시각에서 다시 세야 한다"
+    assert row.instruments == INSTRUMENTS[0]
+
+
+def test_a_song_missing_from_the_catalog_leaves_the_pool(svc):
+    """MySQL 에서 지워진 곡은 색인에 남아 있어도 추천 후보가 아니다.
+
+    남겨 두면 Spring 이 `external_id` 를 못 찾아 그 줄을 버린다 — 화면에는 오류가
+    아니라 "추천이 몇 개 비어 보인다" 로 나온다.
+    """
+    keep = [t for t in _catalog_payload() if t["musicId"] != 1000]
+    before = svc.CAT
+    catalog_api.install(catalog_api.snapshot_from_tracks(keep))
+    try:
+        rebuilt = svc.Catalog()
+        assert "T000000" not in set(rebuilt.pool.track_id)
+        assert rebuilt.moments_outside_catalog == 4
+        assert len(rebuilt.pool) == len(before.pool) - 4
+    finally:
+        catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))
+
+
+def test_the_index_alone_cannot_serve(svc):
+    """카탈로그 없이 색인만으로는 추천하지 않는다.
+
+    뜨게 두면 장르·무드·보컬·악기 조건이 통째로 빈 채 추천이 나가고, 그것은
+    응답만 봐서는 정상과 구분되지 않는다.
+    """
+    catalog_api.reset()
+    try:
+        with pytest.raises(RuntimeError) as e:
+            svc.Catalog()
+        assert "카탈로그" in str(e.value)
+    finally:
+        catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))
