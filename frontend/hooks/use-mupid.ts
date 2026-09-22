@@ -745,11 +745,15 @@ export function useMupid(bootstrap: Bootstrap) {
   /**
    * 이 재생이 어디서 왔는가. 청취 이벤트의 `entry_path` 다.
    *
-   * 정확한 출처를 따로 들고 다니지 않으므로 지금 보고 있는 화면으로 갈음한다.
-   * 인플레이어 다음곡 추천이 없어서 검색 결과를 이어 듣는 것도 `SEARCH` 다
-   * (decision/0014).
+   * **부른 쪽이 출처를 알면 그 값이 이긴다.** 재생 목록(`QUEUE`)과 최근 들은
+   * 음악(`RECENT`)은 어느 화면에서 눌러도 뜻이 같아 화면으로 갈음하면 안 된다 —
+   * 이미 아는 곡을 스스로 다시 꺼낸 것을 추천 성과(`RECOMMEND`)로 세게 된다.
+   *
+   * 출처를 모르는 나머지만 지금 보고 있는 화면으로 갈음한다. 인플레이어 다음곡
+   * 추천이 없어서 검색 결과를 이어 듣는 것도 `SEARCH` 다 (decision/0014).
    */
-  const entryPathOf = (): EntryPath => {
+  const entryPathOf = (from?: EntryPath): EntryPath => {
+    if (from) return from;
     if (page === 'search') return 'SEARCH';
     if (page === 'library') return 'PLAYLIST';
     return 'RECOMMEND';
@@ -800,22 +804,35 @@ export function useMupid(bootstrap: Bootstrap) {
     if (staying) return currentUidRef.current;
     return queue.find((entry) => entry.trackId === track.id)?.uid ?? null;
   };
-  const startPlayback = async (track: Track, start?: number, uid?: string | null) => {
+  const startPlayback = async (
+    track: Track,
+    start?: number,
+    uid?: string | null,
+    from?: EntryPath,
+  ) => {
     if (typeof track.musicId !== 'number' && !track.localAudio) return;
     // 추천으로 시작한 재생이면 그 사실을 함께 남긴다. 이게 없으면 "이 추천으로 튼
     // 곡을 끝까지 들었는가" 를 물어볼 수 없어 추천 성과를 잴 방법이 없다.
+    // 구간을 권한 추천이 먼저다. 구간 없이 곡만 권한 추천(오늘의 Moment)은 `recSource`
+    // 에 온다 — 둘을 한 자리에 담으면 화면이 없는 구간을 그린다 (mupid-data.ts).
     const rec = track.recommended?.recommendationId
       ? {
           id: String(track.recommended.recommendationId),
           type: 'SECTION' as const,
           rank: track.recommended.rank,
         }
-      : undefined;
+      : track.recSource
+        ? {
+            id: String(track.recSource.id),
+            type: track.recSource.type,
+            rank: track.recSource.rank,
+          }
+        : undefined;
     const slot = resolveQueueUid(track, uid);
     currentUidRef.current = slot;
     setCurrentUid(slot);
     if (typeof track.musicId === 'number') analytics.startPlay(
-      { trackId: track.musicId, entryPath: entryPathOf(), rec },
+      { trackId: track.musicId, entryPath: entryPathOf(from), rec },
       start ?? 0,
     );
     const id = ++requestId.current;
@@ -840,15 +857,33 @@ export function useMupid(bootstrap: Bootstrap) {
     }
   };
   /**
-   * 목록 밖에서 튼 곡을 큐 **맨 위**에 놓는다. 이미 담겨 있으면 그 자리를 걷어
-   * 올린다(중복 없음).
+   * 목록 밖에서 튼 곡을 큐에 놓는다. 이미 담겨 있으면 그 자리를 걷어 새 자리에
+   * 다시 놓는다(중복 없음).
+   *
+   * **자리는 담기와 같은 설정(`queueInsertPosition`)이 정한다.** 예전에는 `'top'`
+   * 이 박혀 있었다. 목록 밖에서 튼 곡이 큐에 들어오는 가장 흔한 길인데 그쪽이
+   * 설정을 무시하니, 맨 아래를 골라 두어도 새 곡이 늘 맨 위에 나타났다 —
+   * 게다가 방금 튼 곡이 맨 위에 서 있으므로 `afterCurrent` 로 담은 곡까지
+   * 둘째 줄로 들어와, 세 갈래를 고른 표가 전부 "맨 위" 로 보였다
+   * (S15P21A204-429, decision/0027).
+   *
+   * 자리가 어디든 **방금 튼 곡이 곧 재생 커서**다(`startPlayback` 이 이 자리를
+   * 받는다). 그래서 맨 아래에 놓아도 그 곡이 바로 들리고, 이어지는 곡은 거기서
+   * 부터 이어진다 — 0022 가 맨 위 삽입을 막은 이유(커서 뒤로 가서 영영 안 들림)
+   * 는 이 길에 해당하지 않는다.
    *
    * 재생 버튼은 여기저기 흩어져 있다 — 곡 목록·검색 결과·오늘의 Moment·저장한
    * 순간. **어디서 눌렀든 들은 곡은 목록에 남아야 한다.** 한 곳에 모아 두지
    * 않으면 이번처럼 한 경로가 조용히 빠진다.
    */
-  const liftToQueueTop = (track: Track) => {
-    const placed = placeInQueue(queue, track.id, 'top', currentUidRef.current, QUEUE_LIMIT);
+  const placePlayedTrack = (track: Track) => {
+    const placed = placeInQueue(
+      queue,
+      track.id,
+      queueInsertPosition,
+      currentUidRef.current,
+      QUEUE_LIMIT,
+    );
     setQueue(placed.entries);
     return placed;
   };
@@ -857,13 +892,19 @@ export function useMupid(bootstrap: Bootstrap) {
    * 곡을 튼다.
    *
    * `queueUid` 는 **재생 목록 안에서** 누른 경우다. 그 자리를 그대로 두고 그
-   * 자리를 튼다 — 목록에서 고른 줄이 누르자마자 맨 위로 튀어 오르면 방금 어디를
-   * 눌렀는지 놓친다. 목록 밖(검색·추천·상세)에서 튼 곡만 맨 위로 올린다.
+   * 자리를 튼다 — 목록에서 고른 줄이 누르자마자 자리를 옮기면 방금 어디를
+   * 눌렀는지 놓친다. 목록 밖(검색·추천·상세)에서 튼 곡만 자리를 다시 잡고,
+   * 그 자리는 담기와 같은 설정이 정한다(`placePlayedTrack`).
    */
   const play = (
     track: Track | null = activeRef.current,
     fromMoment = false,
     queueUid?: string,
+    /*
+     * 이 재생의 출처(`entry_path`). 누른 자리가 화면과 무관하게 뜻이 정해져 있을 때만
+     * 넘긴다 — 재생 목록은 `QUEUE`, 최근 들은 음악은 `RECENT`. 빠지면 화면으로 갈음한다.
+     */
+    from?: EntryPath,
   ) => {
     // 곡이 하나도 없으면 누를 것도 없다.
     if (!track) return;
@@ -879,8 +920,8 @@ export function useMupid(bootstrap: Bootstrap) {
     const sameTrack = activeRef.current?.id === track.id;
 
     /*
-     * 목록 밖에서 튼 곡은 **담겨 있든 아니든 맨 위로** 올린다. 담겨 있지 않았으면
-     * 새로 놓고, 담겨 있었으면 그 자리를 걷어 맨 위로 옮긴다(중복 없음).
+     * 목록 밖에서 튼 곡은 **담겨 있든 아니든 고른 자리로** 놓는다. 담겨 있지
+     * 않았으면 새로 놓고, 담겨 있었으면 그 자리를 걷어 옮긴다(중복 없음).
      *
      * 예전에는 담겨 있지 않은 곡을 틀면 카탈로그에서 상한까지 **나머지를 채웠다.**
      * 큐가 "다음에 들을 것" 을 담아 두는 임시 못이던 시절의 동작인데, 큐가 계정에
@@ -893,7 +934,7 @@ export function useMupid(bootstrap: Bootstrap) {
      * 아래에서 일시정지·재개로 갈릴 길인가. **같은 곡인지만으로는 가를 수 없다.**
      * 앱을 열면 마지막에 듣던 곡이 이미 `active` 인데 아직 울리지는 않는다. 그
      * 곡을 목록 밖에서 처음 누르면 "같은 곡" 이라는 이유로 큐를 건드리지 않아,
-     * 맨 위로 올라오지도 담기지도 않았다.
+     * 자리를 잡지도 담기지도 않았다.
      *
      * 실제로 재생기가 그 곡을 들고 있을 때만 토글이다.
      *
@@ -928,7 +969,7 @@ export function useMupid(bootstrap: Bootstrap) {
     let picked: string | undefined = queueUid;
     if (!queueUid && (!willToggle || !inQueue)) {
       // 큐 갱신은 다음 렌더에나 보이므로 이번 재생의 자리는 여기서 직접 넘긴다.
-      const placed = liftToQueueTop(track);
+      const placed = placePlayedTrack(track);
       picked = placed.uid;
       /*
        * 듣던 곡을 그대로 이어 트는 길은 `startPlayback` 을 지나지 않는다.
@@ -956,10 +997,10 @@ export function useMupid(bootstrap: Bootstrap) {
       // 서버가 고른 구간이다. 시작만 맞추고 끝을 두지 않으면 다음 구간까지 흘러
       // "이 구간을 권한다" 는 말과 들리는 것이 달라진다.
       previewEnd.current = track.recommended.end;
-      void startPlayback(track, track.recommended.start, picked);
+      void startPlayback(track, track.recommended.start, picked, from);
       return;
     }
-    void startPlayback(track, fromMoment ? track.moment : undefined, picked);
+    void startPlayback(track, fromMoment ? track.moment : undefined, picked, from);
   };
   const next = (direction = 1) => {
     previewEnd.current = null;
@@ -977,7 +1018,9 @@ export function useMupid(bootstrap: Bootstrap) {
     // 넘길 곡이 실제로 정해진 뒤에 남긴다. 이전·다음 어느 쪽이든 지금 곡을 끝까지
     // 듣지 않고 떠난 것이므로 스킵이다.
     analytics.skip(positionMs(), 'NEXT_BUTTON');
-    void startPlayback(target, 0, target.uid);
+    // 다음 곡은 재생 목록이 고른다. 어느 화면에서 눌렀든 출처는 목록이다 — 이걸
+    // 화면으로 갈음하면 같은 목록을 쭉 듣는 동안 곡마다 경로가 달라진다.
+    void startPlayback(target, 0, target.uid, 'QUEUE');
   };
   /**
    * 화면에 보이는 재생 목록. 큐의 자리 순서 그대로이고, 건너뛴 곡과 카탈로그에서
@@ -1291,7 +1334,8 @@ export function useMupid(bootstrap: Bootstrap) {
     }
     const current = activeRef.current;
     if (!current) return;
-    if (repeatMode === 'one') { void startPlayback(current, 0); return; }
+    // 자동으로 이어지는 재생은 전부 재생 목록이 고른 것이다(한곡 반복 포함).
+    if (repeatMode === 'one') { void startPlayback(current, 0, undefined, 'QUEUE'); return; }
     const uid = currentUidRef.current;
     if (uid) playedInCycle.current.add(uid);
     const pool = queueTracks;
@@ -1309,7 +1353,7 @@ export function useMupid(bootstrap: Bootstrap) {
     const target = shuffle ? remaining[Math.floor(Math.random() * remaining.length)] : stepQueue(pool, uid, 1);
     if (!target) { getPlayer()?.pause(); setPlaying(false); return; }
     playedInCycle.current.add(target.uid);
-    void startPlayback(target, 0, target.uid);
+    void startPlayback(target, 0, target.uid, 'QUEUE');
   };
   // 구독자는 한 번만 등록되므로 최신 규칙을 참조로 넘긴다.
   onEndedRef.current = onEnded;
@@ -1386,9 +1430,9 @@ export function useMupid(bootstrap: Bootstrap) {
     /*
      * 순간 재생도 **곡을 트는 것**이다. 오늘의 Moment·저장한 순간에서 누른 곡이
      * 재생 목록에 남지 않아 방금 들은 곡을 목록에서 찾을 수 없었다. 목록 밖에서
-     * 튼 것과 같게 맨 위에 놓는다.
+     * 튼 것과 같은 자리에 놓는다 — 담기와 같은 설정을 따른다.
      */
-    void startPlayback(first.track, first.start, liftToQueueTop(first.track).uid);
+    void startPlayback(first.track, first.start, placePlayedTrack(first.track).uid);
   };
   const stopSavedMomentPlayback = (trackId: number, mode?: 'all' | 'single') => {
     const sequence = momentSequence.current;
@@ -1972,11 +2016,27 @@ export function useMupid(bootstrap: Bootstrap) {
           .filter(entry => entry.trackId === result.evictedTrackId)
           .forEach(entry => playedInCycle.current.delete(entry.uid));
       }
+      /*
+       * 듣고 있던 자리를 걷어 냈으면 **재생 커서를 새 자리 번호로 옮긴다.**
+       * 옮긴 자리는 번호를 새로 받으므로(0023 규칙 3) 그러지 않으면 화면이 울리는
+       * 줄을 잃고(`currentQueueUid` 가 없는 번호를 가리킨다) 다음 곡 계산도 목록
+       * 맨 앞에서 다시 시작한다 — 듣는 곡을 다시 담은 것만으로 그랬다.
+       */
+      if (result.replacedCurrent) {
+        const before = currentUidRef.current;
+        // 셔플 한 바퀴에 들었다는 표시도 새 번호로 물려준다. 잃으면 방금 들은
+        // 곡이 그 바퀴에 한 번 더 걸린다.
+        if (before && playedInCycle.current.delete(before)) playedInCycle.current.add(result.uid);
+        currentUidRef.current = result.uid;
+        setCurrentUid(result.uid);
+      }
 
       // 알림은 한 줄뿐이다. 사용자가 몰랐을 법한 것부터 고른다 —
       // 설정대로 못 넣은 것 > 밀려난 곡 > 자리를 옮긴 것 > 그냥 담은 것.
       if (result.fellBack) {
         setToast('재생 중인 곡이 없어 맨 아래에 담았어요.');
+      } else if (result.stayed) {
+        setToast(`‘${track.title}’ 곡은 지금 듣는 곡이라 자리를 그대로 두었어요.`);
       } else if (result.evictedTrackId !== null) {
         setToast(`${QUEUE_LIMIT}곡이 초과되어 가장 오래된 곡이 삭제됩니다.`);
       } else if (result.moved) {

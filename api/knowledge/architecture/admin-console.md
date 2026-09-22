@@ -15,6 +15,9 @@
 | `admin/service/AdminResourceRegistry.java` | 기동 시 JPA 메타모델을 읽어 자원 목록을 만든다 |
 | `admin/service/AdminResourceServiceImpl.java` | 자원 하나를 읽고 쓰는 제네릭 CRUD |
 | `admin/service/AdminDashboardServiceImpl.java` | JVM·외부 저장소 상태 집계 |
+| `admin/service/AdminTimelineServiceImpl.java` | 곡의 가사·구간 타임라인 (MySQL 자원) |
+| `admin/service/AdminUserTimelineServiceImpl.java` | 회원의 행동 타임라인 (ClickHouse 이벤트) |
+| `analytics/repository/UserActivityRepository.java` | 그 타임라인이 읽는 ClickHouse 질의 |
 | `admin/controller/AdminClickHouseController.java` | ClickHouse 화면 프록시 (`/api/admin/clickhouse/**`) |
 | `admin/service/AdminClickHouseConsoleServiceImpl.java` | 열람권 발급·검사, 프록시 본체 |
 | `admin/service/AdminValueCodec.java` | JSON 값 → 엔티티 필드 타입 변환 |
@@ -24,13 +27,60 @@
 | `src/main/resources/templates/admin/login.html` | 로그인 화면 |
 | `docs/Admin/` | Bruno 컬렉션 |
 
+## 두 개의 타임라인은 서로 다른 것이다
+
+이름이 닮아서 같은 것으로 읽기 쉬운데, **원본도 축도 다르다.** 고칠 때 한쪽 규칙을
+다른 쪽에 가져오면 조용히 깨진다.
+
+| | 곡 가사·구간 (380) | 회원 행동 (430) |
+|---|---|---|
+| 원본 | MySQL. **관리 자원**(`lyric`·`musicSectionAnalysis`) | ClickHouse `listen_events`. 자원이 아니다 |
+| 가로축 | 곡 안의 ms. **곡마다 다르고 DB 에서 집계한다** | 하루. **언제나 24시간, 고정** |
+| 행 | 목록 조회와 같은 모양(`_id`·`_labels`) | 전용 record. 식별자로 고칠 대상이 없다 |
+| 편집 | 된다 — 같은 편집기, `PATCH /resource/…`. 드래그로 시각도 옮긴다 | **없다.** 이벤트 원본은 쌓기만 한다 |
+| 밴드 선언 | `AdminResourceRegistry.TIMELINES` (자원·시간 컬럼) | `AdminUserEventGroup` (이벤트 종류 묶음) |
+| 화면 진입 | 스키마의 `timeline_axes` 가 비어 있지 않은 자원 | 스키마의 `event_timeline` 이 참인 자원 + 왼쪽 목록 항목 |
+
+축을 그날 데이터에서 유도하지 않는 것이 행동 타임라인의 핵심이다. 유도하면 새벽에만
+쓴 날과 온종일 쓴 날의 눈금이 달라져 **날짜를 바꿀 때마다 같은 가로 위치가 다른 시각을
+뜻하게** 된다 — 그 순간 날짜끼리 비교할 수 없다.
+
+### 하트비트를 점으로 그리지 않는다
+
+`PLAY_PROGRESS` 는 5초 하트비트다. 한 곡을 3분 들으면 서른여섯 건이라, 점으로 늘어놓으면
+시간축이 그것으로 덮여 나머지 행동(좋아요·스킵·검색)이 보이지 않는다. 대신 `play_id` 로
+묶어 **재생 세션 막대 하나**로 접는다.
+
+버린 것이 아니다. 접은 건수를 `heartbeat_events` 로 함께 보내고 화면이 그 사실을 말한다 —
+안 그러면 하루 이벤트 수와 시간축의 항목 수가 크게 어긋나 보여 화면을 의심하게 된다.
+
+> 막대의 **길이**(걸린 시간)와 **실제 들은 시간**(`listened_ms`)은 다르다. 일시정지와
+> 앞으로감기가 그 차이라, 둘을 함께 보여 주지 않으면 막대가 청취 시간으로 읽힌다.
+
+### ClickHouse 를 읽을 때 지켜야 하는 세 가지
+
+`analytics/repository/UserActivityRepository` 머리말에 그대로 적어 두었다. **하나라도
+빠지면 오류 없이 값만 틀린다.**
+
+1. **Distributed 테이블(`listen_events`)만 읽는다.** Kafka 적재 경로가 샤딩 키를 타지
+   않아 한 사용자의 이벤트가 두 샤드에 흩어진다 — 로컬 테이블을 읽으면 하루치가 절반만 온다.
+2. **`GROUP BY event_id` 로 감싼다.** 원본이 `ReplicatedReplacingMergeTree` 라 병합 전에는
+   같은 이벤트가 여러 행으로 남아 있다.
+3. **보낼 때는 문자열, 받을 때는 숫자.** 시각을 `toDateTime64(?, 3, 'Asia/Seoul')` 로 못
+   박아 보내고, 돌려받을 때는 `toUnixTimestamp64Milli` 로 받는다. 숫자에는 시간대가 없어
+   드라이버가 끼어들 자리가 없다.
+
+`position_ms - from_ms` 를 그냥 빼지 않는 것도 같은 부류다. 뒤집힌 하트비트에서 `UInt32`
+언더플로가 나 40억에 가까운 양수가 되고, 그 한 건이 그날 청취 시간을 통째로 망가뜨린다.
+
 ## 자원 목록은 손으로 관리하지 않는다
 
 `AdminResourceRegistry` 는 생성자에서 `EntityManagerFactory.getMetamodel()` 을 읽어 **`@Entity` 전부**를 자원으로 만든다. 지금 30종이다. 엔티티를 추가하면 관리자 화면에도 저절로 나타난다.
 
 도메인마다 관리 컨트롤러를 손으로 쓰지 않은 이유가 이것이다. 엔티티가 서른 개이고 앞으로도 늘 텐데, 손으로 쓰면 새 엔티티가 생길 때마다 조용히 빠진다.
 
-손으로 관리하는 것은 **한글 이름(`LABELS`)과 분류(`CATEGORIES`) 표 둘뿐**이다. 코드에서 유도할 수 없기 때문이다. 표에 없는 엔티티도 동작에는 지장이 없고 클래스 이름과 `"기타"` 로 나온다. **엔티티를 추가하면 이 두 표에도 한 줄씩 넣는다.**
+손으로 관리하는 것은 **한글 이름(`LABELS`)과 분류(`CATEGORIES`) 표 둘뿐**이다 (자식
+링크·타임라인 선언은 "보여 줄 것만" 적는 별개의 표다). 코드에서 유도할 수 없기 때문이다. 표에 없는 엔티티도 동작에는 지장이 없고 클래스 이름과 `"기타"` 로 나온다. **엔티티를 추가하면 이 두 표에도 한 줄씩 넣는다.**
 
 자원 이름은 엔티티 이름의 첫 글자를 내린 것이다 — `MusicComment` → `musicComment`.
 
@@ -240,6 +290,15 @@ DENY·SAMEORIGIN 모드에서 기존 헤더를 확인하지 않고 `setHeader` �
 - 오류 응답이 **어느 필드가 잘못됐는지 말하지 않는다.** `ErrorResponse.errorDetails` 를 채우는 곳은 `GlobalExceptionHandler.invalidArgs` 하나뿐이고 거기에 끼려면 `BindException` 이어야 한다. 지금은 서버 로그에만 남는다. 화면이 타입별 입력칸(숫자·선택·날짜)을 그려 애초에 틀린 값이 잘 가지 않게 하는 것으로 대신하고 있다.
 - `GET /api/v1/admin/resource` 는 자원 수만큼 `COUNT` 쿼리를 돌린다. 행이 아주 많아지면 느려진다.
 - 일괄 삭제가 없다. 화면에서 한 행씩 지운다.
+- **회원 행동 타임라인에 회원을 이름으로 찾는 길이 없다.** 번호를 치거나 회원 목록에서
+  **행동** 버튼으로 들어간다. 목록에는 이메일 검색이 있으므로 길이 막히지는 않는다.
+- 회원 행동 타임라인의 창은 **92일**까지다. 그보다 긴 기간은 날짜 막대가 1~2px 이 되어
+  날을 고를 수 없다 → 주·월 집계로 답할 일이다.
+- **하루 24시간 축에서 몇 분짜리 재생 막대는 몇 px 밖에 안 되어 그 안의 곡 이름이 보이지
+  않는다.** 축을 그날 데이터에 맞춰 늘이면 날짜끼리 비교할 수 없게 되므로 그대로 두었고,
+  마우스를 올리면 곡·진입 경로·실제 청취 시간이 설명에 전부 나온다.
+- 하루 이벤트가 800건(재생 세션 300건)을 넘으면 **그날의 뒤쪽이 잘린다.** 잘린 사실은
+  밴드에 표시되지만, 뒤쪽을 보려면 ClickHouse 콘솔을 써야 한다.
 - 관리자 행동이 감사 로그로 남지 않는다. ClickHouse 콘솔은 **연 사람과 시각만**
   서버 로그에 남는다 — 거기서 무슨 쿼리를 돌렸는지는 ClickHouse 의 `system.query_log`
   를 봐야 한다.

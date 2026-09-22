@@ -25,6 +25,10 @@
  * // 추천에서 들어왔다면 추천 응답이 준 값을 그대로 되돌려준다.
  * analytics.startPlay({ trackId, entryPath: 'RECOMMEND', rec: { id, type: 'SECTION', rank: 2 } });
  *
+ * // `RECOMMEND` 는 화면의 기본값이 아니다. 누른 자리가 화면과 무관하게 뜻이 정해져
+ * // 있으면 그 값을 쓴다 — 재생 목록은 `QUEUE`, 최근 들은 음악은 `RECENT`,
+ * // 아티스트 패널은 `ARTIST`. 앱에서는 `hooks/use-mupid.ts` 의 `entryPathOf` 가 받는다.
+ *
  * // 슬라이더를 놓았을 때 (프로그램이 거는 seek 에서는 부르지 않는다)
  * analytics.seek(beforeMs, afterMs);
  *

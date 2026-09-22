@@ -1,0 +1,389 @@
+info:
+  name: 사용자 행동 타임라인
+  type: http
+  seq: 12
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/admin/resource/user/{{USER_ID}}/timeline"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+  params:
+    - name: from
+      value: ""
+      type: query
+      enabled: false
+    - name: to
+      value: ""
+      type: query
+      enabled: false
+    - name: date
+      value: ""
+      type: query
+      enabled: false
+
+runtime:
+  variables:
+    - name: USER_ID
+      value: "1"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "user_id": 1,
+              "email": "listener@mupid.dev",
+              "nickname": "듣는사람",
+              "status": "ACTIVE",
+              "from": "2026-08-24",
+              "to": "2026-09-22",
+              "date": "2026-09-21",
+              "time_zone": "Asia/Seoul",
+              "has_activity": true,
+              "day_events": 412,
+              "day_listened_ms": 4321000,
+              "heartbeat_events": 361,
+              "days": [
+                {
+                  "date": "2026-08-24",
+                  "events": 0,
+                  "plays": 0,
+                  "tracks": 0,
+                  "listened_ms": 0,
+                  "selected": false
+                },
+                {
+                  "date": "2026-09-21",
+                  "events": 412,
+                  "plays": 12,
+                  "tracks": 9,
+                  "listened_ms": 4321000,
+                  "selected": true
+                }
+              ],
+              "bands": [
+                {
+                  "group": "SESSION",
+                  "label": "재생 세션",
+                  "kind": "RANGE",
+                  "total": 12,
+                  "truncated": false,
+                  "rows": [
+                    {
+                      "id": "6f1a9c2e-4f7b-4a51-9d0e-2c7c1b3e5a10",
+                      "event_type": "PLAY_SESSION",
+                      "label": "재생",
+                      "at_ms": 68400000,
+                      "end_ms": 68612000,
+                      "at": "19:00:00",
+                      "track_id": 14,
+                      "track_title": "14-Nocturne",
+                      "play_id": "6f1a9c2e-4f7b-4a51-9d0e-2c7c1b3e5a10",
+                      "entry_path": "RECOMMEND",
+                      "position_ms": null,
+                      "detail": null,
+                      "events": 44,
+                      "listened_ms": 208000
+                    }
+                  ]
+                },
+                {
+                  "group": "PLAYBACK",
+                  "label": "재생 제어",
+                  "kind": "POINT",
+                  "total": 26,
+                  "truncated": false,
+                  "rows": [
+                    {
+                      "id": "b2b0f0c1-8a3d-4a2e-9f11-0c5a6d7e8f90",
+                      "event_type": "PLAY_START",
+                      "label": "재생 시작",
+                      "at_ms": 68400000,
+                      "end_ms": null,
+                      "at": "19:00:00",
+                      "track_id": 14,
+                      "track_title": "14-Nocturne",
+                      "play_id": "6f1a9c2e-4f7b-4a51-9d0e-2c7c1b3e5a10",
+                      "entry_path": "RECOMMEND",
+                      "position_ms": 0,
+                      "detail": null,
+                      "events": null,
+                      "listened_ms": null
+                    }
+                  ]
+                },
+                {
+                  "group": "NAVIGATION",
+                  "label": "탐색·스킵",
+                  "kind": "POINT",
+                  "total": 9,
+                  "truncated": false,
+                  "rows": [
+                    {
+                      "id": "d41d8cd9-8f00-4204-a980-0998ecf8427e",
+                      "event_type": "SEARCH",
+                      "label": "검색",
+                      "at_ms": 68280000,
+                      "end_ms": null,
+                      "at": "18:58:00",
+                      "track_id": null,
+                      "track_title": null,
+                      "play_id": null,
+                      "entry_path": null,
+                      "position_ms": null,
+                      "detail": "녹턴",
+                      "events": null,
+                      "listened_ms": null
+                    }
+                  ]
+                },
+                {
+                  "group": "FEEDBACK",
+                  "label": "피드백",
+                  "kind": "POINT",
+                  "total": 16,
+                  "truncated": false,
+                  "rows": [
+                    {
+                      "id": "9b2c3d4e-5f60-4718-8293-a4b5c6d7e8f9",
+                      "event_type": "LIKE",
+                      "label": "좋아요",
+                      "at_ms": 68520000,
+                      "end_ms": null,
+                      "at": "19:02:00",
+                      "track_id": 14,
+                      "track_title": "14-Nocturne",
+                      "play_id": "6f1a9c2e-4f7b-4a51-9d0e-2c7c1b3e5a10",
+                      "entry_path": "RECOMMEND",
+                      "position_ms": 120000,
+                      "detail": "TRACK",
+                      "events": null,
+                      "listened_ms": null
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+  - name: 404 없는 회원
+    response:
+      status: 404
+      statusText: Not Found
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_RECORD_NOT_FOUND",
+            "message": "요청한 레코드를 찾을 수 없습니다.",
+            "error_details": null
+          }
+  - name: 400 기간이 올바르지 않음
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_DATE_RANGE",
+            "message": "조회 기간이 올바르지 않습니다.",
+            "error_details": null
+          }
+  - name: 503 ClickHouse 를 읽지 못함
+    response:
+      status: 503
+      statusText: Service Unavailable
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_ANALYTICS_UNAVAILABLE",
+            "message": "분석 데이터를 읽지 못했습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 사용자 행동 타임라인
+
+  `GET /api/v1/admin/resource/user/{id}/timeline` · `ROLE_ADMIN`
+
+  회원 한 명의 **행동 데이터를 날짜에 따라** 그리기 위한 응답입니다 (S15P21A204-430).
+  화면의 회원 행에 있는 **행동** 버튼과 왼쪽 목록의 **사용자 행동 타임라인** 항목이
+  이걸 부릅니다.
+
+  ## 두 층입니다
+
+  | 층 | 필드 | 무엇 |
+  | --- | --- | --- |
+  | 날짜 막대 | `days[]` | 창 전체. **어느 날에 무엇이 있었는가** |
+  | 하루 시간축 | `bands[]` | 그중 하루. **언제 무엇을 했는가** |
+
+  하나만으로는 요구가 되지 않습니다. 막대만 있으면 그날 무엇을 했는지가 없고, 시간축만
+  있으면 **어느 날을 봐야 하는지 알 방법이 없습니다.**
+
+  ## 원본은 ClickHouse 입니다
+
+  요구가 말하는 "행동 데이터" 는 MySQL 에 없습니다. 재생·스킵·되감기·좋아요는 전부
+  `listen_events` 한 스트림이고, 그 표는 엔티티가 아니라 **관리 자원으로 올라오지도
+  않습니다**(`GET /resource` 에 없습니다). 그래서 목록 조회로는 만들 수 없습니다.
+
+  **이 엔드포인트는 조회 전용입니다.** 곡 타임라인은 행을 그 자리에서 고칠 수 있지만
+  (행의 모양이 목록 조회와 같아서), 이벤트 원본은 고치지 않고 쌓기만 하는 자료입니다.
+  응답의 `id` 는 행을 구분하는 데만 씁니다 — `PATCH` 할 경로가 없습니다.
+
+  ## 요청
+
+  | 파라미터 | 설명 |
+  | --- | --- |
+  | `from`·`to` | 날짜 막대가 덮는 창(`YYYY-MM-DD`, 양끝 포함). **둘 다 주거나 둘 다 생략합니다** |
+  | `date` | 시간축에 펼칠 하루. 생략하면 **창 안에서 활동이 있었던 가장 최근 날** |
+
+  ### 왜 한쪽만 주면 400 인가
+
+  나머지를 서버가 지어내면 **클라이언트는 받은 것을 자기가 요청한 창으로 읽습니다.**
+  어느 기간을 보고 있는지 모르는 채로 "이 기간엔 기록이 없다" 를 읽게 됩니다. 둘 다
+  생략하면 **오늘로 끝나는 30일**이라고 분명히 정해 두었습니다.
+
+  ### 왜 `date` 를 당겨 넣지 않고 거절하는가
+
+  조용히 창 안으로 당기면 화면이 고른 날과 서버가 그린 날이 달라지고, 그 어긋남은
+  **다른 날의 기록을 그 날의 것으로 읽게** 만듭니다.
+
+  ### 상한
+
+  창은 **92일**까지입니다. 질의 비용이 아니라 **화면이 정한 상한**입니다 — 날짜 막대는
+  기간 전체를 `GROUP BY` 한 번으로 세므로 날 수에 비례해 느려지지 않지만, 그보다 길면
+  막대 하나가 1~2px 이 되어 "날을 고른다" 는 이 화면의 쓰임 자체가 사라집니다.
+  (일별 리포트의 31일 제한과 근거가 다릅니다. 그쪽은 날마다 집계를 다시 돌립니다.)
+
+  ## 날짜와 시간대
+
+  `time_zone` 이 `Asia/Seoul` 입니다. `occurred_at` 이
+  `DateTime64(3, 'Asia/Seoul')` 이므로 하루의 경계도 그 시간대여야 합니다 —
+  **브라우저 시간대로 다시 계산하지 마세요.**
+
+  `days[]` 에는 **기록이 없는 날도 0 으로 들어옵니다.** 빼면 막대에 구멍이 생겨
+  "그날은 아무것도 안 했다" 와 "그날은 범위 밖" 이 구분되지 않습니다.
+
+  어느 날을 펼쳤는지는 `days[].selected` 가 말합니다. 화면이 날짜 문자열을 비교하게 두면
+  표기가 어긋나는 순간 **아무 막대도 강조되지 않습니다.**
+
+  ## 항목의 위치는 `at_ms` 입니다
+
+  `at_ms` 는 **그날 자정부터의 ms**(0 ~ 86,400,000)입니다. 화면은 이것을
+  `left: at_ms / 86400000 * 100%` 로 놓습니다.
+
+  시각 문자열(`at`)도 함께 보내지만 **위치를 그것으로 계산하지 마세요.** 파싱이
+  브라우저 시간대를 타서 항목이 몇 시간씩 밀립니다. 가사·구간 타임라인이 곡 안의 ms 를
+  그대로 보내는 것과 같은 규칙입니다.
+
+  가로축의 최대값은 **언제나 하루**입니다. 응답에 싣지 않습니다 — 그날 데이터에서
+  유도하면 새벽에만 쓴 날과 온종일 쓴 날의 눈금이 달라져, 날짜를 바꿀 때마다 같은 가로
+  위치가 다른 시각을 뜻하게 됩니다.
+
+  자정을 넘겨 이어진 재생은 **그날의 양끝으로 잘립니다.** 안 자르면 막대가 축 밖으로
+  나가 폭이 잘못 읽힙니다.
+
+  ## 밴드 = 한 줄
+
+  | `group` | `kind` | 무엇 |
+  | --- | --- | --- |
+  | `SESSION` | `RANGE` | 재생 한 번(`play_id`)을 통째로 묶은 막대 |
+  | `PLAYBACK` | `POINT` | 재생 시작·일시정지·완료·오류·끊김 |
+  | `NAVIGATION` | `POINT` | 되감기·앞으로감기·곡 넘김·검색 |
+  | `FEEDBACK` | `POINT` | 좋아요·관심없음·구간 지정·재생목록·댓글 |
+  | `OTHER` | `POINT` | **표가 모르는 이벤트.** 있을 때만 나옵니다 |
+
+  이벤트 종류마다 밴드를 만들지 않는 이유는, 22종이면 화면이 스물두 줄이 되고 하루에
+  실제로 일어나는 것은 대여섯 종이라 **빈 줄이 열대여섯 줄** 깔리기 때문입니다.
+
+  `OTHER` 를 두는 이유는 반대입니다. 수집기가 받는 종류는 늘어나는데, 표가 아직 모르는
+  이벤트가 **조용히 사라지면** 화면은 "그날 그 행동이 없었다" 고 거짓말을 합니다.
+  모르는 것은 `label` 을 지어내지 않고 원래 값 그대로 보여 줍니다.
+
+  ## `PLAY_PROGRESS` 는 점으로 그리지 않습니다
+
+  5초 하트비트입니다. 한 곡을 3분 들으면 서른여섯 건이라 점으로 늘어놓으면 시간축이
+  그것으로 덮여 나머지 행동이 보이지 않습니다. 대신 **`SESSION` 막대의 길이와 청취
+  시간**으로 남습니다.
+
+  버린 것이 아니라는 사실을 `heartbeat_events` 가 말합니다. 그 수가 없으면 `day_events`
+  와 시간축의 항목 수가 크게 어긋나 보여, 보는 사람이 화면을 의심하게 됩니다.
+
+  > 막대의 **길이**(`end_ms - at_ms`)와 **실제 들은 시간**(`listened_ms`)은 다릅니다.
+  > 일시정지와 앞으로감기가 그 차이입니다.
+
+  ## 잘림은 서버가 말합니다
+
+  한 응답에 실리는 이벤트는 **800건**, 재생 세션은 **300건**까지입니다. 걸리면 시각
+  오름차순이므로 **그날의 뒤쪽이 잘립니다.**
+
+  `total` 은 목록이 아니라 **따로 센 값**이라 잘려도 정확합니다. `truncated` 도 서버가
+  계산해 보냅니다 — 화면이 `rows.length < total` 로 판단하게 두면 그 비교가 어긋나는
+  순간 잘린 사실이 조용히 사라집니다.
+
+  ## 값이 없으면 키가 `null` 입니다
+
+  `listen_events` 는 한 표에 22종을 담고 있어서, 어떤 종류에는 뜻 없는 기본값(빈
+  문자열·0)이 다른 종류의 컬럼에 그대로 들어 있습니다. 서버가 **그 이벤트에서 뜻이 있는
+  것만** 골라 내보냅니다.
+
+  | 필드 | 언제 채워지나 |
+  | --- | --- |
+  | `track_id`·`track_title` | 곡이 있는 이벤트. `SEARCH` 는 둘 다 `null` |
+  | `track_title` | 곡을 찾았을 때. **못 찾아도 `track_id` 는 남습니다** |
+  | `play_id` | 재생 중의 이벤트. 영 UUID 는 보내지 않습니다 |
+  | `position_ms` | 곡이 있는 이벤트 |
+  | `detail` | 그 종류의 고유 값 — 검색어·스킵 방식·반응 대상·실패 사유·재생목록/댓글 번호 |
+  | `end_ms`·`events`·`listened_ms` | `SESSION` 밴드만 |
+
+  `event_type` 이 `PLAY_SESSION` 인 것은 **합성 값**입니다. 그런 이벤트는 존재하지
+  않습니다 — `play_id` 로 묶어 만든 것이고, 그 사실이 응답에 드러나야 합니다.
+
+  ## 질의 수는 날 수·행 수와 무관합니다
+
+  ClickHouse 4회(날짜 집계 1 · 종류별 건수 1 · 이벤트 목록 1 · 재생 세션 1),
+  MySQL 2회(회원 1 · 곡 제목 `IN` 1). 창이 92일이든 7일이든, 이벤트가 열 건이든 천
+  건이든 같습니다.
+
+  ## 탈퇴한 회원
+
+  **404 가 아닙니다.** 이벤트가 남아 있고 그 기록을 보려는 것이 이 화면입니다.
+  `status` 를 함께 보내므로 화면이 그 사실을 말할 수 있습니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_RECORD_NOT_FOUND` | 404 | 그 회원이 없음 |
+  | `MUPID_INVALID_DATE_RANGE` | 400 | 창이 한쪽만 있거나, 뒤집혔거나, 미래를 포함하거나, 92일을 넘거나, `date` 가 창 밖 |
+  | `MUPID_ANALYTICS_UNAVAILABLE` | 503 | ClickHouse 를 읽지 못함. 사유는 서버 로그 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

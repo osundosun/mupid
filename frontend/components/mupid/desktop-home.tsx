@@ -162,8 +162,16 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
             </button>
           </header>
           <div className="desktop-recent-list">
+            {/* 다시 듣기는 추천이 아니다 — 홈에 있어도 `RECENT` 로 남긴다. */}
             {recent.map((track) => (
-              <TrackRow key={track.id} track={track} model={m} queueable showDetail={false} />
+              <TrackRow
+                key={track.id}
+                track={track}
+                model={m}
+                queueable
+                showDetail={false}
+                onPlay={() => m.play(track, false, undefined, 'RECENT')}
+              />
             ))}
           </div>
           {!recent.length && (

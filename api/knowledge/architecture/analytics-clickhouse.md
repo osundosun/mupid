@@ -144,7 +144,7 @@ TTL toDateTime(<시각 컬럼>) + INTERVAL 18 MONTH
 | `skip_type` | 조건 | `weight` |
 | --- | --- | --- |
 | `SKIP_AFTER_HOOK` | `play_section_coverage` 를 재생 단위로 합산했을 때 그 `(user_id, section_uid)` 를 `listened_ms > section_ms * 0.5` 로 들은 재생이 있음 | `0.0` |
-| `EARLY_SKIP` | `into_ms <= 5000` 또는 `into_ms <= sec_len * 0.2` | `entry_path='RECOMMEND'` 일 때 `NEXT_BUTTON` 이면 `-1.0`, 아니면 `-0.4`. 그 외 `0.0` |
+| `EARLY_SKIP` | `into_ms <= 5000` 또는 `into_ms <= sec_len * 0.2` | `entry_path='RECOMMEND'` 일 때 `NEXT_BUTTON` 이면 `-1.0`, 아니면 `-0.4`. 그 외 `0.0`<br>⚠ 2026-09-22 부터 `QUEUE`·`RECENT`·`ARTIST` 가 여기서 빠진다 → [recommendation.md](../domain/recommendation.md) |
 | `LATE_SKIP` | `into_ms >= sec_len * 0.8` | `0.3` |
 | `MID_SKIP` | 나머지 | `0.0` |
 

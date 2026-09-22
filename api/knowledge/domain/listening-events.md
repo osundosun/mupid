@@ -87,12 +87,16 @@
 
 | 필드 | 값 |
 |---|---|
-| `entry_path` | `RECOMMEND` · `SEARCH` · `PLAYLIST` |
+| `entry_path` | `RECOMMEND` · `SEARCH` · `PLAYLIST` · `QUEUE` · `RECENT` · `ARTIST` |
 | `skip_trigger` | `NEXT_BUTTON` · `OTHER_TRACK` |
 | `target` | `TRACK` · `SECTION` |
 | `rec_type` | `HOME` · `SECTION` · `CUSTOM` |
 
-`AUTOPLAY` 는 `entry_path` 에서 뺐다. 인플레이어 다음곡 추천이 없으므로 **검색 결과에서 이어 재생되는 것도 `SEARCH` 로 남긴다** — 그래야 나중에 "검색 유입이었는데 추천이 정확했다" 를 구분해 검색 노출 순서를 조정할 수 있다.
+`AUTOPLAY` 는 `entry_path` 에서 뺐다. 인플레이어 다음곡 추천이 없으므로 **검색 결과에서 이어 재생되는 것도 `SEARCH` 로 남긴다** — 그래야 나중에 "검색 유입이었는데 추천이 정확했다" 를 구분해 검색 노출 순서를 조정할 수 있다. 큐가 알아서 넘긴 재생은 `AUTOPLAY` 가 아니라 `QUEUE` 다. 그 순서를 만든 것도 사용자이므로 추천이 한 선택으로 셀 수 없다.
+
+**`RECOMMEND` 는 화면의 기본값이 아니다.** `QUEUE`(재생 목록에서 다시 꺼냄)·`RECENT`('최근 들은 음악' 에서 다시 틀기)·`ARTIST`(아티스트 패널에서 그 아티스트의 다른 곡 찾아 듣기)는 **어느 화면에서 눌러도 뜻이 같아** 화면으로 갈음하지 않는다. 셋 모두 사용자가 스스로 꺼낸 재생이라, `RECOMMEND` 에 섞이면 추천이 한 일과 사용자가 원래 알던 곡이 한 통에 들어가 추천 성과가 부풀려진다. 추천 지표를 볼 때는 `entry_path = 'RECOMMEND'` 에 더해 `rec_id` 가 실렸는지까지 본다.
+
+> ⚠ **값을 늘릴 때는 API 의 `EntryPath` enum 을 먼저 늘린다.** `normalize()` 는 모르는 값을 400 으로 거절하지 않고 **빈 문자열로 떨어뜨린다.** 프론트가 먼저 나가면 그 사이 재생은 경로 없이 원본 테이블에 박히고 되돌릴 수 없다. ClickHouse 쪽은 `LowCardinality(String)` 이라 스키마 변경이 필요 없다.
 
 값 검증은 수집기가 한다. ClickHouse `CONSTRAINT` 로 막지 않는다 — 한 건이 어긋나면 블록 전체가 거부돼 Kafka 소비가 멈춘다.
 
@@ -205,7 +209,18 @@ MV 는 이 구간을 **곡 구간 경계로 쪼갠다.** 하트비트가 두 구
 
 수집 경로는 끝까지 이어졌다. 남은 것은 추천을 서빙할 때 `rec_impressions` 를 남기는 일이다.
 
-`rec_id` · `rec_type` · `rec_rank` 는 아직 비어 나간다 — 추천 응답이 그 셋을 돌려주지 않아 `startPlay` 에 실을 값이 없다. `rec_impressions` 와 같은 작업이다.
+`rec_id` · `rec_type` · `rec_rank` 는 **추천 자리마다 다르다.** 추천 응답이 상관 키를 주는 곳에서만 실린다.
+
+| 추천 자리 | `rec_id` | `rec_type` |
+|---|---|---|
+| 홈 "취향에 이어지는 음악" (`/recommendation/next`) | ✅ | `SECTION` |
+| 오늘의 Moment (`/recommendation/daily`) | ✅ | `HOME` |
+| └ 배치 미실행 시 폴백 묶음 (`첫 모먼트`) | ❌ 저장하지 않아 `recommendation_id` 가 `0` 이다 — `0` 은 가리킬 대상이 없어 싣지 않는다 | — |
+| 챗봇 추천 곡 | 서버가 `recommendation_id` 를 준 턴만 | `SECTION` |
+| 닮은 구간 (`/music/{id}/similar-section`) | ❌ 개인화가 없어 서버가 발급하지 않는다 | — |
+| 추천 서버 무응답 시 홈 대체 목록 | ❌ 추천이 아니다 (`pickForYou` 가 카탈로그로 채운다) | — |
+
+> **추천 성과를 볼 때는 `entry_path = 'RECOMMEND'` 만으로 세지 않는다.** 그 값은 화면으로 갈음한 추정이라 위 표의 아래 두 줄이 섞인다. `rec_id != ''` 를 함께 걸면 추천 응답이 실제로 만든 재생만 남는다 — 대신 닮은 구간은 빠지므로, 그쪽을 세려면 `rec_impressions` 가 필요하다.
 
 ## 전송이 실패했을 때
 

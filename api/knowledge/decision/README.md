@@ -30,9 +30,11 @@
 | [0020](0020-lyric-bulk-replace.md) | 가사는 곡 단위로 통째로 갈아 끼운다 | 채택 · 구현 완료 |
 | [0021](0021-query-plan-instead-of-nl-interpreter.md) | 자연어는 대화 모델이 조건으로 바꾼다 — 별도 해석기를 세우지 않는다 | 채택 |
 | [0022](0022-play-queue-in-redis.md) | 재생 큐는 Redis 에 사용자당 문서 하나로 둔다 | 채택 · 규칙 일부 대체됨 |
-| [0023](0023-queue-insert-position-is-a-user-choice.md) | 담을 자리는 사용자가 고르고, 큐에 같은 곡은 한 번만 둔다 | 채택 |
+| [0023](0023-queue-insert-position-is-a-user-choice.md) | 담을 자리는 사용자가 고르고, 큐에 같은 곡은 한 번만 둔다 | 채택 · 재생 자리 규칙 대체됨 |
 | [0024](0024-mysql-ngram-fulltext-for-catalog-search.md) | 카탈로그 통합 검색은 MySQL ngram FULLTEXT 로 시작한다 | 채택 |
 | [0025](0025-mood-codes-32-48-are-frozen.md) | 무드 코드 `code_id` 32~48 을 동결하고 FE·BE 는 이 구간만 쓴다 | 채택 · **동결 규약 · 변경 전 확인 필수** |
+| [0026](0026-waveform-is-precomputed-by-batch.md) | 파형은 배치가 미리 계산하고, 기기 계산은 폴백으로 남긴다 | 채택 |
+| [0027](0027-played-track-follows-the-chosen-insert-position.md) | 목록 밖에서 튼 곡도 담을 자리 설정을 따른다 | 채택 · 0023 규칙 3 대체 |
 
 ## 먼저 볼 것
 

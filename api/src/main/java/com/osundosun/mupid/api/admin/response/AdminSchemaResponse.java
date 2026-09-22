@@ -44,7 +44,18 @@ public record AdminSchemaResponse(
      * 각 밴드는 자원 이름·시간 필드·정렬 기준을 담으므로 **화면에 자원 이름이 없다** —
      * 자원이 늘어도 화면은 그대로다.
      */
-    List<AdminTimelineAxis> timelineAxes
+    List<AdminTimelineAxis> timelineAxes,
+
+    /**
+     * 이 자원의 행에서 **행동 타임라인**으로 건너갈 수 있는가 (S15P21A204-430).
+     * 회원(`user`)에만 참이다.
+     *
+     * <p>{@link #timelineAxes} 처럼 목록을 주지 않는 이유는, 그 화면이 그리는 것이
+     * 관리 자원이 아니라 ClickHouse 의 이벤트 스트림이기 때문이다 — 늘어놓을 밴드를
+     * 자원 이름으로 선언할 수가 없다. 그래도 <b>판단은 서버가 한다</b>: 화면이
+     * "회원이면 행동 타임라인" 이라고 알고 있으면 대상이 늘 때마다 템플릿을 고쳐야 한다.
+     */
+    boolean eventTimeline
 
 ) {
 }

@@ -74,17 +74,25 @@ const toTurns = (messages: ChatMessage[]): AiChatTurn[] =>
  * 배포 환경에서 "추천받은 3곡 중 3곡은 지금 재생할 수 있는 목록에 없어 빼뒀어요" 만
  * 뜨고 곡이 하나도 안 보이던 것이 이것이다.
  *
- * **재생할 수 없는 곡은 여전히 버린다.** 눌러도 안 나는 줄을 목록에 남기지 않으려는
- * 것인데, 이제 그 판단을 카탈로그에 들어 있느냐가 아니라 **서버가 말해 주는 실제
- * 신호**(`playable` — 완료된 스트림이 있는가)로 한다. 버린 건수는 숨기지 않는다
- * (`missingTracksNotice`).
+ * **재생할 수 없는 곡은 서버가 이미 걷어냈다** (S15P21A204-426). 예전에는 여기까지
+ * 내려와 화면이 거르고 "N곡은 아직 재생할 수 없어 빼뒀어요" 라고 알렸는데, 사용자가
+ * 할 수 있는 일이 없는 의문만 남겼다. 지금은 추천 건수에서도 빠져 나온다.
+ *
+ * 아래 `playable` 검사는 **안전망**이다. 눌러도 소리가 나지 않는 줄은 어떤 경우에도
+ * 그리지 않는다. 다만 여기까지 왔다는 것은 서버가 계약을 어겼다는 뜻이라, 사용자에게
+ * 설명할 일이 아니라 콘솔에 남길 일이다.
  */
 const resolve = (
   recommended: AiRecommendedTrack[],
   recommendationId: number | null,
 ): Track[] =>
   recommended.flatMap((item) => {
-    if (!item.music.playable) return [];
+    if (!item.music.playable) {
+      console.warn(
+        `[ai] music_id ${item.music.music_id} 는 재생할 수 없는데 추천으로 내려왔습니다.`,
+      );
+      return [];
+    }
     const base = toTrack(item.music);
     const start = item.start_time_ms / 1000;
     const end = item.end_time_ms / 1000;
@@ -134,32 +142,33 @@ const recommendedCount = (calls: ChatToolCall[] | undefined): number =>
   );
 
 /**
- * 추천 건수와 화면에 그려진 곡 수가 다르면, 그 차이를 사용자 문구로 옮긴다
- * (S15P21A204-421).
+ * 사용자가 가려 둔 곡이 있으면 그 사실을 한 줄로 남긴다 (S15P21A204-421).
  *
  * ## 왜 필요한가
  *
  * 답변은 "3곡 골라뒀어요" 인데 카드는 2장인 화면이 있었다. 한 곡이 어디로 갔는지
  * 화면 어디에도 없었다 — 이 저장소가 반복해 겪은 조용한 실패다.
  *
- * ## 지금 곡이 빠지는 자리는 둘뿐이다
+ * ## 지금 곡이 빠지는 자리는 하나뿐이다
  *
- *   1) **아직 재생할 수 없는 곡.** 완료된 스트림이 없어 `playable` 이 false 다.
- *      `resolve()` 가 버린다 — 눌러도 안 나는 줄을 목록에 남기지 않으려는 것이다.
- *   2) **사용자가 가린 곡.** 답변이 온 뒤 '관심 없음' 으로 표시한 곡을 곡 목록이 가린다.
+ * **사용자가 가린 곡.** 답변이 온 뒤 '관심 없음' 으로 표시한 곡을 곡 목록이 가린다.
+ * 사용자 자신이 한 일이라 "왜 없지" 가 아니라 "아, 그거" 로 읽힌다.
  *
- * 세 번째 자리가 있었다: 화면 카탈로그(앞쪽 100곡)에 없어서 버리던 것. 서버가 곡을
- * 통째로 실어 주게 되면서 **없어졌다** (S15P21A204-424). 그래서 이 줄은 이제 드물게만
- * 나온다 — 늘 뜨고 있다면 그것 자체가 이상 신호다.
+ * 빠지는 자리가 둘 더 있었다.
+ *   · 화면 카탈로그(앞쪽 100곡)에 없어서 버리던 것 — 서버가 곡을 통째로 실어 주게
+ *     되면서 없어졌다 (S15P21A204-424).
+ *   · 재생할 수 없는 곡 — **서버가 아예 내려보내지 않는다** (S15P21A204-426).
+ *     추천 건수에서도 빠지므로 "3곡 중 1곡은…" 같은 말이 애초에 생기지 않는다.
+ *     사용자가 할 수 있는 일이 없는 의문을 남기지 않으려는 것이다.
  *
  * ## 무엇을 하지 않는가
  *
  * 서버를 다시 부르지 않는다. 근거는 이미 화면에 들어와 있는 툴 호출 기록뿐이다.
- * 재생할 수 없는 곡을 목록에 되살리지도 않는다 — 빠진 **이유**만 말한다.
+ * 가린 곡을 목록에 되살리지도 않는다 — 빠진 **이유**만 말한다.
  *
  * ## 아무 줄도 더하지 않는 경우
  *
- * 추천이 원래 0건인 턴, 툴 호출이 아예 없던 순수 대화 턴, 그리고 빠진 곡이 없는 턴은
+ * 추천이 원래 0건인 턴, 툴 호출이 아예 없던 순수 대화 턴, 그리고 가린 곡이 없는 턴은
  * `null` 이다. 멀쩡한 답변 밑에 군더더기 한 줄을 붙이지 않는다.
  *
  * 문구는 **사용자용**이다. 내부 이름을 쓰지 않는다(`chat-tool-calls.tsx` 의 문구 원칙).
@@ -174,14 +183,9 @@ export function missingTracksNotice(
   if (recommended === 0) return null;
   const resolved = tracks?.length ?? 0;
   const shown = (tracks ?? []).filter((track) => !ignored.includes(track.id)).length;
-  // 서버가 센 것보다 많이 그렸다면(같은 곡이 두 번 추천되는 등) 할 말이 없다. 0 으로 묶는다.
-  const unplayable = Math.max(0, recommended - resolved);
   const hidden = Math.max(0, resolved - shown);
-  if (unplayable === 0 && hidden === 0) return null;
-  const parts: string[] = [];
-  if (unplayable > 0) parts.push(`${unplayable}곡은 아직 재생할 수 없어 빼뒀`);
-  if (hidden > 0) parts.push(`${hidden}곡은 관심 없음으로 표시해 가려뒀`);
-  return `추천받은 ${recommended}곡 중 ${parts.join('고, ')}어요.`;
+  if (hidden === 0) return null;
+  return `추천받은 ${recommended}곡 중 ${hidden}곡은 관심 없음으로 표시해 가려뒀어요.`;
 }
 
 /**
