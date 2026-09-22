@@ -22,9 +22,9 @@
 | `MUPID_BUILD_STAMP` | Variable | `sh infra/ci/build-stamp.sh` 가 값의 출처를 찾을 때 **가장 먼저** 본다 | 위 두 값의 유일한 출처다. 사람이 수동 배포하거나 값을 고정하고 싶을 때 여기에 넣는다. 없으면 `CI_COMMIT_TIMESTAMP` → `git show` → 현재 시각 순으로 내려간다 |
 | `MUPID_DATA_ENV` | **File** | `music_preprocessing/deploy.env.example` 를 채운 것 | `data-deploy`·`data-batch`·`data-check` (JupyterHub). 접속 정보·배치 설정·토큰이 **전부 이 파일 하나** 안에 있다 |
 | `MUPID_API_ENV` | **File** | **GitLab CI/CD 변수**에 넣은 운영 환경변수 내용. 노드의 `/srv/mupid-k8s/.env` 는 **수신기가 쓰는 결과물**이지 사람이 넣는 입력이 아니다 | `k8s-deploy-env` (`infra_k8s/ci/deploy-env.sh`). 내용을 그대로 노드로 보내면 **노드의 root 수신기(`receive-env.py`)가 Secret `mupid-secrets` 를 갈아 끼우고 api 를 재시작**한다. CI 는 Secret 을 직접 만들지 않는다 — 배포 계정의 RBAC 이 `secrets` 를 막고 있다(`rbac.yaml`). 열면 CI 키를 훔친 쪽이 DB 비밀번호·JWT 서명키·S3 키를 전부 읽게 된다 |
-| `MUPID_AI_ENV` | **File** | 추천 서버(`ai`) 전용 환경변수 내용. 키 목록은 아래 | `k8s-deploy-ai-env` (`infra_k8s/ci/deploy-ai-env.sh`) → 노드 수신기 `receive-ai-env.py` → Secret **`mupid-ai-secrets`** → **`ai` 만** 롤아웃. `MUPID_API_ENV` 와 나눠 둔 것은 여기에 `ROLE_SYSTEM` 리프레시 토큰이 들어 있기 때문이다 — 섞으면 Spring 파드도 쓰지 않는 자격을 함께 받고, AI 값 하나 고치자고 api 까지 재시작된다 |
+| `MUPID_AI_SERVER_ENV` | **File** | 추천 서버(`ai`) 전용 환경변수 내용. 키 목록은 아래 | `k8s-deploy-ai-env` (`infra_k8s/ci/deploy-ai-env.sh`) → 노드 수신기 `receive-ai-env.py` → Secret **`mupid-ai-secrets`** → **`ai` 만** 롤아웃. `MUPID_API_ENV` 와 나눠 둔 것은 여기에 `ROLE_SYSTEM` 리프레시 토큰이 들어 있기 때문이다 — 섞으면 Spring 파드도 쓰지 않는 자격을 함께 받고, AI 값 하나 고치자고 api 까지 재시작된다 |
 
-> **`MUPID_AI_ENV` 에 넣는 키** (2026-09-22 추가, S15P21A204-416)
+> **`MUPID_AI_SERVER_ENV` 에 넣는 키** (2026-09-22 추가, S15P21A204-416)
 >
 > 추천 서버가 곡·순간 메타데이터를 **MySQL 에서** 읽게 되면서 생겼다. 색인은 더 이상
 > 제목·장르·무드·보컬·악기 사본을 들고 있지 않다.
@@ -37,6 +37,15 @@
 > | `MUPID_AI_CATALOG_TTL_SEC` | 아니오 | 주기 갱신 간격(초). 비우면 꺼짐 — `POST /internal/catalog/refresh` 가 정규 경로다 |
 > | `MUPID_AI_CATALOG_TIMEOUT` | 아니오 | 호출 하나의 제한 시간(초, 기본 15) |
 > | `MUPID_AI_CATALOG_MIN_COVERAGE` | 아니오 | 색인–카탈로그 최소 일치율 (0~1, 기본 0.5) |
+> | `MUPID_PINECONE_API_KEY` | 켤 때 **예** | Pinecone API 키. 값은 어디에도 찍지 않는다 |
+> | `MUPID_PINECONE_CANDIDATE_INDEX` | 켤 때 **예** | 후보 검색 인덱스 이름 (`normalize(Z - mu)`) |
+> | `MUPID_PINECONE_RAW_INDEX` | 켤 때 **예** | 원본 벡터 인덱스 이름 (DNA·온보딩 평균용) |
+> | `MUPID_PINECONE_NAMESPACE` | 아니오 | 환경 + 승인된 임베딩 버전. 예: `prod__mert-v1-95m` |
+> | `MUPID_PINECONE_ENABLED` | 아니오 | 검색을 Pinecone 으로 돌릴지. 비우면 꺼짐 |
+> | `MUPID_PINECONE_TIMEOUT` | 아니오 | 호출 하나의 제한 시간(초, 기본 10) |
+>
+> `MUPID_PINECONE_ENABLED` 를 켰는데 앞의 셋 중 하나라도 비면 **수신기가 업로드를
+> 거부한다.** 켜 놓고 값을 빼면 추천 서버가 뜨기는 하는데 모든 검색이 실패한다.
 >
 > 필수 둘이 비면 **수신기가 업로드를 거부한다.** 그 값 없이는 추천 서버가 준비 완료로
 > 올라오지 않는다 — 없이 뜨면 장르·무드·보컬·악기 조건이 통째로 빈 채 추천이 나가고,

@@ -5,7 +5,7 @@ ssh-entrypoint-k8s.sh 를 거쳐서만 닿는다. 인자 모양은 거기서 이
 여기서 다시 본다 — root 로 도는 코드가 호출자를 믿으면 안 된다.
 
   argv:  <40-hex 커밋> <64-hex sha256>
-  stdin: `KEY=VALUE` 줄들 (GitLab File 변수 MUPID_AI_ENV 의 내용)
+  stdin: `KEY=VALUE` 줄들 (GitLab File 변수 MUPID_AI_SERVER_ENV 의 내용)
 
 **왜 `mupid-secrets` 와 나누나.** 추천 서버가 Spring 내부 카탈로그 API 를 부르게
 되면서 `ROLE_SYSTEM` 리프레시 토큰을 들고 있어야 한다. 그 값을 공용 Secret 에 섞으면
@@ -38,6 +38,11 @@ KEY = re.compile(r"^MUPID_[A-Z0-9_]+$")
 # 조건이 통째로 빈 채 추천이 나가므로, 그 상태로 뜨지 않게 기동에서 막아 두었다
 # (`ai_server/app/main.py`). 그러니 잘린 업로드는 여기서 거부한다.
 REQUIRED = {"MUPID_API_BASE_URL", "MUPID_API_REFRESH_TOKEN"}
+
+# Pinecone 을 켜 두었다면 이 셋도 있어야 한다. 켜 놓고 값을 빼면 추천 서버가
+# 뜨기는 하는데 **모든 검색이 실패**한다 — 켜는 것과 값을 넣는 것을 한 번에 검사한다.
+PINECONE_REQUIRED = {"MUPID_PINECONE_API_KEY", "MUPID_PINECONE_CANDIDATE_INDEX",
+                     "MUPID_PINECONE_RAW_INDEX"}
 
 
 def fail(message, code=65):
@@ -86,6 +91,11 @@ def parse(body):
     if empty:
         # 빈 값으로 덮으면 파드가 뜨다가 죽는다. 키가 있는 것과 값이 있는 것은 다르다.
         fail(f"필수 항목이 비어 있다: {', '.join(empty)}")
+
+    if pairs.get("MUPID_PINECONE_ENABLED", "").lower() in ("1", "true", "yes", "on"):
+        missing = sorted(k for k in PINECONE_REQUIRED if not pairs.get(k))
+        if missing:
+            fail("MUPID_PINECONE_ENABLED 를 켰는데 값이 없다: " + ", ".join(missing))
     return pairs
 
 

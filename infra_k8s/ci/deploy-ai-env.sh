@@ -3,7 +3,7 @@
 #
 #   sh infra_k8s/ci/deploy-ai-env.sh
 #
-# MUPID_AI_ENV (File 형식·보호된 CI 변수) 의 내용을 그대로 보낸다. 노드의 root
+# MUPID_AI_SERVER_ENV (File 형식·보호된 CI 변수) 의 내용을 그대로 보낸다. 노드의 root
 # 수신기가 Secret `mupid-ai-secrets` 를 갈아 끼우고 **ai 만** 재시작한다.
 #
 # ## 왜 MUPID_API_ENV 와 나누나
@@ -22,7 +22,7 @@
 #
 # 내용이 예전과 같으면 수신기가 UNCHANGED 를 돌려주고 아무것도 하지 않는다.
 set -eu
-: "${MUPID_AI_ENV:?GitLab file variable required}"
+: "${MUPID_AI_SERVER_ENV:?GitLab file variable required}"
 : "${MUPID_DEPLOY_K8S_SSH_KEY:?GitLab file variable required}"
 : "${MUPID_DEPLOY_K8S_KNOWN_HOSTS:?GitLab file variable required}"
 printf '%s\n' "${CI_COMMIT_SHA:?}" | grep -Eq '^[0-9a-f]{40}$'
@@ -51,10 +51,10 @@ ssh-keygen -y -P '' -f "$key" >/dev/null 2>&1 || {
 
 # CR 을 걷어낸다. 윈도우에서 만든 내용을 붙여 넣으면 값 끝에 \r 이 붙고,
 # 그러면 토큰이 조용히 틀린 값이 된다.
-read_secret "$MUPID_AI_ENV" | tr -d '\r' > "$body"
+read_secret "$MUPID_AI_SERVER_ENV" | tr -d '\r' > "$body"
 lines=$(grep -cE '^MUPID_[A-Z0-9_]+=' "$body" || true)
 [ "$lines" -ge 2 ] || {
-  echo "MUPID_AI_ENV 에서 MUPID_* 항목을 $lines 개만 찾았다 — 내용을 확인한다" >&2
+  echo "MUPID_AI_SERVER_ENV 에서 MUPID_* 항목을 $lines 개만 찾았다 — 내용을 확인한다" >&2
   exit 64
 }
 checksum=$(sha256sum < "$body" | cut -d ' ' -f 1)
