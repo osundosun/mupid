@@ -34,6 +34,7 @@ docs:
     | `GET /api/v1/music` | 곡 목록·검색 | 액세스 토큰 |
     | `GET /api/v1/music/{musicId}` | 곡 상세 | 액세스 토큰 |
     | `GET /api/v1/music/{musicId}/lyric` | 가사 | 액세스 토큰 |
+    | `GET /api/v1/music/{musicId}/waveform` | 파형 | 액세스 토큰 |
     | `GET /api/v1/music/{musicId}/analysis` | 구간·보컬·악기 | 액세스 토큰 |
     | `GET /api/v1/artist` | 아티스트 목록·검색 | 액세스 토큰 |
     | `GET /api/v1/artist/{artistId}` | 아티스트 상세 | 액세스 토큰 |
@@ -49,6 +50,7 @@ docs:
     | `PATCH /api/v1/artist/{artistId}` | 아티스트 수정 | SYSTEM/ADMIN |
     | `DELETE /api/v1/artist/{artistId}` | 아티스트 삭제 | SYSTEM/ADMIN |
     | `PUT /api/v1/music/{musicId}/lyric` | 가사 일괄 교체 | SYSTEM/ADMIN |
+    | `PUT /api/v1/music/{musicId}/waveform` | 파형 교체 | SYSTEM/ADMIN |
     | `POST /api/v1/lyric` | 가사 추가 (한 줄) | SYSTEM/ADMIN |
     | `PATCH /api/v1/lyric/{lyricId}` | 가사 수정 | SYSTEM/ADMIN |
     | `DELETE /api/v1/lyric/{lyricId}` | 가사 삭제 | SYSTEM/ADMIN |
@@ -65,9 +67,14 @@ docs:
     5. `음악 추가` (`album_id`, `artist_id` 필요) → `music_id` 획득
     6. `가사 일괄 교체` (`music_id` 필요)
     7. `Stream / 스트림 생성` → `청크 업로드` → `스트림 상태 변경(DONE)`
+    8. `파형 교체` (`music_id` 필요)
 
-    1~7 전체를 `music_preprocessing` 배치가 자동으로 수행합니다. Bruno 로는 같은
+    1~8 전체를 `music_preprocessing` 배치가 자동으로 수행합니다. Bruno 로는 같은
     순서를 수동으로 호출하면 됩니다.
+
+    8번은 **없어도 재생에는 지장이 없습니다.** 파형이 없으면 화면이 청크를
+    내려받아 직접 계산합니다 — 느릴 뿐입니다. 그래서 배치도 이 단계가 실패했을
+    때 스트림을 되돌리지 않습니다.
 
     6번은 **곡 하나의 가사를 통째로 갈아 끼웁니다.** 줄 하나만 손보려면
     `가사 추가`·`가사 수정`·`가사 삭제` 를 씁니다. 배치는 언제나 일괄 교체를

@@ -34,7 +34,6 @@ CREATE TABLE IF NOT EXISTS `ai_chat_messages` (
   CONSTRAINT `ck_ai_chat_messages_1` CHECK (`index`>=0)
 );
 CREATE TABLE IF NOT EXISTS `ai_chat_sessions` (
-  -- AiChatSession 이 GenerationType.IDENTITY 다. AUTO_INCREMENT 를 빼면 세션 생성이 죽는다.
   `ai_chat_session_id` INT AUTO_INCREMENT NOT NULL,
   `title` VARCHAR(50) NOT NULL,
   `user_id` INT NOT NULL,
@@ -152,7 +151,8 @@ CREATE TABLE IF NOT EXISTS `music` (
   `release_date` DATE NOT NULL COMMENT '발매일',
   `play_count` INT NOT NULL DEFAULT 0 COMMENT '누적 재생 수',
   `like_count` INT NOT NULL DEFAULT 0 COMMENT '누적 좋아요 수',
-  `image_file_id` INT,
+  `image_file_id` INT COMMENT '썸네일 이미지 파일 번호',
+  `waveform_file_id` INT COMMENT '웨이브폼 파일 번호',
   `is_deleted` TINYINT(1) NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 일시',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -163,7 +163,7 @@ CREATE FULLTEXT INDEX `ft_music_title_ngram` ON `music` (`title`) WITH PARSER ng
 CREATE TABLE IF NOT EXISTS `music_analysis` (
   `music_id` INT NOT NULL,
   `has_vocal` TINYINT(1) NOT NULL,
-  `vocal_gender` ENUM('M', 'F', 'MIX'),
+  `vocal_gender` ENUM('M', 'F', 'MIX') DEFAULT NULL,
   PRIMARY KEY (`music_id`)
 );
 CREATE TABLE IF NOT EXISTS `music_analysis_instruments` (
@@ -221,12 +221,12 @@ CREATE TABLE IF NOT EXISTS `music_section_analysis_mood` (
 );
 CREATE TABLE IF NOT EXISTS `object_storage_files` (
   `file_id` INT AUTO_INCREMENT NOT NULL,
-  `file_type` ENUM('IMG', 'MUSIC') NOT NULL,
-  `category` ENUM('PROFILE', 'ARTIST', 'ALBUM', 'TRACK', 'MUBTI', 'STREAMING') NOT NULL,
+  `file_type` ENUM('IMG', 'MUSIC', 'WAVEFORM') NOT NULL,
+  `category` ENUM('PROFILE', 'ARTIST', 'ALBUM', 'TRACK', 'MUBTI', 'STREAMING', 'WAVEFORM') NOT NULL,
   `original_file_name` VARCHAR(255) NOT NULL,
   `storage_object_key` VARCHAR(255) NOT NULL,
   `file_size_bytes` INT NOT NULL COMMENT '파일 크기 (bytes)',
-  `mime` VARCHAR(15) NOT NULL,
+  `mime` VARCHAR(64) NOT NULL,
   `is_deleted` TINYINT(1) NOT NULL DEFAULT FALSE,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -349,6 +349,8 @@ ALTER TABLE `lyrics` ADD CONSTRAINT `fk_song_lyrics_song_id` FOREIGN KEY (`music
 ALTER TABLE `mubti` ADD CONSTRAINT `fk_mubti_file_id` FOREIGN KEY (`image_file_id`) REFERENCES `object_storage_files` (`file_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `music` ADD CONSTRAINT `fk_music_image_file_id` FOREIGN KEY (`image_file_id`) REFERENCES `object_storage_files` (`file_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `music` ADD CONSTRAINT `fk_music_waveform_file_id` FOREIGN KEY (`waveform_file_id`) REFERENCES `object_storage_files` (`file_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `music` ADD CONSTRAINT `fk_song_album` FOREIGN KEY (`album_id`) REFERENCES `albums` (`album_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다

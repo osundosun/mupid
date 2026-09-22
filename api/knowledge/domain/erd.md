@@ -80,7 +80,7 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 
 | 항목 | 규칙 | 예외 |
 |---|---|---|
-| PK | `<단수명>_id`, `INT AUTO_INCREMENT` | `ai_chat_messages`·`play_histories` 는 `BIGINT`. `ai_chat_sessions` 는 `AUTO_INCREMENT` 가 없다. `music_analysis` 는 PK 가 곧 FK(`music_id`) 다 |
+| PK | `<단수명>_id`, `INT AUTO_INCREMENT` | `ai_chat_messages`·`play_histories` 는 `BIGINT`. **`ai_chat_sessions.ai_chat_session_id` 에는 `AUTO_INCREMENT` 가 반드시 있어야 한다** — `AiChatSession` 이 `GenerationType.IDENTITY` 라 빼면 세션 생성이 죽는다(수기 보정 #3). `music_analysis` 는 PK 가 곧 FK(`music_id`) 다 |
 | **FK 자리** | **`AUTO_INCREMENT` 를 붙이지 않는다.** 남의 PK 를 가리키는 컬럼은 값을 발급받는 자리가 아니다 | 아래 "`AUTO_INCREMENT` 는 PK 자리에만" 참고 |
 | 복합 PK | 매핑·이력 테이블은 두 컬럼을 묶는다 — `chunks`(`stream_id`,`index`), `listening`, `music_genres`, `music_moods`, `music_reactions`, `music_section_analysis_mood`, `music_analysis_instruments`, `daily_recommendation_tracks`(`…_id`,`rank_order`), `playlist_tracks`(`playlist_id`,`track_order`) | |
 | 테이블명 | 복수형 snake_case | `music`(불가산), `mubti`, `onboarding_survey`, `listening`(단수) |
@@ -229,6 +229,8 @@ ERD 반입 시점(2026-09-11)에 기존 엔티티 3개가 ERD 와 여러 곳에�
 | ① | `music_analysis_instruments.music_section_analysis_id` | `int auto_increment` | `int` | 미적용 | 미적용 |
 | ② | `music_section_analysis.external_id` UNIQUE | 없음 | 있음 | 미적용 | **적용됨** |
 | ③ | `codes.display_name` | 컬럼 없음 | `VARCHAR(200)` | 미적용 | **적용됨** |
+| ④ | `object_storage_files` 의 `file_type`·`category`·`mime` | `ENUM('IMG','MUSIC')` · `ENUM(…,'STREAMING')` · `VARCHAR(15)` | 각각 `WAVEFORM` 추가 · `VARCHAR(64)` | 미적용 | **적용됨** (2026-09-22) |
+| ⑤ | `music.waveform_file_id` + `fk_music_waveform_file_id` | 컬럼 없음 | `INT` NULL + FK | 미적용 | **적용됨** (2026-09-22) |
 
 운영·개발이 갈린 이유는 개발 DB 를 손으로 고쳤기 때문이다. ①의 DDL:
 
@@ -262,6 +264,9 @@ UPDATE codes SET display_name = code_name WHERE display_name = '';
 인덱스 이름은 곳에 따라 다르다 — erd.sql 은 `ux_…`, 위 DDL 은 `uk_…`, 이미 적용된
 개발 DB 도 `uk_…` 다. 게이트가 **이름을 보지 않으므로** 아무 문제가 없다
 (`schema-check.py` 의 "인덱스는 이름을 비교하지 않는다").
+
+④·⑤ 는 [migrate-waveform-2026-09-22.sql](migrate-waveform-2026-09-22.sql) 한 파일에
+들어 있다. 아래 "2026-09-22 — 파형" 절을 본다.
 
 ### 재산출이 풀어 준 것
 
@@ -311,6 +316,60 @@ UPDATE codes SET display_name = code_name WHERE display_name = '';
 >   FOREIGN KEY (`image_file_id`) REFERENCES `object_storage_files` (`file_id`);
 > ```
 
+## 2026-09-22 — 파형 (S15P21A204-420)
+
+파형(곡의 진폭 포락선)을 **배치가 계산해 서버에 올리고** 프런트가 받아 쓰도록
+바꾸면서 `object_storage_files` 의 컬럼 셋이 늘었다. 그전까지 파형은 기기가 곡을
+열 때마다 청크를 전부 내려받아 디코딩해 만들었다
+(`frontend/lib/track-waveform.ts`). 파형은 곡이 바뀌지 않는 한 같은 값이라
+한 번 만들어 두면 되는 데이터다.
+
+파형 자체는 오브젝트 스토리지에 **JSON 파일 하나**로 올라간다 —
+키는 `music/{musicId}/waveform.json` 이고, `object_storage_files` 에는 그 파일의
+메타데이터가 한 행 남는다. 곡은 `music.waveform_file_id` 로 그 행을 가리킨다.
+
+| 변경 | 내용 |
+|---|---|
+| `object_storage_files.file_type` | `ENUM(…)` 에 **`WAVEFORM`** 추가 — 파형은 이미지도 음원도 아니다 |
+| `object_storage_files.category` | `ENUM(…)` 에 **`WAVEFORM`** 추가 — 용도가 청크(`STREAMING`)와 다르다. 청크는 배치만 읽지만 파형은 로그인한 사용자가 읽는다 |
+| `object_storage_files.mime` | `VARCHAR(15)` → **`VARCHAR(64)`** |
+| `music.waveform_file_id` | **컬럼 추가** (`INT`, NULL 허용) + `fk_music_waveform_file_id` — `image_file_id` 와 같은 모양 |
+
+**`mime` 을 넓힌 것이 이 변경의 숨은 핵심이다.** `application/json` 은 16자라
+`VARCHAR(15)` 에 들어가지 않는다. `StorageService.uploadFile` 의 주석이 경고하던
+것이 정확히 이것이고, 그 우회로(호출부가 짧은 mime 을 넘기는 오버로드)는
+컬럼이 좁다는 사실을 **호출부마다 기억해야** 유지된다. 넓히는 쪽이 싸다.
+
+### `waveform_file_id` 를 둔 이유
+
+키가 곡 번호에서 그대로 만들어지므로 컬럼 없이 `StorageService.getFileByKey` 로
+찾을 수도 있었다. 한 번은 그렇게 가기로 했다가 되돌렸다. 근거는 셋이다.
+
+1. **이 스키마의 파일 참조는 전부 FK 컬럼이다** — `albums`·`artists`·`music`·
+   `users`·`mubti` 의 `image_file_id`, `chunks.file_id`. 키로 파일을 찾는 코드가
+   있긴 하지만(`BootstrapRunner`, 이미지 삭제) 전부 **호출부가 이미 키를 들고
+   있는** 경우고, 도메인이 파일을 가리키는 수단으로 쓰는 곳은 없다. 파형만
+   규칙으로 찾으면 `music` 을 봐도 이 곡에 파형이 있는지 알 수 없다.
+2. **백필과 감사가 컬럼을 요구한다.** 기존 곡에 파형을 채우는 명령이 대상을
+   `WHERE waveform_file_id IS NULL` 로 뽑는다. 없으면 곡마다 조회를 한 번씩 때려
+   404 를 세야 하고(카탈로그가 1060곡이다), 그 목록을 배치의 `registered.json` 에
+   기억시키면 `audit.py`·`orphans.py` 가 이미 다루는 드리프트를 하나 더 만든다.
+3. **`storage_object_key` 에는 인덱스가 없다** — `object_storage_files` 의 인덱스는
+   `PRIMARY` 뿐이다(2026-09-22 실측). 청크 때문에 행이 곡당 수십 개씩 쌓이는
+   테이블이라 곡을 열 때마다 풀스캔이 된다. 피하려면 어차피 인덱스를 얹어야 하고,
+   그럴 바엔 PK 조인이 되는 FK 가 낫다.
+
+NULL 을 허용한다. 파형이 아직 없는 곡은 비정상이 아니다 — 프런트가 그때는 기기에서
+계산하는 예전 경로로 내려간다. 재업로드에도 흔들리지 않는다.
+`StorageServiceImpl.uploadFile` 이 같은 키면 기존 행을 재사용하므로 `file_id` 가
+유지된다.
+
+> ⚠️ **개발 DB 에만 적용했다** (2026-09-22). 운영 DB 는 사람이 직접 적용한다.
+> DDL 은 [migrate-waveform-2026-09-22.sql](migrate-waveform-2026-09-22.sql) 에
+> 네 가지가 모두 들어 있다. `ENUM` 값 추가·`VARCHAR` 확장·NULL 컬럼 추가는 모두
+> 기존 행을 건드리지 않아 서로 순서 제약이 없다 — 다만 **앱보다 먼저 들어가야**
+> 파형 등록이 통과한다.
+
 ## 곡 식별자가 둘이다
 
 ClickHouse 쪽 분석 스키마는 곡을 **Jamendo 카탈로그의 `track_id`** 로 식별하고([glossary.md](glossary.md)), MySQL ERD 는 자체 **`music.music_id`** 로 식별한다. `listen_events.track_id` 와 `playlist_tracks.music_id` 가 같은 곡을 가리키는지, 둘을 잇는 매핑이 어디에 있는지는 아직 정해지지 않았다 → [open-questions.md](../open-questions.md).
@@ -320,6 +379,17 @@ MySQL 도메인을 만들 때는 **`music_id` 를 쓴다.** ERD 에 `track_id` �
 ## 출처
 
 [erd.sql](erd.sql) — ERD 도구 산출 DDL (2026-09-11 반입, 2026-09-15 · 2026-09-17 · **2026-09-21** 재산출).
+
+**2026-09-22 의 파형 변경은 재산출이 아니라 수기 편집이다** (위 "2026-09-22 — 파형").
+같이 딸려 온 잔 변경이 셋 있다 — `music_analysis.vocal_gender` 에 `DEFAULT NULL` 이
+명시됐고(의미는 같다), `music.image_file_id` 에 주석이 붙었고,
+`ai_chat_sessions` 위의 `AUTO_INCREMENT` 경고 주석이 빠졌다. 마지막 것은 잃은 게
+없다 — 같은 근거가 `erd.sql` 머리말의 **수기 보정 #3** 에 그대로 있고, 규약대로
+주석을 본문에 다시 넣지는 않는다(아래 2026-09-17 절 끝).
+
+다만 이것을 확인하다 **문서 쪽 오류를 하나 찾아 고쳤다.** 위 "ERD 가 쓰는 공통
+규약" 표의 PK 줄이 `ai_chat_sessions` 에 `AUTO_INCREMENT` 가 **없다**고 거꾸로
+적고 있었다. 수기 보정 #3 이 그것을 붙인 뒤로 이 문장만 따라오지 않은 것이다.
 
 **2026-09-21 재산출은 `music_analysis.vocal_gender` 한 줄을 고쳤다.**
 

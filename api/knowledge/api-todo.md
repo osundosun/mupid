@@ -32,6 +32,7 @@
 | 프로필 사진 | `POST/GET/DELETE /api/v1/storage/image/PROFILE/{userId}` | 연결 완료 |
 | 아티스트·앨범 | `GET /api/v1/artist[/{id}]`, `GET /api/v1/album[/{id}]` | 인증 불필요 |
 | 가사·분석 | `GET /api/v1/music/{id}/lyric`, `.../analysis` | 인증 불필요 |
+| 파형 | `GET /api/v1/music/{id}/waveform`, `PUT` (`ROLE_SYSTEM`) | 연결 완료 · **없으면 404 이고 화면이 직접 계산한다** ([decision/0026](decision/0026-waveform-is-precomputed-by-batch.md)) |
 | 일일 추천 | `GET /api/v1/recommendation/daily` | 조회만 (데이터 없음) |
 | 플레이리스트 | `GET/POST /api/v1/playlist`, `GET/PATCH/DELETE /api/v1/playlist/{id}`, `POST /api/v1/playlist/{id}/track`, `DELETE /api/v1/playlist/{id}/track/{musicId}` | 연결 완료 |
 
