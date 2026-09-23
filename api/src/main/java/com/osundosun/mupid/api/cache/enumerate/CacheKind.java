@@ -74,6 +74,14 @@ public enum CacheKind {
      * 중복 실행의 결과가 "더 오래 걸린다" 로 끝나지 않는다.
      */
     PlayCountBatch("music:playcount:batch"),
+
+    /**
+     * AI 선호도 시간별 집계 배치 선점. 키는 그 회차가 맡은 시각(`yyyy-MM-ddTHH`)이다.
+     *
+     * <p>선점이 뚫려도 값은 틀리지 않는다 — 결과 표가 ReplacingMergeTree 라 같은 칸을 두 번
+     * 넣어도 한 줄만 남는다. ClickHouse 를 인스턴스 수만큼 때리지 않으려는 것뿐이다.
+     */
+    AiPreferenceBatch("analytics:ai-preference:batch"),
     /**
      * 사용자별 재생 큐. `queue:user:{userId}` 한 자리에 큐 한 벌이 통째로 들어간다.
      *

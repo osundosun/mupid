@@ -46,6 +46,8 @@ user_section_signals(user_id, section_uid, track_id, signal,
 >
 > `ai_server` 쪽 `SURFACE` 매핑(`app/clickhouse.py` · `tools/pull_signals.py`)에는 세 값이 아직 없다. 전자는 `""` 로, 후자는 `"queue"` 처럼 소문자로 통과시켜 **두 수집 경로가 서로 다른 값을 만든다.** `BEH_REC_SURFACES` 정책이라 AI 담당이 정할 일이다.
 
+**관리자 화면의 AI 선호도**가 이 평가의 첫 조각이다 — 노출 기록이 없어 CTR 대신 "AI 가 고른 곡을 틀면 충분히 듣는가" 를 시간별로 잰다 → [ai-preference.md](ai-preference.md).
+
 스킵 해석 규칙(끝까지 듣고 넘기면 긍정, 익숙한 구간을 넘기면 중립)은 [listening-events.md](listening-events.md) 참고.
 
 ## 아직 없는 것

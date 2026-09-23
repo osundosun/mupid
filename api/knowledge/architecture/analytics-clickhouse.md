@@ -28,7 +28,7 @@ api/clickhouse/
 | `api/compose.prod.yml` | `mupid` | 없음. 주석에 "ClickHouse 클러스터…는 이 compose 가 띄우지 않는다", `MUPID_CLICKHOUSE_URL` 을 운영 `.env` 에서 덮어쓰라고 적혀 있다 |
 | `infra/deploy/compose.yml` | `mupid` | 포함하되 profile 로 격리. 실제 배포 엔드포인트(`infra/deploy/receive.sh`)가 쓰는 파일이다 |
 
-Spring 쪽은 `api/src/main/java/com/osundosun/mupid/api/analytics/` 아래 세 갈래다 — 설정 두 파일(`config` · `properties`)과 접근 계층(`repository/` + `dto/`). 읽는 쪽은 취향 리포트가 처음 들여왔고 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md), **쓰는 쪽은 구간 적재(`repository/TrackSectionRepository`) 하나뿐이다** (S15P21A204-435).
+Spring 쪽은 `api/src/main/java/com/osundosun/mupid/api/analytics/` 아래 세 갈래다 — 설정 두 파일(`config` · `properties`)과 접근 계층(`repository/` + `dto/`). 읽는 쪽은 취향 리포트가 처음 들여왔고 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md), **쓰는 쪽은 둘이다** — 구간 적재(`repository/TrackSectionRepository`, S15P21A204-435)와 AI 선호도 시간별 집계(`repository/AiPreferenceRepository` + `service/AiPreferenceBatch`, S15P21A204-427). 둘 다 `mupid_all` 표라 Distributed 를 거치지 않고 로컬 표에 바로 넣는다.
 
 ## 클러스터 토폴로지
 
@@ -39,7 +39,7 @@ ClickHouse 서버 2노드 + Keeper 1대 + Kafka 1대(KRaft, broker+controller �
 | 클러스터 | 토폴로지 | 쓰는 테이블 |
 | --- | --- | --- |
 | `mupid` | 2 샤드 × 1 레플리카. `cityHash64(user_id)` 분산 | `listen_events`, `user_section_signals`, `play_section_coverage`, `rec_impressions`, `kafka_listen_events`, `v_track_skips` |
-| `mupid_all` | 1 샤드 × 2 레플리카. 전 노드 복제 | `track_sections`, `v_track_sections_current`, `dict_track_sections` |
+| `mupid_all` | 1 샤드 × 2 레플리카. 전 노드 복제 | `track_sections`, `v_track_sections_current`, `dict_track_sections`, `ai_preference_hourly` |
 
 이 구분은 Keeper 경로와 1:1 대응한다.
 
@@ -87,6 +87,8 @@ ClickHouse 서버 2노드 + Keeper 1대 + Kafka 1대(KRaft, broker+controller �
 | `rec_impressions_local` | `mupid` | `ReplicatedMergeTree` | `(user_id, served_at, rec_id)` |
 | `rec_impressions` | `mupid` | `Distributed(…, cityHash64(user_id))` | — |
 | `v_track_skips` | `mupid` | `VIEW` — `listen_events` 에 `v_track_sections_current` 와 Distributed 서브쿼리 1개를 JOIN | — |
+| `ai_preference_hourly_local` | `mupid_all` | `ReplicatedReplacingMergeTree(…, computed_at)` | `(hour, segment)` |
+| `ai_preference_hourly` | `mupid_all` | `Distributed(…)` — 샤딩 키 없음 | — |
 | `kafka_listen_events` | `mupid` | `Kafka` | — |
 | `mv_kafka_to_events` | `mupid` | `MATERIALIZED VIEW TO listen_events_local` | — |
 
@@ -95,6 +97,7 @@ ClickHouse 서버 2노드 + Keeper 1대 + Kafka 1대(KRaft, broker+controller �
 - **`listen_events_local` = ReplacingMergeTree(`ingested_at`).** 정렬키 `(user_id, occurred_at, event_id)` 가 곧 중복 판정 키다. Kafka 재소비로 같은 이벤트가 다시 들어와도 병합 시 정리된다. 로컬 `api/compose.yml` 이 Kafka 로그에 볼륨을 일부러 안 붙인 근거가 이 성질이다.
 - **`track_sections_local` = ReplacingMergeTree(`created_at`).** 같은 `(analysis_version, track_id, section_index)` 재등록을 최신본으로 덮어쓴다. 마스터성 데이터라 파티션·TTL 이 없는 유일한 테이블이다.
 - **`user_section_signals_local` / `rec_impressions_local` = ReplicatedMergeTree.** 중복 정리 장치가 없다.
+- **`ai_preference_hourly_local` = ReplacingMergeTree(`computed_at`).** 스프링 배치가 매시 직전 6시간을 다시 세어 **덮어쓴다**(S15P21A204-427). 같은 `(hour, segment)` 는 마지막 적재만 남으므로 재실행이 안전하고, 읽을 때 `FINAL` 을 붙인다. 원본에서 다시 만들 수 있는 파생 표다 → [domain/ai-preference.md](../domain/ai-preference.md).
 - **`play_section_coverage_local` = SummingMergeTree(`listened_ms`).** `mv_play_section_coverage` 가 하트비트마다 부분합 행을 넣고, 병합될 때 `listened_ms` 만 합쳐진다. 병합 시점을 보장할 수 없는 데다 Kafka 적재가 `user_id` 샤딩을 타지 않아 한 재생의 부분합이 두 샤드에 흩어질 수 있으므로, **읽을 때 Distributed 테이블에서 재생 단위로 GROUP BY 해야 한다.**
 
 ### 파티션 · TTL · 시간대
@@ -378,7 +381,7 @@ MySQL `JdbcTemplate` 이 `@Primary` 이므로 **`@Qualifier` 를 빠뜨리면 �
    | `CREATE DICTIONARY IF NOT EXISTS` | `dict_track_sections` | 동일 |
 
 3. 테이블·MV·사전의 정의를 실제로 바꾸려면 재적용만으로 부족하다. 로컬은 분석 스택 컨테이너와 `ch1/ch2/ch-keeper` 볼륨만 지우고 다시 올린다 — `down -v` 는 MySQL·Redis 까지 날린다. 지우지 않고 DDL 만 검증하려면 Keeper 경로를 바꾼 사본을 임시 데이터베이스에 적용해 본다.
-4. 오브젝트를 추가/삭제했으면 **`verify.sh` 2단계의 기대값 `5/5/5/1/1` 을 함께 고친다.**
+4. 오브젝트를 추가/삭제했으면 **`verify.sh` 2단계의 기대값을 함께 고친다** (지금 `6/6/5/1/1` — S15P21A204-427 이 `ai_preference_hourly` 짝을 더했다).
 5. 새 이벤트 테이블을 만들면 `PARTITION BY toYYYYMM(...)` + `TTL toDateTime(...) + INTERVAL 18 MONTH` + `DateTime64(3, 'Asia/Seoul')` 규칙과 `_local`/Distributed 짝 규칙을 따른다.
 6. 클러스터를 고를 때: `dictGet` 소스가 되거나 전 노드가 전체를 알아야 하면 `mupid_all` + `{shard}` 없는 Keeper 경로, 그 외 이벤트성이면 `mupid` + `{shard}` 있는 경로.
 7. 설정 XML 을 추가하면 **서버 레벨(`config.d`)인지 쿼리 레벨(`users.d`)인지부터** 확인하고, compose 의 `volumes` 에 **파일 단위로** 한 줄 추가한다(디렉터리째 마운트 금지). 로컬 `api/compose.yml` 노드 2곳과 운영 `infra/deploy/compose.yml` 을 함께 고친다.
