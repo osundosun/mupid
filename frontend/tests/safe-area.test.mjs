@@ -158,6 +158,7 @@ void test('unsubscribing drops both listeners', () => {
 // ─────────────────────────────────────────────────────────────
 
 const sheets = [
+  'app/chat-fullscreen.css',
   'app/globals.css',
   'app/dialog-viewport.css',
   'app/mobile-navigation.css',
