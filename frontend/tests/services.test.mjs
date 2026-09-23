@@ -110,3 +110,25 @@ test('API mode never silently falls back to demo', () => {
   assert.throws(() => createService('api'), /어댑터/);
   assert.throws(() => createService('api', createDemoService(memory())), /어댑터/);
 });
+
+// 카탈로그(앞 100곡) 밖의 곡에 남긴 순간도 새로고침 뒤에 남는다 (S15P21A204-443).
+test('moments on songs outside the catalog are restored through the resolver', async () => {
+  const storage = memory();
+  const outside = { ...demoTracks[0], id: 1777, musicId: 777, duration: 200 };
+  storage.setItem('mupid.sky.preferences.v1', JSON.stringify({
+    moments: [{ id: 1, track: outside, start: 10, end: 20, section: '코러스' }],
+  }));
+  const service = createDemoService(storage);
+
+  // 곡을 찾지 못하면 예전처럼 버린다.
+  assert.deepEqual((await service.bootstrap(demoTracks)).preferences.moments, []);
+
+  const asked = [];
+  const { preferences } = await service.bootstrap(demoTracks, async (ids) => {
+    asked.push(...ids);
+    return ids.includes(1777) ? [outside] : [];
+  });
+  assert.deepEqual(asked, [1777]);
+  assert.equal(preferences.moments.length, 1);
+  assert.equal(preferences.moments[0].track.musicId, 777);
+});

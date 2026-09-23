@@ -49,6 +49,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
   const resultColumn = useRef<HTMLDivElement>(null);
   const trackList = useRef<HTMLDivElement>(null);
 
+  const { rememberTracks } = m;
   const query = m.query.trim();
   const appliedFilters = exploreFilterQuery(appliedKeywords);
   const appliedVocal = appliedFilters.vocal;
@@ -99,6 +100,18 @@ export function SearchView({ model: m }: { model: MupidModel }) {
       });
     return () => controller.abort();
   }, [requestKey, query, appliedVocal, appliedMood, appliedGenre, m.tracks]);
+
+  /**
+   * 검색 결과의 곡을 모델에 알려 둔다 (`knownTracks`).
+   *
+   * 결과에는 카탈로그(앞 100곡) 밖의 곡이 섞여 있다. 알려 두지 않으면 담기·재생은
+   * 곡 번호만 큐에 넣고 그 번호를 곡으로 되돌릴 길이 없어 **줄이 생기지 않는다** —
+   * 버튼을 눌러도 재생 목록에 아무 일도 일어나지 않는 것처럼 보였다
+   * (S15P21A204-441). 좋아요·최근 감상도 같은 목록에서 곡을 찾는다.
+   */
+  useEffect(() => {
+    rememberTracks(listing.tracks);
+  }, [listing.tracks, rememberTracks]);
 
   /** 현재 마지막 곡이 한 행 높이만큼 뷰포트 안으로 들어오면 다음 8곡을 이어 붙인다. */
   useEffect(() => {

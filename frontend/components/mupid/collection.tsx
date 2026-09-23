@@ -79,7 +79,8 @@ const LIBRARY_TAB_TITLES: Record<string, string> = {
   liked: '좋아한 곡',
 };
 export function LibraryView({ model: m }: { model: MupidModel }) {
-  const tracks = m.tracks;
+  // 좋아한 곡은 카탈로그 밖의 곡일 수 있다 (S15P21A204-443).
+  const tracks = m.knownTracks;
   const selected = m.playlists.find((p) => p.id === m.selectedPlaylist);
   /*
    * 지금 울리는 곡이 이 목록의 곡인가.
@@ -720,7 +721,8 @@ function NicknameForm({ model: m }: { model: MupidModel }) {
 }
 
 export function ProfileView({ model: m }: { model: MupidModel }) {
-  const tracks = m.tracks;
+  // 숨긴 곡·최근 감상은 카탈로그 밖의 곡일 수 있다 (S15P21A204-443).
+  const tracks = m.knownTracks;
   const ignoredTracks = tracks.filter(track => m.ignored.includes(track.id));
   const historyTracks = m.history.flatMap(id => { const found = tracks.find(track => track.id === id); return found ? [found] : []; });
   return (

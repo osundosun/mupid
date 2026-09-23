@@ -24,7 +24,7 @@ export function DesktopHome({ model: m }: { model: MupidModel }) {
   const recommendations = pickForYou(m.forYou, tracks, m.ignored);
   const forYou = forYouHeading(m.recommendationsReady);
   const recent = m.history.slice(0, 4).flatMap((id) => {
-    const track = tracks.find((item) => item.id === id);
+    const track = m.knownTracks.find((item) => item.id === id);
     return track ? [track] : [];
   });
   const todayMoments = pickTodayMoments(m);

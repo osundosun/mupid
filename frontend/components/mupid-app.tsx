@@ -7,6 +7,7 @@ import { clearBootstrap, readBootstrap, writeBootstrap } from '@/lib/services/bo
 import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
 import { useStore } from '@/lib/store';
 import { fetchCatalog } from '@/lib/stream-catalog';
+import { resolveTrackIds } from '@/lib/catalog-lookup';
 import { restoreSession, sessionStore } from '@/lib/api/session';
 import { watchSafeArea, watchCrashReports } from '@/lib/platform';
 import { watchKeyboardInset } from '@/hooks/use-keyboard-inset';
@@ -127,7 +128,11 @@ export function MupidApp() {
         const catalog = session.status === 'authenticated' ? await fetchCatalog() : [];
         // 서버 카탈로그는 화면 쪽에서 받아 서비스 계층에 넘긴다.
         // 서비스 계층은 브라우저 저장만 건드린다 (docs/server-integration.md).
-        const value = await mupidService.bootstrap(catalog);
+        // 카탈로그 밖의 곡에 남긴 순간은 곡을 따로 받아 붙인다 (S15P21A204-443).
+        const value = await mupidService.bootstrap(
+          catalog,
+          session.status === 'authenticated' ? (ids) => resolveTrackIds(ids, catalog) : undefined,
+        );
         // 저장은 `live` 와 무관하게 남긴다. 화면이 먼저 사라졌더라도 받아 온
         // 값은 다음 마운트가 쓸 수 있고, 그래야 두 번 받지 않는다.
         writeBootstrap(accountId, value);
