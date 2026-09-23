@@ -75,7 +75,7 @@ test('search is submitted by enter or the button, never by typing', async () => 
   assert.match(view, /onSubmit=\{event => \{ event\.preventDefault\(\); submit\(draft\); \}\}/);
   assert.match(view, /onClick=\{\(\) => submit\(keyword\)\}/);
   assert.match(view, /type="submit"/);
-  assert.match(view, /placeholder="곡, 아티스트, 앨범 검색"/);
+  assert.match(view, /placeholder="곡, 아티스트 검색"/);
 
   const model = await readFile(
     new URL('../hooks/use-mupid.ts', import.meta.url),

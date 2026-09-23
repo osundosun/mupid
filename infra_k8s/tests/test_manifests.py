@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import zipfile
 
 import yaml
 
@@ -2198,10 +2199,14 @@ class IndexUploadTest(unittest.TestCase):
         """이 엔드포인트로 노드에 임의의 파일을 놓을 수 있으면 안 된다."""
         receiver = (self.DEPLOY / "receive-index.py").read_text(encoding="utf-8")
         self.assertIn("ALLOWED = {", receiver)
-        for name in ("moments.parquet", "moments_emb.npy",
-                     "features_v1.npz", "stage1_section.npy"):
+        allowed = receiver[receiver.index("ALLOWED = {"):]
+        allowed = allowed[:allowed.index("}")]
+        for name in ("moments.parquet", "features_v1.npz", "stage1_section.npy"):
             with self.subTest(file=name):
-                self.assertIn(f'"{name}"', receiver)
+                self.assertIn(f'"{name}"', allowed)
+        # `moments_emb.npy` 는 **거절**한다. 이 이름이 파일 어딘가에 있는지만 보면
+        # 거절 메시지에 걸려 통과해 버린다 — 허용 목록만 잘라서 본다.
+        self.assertNotIn("moments_emb.npy", allowed)
         # 경로도 한 겹으로 묶는다. data/proc/mupid 바로 아래만 받는다.
         self.assertIn('INNER = "data/proc/mupid"', receiver)
         self.assertIn("parent != INNER", receiver)
@@ -2269,12 +2274,17 @@ class IndexUploadTest(unittest.TestCase):
         self.assertNotIn("서빙 경로가 읽지 않는다", text)
 
     def test_the_uploader_refuses_to_send_an_incomplete_index(self):
-        """네 개가 다 있어야 한다. 하나라도 빠지면 ready 가 영영 false 다."""
+        """배송되는 세 개가 다 있어야 한다. 하나라도 빠지면 ready 가 영영 false 다.
+
+        `moments_emb.npy` 를 여기 넣으면 안 된다 — slice_index 의 NOT_SHIPPED 라
+        정상 묶음에도 없고, 요구하면 업로드가 통째로 멈춘다."""
         script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
-        for name in ("moments.parquet", "moments_emb.npy",
-                     "features_v1.npz", "stage1_section.npy"):
+        for name in ("moments.parquet", "features_v1.npz", "stage1_section.npy"):
             with self.subTest(file=name):
                 self.assertIn(name, script)
+        loop = next(line for line in script.splitlines()
+                    if line.startswith("for name in "))
+        self.assertNotIn("moments_emb.npy", loop)
         self.assertIn("slice_index", script)
 
     def test_the_uploader_demands_the_node_the_pod_runs_on(self):
@@ -2313,7 +2323,7 @@ def _load_receiver():
     return module
 
 
-def _npy(path, rows, cols=4, version=1):
+def _npy_bytes(rows, cols=4, version=1):
     """헤더만 진짜인 .npy 를 만든다. numpy 없이 만들어야 한다 — 이 시험은
     python:3.12-slim 에서 돌고 거기엔 numpy 가 없다(`infra/ci/manifests.yml`).
 
@@ -2329,8 +2339,20 @@ def _npy(path, rows, cols=4, version=1):
         width = 4
     pad = -(len(prefix) + width + len(header) + 1) % 64
     body = (header + " " * pad + "\n").encode("latin-1")
-    path.write_bytes(prefix + len(body).to_bytes(width, "little") + body
-                     + b"\x00" * (rows * cols * 4))
+    return (prefix + len(body).to_bytes(width, "little") + body
+            + b"\x00" * (rows * cols * 4))
+
+
+def _npy(path, rows, cols=4, version=1):
+    path.write_bytes(_npy_bytes(rows, cols, version))
+
+
+def _npz(path, rows, cols=4, member="X"):
+    """헤더만 진짜인 .npz 를 만든다. npz 는 .npy 를 담은 zip 이라 numpy 없이도
+    만들 수 있다. **압축해서** 넣는다 — 수신기는 `np.savez_compressed` 로 나온
+    묶음도 읽어야 하고, 안 풀고 생바이트를 훑으면 거기서 깨진다."""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr(f"{member}.npy", _npy_bytes(rows, cols))
 
 
 class IndexReceiverCheckTest(unittest.TestCase):
@@ -2347,11 +2369,11 @@ class IndexReceiverCheckTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def _fill(self, emb_rows, sec_rows, report_rows=None):
-        _npy(self.data / "moments_emb.npy", emb_rows)
+    def _fill(self, feat_rows, sec_rows, report_rows=None):
+        """`moments_emb.npy` 는 만들지 않는다 — 배송에서 빠졌고 수신기가 거절한다."""
+        _npz(self.data / "features_v1.npz", feat_rows)
         _npy(self.data / "stage1_section.npy", sec_rows)
         (self.data / "moments.parquet").write_bytes(b"PAR1")
-        (self.data / "features_v1.npz").write_bytes(b"PK\x03\x04")
         if report_rows is not None:
             (self.data / "slice_report.json").write_text(
                 json.dumps({"rows": {"moments": report_rows}}), encoding="utf-8")
@@ -2369,6 +2391,19 @@ class IndexReceiverCheckTest(unittest.TestCase):
         (self.data / "c.npy").write_bytes(b"not a numpy file at all")
         with self.assertRaises(SystemExit):
             self.mod.npy_rows(self.data / "c.npy")
+
+    def test_reads_the_row_count_inside_a_compressed_npz(self):
+        """npz 안의 배열도 numpy 없이 세어야 한다. `moments_emb.npy` 가 배송에서
+        빠진 뒤로 `features_v1.npz` 가 두 번째 대조 갈래라, 여기서 막히면 갈래가
+        하나로 줄고 검사가 조용히 무력해진다."""
+        _npz(self.data / "d.npz", 4242)
+        self.assertEqual(4242, self.mod.npz_rows(self.data / "d.npz"))
+
+    def test_refuses_an_npz_without_the_array(self):
+        with zipfile.ZipFile(self.data / "e.npz", "w") as bundle:
+            bundle.writestr("Y.npy", b"")
+        with self.assertRaises(SystemExit):
+            self.mod.npz_rows(self.data / "e.npz")
 
     def test_mismatched_vectors_are_refused(self):
         """네 색인은 같은 행 번호로 서로를 가리킨다. 서로 다른 판에서 온 파일이

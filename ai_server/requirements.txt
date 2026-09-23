@@ -7,6 +7,11 @@ pandas==3.0.5
 pyarrow==25.0.1
 # 선호 구간 묶음(build_dna)이 계층 군집에 쓴다. 빠뜨리면 추천 호출에서만 터진다.
 scipy==1.18.1
+# 순간 벡터 검색·fetch. **공식 SDK 만 쓴다** (app/pinecone_store.py).
+# 이 줄이 바뀌면 CI 이미지도 다시 구워야 한다 — infra/ci/ai-server.yml 이 구운
+# 이미지와 이 파일을 cmp 로 대조해 다르면 job 이 멈춘다.
+#   sh infra/runner/build-images.sh
+pinecone==5.4.2
 
 # torch 는 **서빙에 필요 없다.** 사용자 벡터 계산을 NumPy 로 옮겼다(app/stage1_np.py).
 # 산출물에 stage1_weights.npz 를 두면 그 경로로 돈다.

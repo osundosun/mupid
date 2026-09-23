@@ -100,7 +100,7 @@ cd api && ./clickhouse/verify.sh
 | --- | --- |
 | 0 | `kafka-init` / `ch-init` 이 exit 0 으로 끝났는지 |
 | 1 | `mupid` 2 샤드, `mupid_all` 1 샤드 2 레플리카 |
-| 2 | 두 노드의 오브젝트 구성이 동일한지 (Replicated 5 / Distributed 5 / View 5 / Kafka 1 / Dictionary 1) |
+| 2 | 두 노드의 오브젝트 구성이 동일한지 (Replicated 6 / Distributed 6 / View 5 / Kafka 1 / Dictionary 1) |
 | 3 | `system.distributed_ddl_queue` 에 실패 항목이 없는지 |
 | 4 | `track_sections` 한 번 INSERT 가 두 노드에 모두 복제되는지 |
 | 5 | `dict_track_sections` 가 두 노드에서 같은 `dictGet` 결과를 주는지 |

@@ -147,15 +147,16 @@ class RegistryTests(unittest.TestCase):
         """태그가 색인 행까지 **문자열**로 간다. 배열이면 parquet 이 멈춘다."""
         self._audio("T000001")
         lib = self._registry(
-            tags=[{"track_id": "T000001", "genre_top1": "Pop---Ballad",
-                   "mood_json": json.dumps([{"label": "love", "confident": True}]),
+            tags=[{"track_id": "T000001", "genre_code": "pop_ballad",
+                   "mood_json": json.dumps([{"label": "warm", "confident": True}]),
                    "instrument_json": json.dumps([{"label": "piano", "confident": True}]),
                    "voice_label": "voice", "gender_label": "female"}])
         tracks, _ = lib.build(["T000001"], sections_of=lambda t: self.tmp / f"{t}.json",
                               load=lambda p: None, measure=lambda y: {"bpm": 100.0})
         row = tracks[0].meta_row
-        self.assertEqual(row["genre_top1"], "Pop---Ballad")
-        self.assertEqual(row["mood_tags"], "love")
+        # 값은 DB `codes.code_name` 어휘다 (2026-09-21 전환).
+        self.assertEqual(row["genre_code"], "pop_ballad")
+        self.assertEqual(row["mood_codes"], "warm")
         self.assertEqual(row["instrument_tags"], "piano")
         self.assertEqual(row["voice_label"], "voice")
         self.assertEqual(row["gender_label"], "female")
@@ -166,7 +167,7 @@ class RegistryTests(unittest.TestCase):
         lib = self._registry()
         tracks, info = lib.build(["T000001"], sections_of=lambda t: self.tmp / f"{t}.json",
                                  load=lambda p: None, measure=lambda y: {"bpm": 100.0})
-        self.assertEqual(tracks[0].meta_row["genre_top1"], "")
+        self.assertEqual(tracks[0].meta_row["genre_code"], "")
         self.assertTrue(any("태깅 산출물이 없다" in w for w in info["warn"]))
 
     def test_demix_root_is_carried_to_the_batch_track(self):

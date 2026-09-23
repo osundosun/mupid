@@ -76,16 +76,42 @@ def spans_of(ev) -> list[tuple[float, float]]:
     return out
 
 
+# 라벨러가 구간에서 읽는 열. 서빙이 stdin 으로 넘겨줄 때도 이 목록이 기준이다.
+MOMENT_COLS = ("moment_id", "track_id", "section_idx", "start_sec", "end_sec",
+               "dur_sec", "rel_start", "rel_end", "emb_row", "source")
+
+
+def read_moments(source: str | None) -> pd.DataFrame:
+    """구간 표를 읽는다. `-` 면 **stdin 의 JSON records** 다.
+
+    구간 종류·시각·순서는 MySQL 이 정본이라 색인의 `moments.parquet` 에 더는 없다
+    (`app/catalog_api.py`). 서빙에서 이 도구를 부를 때는 이미 합쳐 둔 표를
+    **stdin 으로 넘긴다** — 파일로 떨구면 그 파일이 곧 두 번째 사본이 되고, 다음
+    사람은 그것을 읽어도 되는 줄 안다.
+
+    인자가 없으면 색인의 parquet 을 읽는다. 전체 색인(구간 열이 아직 붙어 있는 판)
+    에서 오프라인으로 돌리는 길이 그대로 남아 있어야 하기 때문이다.
+    """
+    if source == "-":
+        return pd.DataFrame(json.loads(sys.stdin.read()))
+    if source:
+        return pd.read_parquet(source)
+    return pd.read_parquet(OUT_DIR / "moments.parquet")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="구간 선호 라벨 생성")
     ap.add_argument("--pool", default="local", help="local | fma | flow | service")
     ap.add_argument("--events", default=None, help="이벤트 JSONL 경로 (기본: logs/events_<pool>.jsonl)")
     ap.add_argument("--out", default=None, help="출력 parquet 경로")
+    ap.add_argument("--moments", default=None,
+                    help="구간 표. `-` 면 stdin 의 JSON records. "
+                         "기본은 색인의 moments.parquet")
     a = ap.parse_args()
 
     events = Path(a.events) if a.events else LOG_DIR / f"events_{a.pool}.jsonl"
     out = Path(a.out) if a.out else OUT_DIR / f"labels_{a.pool}.parquet"
-    mom = pd.read_parquet(OUT_DIR / "moments.parquet")
+    mom = read_moments(a.moments)
     if "source" not in mom.columns:
         mom["source"] = "fma"
     ev = pd.DataFrame([json.loads(x) for x in events.open(encoding="utf-8")])

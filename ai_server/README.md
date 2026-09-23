@@ -167,7 +167,7 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 | GET | `/internal/ready` | 요청을 받을 수 있는가 |
 | GET | `/internal/facets` | QueryPlan 에 쓸 수 있는 태그 어휘 |
 | GET | `/internal/metrics` | 운영 지표 (프로세스 내 카운터) |
-| POST | `/internal/recommendations/daily` | 오늘의 모먼트 |
+| POST | `/internal/recommendations/daily` | 오늘의 모멘트 — **4개 고정** |
 | POST | `/internal/recommendations/next` | 이어 듣기 |
 | POST | `/internal/recommendations/search` | 자연어 검색 |
 | POST | `/internal/similar` | 기준 구간과 닮은 다른 곡의 구간 |
@@ -201,8 +201,17 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
   "onboarding": { "moods": ["serene"], "genres": ["Jazz"] } }
 ```
 
-`recommendation_id`·`user_id` 만 필수. `current_*` 는 `next` 전용이다.
-타입이 엄격하다 — `"5001"` 같은 문자열이나 실수 `limit` 은 400 으로 거부한다.
+`recommendation_id`·`user_id` 만 필수. `current_*` 는 `next` 전용이고, 위 예시의
+`limit: 10` 은 `next`·`search` 기준이다. 타입이 엄격하다 — `"5001"` 같은 문자열이나
+실수 `limit` 은 400 으로 거부한다.
+
+#### `daily` 의 개수는 고정이다
+
+오늘의 모멘트는 **4개**다(`internal_api.DAILY_LIMIT`). `limit` 을 빼고 보내면 4개가
+오고, `4` 를 명시해도 된다. **그 밖의 값은 400 이다** — 조용히 4로 깎지 않는다.
+깎으면 10개를 요청한 쪽이 4개를 받고도 그것이 전부인 줄 알아, 빈 6칸을 AI 쪽 후보
+부족(`shortfall`)으로 잘못 읽는다. `next`·`search`·`similar` 는 종전대로 `limit` 을
+받는다(기본 5, 최대 50).
 
 `onboarding` 은 **Spring 코드표의 `code_name`(영문 내부 코드) 그대로** 보낸다
 (`serene`·`melancholic` …, 2026-09-21 정리 전의 한국어 이름도 별칭으로 받는다). AI 태그로

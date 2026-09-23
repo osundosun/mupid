@@ -167,5 +167,5 @@ docker compose logs -f api   # 운영 스택 로그
 
 ## 주의
 
-- `.env` 에는 DB 비밀번호와 JWT 시크릿이 들어간다. **커밋하지 말 것** (현재 `.gitignore` 에 등록되어 있지 않다).
+- `.env` 에는 DB 비밀번호와 JWT 시크릿이 들어간다. **커밋하지 말 것.** `api/.gitignore` 에 등록되어 있다.
 - `Dockerfile` 의 베이스 이미지 `azul-zulu` 는 **Debian 기반**이다. `addgroup -S` 같은 Alpine(BusyBox) 문법은 쓸 수 없다.

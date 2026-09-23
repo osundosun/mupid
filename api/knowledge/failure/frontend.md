@@ -49,9 +49,9 @@
 
 ### grep 결과에 오래된 중복 구현이 계속 걸린다
 
-- **원인**: 죽은 코드가 상당량 남아 있다. `components/mufeed-app.tsx` 는 101,388 bytes 인데 저장소 전체에서 참조가 0건이다(프로토타입의 단일 파일 앱). `lib/demo-session.ts` 의 `createDemoSession` 은 어떤 컴포넌트도 import 하지 않고 `tests/demo-session.test.mjs` 만 붙잡고 있다 — 실제 세션 타입은 `lib/services/contracts.ts` 의 `AccountSession` 이다. `components/ui/` 60개 중 앱이 실제로 쓰는 것은 alert-dialog, carousel, dialog, pagination, slider, tabs 6개뿐이고 `hooks/use-mobile.ts` 는 미사용인 `components/ui/sidebar.tsx` 만 참조한다.
-- **해결**: 코드를 찾을 때 `mufeed-app.tsx` 히트는 무시한다.
-- **근거**: `frontend/components/mufeed-app.tsx`, `frontend/lib/demo-session.ts`
+- **원인**: 죽은 코드가 상당량 남아 있다. `lib/demo-session.ts` 의 `createDemoSession` 은 어떤 컴포넌트도 import 하지 않고 `tests/demo-session.test.mjs` 만 붙잡고 있다 — 실제 세션 타입은 `lib/services/contracts.ts` 의 `AccountSession` 이다. `components/ui/` 60개 중 앱이 실제로 쓰는 것은 alert-dialog, carousel, dialog, pagination, slider, tabs 6개뿐이고 `hooks/use-mobile.ts` 는 미사용인 `components/ui/sidebar.tsx` 만 참조한다.
+- **해결**: 코드를 찾을 때 `prototype/` 과 위 파일들의 히트는 무시한다. 프로토타입 단일 파일 앱(`prototype/components/mupid-app.tsx`)은 `frontend/` 에서는 이미 지웠다.
+- **근거**: `frontend/lib/demo-session.ts`
 
 ### 폐쇄망·차단 환경에서 데모가 통째로 실패한다
 
@@ -83,11 +83,11 @@
 - **해결**: 일회성 실행 기록으로만 본다. 마스코트 자산을 다시 만들려면 경로부터 고친다.
 - **근거**: `frontend/scripts/remove-mascot-checkerboard.py`
 
-### `App/` 에서 Sites 배포를 실행하면 개인 프로토타입을 덮어쓴다
+### `prototype/` 에서 Sites 배포를 실행하면 개인 프로토타입을 덮어쓴다
 
-- **원인**: `frontend/.openai/hosting.json` 은 `{"d1": null, "r2": null}` 로 정리됐지만 `App/.openai/hosting.json` 에는 `"project_id": "appgprj_6a96142907848191bb46392959b6ed47"` 가 그대로 있다. `App/README.md` 도 이를 인정한다.
-- **해결**: `App/` 에서 Sites 배포 명령을 실행하지 않는다.
-- **근거**: `App/.openai/hosting.json`, `App/README.md`
+- **원인**: `frontend/.openai/hosting.json` 은 `{"d1": null, "r2": null}` 로 정리됐지만 `prototype/.openai/hosting.json` 에는 `"project_id": "appgprj_6a96142907848191bb46392959b6ed47"` 가 그대로 있다. `prototype/README.md` 도 이를 인정한다.
+- **해결**: `prototype/` 에서 Sites 배포 명령을 실행하지 않는다.
+- **근거**: `prototype/.openai/hosting.json`, `prototype/README.md`
 
 ### 로그인해도 `/explore` 새로고침이 `/home` 으로 떨어진다 — 해소됨
 

@@ -38,6 +38,7 @@ import lombok.extern.slf4j.Slf4j;
  * 1. 시스템 프롬프트 + 이전 대화 + 이번 메시지로 messages 를 만든다
  * 2. 게이트웨이에 보낸다 (툴 선언을 함께)
  * 3. 툴 호출이 돌아오면 실행하고 결과를 messages 에 붙여 다시 보낸다 ← 최대 ai.max-tool-rounds 회
+ *    추천은 이 중 한 번만 실제로 돈다 (S15P21A204-437, {@link #runTool})
  * 4. 본문이 돌아오면 그것이 답변이다. 그동안 모은 곡을 함께 돌려준다
  * </pre>
  *
@@ -68,17 +69,28 @@ public class AiChatServiceImpl implements AiChatService {
 
     /**
      * gpt-5 계열의 시스템 프롬프트 역할은 `system` 이 아니라 `developer` 다.
+     *
+     * <p><b>툴을 부르지 않을 때를 적는다</b> (S15P21A204-436). 예전 프롬프트는 "추천을
+     * 원하면 반드시 부른다" 만 있고 원하지 않을 때의 규칙이 없었다. 거기에 역할은 "다음
+     * 음악으로 건너가도록 돕는다", 무관한 질문에는 "음악 이야기로 돌아온다" 여서 모델에게
+     * 주어진 문장이 전부 추천 쪽으로 기울어 있었다. 코드는 툴을 강제하지 않는데도(요청에
+     * `tool_choice` 가 없다) 인사 한마디에 곡 카드가 붙던 것이 이것이다.
      */
     private static final String DEVELOPER_PROMPT = """
         당신은 음악 감상 서비스 Mupid 의 AI 큐레이터입니다.
-        사용자가 "저장한 순간"(곡에서 마음에 남은 순간)에서 다음 음악으로 건너가도록 돕습니다.
+        사용자가 "저장한 순간"(곡에서 마음에 남은 순간)을 이야기하고, 원할 때 다음 음악을 찾도록 돕습니다.
 
         규칙:
         - 한국어로, 다정하지만 담백하게 두세 문장 안에서 답합니다.
-        - 곡/분위기/장르 추천을 원하면 반드시 recommend_music 툴을 먼저 부릅니다.
+        - recommend_music 툴은 사용자가 이번 말에서 곡을 찾아 달라고 할 때만 부릅니다.
+          예: "추천해 줘", "비슷한 곡 있어?", "잔잔한 노래 틀어 줘", "다른 걸로", "신나는 느낌으로 듣고 싶어".
+          이런 요청에는 반드시 recommend_music 툴을 먼저 부릅니다.
+        - 인사, 고마움, 곡·아티스트에 대한 질문, 감상 나누기, 사용법 질문처럼 곡을 찾아 달라는 말이 없으면
+          툴을 부르지 않고 말로만 답합니다. 묻지 않은 곡을 먼저 권하지 않습니다.
+        - 앞선 턴에서 추천했다고 이번 턴에 다시 추천하지 않습니다. 이번 말이 요청일 때만 부릅니다.
         - 툴 결과에 있는 곡만 이야기합니다. 제목이나 아티스트를 지어내지 않습니다.
         - 곡 목록은 화면이 따로 그려 줍니다. 답변에 목록을 나열하지 말고, 어떤 결로 골랐는지만 말합니다.
-        - 음악과 무관한 질문에는 짧게 답하고 음악 이야기로 돌아옵니다.
+        - 음악과 무관한 질문에는 짧게 답합니다. 곡 추천으로 화제를 돌리지 않습니다.
         """;
 
     private final OpenAiClient openAiClient;
@@ -96,9 +108,10 @@ public class AiChatServiceImpl implements AiChatService {
         appendHistory(messages, request.history());
         messages.add(OpenAiMessage.user(request.message()));
 
-        // 툴이 여러 번 불려도 화면에는 한 번만 보여야 한다. 곡 번호로 접는다.
+        // 같은 곡이 두 번 실리지 않게 곡 번호로 접는다.
         Map<Integer, AiRecommendedTrack> tracks = new LinkedHashMap<>();
-        // **접지 않는다.** 호출 순서대로 전부 남긴다 — 몇 번 불렀는지가 정보다.
+        // **접지 않는다.** 실제로 실행한 호출을 순서대로 전부 남긴다. 추천은 요청당 한 번만
+        // 돌므로 recommend_music 기록도 많아야 한 줄이다 (S15P21A204-437).
         List<AiToolCallRecord> toolCalls = new ArrayList<>();
         // 마지막으로 곡을 돌려준 추천 묶음의 번호. 화면이 재생 이벤트에 되돌려 싣는다.
         long[] recommendationId = {0L};
@@ -206,6 +219,26 @@ public class AiChatServiceImpl implements AiChatService {
         long[] recommendationId
     ) {
         String name = call.function() != null ? call.function().name() : null;
+        if (AiRecommendTool.NAME.equals(name) && ranRecommend(records)) {
+            /*
+             * 추천은 요청 한 번에 한 번만 실행한다 (S15P21A204-437).
+             *
+             * 사용자는 추천을 한 번 청했는데 추천이 연달아 두 번 돌아, 화면에 "1번째·2번째
+             * 음악 추천" 이 붙고 두 묶음의 곡이 섞였다. 모델은 한 응답에 호출을 둘 싣거나,
+             * 결과를 받은 뒤 말을 살짝 바꿔 다시 불렀다. 요청 쪽에서도 막지만
+             * ({@code OpenAiChatRequest.of} — parallel_tool_calls=false, 결과 뒤 tool_choice=none)
+             * 게이트웨이가 그 값을 따른다는 보장은 없어서 여기서 한 번 더 막는다.
+             *
+             * 두 번째 호출은 **실행하지 않고 기록에도 남기지 않는다** — 일어나지 않은 추천이다.
+             * 합치지 않고 첫 호출만 쓰는 것은, 첫 호출이 사용자 말을 그대로 옮긴 것이고 뒤의
+             * 것은 모델이 조건을 바꿔 본 것이라서다. 결과 메시지는 빼먹을 수 없다 — 호출 id
+             * 마다 tool 메시지가 없으면 게이트웨이가 다음 요청을 거부한다.
+             */
+            log.info("이번 요청에서 이미 추천했다 — 추가 recommend_music 호출은 실행하지 않는다 user_id={}",
+                user.getUserId());
+            return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of(
+                "message", "이번 요청의 추천은 이미 앞의 결과로 끝났습니다. 툴을 다시 부르지 말고 그 결과로 답하세요.")));
+        }
         if (!AiRecommendTool.NAME.equals(name)) {
             log.warn("선언하지 않은 툴을 불렀다 name={}", name);
             // 사용자에게는 우리가 아는 이름으로 보여준다. 모르는 툴이면 이름 그대로가 정직하다.
@@ -239,7 +272,10 @@ public class AiChatServiceImpl implements AiChatService {
                 AiRecommendTool.NAME, labelOf(AiRecommendTool.NAME), argumentsOf(arguments),
                 e.getMessage()));
             return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of(
-                "error", "지금은 곡을 찾을 수 없습니다. 잠시 후 다시 시도해 주세요.")));
+                // "잠시 후 다시 시도" 라고 쓰면 모델이 그 말을 자기에게 한 것으로 읽고 툴을
+                // 다시 불렀다 (S15P21A204-437). 다시 부르지 말라고 분명히 적는다.
+                "error", "추천 서버가 응답하지 않아 지금은 곡을 찾을 수 없습니다. "
+                    + "툴을 다시 부르지 말고, 지금은 곡을 찾아 드릴 수 없다고 사용자에게 답하세요.")));
         }
         found.forEach(track -> tracks.putIfAbsent(track.musicId(), track));
         records.add(AiToolCallRecord.succeeded(
@@ -248,11 +284,20 @@ public class AiChatServiceImpl implements AiChatService {
         if (found.isEmpty()) {
             // 빈 배열만 주면 모델이 "오류" 로 읽고 곡을 지어내는 일이 있다. 조건에 맞는
             // 곡이 없다는 것은 정상 결과이므로 그렇게 말해 준다.
+            //
+            // "조건을 줄이거나 다른 분위기를 제안하세요" 라고만 쓰면 모델이 조건을 줄여 툴을
+            // 다시 불렀다 (S15P21A204-437). 제안은 사용자에게 말로 하는 것이다.
             return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of(
                 "tracks", modelView(found),
-                "message", "조건에 맞는 곡이 없습니다. 조건을 줄이거나 다른 분위기를 제안하세요.")));
+                "message", "조건에 맞는 곡이 없습니다. 툴을 다시 부르지 말고, "
+                    + "조건을 줄이거나 다른 분위기를 말해 달라고 사용자에게 답하세요.")));
         }
         return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of("tracks", modelView(found))));
+    }
+
+    /** 이번 요청에서 추천 툴이 이미 돌았는가. 성공이든 실패든 한 번 돈 것이다. */
+    private boolean ranRecommend(List<AiToolCallRecord> records) {
+        return records.stream().anyMatch(record -> AiRecommendTool.NAME.equals(record.name()));
     }
 
     /**
@@ -367,12 +412,23 @@ public class AiChatServiceImpl implements AiChatService {
     /**
      * 이전 대화를 붙인다. `ai.max-history` 를 넘으면 최근 것부터 남긴다.
      * 오래된 쪽을 버리는 것은 프롬프트가 무한정 길어지는 것을 막기 위해서다.
+     *
+     * <p><b>사용자가 말하기 전의 AI 말은 싣지 않는다</b> (S15P21A204-436). 그 자리에 오는
+     * 것은 화면이 대화창을 열 때 그리는 인사말("새로운 음악을 찾아볼까요? 원하는 느낌을
+     * 들려주세요.")뿐인데, 모델이 한 말이 아니다. 그대로 실으면 모델은 자기가 먼저 곡을
+     * 권했다고 읽어, 사용자의 첫마디가 "안녕" 이어도 그 제안에 대한 답으로 받아 곡을 찾았다.
+     * 잘라 내는 것은 <b>전체 기록의 앞머리</b>다 — 개수 제한으로 잘린 뒤 맨 앞에 온 AI 말은
+     * 모델이 실제로 한 답이라 남긴다.
      */
     private void appendHistory(List<OpenAiMessage> messages, List<AiChatTurn> history) {
         if (history == null || history.isEmpty()) {
             return;
         }
-        int from = Math.max(0, history.size() - props.maxHistory());
+        int firstUser = 0;
+        while (firstUser < history.size() && history.get(firstUser).role() != AiMessageType.USER) {
+            firstUser++;
+        }
+        int from = Math.max(firstUser, history.size() - props.maxHistory());
         for (AiChatTurn turn : history.subList(from, history.size())) {
             switch (turn.role()) {
                 case USER -> messages.add(OpenAiMessage.user(turn.content()));

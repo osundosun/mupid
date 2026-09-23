@@ -23,7 +23,9 @@ import argparse
 import hashlib
 import json
 import sys
+from collections import Counter
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -134,14 +136,16 @@ def fetch_plays(since: str, limit: int) -> list[dict]:
     return [json.loads(ln) for ln in query(sql).splitlines() if ln.strip()]
 
 
-def to_play_event(r: dict, im) -> dict | None:
+def to_play_event(r: dict, im, why: Optional[Counter] = None) -> dict | None:
     """곡 단위 재생 신호 한 건. 구간 경계가 없으므로 `section_uid` 도 없다."""
     sig = str(r["signal"])
     if sig not in PLAY_EVENTS:
+        _count(why, "unknown_signal")
         return None
     try:
         track = im.source_track_id(int(r["track_id"]))
     except Exception:
+        _count(why, "music_id_unmapped")
         return None
     ep = str(r.get("entry_path") or "").upper()
     ev = {"event_id": event_id(r),
@@ -179,6 +183,11 @@ def to_play_event(r: dict, im) -> dict | None:
     return ev
 
 
+def _count(why: Optional[Counter], reason: str) -> None:
+    if why is not None:
+        why[reason] += 1
+
+
 def event_id(r: dict) -> str:
     """내용에서 만든다. 같은 신호를 두 번 받아도 한 번만 쌓인다.
 
@@ -206,18 +215,30 @@ def recent_ids() -> set:
         return set()
 
 
-def to_event(r: dict, bounds: dict, im) -> dict | None:
-    """신호 한 건을 AI 행동 로그 한 줄로 옮긴다."""
+def to_event(r: dict, bounds: dict, im, why: Optional[Counter] = None) -> dict | None:
+    """신호 한 건을 AI 행동 로그 한 줄로 옮긴다.
+
+    버릴 때는 **왜 버렸는지 센다**(`why`). 예전에는 세 가지 원인이 한 숫자로
+    뭉쳐 있었고 로그는 그중 하나라고 단정했다 — 매핑표에 색인 밖 곡까지 담은
+    뒤로는 "색인에 없는 곡" 이 가장 흔한 원인이라, 그 단정이 사람을
+    `push_sections` 버전 쪽으로 잘못 보낸다.
+    """
     sig = str(r["signal"])
     if sig not in KNOWN:
+        _count(why, "unknown_signal")
         return None
     uid = str(r["section_uid"])
     b = bounds.get(uid)
-    if b is None:                     # 구간 표에는 있는데 AI 색인에 없다 — 버전이 어긋났다
+    if b is None:
+        # 구간 표에는 있는데 **AI 색인에 없다.** 지금은 대개 아직 임베딩하지 않은
+        # 곡이다(매핑표는 DB 전량을 담는다). 버전 불일치일 수도 있어 둘을 가르는
+        # 것은 사람이 한다 — 여기서는 수만 정확히 남긴다.
+        _count(why, "section_not_in_index")
         return None
     try:
         track = im.source_track_id(int(r["track_id"]))
     except Exception:
+        _count(why, "music_id_unmapped")
         return None                   # 숫자 ID 를 문자열로 못 되돌린다
     return {"event_id": event_id(r),
             "user_ref": f"internal:{int(r['user_id'])}",
@@ -251,13 +272,14 @@ def run(limit: int, dry_run: bool) -> dict:
     bounds, im = section_bounds(), ids.id_map()
     known = recent_ids()
     appended, dup, dropped = 0, 0, 0
+    why: Counter = Counter()
     last = since
     fresh: list[str] = []
 
     for r, maker in ([(r, "section") for r in sig_rows]
                      + [(r, "play") for r in play_rows]):
-        ev = (to_event(r, bounds, im) if maker == "section"
-              else to_play_event(r, im))
+        ev = (to_event(r, bounds, im, why) if maker == "section"
+              else to_play_event(r, im, why))
         if ev is None:
             dropped += 1
         elif ev["event_id"] in known:
@@ -275,14 +297,21 @@ def run(limit: int, dry_run: bool) -> dict:
 
     log(f"적재 {appended} · 중복 {dup} · 제외 {dropped}")
     if dropped:
-        log("  제외는 구간 표와 AI 색인이 어긋났다는 뜻이다 — push_sections 버전을 본다")
+        log("  제외 원인: " + " · ".join(f"{k}={v}" for k, v in why.most_common()))
+        if why.get("section_not_in_index"):
+            log(f"    section_not_in_index {why['section_not_in_index']}건 — 그 곡이 아직"
+                " 색인에 없거나 push_sections 버전이 어긋났다")
+        if why.get("music_id_unmapped"):
+            log(f"    music_id_unmapped {why['music_id_unmapped']}건 — id_map 을"
+                " 다시 뽑는다 (매핑에 없는 곡의 청취가 통째로 사라진다)")
     if not dry_run:
         # 성공했을 때만 전진한다. 경계의 같은 밀리초를 다시 읽으므로 그때 쓸
         # ID 목록을 함께 남긴다 — 로그 전체를 다시 훑지 않기 위해서다.
         save_watermark(last, len(sig_rows) + len(play_rows), fresh)
         log(f"워터마크 → {last}")
     return {"fetched": len(sig_rows) + len(play_rows), "appended": appended,
-            "duplicate": dup, "dropped": dropped, "watermark": last}
+            "duplicate": dup, "dropped": dropped, "dropped_by": dict(why),
+            "watermark": last}
 
 
 def main() -> int:

@@ -16,6 +16,8 @@
 }
 .mupid-shell { font-size: 16px; line-height: 1.55; }
 .mupid-shell .desktop-app-nav button, .mupid-shell .nav-item { font-size: 16px; }
+/* 글자를 16px로 키우면서 메뉴가 좁아지면 '내 취향'이 둘째 줄로 떨어졌다(1280px). 메뉴는 줄바꿈하지 않고, 남는 폭은 검색창이 줄여 맞춘다. */
+.mupid-shell .desktop-app-nav { flex: 1 0 auto; flex-wrap: nowrap; }
 .mupid-shell .field-label { font-size: 16px; }
 .mupid-shell .nav-search input { font-size: 16px; }
 .mupid-shell .track-title, .mupid-shell .desktop-playlist-row strong { font-size: 17px; }

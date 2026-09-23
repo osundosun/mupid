@@ -7,10 +7,13 @@ import { toggleExploreFilter } from '@/lib/explore-filter';
 type Option = { key: string; label: string };
 type Category = { title: string; icon: typeof SlidersHorizontal; options: Option[] };
 
+// 장르는 수가 많아 찾기 쉽게 가나다 순으로 보여 준다.
+const byLabel = (a: Option, b: Option) => a.label.localeCompare(b.label, 'ko');
+
 function categoriesOf(options: ExploreFilterOptions): Category[] {
   return [
     { title: '분위기', icon: SlidersHorizontal, options: options.moods.map((item) => ({ key: `mood:${item.name}`, label: item.display_name || item.name })) },
-    { title: '장르', icon: Music2, options: options.genres.map((item) => ({ key: `genre:${item.name}`, label: item.display_name || item.name })) },
+    { title: '장르', icon: Music2, options: options.genres.map((item) => ({ key: `genre:${item.name}`, label: item.display_name || item.name })).sort(byLabel) },
     { title: '보컬', icon: Mic2, options: [
       { key: 'vocal:female', label: '여성 보컬' },
       { key: 'vocal:male', label: '남성 보컬' },

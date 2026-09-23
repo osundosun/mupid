@@ -51,12 +51,11 @@ import com.sun.net.httpserver.HttpServer;
  *   <li><b>기록이 실제로 응답에 실린다.</b> 서버 로그에만 남기면 사용자는 여전히 모른다.
  *   <li><b>실패도 실린다.</b> 예전에는 추천 서버 장애를 {@code runTool} 이 삼키고 대화를
  *       이어 가서 화면에 아무 흔적이 없었다 — 이 저장소가 반복해서 겪은 "조용한 실패" 다.
- *   <li><b>여러 번 불린 툴을 접지 않는다.</b> {@code ai.max-tool-rounds} 가 3 이라 같은
- *       툴이 한 턴에 두 번 불릴 수 있고, <b>몇 번 불렀는지가 정보다.</b>
+ *   <li><b>실행한 호출을 접지 않는다.</b> 다만 437 부터 추천은 요청당 한 번만 실행한다 —
+ *       모델이 다시 부른 추천은 실행하지 않고 기록에도 없다({@code repeatedCallRunsOnce}).
  * </ol>
  *
- * <p>곡 목록({@code tracks})은 반대로 <b>곡 번호로 접힌다</b> — 같은 곡이 두 줄로 보이면
- * 안 된다. 두 규칙이 서로 반대라 한 테스트에서 함께 확인한다.
+ * <p>곡 목록({@code tracks})은 <b>곡 번호로 접힌다</b> — 같은 곡이 두 줄로 보이면 안 된다.
  *
  * <p>스프링 컨텍스트도 DB 도 쓰지 않는다. JDK 내장 HTTP 서버 둘(게이트웨이·추천 서버)과
  * Mockito 목으로 직접 조립한다 — {@code ChatRecommendationEndToEndTest} 와 같은 스타일이다.
@@ -311,26 +310,27 @@ class AiChatToolCallRecordTest {
     }
 
     @Test
-    @DisplayName("409: 같은 툴이 두 번 불리면 기록은 둘, 곡 목록은 접힌다 — 몇 번 불렀는지가 정보다")
-    void repeatedCallsAreNotCollapsed() throws IOException {
+    @DisplayName("437: 모델이 결과를 받고 추천을 또 불러도 실행은 한 번 — 기록 한 줄, 툴은 결과 뒤에 닫힌다")
+    void repeatedCallRunsOnce() throws IOException {
         AiChatResponse response = chat(service(true, false));
 
-        // 기록은 **호출 순서대로 전부**. 라운드마다 인자가 다르므로 구분된다.
-        assertThat(response.toolCalls()).hasSize(2);
-        assertThat(response.toolCalls().get(0).arguments())
+        // 409 때는 두 번째 호출도 실행해 기록이 둘이었다. 사용자가 한 번 청한 추천이 연달아
+        // 두 번 도는 것이 437 의 버그라, 두 번째는 실행하지 않고 기록에도 남기지 않는다.
+        assertThat(response.toolCalls()).hasSize(1);
+        assertThat(response.toolCalls().getFirst().arguments())
             .containsEntry("query", "비 오는 날 잔잔한 곡");
-        assertThat(response.toolCalls().get(1).arguments())
-            .containsEntry("query", "조금 더 차분하게");
-        // 결과 요약도 호출마다 따로다.
-        assertThat(response.toolCalls()).allMatch(r -> r.trackCount() == 2);
-
-        // **곡 목록은 반대로 접힌다.** 추천 서버가 같은 구간을 두 번 줬으므로 곡은 2건이다.
-        // 접지 않으면 화면에 같은 곡이 네 줄로 보인다.
         assertThat(response.tracks()).hasSize(2);
 
-        // 게이트웨이는 **툴 호출 횟수만큼** 왕복한다: 두 번 불렀으면 요청 3회다
-        // (1회차 툴 호출 → 2회차 툴 호출 → 3회차 본문). 로그에 남는 것은 이 3건이다.
+        // 대역은 두 번째 요청에도 툴 호출을 주므로 왕복은 여전히 3회다.
         assertThat(gatewayRequests).hasSize(3);
+        // 첫 요청: 한 응답에 호출 하나만, 부를지는 모델이 고른다(436).
+        assertThat(gatewayRequests.getFirst()).contains("\"parallel_tool_calls\":false");
+        assertThat(gatewayRequests.getFirst()).doesNotContain("tool_choice");
+        // 툴 결과를 실은 뒤에는 툴을 닫는다 — 이제 말로 답할 차례다.
+        assertThat(gatewayRequests.get(1)).contains("\"tool_choice\":\"none\"");
+        // 그래도 부른 호출에는 실행 없이 답이 간다. 호출 id 마다 tool 메시지가 있어야 한다.
+        assertThat(gatewayRequests.get(2)).contains("\"tool_call_id\":\"call_2\"");
+        assertThat(gatewayRequests.get(2)).contains("툴을 다시 부르지 말고");
     }
 
     @Test

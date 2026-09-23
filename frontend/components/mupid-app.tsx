@@ -396,7 +396,7 @@ function LoadedMupidApp({ bootstrap }: { bootstrap: Bootstrap }) {
       <AppDialogs model={m} />
       {teamCredits && <div className="team-secret-credit" role="status">
         <span className="team-secret-record" aria-hidden="true"><span>A204</span></span>
-        <div><strong>이 음악 공간을 만든 사람들</strong><p>이규원 · 김건우 · 안규리<br />정예준 · 정준호</p></div>
+        <div><strong>이 음악 공간을 만든 사람들</strong><p>이규원 · 김건우 · 안규리<br />정예준 · 정준호</p><p className="team-secret-investor"><small>투자자</small> 곽도연</p></div>
       </div>}
       <ArtistInfo model={m} />
       {/* 업데이트 안내는 여기 없다 — `app/layout.tsx`(root)로 옮겼다.

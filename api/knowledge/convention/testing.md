@@ -21,6 +21,8 @@
 | `playlist/PlaylistTrackRemoveAndRenameTest` | `@SpringBootTest` | 곡 빼기·이름 변경 8건 |
 | `event/EventCollectBatchTest` | 순수 JUnit | 수집기의 배치 멱등·거부 격리 4건 |
 | `report/MubtiScorerTest` | 순수 JUnit | MuBTI 네 축 판정·표본 하한·이력 현상 11건 |
+| `analytics/service/AiPreferenceBatchTest` | 순수 JUnit | AI 선호도 배치 — 빈 칸 채우기·창 경계·멱등·실패 시 안 씀·선점 10건 |
+| `admin/service/AdminAiPreferenceBuildTest` | 순수 JUnit | AI 선호도 응답 — 합계 비율·null 비율·계산 안 된 칸·창 규칙 10건 |
 | `bootstrap/BootstrapSeedTest` | 순수 JUnit | 시드가 DB에 들어갈 모양인지 · 저장 키와 조회 URL 이 이어지는지 |
 
 `@SpringBootTest` 는 전부 `@Transactional` 로 매번 롤백한다.

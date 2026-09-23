@@ -103,8 +103,8 @@ export function HeaderSearch({ model: m }: { model: MupidModel }) {
     <form className="nav-search" role="search" onSubmit={event => { event.preventDefault(); submit(draft); }}>
       <input
         ref={input}
-        aria-label="곡, 아티스트 또는 앨범 검색"
-        placeholder="곡, 아티스트, 앨범 검색"
+        aria-label="곡 또는 아티스트 검색"
+        placeholder="곡, 아티스트 검색"
         value={draft}
         onFocus={() => setOpen(true)}
         // 커서가 이미 들어와 있는 창을 다시 누른 경우. focus 는 오지 않는다.

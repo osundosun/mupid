@@ -26,7 +26,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
-from . import clickhouse, metrics, onboarding as onb, paths
+from . import (catalog_api, clickhouse, metrics, onboarding as onb, paths,
+               pinecone_store)
 from .log import log
 
 PREFIX = "/internal"
@@ -55,6 +56,11 @@ def _expected_token() -> str:
     return os.environ.get("MUPID_AI_INTERNAL_TOKEN", "").strip()
 BIGINT_MAX = 2 ** 63 - 1
 MAX_LIMIT = 50
+# 오늘의 모멘트는 **하루 4개**다. 화면이 네 칸이라서가 아니라, 하루치로 내보내는 수가
+# 곧 그날의 추천 품질이 평가되는 단위이기 때문이다 — 개수를 호출자가 정하면 같은 날
+# 사용자마다 다른 크기의 "오늘" 이 나가고, 적재된 `daily_recommendations` 끼리 비교가
+# 안 된다. `next`·`search` 는 그 단위가 아니므로 종전대로 `limit` 을 받는다.
+DAILY_LIMIT = 4
 # `music_section_analysis.external_id` 가 VARCHAR(64) 다. 그보다 긴 값은
 # MySQL 에 있을 수 없으므로 받아도 번역되지 않는다.
 UID_MAX = 64
@@ -117,7 +123,24 @@ class NextRequest(_Base):
 
 
 class DailyRequest(_Base):
-    pass
+    """오늘의 모멘트. 개수는 **4개로 고정**이다(`DAILY_LIMIT`).
+
+    `limit` 을 안 보내면 4다. 다른 값을 보내면 **400 으로 거부한다** — 조용히 4로
+    깎지 않는다. 깎으면 10개를 요청한 Spring 이 4개를 받고도 그것이 전부인 줄 알아,
+    "왜 6개가 비나" 가 AI 쪽 후보 부족(`shortfall`)으로 잘못 읽힌다. 거절은 배포
+    한 번에 드러나고, 침묵은 데이터를 며칠 오염시킨 뒤에 드러난다.
+    """
+
+    limit: StrictInt = Field(DAILY_LIMIT, ge=1, le=MAX_LIMIT,
+                             description=f"보낸다면 {DAILY_LIMIT} 이어야 한다")
+
+    @model_validator(mode="after")
+    def _limit_is_fixed(self):
+        if self.limit != DAILY_LIMIT:
+            raise ValueError(
+                f"오늘의 모멘트는 {DAILY_LIMIT}개로 고정이다 — limit 을 빼고 보내거나 "
+                f"{DAILY_LIMIT} 로 보낸다 (개수를 바꾸려면 next·search 를 쓴다)")
+        return self
 
 
 class SearchRequest(_Base):
@@ -319,6 +342,20 @@ def _svc_mod():
 
 
 def _svc():
+    # 벡터를 갈아 끼우는 동안에는 **분명한 오류**를 돌려준다. 그때 데이터
+    # namespace 가 비었거나 반쯤 차 있어서, 그 상태의 추천은 오류가 아니라 그냥
+    # 이상한 결과로 나온다. 로컬 옛 벡터로 조용히 내려가지도 않는다.
+    #
+    # 같은 호출이 **새 μ 도 읽어 온다** — 배치가 평균을 갈았는데 서버가 옛 평균으로
+    # 계속 도는 상태를 막는다. 재기동이 필요 없다.
+    if pinecone_store.enabled():
+        try:
+            pinecone_store.serving_center()
+        except pinecone_store.ServingPaused:
+            raise ApiError("RELOAD_IN_PROGRESS",
+                           "추천 벡터를 갱신하는 중입니다. 잠시 뒤 다시 시도해 주세요.")
+        except pinecone_store.PineconeError as e:
+            raise ApiError("INDEX_NOT_READY", f"순간 벡터 저장소를 읽지 못했습니다: {e}")
     svc = _svc_mod()
     if getattr(svc, "CAT", None) is None or len(svc.CAT.pool) == 0:
         raise ApiError("INDEX_NOT_READY", "추천 색인이 아직 준비되지 않았습니다.")
@@ -338,18 +375,45 @@ def _behavior_events(user_id: int) -> Optional[list]:
     눈치채지 못한다.
 
     주소가 아예 없으면 `None` 을 돌려 종전의 파일 경로로 간다(개발·오프라인).
+
+    조인 결과가 **0행일 때만** 원본 이벤트를 한 번 더 세어 `mapping_empty` 를 가른다.
+    정상 경로(1행 이상)에는 쿼리를 늘리지 않는다 — 추천은 사용자가 기다리는 경로다.
     """
+    since = time.time() - BEHAVIOR_WINDOW_SEC
     if not clickhouse.configured():
         metrics.observe_behavior_source("file")
         return None
     try:
-        rows = clickhouse.behavior_events(user_id, time.time() - BEHAVIOR_WINDOW_SEC)
+        rows = clickhouse.behavior_events(user_id, since)
     except Exception as e:                       # 연결·쿼리 실패
         metrics.observe_behavior_source("unavailable")
         log(f"행동 조회 실패 — 개인화 없이 추천한다 ({type(e).__name__}: {e})")
         return []
-    metrics.observe_behavior_source("clickhouse")
+    metrics.observe_behavior_source(
+        "clickhouse" if rows else _empty_reason(user_id, since))
     return rows
+
+
+def _empty_reason(user_id: int, since: float) -> str:
+    """조인 결과가 0행이다. **안 들은 것과 못 이은 것을 가른다.**
+
+    원본 이벤트가 있는데 조인이 0이면 `v_track_sections_current` 가 그 곡을 되돌리지
+    못한 것이다 — 색인과 ClickHouse 딕셔너리가 어긋났다는 뜻이고, 한 사용자의 문제가
+    아니라 전 사용자의 개인화가 빠지는 문제다. 그것을 "행동 없음" 으로 세면 콜드스타트
+    비율만 조금 올라간 것처럼 보인다.
+
+    세는 것 자체가 실패하면 **`mapping_empty` 라고 주장하지 않는다.** 조인은 성공했고
+    (0행) 그 뒤 판정만 못 한 것이라 `clickhouse` 로 남긴다.
+    """
+    try:
+        if clickhouse.raw_event_count(user_id, since) > 0:
+            log(f"행동 {user_id}: 원본 이벤트는 있는데 곡 매핑이 0건이다 "
+                f"— v_track_sections_current 를 본다")
+            return "mapping_empty"
+    except Exception as e:
+        log(f"원본 이벤트 수를 세지 못했다 — 매핑 공백 여부는 미판정 "
+            f"({type(e).__name__}: {e})")
+    return "clickhouse"
 
 
 def _genre_catalog(svc) -> list[str]:
@@ -369,9 +433,23 @@ def _onboarding(req: "_Base", svc) -> Optional[dict]:
     if req.onboarding is None:
         return None
     ans = onb.from_request(req.onboarding.model_dump(), _genre_catalog(svc))
-    if ans is not None and not ans["mood"] and not ans["genre"]:
-        # 답변은 왔는데 하나도 못 옮겼다. 조용히 넘기면 "연결은 됐는데 개인화가 0" 이다.
-        log(f"온보딩 변환 결과가 비었다 — mood={ans['mood_raw']} genre={ans['genre_raw']}")
+    if ans is None:
+        return ans
+    # 축을 **따로** 본다. 둘 다 비었을 때만 보면, 무드는 되고 장르만 안 되는
+    # 경우가 안 보인다 — 코드표 세분류 장르 45종(49~93)이 지금 그 상태다
+    # (`alternative_rock` 대 `Rock---Alternative Rock`). 그 축만 조용히 빠진 채
+    # 추천은 정상으로 나가므로 응답으로는 찾을 수 없다.
+    failed = [axis for axis in ("mood", "genre")
+              if ans[f"{axis}_raw"] and not ans[axis]]
+    for axis in failed:
+        metrics.observe_onboarding_unmapped(axis)
+        log(f"온보딩 {axis} 를 하나도 옮기지 못했다 — {ans[f'{axis}_raw']}")
+    if len(failed) == 2:
+        # **두 축 모두** 실패했다. 축별 셈만 보면 "mood 1건, genre 1건" 이 서로 다른
+        # 사용자인지 같은 사용자인지 알 수 없는데, 같은 사용자면 그 사람은 씨앗이
+        # 통째로 없다(`recommender.onboarding_seeds` 가 빈 씨앗을 돌려준다).
+        # 실측으로 기존 회원 8명 중 6명이 이쪽이었다.
+        metrics.observe_onboarding_unmapped("both")
     return ans
 
 
@@ -404,14 +482,19 @@ def next_(req: NextRequest) -> RecommendationResponse:
 
 
 @router.post("/recommendations/daily", response_model=RecommendationResponse,
-             responses=ERRORS, summary="오늘의 추천 (곡 목록)")
+             responses=ERRORS, summary=f"오늘의 모멘트 ({DAILY_LIMIT}개 고정)")
 def daily(req: DailyRequest) -> RecommendationResponse:
+    """오늘의 모멘트 4개. 개수는 요청이 아니라 **여기가** 정한다.
+
+    `req.limit` 을 쓰지 않고 `DAILY_LIMIT` 을 그대로 넘긴다. 검증에서 이미 4만
+    통과하지만, 개수의 출처를 한 곳으로 두면 나중에 값을 바꿀 때 상수만 고치면 된다.
+    """
     svc = _svc()
-    out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
+    out = svc.recommend(_user_ref(req.user_id), DAILY_LIMIT, _exclude(req),
                         True, None, None, None,
                         beh_events=_behavior_events(req.user_id),
                         onboarding=_onboarding(req, svc))
-    return to_response(req.recommendation_id, out, req.limit, False)
+    return to_response(req.recommendation_id, out, DAILY_LIMIT, False)
 
 
 # 자연어 검색은 외부 해석기가 있어야 조건을 뽑는다. 해석기 없이 열어 두면 사용자가 적은
@@ -572,12 +655,70 @@ def ready() -> dict:
     빠진 콜드스타트 추천이 나가지만 추천 자체는 된다. 그때 준비 완료를 거두면 모든
     파드가 한꺼번에 빠져 품질 저하가 장애로 번진다.
     """
-    svc = _svc()                       # 카탈로그 미적재면 INDEX_NOT_READY (503)
+    # 갱신 중이면 여기서 RELOAD_IN_PROGRESS(503) 로 나간다 — readinessProbe 가
+    # 그것을 보고 파드를 엔드포인트에서 뺀다. 재개는 배치가 검증을 통과한 뒤에만
+    # 표시를 지우면서 일어난다.
+    svc = _svc()                       # 색인 미적재면 INDEX_NOT_READY (503)
     return {"ready": True,
             "tracks": int(svc.CAT.pool.track_id.nunique()),
             "moments": int(len(svc.CAT.pool)),
+            # 곡·순간 메타데이터의 출처. 이것이 비면 장르·무드·보컬 조건이
+            # 통째로 빈 채 추천이 나가므로, 준비 판정을 보는 자리에서 함께 읽는다.
+            "metadata_source": catalog_api.status(),
+            # 벡터 검색 갈래. Pinecone 장애는 여기서 드러나야 하고, 로컬 옛 벡터로
+            # 조용히 내려가지 않는다.
+            "vector_search": {"backend": svc.vector_backend(),
+                              **pinecone_store.settings()},
             "behavior_store": behavior_store_status(),
             "paths": paths.check()}
+
+
+def refresh_catalog() -> dict:
+    """카탈로그를 다시 읽고, 성공하면 색인과 다시 묶는다. **구현은 여기 하나다.**
+
+    부르는 자리가 둘이다 — 운영자가 치는 `/internal/catalog/refresh` 와 TTL 주기
+    갱신. 두 곳이 각자 들고 있으면 한쪽만 고쳐져 "손으로 부르면 반영되는데 주기로는
+    안 된다" 같은 상태가 생긴다.
+
+    실패는 두 단계로 갈린다.
+
+      · 받아오기 실패 — 옛 카탈로그를 그대로 쓴다(`catalog_api.refresh`).
+      · 받아왔는데 색인과 못 묶음 — **옛 `Catalog` 객체를 그대로 둔다.** 반쯤 바뀐
+        상태로 추천하지 않는다. 다만 `catalog_api` 쪽 스냅샷은 이미 새것이므로,
+        다음 갱신에서 다시 묶기를 시도한다.
+    """
+    result = catalog_api.refresh()
+    svc = _svc_mod()
+    if result["ok"] and getattr(svc, "CAT", None) is not None:
+        # 색인은 그대로 두고 **메타데이터만** 갈아 끼운다. 판을 다시 읽지 않으므로
+        # 벡터·행 번호는 건드리지 않는다 — 어긋날 자리가 생기지 않는다.
+        try:
+            svc.CAT = svc.Catalog()
+            result["reloaded"] = True
+        except Exception as e:
+            result["reloaded"] = False
+            result["reload_error"] = f"{type(e).__name__}: {e}"
+            log(f"카탈로그 갱신 후 색인 재구성 실패 — {result['reload_error']}")
+    else:
+        result["reloaded"] = False
+    return result
+
+
+@router.post("/catalog/refresh", summary="곡·순간 메타데이터를 다시 읽는다")
+def catalog_refresh() -> dict:
+    """MySQL 쪽이 바뀐 것을 **재기동 없이** 반영한다.
+
+    곡을 지우거나 장르를 고친 뒤 부른다. 시간으로도 갱신되게 하려면
+    `MUPID_AI_CATALOG_TTL_SEC` 를 켠다 — 기본은 꺼져 있다.
+
+    **실패해도 200 이다.** 돌려주는 `ok` 가 거짓이면 갱신을 못 했다는 뜻이고,
+    그때도 들고 있던 카탈로그로 추천은 계속된다. 여기서 500 을 내면 부르는 쪽이
+    재시도하다 서비스를 멈추게 만들기 쉬운데, 멈춰야 할 상황이 아니다.
+
+    토큰 검사 안에 있다(`PUBLIC_PATHS` 밖). 카탈로그를 다시 읽게 하는 것은 Spring 을
+    향한 호출을 일으키는 일이라 아무나 부를 자리가 아니다.
+    """
+    return refresh_catalog()
 
 
 # ------------------------------------------------------------------ 설치
@@ -616,6 +757,7 @@ def install(app: FastAPI, service_module=None) -> None:
     @app.exception_handler(ApiError)
     async def _api(request: Request, exc: ApiError):
         status = {"NO_CANDIDATES": 404, "INDEX_NOT_READY": 503,
+                  "RELOAD_IN_PROGRESS": 503,
                   "SEARCH_NOT_CONFIGURED": 501, "INTERNAL_ERROR": 500}.get(exc.code, 400)
         return _err(exc.code, exc.message, status)
 

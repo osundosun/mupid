@@ -47,8 +47,15 @@ def _build(root, n_pool=6, n_fma=14):
              pca_comp=rng.normal(size=(DIM_EMB, DIM_X)).astype(np.float32),
              side_cols=np.array(["a"], dtype="<U24"), evr=np.float32(0.7))
     np.save(data / "stage1_section.npy", rng.normal(size=(total, DIM_Z)).astype(np.float32))
-    pd.DataFrame({"track_id": mom.track_id, "bpm": 120.0}).to_parquet(
-        data / "content.parquet", index=False)
+    pd.DataFrame({"track_id": mom.track_id, "bpm": 120.0, "dur_sec": 200.0}
+                 ).to_parquet(data / "content.parquet", index=False)
+    # 전체 색인 쪽에는 그대로 남는다(특징을 다시 굽는 오프라인 경로가 읽는다).
+    # **배송 묶음에는 나가면 안 된다** — 제목·장르는 MySQL 이 정본이다.
+    pd.DataFrame({"track_id": mom.track_id, "title": "제목",
+                  "genre_code": "indie_rock", "mood_codes": "calm",
+                  "language": "ko", "category": "pop", "sound_raw": "",
+                  "bpm_lo": 100.0, "bpm_hi": 140.0}
+                 ).to_parquet(data / "flow_meta.parquet", index=False)
     (data / "features_info.json").write_text(json.dumps({"version": "feat-v1"}),
                                              encoding="utf-8")
     return data
@@ -86,8 +93,6 @@ def test_every_vector_keeps_its_value(sliced):
     before = pd.read_parquet(full / "moments.parquet")
     after = pd.read_parquet(out / "moments.parquet")
 
-    Z_before = np.load(full / "moments_emb.npy")
-    Z_after = np.load(out / "moments_emb.npy")
     X_before = np.load(full / "features_v1.npz")["X"]
     X_after = np.load(out / "features_v1.npz")["X"]
     S_before = np.load(full / "stage1_section.npy")
@@ -96,9 +101,14 @@ def test_every_vector_keeps_its_value(sliced):
     old_row = before.set_index("moment_id").emb_row
     for i, mid in enumerate(after.moment_id):
         j = int(old_row.loc[mid])
-        assert np.array_equal(Z_after[i], Z_before[j]), f"{mid} 임베딩이 바뀌었다"
         assert np.array_equal(X_after[i], X_before[j]), f"{mid} 특징이 바뀌었다"
         assert np.array_equal(S_after[i], S_before[j]), f"{mid} 구간 벡터가 바뀌었다"
+
+    # `moments_emb.npy` 는 **배송에 없다.** 순간 벡터의 정본은 Pinecone 이고, 이
+    # 파일은 분석 배치가 그것을 채울 때만 읽는 입력 산출물이다. 실으면 같은 벡터를
+    # 파일과 인덱스 두 곳에서 관리하게 된다.
+    assert not (out / "moments_emb.npy").exists()
+    assert (full / "moments_emb.npy").exists(), "원본까지 지우면 적재할 근거가 없다"
 
 
 def test_moment_id_order_matches_between_moments_and_features(sliced):
@@ -135,12 +145,57 @@ def test_pca_basis_is_carried_over_not_refitted(sliced):
     assert np.array_equal(before["side_cols"], after["side_cols"])
 
 
-def test_content_is_narrowed_to_pool_tracks(sliced):
+def test_track_features_are_narrowed_to_pool_tracks(sliced):
     _, out, _ = sliced
     mom = pd.read_parquet(out / "moments.parquet")
-    content = pd.read_parquet(out / "content.parquet")
+    features = pd.read_parquet(out / "track_features.parquet")
 
-    assert set(content.track_id) == set(mom.track_id)
+    assert set(features.track_id) == set(mom.track_id)
+
+
+def test_mysql_owned_metadata_never_ships(sliced):
+    """제목·장르·무드·보컬·악기는 **MySQL 이 정본**이다. 묶음에 사본이 가면 안 된다.
+
+    가면 어느 쪽이 이기는지가 자리마다 갈린다 — 지워진 곡의 구간이 색인에 남아
+    계속 추천되던 것이 그 상태였다. 오류는 나지 않는다.
+    """
+    _, out, _ = sliced
+
+    assert not (out / "content.parquet").exists()
+    assert not (out / "flow_meta.parquet").exists()
+
+    # 곡 축에는 DB 에 컬럼이 없는 것만 남는다.
+    features = pd.read_parquet(out / "track_features.parquet")
+    # 읽는 곳이 있는 열만 남는다. `dur_sec`(곡)·`sound_raw` 는 뺐다.
+    assert set(features.columns) == {
+        "track_id", "bpm", "language", "category", "bpm_lo", "bpm_hi"}
+
+    # 구간 축에서도 MySQL 이 정본인 열은 떨어져 나간다.
+    mom = pd.read_parquet(out / "moments.parquet")
+    for gone in ("section_label", "section_idx", "start_sec", "end_sec",
+                 "dur_sec", "instruments"):
+        assert gone not in mom.columns, gone
+    # 벡터를 가리키는 값과 오디오에서 잰 값은 남아야 한다.
+    for kept in ("moment_id", "track_id", "emb_row", "source",
+                 "rel_start", "rel_end", "rms"):
+        assert kept in mom.columns, kept
+
+
+def test_bundle_declares_the_contract_it_was_baked_with(sliced):
+    """표식이 없으면 옛 판과 새 코드가 **오류 없이** 섞인다.
+
+    옛 판은 장르·무드를 `flow_meta` 안에 들고 있는데 새 코드는 그 파일을 읽지
+    않으므로, 그 축이 통째로 빈 채 추천이 돈다. 추천 서버가 이 표식을 보고 거절한다.
+    """
+    from ai_server.app import index_contract
+
+    _, out, report = sliced
+    meta = json.loads((out / "index_meta.json").read_text(encoding="utf-8"))
+
+    assert meta["index_contract"] == index_contract.CONTRACT
+    assert meta["catalog_source"] == index_contract.SOURCE
+    assert meta["rows"] == len(pd.read_parquet(out / "moments.parquet"))
+    assert report["metadata_source"] == index_contract.SOURCE
 
 
 def test_refuses_to_overwrite_the_source(tmp_path, monkeypatch):
@@ -177,3 +232,130 @@ def test_report_records_what_was_dropped(sliced):
     assert report["dropped"] > 0
     assert len(set(report["rows"].values())) == 1
     assert json.loads((out / "slice_report.json").read_text(encoding="utf-8"))["rows"]
+
+
+# ------------------------------------------------- 배송 묶음이 갖춰야 하는 것
+
+def test_features_info_row_count_follows_the_slice(sliced):
+    """통째로 복사하면 65,540행이라고 적힌 채 잘린 npz 옆에 놓인다.
+
+    기동을 막지 않아 더 나쁘다 — 어느 판이 올라가 있는지 이 파일로 확인할 때
+    조용히 거짓말을 한다.
+    """
+    _, out, _ = sliced
+    info = json.loads((out / "features_info.json").read_text(encoding="utf-8"))
+    rows = len(pd.read_parquet(out / "moments.parquet"))
+
+    assert info["features_rows"] == rows
+    assert info["features_sha256"]
+    assert info["version"] == "feat-v1"          # 기저 항목은 그대로
+
+
+def test_id_map_file_never_ships(tmp_path, monkeypatch):
+    """옛 매핑 파일은 묶음에 들어가면 **안 된다.**
+
+    받는 쪽 `ALLOWED` 밖의 이름이 섞이면 묶음 전체가 exit 65 로 거부된다.
+    근거는 파일도 색인도 아니라 **MySQL** 이다 (`app/catalog_api.py`).
+    """
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    data = _build(src)
+    pd.DataFrame({"source_track_id": ["T0"], "music_id": [1],
+                  "external_id": ["T0#0"], "music_section_analysis_id": [9330]}
+                 ).to_parquet(data / "id_map.parquet", index=False)
+
+    slice_index.slice_index(src, dst)
+    assert not (dst / "data" / "proc" / "mupid" / "id_map.parquet").exists()
+
+
+def test_empty_track_axes_are_reported_not_swallowed(tmp_path, monkeypatch, capsys):
+    """비면 조용히 무너진다 — 그 조건이 아무 곡도 고르지 못한다. 말은 한다.
+
+    오류가 아니라 "조건에 맞는 곡이 없다" 로 나오므로, 세어서 말하지 않으면
+    응답만 봐서는 정상과 구분되지 않는다.
+    """
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    data = _build(src)
+    pd.read_parquet(data / "content.parquet")[["track_id"]].to_parquet(
+        data / "flow_meta.parquet", index=False)      # language·category 가 없다
+
+    report = slice_index.slice_index(src, dst)
+
+    assert set(report["track_features"]["empty_axes"]) == {
+        "language", "category", "bpm_lo", "bpm_hi"}
+    assert "곡 수준 축이 비었다" in capsys.readouterr().err
+
+
+def test_refuses_when_bpm_cannot_be_carried(tmp_path, monkeypatch):
+    """BPM 이 빠지면 템포 조건과 이어 듣기 감점이 통째로 사라진다 — 그 전에 멈춘다."""
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    data = _build(src)
+    (data / "content.parquet").unlink()
+
+    with pytest.raises(SystemExit) as e:
+        slice_index.slice_index(src, dst)
+    assert e.value.code == 65
+
+
+def test_every_shipped_file_is_one_the_receiver_accepts(sliced):
+    """받는 쪽 허용 목록과 **실제로 맞춰 본다.**
+
+    이 시험이 없어서 2026-09-21 에 묶음이 거부되는 변경이 그대로 커밋됐다.
+    `receive-index.py` 의 `ALLOWED` 는 "이 엔드포인트로 노드에 임의의 파일을 놓을 수
+    있으면 안 된다" 는 보안 경계다. 색인 도구가 그 목록 밖의 이름을 쓰면 배포가
+    통째로 멈추는데, 여기서는 아무 신호도 나지 않는다.
+    """
+    import ast
+    import pathlib
+
+    receiver = pathlib.Path(__file__).resolve().parents[2] / "infra_k8s" / "deploy" / "receive-index.py"
+    if not receiver.exists():
+        pytest.skip("인프라 저장소가 함께 있지 않다")
+
+    tree = ast.parse(receiver.read_text(encoding="utf-8"))
+    allowed = next(
+        (set(ast.literal_eval(node.value))
+         for node in ast.walk(tree)
+         if isinstance(node, ast.Assign)
+         and any(getattr(t, "id", None) == "ALLOWED" for t in node.targets)),
+        None)
+    assert allowed, "receive-index.py 에서 ALLOWED 를 읽지 못했다"
+
+    _, out, _ = sliced
+    shipped = {p.name for p in out.rglob("*") if p.is_file()}
+    assert shipped <= allowed, f"받는 쪽이 거부할 파일: {sorted(shipped - allowed)}"
+
+
+def test_state_directories_never_ship(sliced):
+    """`logs`(실측 51MB)·`serve` 는 판에만 있고 묶음에는 없다.
+
+    `shrink_index`(판)와 갈리는 지점이다. 보내면 서빙 로그를 색인이라고 배포하게 된다.
+    """
+    _, out, _ = sliced
+    assert not (out / "logs").exists()
+    assert not (out / "serve").exists()
+
+
+def test_src_dir_reads_a_versioned_plate(tmp_path, monkeypatch):
+    """교체 전 버전 판을 잘라야 한다 — 확인 전에 교체부터 하게 되면 순서가 거꾸로다."""
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    _build(src)
+    plate = src / "data" / "proc" / "mupid_v20260921-161142"
+    (src / "data" / "proc" / "mupid").rename(plate)
+
+    report = slice_index.slice_index(src, dst, src_data=plate)
+
+    # 들어온 이름이 무엇이든 **나가는 자리는 언제나 mupid** 다.
+    assert (dst / "data" / "proc" / "mupid" / "moments.parquet").exists()
+    assert report["rows"]["moments"] > 0

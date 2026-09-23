@@ -57,6 +57,17 @@ if [[ $command =~ ^upload-env\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
     "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 fi
 
+# upload-ai-env <40-hex commit> <64-hex sha256>
+# 추천 서버 환경변수를 갈아 끼우고 **ai 만** 재시작한다.
+#
+# 공용 Secret 과 나눈 것은 여기에 `ROLE_SYSTEM` 리프레시 토큰이 들어 있기
+# 때문이다 — 섞으면 Spring 파드도 쓰지 않는 자격을 함께 받게 되고, 한 곳이 새면
+# 둘 다 새는 모양이 된다. 재시작 범위도 함께 좁아진다.
+if [[ $command =~ ^upload-ai-env\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
+  exec sudo /usr/local/sbin/mupid-receive-ai-env \
+    "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+fi
+
 # apply-manifests <40-hex commit> <64-hex sha256>
 # 오버레이 전체를 적용한다. **이 동사가 셋 중 가장 힘이 세다** — 이미지 수신기는
 # 태그만, 환경변수 수신기는 Secret 하나만 건드리지만 여기는 클러스터의 모양을
