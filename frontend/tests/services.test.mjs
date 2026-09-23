@@ -28,23 +28,24 @@ test('browser storage never grants a session', async () => {
   assert.equal(storage.getItem('mupid.demo-session.v1'), null);
 });
 
-test('bootstrap returns independent snapshots of the server catalog', async () => {
+test('bootstrap returns independent snapshots of preferences', async () => {
   const service = createDemoService(memory());
-  const first = await service.bootstrap(demoTracks);
-  assert.equal(first.tracks.length, demoTracks.length);
-  // 받은 쪽이 고쳐도 다음 호출과 원본 목록이 흔들리지 않는다.
-  first.tracks.length = 0;
+  const first = await service.bootstrap();
+  // 받은 쪽이 고쳐도 다음 호출이 흔들리지 않는다.
   first.preferences.moods.push('망가뜨리기');
-  const second = await service.bootstrap(demoTracks);
-  assert.equal(second.tracks.length, demoTracks.length);
+  const second = await service.bootstrap();
   assert.deepEqual(second.preferences.moods, []);
-  assert.equal(demoTracks.length, 8);
 });
 
-// 곡을 하나도 받지 못하면 화면에 보일 곡도 없다. 예시 곡으로 채우지 않는다.
-test('bootstrap without a catalog has no songs', async () => {
-  const { tracks } = await createDemoService(memory()).bootstrap();
-  assert.deepEqual(tracks, []);
+// 곡 목록(카탈로그)을 들고 오지 않는다 (S15P21A204-446). 곡은 저장된 값이 가리키는
+// 것만 찾아 오고, 그마저 찾는 방법(resolve)이 없으면 묻지 않는다. 예시 곡으로 채우지 않는다.
+test('bootstrap carries no song list, only tracks the stored values point to', async () => {
+  const { knownTracks } = await createDemoService(memory()).bootstrap();
+  assert.deepEqual(knownTracks, []);
+  const asked = [];
+  const result = await createDemoService(memory()).bootstrap(async (ids) => { asked.push(...ids); return []; });
+  assert.deepEqual(result.knownTracks, []);
+  assert.deepEqual(asked, [], '가리키는 곡이 없으면 묻지도 않는다');
 });
 test('first visits require onboarding and completion survives reload independently of login', async () => {
   const service = createDemoService(memory());
@@ -73,12 +74,13 @@ test('existing preferences and empty playlists survive round trip', async () => 
   const restored = await service.bootstrap();
   assert.equal(restored.preferences.nickname, '테스트'); assert.deepEqual(restored.preferences.playlists, []);
 });
-test('corrupt storage recovers and invalid track references are removed', async () => {
+test('corrupt storage recovers and malformed track references are removed', async () => {
   const storage = memory(); storage.setItem('mupid.sky.preferences.v1', '{broken');
   const service = createDemoService(storage);
-  assert.equal((await service.bootstrap(demoTracks)).tracks.length, demoTracks.length);
-  storage.setItem('mupid.sky.preferences.v1', JSON.stringify({ liked: [1, 999], playlists: [{id: 3, name: '목록', tracks: [null, {id: 999}]}] }));
-  const data = await service.bootstrap(demoTracks); assert.deepEqual(data.preferences.liked, [1]); assert.deepEqual(data.preferences.playlists, []);
+  assert.deepEqual((await service.bootstrap()).preferences.liked, []);
+  // 곡 번호 목록은 번호만 본다 — 곡 목록으로 거르지 않는다. 번호가 아닌 것만 버린다.
+  storage.setItem('mupid.sky.preferences.v1', JSON.stringify({ liked: [1, 1999, 'x', 1.5, null], playlists: [{id: 3, name: '목록', tracks: [null, {id: 999}]}] }));
+  const data = await service.bootstrap(); assert.deepEqual(data.preferences.liked, [1, 1999]); assert.deepEqual(data.preferences.playlists, []);
 });
 // 기기에 남은 플레이리스트는 되살리지도, 다시 적지도 않는다. 이 저장소는 계정별로
 // 나뉘어 있지 않아 — 신규 가입자가 앞사람의(그리고 예전 빌드의 데모) 목록을 넘겨받았다.
@@ -86,7 +88,7 @@ test('device-stored playlists are never restored and get purged on save', async 
   const storage = memory();
   storage.setItem('mupid.sky.preferences.v1', JSON.stringify({ nickname: '새 사람', playlists: [{ id: 1, name: '규원의 Mupid Mix', tracks: [] }] }));
   const service = createDemoService(storage);
-  const data = await service.bootstrap(demoTracks);
+  const data = await service.bootstrap();
   assert.deepEqual(data.preferences.playlists, []);
   await service.savePreferences({ ...data.preferences, playlists: [{ id: 1, name: '규원의 Mupid Mix', tracks: [] }] });
   assert.deepEqual(JSON.parse(storage.getItem('mupid.sky.preferences.v1')).playlists, []);
@@ -103,7 +105,7 @@ test('photo create/read/delete and storage failure propagate', async () => {
   await service.savePhoto('data:image/jpeg;base64,test'); assert.equal(await service.readPhoto(), 'data:image/jpeg;base64,test');
   await service.removePhoto(); assert.equal(await service.readPhoto(), '');
   const broken = createDemoService({ getItem(){throw Error('blocked');}, setItem(){throw Error('quota');}, removeItem(){throw Error('blocked');} });
-  assert.equal((await broken.bootstrap(demoTracks)).tracks.length, demoTracks.length);
+  assert.deepEqual((await broken.bootstrap()).knownTracks, []);
   await assert.rejects(broken.savePhoto('x'), /quota/);
 });
 test('API mode never silently falls back to demo', () => {
@@ -111,24 +113,30 @@ test('API mode never silently falls back to demo', () => {
   assert.throws(() => createService('api', createDemoService(memory())), /어댑터/);
 });
 
-// 카탈로그(앞 100곡) 밖의 곡에 남긴 순간도 새로고침 뒤에 남는다 (S15P21A204-443).
-test('moments on songs outside the catalog are restored through the resolver', async () => {
+// 저장한 순간과 마지막 재생 곡은 가리키는 곡을 찾아 붙여야 남는다 (S15P21A204-443·446).
+test('moments and the last played track are restored through the resolver', async () => {
   const storage = memory();
-  const outside = { ...demoTracks[0], id: 1777, musicId: 777, duration: 200 };
+  const song = { ...demoTracks[0], id: 1777, musicId: 777, duration: 200 };
+  const last = { ...demoTracks[1], id: 1888, musicId: 888 };
   storage.setItem('mupid.sky.preferences.v1', JSON.stringify({
-    moments: [{ id: 1, track: outside, start: 10, end: 20, section: '코러스' }],
+    moments: [{ id: 1, track: song, start: 10, end: 20, section: '코러스' }],
+    lastPlayedId: 1888,
   }));
   const service = createDemoService(storage);
 
-  // 곡을 찾지 못하면 예전처럼 버린다.
-  assert.deepEqual((await service.bootstrap(demoTracks)).preferences.moments, []);
+  // 찾는 방법이 없으면(로그인 전) 곡을 알아야 하는 값은 비운다.
+  const anonymous = await service.bootstrap();
+  assert.deepEqual(anonymous.preferences.moments, []);
+  assert.equal(anonymous.preferences.lastPlayedId, null);
 
   const asked = [];
-  const { preferences } = await service.bootstrap(demoTracks, async (ids) => {
+  const { preferences, knownTracks } = await service.bootstrap(async (ids) => {
     asked.push(...ids);
-    return ids.includes(1777) ? [outside] : [];
+    return [song, last].filter((track) => ids.includes(track.id));
   });
-  assert.deepEqual(asked, [1777]);
+  assert.deepEqual(asked, [1777, 1888], '한 번에 묻는다');
   assert.equal(preferences.moments.length, 1);
   assert.equal(preferences.moments[0].track.musicId, 777);
+  assert.equal(preferences.lastPlayedId, 1888);
+  assert.deepEqual(knownTracks.map((track) => track.id), [1777, 1888]);
 });

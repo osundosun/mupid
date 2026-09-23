@@ -121,13 +121,20 @@ export async function fetchTodayMoments(
  * **빈 목록은 오류가 아니다.** 조건에 맞는 곡이 없다는 뜻이다.
  */
 export async function fetchNextTracks(
-  options: { currentMusicId?: number; currentSectionId?: number; limit?: number } = {},
+  options: {
+    currentMusicId?: number;
+    currentSectionId?: number;
+    limit?: number;
+    /** 이번 목록에서 뺄 서버 곡 번호. 자동 추천은 이미 큐에 있는 곡을 넘긴다. */
+    excludeMusicIds?: number[];
+  } = {},
   signal?: AbortSignal,
 ): Promise<Track[]> {
   const result = await api.recommendation.next(
     {
       current_music_id: options.currentMusicId,
       current_music_section_id: options.currentSectionId,
+      exclude_music_ids: options.excludeMusicIds,
       limit: options.limit,
     },
     signal,
@@ -164,7 +171,7 @@ export async function fetchSimilarSections(
 /**
  * "당신을 위한 추천" 에 보여 줄 곡.
  *
- * 서버가 준 것이 있으면 그것을 쓰고, 없으면 카탈로그 앞쪽으로 채운다. 홈이 비어
+ * 서버가 준 것이 있으면 그것을 쓰고, 없으면 인기곡(`popularTracks`)으로 채운다. 홈이 비어
  * 보이는 것보다는 낫지만 **추천은 아니다** — 화면은 `recommendationsReady` 로 그
  * 차이를 말한다.
  *
@@ -183,7 +190,7 @@ export function pickForYou(
 /**
  * "당신을 위한 추천" 자리의 제목.
  *
- * 추천 서버가 답하지 않았을 때는 **추천이라고 부르지 않는다.** 카탈로그 앞쪽을
+ * 추천 서버가 답하지 않았을 때는 **추천이라고 부르지 않는다.** 인기곡을
  * 잘라 채운 목록에 "당신을 위한" 이라고 적으면, 개인화가 꺼져 있는 것을 아무도
  * 눈치채지 못한다.
  */

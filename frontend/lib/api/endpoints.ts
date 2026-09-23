@@ -536,6 +536,22 @@ export type AiChatResult = {
 
 export function createEndpoints(client: ApiClient) {
   return {
+    system: {
+      /**
+       * API 서버가 요청을 받을 수 있는가. 앱을 열 때 한 번 본다 (S15P21A204-444).
+       *
+       * 스프링 액츄에이터라 `BaseResponse` 로 감싸지 않은 `{"status":"UP"}` 가 온다.
+       * DB·Redis 가 죽으면 503 이다. ClickHouse 는 집계에서 빠져 있다(`ClickHouseConfig`).
+       * 로그인과 무관하므로 토큰을 싣지 않는다.
+       */
+      health: (signal?: AbortSignal) =>
+        client.request<{ status: string }>({
+          path: '/api/actuator/health',
+          anonymous: true,
+          timeoutMs: 8000,
+          signal,
+        }),
+    },
     auth: {
       /** 로그인. 응답 쿠키로 리프레시 토큰이 심긴다. */
       login: (email: string, password: string) =>
@@ -856,6 +872,17 @@ export function createEndpoints(client: ApiClient) {
       get: (musicId: number, signal?: AbortSignal) =>
         client.request<MusicSummary>({
           path: `/api/v1/music/${musicId}`,
+          signal,
+        }),
+      /**
+       * 곡 여러 개를 한 번에 (S15P21A204-445). 한 번에 100곡까지다.
+       *
+       * **없거나 지워진 곡은 404·410 이 아니라 결과에서 빠진다.** 순서는 보낸 그대로다.
+       */
+      bulk: (musicIds: number[], signal?: AbortSignal) =>
+        client.request<{ items: MusicSummary[] }>({
+          path: '/api/v1/music/bulk',
+          query: { ids: musicIds.join(',') },
           signal,
         }),
       /**

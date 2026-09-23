@@ -79,7 +79,7 @@ export function DailyAlbumTreemap({
   const playTrack = async (musicId: number) => {
     const request = ++playRequest.current;
     try {
-      const track = m.tracks.find(item => item.musicId === musicId)
+      const track = m.knownTracks.find(item => item.musicId === musicId)
         ?? toTrack(await api.music.get(musicId));
       if (request === playRequest.current) m.play(track);
     } catch {

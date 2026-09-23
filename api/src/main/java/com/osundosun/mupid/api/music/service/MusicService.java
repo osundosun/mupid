@@ -10,6 +10,7 @@ import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.enumerate.VocalFilter;
 import com.osundosun.mupid.api.music.request.MusicSortRequest;
 import com.osundosun.mupid.api.music.response.MusicAnalysisResponse;
+import com.osundosun.mupid.api.music.response.MusicBulkResponse;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
 import com.osundosun.mupid.api.music.request.MusicAddRequest;
 import com.osundosun.mupid.api.music.request.MusicUpdateRequest;
@@ -30,6 +31,12 @@ public interface MusicService {
      * 서비스마다 베끼면 한쪽만 고쳐졌을 때 조용히 갈리기 때문이다.
      */
     Music requireAlive(int musicId);
+
+    /**
+     * 곡 여러 개를 한 번에. 순서는 넘긴 그대로이고 없거나 삭제된 곡은 빠진다
+     * (S15P21A204-445). 번호 검증은 {@link MusicBulkQuery} 가 이미 했다.
+     */
+    MusicBulkResponse getMusicSummaries(List<Integer> musicIds);
 
     /**
      * 곡 목록. 검색어가 비면 전체다.

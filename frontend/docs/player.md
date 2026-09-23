@@ -255,10 +255,11 @@ useEffect(() => player.setQueue([12, 13]), [player]);
 
 ## 남은 제약
 
-1. **곡 목록은 `GET /api/v1/music` 에서 받는다.** `lib/stream-catalog.ts` 의
-   `fetchCatalog()` 가 서버 응답을 `Track` 으로 옮긴다. `Track.musicId` 가 있는
-   곡만 청크 스트리밍으로 재생되고, 없는 곡(데모 8곡)은 기존 `<audio>` 로
-   재생된다. 카탈로그가 채워지면 데모 목록을 지우면 된다.
+1. **곡은 서버에서 온다.** 앱을 열 때 곡 목록을 미리 받지 않는다(S15P21A204-446).
+   화면마다 서버 목록(검색·추천·큐·보관함)을 받고, `lib/stream-catalog.ts` 의
+   `toTrack` 이 `Track` 으로 옮긴다. 곡 번호로 곡을 찾을 때는 모델의 `knownTracks`
+   를 먼저 보고, 없으면 곡 일괄 조회(`lib/server-tracks.ts`)로 묻는다.
+   `Track.musicId` 가 있는 곡만 청크 스트리밍으로 재생된다.
 
 2. **장르·분위기·구간은 아직 빈 값이다.** 서버 응답에 필드는 있지만
    `codes`·`music_genres`·`music_moods`·`music_section_analysis` 가 전부 비어

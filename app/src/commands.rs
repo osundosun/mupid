@@ -6,7 +6,7 @@
 use tauri::State;
 
 use crate::db::Db;
-use crate::store::{cache, kv, prefs};
+use crate::store::{kv, prefs};
 
 /// 계정 키를 정한다. 화면이 넘기지 않으면 지금 열려 있는 계정.
 fn user_key(db: &Db, given: Option<String>) -> Result<String, String> {
@@ -82,35 +82,6 @@ pub fn session_set_user_key(value: String, db: State<'_, Db>) -> Result<(), Stri
         value
     };
     kv::set_current_user_key(&db, &key).map_err(String::from)
-}
-
-// ─────────────────────────────────────────────────────────────
-// 캐시
-// ─────────────────────────────────────────────────────────────
-
-#[tauri::command]
-pub fn cache_get(
-    scope: String,
-    key: String,
-    max_age_ms: Option<i64>,
-    db: State<'_, Db>,
-) -> Result<Option<cache::CacheEntry>, String> {
-    cache::get(&db, &scope, &key, max_age_ms).map_err(String::from)
-}
-
-#[tauri::command]
-pub fn cache_put(
-    scope: String,
-    key: String,
-    payload: serde_json::Value,
-    db: State<'_, Db>,
-) -> Result<(), String> {
-    cache::put(&db, &scope, &key, &payload).map_err(String::from)
-}
-
-#[tauri::command]
-pub fn cache_clear(scope: Option<String>, db: State<'_, Db>) -> Result<(), String> {
-    cache::clear(&db, scope.as_deref()).map_err(String::from)
 }
 
 // ─────────────────────────────────────────────────────────────

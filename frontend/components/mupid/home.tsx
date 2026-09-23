@@ -17,7 +17,6 @@ import { Heading, TrackRow, Waveform, PlayerControls } from './primitives';
 import { forYouHeading, pickForYou } from '@/lib/recommendations';
 import { useTrackWaveform } from '@/lib/track-waveform';
 export function HomeView({ model: m }: { model: MupidModel }) {
-  const tracks = m.tracks;
   const forYou = forYouHeading(m.recommendationsReady);
   // '지금 재생 중' 카드의 파형은 현재 기기에서 음원 청크를 분석한다.
   // 듣고 있는 곡이라 청크는 어차피 받는 중이다.
@@ -43,7 +42,7 @@ export function HomeView({ model: m }: { model: MupidModel }) {
           <AlbumDeck
             model={m}
             label="취향에 이어지는 음악"
-            items={pickForYou(m.forYou, tracks, m.ignored)}
+            items={pickForYou(m.forYou, m.popularTracks, m.ignored)}
           />
           <Heading
             eyebrow="다시 듣기"

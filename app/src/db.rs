@@ -32,7 +32,7 @@ impl From<DbError> for String {
 pub type DbResult<T> = Result<T, DbError>;
 
 /// 스키마 버전. 새 마이그레이션을 넣을 때마다 하나 올린다.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 impl Db {
     pub fn open(path: &Path) -> DbResult<Self> {
@@ -64,6 +64,9 @@ fn migrate(connection: &Connection) -> DbResult<()> {
     }
     if current < 1 {
         connection.execute_batch(SCHEMA_V1)?;
+    }
+    if current < 2 {
+        connection.execute_batch(SCHEMA_V2)?;
     }
     connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
@@ -135,23 +138,51 @@ CREATE TABLE IF NOT EXISTS profile_photo (
   data     TEXT NOT NULL
 );
 
--- 서버 응답 캐시. scope 로 갈래를 나눈다 ('catalog', 'analysis' 등).
--- 만료는 읽는 쪽이 fetched_at 으로 판단한다 — 무엇을 얼마나 묵혀도 되는지는
--- 저장소가 아니라 그 데이터를 쓰는 화면이 안다.
-CREATE TABLE IF NOT EXISTS cache (
-  scope      TEXT    NOT NULL,
-  key        TEXT    NOT NULL,
-  payload    TEXT    NOT NULL,
-  fetched_at INTEGER NOT NULL,
-  PRIMARY KEY (scope, key)
-);
 "#;
 
-/// 지금 시각(밀리초). 캐시 만료 판단에 쓴다.
+/// v2 — 서버 응답 캐시를 없앤다 (S15P21A204-444).
+///
+/// 서버에 닿지 않으면 서비스를 열지 않으므로(`ServerGate`) 묵은 응답으로 화면을
+/// 채울 일이 없다. v1 로 깔린 기기에 남은 표를 지운다.
+const SCHEMA_V2: &str = "DROP TABLE IF EXISTS cache;";
+
+/// 지금 시각(밀리초).
 pub fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    /// v1 로 깔린 기기에 남은 응답 캐시 표가 v2 에서 지워진다 (S15P21A204-444).
+    #[test]
+    fn v2_drops_the_response_cache_left_by_v1() {
+        let connection = Connection::open_in_memory().expect("열기");
+        connection
+            .execute_batch(
+                "CREATE TABLE cache (scope TEXT, key TEXT, payload TEXT, fetched_at INTEGER);
+                 PRAGMA user_version = 1;",
+            )
+            .expect("v1 흉내");
+
+        super::migrate(&connection).expect("이관");
+
+        let left: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'cache'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("조회");
+        assert_eq!(left, 0);
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("판");
+        assert_eq!(version, super::SCHEMA_VERSION);
+    }
 }

@@ -19,10 +19,10 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
   // 저장소를 주입받아 테스트와 브라우저 실행을 분리한다. 현재 데이터는 기기 간 동기화되지 않는다.
   return {
     mode: 'demo',
-    async bootstrap(catalog: Track[] = [], resolve?: TrackResolver) {
+    async bootstrap(resolve?: TrackResolver) {
       const preferences = structuredClone(defaults);
-      // 저장된 좋아요·기록이 서버 곡을 가리킬 수도 있다. 검증은 합친 목록으로 한다.
-      const allTracks = catalog;
+      // 저장된 값이 곡 번호로 가리키는 곡. 곡 목록을 미리 받아 두지 않는다(S15P21A204-446).
+      let knownTracks: Track[] = [];
       // Corrupt/blocked device storage must not prevent opening the demo.
       try {
         const saved: unknown = JSON.parse(storage.getItem(preferencesKey) || 'null');
@@ -34,9 +34,10 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
           if (typeof saved.nickname === 'string' && saved.nickname.trim()) preferences.nickname = saved.nickname.slice(0, 20);
           if (Array.isArray(saved.moods)) preferences.moods = saved.moods.filter((v: unknown) => typeof v === 'string');
           if (Array.isArray(saved.genres)) preferences.genres = [...new Set(saved.genres.filter((v: unknown): v is string => typeof v === 'string'))];
-          if (typeof saved.lastPlayedId === 'number' && allTracks.some(t => t.id === saved.lastPlayedId)) preferences.lastPlayedId = saved.lastPlayedId;
+          // 곡 번호 목록은 번호만 본다. 곡은 화면이 찾아 그린다 — 여기서 곡 목록으로
+          // 거르면 목록 밖의 곡이 사라진다. 로그인하면 계정 값으로 덮인다.
           for (const key of ['liked', 'ignored', 'history'] as const) {
-            if (Array.isArray(saved[key])) preferences[key] = saved[key].filter((id: unknown) => allTracks.some(t => t.id === id));
+            if (Array.isArray(saved[key])) preferences[key] = saved[key].filter((id: unknown): id is number => Number.isInteger(id));
           }
           /*
            * 플레이리스트는 **되살리지 않는다.** 계정이 기준이다 —
@@ -47,17 +48,20 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
            * 데모 목록('규원의 Mupid Mix' 등)이 남은 기기에서는 그것이 보인다.
            */
           /*
-           * 순간이 가리키는 곡은 카탈로그(앞 100곡) 밖에 있을 수 있다. 그런 곡은
-           * 화면 번호로 찾아 온다 — 못 찾으면 아래에서 버려지고, 그 목록이 곧바로
-           * 다시 저장돼 **기기에서도 지워진다** (S15P21A204-443).
+           * 곡을 알아야 하는 값 — 저장한 순간과 마지막 재생 곡. 가리키는 곡을 화면
+           * 번호로 찾아 온다. 못 찾으면 아래에서 버려지고, 그 목록이 곧바로 다시
+           * 저장돼 **기기에서도 지워진다** (S15P21A204-443).
            */
           const trackIdOf = (m: unknown) => record(m) && record(m.track) && typeof m.track.id === 'number' ? m.track.id : null;
-          const missing = [...new Set((Array.isArray(saved.moments) ? saved.moments : []).map(trackIdOf)
-            .filter((id): id is number => id !== null && !allTracks.some(t => t.id === id)))];
-          const momentTracks = missing.length && resolve ? [...allTracks, ...await resolve(missing).catch(() => [])] : allTracks;
+          const wanted = [...new Set([
+            ...(Array.isArray(saved.moments) ? saved.moments : []).map(trackIdOf),
+            typeof saved.lastPlayedId === 'number' ? saved.lastPlayedId : null,
+          ].filter((id): id is number => id !== null))];
+          if (wanted.length && resolve) knownTracks = await resolve(wanted).catch(() => []);
+          if (typeof saved.lastPlayedId === 'number' && knownTracks.some(t => t.id === saved.lastPlayedId)) preferences.lastPlayedId = saved.lastPlayedId;
           if (Array.isArray(saved.moments)) preferences.moments = saved.moments.flatMap((m: unknown) => {
             if (!record(m) || !record(m.track)) return [];
-            const id = m.track.id, track = momentTracks.find(t => t.id === id);
+            const id = m.track.id, track = knownTracks.find(t => t.id === id);
             if (!track || typeof m.id !== 'number' || !Number.isFinite(m.id) || typeof m.start !== 'number' || typeof m.end !== 'number' || !Number.isFinite(m.start) || !Number.isFinite(m.end) || m.start < 0 || m.end <= m.start || m.end > track.duration) return [];
             return [{ id: m.id, track, start: m.start, end: m.end, section: typeof m.section === 'string' ? m.section : '' }];
           });
@@ -69,10 +73,7 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
       const session: import('./contracts').AccountSession | null = null;
       // 예전 체험 로그인 흔적이 남아 있으면 지운다.
       try { storage.removeItem(DEMO_SESSION_KEY); } catch {}
-      // 서버에 등록된 곡만 보여 준다. 데모 곡은 없앴다.
-      // 넘겨받은 배열을 그대로 돌려주지 않는다. 호출자가 고치면 다음 호출까지
-      // 흔들린다.
-      return { tracks: [...catalog], preferences, session };
+      return { knownTracks, preferences, session };
     },
     // 플레이리스트는 빼고 적는다. 읽지 않는 값을 남겨 두면 예전 빌드가 넣어 둔
     // 데모 목록이 기기에 눌러앉는다 — 저장할 때마다 덮어 지운다.
@@ -113,7 +114,7 @@ let native: Promise<MupidService> | null = null;
 const shell = () => (native ??= import('../platform/service').then(m => m.createSqliteService()));
 const nativeService: MupidService = {
   mode: 'demo', // 역할은 데모 저장소와 같다 — 기기에만 남는 저장.
-  bootstrap: async (catalog, resolve) => (await shell()).bootstrap(catalog, resolve),
+  bootstrap: async resolve => (await shell()).bootstrap(resolve),
   savePreferences: async value => (await shell()).savePreferences(value),
   login: async input => (await shell()).login(input),
   logout: async () => (await shell()).logout(),

@@ -12,7 +12,6 @@ import { createEndpoints, type UserInfo } from './endpoints';
 import { createStore } from '../store';
 import { localDemoEnabled, withLocalDemo, loginLocalDemo, logoutLocalDemo, restoreLocalDemo } from './local-demo';
 import {
-  clearCache,
   clearNativeCookies,
   createPlatformTransport,
   isTauri,
@@ -135,14 +134,10 @@ export async function logout() {
   } finally {
     apiClient.clearSession();
     sessionStore.set({ status: 'anonymous', user: null });
-    // 앱은 쿠키와 캐시를 기기에 들고 있다. 지우지 않으면 다음 사람이 앱을
+    // 앱은 쿠키를 기기에 들고 있다. 지우지 않으면 다음 사람이 앱을
     // 열었을 때 앞사람 계정으로 재발급이 돌아 그대로 로그인된다.
     if (isTauri()) {
-      await Promise.allSettled([
-        clearNativeCookies(),
-        clearCache(),
-        setStoredAccount(null),
-      ]);
+      await Promise.allSettled([clearNativeCookies(), setStoredAccount(null)]);
     }
   }
 }
@@ -154,6 +149,6 @@ export async function withdrawAccount() {
   apiClient.clearSession();
   sessionStore.set({ status: 'anonymous', user: null });
   if (isTauri()) {
-    await Promise.allSettled([clearNativeCookies(), clearCache(), setStoredAccount(null)]);
+    await Promise.allSettled([clearNativeCookies(), setStoredAccount(null)]);
   }
 }
