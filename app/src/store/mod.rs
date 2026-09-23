@@ -1,10 +1,9 @@
-pub mod cache;
 pub mod kv;
 pub mod prefs;
 
 #[cfg(test)]
 mod tests {
-    use super::{cache, kv, prefs};
+    use super::{kv, prefs};
     use crate::db::Db;
 
     /// 시험마다 새 파일을 쓴다. 메모리 DB 를 쓰지 않는 이유는, 실제로 확인하고
@@ -126,32 +125,6 @@ mod tests {
 
         prefs::remove_photo(&temp.db, "42").expect("지우기");
         assert_eq!(prefs::read_photo(&temp.db, "42").expect("읽기"), None);
-    }
-
-    #[test]
-    fn cache_reports_staleness_but_still_returns_the_value() {
-        let temp = TempDb::new("cache");
-        let payload = serde_json::json!({ "items": [1, 2, 3] });
-        cache::put(&temp.db, "catalog", "size:100", &payload).expect("저장");
-
-        let fresh = cache::get(&temp.db, "catalog", "size:100", Some(60_000))
-            .expect("읽기")
-            .expect("값이 있어야 한다");
-        assert!(!fresh.stale);
-        assert_eq!(fresh.payload, payload);
-
-        // 신선도를 0 으로 잡으면 방금 넣은 것도 묵은 값이다. 그래도 버리지
-        // 않는다 — 네트워크가 죽었을 때 빈 화면보다 낫다.
-        let stale = cache::get(&temp.db, "catalog", "size:100", Some(0))
-            .expect("읽기")
-            .expect("값이 있어야 한다");
-        assert!(stale.stale);
-        assert_eq!(stale.payload, payload);
-
-        cache::clear(&temp.db, Some("catalog")).expect("비우기");
-        assert!(cache::get(&temp.db, "catalog", "size:100", None)
-            .expect("읽기")
-            .is_none());
     }
 
     #[test]

@@ -3,6 +3,7 @@ import './globals.css';
 import './dark-mode.css';
 import { ThemeProvider } from '@/components/mupid/theme';
 import { UpdatePrompt } from '@/components/mupid/update-prompt';
+import { ServerGate } from '@/components/mupid/server-gate';
 import { SkyCursor } from '@/components/mupid/sky-cursor';
 import { PageScrollbar } from '@/components/mupid/page-scrollbar';
 import { InnerScrollbars } from '@/components/mupid/inner-scrollbars';
@@ -117,7 +118,11 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: "try{if(localStorage.getItem('mupid-theme')==='dark'){document.documentElement.classList.add('dark');document.documentElement.style.colorScheme='dark'}}catch(e){}" }} />
       </head>
       <body id="page-content" className="font-sans antialiased">
-        <ThemeProvider>{children}</ThemeProvider>
+        {/*
+          서버에 닿기 전에는 화면을 열지 않는다 (S15P21A204-444). 로그인 화면도
+          이 안쪽이다 — 로그인도 서버가 한다. 업데이트 안내는 바깥에 둔다.
+        */}
+        <ThemeProvider><ServerGate>{children}</ServerGate></ThemeProvider>
         {/*
           업데이트 안내를 **root 에 둔다.** 인증이 필요한 `(music)` 그룹 안에
           두면 로그인 전에는 새 판이 있어도 알 수 없다 — 실기기에서 확인했다
