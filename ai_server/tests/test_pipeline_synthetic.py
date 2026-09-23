@@ -488,9 +488,16 @@ def test_internal_api_end_to_end(svc):
 def test_pool_source_counts_are_reported(svc):
     """설정한 출처가 카탈로그에 없으면 풀이 조용히 빈다. 건수를 보여줘야 한다."""
     assert svc.CAT.pool_sources["flow"] == 24
-    # 기본값에 있는 jamendo 는 이 합성 카탈로그에 없다 → 0 으로 드러난다.
-    assert svc.CAT.pool_sources.get("jamendo") == 0
-    assert "jamendo" in svc.CAT.pool_sources_empty
+    assert not svc.CAT.pool_sources_empty
+
+
+def test_jamendo_is_not_in_the_default_pool(svc):
+    """Jamendo 곡은 실서비스에서 재생하지 않는다. 설정이 없어도 후보가 되면 안 된다.
+
+    기본값이 `jamendo` 이던 때에는 매니페스트가 `''` 로 덮어서만 막혀 있었고, 배포 직후
+    받은 추천 3건이 전부 `JAMENDO_*` 였던 적이 있다.
+    """
+    assert "jamendo" not in svc.POOL_SOURCES
 
 
 def test_own_is_not_in_the_default_pool(svc):

@@ -81,7 +81,8 @@ from ai_server.app import index_contract, paths
 # 추천 풀의 정의는 `recommender` 와 같은 환경변수를 쓴다. 여기서 따로 정하면 자른 색인과
 # 서빙의 풀이 어긋나 — 서비스는 뜨는데 후보가 0건이 된다.
 POOL_SOURCE = os.environ.get("MUPID_POOL", "flow")
-POOL_EXTRA = os.environ.get("MUPID_POOL_EXTRA", "jamendo")
+# 기본값에 `jamendo` 를 두지 않는다 — 실서비스에서 재생하지 않는 곡이다(recommender 주석).
+POOL_EXTRA = os.environ.get("MUPID_POOL_EXTRA", "")
 
 # 행 정렬이 걸린 것들. 넷은 반드시 함께 잘린다.
 # 행 정렬이 걸린 것들. `moments_emb.npy` 는 **자르기의 입력**이지만 배송에는 넣지

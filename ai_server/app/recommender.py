@@ -61,8 +61,14 @@ POOL_SOURCE = os.environ.get("MUPID_POOL", "flow")
 # "자체 음원도 추천된다" 고 읽히기 때문이다. 실제로 넣을 때 환경변수로 다시 켠다.
 # 설정한 출처가 카탈로그에 없으면 기동 로그와 /health 가 알려준다 — 오타로 풀이 조용히
 # 비는 일이 없어야 한다.
+#
+# **기본값에 `jamendo` 를 두지 않는다.** Jamendo 곡은 실서비스에서 재생하지 않는다 —
+# 학습용으로 색인에 섞여 있을 뿐이다. 기본값이 `jamendo` 이던 때에는 운영 매니페스트가
+# `''` 로 덮어서만 막혀 있었고, 그 설정이 없는 자리(JupyterHub 의 Pinecone 적재,
+# 새 도구)에서는 재생할 수 없는 곡이 조용히 후보가 됐다. 실제로 배포 직후 받은 추천
+# 3건이 전부 `JAMENDO_*` 였던 적이 있다(`infra_k8s/base/ai.yaml`).
 POOL_SOURCES = {POOL_SOURCE} | {
-    x.strip() for x in os.environ.get("MUPID_POOL_EXTRA", "jamendo").split(",")
+    x.strip() for x in os.environ.get("MUPID_POOL_EXTRA", "").split(",")
     if x.strip()}
 MAX_BPM_LOG2 = 0.40
 MIN_MOMENT_SEC = 8.0
