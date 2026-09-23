@@ -6,19 +6,19 @@
 
 트리가 두 벌이다. **`frontend/` 하나만 제품이다.**
 
-| | `App/` | `frontend/` |
+| | `prototype/` | `frontend/` |
 |---|---|---|
 | package name | `sites-project` | `mupid-production` |
 | git 추적 파일 | 86 | 204 |
 | README 제목 | `Mupid 프론트엔드 프로토타입` | `MUPID Production` |
-| 루트 컴포넌트 | `components/mufeed-app.tsx` | `components/mupid-app.tsx` |
+| 루트 컴포넌트 | `components/mupid-app.tsx` | `components/mupid-app.tsx` |
 | `.openai/hosting.json` | `project_id` 가 남아 있음 | `{"d1": null, "r2": null}` |
 | CI | 없음 | `infra/ci/frontend.yml` |
 
 - 두 `package.json` 은 `name` 필드를 빼면 완전히 동일하다.
-- `infra/ci/frontend.yml` 의 `rules.changes` 는 `frontend/**/*` 와 `infra/ci/frontend*`, `infra/deploy/receive-front.py`, `.gitlab-ci.yml` 만 감시한다. `App/` 을 고쳐도 파이프라인이 돌지 않는다. 다만 `frontend-verify` 의 세 번째 규칙 `- if: '$CI_PIPELINE_SOURCE == "web"'` 에는 `changes` 가 없어, 수동(web) 트리거 파이프라인에서는 변경 경로와 무관하게 이 잡만 실행된다.
+- `infra/ci/frontend.yml` 의 `rules.changes` 는 `frontend/**/*` 와 `infra/ci/frontend*`, `infra/deploy/receive-front.py`, `.gitlab-ci.yml` 만 감시한다. `prototype/` 을 고쳐도 파이프라인이 돌지 않는다. 다만 `frontend-verify` 의 세 번째 규칙 `- if: '$CI_PIPELINE_SOURCE == "web"'` 에는 `changes` 가 없어, 수동(web) 트리거 파이프라인에서는 변경 경로와 무관하게 이 잡만 실행된다.
 - `frontend/README.md`: "기존 MUPID 프로토타입에서 분리한 본개발용 프로젝트입니다."
-- `frontend/` 는 `App/` 의 상위집합이다. `App/` 에만 있는 파일은 없다. 신규 작업은 전부 `frontend/` 에 넣는다.
+- `frontend/` 는 `prototype/` 의 상위집합이다. `prototype/` 에만 있는 파일은 없다. 신규 작업은 전부 `frontend/` 에 넣는다.
 
 ## 스택
 
@@ -143,7 +143,7 @@ const go = (next: Page) => {
 
 `frontend/components.json` 의 `style` 이 `base-nova` 이고, 60개 중 **38개가 `@base-ui/react/*` 를 감싼다. `@radix-ui` 를 import 하는 파일은 0개이고 `package.json` 에도 `@radix-ui` 를 직접 선언하지 않았다.** `@radix-ui` 를 전제한 shadcn 예제를 그대로 가져오면 이 트리와 어긋난다. 컴포넌트를 추가하기 전에 같은 계열 파일이 무엇을 감싸는지 확인한다.
 
-살아 있는 앱 코드가 실제로 import 하는 건 6개뿐이다: `alert-dialog`, `carousel`, `dialog`, `pagination`, `slider`, `tabs`. `@/components/ui/` 를 grep 하면 `button` 과 `chart` 가 더 잡히는데, 둘 다 죽은 코드인 `components/mufeed-app.tsx`(44·45행) 에서만 쓴다.
+살아 있는 앱 코드가 실제로 import 하는 건 6개뿐이다: `alert-dialog`, `carousel`, `dialog`, `pagination`, `slider`, `tabs`.
 
 ## 상태: 단일 모델 객체
 
@@ -375,5 +375,5 @@ test "$(curl --fail --silent --show-error https://j15a204.p.ssafy.io/deployment.
 - `README.md` 의 손글씨 폰트 설명이 실제 코드와 반대다
 - `lib/track-comments.ts` 가 서비스 계층을 우회해 localStorage 를 직접 쓴다
 - 데모가 외부 CDN(Pretendard) 과 외부 오디오 호스트(soundhelix.com) 에 실시간 의존한다
-- `components/mufeed-app.tsx`(101,388 bytes) 등 죽은 코드가 grep 결과를 오염시킨다
-- `App/.openai/hosting.json` 에 개인 Sites 프로젝트 ID 가 남아 있다
+- `lib/demo-session.ts`, 미사용 `components/ui/*` 등 죽은 코드가 grep 결과를 오염시킨다
+- `prototype/.openai/hosting.json` 에 개인 Sites 프로젝트 ID 가 남아 있다

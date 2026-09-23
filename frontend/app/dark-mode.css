@@ -496,3 +496,223 @@ html.dark .update-dialog .update-dialog-error {
   html.dark ::-webkit-scrollbar-track, html.dark ::-webkit-scrollbar-corner { background: #15181c; }
   html.dark ::-webkit-scrollbar-thumb { background: #505863; border-color: #15181c; }
 }
+
+/* ─────────────────────────────────────────────────────────────
+ * 다크 모드 누락 보강 (2026-09)
+ * 밝은 배경/어두운 글자가 하드코딩된 채 다크 규칙이 없던 곳들.
+ * 원래 선택자 앞에 html.dark 를 붙여 우선순위만 높인다.
+ * 표면 #191c21 · 호버 #242930 · 선택 #2b3749 · 선 #32373f
+ * ───────────────────────────────────────────────────────────── */
+
+/* 카드·입력·작은 버튼 같은 표면 */
+html.dark .profile-card,
+html.dark .main-content .profile-card,
+html.dark .now-card,
+html.dark .ai-invitation,
+html.dark .ai-prompt-card,
+html.dark .sky-banner,
+html.dark .notification-card,
+html.dark .moment-story,
+html.dark .playlist-card,
+html.dark .new-playlist,
+html.dark .collection-page .new-playlist .new-playlist-tile,
+html.dark .mupid-shell .collection-page .new-playlist .new-playlist-tile,
+html.dark .collection-page .playlist-card-menu,
+html.dark .collection-page .playlist-tracks .play-small,
+html.dark .select-toolbar .ghost-button,
+html.dark :is(.select-box, .track-check, .queue-check, .queue-head-check),
+html.dark .demo-auth-badge,
+html.dark .desktop-empty-cover,
+html.dark .album-art-empty,
+html.dark .desktop-search input,
+html.dark :is(.search-box, .page-home .search-box, .onboarding-search),
+html.dark .explore-orbit-play,
+html.dark .explore-orbit-window,
+html.dark :is(.album-side-arrow, .album-pagination button),
+html.dark .inquiry-dialog :is(input, textarea),
+html.dark .discovery-small-art > svg,
+html.dark .mobile-song-heading .like-button,
+html.dark .quick-link-icon,
+html.dark .header-profile > span:first-child,
+html.dark .mupid-shell .header-profile > span:first-child,
+html.dark .cover-play,
+html.dark .range-fields label > span,
+html.dark .daily-album-popup,
+html.dark .weekly-card.is-typed,
+html.dark .mupid-shell .explore-keyword-toggle,
+html.dark .mupid-shell .saved-moment-player,
+html.dark .mupid-shell .saved-moment-part,
+html.dark .mupid-shell .profile-ignored-card .ignored-restore,
+html.dark .moment-heart-marker small,
+html.dark .team-secret-credit,
+html.dark .mupid-shell .chat-panel .chat-messages,
+html.dark .comment-sort select,
+html.dark .update-progress,
+html.dark .mupid-shell .track-comments .selected-moment-popover,
+html.dark .mupid-shell .track-comments .player-waveform,
+html.dark :is(.moment-author-avatar, .mupid-shell .wave-comment-avatar, .wave-comment-avatar small, .artist-profile-photo),
+html.dark .artist-stat-grid button,
+html.dark .mupid-shell .report-grid .listening-story,
+html.dark .player-reason-dialog .player-reason-text,
+html.dark .comment-error-notice,
+html.dark .artist-info-dialog .artist-tabs [data-slot=tabs-list],
+html.dark .moment-popup-write,
+html.dark :is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .moment-popup-write,
+html.dark .sky-dialog .track-row,
+html.dark .mupid-shell .mobile-song-heading .like-button {
+  background: #191c21 !important;
+  border-color: #32373f !important;
+  color: #bfc3ca;
+}
+html.dark .profile-card { box-shadow: none !important; }
+html.dark .explore-orbit-window { background: #191c21a8 !important; }
+html.dark .profile-photo-frame,
+html.dark .profile-photo-editor.has-photo .profile-photo-frame { background: #15181c !important; border-color: #3a404a !important; }
+
+/* 호버 */
+html.dark .collection-page .new-playlist:hover .new-playlist-tile,
+html.dark .select-toolbar .ghost-button:hover:not(:disabled),
+html.dark .collection-page .playlist-card-menu:hover,
+html.dark .desktop-recommendation:hover,
+html.dark .explore-orbit-play:hover,
+html.dark .mobile-listening-actions > button:hover,
+html.dark .mupid-shell .mobile-nav button:hover .mobile-nav-icon,
+html.dark .quick-link:hover .quick-link-icon,
+html.dark :is(.recent-search-remove:hover, .recent-search-remove:focus-visible),
+html.dark .track-menu-options > button:hover,
+html.dark .mupid-shell .moment-part-row > button:first-child:hover,
+html.dark .mupid-shell .saved-moment-part > button:first-child:hover,
+html.dark .mupid-shell .saved-moment .track-row > .saved-moment-expand:hover,
+html.dark .mupid-shell .profile-ignored-card .ignored-restore:hover,
+html.dark .profile-photo-pick:hover .profile-photo-frame,
+html.dark :is(.mupid-shell .track-comments, .moment-comment-dialog) .wave-comment-composer footer > .comment-cancel:hover,
+html.dark .moment-popup-write:hover,
+html.dark :is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover .moment-popup-write:hover,
+html.dark .queue-item.is-dragging {
+  background: #242930 !important;
+  color: #d2d5dc !important;
+}
+
+/* 선택·현재 위치 */
+html.dark .signup-gender-options label:has(input:checked),
+html.dark .mobile-profile-link[aria-current='page'],
+html.dark .mupid-shell .mobile-nav button[aria-current='page'] .mobile-nav-icon,
+html.dark .mobile-nav button[aria-current='page'] .mobile-nav-icon,
+html.dark .playlist-play-actions button[aria-pressed="true"],
+html.dark .mini-player .ai-button[aria-expanded='true'],
+html.dark .moment-popup-write[aria-pressed='true'],
+html.dark .artist-info-dialog .artist-tabs [data-slot=tabs-trigger][aria-selected=true],
+html.dark .mupid-shell .explore-track-list .is-playing .play-small,
+html.dark .team-secret-record span {
+  background: #2b3749 !important;
+  border-color: #3b4a60 !important;
+  color: #d2d5dc !important;
+}
+html.dark .mupid-shell .mobile-nav button:is(.active, [aria-current='page']) :is(.mobile-nav-label, svg),
+html.dark .mupid-shell .mobile-nav button.active { color: #a9c0ea !important; }
+html.dark .mupid-shell .explore-track-list .play-small { background: #1d2127 !important; color: #a9c0ea !important; }
+
+/* 태그 칩 */
+html.dark :is(.tags > span, .mupid-shell .tags span, .mupid-shell .player-insights .tags > span, .track-info-dialog .tags > span, .artist-genres .tags span) {
+  background: #20242a !important;
+  border-color: #32373f !important;
+  color: #aeb4be !important;
+}
+
+/* 진행 막대·파형 */
+html.dark [data-slot='slider-track'],
+html.dark :is(.mobile-home-seek, .mini-seek) [data-slot='slider-track'],
+html.dark .player-progress-line { background: #2c3139 !important; }
+html.dark .mobile-player-transport > input::-moz-range-track { background: #2c3139 !important; }
+html.dark .mobile-player-transport > input::-webkit-slider-runnable-track { background: #2c3139 !important; }
+html.dark .mupid-shell .track-comments .waveform i { background: #3a4250 !important; }
+
+/* 삭제·위험 */
+html.dark :is(.profile-photo-remove, .select-toolbar .danger-button, .queue-head-action.is-danger) {
+  background: #2a1a1f !important; border-color: #4a2a31 !important; color: #e39aa6 !important;
+}
+html.dark :is(.profile-photo-remove:hover:not(:disabled), .select-toolbar .danger-button:hover:not(:disabled), .queue-head-action.is-danger:hover:not(:disabled), .mupid-shell .moment-part-remove:hover) {
+  background: #36212a !important; color: #efaab4 !important;
+}
+
+/* 분홍 강조 */
+html.dark .heart-badge,
+html.dark .mupid-shell .saved-moment-part > button:first-child.is-focused,
+html.dark .sky-dialog button.selected,
+html.dark .mupid-shell .moment-editor button.selected {
+  background: #33212b !important; border-color: #56344a !important; color: #e7a3c4 !important;
+}
+html.dark .mupid-shell .saved-moment-part > button:first-child.is-focused:hover { background: #3d2733 !important; }
+
+/* 밝은 배경을 전제로 한 진한 글자 */
+html.dark .sky-dialog:is([data-slot='dialog-content'], [data-slot='alert-dialog-content']),
+html.dark .inquiry-dialog :is(input, textarea),
+html.dark .range-fields input,
+html.dark .onboarding-search,
+html.dark .weekly-nav strong,
+html.dark .collection-page .playlist-card-menu:hover { color: #c6c8cd !important; }
+html.dark .track-info-fields dd,
+html.dark :is(.artist-song, .artist-overview h3, .artist-album-detail h3, .artist-album-card strong, .artist-stat-grid button strong),
+html.dark .artist-info-dialog [data-slot=dialog-title],
+html.dark .mupid-shell .explore-filter-sidebar .explore-category-heading h2,
+html.dark .player-reason-dialog .player-reason-section strong,
+html.dark :is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover strong { color: #c6c8cd !important; }
+html.dark .track-info-fields dd :is(a, button) { color: #a9c0ea !important; }
+html.dark :is(.mupid-shell, .moment-comment-dialog) .selected-moment-popover article p { color: #aeb4be !important; }
+html.dark .track-info-fields dt { color: #8a909a; }
+
+/* 곡 줄 기본 배경이 흰 반투명이라 다크에서 흰 박스로 보였다. */
+html.dark .track-row { background-color: transparent; }
+html.dark .mupid-shell .main-content .profile-history .track-row { background: #15181c; border-color: #292d33; }
+html.dark .mupid-shell .liked-track-list .track-row:nth-child(even) { background: #111316; }
+html.dark .mupid-shell .saved-moment:hover > .track-row { background: #191c21; }
+/* 입력란 공통 규칙이 재생 바(range)에도 네모난 배경을 깔았다. */
+html.dark :is(.mupid-shell, .sky-dialog, .demo-login-dialog) input[type='range'] { background: transparent !important; border-color: transparent !important; }
+
+/* 미니 플레이어 재생 버튼: 눌리는 영역용 5px 투명 테두리가 다크 공통 버튼 규칙 때문에
+   회색으로 칠해져 두꺼운 링처럼 보였다. 테두리는 투명하게 두고 원만 칠한다. */
+html.dark .mupid-shell .mini-player .player-controls .play-main {
+  border-color: transparent !important;
+  background-color: #456698 !important;
+  background-clip: padding-box !important;
+  color: #e3e6ec !important;
+}
+html.dark .mupid-shell .mini-player .player-controls .play-main:hover { background-color: #5275ab !important; }
+
+/* 재생 바 뒤 네모 띠: 댓글 파형 표면 규칙이 선형 타임라인에도 걸렸다. 선만 보이게 비운다. */
+html.dark .mupid-shell .track-comments .player-waveform.player-line-timeline { background: transparent !important; border-color: transparent !important; box-shadow: none !important; }
+
+/* LP 주변 회색 후광이 진했다. 하늘 질감을 거의 보이지 않을 만큼만 남긴다. */
+html.dark .desktop-record-stage::before,
+html.dark .mobile-record-stage::before,
+html.dark .player-art-area::before { opacity: .04; filter: grayscale(1) contrast(.5) brightness(.55) blur(6px); }
+html.dark .mobile-record-stage::after,
+html.dark .player-art-area::after { opacity: .025; }
+
+/* PC 홈 음량 바: 기본 range 모양이라 다크에서도 트랙이 흰색으로 그려졌다. */
+html.dark .mupid-shell .desktop-audio-options input[type='range'] { appearance: none; -webkit-appearance: none; background: transparent; }
+html.dark .mupid-shell .desktop-audio-options input[type='range']::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: #32373f; }
+html.dark .mupid-shell .desktop-audio-options input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: #91afe0; border: 0; }
+html.dark .mupid-shell .desktop-audio-options input[type='range']::-moz-range-track { height: 4px; border-radius: 999px; background: #32373f; }
+html.dark .mupid-shell .desktop-audio-options input[type='range']::-moz-range-progress { height: 4px; border-radius: 999px; background: #6f8fc4; }
+html.dark .mupid-shell .desktop-audio-options input[type='range']::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: #91afe0; }
+
+/* PC 홈 재생 버튼도 다른 재생 버튼처럼 강조색으로 칠한다(다크에서만 회색이었다). */
+html.dark .mupid-shell .desktop-home .full-controls .play-main,
+html.dark .mupid-shell .desktop-song .full-controls .play-main { background: #456698 !important; border-color: #456698 !important; color: #e3e6ec !important; }
+
+/* 모바일·태블릿 홈 LP 뒤 하늘색 원형 빛(#dceaff)이 다크에서 회색 후광으로 보였다. 다크에서는 없앤다. */
+html.dark .mobile-record-stage { background: transparent !important; }
+
+/* 하단 메뉴 선택: 다크 규칙이 버튼 전체에 네모 배경을 깔아 아이콘 알약과 두 겹으로 보였다.
+   밝은 모드처럼 알약(아이콘 배경)과 위쪽 막대만 남긴다. */
+html.dark .mupid-shell .mobile-nav button,
+html.dark .mupid-shell .mobile-nav button[aria-current='page'],
+html.dark .mupid-shell .mobile-nav button:is(:hover, :focus-visible, .active),
+html.dark .mupid-shell .mobile-nav button[aria-current='page']:is(:hover, :focus-visible) {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+html.dark .mupid-shell .mobile-nav button[aria-current='page'] .mobile-nav-icon { background: #26303f !important; border-color: #34425a !important; }
+html.dark .mupid-shell .mobile-nav button:not([aria-current='page']) :is(.mobile-nav-label, svg) { color: #8d939c; }

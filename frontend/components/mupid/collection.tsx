@@ -577,10 +577,13 @@ export function ReportView({ model: m }: { model: MupidModel }) {
   const mubti = report?.mubti ?? null;
   // 판정하기엔 이른 하루인가. 서버가 표본 하한(5분·3곡)으로 정한다.
   const tooEarly = !!report && !report.sample.sufficient;
+  // 불러오기 실패는 본문 문구가 아니라 잠깐 뜨는 알림으로 알린다. 30초 폴링이 계속
+  // 실패해도 문구가 같으면 다시 띄우지 않는다.
+  const { setToast } = m;
+  useEffect(() => { if (error) setToast(error); }, [error, setToast]);
   return (
     <div className="content-page">
       <PageHeader title="내 취향 리포트" onBack={() => m.go('home')} />
-      {error && <p className="demo-note" role="alert">{error}</p>}
       <div className="report-grid">
         <DailyAlbumTreemap
           model={m}
