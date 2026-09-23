@@ -12,7 +12,7 @@ import { api } from './api/session';
 import { localDemoEnabled } from './api/local-demo';
 import type { MusicSummary } from './api/endpoints';
 import { DEFAULT_ALBUM_COVER, moodLabel, type Track } from './mupid-data';
-import { toImageSource, withCache } from './platform';
+import { toImageSource } from './platform';
 
 /**
  * 화면용 곡 번호는 서버 번호에 이 값을 더해 만든다.
@@ -102,11 +102,8 @@ export const toTrack = (music: MusicSummary): Track => {
  *
  * 중간에 취소된 것은 실패가 아니다. 빈 배열로 조용히 끝낸다.
  *
- * 앱에서는 마지막으로 받은 목록을 SQLite 에 남긴다. 서버가 응답하지 않으면 그
- * 값으로 화면을 연다 — 지하철에서 앱을 열었을 때 목록이 통째로 비는 것보다
- * 낫다. **캐시를 먼저 보지는 않는다.** 그러면 새로 올라온 곡이 하루 동안
- * 보이지 않는다. 서버 응답을 저장하는 것은 DTO 그대로다 — 화면용 변환은
- * `toTrack` 한 곳에서만 일어나야 한다.
+ * 앱도 기기에 남겨 둔 목록으로 대신하지 않는다. 서버에 닿지 않으면 서비스를
+ * 열지 않는다(`components/mupid/server-gate.tsx`, S15P21A204-444).
  */
 export async function fetchCatalog(signal?: AbortSignal): Promise<Track[]> {
   if (localDemoEnabled()) {
@@ -115,11 +112,8 @@ export async function fetchCatalog(signal?: AbortSignal): Promise<Track[]> {
     return response.json();
   }
   try {
-    const items = await withCache('catalog', `size:${CATALOG_SIZE}`, async () => {
-      const page = await api.music.search({ size: CATALOG_SIZE }, signal);
-      return page.items;
-    });
-    return items.map(toTrack);
+    const page = await api.music.search({ size: CATALOG_SIZE }, signal);
+    return page.items.map(toTrack);
   } catch (error) {
     if (signal?.aborted) return [];
     console.warn('[mupid] 곡 카탈로그를 불러오지 못했어요.', error);

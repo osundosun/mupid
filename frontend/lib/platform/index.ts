@@ -12,12 +12,6 @@ export { isTauri } from './bridge';
 export { onBackButtonPress } from './bridge';
 export { clearNativeCookies } from './transport';
 export { createSqliteService, setStoredAccount } from './service';
-export {
-  clearCache,
-  withCache,
-  CATALOG_MAX_AGE_MS,
-  type CacheOptions,
-} from './cache';
 export { toImageSource } from './image';
 export {
   createMediaSession,
