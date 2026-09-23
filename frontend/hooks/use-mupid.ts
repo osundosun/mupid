@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { guardPath, pageForPath, pagePaths } from '@/lib/routes';
 import { mupidService } from '@/lib/services';
@@ -127,7 +127,43 @@ export function useMupid(bootstrap: Bootstrap) {
   const router = useRouter();
   const pathname = usePathname() || '/';
   // 화면들은 이 훅의 모델을 공유한다. 재생기나 로그인 상태를 화면마다 별도로 만들지 않는다.
-  const { tracks, preferences: initial } = bootstrap;
+  const { tracks: catalog, preferences: initial } = bootstrap;
+  /**
+   * 카탈로그 밖에서 만난 곡들. 검색 결과·추천·계정 큐가 여기로 들어온다.
+   *
+   * 앱이 처음 받아 오는 카탈로그는 앞 100곡뿐이다(`lib/stream-catalog.ts`).
+   * 그런데 재생 목록·좋아요·최근 기록은 모두 **곡 번호**만 들고 있고, 번호를
+   * 곡으로 되돌리는 곳은 이 목록 하나다. 그래서 카탈로그 밖의 곡은 담아도
+   * 화면이 그 줄을 그리지 못하고 조용히 사라졌다 — 검색으로 찾은 곡의 담기·재생
+   * 버튼이 아무 일도 하지 않는 것처럼 보이던 원인이다 (S15P21A204-441).
+   *
+   * 그래서 **만난 곡은 기억한다.** 담거나 튼 곡, 계정 큐로 받아 온 곡을 여기에
+   * 쌓아 두면 그 뒤로는 카탈로그에 있던 곡과 똑같이 다룰 수 있다.
+   */
+  const [discovered, setDiscovered] = useState<Track[]>([]);
+  const tracks = useMemo(
+    () => (discovered.length ? [...catalog, ...discovered] : catalog),
+    [catalog, discovered],
+  );
+  /**
+   * 카탈로그에 없던 곡을 기억한다. 이미 아는 곡은 그냥 넘긴다.
+   *
+   * 아무것도 더할 것이 없으면 **같은 배열을 그대로 돌려준다** — 새 배열을 만들면
+   * `tracks` 가 매번 달라져 이것을 보는 효과들(계정 큐 저장 등)이 헛돈다.
+   */
+  const rememberTracks = useCallback((found: Track[]) => {
+    if (!found.length) return;
+    setDiscovered((current) => {
+      const known = new Set([...catalog, ...current].map((track) => track.id));
+      const added: Track[] = [];
+      for (const track of found) {
+        if (known.has(track.id)) continue;
+        known.add(track.id);
+        added.push(track);
+      }
+      return added.length ? [...current, ...added] : current;
+    });
+  }, [catalog]);
   // Local preferences are not proof of authentication or account onboarding.
   // 완료 **시각**은 들고 있지 않는다. 화면이 묻는 것은 "설문으로 보내야
   // 하는가" 하나뿐이고, 서버도 `GET /api/v1/user` 로 불리언만 준다.
@@ -578,8 +614,12 @@ export function useMupid(bootstrap: Bootstrap) {
      * 아래의 효과가 카탈로그가 도착한 뒤 다시 부른다.
      */
     if (!tracks.length) return;
-    const saved = await queueApi.fetchQueue(tracks, signal);
+    const saved = await queueApi.fetchQueue(signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
+    // 계정 큐에는 카탈로그 밖의 곡(검색으로 찾아 담은 곡)이 섞여 있다. 먼저
+    // 기억해 두지 않으면 화면이 그 줄을 그리지 못하고, 그렇게 줄어든 목록이
+    // 곧바로 계정에 저장돼 담아 둔 곡이 지워진다.
+    rememberTracks(saved.tracks);
     queueAdopted.current = true;
     queueRevision.current = saved.revision;
     /*
@@ -607,6 +647,7 @@ export function useMupid(bootstrap: Bootstrap) {
    */
   const adoptServerChange = (saved: queueApi.QueueSnapshot | null) => {
     if (!saved || !mountedRef.current) return;
+    rememberTracks(saved.tracks);
     queueRevision.current = saved.revision;
     setQueue(toQueueEntries(saved.ids));
     savedQueue.current = { ids: saved.ids, currentId: savedQueue.current?.currentId ?? null };
@@ -920,6 +961,9 @@ export function useMupid(bootstrap: Bootstrap) {
    * 않으면 이번처럼 한 경로가 조용히 빠진다.
    */
   const placePlayedTrack = (track: Track) => {
+    // 카탈로그 밖의 곡(검색 결과 등)일 수 있다. 자리만 만들고 곡을 기억하지
+    // 않으면 그 자리는 곡으로 되돌려지지 못해 화면에서 빈다.
+    rememberTracks([track]);
     const placed = placeInQueue(
       queue,
       track.id,
@@ -1257,6 +1301,9 @@ export function useMupid(bootstrap: Bootstrap) {
        */
       void queueApi.saveQueue(ids, currentId, revision, tracks).then((saved) => {
         if (!saved || !mountedRef.current) return;
+        // 판본이 어긋나 다른 기기의 큐를 받아 왔을 수 있다. 그 목록에도 카탈로그
+        // 밖의 곡이 있다.
+        rememberTracks(saved.tracks);
         pendingQueueSave.current = null;
         queueRevision.current = saved.revision;
         savedQueue.current = { ids: saved.ids, currentId };
@@ -1272,7 +1319,7 @@ export function useMupid(bootstrap: Bootstrap) {
     }, QUEUE_SAVE_DELAY);
 
     return () => clearTimeout(timer);
-  }, [queue, active?.id, demoSession, tracks]);
+  }, [queue, active?.id, demoSession, tracks, rememberTracks]);
 
   /**
    * 카탈로그가 도착한 뒤에 계정 큐를 받아 온다.
@@ -1893,6 +1940,15 @@ export function useMupid(bootstrap: Bootstrap) {
     onboardingSubmitted,
     completeOnboarding,
     tracks,
+    /**
+     * 카탈로그 밖에서 받아 온 곡을 화면이 알려 준다.
+     *
+     * 검색 결과처럼 서버에서 곡을 직접 받아 그리는 화면은 그 목록을 여기에
+     * 넘긴다. 담기·재생은 스스로도 기억하지만(`addToQueue`·`placePlayedTrack`),
+     * 좋아요·상세·최근 기록처럼 **곡 번호로만 오가는** 기능들은 목록을 그린
+     * 시점에 이미 알고 있어야 한다.
+     */
+    rememberTracks,
     todayMoments,
     todayMomentNote,
     forYou,
@@ -2061,6 +2117,8 @@ export function useMupid(bootstrap: Bootstrap) {
      * 100곡이 차 있어도 거절하지 않고 가장 오래 머문 자리를 밀어낸다.
      */
     addToQueue: (track: Track) => {
+      // 담는 곡이 카탈로그 밖일 수 있다 — 검색 결과의 담기 버튼이 그 길이다.
+      rememberTracks([track]);
       const result = placeInQueue(queue, track.id, queueInsertPosition, currentUidRef.current, QUEUE_LIMIT);
       setQueue(result.entries);
       if (result.evictedTrackId !== null) {

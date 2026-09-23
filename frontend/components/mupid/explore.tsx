@@ -45,10 +45,21 @@ export function SearchView({ model: m }: { model: MupidModel }) {
   const [listing, setListing] = useState<ListingState>(EMPTY_LISTING);
   const [keywordsOpen, setKeywordsOpen] = useState(!m.query.trim());
   const [desktopSidebarStyle, setDesktopSidebarStyle] = useState<CSSProperties>();
+  /**
+   * 로컬 데모가 뒤질 곡 목록. **의존성이 아니라 참조로 들고 있는다.**
+   *
+   * 모델의 곡 목록은 이제 검색으로 만난 곡을 흡수하며 자란다
+   * (`useMupid` 의 `rememberTracks`). 이것을 아래 효과의 의존성에 두면 결과
+   * 한 곡을 담는 순간 목록이 자라고, 그 바람에 검색이 처음부터 다시 돌아
+   * **스크롤로 이어 붙인 결과가 8곡으로 되감긴다.** 서버 검색은 이 목록을
+   * 쓰지도 않는다.
+   */
+  const demoCatalog = useRef(m.tracks);
   const filterSlot = useRef<HTMLDivElement>(null);
   const resultColumn = useRef<HTMLDivElement>(null);
   const trackList = useRef<HTMLDivElement>(null);
 
+  const { rememberTracks } = m;
   const query = m.query.trim();
   const appliedFilters = exploreFilterQuery(appliedKeywords);
   const appliedVocal = appliedFilters.vocal;
@@ -56,6 +67,10 @@ export function SearchView({ model: m }: { model: MupidModel }) {
   const appliedGenre = appliedFilters.genre;
   const appliedFilterKey = `${appliedVocal ?? ''}:${appliedMood ?? ''}:${appliedGenre ?? ''}`;
   const requestKey = `${m.searchRevision}:${filterRevision}:${query}:${appliedFilterKey}`;
+
+  useEffect(() => {
+    demoCatalog.current = m.tracks;
+  }, [m.tracks]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -76,7 +91,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
   useEffect(() => {
     if (localDemoEnabled()) {
       const lowered = query.toLowerCase();
-      const tracks = m.tracks.filter((track) => !lowered || [track.title, track.artist, track.album].some((value) => value.toLowerCase().includes(lowered)));
+      const tracks = demoCatalog.current.filter((track) => !lowered || [track.title, track.artist, track.album].some((value) => value.toLowerCase().includes(lowered)));
       queueMicrotask(() => setListing({ key: requestKey, tracks: tracks.slice(0, PAGE_SIZE), total: tracks.length, nextPage: tracks.length > PAGE_SIZE ? 1 : null, loading: false, error: '' }));
       return;
     }
@@ -98,7 +113,19 @@ export function SearchView({ model: m }: { model: MupidModel }) {
         if (!controller.signal.aborted) setListing({ key: requestKey, tracks: [], total: 0, nextPage: null, loading: false, error: '검색 결과를 불러오지 못했어요. 다시 시도해 주세요.' });
       });
     return () => controller.abort();
-  }, [requestKey, query, appliedVocal, appliedMood, appliedGenre, m.tracks]);
+  }, [requestKey, query, appliedVocal, appliedMood, appliedGenre]);
+
+  /**
+   * 검색 결과의 곡을 모델에 알려 둔다.
+   *
+   * 결과에는 카탈로그(앞 100곡) 밖의 곡이 섞여 있다. 알려 두지 않으면 담기·재생은
+   * 곡 번호만 큐에 넣고 그 번호를 곡으로 되돌릴 길이 없어 **줄이 생기지 않는다** —
+   * 버튼을 눌러도 재생 목록에 아무 일도 일어나지 않는 것처럼 보였다
+   * (S15P21A204-441). 좋아요·상세도 같은 목록을 쓴다.
+   */
+  useEffect(() => {
+    rememberTracks(listing.tracks);
+  }, [listing.tracks, rememberTracks]);
 
   /** 현재 마지막 곡이 한 행 높이만큼 뷰포트 안으로 들어오면 다음 8곡을 이어 붙인다. */
   useEffect(() => {
@@ -119,7 +146,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
       });
       if (localDemoEnabled()) {
         const lowered = query.toLowerCase();
-        const tracks = m.tracks.filter((track) => !lowered || [track.title, track.artist, track.album].some((value) => value.toLowerCase().includes(lowered)));
+        const tracks = demoCatalog.current.filter((track) => !lowered || [track.title, track.artist, track.album].some((value) => value.toLowerCase().includes(lowered)));
         const end = (pageNumber + 1) * PAGE_SIZE;
         void minimumLoadingTime.then(() => setListing((current) => ({ ...current, tracks: tracks.slice(0, end), total: tracks.length, nextPage: end < tracks.length ? pageNumber + 1 : null, loading: false })));
         return;
@@ -179,7 +206,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
       document.removeEventListener('touchmove', handleTouchMove);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [listing.key, listing.nextPage, listing.loading, requestKey, query, appliedVocal, appliedMood, appliedGenre, m.tracks]);
+  }, [listing.key, listing.nextPage, listing.loading, requestKey, query, appliedVocal, appliedMood, appliedGenre]);
 
   useEffect(() => {
     if (filterRevision > 0) resultColumn.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
