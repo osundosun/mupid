@@ -47,8 +47,9 @@
 `MupidService` 계약은 그대로다 (`lib/services/contracts.ts`). 앱 구현은
 `lib/platform/service.ts` 이고, `localStorage` 자리에 SQLite 가 들어간다.
 
-곡은 **번호로만** 저장한다. 곡 정보는 서버 카탈로그의 것이고, 복사해 두면 제목이
-바뀐 곡이 그 기기에서만 옛 이름으로 남는다. 읽을 때 카탈로그에 없는 번호는 버린다.
+곡은 **번호로만** 저장한다. 곡 정보는 서버의 것이고, 복사해 두면 제목이
+바뀐 곡이 그 기기에서만 옛 이름으로 남는다. 읽을 때 번호로 서버에 물어(곡 일괄 조회)
+찾지 못한 번호는 버린다.
 
 계정 전환은 `lib/api/session.ts` 가 맡는다 — 로그인·세션 복원에 성공하면
 `setStoredAccount(user_id)` 로 어느 계정 몫인지 먼저 알리고, 그 다음에 취향을 읽는다.
@@ -58,17 +59,15 @@
 번들에도 `@tauri-apps/api` 가 섞이고, 이 모듈만 떼어 검사하는
 `tests/services.test.mjs` 가 상대 경로를 풀지 못한다.
 
-## 캐시
+## 서버에 닿지 않으면
 
-`withCache(scope, key, load, options)` (`lib/platform/cache.ts`). 웹에서는 `load()` 를
-그대로 통과시킨다.
+**서비스를 열지 않는다.** 웹·앱 모두 처음 켜질 때 `GET /api/actuator/health` 를 보고,
+`UP` 이 아니면 닫을 수 없는 창에 "다시 시도" 만 남긴다(`components/mupid/server-gate.tsx`,
+S15P21A204-444). 음악 스트리밍이라 서버 없이 할 수 있는 일이 없다.
 
-**언제나 서버를 먼저 부른다.** 실패했을 때만 저장해 둔 값으로 내려앉는다. 반대로 하면
-새로 올라온 곡이 하루 동안 보이지 않는다.
-
-지금 쓰는 곳: 곡 카탈로그(`lib/stream-catalog.ts`), 구간 분석(`lib/music-analysis.ts`).
-분석은 `analyzed: true` 인 응답만 남긴다 — 아직 분석 전인 답을 저장하면 파이프라인이
-돌고 난 뒤에도 앱만 계속 빈 답을 내놓는다.
+그래서 서버 응답을 기기에 남겨 두던 캐시(`withCache`, 곡 목록·구간 분석)는 없앴다.
+묵은 곡 목록으로 화면을 채우면 목록은 보이는데 재생이 안 되는 상태가 된다.
+SQLite 스키마 v2 가 예전 기기에 남은 `cache` 표를 지운다.
 
 ## 앱에서만 부딪히는 것들
 

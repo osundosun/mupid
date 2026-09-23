@@ -12,7 +12,7 @@ import { api } from './api/session';
 import type { ReactionType } from './api/endpoints';
 import type { Track } from './mupid-data';
 import { musicIdOfTrackId } from './stream-catalog';
-import { trackResolver } from './catalog-lookup';
+import { trackResolver } from './server-tracks';
 
 /** 화면이 "최근 감상" 에 보여 주는 곡 수. 홈은 4개, 프로필은 더 본다. */
 const HISTORY_SIZE = 20;
@@ -74,7 +74,7 @@ export async function fetchHistory(
 /**
  * 계정에 저장된 반응을 곡으로 바꿔 온다.
  *
- * 카탈로그에 없는 곡은 곡 번호로 받아 온다. 예전에는 버려서, 검색으로 찾아 좋아한
+ * 이 기기가 모르는 곡은 곡 번호로 받아 온다. 예전에는 앞 100곡(카탈로그) 밖의 곡을 버려서, 검색으로 찾아 좋아한
  * 곡이 새로고침하면 보관함에서 사라졌다 (S15P21A204-443). 지워진 곡만 빠진다.
  */
 export async function fetchReactions(

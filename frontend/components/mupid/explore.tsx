@@ -77,7 +77,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
   useEffect(() => {
     if (localDemoEnabled()) {
       const lowered = query.toLowerCase();
-      const tracks = m.tracks.filter((track) => !lowered || [track.title, track.artist, track.album].some((value) => value.toLowerCase().includes(lowered)));
+      const tracks = m.popularTracks.filter((track) => !lowered || [track.title, track.artist, track.album].some((value) => value.toLowerCase().includes(lowered)));
       queueMicrotask(() => setListing({ key: requestKey, tracks: tracks.slice(0, PAGE_SIZE), total: tracks.length, nextPage: tracks.length > PAGE_SIZE ? 1 : null, loading: false, error: '' }));
       return;
     }
@@ -99,7 +99,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
         if (!controller.signal.aborted) setListing({ key: requestKey, tracks: [], total: 0, nextPage: null, loading: false, error: '검색 결과를 불러오지 못했어요. 다시 시도해 주세요.' });
       });
     return () => controller.abort();
-  }, [requestKey, query, appliedVocal, appliedMood, appliedGenre, m.tracks]);
+  }, [requestKey, query, appliedVocal, appliedMood, appliedGenre, m.popularTracks]);
 
   /**
    * 검색 결과의 곡을 모델에 알려 둔다 (`knownTracks`).
@@ -132,7 +132,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
       });
       if (localDemoEnabled()) {
         const lowered = query.toLowerCase();
-        const tracks = m.tracks.filter((track) => !lowered || [track.title, track.artist, track.album].some((value) => value.toLowerCase().includes(lowered)));
+        const tracks = m.popularTracks.filter((track) => !lowered || [track.title, track.artist, track.album].some((value) => value.toLowerCase().includes(lowered)));
         const end = (pageNumber + 1) * PAGE_SIZE;
         void minimumLoadingTime.then(() => setListing((current) => ({ ...current, tracks: tracks.slice(0, end), total: tracks.length, nextPage: end < tracks.length ? pageNumber + 1 : null, loading: false })));
         return;
@@ -192,7 +192,7 @@ export function SearchView({ model: m }: { model: MupidModel }) {
       document.removeEventListener('touchmove', handleTouchMove);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [listing.key, listing.nextPage, listing.loading, requestKey, query, appliedVocal, appliedMood, appliedGenre, m.tracks]);
+  }, [listing.key, listing.nextPage, listing.loading, requestKey, query, appliedVocal, appliedMood, appliedGenre, m.popularTracks]);
 
   useEffect(() => {
     if (filterRevision > 0) resultColumn.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });

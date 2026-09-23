@@ -10,7 +10,7 @@ import { RowPlaybackArea, AlbumArt } from './primitives';
  * **서버가 만들어 둔 것이 있으면 그것을 쓴다.** 배치가 매일 정오에 한 번 만들고,
  * 하루 동안 같은 곡이 나온다 — 열 때마다 바뀌면 "오늘의" 가 성립하지 않는다.
  *
- * 없으면 카탈로그를 취향으로 정렬해 채운다. 배치가 아직 안 돌았거나 추천 서버가
+ * 없으면 인기곡을 취향으로 정렬해 채운다. 배치가 아직 안 돌았거나 추천 서버가
  * 준비되지 않았을 수 있고, 그때 홈이 비면 곤란하다. **물러났다는 사실은
  * `todayMomentNote` 가 말한다** — 조용히 대신 채우면 추천이 도는 줄 알고 넘어간다.
  */
@@ -20,7 +20,7 @@ export function pickTodayMoments(m: MupidModel): Track[] {
   }
   const moods = m.onboardingSubmitted ? [...new Set(m.moods)] : [];
   const genres = m.onboardingSubmitted ? m.genres : [];
-  return m.tracks
+  return m.popularTracks
     .filter((track) => !m.ignored.includes(track.id))
     .map((track) => ({
       track,

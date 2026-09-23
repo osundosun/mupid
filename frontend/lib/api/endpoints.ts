@@ -875,6 +875,17 @@ export function createEndpoints(client: ApiClient) {
           signal,
         }),
       /**
+       * 곡 여러 개를 한 번에 (S15P21A204-445). 한 번에 100곡까지다.
+       *
+       * **없거나 지워진 곡은 404·410 이 아니라 결과에서 빠진다.** 순서는 보낸 그대로다.
+       */
+      bulk: (musicIds: number[], signal?: AbortSignal) =>
+        client.request<{ items: MusicSummary[] }>({
+          path: '/api/v1/music/bulk',
+          query: { ids: musicIds.join(',') },
+          signal,
+        }),
+      /**
        * 서버가 들고 있는 파형. **곡에 파형이 없으면 404 라 에러가 난다.**
        *
        * 빈 배열이 아니라 404 인 것은 부르는 쪽이 갈라져야 하기 때문이다 —

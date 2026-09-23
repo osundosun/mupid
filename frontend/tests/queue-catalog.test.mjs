@@ -48,8 +48,8 @@ test('계정 큐로 받아 온 곡도 기억한다 — 새로고침해도 담아
   assert.doesNotMatch(queue, /function toScreenIds/, '서버 큐를 카탈로그로 거르면 카탈로그 밖의 곡이 사라진다');
   assert.match(queue, /export async function fetchQueue\(signal\?: AbortSignal\)/);
   // 받아 온 곡을 기억한 **뒤에** 큐를 세운다.
-  assert.match(model, /rememberTracks\(saved\.tracks\);\s*queueAdopted\.current = true;/);
-  assert.match(model, /rememberTracks\(saved\.tracks\);\s*queueRevision\.current = saved\.revision;/);
+  // 계정 큐(`adoptServerQueue`)와 담기·빼기 뒤처리(`adoptServerChange`) 두 곳이다.
+  assert.equal(model.match(/rememberTracks\(saved\.tracks\);\s*queueRevision\.current = saved\.revision;/g)?.length, 2);
 });
 
 test('검색 결과 목록은 그린 곡을 모델에 알려 둔다', async () => {

@@ -424,7 +424,7 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
    * 서버에 닮은 구간을 묻는다.
    *
    * **분석된 구간에만 번호가 있다.** 아직 분석 전인 곡은 임시 구간이라 물어볼
-   * 대상이 없고, 그때는 아래에서 카탈로그로 물러난다.
+   * 대상이 없고, 그때는 아래에서 인기곡으로 물러난다.
    */
   useEffect(() => {
     if (typeof musicId !== 'number' || typeof sectionId !== 'number') return;
@@ -441,11 +441,12 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
   if (!active) return <EmptyState title="듣고 싶은 음악을 골라보세요" description="추천 음악이나 탐색에서 곡을 선택하면 재생이 시작돼요."><button className="primary-button" onClick={() => m.go('search')}>음악 둘러보기</button></EmptyState>;
   const answered = answer.key === askKey;
   const asking = Boolean(askKey) && !answered;
-  const tracks = m.tracks;
+  // 추천이 없을 때 둘러볼 곡. 곡 목록을 미리 받아 두지 않으므로 인기곡이다.
+  const tracks = m.popularTracks;
   const served = (answered ? answer.tracks : []).filter(
     (t) => t.id !== active.id && !m.ignored.includes(t.id),
   );
-  // 서버가 답을 주면 그것만 쓴다. 카탈로그를 섞으면 어느 줄이 추천인지 알 수 없다.
+  // 서버가 답을 주면 그것만 쓴다. 인기곡을 섞으면 어느 줄이 추천인지 알 수 없다.
   const fromServer = served.length > 0;
   const pool = fromServer
     ? served
