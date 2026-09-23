@@ -67,11 +67,12 @@ ALTER TABLE music_section_analysis
 |---|---|---|---|
 | `daily_recommendation_tracks.music_section_id` | **컬럼 없음** | 추가 (NULL 허용) | 없으면 "오늘의 추천" 이 **곡 단위로만** 남는다. 구간 추천이 이 프로젝트의 핵심인데 그 축이 사라진다 |
 | `daily_recommendations.mood_code_id` | `NOT NULL` | 유지하되 값을 정할 주체 필요 | AI 가 묶음 분위기를 고르지 않으면 넣을 값이 없다 |
-| `music.language` (가칭) | **컬럼 없음** | 추가 | 추천이 **하드 게이트로 쓰는 축**이다(`filter_query_pool`·온보딩 `track_ok`). 옮길 자리가 없어 색인에 남겨 두었다 |
-| `music.category`/`style` (가칭) | **컬럼 없음** | 추가 | 같음. `genre` 게이트가 장르 코드와 **함께** 이 값을 본다 |
-| `music_analysis.bpm` (가칭) | **컬럼 없음** | 추가 | 템포 게이트·`tempo_direction`·이어 듣기 감점이 전부 이 값을 쓴다 |
+| ~~`music.language`·`category`·`bpm`~~ | **해소 2026-09-23** | `music_analysis.bpm`·`bpm_requested_min/max`·`language`·`category`, `music_section_analysis.energy` | S15P21A204-423. `knowledge/domain/migrate-ai-values-2026-09-23.sql`. 추천 서버는 이 값을 요청 본문 `catalog` 로 받는다 |
 
-#### language·style·bpm 을 색인에 남겨 둔 이유 (S15P21A204-416)
+#### language·style·bpm 을 색인에 남겨 뒀던 이유 (S15P21A204-416, 지금은 해소)
+
+> **2026-09-23 해소.** 아래는 기록이다. 컬럼을 만들었고 `track_features.parquet` 는 색인에서
+> 걷어냈다. 추천 서버는 Spring 카탈로그 API 를 부르지 않는다 — 그 API 도 없앴다.
 
 곡·순간 메타데이터의 정본을 MySQL 로 옮기면서 제목·장르·무드·보컬·악기·순간
 메타데이터는 전부 내부 카탈로그 API(`GET /api/v1/internal/ai/catalog`)로 옮겼다.

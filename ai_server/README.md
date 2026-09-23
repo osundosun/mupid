@@ -92,9 +92,8 @@ Python **3.12**. GPU 도 `torch` 도 필요 없다 — 사용자 벡터 계산�
 | `MUPID_ID_MAP` | `<ARTIFACT_DIR>/data/proc/mupid/id_map.parquet` | 숫자 ID 매핑표. **배치 전용** (`push_sections`). 서빙은 읽지 않는다 |
 | `MUPID_CLICKHOUSE_URL` | (없음) | 행동 저장소. 비우면 개인화 없이 돈다 |
 | `MUPID_CLICKHOUSE_USER` · `_PASSWORD` | (없음) | 〃 (읽기 전용 계정) |
-| `MUPID_AI_NLP_URL` | (없음) | 자연어 해석기 주소. 비우면 `search` 가 501 |
 | `MUPID_POOL` | `flow` | 후보 풀의 주 출처 (`moments.parquet` 의 `source`) |
-| `MUPID_POOL_EXTRA` | `jamendo` | 주 출처에 **더해** 후보로 넣을 출처 (쉼표 구분) |
+| `MUPID_POOL_EXTRA` | (비움) | 주 출처에 **더해** 후보로 넣을 출처 (쉼표 구분). `jamendo` 는 서비스 곡이 아니라 넣지 않는다 |
 | `MUPID_COMBINER` | `logistic_flow_stage1.json` | 점수 결합기 파일 이름 |
 | `MUPID_AI_INTERNAL_TOKEN` | (없음) | `/internal` 호출 토큰. 비우면 검사하지 않는다 |
 
@@ -165,11 +164,10 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 |---|---|---|
 | GET | `/health` | 프로세스 생존 |
 | GET | `/internal/ready` | 요청을 받을 수 있는가 |
-| GET | `/internal/facets` | QueryPlan 에 쓸 수 있는 태그 어휘 |
 | GET | `/internal/metrics` | 운영 지표 (프로세스 내 카운터) |
 | POST | `/internal/recommendations/daily` | 오늘의 모멘트 — **4개 고정** |
 | POST | `/internal/recommendations/next` | 이어 듣기 |
-| POST | `/internal/recommendations/search` | 자연어 검색 |
+| POST | `/internal/recommendations/search` | 조건 검색 (`query_plan` 필수) |
 | POST | `/internal/similar` | 기준 구간과 닮은 다른 곡의 구간 |
 
 ### 이 서버는 숫자 ID 를 다루지 않는다
@@ -189,7 +187,8 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 |---|---|
 | 행동 데이터 | **요청마다 ClickHouse 직접 조회** (`user_section_signals`·`listen_events`) |
 | 온보딩 | **요청 본문** — Spring 코드표 이름 그대로 받아 카탈로그 어휘로 옮긴다 |
-| 곡·구간 메타 | 자체 색인 (임베딩과 같은 묶음이라 요청에 실을 수 없다) |
+| 후보와 곡·구간 값 | **요청 본문 `catalog`** — Spring 이 MySQL 에서 만든다(아래) |
+| 임베딩·무드·악기 확률 | 자체 색인 (행렬이라 요청에 실을 수 없다) |
 | 선호 구간 등급 | ClickHouse `section_labels` — **배치가 만든다**(아래 "배치") |
 
 ### 요청
@@ -198,10 +197,25 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 { "recommendation_id": 5001, "user_id": 15, "limit": 10,
   "exclude_tracks": ["T000148"],
   "current_track": "T000901", "current_section": "T000901#2",
-  "onboarding": { "moods": ["serene"], "genres": ["Jazz"] } }
+  "onboarding": { "moods": ["serene"], "genres": ["Jazz"] },
+  "catalog": { "tracks": { "track": ["T000901"], "duration_ms": [151978], "...": [] },
+               "sections": { "external_id": ["T000901#2"], "...": [] } } }
 ```
 
-`recommendation_id`·`user_id` 만 필수. `current_*` 는 `next` 전용이고, 위 예시의
+`recommendation_id`·`user_id`·`catalog` 가 필수.
+
+#### `catalog` — 이 요청의 후보
+
+**이 서버는 Spring 을 부르지 않는다.** 후보(삭제 안 됨·재생 가능)와 그 값(BPM·언어·스타일·
+보컬·구간 에너지)은 Spring 이 MySQL 에서 모아 **요청마다** 열 단위로 싣는다. 열 목록과
+MySQL 컬럼 대응은 `infra/AI-SPRING-CONTRACT.md` 의 "2026-09-23" 절, 받는 코드는
+`app/catalog_body.py` 다.
+
+- `sections` 에 있고 색인에도 있는 구간만 후보다. 색인에만 있는 구간(지워진 곡)은 나가지 않는다.
+- 같은 본문이 거듭 오면 파생 표를 **본문 해시로** 재사용한다(최근 8개). 캐시이지 상태가 아니다.
+- 모양이 틀리면 400 `INVALID_CATALOG`, 색인과 겹치는 구간이 없으면 404 `NO_CANDIDATES`.
+
+`catalog` 외에는 `recommendation_id`·`user_id` 만 필수. `current_*` 는 `next` 전용이고, 위 예시의
 `limit: 10` 은 `next`·`search` 기준이다. 타입이 엄격하다 — `"5001"` 같은 문자열이나
 실수 `limit` 은 400 으로 거부한다.
 
@@ -218,15 +232,12 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 옮기는 것은 이쪽 일이다(`app/onboarding.py`) — 코드표 이름과 색인 태그는 다른 어휘라서,
 보내는 쪽이 어설프게 옮기면 조건이 조용히 사라진다.
 
-`search` 는 조건을 **누가 뽑았느냐**에 따라 둘 중 하나를 채운다. 둘 다 없으면 400 이다.
-
-| 필드 | 쓰는 경우 | 해석기 |
-|---|---|---|
-| `query_plan` | 호출자(Spring 의 LLM)가 이미 조건을 뽑았다 | **불필요** |
-| `query` | 원문만 보낸다 | 필요. 없으면 501 |
+`search` 는 **`query_plan` 이 필수다.** 조건은 Spring 의 대화 모델이 뽑고, 게이트 조건
+(장르·언어·보컬·악기·flow·BPM·방향)은 **Spring 이 이미 걸러서** `catalog` 로 보낸다. 이
+서버는 `query_plan` 을 무드 가점·CLAP 재정렬·진단에만 쓴다. 원문 `query` 는 기록용이고
+조건으로 해석하지 않는다(자연어 해석기 경로는 없앴다).
 
 `query_plan` 은 `filters`·`exclude` 만 읽는다. 밑줄로 시작하는 키는 내부 전용이라 버린다.
-쓸 수 있는 태그는 `GET /internal/facets` 가 알려준다.
 
 ### 응답
 
@@ -267,7 +278,7 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 |---|---|---|
 | `INVALID_REQUEST` | 400 | 타입·범위·미정의 필드 |
 | `NO_CANDIDATES` | 404 | **조건에 맞는 곡이 없음 — 장애가 아니다.** 빈 목록으로 전달 |
-| `SEARCH_NOT_CONFIGURED` | 501 | 자연어 해석기 미설정 (`MUPID_AI_NLP_URL` 없음) → `S15P21A204-219` |
+| `INVALID_CATALOG` | 400 | `catalog` 의 열 이름·길이·형이 틀림 — 보내는 쪽 버그다 |
 | `INDEX_NOT_READY` | 503 | 색인 미적재. 재시도 대상 |
 | `INTERNAL_ERROR` | 500 | 그 밖. 재시도 대상 |
 
@@ -308,10 +319,11 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 한 곡당 가장 닮은 구간 **하나만** 남긴다. 같은 곡의 인접 구간이 목록을 채우면 "비슷한 곡"
 으로 쓸모가 없다. `similarity` 는 코사인이고 순위 근거일 뿐 확률이 아니다.
 
-### `/internal/facets`
+### 조건 어휘 (Spring 이 만든다)
 
-자연어를 QueryPlan 으로 바꾸는 쪽(외부 해석기든 Spring 의 LLM 이든)이 읽는다. 선택지는
-**카탈로그에서 직접** 만든다 — 없는 태그를 지어내면 조건이 어휘에 없어 후보가 0 이 된다.
+예전 `GET /internal/facets` 는 없앴다. 대화 모델에 주는 선택지는 Spring 이 **MySQL 후보에서
+직접** 만든다(`api/.../ai/catalog/RecommenderFacets`) — 없는 태그를 지어내면 조건이 어휘에
+없어 후보가 0 이 된다. 모양은 예전 응답과 같아 아래를 그대로 참고한다.
 
 ```json
 { "catalog": { "tracks": 111, "moments": 65540 },
@@ -348,7 +360,10 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 
 `/health` 가 200 이어도 트래픽을 받지 않는다. 아래가 모두 맞아야 200 이다.
 
-1. 모델 로드 2. 색인 4종 행 수 일치 3. `emb_row` 0부터 연속 4. 카탈로그 적재 완료
+1. 모델 로드 2. 색인 4종 행 수 일치 3. `emb_row` 0부터 연속
+
+카탈로그는 보지 않는다 — 요청마다 오므로 기동 때 받을 것이 없다. 예전에는 Spring 카탈로그
+적재가 준비 조건이라 토큰 만료 하나로 파드가 Ready 가 되지 못했다(423).
 
 **숫자 ID 매핑은 더 이상 보지 않는다.** 번역을 Spring 이 하므로 이 서버가 확인할 매핑이
 없다. 예전에는 추천 풀 전량이 매핑돼야 200 이었고, 그래서 곡을 한 곡이라도 덜 적재하면
@@ -437,7 +452,7 @@ Spring 은 컨테이너로 돈다. 이 서비스를 호스트에서 직접 실�
 > 있어(`api` 의 `ai.base-url`), 여기에 이 서비스 주소를 넣으면 **대화 요청이 추천 서버로
 > 나간다.**
 
-Spring 은 자연어 원문 대신 `query_plan` 을 보낸다. 대화 모델이 `/internal/facets` 의 어휘로
+Spring 은 자연어 원문 대신 `query_plan` 을 보낸다. 대화 모델이 Spring 이 만든 조건 어휘로
 조건을 뽑기 때문에 **자연어 해석기를 따로 세우지 않아도** 조건이 걸린다. 배경과 결정
 기록은 `S15P21A204-344` 에 있다.
 

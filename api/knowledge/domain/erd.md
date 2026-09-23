@@ -231,6 +231,7 @@ ERD 반입 시점(2026-09-11)에 기존 엔티티 3개가 ERD 와 여러 곳에�
 | ③ | `codes.display_name` | 컬럼 없음 | `VARCHAR(200)` | 미적용 | **적용됨** |
 | ④ | `object_storage_files` 의 `file_type`·`category`·`mime` | `ENUM('IMG','MUSIC')` · `ENUM(…,'STREAMING')` · `VARCHAR(15)` | 각각 `WAVEFORM` 추가 · `VARCHAR(64)` | 미적용 | **적용됨** (2026-09-22) |
 | ⑤ | `music.waveform_file_id` + `fk_music_waveform_file_id` | 컬럼 없음 | `INT` NULL + FK | 미적용 | **적용됨** (2026-09-22) |
+| ⑥ | `music_analysis` 의 `bpm`·`bpm_requested_min/max`·`language`·`category`, `music_section_analysis.energy` | 컬럼 없음 | `DOUBLE`·`SMALLINT`·`VARCHAR(32)`·`VARCHAR(64)`·`DOUBLE`, 전부 NULL | 미적용 | **적용됨** (2026-09-23) |
 
 운영·개발이 갈린 이유는 개발 DB 를 손으로 고쳤기 때문이다. ①의 DDL:
 
@@ -369,6 +370,33 @@ NULL 을 허용한다. 파형이 아직 없는 곡은 비정상이 아니다 —
 > 네 가지가 모두 들어 있다. `ENUM` 값 추가·`VARCHAR` 확장·NULL 컬럼 추가는 모두
 > 기존 행을 건드리지 않아 서로 순서 제약이 없다 — 다만 **앱보다 먼저 들어가야**
 > 파형 등록이 통과한다.
+
+## 2026-09-23 — 추천 값 (S15P21A204-423)
+
+추천 서버는 Spring 을 부르지 않는다(`infra/AI-SPRING-CONTRACT.md` 의 2026-09-23 절).
+후보와 그 값은 Spring 이 추천 요청마다 본문 `catalog` 로 싣는데, BPM·언어·스타일과
+구간 에너지는 **MySQL 에 자리가 없어** AI 색인 파일(`track_features.parquet`,
+`moments.parquet` 의 `rms`)에만 있었다. 그 자리를 만든다.
+
+| 표 | 컬럼 | 형 | 뜻 |
+|---|---|---|---|
+| `music_analysis` | `bpm` | `DOUBLE NULL` | 오디오에서 잰 BPM |
+| `music_analysis` | `bpm_requested_min`·`_max` | `SMALLINT NULL` | 생성 때 요청한 BPM 범위. 템포 조건은 이 중간값을 먼저 본다 — 측정값은 옥타브 오류가 잦다 |
+| `music_analysis` | `language` | `VARCHAR(32) NULL` | `korean`·`english`… |
+| `music_analysis` | `category` | `VARCHAR(64) NULL` | 생성 스타일 원문(`female_korean_ballad`) |
+| `music_section_analysis` | `energy` | `DOUBLE NULL` | 구간 RMS(0~1) |
+
+전부 분석 파이프라인이 잰 값이고 쓰는 쪽도 하나라 `music_analysis` 에 모았다(곡 메타
+`music` 이 아니라). 적재는 `PUT /api/v1/music/{id}/analysis`·`/section` 이 그대로 받고,
+기존 곡은 `music_preprocessing analysis-values` 로 한 번 채운다.
+
+`has_vocal` 은 NOT NULL 그대로다. 생성 음원은 생성 요청의 보컬 종류가 정답이라 늘 값이
+있다 — 분류기가 판정을 못 한(확률 0.60 미만) 곡은 확인해 보니 전부 연주곡이었다.
+
+> ⚠️ **개발 DB 에만 적용했다** (2026-09-23). 운영 DB 는 앱 배포 **전에** 사람이
+> [migrate-ai-values-2026-09-23.sql](migrate-ai-values-2026-09-23.sql) 를 적용한다.
+> NULL 컬럼 추가뿐이라 기존 행을 건드리지 않는다. 앱이 먼저 올라가면 엔티티가 없는
+> 컬럼을 읽어 곡 조회가 실패한다.
 
 ## 곡 식별자가 둘이다
 

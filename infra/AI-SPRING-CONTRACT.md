@@ -14,6 +14,11 @@
 
 **이 절이 아래 모든 절보다 우선한다.** 대상 `S15P21A204-423`.
 
+구현: AI `app/catalog_body.py`(받기·검증), Spring `api/.../ai/catalog/`(후보 수집
+`RecommenderCatalogService`, 검색 조건 `QueryPlanFilter`, 조건 어휘 `RecommenderFacets`),
+적재 `music_preprocessing analysis-values`. 아래 절에서 `/internal/facets`·카탈로그 적재·
+`MUPID_API_*` 를 말하는 대목은 이 절 이전의 기록이다.
+
 ### 무엇이 어긋나 있었나
 
 §0 은 처음부터 "FastAPI 는 추천 계산만. 상태를 갖지 않는다" 였다. 2026-09-22(416)에
@@ -130,8 +135,10 @@ API 로 **등록**하는 것은 그대로다. MySQL 에 쓰는 길은 Spring 하
 | `filters.tempo_direction` | 위와 같은 BPM, 기준은 `current_track` | 더 빠름/느림 |
 | `filters.energy_direction` | `energy`, 기준은 `current_section`(없으면 곡 평균) | 더 높음/낮음 |
 
-"토큰 일치" 는 `_` 경계 부분 일치다 — `rock` 은 `alternative_rock` 에 맞는다. 값은 소문자,
-`-`·공백은 `_` 로 바꿔 비교한다.
+요청 값은 먼저 카탈로그 어휘로 옮긴다 — 소문자, `-`·공백은 `_` 로 바꾼 뒤 어휘에 **정확히**
+있는 값만 남는다(`rock` 이 어휘에 없으면 `indie_rock` 으로 넓혀지지 않는다). 남은 값과 후보
+값의 비교가 "토큰 일치" 이고, `_` 경계 부분 일치다 — 어휘의 `ballad` 는 스타일
+`korean_ballad` 에 맞는다.
 
 **어휘에 없는 필수 조건은 조용히 버리지 않는다.** `genre`·`language`·`vocal`·`instrument`
 중 요청했는데 카탈로그 어휘로 하나도 옮겨지지 않은 것이 있으면 AI 를 부르지 않고 빈 결과와
@@ -707,9 +714,8 @@ MUPID_AI_PORT=                 # 기본 8100
 MUPID_AI_ARTIFACT_DIR=         # 산출물 디렉터리. 없으면 /internal/ready 가 거짓이다
 MUPID_AI_INTERNAL_TOKEN=       # 비우면 헤더 검사를 하지 않는다 (기본 꺼짐)
 MUPID_ID_MAP=                  # 숫자 ID 매핑표 경로
-MUPID_AI_NLP_URL=              # 자연어 해석기. 비우면 QueryPlan 을 받는 경로만 쓴다
 MUPID_POOL=                    # 추천 후보 풀 (기본 flow)
-MUPID_POOL_EXTRA=              # 추가 풀. 쉼표로 구분 (예: jamendo,own)
+MUPID_POOL_EXTRA=              # 추가 풀. 쉼표로 구분 (기본 비움 — jamendo 는 서비스 곡이 아니다)
 MUPID_COMBINER=                # 결합기 파일명
 ```
 

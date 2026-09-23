@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Optional
 
 from . import paths
@@ -37,14 +36,6 @@ SOURCE = "spring-internal-v1"
 # `track_features.parquet` 도 걷어냈다 — BPM·언어·스타일은 MySQL 이 정본이고 요청
 # 본문으로 온다(연동 계약 2026-09-23 절).
 RETIRED_FILES = ("flow_meta.parquet", "content.parquet", "track_features.parquet")
-
-
-def min_coverage() -> float:
-    raw = os.environ.get("MUPID_AI_CATALOG_MIN_COVERAGE", "").strip()
-    try:
-        return min(1.0, max(0.0, float(raw))) if raw else DEFAULT_MIN_COVERAGE
-    except ValueError:
-        return DEFAULT_MIN_COVERAGE
 
 
 def read() -> dict:
