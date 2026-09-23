@@ -11,7 +11,28 @@
 이 프로젝트가 색인 불일치로 두 번 겪은 실패와 같은 형태다. 그래서 여기서는 **매핑이 없으면
 만들지 않고 오류를 낸다.**
 
-매핑표 파일: `data/proc/mupid/id_map.parquet`
+## 근거는 MySQL 이다
+
+**별도 매핑 파일을 두지 않는다**(팀 규칙). 예전에는 `flow_meta.parquet` 의
+`music_id` 열이 근거였는데, 그것도 결국 색인 안의 사본이었다 — 곡이 지워지거나
+번호가 바뀌면 색인을 다시 굽기 전까지 옛 값이 살아 있었다.
+
+이제 근거는 Spring 내부 카탈로그 API 다(`app/catalog_api.py`). 곡 수준
+(`track_id` → `music_id`)과 구간 수준(`external_id` →
+`music_section_analysis_id`)을 **둘 다** 그쪽이 준다 — 예전 `flow_meta` 경로는
+곡 수준밖에 만들지 못했다.
+
+숫자가 필요한 곳은 배치 도구 둘뿐이고 둘 다 **곡 수준만** 쓴다 — `push_sections` 의
+`im.music_id(tid)` 와 `pull_signals` 의 `im.source_track_id(...)`. 구간 PK
+(`music_section_analysis_id`)를 환산하는 코드는 저장소에 하나도 없다. 서빙은 아예
+숫자를 다루지 않는다 — 계약이 문자열 `external_id` 이고 환산은 Spring 이 한다.
+
+판 자리(`data/proc/mupid/id_map.parquet`)에 옛 매핑표가 있어도 **쓰지 않는다.**
+있다는 사실만 알린다 — 규칙상 없어야 할 파일이고, 조용히 그쪽이 이기면 낡은 표가
+색인을 덮어 오류 없이 엉뚱한 곡을 가리킬 수 있다.
+
+경로를 **직접 준 경우**(`IdMap(path=...)`)는 다르다. 도구가 만든 표를 그 자리에서
+검사하는 길이라 그 파일을 읽는다 — `build_id_map` 이 그렇게 쓴다.
     source_track_id   문자열 곡 ID (예: JAMENDO_1083659)
     music_id          MySQL music.music_id
     external_id       문자열 순간 ID (예: JAMENDO_1083659#3)
@@ -22,6 +43,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +80,7 @@ class IdMap:
     def __init__(self, path: Optional[Path] = None, strict: bool = True):
         # 경로를 만들 때 읽는다. 기본값으로 굳히면 import 순서에 따라 환경변수 설정 전의
         # 값이 박힌다.
+        self.explicit_path = path is not None
         self.path = Path(path) if path is not None else paths.id_map_path()
         self.strict = strict
         self.track_to_num: dict[str, int] = {}
@@ -66,14 +89,20 @@ class IdMap:
         self.num_to_sec: dict[int, str] = {}
         self.loaded = False
         self.error: Optional[str] = None
+        self.source = "id_map"
         self.reload()
 
     def reload(self) -> None:
         self.track_to_num, self.num_to_track = {}, {}
         self.sec_to_num, self.num_to_sec = {}, {}
-        self.loaded, self.error = False, None
-        if not self.path.exists():
-            self.error = f"매핑표 없음: {self.path}"
+        self.loaded, self.error, self.source = False, None, "id_map"
+        # 판 자리의 매핑표는 규칙상 없어야 한다. 있어도 읽지 않고 알리기만 한다 —
+        # 조용히 이기면 낡은 표가 색인을 덮는다. 경로를 직접 준 경우만 읽는다.
+        if not self.explicit_path or not self.path.exists():
+            if self.path.exists():
+                print(f"[ids] 규칙상 없어야 할 매핑표가 있다(무시): {self.path}",
+                      file=sys.stderr)
+            self._from_catalog()
             return
         try:
             df = pd.read_parquet(self.path)
@@ -96,6 +125,53 @@ class IdMap:
             self.sec_to_num, self.num_to_sec = {}, {}
             if self.strict:
                 raise
+            return
+        self.loaded = True
+
+    def _from_catalog(self) -> None:
+        """Spring 내부 카탈로그로 곡·구간 매핑을 만든다.
+
+        **지어내지 않는다.** 카탈로그를 읽지 못하면 빈 채로 둔다 — `T000001` 에서
+        1 을 뽑는 식의 규칙은 시딩이 그렇게 만들었을 뿐 계약이 아니고, 실제로
+        `T000847_1` 처럼 규칙 밖 값이 있었다. 어긋난 순간 오류 없이 엉뚱한 곡을
+        추천하게 된다.
+
+        이미 적재된 스냅샷이 있으면 그것을 쓴다. 없으면 한 번 받아온다 — 이 길로
+        오는 것은 배치 도구(`push_sections`·`pull_signals`)뿐이고, 그쪽은 어차피
+        같은 자격으로 Spring 을 부른다. 서빙은 기동 때 이미 적재해 둔다.
+        """
+        from . import catalog_api      # 순환 import 를 피해 쓰는 자리에서 가져온다
+
+        self.source = "catalog_api"
+        snap = catalog_api.snapshot()
+        if snap is None:
+            try:
+                snap = catalog_api.load()
+            except Exception as e:
+                self.error = (f"카탈로그를 읽지 못했다 — {type(e).__name__}: {e} "
+                              f"(MUPID_API_BASE_URL · MUPID_API_REFRESH_TOKEN 확인)")
+                return
+        rows = [{"source_track_id": tid,
+                 "music_id": row.get("music_id"),
+                 "external_id": pd.NA,
+                 "music_section_analysis_id": pd.NA}
+                for tid, row in snap.tracks.items()]
+        rows += [{"source_track_id": row.get("track_id"),
+                  "music_id": pd.NA,
+                  "external_id": uid,
+                  "music_section_analysis_id": row.get("music_section_analysis_id")}
+                 for uid, row in snap.sections.items()]
+        try:
+            self._ingest(pd.DataFrame(rows, columns=list(COLS)))
+        except MapIntegrityError as e:
+            self.error = str(e)
+            self.track_to_num, self.num_to_track = {}, {}
+            self.sec_to_num, self.num_to_sec = {}, {}
+            if self.strict:
+                raise
+            return
+        if not self.track_to_num:
+            self.error = "카탈로그의 music_id 가 전부 비어 있다"
             return
         self.loaded = True
 
@@ -188,7 +264,8 @@ class IdMap:
         return v
 
     def stats(self) -> dict:
-        return {"path": str(self.path), "loaded": self.loaded, "error": self.error,
+        return {"path": str(self.path), "source": self.source,
+                "loaded": self.loaded, "error": self.error,
                 "tracks": len(self.track_to_num), "sections": len(self.sec_to_num)}
 
     def readiness(self, pool_track_ids, pool_section_uids) -> dict:

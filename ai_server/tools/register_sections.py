@@ -40,7 +40,9 @@ from __future__ import annotations
 import argparse
 import sys
 import urllib.error
+from collections import Counter
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -71,6 +73,12 @@ def _instruments_module():
 # AI 태그 → Spring 코드표 이름(`code_name`, 영문 내부 코드 — `serene`·`melancholic`).
 # `MOOD_MAP` 을 뒤집은 것이다.
 #
+# **이 경로는 2026-09-21 어휘 전환에서 건드리지 않았다.** 여기가 만드는 것은
+# **순간 무드**(`music_section_analysis_mood`, code_id 32~39)이고, 전환한 것은
+# **곡 무드**(`music_moods`, 40~48)다. 표는 같은 `codes` 를 보지만 축이 다르고
+# 쓰는 테이블도 다르다 — 한쪽을 고치면서 다른 쪽을 같이 옮기면 순간 무드가
+# 통째로 어긋난다. 순간 무드 전환은 별건으로 남겨 두었다.
+#
 # **번호는 보내지 않는다.** 코드 번호는 MySQL 이 발급하고 이 서버는 모른다 — 이름으로
 # 보내면 Spring 이 붙인다. 카탈로그 1,063곡 중 918곡(86%)이 이 표로 옮겨진다. 나머지는
 # 분위기 없이 들어가고, 그 자체는 오류가 아니다.
@@ -89,12 +97,22 @@ def _tag_list(value) -> list[str]:
     return [str(x).strip() for x in value if str(x).strip()]
 
 
-def moods_of(tags) -> list[str]:
-    """곡의 AI 무드 태그 → Spring 코드 이름. 순서를 지키고 중복은 뺀다."""
+def moods_of(tags, unmapped: Optional[Counter] = None) -> list[str]:
+    """곡의 AI 무드 태그 → Spring 코드 이름. 순서를 지키고 중복은 뺀다.
+
+    **옮기지 못한 태그는 세어서 내보낸다.** 그냥 빼면 "이 곡은 분위기가 없다" 와
+    "우리가 그 태그를 모른다" 가 같아 보이고, 코드표에 무드가 늘었는데 `MOOD_MAP`
+    에 안 넣은 날에도 적재는 조용히 성공한다. `unmapped` 를 주면 태그별 건수를
+    담는다 — 새 코드를 만들지 않으므로, 아는 것은 이 셈뿐이다.
+    """
     out: list[str] = []
     for tag in _tag_list(tags):
         name = MOOD_BY_TAG.get(tag)
-        if name and name not in out:
+        if name is None:
+            if unmapped is not None:
+                unmapped[tag] += 1
+            continue
+        if name not in out:
             out.append(name)
     return out
 
@@ -237,7 +255,17 @@ def add_instrument_codes(names: set[str], *, dry_run: bool = False) -> list[dict
     # 코드 이름은 영문 스템 이름(`vocals`…), 표시명은 한국어다 — 분위기·장르와
     # 같은 방향이다 (2026-09-21). 표시명을 빼면 서버가 코드 이름을 그대로
     # 표시명으로 써서 화면에 영문이 뜬다.
-    display = _instruments_module().DISPLAY_NAMES
+    ins = _instruments_module()
+    display = ins.DISPLAY_NAMES
+    # **확정 목록 밖의 이름은 만들지 않는다.** `POST /api/v1/code` 는 없는 이름을
+    # 받으면 새 행을 만들고, 한번 생긴 코드는 사람이 지워야 한다 — 분위기에서
+    # 실제로 두 번 늘었다(98~106, 107~123). 정본은 `instruments.STEMS` 하나이고,
+    # 여기 없는 이름이 왔다면 코드표가 아니라 **분석 쪽이 틀린 것**이다.
+    unknown = sorted(set(names) - set(ins.CODE_NAMES))
+    if unknown:
+        raise SystemExit(
+            f"확정 목록에 없는 악기 이름이다: {unknown} "
+            f"(정본: {list(ins.CODE_NAMES)}). 코드를 새로 만들지 않고 멈춘다.")
     added = []
     for name in sorted(names):
         body = {"code_type": "INSTRUMENT", "code_name": name}
@@ -308,11 +336,19 @@ def main() -> int:
     # 곡 분위기. 없으면 분위기 없이 넣는다 — 그 자체는 오류가 아니다.
     meta_path = paths.data_dir() / "flow_meta.parquet"
     mood_of: dict[str, list[str]] = {}
+    mood_unmapped: Counter = Counter()
     if meta_path.exists():
         meta = pd.read_parquet(meta_path)
         if "mood_tags" in meta.columns:
-            mood_of = {str(r.track_id): moods_of(r.mood_tags)
+            mood_of = {str(r.track_id): moods_of(r.mood_tags, mood_unmapped)
                        for r in meta.itertuples()}
+        else:
+            # 어휘 전환(2026-09-21) 뒤의 판에는 이 열이 없다. 순간 무드는 AI 태그에서
+            # 왔는데 그 태그를 더는 싣지 않는다 — **곡 무드(`mood_codes`)로 대신하지
+            # 않는다.** 축이 다르고(32~39 대 40~48), 대신 쓰면 순간에 곡 무드가
+            # 붙는다. 조용히 넘기지 않고 왜 비는지 남긴다.
+            log(f"{meta_path.name} 에 mood_tags 가 없다 (어휘 전환 후 판) — "
+                "순간 무드 없이 적재한다. 순간 무드 전환은 별건이다")
     else:
         log(f"{meta_path.name} 이 없다 — 분위기 없이 적재한다")
 
@@ -417,6 +453,11 @@ def main() -> int:
     for k in ("unknown_label", "bad_range", "long_uid"):
         if stat[k]:
             log(f"  제외 구간 {k}={stat[k]}")
+    if mood_unmapped:
+        # 코드를 새로 만들지 않는다. 모르는 태그는 이름과 건수를 남기고 사람이 판단한다.
+        log(f"  코드표로 옮기지 못한 무드 태그 {len(mood_unmapped)}종 "
+            f"· {sum(mood_unmapped.values())}건: "
+            f"{', '.join(f'{t}={n}' for t, n in mood_unmapped.most_common(8))}")
     if unmapped:
         log(f"  --track-map 에 없는 곡 {len(unmapped)}개 (예: {unmapped[:5]})")
     if empty:

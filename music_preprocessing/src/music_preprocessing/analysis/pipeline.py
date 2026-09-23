@@ -41,6 +41,12 @@ from .feature_space import ArtifactMissing, FeatureSpace, Section, TrackStats
 STATE_NAME = "analysis_processed.json"
 STATE_VERSION = 1
 
+# 상태 파일에만 쓰는 중간 값. 계산은 끝났는데 **색인에는 아직 없다**는 뜻이다.
+# `ok` 는 교체까지 끝난 곡만 받는다(`batch.mark_indexed`) — 분석 직후에 `ok` 를
+# 적으면 교체가 보류된 날의 곡이 다음 배치에서 건너뛰어져 영영 색인에 못 들어간다.
+STATUS_ANALYZED = "analyzed"
+STATUS_OK = "ok"
+
 
 # ────────────────────────────────────────────────────────────── 결과 담는 것
 

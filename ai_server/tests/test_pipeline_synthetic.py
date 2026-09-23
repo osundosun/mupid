@@ -19,9 +19,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from ai_server.app import catalog_api, index_contract
+
 LABELS4 = ["intro", "verse", "chorus", "bridge"]
-GENRES = ["pop", "ballad", "rock"]
-MOODS = ["relaxing", "happy"]
+# DB 코드표 어휘(`codes.code_name`). 합성이지만 모양을 실제와 맞춘다.
+GENRES = ["contemporary_pop", "pop_ballad", "indie_rock"]
+MOODS = ["calm", "bright"]
 INSTRUMENTS = ["piano", "guitar"]
 
 
@@ -32,15 +35,15 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
     (d / "serve").mkdir(parents=True, exist_ok=True)
     (d / "logs").mkdir(parents=True, exist_ok=True)
 
+    # 색인에는 **벡터를 가리키는 행 번호와 오디오에서 잰 값만** 둔다. 구간 종류·
+    # 시각·악기는 MySQL 이 정본이고 `catalog_api` 가 읽는다(`_catalog_payload`).
     rows, r = [], 0
     for t in range(n_tracks):
         tid = f"T{t:06d}"
         for s in range(per_track):
             rows.append({
-                "moment_id": f"{tid}#{s}", "track_id": tid, "section_idx": s,
-                "section_label": LABELS4[s % len(LABELS4)], "label_source": "allin1",
-                "start_sec": float(s * 30), "end_sec": float(s * 30 + 28),
-                "dur_sec": 28.0, "emb_row": r, "source": "flow",
+                "moment_id": f"{tid}#{s}", "track_id": tid, "label_source": "allin1",
+                "emb_row": r, "source": "flow",
                 "rms": float(rng.uniform(0.05, 0.4)),
                 "track_dur_sec": float(per_track * 30),
                 # 곡 안에서의 상대 위치. 위치 prior 가 읽는다.
@@ -83,20 +86,54 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
         hist_max=np.asarray(hist_max, dtype=np.int64),
         in_dim=np.asarray(feat_dim, dtype=np.int64))
 
+    # 색인에 남는 곡 수준 축. **MySQL 에 컬럼이 없는 것만** 담는다.
     tids = sorted(mom.track_id.unique())
-    pd.DataFrame([{"track_id": t, "bpm": float(rng.uniform(70, 150)),
-                   "dur_sec": float(per_track * 30)} for t in tids]
-                 ).to_parquet(d / "content.parquet", index=False)
     pd.DataFrame([{
-        "track_id": t, "title": f"곡 {t}", "category": GENRES[i % 3],
-        "vocal_type": ["female", "male"][i % 2], "language": ["ko", "en"][i % 2],
-        "bpm_lo": 80, "bpm_hi": 120, "sound_raw": "",
-        # 장르는 `genre` 가 아니라 `genre_top1` 에서 온다(_catalog_tags). 이름을 틀리면
-        # 패싯이 조용히 빈 목록이 되고, LLM 이 고를 어휘가 사라진다.
-        "genre_top1": GENRES[i % 3],
-        "mood_tags": MOODS[i % 2], "instrument_tags": INSTRUMENTS[i % 2],
-    } for i, t in enumerate(tids)]).to_parquet(d / "flow_meta.parquet", index=False)
+        "track_id": t, "bpm": float(rng.uniform(70, 150)),
+        "language": ["ko", "en"][i % 2], "category": GENRES[i % 3],
+        "bpm_lo": 80.0, "bpm_hi": 120.0,
+    } for i, t in enumerate(tids)]).to_parquet(d / "track_features.parquet", index=False)
+
+    (d / "index_meta.json").write_text(json.dumps(
+        index_contract.build_meta(rows=len(mom), tracks=len(tids),
+                                  built_at="1970-01-01T00:00:00Z"),
+        ensure_ascii=False), encoding="utf-8")
     return d
+
+
+def _catalog_payload(n_tracks=6, per_track=4):
+    """Spring `GET /api/v1/internal/ai/catalog` 응답의 `tracks` 모양 그대로.
+
+    사전을 손으로 채우지 않고 이 모양을 지나가게 하는 이유는, 계약이 바뀌면 시험도
+    함께 깨지게 하려는 것이다. 값은 예전 `flow_meta` 합성값과 같게 두어 **이 변경이
+    추천 결과를 바꾸지 않았다**는 것을 다른 시험들이 그대로 확인할 수 있게 한다.
+    """
+    # 추천 쪽 어휘는 소문자이고 MySQL ENUM 은 대문자다. 경계에서 한 번 바뀌는지가
+    # 이 시험이 지나가는 길이다.
+    enum_of = {"intro": "INTRO", "verse": "VERSE", "chorus": "CHORUS",
+               "bridge": "BRIDGE"}
+    out = []
+    for t in range(n_tracks):
+        tid = f"T{t:06d}"
+        out.append({
+            "musicId": 1000 + t,
+            "title": f"곡 {tid}",
+            "hasVocal": True,
+            "vocalGender": ["F", "M"][t % 2],
+            "genres": [GENRES[t % 3]],
+            "moods": [MOODS[t % 2]],
+            "sections": [{
+                "externalId": f"{tid}#{s}",
+                "musicSectionAnalysisId": 500000 + t * 100 + s,
+                "sectionLabel": enum_of[LABELS4[s % len(LABELS4)]],
+                "index": s,
+                "startTimeMs": s * 30 * 1000,
+                "endTimeMs": (s * 30 + 28) * 1000,
+                "instruments": [INSTRUMENTS[t % 2]],
+                "moods": [],
+            } for s in range(per_track)],
+        })
+    return out
 
 
 @pytest.fixture(scope="module")
@@ -125,6 +162,10 @@ def svc(tmp_path_factory):
         from ai_server.app import recommender as mod
         return importlib.reload(mod)
 
+    # 곡·순간 메타데이터는 색인이 아니라 Spring 내부 API 에서 온다. 시험은 그
+    # 응답 모양 그대로를 꽂는다 — 망을 타지 않을 뿐 담기는 길은 운영과 같다.
+    catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))
+
     rc = _reload()
     rc.CAT = rc.Catalog()
     yield rc
@@ -133,6 +174,7 @@ def svc(tmp_path_factory):
         os.environ.pop("MUPID_AI_ARTIFACT_DIR", None)
     else:
         os.environ["MUPID_AI_ARTIFACT_DIR"] = saved_env
+    catalog_api.reset()
     back = _reload()
     back.CAT = None
 
@@ -153,13 +195,13 @@ def test_model_runs_on_numpy_without_torch(svc):
 
 def test_missing_runner_is_reported_not_silent(svc, tmp_path, monkeypatch):
     """구간 벡터만 있고 실행기가 없으면 학습 점수가 통째로 빠진다. 말을 해야 한다."""
-    (svc.OUT_DIR / "stage1_weights.npz").rename(tmp_path / "moved.npz")
+    (svc.paths.data_dir() / "stage1_weights.npz").rename(tmp_path / "moved.npz")
     try:
         cat = svc.Catalog()
         assert cat.model is None
         assert cat.model_error and "stage1_weights.npz" in cat.model_error
     finally:
-        (tmp_path / "moved.npz").rename(svc.OUT_DIR / "stage1_weights.npz")
+        (tmp_path / "moved.npz").rename(svc.paths.data_dir() / "stage1_weights.npz")
 
 
 def test_recommend_returns_requested_count(svc):
@@ -182,10 +224,11 @@ def test_recommend_honours_exclusion(svc):
 
 def test_query_plan_actually_gates(svc):
     """조건이 걸리지 않으면 자연어 검색이 무의미하다."""
-    out = svc.recommend("internal:1", 5, set(), True, {"filters": {"genre": ["pop"]}})
+    out = svc.recommend("internal:1", 5, set(), True,
+                        {"filters": {"genre": [GENRES[0]]}})
     assert out["diagnostics"]["nlp"]["applied"] == ["filters.genre"]
     for r in out["results"]:
-        assert svc.CAT.track_info(r["track_id"])["category"] == "pop"
+        assert svc.CAT.track_info(r["track_id"])["category"] == GENRES[0]
 
 
 def test_query_plan_uses_only_matching_dna_moments(svc, monkeypatch):
@@ -212,7 +255,7 @@ def test_query_plan_searches_without_dna_when_none_match(svc, monkeypatch):
     monkeypatch.setattr(svc, "user_positives", lambda _user: pos)
 
     out = svc.recommend("internal:no-query-dna", 4, set(), True,
-                        {"filters": {"flow": "verse", "mood": ["relaxing"]}})
+                        {"filters": {"flow": "verse", "mood": [MOODS[0]]}})
 
     assert out["dna"] == []
     assert out["diagnostics"]["query_source"] == "none"
@@ -250,13 +293,23 @@ def test_query_plan_ignores_history_onboarding_bpm_and_explore(svc, monkeypatch)
 
 
 def test_missing_vocal_and_instrument_data_do_not_drop_candidates(svc):
-    old = svc.CAT.meta.copy()
+    """카탈로그가 보컬·악기를 안 주면 그 조건은 **무시**한다 — 후보를 비우지 않는다.
+
+    악기는 이제 곡이 아니라 **구간**에 달린다(MySQL `music_analysis_instruments`).
+    그래서 곡 메타만 비워서는 "악기 데이터가 없다" 가 되지 않는다 — 구간 쪽도 함께
+    비워야 실제로 그 상태가 된다.
+    """
+    old_meta, old_pool, old_mom = svc.CAT.meta.copy(), svc.CAT.pool, svc.CAT.mom
     svc.CAT.meta["vocal_type"] = ""
     svc.CAT.meta["voice_label"] = ""
     svc.CAT.meta["gender_label"] = ""
     svc.CAT.meta["has_vocal"] = np.nan
     svc.CAT.meta["vocal_gender"] = ""
-    svc.CAT.meta["instrument_tags"] = ""
+    svc.CAT.meta["instruments"] = ""
+    svc.CAT.pool = old_pool.copy()
+    svc.CAT.mom = old_mom.copy()
+    svc.CAT.pool["instruments"] = ""
+    svc.CAT.mom["instruments"] = ""
     svc.CAT.__dict__.pop("_facets_cache", None)
     svc.CAT.__dict__.pop("_facets_by_track", None)
     try:
@@ -267,7 +320,7 @@ def test_missing_vocal_and_instrument_data_do_not_drop_candidates(svc):
         assert set(diag["ignored"]) == {
             "vocal(카탈로그 데이터 없음)", "instrument(카탈로그 데이터 없음)"}
     finally:
-        svc.CAT.meta = old
+        svc.CAT.meta, svc.CAT.pool, svc.CAT.mom = old_meta, old_pool, old_mom
         svc.CAT.__dict__.pop("_facets_cache", None)
         svc.CAT.__dict__.pop("_facets_by_track", None)
 
@@ -304,10 +357,72 @@ def test_unsatisfiable_condition_returns_nothing_not_anything(svc):
 def test_mood_filter_reranks_without_dropping(svc):
     plain = svc.recommend("internal:1", 6, set())
     moody = svc.recommend("internal:1", 6, set(), True,
-                          {"filters": {"mood": ["relaxing"]}})
+                          {"filters": {"mood": [MOODS[0]]}})
     assert moody["diagnostics"]["mood_rerank"]["matched"] > 0
     # 후보 수는 그대로 — mood 는 게이트가 아니다.
     assert moody["diagnostics"]["candidates"] == plain["diagnostics"]["candidates"]
+
+
+def test_onboarding_with_nothing_mapped_makes_no_seed(svc):
+    """원문은 왔는데 어휘로 옮겨진 축이 하나도 없으면 **씨앗을 만들지 않는다.**
+
+    `track_ok` 의 조건은 전부 `want_X and …` 라 빈 축은 건너뛴다. 모든 축이 비면
+    조건이 하나도 없어 전곡이 통과하고 씨앗이 **풀 전체의 구간별 평균**이 되는데,
+    그런데도 응답은 `ONBOARDING_MATCH` 라고 말한다. 실측으로 기존 회원 8명 중
+    6명이 그 상태였다 — 모두 같은 값을 받으면서 근거는 "온보딩 일치" 였다.
+    콜드스타트보다 나쁘다: 틀린 근거를 자신 있게 말한다.
+    """
+    from ai_server.app import onboarding as onb
+
+    # 대분류 장르 + 1세대 무드. 둘 다 온보딩 축에서 내려간 값이다.
+    ans = onb.from_request({"moods": ["잔잔한"], "genres": ["Rock"]}, GENRES)
+    assert ans["mood"] == [] and ans["genre"] == []
+    assert ans["mood_raw"] == ["잔잔한"], "원문은 남아야 되짚을 수 있다"
+
+    out = svc.recommend("internal:404", 4, set(), False, None, None, None,
+                        beh_events=[], onboarding=ans)
+    d = out["diagnostics"]
+    assert d["query_source"] == "none", "씨앗이 없는데 온보딩이라고 했다"
+    assert d["onboarding_source"] == "empty_after_mapping"
+    assert d.get("cold_start") is True
+    assert out["results"], "근거가 없어도 추천은 나가야 한다"
+    for r in out["results"]:
+        assert not r.get("matched_dna"), "씨앗이 없는데 근거 구간이 붙었다"
+
+
+def test_one_axis_left_still_makes_a_seed(svc):
+    """한 축이라도 남으면 종전 그대로다. 9번 회원이 이쪽이다.
+
+    실제 응답: 장르 `9·12·13·14 · 53·57` 중 세분류 `53·57` 만 남는다.
+    """
+    from ai_server.app import onboarding as onb
+
+    ans = onb.from_request({"moods": ["잔잔한"], "genres": ["Rock", GENRES[0]]}, GENRES)
+    assert ans["mood"] == [] and ans["genre"] == [GENRES[0]], "세분류만 남아야 한다"
+
+    out = svc.recommend("internal:405", 4, set(), False, None, None, None,
+                        beh_events=[], onboarding=ans)
+    assert out["diagnostics"]["query_source"] == "onboarding"
+    assert out["diagnostics"]["onboarding_source"] == "request"
+
+
+def test_a_value_already_in_the_vocabulary_is_not_rewritten_by_an_alias(svc):
+    """별칭표가 **어휘에 있는 값**을 덮으면 조건이 통째로 사라진다.
+
+    어휘 전환(2026-09-21) 뒤에 실제로 걸렸다. `calm`·`serene` 은 이제 코드 이름
+    그 자체인데 별칭표가 옛 카탈로그 태그(`relaxing`·`meditative`)로 바꿔 놓았고,
+    그 태그가 없어져 `filters.mood` 가 빈 목록이 됐다 — 사용자가 "고요한" 을
+    골랐는데 아무 곡이나 나오는 상태였다. 오류는 나지 않는다.
+    """
+    out = svc.recommend("internal:1", 6, set(), True,
+                        {"filters": {"mood": ["calm"]}})
+    assert out["diagnostics"]["nlp"]["plan"]["filters"]["mood"] == ["calm"]
+    assert "mood_rerank" in out["diagnostics"], "조건이 사라졌다"
+
+    # 어휘에 없는 말은 여전히 별칭을 거친다. 거쳐도 못 맞추면 그냥 떨어진다.
+    unknown = svc.recommend("internal:1", 6, set(), True,
+                            {"filters": {"mood": ["존재하지않는무드"]}})
+    assert unknown["diagnostics"]["nlp"]["plan"]["filters"]["mood"] == []
 
 
 def test_ranking_is_unchanged_when_no_mood_is_asked(svc):
@@ -347,17 +462,18 @@ def test_internal_api_end_to_end(svc):
     internal_api.install(app, svc)
     c = TestClient(app)
 
+    # `daily` 는 개수를 받지 않는다 — 4개 고정이다(`internal_api.DAILY_LIMIT`).
     r = c.post("/internal/recommendations/daily",
-               json={"recommendation_id": 1, "user_id": 7, "limit": 3})
+               json={"recommendation_id": 1, "user_id": 7})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert len(body["items"]) == 3
+    assert len(body["items"]) == internal_api.DAILY_LIMIT
     for it in body["items"]:
         assert it["external_id"] and it["reason_code"]
         assert it["rank_order"] >= 1
     # 같은 곡이 두 번 나오지 않는다 (`#` 앞이 곡 ID 다)
     tracks = {i["external_id"].split("#")[0] for i in body["items"]}
-    assert len(tracks) == 3
+    assert len(tracks) == internal_api.DAILY_LIMIT
 
     # 모델 수치·내부 진단은 응답으로 새지 않는다. 문자열 ID 는 이제 계약이라 셈에서 뺀다.
     raw = r.text
@@ -421,7 +537,7 @@ def test_clickhouse_signals_become_labels(svc, monkeypatch):
     # 라벨러가 이 이벤트를 실제로 읽어 등급을 만드는가
     res = svc.run_labeler()
     assert res["ok"], res
-    lab = pd.read_parquet(svc.LABELS)
+    lab = pd.read_parquet(svc.paths.labels_path())
     mine = lab[lab.user_ref == "internal:7"]
     assert not mine.empty, "ClickHouse 신호가 라벨까지 도달하지 않았다"
     assert (mine.section_key == uid).any()
@@ -466,3 +582,71 @@ def test_query_gate_result_is_unchanged_by_the_cache(svc):
     b_pool, b_diag = svc.filter_query_pool(svc.CAT.pool, dict(plan), None, None)
     assert a_diag == b_diag
     assert a_pool.moment_id.tolist() == b_pool.moment_id.tolist()
+
+
+# ------------------------------------- 메타데이터의 정본은 MySQL 이다 (색인이 아니다)
+
+def test_catalog_axes_actually_gate_candidates(svc):
+    """내부 API 가 준 장르·무드·보컬·악기가 **실제로 후보를 거른다.**
+
+    한 축이 안 실리면 오류가 아니라 "조건을 걸었는데 아무 곡도 안 걸러진" 결과가
+    나온다. 그래서 축마다 걸러진 수가 0보다 큰지 본다.
+    """
+    full = len(svc.CAT.pool)
+    for axis, value in (("genre", GENRES[0]), ("vocal", "female"),
+                        ("instrument", INSTRUMENTS[0])):
+        pool, diag = svc.filter_query_pool(
+            svc.CAT.pool, {"filters": {axis: [value]}}, None, None)
+        assert f"filters.{axis}" in diag["applied"], f"{axis} 축이 게이트에 안 걸렸다"
+        assert 0 < len(pool) < full, f"{axis}={value} 가 아무것도 거르지 않았다"
+
+    # 무드는 **거르지 않고 재정렬만** 한다(`MOOD_WEIGHT`) — 추론 가능성이 커서
+    # 그렇게 둔 것이다. 그래서 값이 실렸는지는 빼는 쪽으로 확인한다.
+    pool, diag = svc.filter_query_pool(
+        svc.CAT.pool, {"exclude": {"mood": [MOODS[0]]}}, None, None)
+    assert "exclude.mood" in diag["applied"], "무드 축이 카탈로그에서 안 실렸다"
+    assert 0 < len(pool) < full
+
+
+def test_moment_metadata_comes_from_the_catalog_not_the_index(svc):
+    """구간 종류·시각·악기는 색인에 없고 카탈로그에서 붙는다."""
+    mom = svc.CAT.mom.set_index(svc.CAT.mom.moment_id.astype(str))
+    row = mom.loc["T000000#2"]
+
+    assert row.section_label == "chorus", "MySQL ENUM 이 추천 어휘로 안 바뀌었다"
+    assert float(row.start_sec) == 60.0 and float(row.end_sec) == 88.0
+    assert float(row.dur_sec) == 28.0, "길이는 시각에서 다시 세야 한다"
+    assert row.instruments == INSTRUMENTS[0]
+
+
+def test_a_song_missing_from_the_catalog_leaves_the_pool(svc):
+    """MySQL 에서 지워진 곡은 색인에 남아 있어도 추천 후보가 아니다.
+
+    남겨 두면 Spring 이 `external_id` 를 못 찾아 그 줄을 버린다 — 화면에는 오류가
+    아니라 "추천이 몇 개 비어 보인다" 로 나온다.
+    """
+    keep = [t for t in _catalog_payload() if t["musicId"] != 1000]
+    before = svc.CAT
+    catalog_api.install(catalog_api.snapshot_from_tracks(keep))
+    try:
+        rebuilt = svc.Catalog()
+        assert "T000000" not in set(rebuilt.pool.track_id)
+        assert rebuilt.moments_outside_catalog == 4
+        assert len(rebuilt.pool) == len(before.pool) - 4
+    finally:
+        catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))
+
+
+def test_the_index_alone_cannot_serve(svc):
+    """카탈로그 없이 색인만으로는 추천하지 않는다.
+
+    뜨게 두면 장르·무드·보컬·악기 조건이 통째로 빈 채 추천이 나가고, 그것은
+    응답만 봐서는 정상과 구분되지 않는다.
+    """
+    catalog_api.reset()
+    try:
+        with pytest.raises(RuntimeError) as e:
+            svc.Catalog()
+        assert "카탈로그" in str(e.value)
+    finally:
+        catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))

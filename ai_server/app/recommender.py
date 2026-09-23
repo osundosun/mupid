@@ -29,27 +29,21 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
-from . import labels_store, metrics, paths, stage1_np
+from . import catalog_api, labels_store, metrics, paths, pinecone_store, stage1_np
 from .log import log
 
 warnings.filterwarnings("ignore")
 
-# 모델·색인 경로는 MUPID_AI_ARTIFACT_DIR 하나로 통일한다. 계산은 paths 한 곳에서만 한다
-# — 값은 종전과 같다(미설정 시 ai_server/artifacts).
-ROOT = paths.artifact_root()
-# 라벨러는 **코드와 함께** 배포된다(app/labeler.py). 산출물 디렉터리에는 없다 — 예전
-# 데모의 <저장소>/src 배치를 그대로 들고 오면 subprocess 가 조용히 실패한다.
-OUT_DIR = ROOT / "data" / "proc" / "mupid"
-# 배치가 **쓰는** 자리. 색인 마운트가 읽기 전용이라 나눠 두었다 — 나누지
-# 않으면 기본값이 OUT_DIR 이라 종전과 같다(`paths.state_dir`).
-STATE_DIR = paths.state_dir()
-SERVE = STATE_DIR / "serve"
-EVENTS = STATE_DIR / "logs" / "events_service.jsonl"
-# 라벨의 정본은 ClickHouse 다(`app/labels_store.py`). 이 파일은 ClickHouse 가
-# 없는 개발·오프라인에서만 쓰이고, 배치가 만든 중간 산출물이기도 하다.
-LABELS = STATE_DIR / "labels_service.parquet"
-PREFS = SERVE / "prefs.parquet"
-ONBOARD = SERVE / "onboarding.parquet"
+# 모델·색인 경로는 MUPID_AI_ARTIFACT_DIR 하나로 통일한다. 계산은 `paths` 한 곳에서만 한다.
+#
+# **상수로 굳히지 않는다.** 예전에는 여기서 `ROOT = paths.artifact_root()` 로 받아
+# 두었는데, 그러면 import 시점의 환경변수가 그대로 박힌다. 이 모듈은 다른 모듈이
+# 먼저 끌어올 수 있어서 "누가 먼저 import 했는가" 가 경로를 정하게 되고, 값이
+# 어긋나도 서비스는 정상처럼 뜬다. 그래서 읽는 시점에 부른다 — 라벨러는 **코드와
+# 함께** 배포되므로(`app/labeler.py`) 산출물 디렉터리에는 없다는 점도 그대로다.
+#
+# 배치가 쓰는 자리(`serve`·`logs`·`labels_service.parquet`)는 `paths.state_dir()`
+# 에 붙는다. 나누지 않은 환경에서는 기본값이 색인 디렉터리라 종전과 같다.
 # 음원·표지 경로는 두지 않는다. 이 서비스는 스트리밍을 하지 않고(main.py), 그 값을 읽는
 # 곳도 없었다. 개발자 홈 디렉터리(Path.home())를 가리키고 있어 컨테이너에서는 존재하지도
 # 않는 경로였고, 추천 결과 딕셔너리에 실려 로그로 새어 나갈 수 있었다.
@@ -136,6 +130,13 @@ LAMBDA_USER_RESIDUAL = 0.5
 HALF_LIFE_DAYS = 14.0          # 히스토리 반감기(일). 스윕 최적값. 0 = 감쇠 없음
 ONBOARD_MIN_MATCH = 12         # 조사 결과로 고른 구간이 이보다 적으면 조건을 단계적으로 완화
 ONBOARD_SEEDS = 3              # 조사에서 만드는 씨앗 질의 벡터 개수 상한
+# 닮은 구간은 **곡당 하나**만 남긴다. 한 곡이 구간 여럿으로 상위를 채우면 그만큼
+# 곡 수가 모자라므로 넉넉히 받아 온다.
+SIMILAR_OVERFETCH = 8
+# DNA 중심 하나당 받아 올 후보 수. 중심이 최대 7개(DNA_MAX)라 상한은 그 곱이다.
+# 여기서 받은 것만 점수를 매기므로 너무 좁으면 후보가 마르고, 너무 넓으면 요청마다
+# 원본 벡터를 그만큼 가져오게 된다.
+DNA_CANDIDATES_PER_SEED = 200
 # ------------------------------------------------------------------------
 
 
@@ -143,19 +144,154 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# ------------------------------------------- 색인 + 카탈로그를 하나로 합치는 자리
+#
+# 추천 계산부는 예전과 **같은 열 이름**을 읽는다. 값의 출처만 바뀌었다 — 점수·가중치·
+# 필터·후보 생성·랭킹에는 손대지 않는다. 그래서 여기서 이름을 맞춰 둔다.
+
+# 색인이 계속 들고 있는 곡 수준 축. MySQL 에 컬럼 자체가 없어 API 로 옮길 수 없다.
+# 색인이 계속 들고 있는 곡 수준 축. **읽는 곳이 있는 것만** 남긴다.
+#   bpm            템포 게이트 · tempo_direction · _flow_penalty
+#   bpm_lo/bpm_hi  bpm_requested → catalog_facets 가 측정 BPM 보다 우선 사용
+#   language       filter_query_pool 게이트 · 온보딩 track_ok
+#   category       parse_style() → style 게이트
+# `dur_sec`(곡)·`sound_raw` 는 track_info dict 에 담기기만 하고 읽는 곳이 없어 뺐다.
+TRACK_FEATURE_COLS = ("bpm", "language", "category", "bpm_lo", "bpm_hi")
+# `flow_meta` 가 하던 일 가운데 색인에 남는 몫. 나머지(제목·장르·무드·보컬)는 카탈로그다.
+META_FROM_FEATURES = ("language", "category", "bpm_lo", "bpm_hi")
+
+
+def _track_features() -> pd.DataFrame:
+    """`track_features.parquet`. 없으면 **빈 표**가 아니라 실패다.
+
+    빈 표로 넘어가면 BPM·언어·스타일 조건이 조용히 아무 곡도 못 고르게 된다.
+    """
+    path = paths.track_features_path()
+    if not path.exists():
+        raise RuntimeError(
+            f"{path.name} 이 없다 — BPM·언어·스타일 축이 통째로 빈다. "
+            f"`python -m ai_server.tools.slice_index` 로 다시 구운 판을 올린다")
+    frame = pd.read_parquet(path)
+    if "track_id" not in frame.columns:
+        raise RuntimeError(f"{path.name} 에 track_id 열이 없다")
+    for col in TRACK_FEATURE_COLS:
+        if col not in frame.columns:
+            frame[col] = "" if col in META_FROM_FEATURES else 0.0
+    return frame.set_index(frame.track_id.astype(str)).drop(columns=["track_id"])
+
+
+def _merge_track_meta(snap, features: pd.DataFrame) -> pd.DataFrame:
+    """카탈로그(제목·장르·무드·보컬)와 색인(언어·스타일·요청 BPM)을 한 표로.
+
+    합치는 기준은 카탈로그다 — 카탈로그에 없는 곡은 추천 후보가 아니므로 메타도
+    필요 없다. 반대로 색인에 없는 곡은 `language`·`category` 가 빈 값이 되는데,
+    그것은 "그 축을 모른다" 이고 해당 게이트가 그 곡을 거를 뿐 오류가 아니다.
+    """
+    meta = snap.track_frame()
+    if meta.empty:
+        return meta
+    for col in META_FROM_FEATURES:
+        source = features[col] if col in features.columns else pd.Series(dtype=object)
+        meta[col] = meta.index.map(source)
+    # 곡 수준 악기는 **그 곡 구간들의 합집합**이다. 예전에는 `flow_meta` 가 곡마다
+    # 한 줄로 들고 있었는데, MySQL 은 구간에만 악기를 단다(`music_analysis_instruments`).
+    # 곡 단위로 묻는 자리(`filter_query_pool` 의 폴백)가 남아 있으므로 여기서 만든다.
+    by_track: dict[str, list] = {}
+    for row in snap.sections.values():
+        tid = row.get("track_id")
+        if not tid:
+            continue
+        bucket = by_track.setdefault(str(tid), [])
+        for name in str(row.get("instruments") or "").split(","):
+            name = name.strip()
+            if name and name not in bucket:
+                bucket.append(name)
+    meta["instruments"] = [", ".join(by_track.get(str(t), [])) for t in meta.index]
+    return meta
+
+
+def _attach_section_meta(mom: pd.DataFrame, snap) -> pd.DataFrame:
+    """구간 종류·시각·악기를 **카탈로그에서** 붙인다.
+
+    색인은 이 값들을 더 들고 있지 않다. 붙지 않는 행(카탈로그에 없는 구간)은
+    `section_label` 이 빈 문자열이 되고, 곧바로 후보에서 빠진다.
+
+    `dur_sec` 는 시각에서 다시 센다. 색인에 남겨 두면 MySQL 이 고쳐진 뒤에도 옛
+    길이가 살아남아 `MIN_MOMENT_SEC` 판정이 둘로 갈린다.
+    """
+    sec = snap.section_frame()
+    # 색인이 들고 있던 옛 사본은 버린다. 남겨 두고 병합하면 접미사가 붙은 두 열이
+    # 생기고, 어느 쪽을 읽느냐가 자리마다 갈린다.
+    drop = [c for c in ("section_label", "start_sec", "end_sec", "dur_sec",
+                        "instruments", "moment_moods", "section_idx",
+                        "music_section_analysis_id", "start_ms", "end_ms")
+            if c in mom.columns]
+    out = mom.drop(columns=drop).merge(
+        sec.drop(columns=["track_id"]), how="left",
+        left_on=mom.moment_id.astype(str), right_on="moment_id",
+        suffixes=("", "_cat"))
+    # merge 가 만든 키 열과 중복 이름 열을 정리한다.
+    out = out.drop(columns=[c for c in ("key_0", "moment_id_cat") if c in out.columns])
+
+    start = pd.to_numeric(out.pop("start_ms"), errors="coerce") / 1000.0
+    end = pd.to_numeric(out.pop("end_ms"), errors="coerce") / 1000.0
+    out["start_sec"] = start.fillna(0.0)
+    out["end_sec"] = end.fillna(0.0)
+    out["dur_sec"] = (out.end_sec - out.start_sec).clip(lower=0.0)
+    # 구간 종류는 카탈로그가 ENUM 이름(`CHORUS`)으로 준다. 추천 쪽 어휘는 소문자다
+    # (`features.LABELS` · 조사 선택지 · QueryPlan 의 `flow`). 경계에서 한 번만 맞춘다.
+    out["section_label"] = (out.section_label.fillna("").astype(str)
+                            .str.strip().str.lower())
+    out["instruments"] = out.instruments.fillna("").astype(str)
+    out["moment_moods"] = out.moment_moods.fillna("").astype(str)
+    return out
+
+
 class Catalog:
     def __init__(self) -> None:
         from . import features as feat
 
-        self.mom = pd.read_parquet(OUT_DIR / "moments.parquet")
+        self.mom = pd.read_parquet(paths.data_dir() / "moments.parquet")
         if "source" not in self.mom.columns:
             self.mom["source"] = "fma"
-        self.Z = np.load(OUT_DIR / "moments_emb.npy", mmap_mode="r")
+        # **운영 판에는 없다.** 순간 벡터의 정본은 Pinecone 이고, 이 파일은 분석
+        # 배치가 Pinecone 을 채울 때만 읽는 입력 산출물이다. 로컬 갈래(개발·비교)
+        # 에서만 쓰이므로 없으면 None 으로 둔다 — 읽는 자리가 이유를 말한다.
+        emb = paths.data_dir() / "moments_emb.npy"
+        self.Z = np.load(emb, mmap_mode="r") if emb.exists() else None
         self.X, self.idx, self.info = feat.load()
-        self.content = pd.read_parquet(OUT_DIR / "content.parquet").set_index("track_id")
-        self.meta = (pd.read_parquet(OUT_DIR / "flow_meta.parquet").set_index("track_id")
-                     if (OUT_DIR / "flow_meta.parquet").exists() else pd.DataFrame())
-        self.pool = self.mom[self.mom.source.isin(POOL_SOURCES)].reset_index(drop=True)
+
+        # ── 곡·순간 메타데이터의 정본은 **MySQL** 이다. 색인에는 없다.
+        #
+        # 예전에는 `content.parquet` 과 `flow_meta.parquet` 이 이 자리에 있었다.
+        # 그 두 파일이 제목·장르·무드·보컬을 한 벌 더 들고 있어서, DB 에서 곡을
+        # 지우거나 장르를 고쳐도 추천은 옛 값으로 계속 돌았다 — 색인을 다시 굽기
+        # 전까지 아무 오류도 나지 않는다.
+        #
+        # 이제 그 값들은 `catalog_api` 가 Spring 내부 API 로 읽어 메모리에 둔다.
+        # 색인에 남은 것은 **DB 에 컬럼 자체가 없는 축**뿐이다(BPM·언어·스타일).
+        snap = catalog_api.snapshot()
+        if snap is None:
+            # 없이 뜨면 장르·무드·보컬·악기 조건이 통째로 빈 채 추천이 나간다.
+            # 그것은 오류가 아니라 "조건에 맞는 곡이 없다" 로 보이므로 여기서 멈춘다.
+            raise RuntimeError(
+                "카탈로그를 읽지 못했다 — Spring 내부 API(/api/v1/internal/ai/catalog)를 "
+                "먼저 적재해야 한다. MUPID_API_BASE_URL · MUPID_API_REFRESH_TOKEN 확인")
+        self.catalog = snap
+        self.catalog_stats = snap.stats()
+
+        features = _track_features()
+        self.content = features                    # bpm 을 읽는 자리
+        self.meta = _merge_track_meta(snap, features)
+        self.mom = _attach_section_meta(self.mom, snap)
+
+        # 카탈로그에 없는 구간은 **후보에서 뺀다.** 지워진 곡이거나 아직 적재되지
+        # 않은 곡이다. 색인에 남아 있다는 이유로 추천하면 화면이 그 곡을 열지
+        # 못한다(Spring 이 external_id 를 못 찾아 그 줄을 버린다).
+        in_catalog = self.mom.moment_id.astype(str).isin(snap.sections).to_numpy()
+        self.moments_outside_catalog = int((~in_catalog).sum())
+        self.pool = self.mom[self.mom.source.isin(POOL_SOURCES) & in_catalog
+                             ].reset_index(drop=True)
         # 출처별 구간 수. 설정했는데 0건인 출처는 오타이거나 아직 안 실린 것이다.
         counts = self.pool.source.value_counts().to_dict()
         self.pool_sources = {src: int(counts.get(src, 0)) for src in sorted(POOL_SOURCES)}
@@ -167,7 +303,7 @@ class Catalog:
         self.pool_x = np.asarray([self.idx.get(m, -1) for m in self.pool.moment_id])
         self.by_track = {t: g for t, g in self.pool.groupby("track_id", sort=False)}
         self.clap_idx, self.clap_emb = {}, None
-        clap_path = OUT_DIR / "clap_moments.npz"
+        clap_path = paths.data_dir() / "clap_moments.npz"
         if clap_path.exists():
             d = np.load(clap_path)
             self.clap_emb = np.asarray(d["embeddings"], dtype=np.float32)
@@ -177,11 +313,11 @@ class Catalog:
         self.model = None          # torch 판 (있을 때만)
         self.user_enc = None       # NumPy 판 (stage1_weights.npz 가 있을 때)
         self.model_backend = None
-        p = OUT_DIR / "stage1_section.npy"
+        p = paths.data_dir() / "stage1_section.npy"
 
         # NumPy 가중치가 있으면 그쪽을 먼저 쓴다. 서빙에서 torch 가 하는 일은 enc_user
         # 한 번뿐이라 이것만 있으면 이미지에서 torch 를 걷어낼 수 있다.
-        npz = OUT_DIR / "stage1_weights.npz"
+        npz = paths.data_dir() / "stage1_weights.npz"
         if p.exists() and npz.exists():
             try:
                 enc = stage1_np.load(npz)
@@ -201,7 +337,7 @@ class Catalog:
             except Exception as e:
                 self.model_error = f"npz 적재 실패: {type(e).__name__}: {e}"
 
-        if self.model is None and p.exists() and (OUT_DIR / "stage1.pt").exists():
+        if self.model is None and p.exists() and (paths.data_dir() / "stage1.pt").exists():
             try:
                 import torch
 
@@ -211,7 +347,7 @@ class Catalog:
                 # 임의 코드를 실행할 수 있다. 먼저 안전 모드로 열고, 그 파일이 텐서·
                 # 기본형만 담고 있지 않을 때만 예전 방식으로 물러난다 — 그때는 조용히
                 # 넘어가지 않고 로그를 남긴다.
-                ckpt_path = OUT_DIR / "stage1.pt"
+                ckpt_path = paths.data_dir() / "stage1.pt"
                 try:
                     ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
                 except Exception as _e:
@@ -247,9 +383,9 @@ class Catalog:
         self.comb = None
         import os as _os
         _name = _os.environ.get("MUPID_COMBINER", "logistic_flow_stage1.json")
-        cp = OUT_DIR / _name
+        cp = paths.data_dir() / _name
         if not cp.exists():
-            cp = OUT_DIR / "logistic_combiner.json"
+            cp = paths.data_dir() / "logistic_combiner.json"
         if cp.exists():
             d = json.loads(cp.read_text(encoding="utf-8"))
             self.comb = {"features": d["features"],
@@ -272,8 +408,6 @@ class Catalog:
             "language": _text(m.get("language")),
             "bpm": round(float(c.get("bpm", 0.0)), 1),
             "bpm_requested": [m.get("bpm_lo"), m.get("bpm_hi")],
-            "dur_sec": round(float(c.get("dur_sec", 0.0)), 1),
-            "sound_raw": m.get("sound_raw", ""),
             **_catalog_tags(m),
             **{k: v for k, v in jamendo_row(tid).items()
                if k in ("source", "artist_name", "audio_url", "image_url",
@@ -305,6 +439,19 @@ _VOCAL_GENDER = {
     "m": "M", "male": "M", "f": "F", "female": "F",
     "mix": "MIX", "mixed": "MIX",
 }
+# 검색 근거로 쓰지 않는 악기 이름. demucs 스템 넷 중 `other` 한 종이다
+# (`music_preprocessing/.../instruments.py` 의 `STEMS` 가 정본).
+#
+# **`code_name` 과 `display_name` 을 둘 다 적는다.** 코드표 정리로 이 행의
+# `code_name` 이 `그 외 악기` → `other` 로 바뀌는 중인데, 한쪽만 보면 마이그레이션
+# 전후 어느 한쪽에서 필터가 통째로 풀린다 — 실측 9,292행(`music_analysis_instruments`
+# 의 31%)이 "구체적인 악기" 로 검색에 노출된다. 오류는 나지 않고 결과만 나빠진다.
+#
+# 보컬 성별과는 **다른 축이다.** 예전에는 성별 어휘에도 `other`(값 `ETC`)가 있어
+# 이름으로 겹쳤고, 한 집합으로 합치면 성별까지 같이 지워졌다. S15P21A204-402 로
+# 성별이 서버 enum 과 같은 `M`·`F`·`MIX` 만 남아 그 충돌은 사라졌다 — 다시 겹치지
+# 않는지는 `test_instrument_other_never_touches_the_gender_axis` 가 지킨다.
+_NONSPECIFIC_INSTRUMENTS = {"other", "그 외 악기", "그외 악기"}
 
 
 def _text(v) -> str:
@@ -327,15 +474,19 @@ def _tag_list(v) -> list:
 
 
 def _instrument_list(v) -> list:
-    """구체적인 악기만 검색 근거로 쓴다."""
+    """구체적인 악기만 검색 근거로 쓴다.
+
+    `unknown`·`nan`·`null` 같은 누락 표기는 `_tag_list` 가 이미 떨군다(`_MISSING_TEXT`).
+    여기서 더 거르는 것은 **뜻이 없는 악기 이름** 하나뿐이다.
+    """
     return list(dict.fromkeys(
-        x for x in _tag_list(v) if x.lower() != "unknown" and x != "그 외 악기"))
+        x for x in _tag_list(v)
+        if x.casefold() not in _NONSPECIFIC_INSTRUMENTS))
 
 
-def short_genre(g: str) -> str:
-    """'Rock---Punk' -> 'Punk'."""
-    g = _text(g)
-    return g.split("---")[-1].strip() if g else ""
+# `short_genre()` 를 걷어냈다. `대분류---세분류` 문자열에서 뒤를 떼던 함수인데,
+# 장르가 DB 코드 이름(`alternative_rock`) 하나가 되면서 뗄 것이 없다. 남겨 두면
+# 새 값에도 `---` 가 있는 줄 알고 다음 사람이 같은 모양을 또 만든다.
 
 
 def _catalog_tags(m: dict) -> dict:
@@ -360,10 +511,18 @@ def _catalog_tags(m: dict) -> dict:
                        (m.get("vocal_gender"), m.get("gender_label"), raw_vocal)
                        if _text(v)), "")
     vocal_gender = None if has_vocal is not True else _VOCAL_GENDER.get(raw_gender)
+    # 장르·무드는 **DB 코드표의 `code_name` 그대로**다 (`genre_code` · `mood_codes`).
+    # 예전에는 카탈로그가 제 어휘(`Rock---Punk` · `relaxing`)를 쓰고 온보딩이 코드
+    # 이름을 그 어휘로 옮겼는데, 옮기는 표가 세분류 장르 45종을 하나도 못 이어
+    # 그 축이 조용히 비어 있었다. 이제 양쪽이 같은 값을 쓴다.
+    #
+    # `genre_full` 은 옛 축의 `대분류---세분류` 에서 세분류만 떼던 자리였다. 코드는
+    # 한 값이라 둘이 같지만, 데모 응답이 두 키를 다 읽으므로 이름은 남긴다.
+    genre = _text(m.get("genre_code"))
     return {
-        "genre": short_genre(m.get("genre_top1")),
-        "genre_full": _text(m.get("genre_top1")),
-        "moods": _tag_list(m.get("mood_tags")),
+        "genre": genre,
+        "genre_full": genre,
+        "moods": _tag_list(m.get("mood_codes")),
         "instruments": _instrument_list(m.get("instruments", m.get("instrument_tags"))),
         "has_vocal": has_vocal,
         "vocal_gender": vocal_gender,
@@ -486,6 +645,11 @@ def catalog_facet_rows() -> dict:
 
 ONB_LIST_FIELDS = ("language", "vocal_type", "style", "genre", "mood", "instrument",
                    "tempo", "energy", "section_label", "exclude_style")
+# `track_ok` 가 **실제로 후보를 거르는** 축. 이 중 하나라도 차 있어야 씨앗에 근거가
+# 있다. `energy` 와 `exclude_style` 은 여기 없다 — 앞엣것은 `track_ok` 가 읽지 않고,
+# 뒤엣것은 빼는 조건이라 그것만으로는 "무엇을 좋아하는가" 가 되지 않는다.
+ONB_FILTER_AXES = ("language", "vocal_type", "style", "tempo", "genre", "mood",
+                   "instrument", "section_label")
 
 
 def _onb_list(v) -> list:
@@ -515,9 +679,9 @@ def onboarding_of(user: str, injected: dict | None = None) -> dict | None:
     """
     if injected is not None:
         return injected
-    if not ONBOARD.exists():
+    if not paths.onboarding_path().exists():
         return None
-    d = pd.read_parquet(ONBOARD)
+    d = pd.read_parquet(paths.onboarding_path())
     m = d[d.user_ref == user]
     if m.empty:
         return None
@@ -531,7 +695,24 @@ def onboarding_seeds(user: str,
     c = CAT
     ans = onboarding_of(user, injected)
     if not ans:
-        return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
+        return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
+    # ── 필터 축이 **전부** 비면 씨앗을 만들지 않는다.
+    #
+    # `track_ok` 의 조건은 하나같이 `want_X and …` 라, 빈 축은 그냥 건너뛴다.
+    # 모든 축이 비면 조건이 하나도 없어 **전곡이 통과하고 씨앗이 풀 전체의
+    # 구간별 평균**이 된다. 그런데도 호출부는 `query_source="onboarding"` ·
+    # `reason_code="ONBOARDING_MATCH"` 를 붙인다 — 실측으로 기존 회원 8명 중
+    # 6명이 이 상태였다. 모두 같은 풀 중심값을 받으면서 응답은 "온보딩 일치"
+    # 라고 말한다. 콜드스타트보다 나쁘다: 틀린 근거를 자신 있게 말한다.
+    #
+    # 원문이 왔다는 것만으로는 근거가 아니다. **어휘로 옮겨진 것이 있어야** 근거다.
+    if not any(ans.get(axis) for axis in ONB_FILTER_AXES):
+        return (np.zeros((0, _vector_dim()), np.float32), np.zeros(0),
+                [{"onboarding_source": "empty_after_mapping",
+                  "note": "원문은 왔지만 어휘로 옮겨진 축이 하나도 없다 — "
+                          "씨앗을 만들지 않는다",
+                  "mood_raw": list(ans.get("mood_raw") or []),
+                  "genre_raw": list(ans.get("genre_raw") or [])}])
     fac = catalog_facets()
     df = fac["_df"].set_index("track_id")
 
@@ -574,15 +755,22 @@ def onboarding_seeds(user: str,
         if len(pool) >= ONBOARD_MIN_MATCH:
             break
     if pool.empty:
-        return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
+        return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
 
-    V = center(np.asarray(c.Z[pool.emb_row.to_numpy()], dtype=np.float32))
+    # **원본 벡터를 읽어 여기서 중심화한다.** 조건에 맞는 구간들의 평균이라
+    # ANN 질의로 표현되지 않는다 — 그래서 원본 인덱스에서 id 로 가져온다.
+    V0, found = raw_vectors(pool.moment_id.astype(str).tolist())
+    if not found:
+        return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
+    pool = pool[pool.moment_id.astype(str).isin(found)]
+    V = center(V0)
     # 구간 라벨별로 씨앗을 나눈다 (하나로 평균 내지 않는다)
     seeds, W, meta = [], [], []
     groups = list(pool.groupby("section_label", sort=False))
     groups.sort(key=lambda kv: -len(kv[1]))
+    place = {m: i for i, m in enumerate(found)}
     for lab, g in groups[:ONBOARD_SEEDS]:
-        idx = [pool.index.get_loc(i) for i in g.index]
+        idx = [place[str(m)] for m in g.moment_id]
         v = V[idx].mean(0)
         v /= max(np.linalg.norm(v), 1e-9)
         seeds.append(v)
@@ -598,10 +786,10 @@ def onboarding_seeds(user: str,
 
 # --------------------------------------------------------------- 이벤트/라벨
 def append_event(ev: dict) -> None:
-    EVENTS.parent.mkdir(parents=True, exist_ok=True)
+    paths.events_path().parent.mkdir(parents=True, exist_ok=True)
     ev.setdefault("event_id", f"evt_{uuid.uuid4().hex[:22]}")
     ev.setdefault("occurred_at", now_iso())
-    with EVENTS.open("a", encoding="utf-8") as f:
+    with paths.events_path().open("a", encoding="utf-8") as f:
         f.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
 
@@ -611,10 +799,10 @@ def normalized_events() -> Path:
     LIKE/DISLIKE 는 토글이라 **최종 상태가 활성인 것만** TRACK_LIKE/DISLIKE 로 넘긴다.
     (UNLIKE/UNDISLIKE 로 취소된 것은 라벨에 남지 않아야 한다.)
     """
-    out = EVENTS.parent / "events_service_normalized.jsonl"
-    if not EVENTS.exists():
-        return EVENTS
-    raw = [ln for ln in EVENTS.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    out = paths.events_path().parent / "events_service_normalized.jsonl"
+    if not paths.events_path().exists():
+        return paths.events_path()
+    raw = [ln for ln in paths.events_path().read_text(encoding="utf-8").splitlines() if ln.strip()]
     state: dict = {}                       # (user, track) -> {"like": bool, "dislike": bool}
     for ln in raw:
         try:
@@ -686,19 +874,31 @@ def normalized_events() -> Path:
 
 
 def run_labeler() -> dict:
-    if not EVENTS.exists():
+    if not paths.events_path().exists():
         return {"ok": False, "reason": "이벤트 로그가 없다"}
     src_events = normalized_events()
     # 출력 인코딩을 못 박는다. 지정하지 않으면 파이썬이 **콘솔 기본 인코딩**으로
     # 디코드하는데, Windows 는 cp949 라서 자식이 찍은 한국어 한 줄에 UnicodeDecodeError
     # 로 죽는다. 라벨은 제대로 만들어진 뒤에 출력을 읽다가 터지는 것이라, 증상이
     # "라벨 생성 실패" 로만 보여 원인이 인코딩이라는 것이 드러나지 않는다.
+    #
+    # 구간 종류·시각·순서는 색인에 없다 — MySQL 이 정본이고 `CAT.mom` 에 이미 합쳐져
+    # 있다. 자식에게 **stdin 으로** 넘긴다. 파일로 떨구면 그 파일이 곧 두 번째 사본이
+    # 되고, 다음 사람은 그것을 읽어도 되는 줄 안다.
+    from . import labeler as _lab
+    argv = [sys.executable, "-m", "ai_server.app.labeler", "--events", str(src_events),
+            "--out", str(paths.labels_path()), "--pool", "service"]
+    payload = None
+    if CAT is not None:
+        cols = [c for c in _lab.MOMENT_COLS if c in CAT.mom.columns]
+        payload = json.dumps(CAT.mom[cols].to_dict("records"),
+                             ensure_ascii=False, default=str)
+        argv += ["--moments", "-"]
     r = subprocess.run(
-        [sys.executable, "-m", "ai_server.app.labeler", "--events", str(src_events),
-         "--out", str(LABELS), "--pool", "service"],
+        argv, input=payload,
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         cwd=paths.PKG_ROOT.parent)
-    out = {"ok": r.returncode == 0 and LABELS.exists(),
+    out = {"ok": r.returncode == 0 and paths.labels_path().exists(),
            "stdout": r.stdout[-1500:], "stderr": r.stderr[-800:]}
     if out["ok"] and labels_store.configured():
         # 라벨러는 parquet 으로 내놓는다(중간 산출물). 서빙이 읽는 정본은
@@ -708,7 +908,7 @@ def run_labeler() -> dict:
         # 서빙은 어제 라벨을 계속 보게 되고, 그 차이는 아무 데도 드러나지 않는다.
         run_id = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         try:
-            out["loaded"] = labels_store.write(pd.read_parquet(LABELS), run_id)
+            out["loaded"] = labels_store.write(pd.read_parquet(paths.labels_path()), run_id)
             out["run_id"] = run_id
         except Exception as e:
             out["ok"] = False
@@ -718,7 +918,7 @@ def run_labeler() -> dict:
 
 
 # ------------------------- 라벨 읽기 (ClickHouse / 파일) -------------------------
-# 다섯 곳이 각자 `pd.read_parquet(LABELS)` 를 부르고 있었다. 저장소가 둘이 되면
+# 다섯 곳이 각자 `pd.read_parquet(paths.labels_path())` 를 부르고 있었다. 저장소가 둘이 되면
 # 그 다섯 곳이 따로 갈라지므로 여기 하나로 모은다. **판단 기준은 하나다** —
 # `labels_store.configured()`. 읽기와 쓰기가 서로 다른 곳을 보는 상태를 만들지
 # 않기 위해서다.
@@ -730,7 +930,7 @@ def labels_available() -> bool:
             # 추천을 죽이지 않는다. 개인화만 빠지고 그 사실이 로그에 남는다.
             log(f"라벨 저장소 조회 실패 — {type(e).__name__}: {e}")
             return False
-    return LABELS.exists()
+    return paths.labels_path().exists()
 
 
 def labels_for(user: str) -> pd.DataFrame:
@@ -741,9 +941,9 @@ def labels_for(user: str) -> pd.DataFrame:
         except Exception as e:
             log(f"라벨 조회 실패 ({user}) — {type(e).__name__}: {e}")
             return pd.DataFrame()
-    if not LABELS.exists():
+    if not paths.labels_path().exists():
         return pd.DataFrame()
-    lab = pd.read_parquet(LABELS)
+    lab = pd.read_parquet(paths.labels_path())
     return lab[lab.user_ref == user]
 
 
@@ -751,7 +951,7 @@ def labels_all() -> pd.DataFrame:
     """전체. 배치(`learn`)만 쓴다 — 요청 경로에서 부르지 않는다."""
     if labels_store.configured():
         return labels_store.all_labels()
-    return pd.read_parquet(LABELS) if LABELS.exists() else pd.DataFrame()
+    return pd.read_parquet(paths.labels_path()) if paths.labels_path().exists() else pd.DataFrame()
 
 
 def other_positives(user: str) -> pd.DataFrame:
@@ -762,9 +962,9 @@ def other_positives(user: str) -> pd.DataFrame:
         except Exception as e:
             log(f"타 사용자 라벨 조회 실패 — {type(e).__name__}: {e}")
             return pd.DataFrame()
-    if not LABELS.exists():
+    if not paths.labels_path().exists():
         return pd.DataFrame()
-    lab = pd.read_parquet(LABELS)
+    lab = pd.read_parquet(paths.labels_path())
     return lab[(lab.user_ref != user) & (lab.grade == "L1")]
 
 
@@ -783,22 +983,19 @@ def decay_weights(df: pd.DataFrame) -> np.ndarray:
 
 # --------------------------- §16 선호 구간 (조회/수정/삭제) ---------------------------
 # 사용자 수정·삭제는 원본 라벨을 덮어쓰지 않고 override 로그에만 쌓는다.
-TEST_OUT = ROOT / "data" / "test_pipeline"
-OVERRIDES = TEST_OUT / "preference_overrides.jsonl"
-CHECKPOINT = TEST_OUT / "learn_checkpoint.json"
-JAMENDO_CATALOG = TEST_OUT / "jamendo_catalog.parquet"
+# override 로그·체크포인트·Jamendo 카탈로그의 자리도 `paths` 가 정한다.
 JAMENDO_PREFIX = "JAMENDO_"
 _JAM_CACHE: dict = {"mtime": None, "rows": {}}
 
 
 def jamendo_row(track_id: str) -> dict:
     """Jamendo 카탈로그 1행. 파일이 없으면 항상 빈 dict (기존 동작과 동일)."""
-    if not str(track_id).startswith(JAMENDO_PREFIX) or not JAMENDO_CATALOG.exists():
+    if not str(track_id).startswith(JAMENDO_PREFIX) or not paths.jamendo_catalog_path().exists():
         return {}
-    mt = JAMENDO_CATALOG.stat().st_mtime
+    mt = paths.jamendo_catalog_path().stat().st_mtime
     if _JAM_CACHE["mtime"] != mt:
         try:
-            df = pd.read_parquet(JAMENDO_CATALOG)
+            df = pd.read_parquet(paths.jamendo_catalog_path())
             _JAM_CACHE["rows"] = {str(r.track_id): {k: ("" if pd.isna(v) else v)
                                                     for k, v in r._asdict().items()
                                                     if k != "Index"}
@@ -816,9 +1013,9 @@ REACTION_EVENTS = {"LIKE": "LIKED", "UNLIKE": "NEUTRAL",
 
 
 def load_checkpoint() -> dict:
-    if CHECKPOINT.exists():
+    if paths.checkpoint_path().exists():
         try:
-            return json.loads(CHECKPOINT.read_text(encoding="utf-8"))
+            return json.loads(paths.checkpoint_path().read_text(encoding="utf-8"))
         except Exception:
             return {}
     return {}
@@ -826,17 +1023,17 @@ def load_checkpoint() -> dict:
 
 def save_checkpoint(ck: dict) -> None:
     """원자적으로 쓴다. 중간에 죽어도 checkpoint 가 깨지지 않는다."""
-    TEST_OUT.mkdir(parents=True, exist_ok=True)
-    tmp = CHECKPOINT.with_suffix(".json.tmp")
+    paths.test_pipeline_dir().mkdir(parents=True, exist_ok=True)
+    tmp = paths.checkpoint_path().with_suffix(".json.tmp")
     tmp.write_text(json.dumps(ck, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(CHECKPOINT)
+    tmp.replace(paths.checkpoint_path())
 
 
 def user_event_state(user: str) -> dict:
     """사용자 로그를 한 번 훑어 현재 상태를 만든다 (건수 + 마지막 event_id/시각)."""
     n, last_id, last_at = 0, "", ""
-    if EVENTS.exists():
-        for ln in EVENTS.open(encoding="utf-8"):
+    if paths.events_path().exists():
+        for ln in paths.events_path().open(encoding="utf-8"):
             try:
                 e = json.loads(ln)
             except Exception:
@@ -882,16 +1079,16 @@ def learn(req: "LearnReq") -> dict:
                 "dna_clusters": len(C), "created_at": now_iso(),
                 "source": "auto",
             })
-    SERVE.mkdir(parents=True, exist_ok=True)
+    paths.serve_dir().mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(rows)
-    if PREFS.exists() and len(df):
-        old = pd.read_parquet(PREFS)
+    if paths.prefs_path().exists() and len(df):
+        old = pd.read_parquet(paths.prefs_path())
         old = old[~old.user_ref.isin(df.user_ref.unique())]
         df = pd.concat([old, df], ignore_index=True)
     if len(df):
-        df.to_parquet(PREFS, index=False)
+        df.to_parquet(paths.prefs_path(), index=False)
     return {"ok": True, "users": users, "labels": int(len(lab)),
-            "preferences_saved": int(len(rows)), "path": str(PREFS)}
+            "preferences_saved": int(len(rows)), "path": str(paths.prefs_path())}
 
 
 def learn_incremental(user: str, force: bool = False) -> dict:
@@ -923,9 +1120,9 @@ def pref_id(user: str, section_key: str) -> str:
 def load_overrides() -> dict:
     """preference_overrides.jsonl 을 순서대로 접어 현재 상태를 만든다 (마지막이 이긴다)."""
     out: dict = {}
-    if not OVERRIDES.exists():
+    if not paths.overrides_path().exists():
         return out
-    for ln in OVERRIDES.open(encoding="utf-8"):
+    for ln in paths.overrides_path().open(encoding="utf-8"):
         ln = ln.strip()
         if not ln:
             continue
@@ -951,18 +1148,18 @@ def load_overrides() -> dict:
 
 
 def append_override(rec: dict) -> None:
-    OVERRIDES.parent.mkdir(parents=True, exist_ok=True)
+    paths.overrides_path().parent.mkdir(parents=True, exist_ok=True)
     rec.setdefault("occurred_at", now_iso())
-    with OVERRIDES.open("a", encoding="utf-8") as f:
+    with paths.overrides_path().open("a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
 def track_reactions(user: str) -> dict:
     """LIKE/UNLIKE/DISLIKE/UNDISLIKE 이벤트를 접어 곡별 현재 상태를 만든다."""
     out: dict = {}
-    if not EVENTS.exists():
+    if not paths.events_path().exists():
         return out
-    for ln in EVENTS.open(encoding="utf-8"):
+    for ln in paths.events_path().open(encoding="utf-8"):
         try:
             e = json.loads(ln)
         except Exception:
@@ -1083,9 +1280,9 @@ def _file_events(user: str):
     두 출처가 같은 모양으로 들어와야 집계를 한 벌로 둘 수 있다. 두 벌이 되면 한쪽만
     고쳐져 같은 사용자에게 다른 점수가 나간다.
     """
-    if not EVENTS.exists():
+    if not paths.events_path().exists():
         return
-    for ln in EVENTS.open(encoding="utf-8"):
+    for ln in paths.events_path().open(encoding="utf-8"):
         try:
             e = json.loads(ln)
         except Exception:
@@ -1227,7 +1424,7 @@ def user_behavior(user: str, now: float | None = None,
         # 요청마다 새로 읽어 온 것이다. 캐시하면 최신성을 버리는 셈이라 그대로 집계한다.
         return _aggregate_behavior(events, now)
 
-    if not EVENTS.exists():
+    if not paths.events_path().exists():
         return {"recent_play": set(), "dislike": set(), "like": set(),
                 "complete": {}, "skip_pen": {}, "delta": {}, "recent_pen": {},
                 "events": 0}
@@ -1235,7 +1432,7 @@ def user_behavior(user: str, now: float | None = None,
     # 로그가 그대로면 다시 읽지 않는다. 추천은 사용자가 기다리는 경로라 요청마다
     # 전체를 훑으면 로그 크기에 비례해 느려진다. 파일이 자라거나 바뀌면 캐시를 버린다.
     # (시간이 흐르면 감쇠 값이 달라지므로 `now` 도 키에 넣는다 — 분 단위로 끊는다.)
-    st = EVENTS.stat()
+    st = paths.events_path().stat()
     ck = (user, st.st_size, st.st_mtime_ns, int(now // 60))
     hit = _BEH_CACHE.get(ck)
     if hit is not None:
@@ -1259,11 +1456,113 @@ def user_positives(user: str) -> pd.DataFrame:
     return pos
 
 
+# ------------------------------------------------- 순간 벡터를 어디서 읽는가
+#
+# 두 갈래가 있고, **고르는 것은 설정이지 실패가 아니다.**
+#
+#   local     `moments_emb.npy` 를 읽는다. Pinecone 전환 전의 동작이다
+#   pinecone  후보는 후보 인덱스에서 찾고, 원본 벡터는 원본 인덱스에서 가져온다
+#
+# Pinecone 을 켜 둔 배포에서 Pinecone 이 **실패하면 local 로 내려가지 않는다.**
+# 내려가면 노드에 남은 옛 벡터로 조용히 다른 추천이 나가고, 그 사실이 응답 어디에도
+# 드러나지 않는다. 실패는 예외로 올려 `/internal/ready` 와 오류로 보이게 한다.
+
+def vector_backend() -> str:
+    return "pinecone" if pinecone_store.enabled() else "local"
+
+
 def _pool_mean() -> np.ndarray:
+    """중심화에 쓰는 풀 평균.
+
+    Pinecone 을 켜면 **판에 고정된 평균**을 쓴다. 요청마다 풀에서 다시 재면 적재
+    때와 다른 공간으로 질의가 나가 유사도가 통째로 내려앉는다 — 오류 없이 품질만
+    나빠지는 종류다. 고정본이 없으면 멈춘다(지어내지 않는다).
+    """
     c = CAT
+    if vector_backend() == "pinecone":
+        # control 이 들고 있다. **읽을 때마다 상태와 세대를 함께 본다** —
+        # UPDATING 이면 여기서 멈추고, 세대가 바뀌었으면 새 μ 로 갈아 끼운다.
+        # 서버를 다시 띄우지 않아도 새 평균을 쓰게 되는 자리가 여기다.
+        return pinecone_store.serving_center().mu
+    Z = _require_local_vectors("_pool_mean")
     if getattr(c, "_mu_g", None) is None:
-        c._mu_g = np.asarray(c.Z[c.pool_rows], dtype=np.float32).mean(0)
+        c._mu_g = np.asarray(Z[c.pool_rows], dtype=np.float32).mean(0)
     return c._mu_g
+
+
+def raw_vectors(moment_ids) -> tuple[np.ndarray, list[str]]:
+    """원본 Z 를 `external_id` 로 읽는다. **변환 벡터를 쓰지 않는다.**
+
+    DNA 군집과 온보딩 조건별 평균이 부른다. 둘 다 "닮은 것 찾기" 가 아니라 "이
+    구간들의 평균" 이라 ANN 질의로 표현되지 않는다 — 그래서 원본 인덱스가 따로 있다.
+
+    돌려주는 것은 (벡터, 실제로 찾은 id) 다. 없는 id 는 빠지므로 부르는 쪽이 수를
+    세어 판단한다.
+    """
+    ids = [str(m) for m in moment_ids]
+    if not ids:
+        return np.zeros((0, _vector_dim()), np.float32), []
+    if vector_backend() == "local":
+        Z = _require_local_vectors("raw_vectors")
+        rowmap = CAT.mom.set_index(CAT.mom.moment_id.astype(str)).emb_row
+        keep = [i for i in ids if i in rowmap.index]
+        if not keep:
+            return np.zeros((0, _vector_dim()), np.float32), []
+        rows = rowmap.loc[keep].to_numpy()
+        return np.asarray(Z[rows], dtype=np.float32), keep
+    got = pinecone_store.fetch_raw(ids)
+    keep = [i for i in ids if i in got]          # 부른 차례를 지킨다
+    if not keep:
+        return np.zeros((0, _vector_dim()), np.float32), []
+    return np.asarray([got[i] for i in keep], dtype=np.float32), keep
+
+
+def candidate_search(query_vector: np.ndarray, top_k: int) -> list[tuple[str, float]]:
+    """닮은 순간 후보. 질의는 **이미 중심화된** 벡터여야 한다.
+
+    Pinecone 갈래는 후보 인덱스만 본다(저장값이 `normalize(Z - mu)` 라 같은 공간이다).
+    local 갈래는 오늘처럼 풀 전체와 내적해 상위만 남긴다 — 같은 값이 나온다.
+    """
+    q = np.asarray(query_vector, dtype=np.float32).reshape(-1)
+    if vector_backend() == "pinecone":
+        return pinecone_store.search(q, top_k)
+    c = CAT
+    Z = _require_local_vectors("candidate_search")
+    sim = center(np.asarray(Z[c.pool_rows], dtype=np.float32)) @ q
+    order = np.argsort(-sim)[:top_k]
+    return [(str(c.pool.moment_id.iloc[int(i)]), float(sim[int(i)])) for i in order]
+
+
+def current_snapshot() -> str:
+    """지금 판의 적재본 지문. 배치가 굳힌 평균과 대조하는 값이다.
+
+    풀 전체 벡터를 한 번 훑는다(mmap). 기동에서 한 번뿐이고, 이 한 번이 "평균만
+    옛 것" 인 상태를 잡는다 — 그 상태는 오류가 아니라 유사도 저하로만 드러난다.
+    """
+    c = CAT
+    ids = c.pool.moment_id.astype(str).tolist()
+    Z = np.asarray(_require_local_vectors("current_snapshot")[c.pool_rows],
+                   dtype=np.float32)
+    version = (c.info.get("embedding_version", "mert-v1-95m")
+               if isinstance(c.info, dict) else "mert-v1-95m")
+    return pinecone_store.snapshot_hash(ids, Z, version, POOL_SOURCES)
+
+
+def _vector_dim() -> int:
+    c = CAT
+    if c is not None and getattr(c, "Z", None) is not None:
+        return int(c.Z.shape[1])
+    return pinecone_store.center().dim
+
+
+def _require_local_vectors(what: str):
+    """local 갈래에서만 쓰는 저장본. 운영(Pinecone)에는 없어도 된다."""
+    c = CAT
+    if getattr(c, "Z", None) is None:
+        raise RuntimeError(
+            f"{what}: moments_emb.npy 가 판에 없다. 운영은 Pinecone 을 켜고 "
+            f"돌린다(MUPID_PINECONE_ENABLED) — 로컬 갈래는 개발·비교용이다")
+    return c.Z
 
 
 def center(V: np.ndarray) -> np.ndarray:
@@ -1293,30 +1592,41 @@ def similar_moments(moment_id: str, n: int, exclude_tracks: set[str] | None = No
     i0 = int(hit[0])
     src_track = str(c.pool.track_id.iloc[i0])
 
-    q = center(np.asarray(c.Z[int(c.pool.emb_row.iloc[i0])], dtype=np.float32))[0]
-    V = center(np.asarray(c.Z[c.pool_rows], dtype=np.float32))
-    sim = V @ q
+    # 질의 벡터는 **원본**에서 만들어 중심화한다. 저장된 후보가 같은 변환을 거친
+    # 것이라 이래야 같은 공간이다.
+    V0, found = raw_vectors([str(moment_id)])
+    if not found:
+        return []
+    q = center(V0)[0]
 
     drop = set(exclude_tracks or ())
     if not same_track:
         drop.add(src_track)
 
+    # 곡당 하나만 남기므로 넉넉히 받아 온다. 한 곡이 구간 여럿으로 상위를 채우면
+    # 그만큼 곡 수가 줄어든다.
+    want = max(n * SIMILAR_OVERFETCH, n + 1)
+    by_moment = dict(candidate_search(q, want))
+
+    # **카탈로그에 있는 순간만** 남긴다. Pinecone 에 남아 있어도 MySQL 에서
+    # 지워졌으면 화면이 그 줄을 열지 못한다.
+    pool_by_id = c.pool.set_index(c.pool.moment_id.astype(str))
+
     out: list[dict] = []
     seen: set[str] = set()
-    for i in np.argsort(-sim):
-        i = int(i)
-        if i == i0:
+    for mid, score in sorted(by_moment.items(), key=lambda kv: -kv[1]):
+        if mid == str(moment_id) or mid not in pool_by_id.index:
             continue
-        r = c.pool.iloc[i]
+        r = pool_by_id.loc[mid]
         t = str(r.track_id)
         if t in drop or t in seen:
             continue
         seen.add(t)
-        out.append({"rank": len(out) + 1, "track_id": t, "moment_id": str(r.moment_id),
+        out.append({"rank": len(out) + 1, "track_id": t, "moment_id": mid,
                     "section_label": str(r.section_label),
                     "start_sec": round(float(r.start_sec), 2),
                     "end_sec": round(float(r.end_sec), 2),
-                    "similarity": round(float(sim[i]), 6)})
+                    "similarity": round(float(score), 6)})
         if len(out) >= n:
             break
     return out
@@ -1347,13 +1657,12 @@ def build_dna(user: str, query_plan: Optional[dict] = None,
             matched = matched.iloc[0:0]
         pos = pos[pos.section_key.isin(matched.moment_id)]
     if pos.empty:
-        return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
-    rowmap = c.mom.set_index("moment_id").emb_row
-    keys = [k for k in pos.section_key if k in rowmap.index][:DNA_TOP_N]
+        return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
+    # **원본 벡터로 군집한다.** 변환 벡터로 평균을 내면 중심이 어긋난 공간에 놓이고,
+    # 그 뒤 `center()` 를 한 번 더 먹여 두 번 중심화된다 — 오류는 나지 않는다.
+    V0, keys = raw_vectors(list(pos.section_key)[:DNA_TOP_N])   # 원공간 (이미 L2)
     if not keys:
-        return np.zeros((0, c.Z.shape[1]), np.float32), np.zeros(0), []
-    rows = rowmap.loc[keys].to_numpy()
-    V0 = np.asarray(c.Z[rows], dtype=np.float32)          # 원공간 (이미 L2)
+        return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
     dw = decay_weights(pos[pos.section_key.isin(keys)].set_index("section_key").loc[keys]
                        .reset_index())
 
@@ -1371,9 +1680,9 @@ def build_dna(user: str, query_plan: Optional[dict] = None,
     if query_plan is None:
         o = other_positives(user)
         if not o.empty:
-            ok = [k for k in o.section_key if k in rowmap.index]
+            OW, ok = raw_vectors(list(o.section_key))
             if ok:
-                OV = center(np.asarray(c.Z[rowmap.loc[ok].to_numpy()], dtype=np.float32)).mean(0)
+                OV = center(OW).mean(0)
 
     C, W, meta = [], [], []
     for cid in ids:
@@ -1550,12 +1859,18 @@ def _qvals(v) -> list[str]:
             for x in v if str(x).strip()]
 
 
+# 해석기가 어휘 밖의 말을 보낼 때만 쓰는 별칭. **어휘에 있는 값은 건드리지 않는다**
+# (`_canonicalize_query_tags` 가 값 자체를 먼저 본다).
+#
+# 오른쪽 값들은 어휘 전환(2026-09-21) 전의 카탈로그 태그라 **지금은 하나도 맞지
+# 않는다.** 지우지 않고 남겨 둔 이유: 무엇을 코드 이름으로 다시 이어야 하는지가
+# 여기 적혀 있고, 그 대응은 코드표가 정할 일이지 여기서 지어낼 일이 아니다.
+# 맞지 않는 별칭은 조건을 만들지 못하고 그대로 떨어진다 — 조용히 다른 곡을
+# 고르는 것보다 낫다. 이어야 할 것은 보고에 남겼다.
 _TAG_ALIASES = {
     "mood": {
-        "calm": ("relaxing", "meditative"),
         "quiet": ("relaxing", "meditative"),
         "peaceful": ("relaxing", "meditative"),
-        "serene": ("relaxing", "meditative"),
         "chill": ("relaxing",),
         "soft": ("relaxing",),
         "잔잔한": ("relaxing", "meditative"),
@@ -1590,7 +1905,18 @@ def _canonicalize_query_tags(data: dict, fac: pd.DataFrame,
     for name, vocab in allowed.items():
         normalized = []
         for value in _qvals(out.get(name)):
-            for candidate in _TAG_ALIASES.get(name, {}).get(value, (value,)):
+            # **그 값이 이미 어휘에 있으면 그대로 쓴다.** 별칭은 어휘에 없는 말을
+            # 받아 주려고 두는 것이지, 있는 말을 바꾸라고 두는 것이 아니다.
+            #
+            # 어휘 전환(2026-09-21) 뒤에 실제로 걸렸다: `calm`·`serene` 은 이제
+            # 코드 이름 그 자체인데, 별칭표가 옛 카탈로그 태그(`relaxing`·
+            # `meditative`)로 바꿔 놓고 그 태그가 없어져 **조건이 통째로 사라졌다.**
+            # 사용자가 "고요한" 을 골랐는데 아무 곡이나 나오는 상태였다.
+            if value in vocab:
+                if value not in normalized:
+                    normalized.append(value)
+                continue
+            for candidate in _TAG_ALIASES.get(name, {}).get(value, ()):
                 if candidate in vocab and candidate not in normalized:
                     normalized.append(candidate)
         out[name] = normalized if name != "flow" else (normalized[0] if normalized else None)
@@ -1755,10 +2081,16 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     c = CAT
     C, W, dna_meta = build_dna(user, query_plan, current_track_id, current_moment_id)
     query_source = "labels" if len(C) else "none"
+    onb_empty = ""
     if query_plan is None and not len(C):
         C, W, dna_meta = onboarding_seeds(user, onboarding)
         if len(C):
             query_source = "onboarding"
+        elif dna_meta and dna_meta[0].get("onboarding_source") == "empty_after_mapping":
+            # 답변은 왔는데 어휘로 옮겨진 축이 하나도 없다. 씨앗이 없으므로
+            # `query_source` 는 `none`(콜드스타트)이고, **왜** 그런지는 여기 남긴다.
+            onb_empty = "empty_after_mapping"
+            dna_meta = []
     zu = model_user_vec(user) if query_plan is None else None
     if query_plan is None:
         _t_beh = time.perf_counter()
@@ -1776,8 +2108,10 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
                             "query_source": query_source,
                             "behavior_source": ("disabled_for_query" if query_plan is not None else
                                                 "clickhouse" if beh_events is not None else "file"),
-                            "onboarding_source": ("disabled_for_query" if query_plan is not None else
-                                                  "request" if onboarding is not None else "file"),
+                            "onboarding_source": (
+                                "disabled_for_query" if query_plan is not None else
+                                onb_empty if onb_empty else
+                                "request" if onboarding is not None else "file"),
                             "behavior_events": beh["events"],
                             "dropped_bpm": 0, "dropped_short": 0, "excluded": len(hard),
                             "excluded_session": len(set(exclude)),
@@ -1792,6 +2126,29 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     if query_plan is not None:
         pool, qdiag = filter_query_pool(pool, query_plan, current_track_id, current_moment_id)
         diag["nlp"] = qdiag
+    # ── 후보 검색. Pinecone 갈래는 **여기서** 후보를 좁힌다.
+    #
+    # DNA 중심마다 닮은 순간을 받아 그 합집합만 남긴다. 좁힌 뒤의 점수 계산은 아래가
+    # 그대로 한다 — Pinecone 은 후보를 고르는 일만 하고 최종 순위는 맡지 않는다.
+    #
+    # 좁힌 뒤 **원본 벡터를 다시 가져와 여기서 중심화한다.** 검색 점수를 그대로
+    # 쓰지 않는 이유는, 중심마다 상위 K 밖의 값을 모르는 채로 행렬을 채우면 그
+    # 빈자리가 점수에 섞이기 때문이다. 원본을 가져오면 좁히기 전과 **같은 값**이 된다.
+    if vector_backend() == "pinecone" and len(C):
+        found: dict = {}
+        for j, cv in enumerate(C):
+            for mid, _score in candidate_search(cv, DNA_CANDIDATES_PER_SEED):
+                found.setdefault(mid, j)
+        before = len(pool)
+        pool = pool[pool.moment_id.astype(str).isin(found)].reset_index(drop=True)
+        diag["vector_search"] = {"backend": "pinecone", "seeds": int(len(C)),
+                                 "per_seed": DNA_CANDIDATES_PER_SEED,
+                                 "retrieved": len(found),
+                                 "kept_after_catalog_gate": len(pool),
+                                 "dropped_from_pool": int(before - len(pool))}
+    else:
+        diag["vector_search"] = {"backend": vector_backend(), "seeds": int(len(C))}
+
     diag["candidates"] = len(pool)
     if pool.empty:
         why = (diag.get("nlp") or {}).get("reason") or "후보 없음"
@@ -1824,8 +2181,19 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
                                "matched": int((mood_match > 0).sum()),
                                "candidates": len(pool)}
 
-    rows = pool.emb_row.to_numpy()
-    V = center(np.asarray(c.Z[rows], dtype=np.float32))   # 질의와 동일 변환
+    # 질의와 동일 변환. 원본을 읽어 여기서 중심화하므로 두 갈래의 값이 같다.
+    V0, kept = raw_vectors(pool.moment_id.astype(str).tolist())
+    if len(kept) != len(pool):
+        # 카탈로그에는 있는데 벡터가 없는 순간. 점수를 지어내지 않고 후보에서 뺀다.
+        pool = pool[pool.moment_id.astype(str).isin(kept)].reset_index(drop=True)
+        diag["missing_vectors"] = int(diag["candidates"] - len(pool))
+        if pool.empty:
+            return {"results": [], "diagnostics": {**diag, "reason": "후보 벡터가 없다"}}
+        clap_score = clap_score[:len(pool)]
+        clap_pct = clap_pct[:len(pool)]
+        if mood_match is not None:
+            mood_match = mood_match[:len(pool)]
+    V = center(V0)
     n_pairs = 0
     if len(C):
         S = V @ C.T * W[None, :]

@@ -137,12 +137,12 @@ def test_empty_frame_writes_nothing(store):
 def test_recommender_falls_back_to_the_file_without_clickhouse(monkeypatch, tmp_path):
     """주소가 없으면 종전의 parquet 경로로 간다. 개발·오프라인이 그 경로로 돈다."""
     monkeypatch.delenv("MUPID_CLICKHOUSE_URL", raising=False)
-    from ai_server.app import recommender
+    from ai_server.app import paths, recommender
 
     labels = tmp_path / "labels_service.parquet"
     pd.DataFrame([{"user_ref": "u1", "section_key": "T1#0", "grade": "L1",
                    "is_merged": False, "track_id": "T1", "w": 1.0}]).to_parquet(labels)
-    monkeypatch.setattr(recommender, "LABELS", labels)
+    monkeypatch.setattr(paths, "labels_path", lambda: labels)
 
     assert recommender.labels_available() is True
     assert len(recommender.labels_for("u1")) == 1
@@ -301,18 +301,27 @@ def test_state_dir_can_be_split_from_the_index(monkeypatch, tmp_path):
     assert paths.check()["state_dir_split"] is True
 
 
-def test_everything_the_batch_writes_lives_under_the_state_dir():
+def test_everything_the_batch_writes_lives_under_the_state_dir(monkeypatch, tmp_path):
     """하나라도 색인 쪽에 남으면 읽기 전용 마운트에서 그 순간 터진다."""
     import re
     from pathlib import Path
 
-    from ai_server.app import recommender
+    monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path / "index"))
+    monkeypatch.setenv("MUPID_AI_STATE_DIR", str(tmp_path / "state"))
+    from ai_server.app import paths, recommender
 
-    src = Path(recommender.__file__).read_text(encoding="utf-8")
-    for name in ("SERVE", "EVENTS", "LABELS"):
-        found = re.search(rf"^{name} = (\w+)", src, re.M)
-        assert found, name
-        assert found.group(1) == "STATE_DIR", f"{name} 이 {found.group(1)} 에 붙어 있다"
+    # 자리를 정하는 곳은 `paths` 한 군데다. 배치가 쓰는 것은 전부 거기 밑이어야 한다.
+    state = paths.state_dir()
+    for fn in (paths.serve_dir, paths.events_path, paths.labels_path,
+               paths.prefs_path, paths.onboarding_path):
+        assert state in fn().parents, f"{fn.__name__} 이 {fn()} 로 간다"
+
+    # 그리고 `recommender` 는 그 자리를 **상수로 굳히지 않는다.** 굳히면 import
+    # 시점의 환경변수가 박혀, 위 두 줄을 바꿔도 값이 따라오지 않는다.
+    rec = Path(recommender.__file__).read_text(encoding="utf-8")
+    frozen = re.findall(r"^(ROOT|OUT_DIR|STATE_DIR|SERVE|EVENTS|LABELS|PREFS) = ",
+                        rec, re.M)
+    assert not frozen, f"import 시점에 굳은 경로 상수가 남았다: {frozen}"
 
     watermark = (Path(recommender.__file__).parents[1] / "tools" / "pull_signals.py") \
         .read_text(encoding="utf-8")

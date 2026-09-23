@@ -100,54 +100,104 @@ MOOD_MAP = {
     "exciting": ["energetic", "action", "happy"],                        # 짜릿한
 }
 
+# 온보딩이 받는 것은 **곡 무드 9종(code_id 40~48)뿐이다** (2026-09-21 BE 합의).
+#
+# 1세대 8종(32~39)은 순간 무드 축이고 온보딩에서 내렸다. `MOOD_MAP` 은 17종을 그대로
+# 들고 있는데, 그쪽은 `register_sections` 가 **순간** 무드를 붙일 때 쓰는 표라
+# 건드리지 않는다. 두 축을 한 함수가 받아 주면 온보딩이 순간 무드로 곡을 거르게 되고,
+# `flow_meta.mood_codes` 에는 그 값이 없어 **조건이 아무 곡도 못 고른다.**
+TRACK_MOOD_NAMES = TAXONOMY_MOOD_NAMES
+
 # 한국어 표시명 → 영문 코드. 코드표 정리 전에 저장된 요청·기록에는 한국어가 남아
 # 있을 수 있어(`mood_raw` 등) 둘 다 받는다. 정리 전 운영 표시명이던
 # `몽글몽글한`·`차분한` 도 같은 무드로 읽는다.
+#
+# **운영의 중복 무드 124~132 는 `code_name` 자체가 한국어다**(`고요한`). 이름으로
+# 오면 이 표가 40~48 의 영문 코드로 되돌리므로 AI 쪽은 그 중복에 영향을 받지 않는다.
+TRACK_MOOD_ALIASES = {ko: en for en, ko in TRACK_MOOD_NAMES.items()}
+TRACK_MOOD_ALIASES.update({"몽글몽글한": "dreamy", "차분한": "calm"})
+
+# 17종 전체 표. `mood_code()` 는 쓰지 않는다 — 진단·대조용으로 남긴다.
 MOOD_ALIASES = {ko: en for en, ko in MOOD_NAMES.items()}
 MOOD_ALIASES.update({"몽글몽글한": "dreamy", "차분한": "calm"})
 
 
 def mood_code(name) -> str | None:
-    """받은 이름을 Spring 영문 코드로. 한국어·대소문자 차이를 받아 준다."""
+    """받은 이름을 **곡 무드(40~48)** 의 영문 코드로. 아니면 `None`.
+
+    한국어 표시명과 대소문자 차이는 받아 준다. 1세대 8종(32~39)은 받지 않는다 —
+    온보딩 축이 아니고, 통과시키면 `flow_meta.mood_codes` 에 없는 값으로 곡을
+    거르게 되어 조건이 아무것도 못 고른다.
+    """
     if not isinstance(name, str):
         return None
     key = name.strip()
-    if key in MOOD_MAP:
+    if key in TRACK_MOOD_NAMES:
         return key
-    if key.casefold() in MOOD_MAP:
+    if key.casefold() in TRACK_MOOD_NAMES:
         return key.casefold()
-    return MOOD_ALIASES.get(key)
+    return TRACK_MOOD_ALIASES.get(key)
 
 
-# 이름 포함으로는 못 잇는 것만 적는다.
-GENRE_EXTRA = {
-    "Electronic": ["House", "Downtempo", "Synthwave", "Tropical House", "Dubstep",
-                   "Drum n Bass", "Electro House", "Chillwave", "Nu-Disco", "Synth-pop"],
-    "Hip-hop": ["Cloud Rap", "Trap", "lofi_hiphop", "boom_bap_hiphop", "modern_trap_hiphop", 
-                "singing_rap_melodic_hiphop", "chillhop", "jazzhop"],
-    "Indie": ["Folk"],
-}
+# `GENRE_EXTRA` 를 걷어냈다 (2026-09-21).
+#
+# 대분류(`Electronic`·`Hip-hop`·`Indie`)를 옛 카탈로그 태그에 손으로 이어 두던
+# 표다. 카탈로그가 DB 코드 이름을 쓰게 되면서 **이을 대상 자체가 없어졌다.**
+#
+# 대분류 8종(code_id 9~16)이 세분류 45종(49~93) 중 무엇에 해당하는지는 아직
+# **정해진 계약이 없다.** 여기서 추측해 적지 않는다 — `music_genres` 에 그 8종을
+# 쓰는 곡이 0개이므로, 이으려면 코드표 쪽에서 정해야 한다.
 
+
+# ─────────────────────────────────────────────── 옮기지 않는다 (2026-09-21)
+#
+# **카탈로그가 코드 이름을 쓰게 되면서 변환이 없어졌다.** `flow_meta` 의
+# `genre_code`·`mood_codes` 가 DB `codes.code_name` 그대로이고, 온보딩이 받는 값도
+# 같은 `code_name` 이다. 두 어휘가 하나가 됐으므로 옮길 것이 없다.
+#
+# 왜 함수와 모듈을 남기는가:
+#
+#   · 부르는 자리(`from_request`)와 시험이 이 이름을 쓴다. 지우면 호출부를 다
+#     고쳐야 하고, 그 과정에서 **축을 통째로 빠뜨리기 쉽다** — 빈 축은 필터를
+#     건너뛰므로 조용히 개인화가 0 이 된다.
+#   · 카탈로그에 **있는 값만** 통과시키는 자리는 여전히 필요하다. 없는 코드를
+#     그대로 넘기면 추천기가 후보 0 을 만들고, 그 이유가 응답에 남지 않는다.
+#
+# 아래 두 함수는 이제 "거르기" 만 한다. 표는 위에 남겨 두었다 — 한국어 표시명으로
+# 저장된 옛 요청(`MOOD_ALIASES`)이 아직 들어올 수 있고, 그건 변환이 아니라 **같은
+# 코드의 다른 철자**다.
 
 def map_mood(names: list[str]) -> list[str]:
+    """받은 무드를 코드 이름으로 정규화한다. 모르는 이름은 버린다.
+
+    한국어 표시명(`잔잔한`)과 정리 전 철자(`몽글몽글한`)를 코드로 되돌리는 것이
+    `mood_code()` 의 일이고, 그 밖에는 그대로 통과한다.
+    """
     out: list[str] = []
     for n in names:
         code = mood_code(n)
-        for v in (MOOD_MAP.get(code, []) if code else []):
-            if v not in out:
-                out.append(v)
+        if code and code not in out:
+            out.append(code)
     return out
 
 
 def map_genre(names: list[str], catalog: list[str]) -> list[str]:
-    """대분류 이름이 세분류 안에 들어 있으면 같은 무리로 본다."""
+    """받은 장르를 **카탈로그에 있는 것만** 남긴다.
+
+    예전에는 대분류 이름이 세분류 문자열에 들어 있는지 부분일치로 봤다. 카탈로그가
+    `Rock---Punk` 꼴이던 때의 방법이고, 코드 이름(`alternative_rock`)에는 걸리지
+    않아 세분류 45종이 0건이었다. 지금은 같은 어휘라 **정확히 같은 값**만 본다.
+
+    대분류 8종(`Rock`·`Pop` …, code_id 9~16)은 `music_genres` 에 곡이 0개라
+    카탈로그에도 없다. 여기서 억지로 세분류에 이어 붙이지 않는다 — 그 연결은
+    코드표가 정해야 하고, 지금 이으면 근거 없는 매핑표가 하나 더 생긴다.
+    호출자가 `metrics.onboarding_unmapped` 로 그 사실을 본다.
+    """
+    have = set(catalog or [])
     out: list[str] = []
     for n in names:
-        hit = [c for c in catalog if n.lower() in c.lower()]
-        hit += [c for c in GENRE_EXTRA.get(n, []) if c in catalog]
-        for v in hit:
-            if v not in out:
-                out.append(v)
+        if n in have and n not in out:
+            out.append(n)
     return out
 
 

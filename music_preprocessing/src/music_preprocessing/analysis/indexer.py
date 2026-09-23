@@ -142,8 +142,12 @@ def stage(new_tracks: Sequence[NewTrack], data_dir: Path,
     fresh: list[NewTrack] = []
     for t in new_tracks:
         if str(t.track_id) in known:
+            # `already_indexed` 는 배치가 상태 파일을 올릴 때 본다. 이 곡은 색인에
+            # 있으니 다음 배치가 다시 분석할 이유가 없다 — 검사에 걸려 거부된
+            # 곡(바로 아래)과는 뜻이 다르다.
             rep.rejected.append({
-                "track_id": t.track_id, "reason": "이미 색인에 있다 — 교체는 이 경로가 아니다"})
+                "track_id": t.track_id, "already_indexed": True,
+                "reason": "이미 색인에 있다 — 교체는 이 경로가 아니다"})
             continue
         try:
             t.check()
@@ -416,6 +420,24 @@ def _prune(parent: Path, name: str, keep: int) -> list[str]:
     """오래된 판을 지운다. 롤백용으로 몇 판은 남긴다."""
     olds = sorted((p for p in parent.glob(f"{name}_prev*") if p.is_dir()),
                   key=lambda p: p.name)
+    drop = olds[:-keep] if keep > 0 else olds
+    for p in drop:
+        shutil.rmtree(p, ignore_errors=True)
+    return [p.name for p in drop]
+
+
+def prune_staged(data_dir: Path, *, keep: int = 0,
+                 exclude: Optional[Path] = None) -> list[str]:
+    """교체되지 못한 **새 판**(`<이름>_v*`)을 지운다.
+
+    `_prune` 이 지우는 `_prev*` 는 롤백용 이전 판이고, 이쪽은 교체가 보류·중단돼
+    붙지 못한 판이다. 한 벌이 색인 전체 크기(수백 MB)라 등록이 며칠 막히면 그것만으로
+    디스크가 찬다. 이어서 쓰는 길은 없다 — 등록이 붙으면 다음 배치가 새로 만든다.
+    """
+    src = Path(data_dir)
+    skip = Path(exclude).resolve() if exclude else None
+    olds = sorted((p for p in src.parent.glob(f"{src.name}_v*")
+                   if p.is_dir() and p.resolve() != skip), key=lambda p: p.name)
     drop = olds[:-keep] if keep > 0 else olds
     for p in drop:
         shutil.rmtree(p, ignore_errors=True)

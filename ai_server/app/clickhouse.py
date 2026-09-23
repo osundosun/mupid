@@ -135,6 +135,28 @@ def behavior_events(user_id: int, since_sec: float) -> list[dict]:
     return out
 
 
+def raw_event_count(user_id: int, since_sec: float) -> int:
+    """조인 **없이** 원본 `listen_events` 만 센다.
+
+    `behavior_events()` 가 0행일 때 그것이 "이 사용자가 안 들었다" 인지 "들었는데
+    `v_track_sections_current` 로 되돌리지 못했다" 인지 가른다. 둘은 같은 빈 결과로
+    보이지만 뜻이 정반대다 — 뒤쪽은 색인과 ClickHouse 딕셔너리가 어긋났다는
+    신호이고, 그대로 두면 전 사용자의 개인화가 조용히 빠진다.
+
+    **정상 경로에서는 부르지 않는다.** 조인 결과가 0행일 때만 한 번 더 묻는다
+    (`internal_api._behavior_events`) — 추천은 사용자가 기다리는 경로다.
+    """
+    sql = f"""
+        SELECT count() FROM listen_events
+         WHERE user_id = {int(user_id)}
+           AND event_type IN ({','.join("'%s'" % x for x in WANTED)})
+           AND occurred_at >= fromUnixTimestamp64Milli(toInt64({int(since_sec * 1000)}))
+        FORMAT TabSeparated
+    """
+    text = query(sql).strip()
+    return int(text.splitlines()[0]) if text else 0
+
+
 def _to_recommender_shape(row: dict) -> dict:
     """ClickHouse 한 줄 → 추천기가 읽는 이벤트 한 건.
 

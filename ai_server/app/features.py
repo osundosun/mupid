@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -22,9 +23,21 @@ from . import paths
 # 산출물 루트는 paths 한 곳에서만 계산한다. 예전에는 이 모듈이 따로 셈해서
 # `MUPID_AI_ARTIFACT_DIR=` (빈 값) 일 때 recommender 와 다른 곳을 봤다 —
 # os.environ.get 의 기본값은 빈 문자열을 덮지 않아 Path('') 가 되기 때문이다.
-ROOT = paths.artifact_root()
-OUT_DIR = ROOT / "data" / "proc" / "mupid"
-FEAT = OUT_DIR / "features_v1.npz"
+#
+# **상수로 굳히지 않는다.** import 시점에 박으면 한 프로세스가 **다른 판**을 읽을 수
+# 없다. 색인을 축소하고 옛 판과 새 판의 추천을 비교할 때 실제로 막혔다 —
+# `recommender` 는 새 판을 보는데 이 모듈만 옛 판의 `features_v1.npz` 를 들고 있어,
+# 65,540행짜리 `moment_id` 색인으로 6,754행짜리 배열을 찔러 IndexError 가 났다.
+# 조용히 틀린 값이 나오지 않고 터진 것이 다행이었다.
+
+
+def out_dir() -> Path:
+    return paths.data_dir()
+
+
+def feat_path() -> Path:
+    return paths.data_dir() / "features_v1.npz"
+
 
 FEATURE_VERSION = "feat-v1"
 PCA_DIM = 256
@@ -77,11 +90,11 @@ def side_features(mom: pd.DataFrame, content: pd.DataFrame) -> tuple[np.ndarray,
 
 
 def fit(train_track_ids: set[str] | None = None) -> dict:
-    mom = pd.read_parquet(OUT_DIR / "moments.parquet")
+    mom = pd.read_parquet(out_dir() / "moments.parquet")
     if "source" not in mom.columns:
         mom["source"] = "fma"
-    content = pd.read_parquet(OUT_DIR / "content.parquet")
-    Z = np.load(OUT_DIR / "moments_emb.npy", mmap_mode="r")
+    content = pd.read_parquet(out_dir() / "content.parquet")
+    Z = np.load(out_dir() / "moments_emb.npy", mmap_mode="r")
 
     rows = mom.emb_row.to_numpy()
     if train_track_ids is None:                    # 기본: FMA 만으로 적합 (local 은 평가·서비스용)
@@ -107,22 +120,22 @@ def fit(train_track_ids: set[str] | None = None) -> dict:
     P /= np.clip(np.linalg.norm(P, axis=1, keepdims=True), 1e-9, None)
     X = np.concatenate([P[rows], S], axis=1).astype(np.float32)
 
-    np.savez(FEAT, X=X, moment_id=mom.moment_id.astype(str).to_numpy(dtype='<U80'), pca_mean=mu,
+    np.savez(feat_path(), X=X, moment_id=mom.moment_id.astype(str).to_numpy(dtype='<U80'), pca_mean=mu,
              pca_comp=comp, side_cols=np.array(cols, dtype='<U24'), evr=np.float32(evr))
-    (OUT_DIR / "features_info.json").write_text(json.dumps({
+    (out_dir() / "features_info.json").write_text(json.dumps({
         "version": FEATURE_VERSION, "pca_dim": PCA_DIM, "side_dim": S.shape[1],
         "total_dim": int(X.shape[1]), "explained_variance_ratio": evr,
         "pca_fit_on": "fma" if train_track_ids is None else "train_tracks",
         "side_cols": cols,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"특징 {X.shape} (PCA {PCA_DIM} + side {S.shape[1]}) -> {FEAT}")
+    print(f"특징 {X.shape} (PCA {PCA_DIM} + side {S.shape[1]}) -> {feat_path()}")
     return {"X": X}
 
 
 def load() -> tuple[np.ndarray, dict[str, int], dict]:
-    d = np.load(FEAT, allow_pickle=False)
+    d = np.load(feat_path(), allow_pickle=False)
     idx = {str(m): i for i, m in enumerate(d["moment_id"])}
-    info = json.loads((OUT_DIR / "features_info.json").read_text(encoding="utf-8"))
+    info = json.loads((out_dir() / "features_info.json").read_text(encoding="utf-8"))
     return d["X"], idx, info
 
 
@@ -130,7 +143,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fit", action="store_true")
     a = ap.parse_args()
-    if a.fit or not FEAT.exists():
+    if a.fit or not feat_path().exists():
         fit()
     else:
         X, idx, info = load()

@@ -347,6 +347,112 @@ def test_changed_audio_is_not_reprocessed(sandbox, tmp_path):
     assert s.changed_tracks[0]["track_id"] == tracks[0].track_id
 
 
+# ──────────────────────────────── 5-1. 보류된 곡은 다음 배치가 다시 집는다
+
+def test_a_held_track_is_picked_up_again(sandbox, tmp_path):
+    """교체가 보류된 날의 곡을 **다음 배치가 건너뛰면 안 된다.**
+
+    예전에는 분석 직후에 `ok` 를 적었다. 그날 등록이 막혀 색인에 못 들어간 곡이
+    다음 날 "이미 했다" 로 건너뛰어지고, 그 뒤로는 영원히 색인 밖에 남는다. 오류는
+    나지 않는다 — 그 곡만 추천에 안 나올 뿐이다.
+    """
+    root, data = sandbox
+    state = tmp_path / "state.json"
+    tracks, analyze, _ = make_inputs(data, "held", 1, skip=12)
+    rows = len(pd.read_parquet(data / "moments.parquet"))
+
+    held = bt.run(tracks, data, state_path=state, summary_path=tmp_path / "s.jsonl",
+                  registrar=bt.UnavailableRegistrar(), analyze=analyze)
+    assert held.exit_code == bt.EXIT_HOLD and not held.swapped
+    rec = json.loads(state.read_text(encoding="utf-8"))["tracks"][tracks[0].track_id]
+    assert rec["status"] != "ok", "색인에 없는 곡을 ok 로 적었다"
+    assert held.marked_ok == 0
+
+    again = bt.run(tracks, data, state_path=state, summary_path=tmp_path / "s.jsonl",
+                   registrar=FakeRegistrar(), analyze=analyze)
+    assert again.skipped == 0, "보류된 곡을 건너뛰었다"
+    assert again.ok == 1 and again.swapped and again.marked_ok == 1
+    assert len(pd.read_parquet(data / "moments.parquet")) > rows
+
+    # 이제야 `ok` 다. 세 번째 실행은 건너뛴다 — 다시 붙이지 않는다.
+    rec = json.loads(state.read_text(encoding="utf-8"))["tracks"][tracks[0].track_id]
+    assert rec["status"] == "ok"
+    third = bt.run(tracks, data, state_path=state, summary_path=tmp_path / "s.jsonl",
+                   registrar=FakeRegistrar(), analyze=analyze)
+    assert third.skipped == 1 and not third.swapped
+    print("\n보류 → 재시도 → 반영 · 세 번째는 건너뜀")
+    cleanup(data)
+
+
+def test_state_that_disagrees_with_the_index_is_reanalyzed(sandbox, tmp_path):
+    """기록은 `ok` 인데 색인에 없다. **색인을 믿는다.**
+
+    예전 판이 남긴 기록이거나 교체가 되돌려진 경우다. 기록을 믿고 건너뛰면 그 곡은
+    영영 안 들어간다.
+    """
+    root, data = sandbox
+    state = tmp_path / "state.json"
+    tracks, analyze, _ = make_inputs(data, "ghost", 1, skip=14)
+    tid = tracks[0].track_id
+    sha = pl._sha256(tracks[0].audio_path)
+    pl.save_state(state, {"version": pl.STATE_VERSION, "tracks": {
+        tid: {"track_id": tid, "status": "ok", "audio_sha256": sha}}})
+
+    s = bt.run(tracks, data, state_path=state, summary_path=tmp_path / "s.jsonl",
+               registrar=FakeRegistrar(), analyze=analyze)
+
+    assert s.skipped == 0, "색인에 없는데 기록만 믿고 건너뛰었다"
+    assert s.ok == 1 and s.swapped
+    cleanup(data)
+
+
+def test_unswapped_plates_do_not_pile_up(sandbox, tmp_path):
+    """보류가 이어져도 새 판이 쌓이지 않는다. 한 벌이 색인 전체 크기다."""
+    root, data = sandbox
+    made = []
+    for i in range(3):
+        tracks, analyze, _ = make_inputs(data, f"pile{i}", 1, skip=16 + i)
+        s = bt.run(tracks, data, state_path=tmp_path / f"st{i}.json",
+                   summary_path=tmp_path / "s.jsonl",
+                   registrar=bt.UnavailableRegistrar(), analyze=analyze)
+        assert s.exit_code == bt.EXIT_HOLD
+        made.append(s.staged_dir)
+        left = [p.name for p in data.parent.glob(f"{data.name}_v*") if p.is_dir()]
+        assert len(left) == 1, f"{i + 1}번째 보류에서 판이 {len(left)}벌 남았다: {left}"
+
+    # 마지막 한 벌은 남는다 — 사람이 들여다볼 수 있어야 한다.
+    assert Path(made[-1]).is_dir()
+    assert not Path(made[0]).exists() and not Path(made[1]).exists()
+    print("\n보류 3회 · 남은 새 판 1벌")
+    cleanup(data)
+
+
+def test_a_failed_swap_leaves_the_index_alone(sandbox, tmp_path, monkeypatch):
+    """교체가 깨져도 **기존 색인은 그대로**고, 요약은 남는다.
+
+    예외를 그대로 올리면 요약이 없어 다음 날 무슨 일이었는지 알 수 없고, 종료 코드도
+    cron 이 읽을 수 있는 값이 아니다.
+    """
+    root, data = sandbox
+    before = len(pd.read_parquet(data / "moments.parquet"))
+    tracks, analyze, _ = make_inputs(data, "swapfail", 1, skip=19)
+    summary = tmp_path / "s.jsonl"
+
+    def boom(*a, **k):
+        raise OSError("디스크가 찼다")
+
+    monkeypatch.setattr(ix, "swap", boom)
+    s = bt.run(tracks, data, state_path=tmp_path / "state.json",
+               summary_path=summary, registrar=FakeRegistrar(), analyze=analyze)
+
+    assert s.exit_code == bt.EXIT_FAIL and not s.swapped
+    assert "교체하지 못했다" in s.hold_reason
+    assert len(pd.read_parquet(data / "moments.parquet")) == before
+    assert summary.read_text(encoding="utf-8").strip(), "요약이 남지 않았다"
+    assert s.marked_ok == 0, "교체하지 못한 곡을 ok 로 올렸다"
+    cleanup(data)
+
+
 # ────────────────────────────────────────────────────── 6. 동시 실행 금지
 
 def test_second_process_backs_off(tmp_path):

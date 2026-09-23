@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -88,12 +89,18 @@ def check(out: pd.DataFrame) -> list[str]:
     return problems
 
 
-def write_map(out: pd.DataFrame, dst: Path, force: bool = False) -> tuple[int, int]:
+def write_map(out: pd.DataFrame, dst: Path, force: bool = False,
+              source_note: str = "") -> tuple[int, int]:
     """검증한 뒤에만 쓴다. 곡 수·구간 수를 돌려준다.
 
     `register_sections` 가 같은 경로로 쓰기 위해 `main()` 에서 빼냈다. 매핑표를
     만드는 길이 둘인데 검증이 한쪽에만 있으면, 없는 쪽으로 만든 표가 1:1 을 깨뜨린
     채 서비스에 올라간다.
+
+    `source_note` 는 **이 표가 어느 DB 에서 나왔는지**를 parquet 머리(스키마
+    metadata)에 박아 둔다. 파일만 봐서는 로컬 스냅샷인지 운영본인지 알 수 없고,
+    로컬 것을 운영에 올리면 번호가 통째로 어긋난 채 서비스가 정상으로 뜬다.
+    `parquet.show_source(파일)` 로 읽는다.
     """
     problems = check(out)
     for problem in problems:
@@ -103,7 +110,7 @@ def write_map(out: pd.DataFrame, dst: Path, force: bool = False) -> tuple[int, i
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_suffix(".parquet.tmp")
-    out.to_parquet(tmp, index=False)
+    _write_with_source(out, tmp, source_note)
 
     # 서비스가 읽는 그대로 한 번 적재해 본다. 1:1 위반이면 여기서 막힌다.
     try:
@@ -113,6 +120,30 @@ def write_map(out: pd.DataFrame, dst: Path, force: bool = False) -> tuple[int, i
         raise SystemExit(f"매핑표가 1:1 이 아니다. 쓰지 않는다." + chr(10) + f"{e}") from None
     tmp.replace(dst)
     return len(im.track_to_num), len(im.sec_to_num)
+
+
+def _write_with_source(out: pd.DataFrame, dst: Path, note: str) -> None:
+    """출처를 스키마 metadata 에 함께 쓴다. 없으면 종전과 같이 쓴다."""
+    if not note:
+        out.to_parquet(dst, index=False)
+        return
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pa.Table.from_pandas(out, preserve_index=False)
+    meta = dict(table.schema.metadata or {})
+    meta[b"mupid_id_map_source"] = note.encode("utf-8")
+    meta[b"mupid_id_map_written_at"] = datetime.now().astimezone().isoformat().encode()
+    pq.write_table(table.replace_schema_metadata(meta), dst)
+
+
+def show_source(path: Path) -> dict:
+    """매핑표가 어디서 나왔는지 읽는다. 배포 전에 이걸로 확인한다."""
+    import pyarrow.parquet as pq
+
+    meta = pq.read_schema(Path(path)).metadata or {}
+    return {k.decode(): v.decode("utf-8", "replace")
+            for k, v in meta.items() if k.startswith(b"mupid_id_map_")}
 
 
 def main() -> int:
@@ -125,6 +156,8 @@ def main() -> int:
                     help="(기본값) 호환용으로 남겨 둔다")
     ap.set_defaults(derive_track_id=True)
     ap.add_argument("--force", action="store_true", help="경고가 있어도 쓴다")
+    ap.add_argument("--source-note", default="",
+                    help="이 표가 나온 DB. parquet 머리에 박는다 (배포 전 확인용)")
     a = ap.parse_args()
 
     src = Path(a.table)
@@ -134,7 +167,7 @@ def main() -> int:
 
     out = build(read_table(src), a.derive_track_id)
     dst = Path(a.out) if a.out else paths.id_map_path()
-    tracks, sections = write_map(out, dst, a.force)
+    tracks, sections = write_map(out, dst, a.force, a.source_note)
     print(f"저장 {dst} · 곡 {tracks} · 구간 {sections}")
     return 0
 

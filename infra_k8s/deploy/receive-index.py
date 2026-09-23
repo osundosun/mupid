@@ -35,6 +35,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 
 ROOT = pathlib.Path("/srv/mupid-k8s")
 ARTIFACTS = ROOT / "ai-artifacts"
@@ -49,14 +50,27 @@ CHECKSUM = re.compile(r"^[0-9a-f]{64}$")
 
 # 이 이름들만 받는다. 목록에 없는 파일이 섞여 오면 거부한다 — 이 엔드포인트로 노드에
 # 임의의 파일을 놓을 수 있으면 안 된다.
+# `content.parquet` · `flow_meta.parquet` 은 여기 없다. 곡명·장르·무드·보컬은 MySQL 이
+# 정본이고 추천 서버가 Spring 내부 카탈로그 API 로 읽는다 — 색인이 사본을 들고 오면
+# 어느 쪽이 이기는지가 자리마다 갈린다. 옛 묶음은 이 목록 밖의 이름이라 거부된다.
+#
+# `moments_emb.npy` 도 여기 없다. 순간 벡터의 정본은 Pinecone 이다 — 노드에 사본이
+# 놓이는 순간 "인덱스는 갈아 끼웠는데 파일은 옛것" 인 상태가 생기고, 서버가 조용히
+# 그 파일로 내려갈 자리가 열린다. 그 자리를 아예 두지 않는다.
 ALLOWED = {
-    "moments.parquet", "moments_emb.npy", "features_v1.npz", "stage1_section.npy",
-    "content.parquet", "flow_meta.parquet", "clap_moments.npz",
+    "moments.parquet", "features_v1.npz", "stage1_section.npy",
+    "track_features.parquet", "index_meta.json", "clap_moments.npz",
     "stage1_weights.npz", "stage1.pt", "logistic_flow_stage1.json",
     "features_info.json", "feature_stats_v1.npz", "slice_report.json",
 }
 # 없으면 파드가 뜨더라도 /internal/ready 가 영영 false 인 것들.
-REQUIRED = {"moments.parquet", "moments_emb.npy", "features_v1.npz", "stage1_section.npy"}
+#
+# `track_features.parquet` 이 없으면 BPM·언어·스타일 축이 통째로 비고,
+# `index_meta.json` 이 없으면 추천 서버가 옛 판으로 보고 거절한다.
+# `moments_emb.npy` 는 **여기 없다.** slice_index 가 배송에서 뺐으므로 요구하면 정상
+# 묶음이 통째로 거부된다 — 실제로 그렇게 막혔다.
+REQUIRED = {"moments.parquet", "features_v1.npz", "stage1_section.npy",
+            "track_features.parquet", "index_meta.json"}
 
 
 def fail(message, code=65):
@@ -102,29 +116,51 @@ def safe_extract(archive, target):
                 parent = str(pathlib.PurePosixPath(name).parent)
                 if parent != INNER:
                     fail(f"{INNER}/ 바로 아래만 받는다: {name}")
-                if pathlib.PurePosixPath(name).name not in ALLOWED:
+                leaf = pathlib.PurePosixPath(name).name
+                if leaf == "moments_emb.npy":
+                    fail("moments_emb.npy 는 받지 않는다 — 순간 벡터의 정본은 "
+                         "Pinecone 이다. 배송에 넣지 않는다")
+                if leaf not in ALLOWED:
                     fail(f"허용하지 않는 파일: {name}")
         tar.extractall(target, members=members)
 
 
-def npy_rows(path):
-    """`.npy` 첫 축의 길이를 numpy 없이 읽는다.
+def _rows_from_header(stream, label):
+    """열린 이진 스트림에서 NPY 헤더를 읽어 첫 축의 길이를 돌려준다.
 
     노드에는 numpy 도 pandas 도 없다(실측 2026-09-16). 그래서 아래 전체 검사가
     **건너뛰어진다** — 막으려고 쓴 검사가 정작 운영에서는 돌지 않았다. NPY 는 헤더가
     ASCII 딕셔너리라 표준 라이브러리만으로 형태를 읽을 수 있으니, 최소한 두 벡터
     파일의 행 수는 언제나 본다."""
-    with open(path, "rb") as source:
-        if source.read(6) != b"\x93NUMPY":
-            fail(f"NPY 가 아니다: {path.name}")
-        major = source.read(2)[0]
-        width = 2 if major == 1 else 4
-        length = int.from_bytes(source.read(width), "little")
-        header = source.read(length).decode("latin-1")
+    if stream.read(6) != b"\x93NUMPY":
+        fail(f"NPY 가 아니다: {label}")
+    major = stream.read(2)[0]
+    width = 2 if major == 1 else 4
+    length = int.from_bytes(stream.read(width), "little")
+    header = stream.read(length).decode("latin-1")
     found = re.search(r"'shape':\s*\((\d+)", header)
     if not found:
-        fail(f"NPY 헤더에서 형태를 읽지 못했다: {path.name}")
+        fail(f"NPY 헤더에서 형태를 읽지 못했다: {label}")
     return int(found.group(1))
+
+
+def npy_rows(path):
+    """`.npy` 첫 축의 길이를 numpy 없이 읽는다."""
+    with open(path, "rb") as source:
+        return _rows_from_header(source, path.name)
+
+
+def npz_rows(path, member="X"):
+    """`.npz` 안 배열의 첫 축 길이를 numpy 없이 읽는다.
+
+    npz 는 `.npy` 를 담은 zip 이다. `zipfile` 은 표준 라이브러리이고 압축된 멤버도
+    알아서 풀어 주므로, numpy 가 없는 노드에서도 헤더까지는 닿는다."""
+    try:
+        with zipfile.ZipFile(path) as bundle:
+            with bundle.open(f"{member}.npy") as stream:
+                return _rows_from_header(stream, f"{path.name}[{member}]")
+    except (zipfile.BadZipFile, KeyError) as e:
+        fail(f"{path.name} 에서 {member} 를 읽지 못했다: {type(e).__name__}: {e}")
 
 
 def check_rows(data):
@@ -136,8 +172,18 @@ def check_rows(data):
     # 네 색인은 같은 행 번호로 서로를 가리키므로, 서로 다른 판에서 온 파일이
     # 섞이면 행 수부터 어긋난다. 자르는 쪽이 남긴 보고서와도 맞춰 본다 —
     # 보고서만 새 판이고 파일이 옛 판인 경우를 잡는다.
-    counts = {name: npy_rows(data / name)
-              for name in ("moments_emb.npy", "stage1_section.npy")}
+    #
+    # `moments_emb.npy` 는 세지 않는다 — 순간 벡터의 정본이 Pinecone 으로 가면서
+    # 배송에서 빠졌다. 그 자리는 `features_v1.npz` 로 메운다. REQUIRED 라 언제나
+    # 오고, npz 는 zip 이라 안의 `X.npy` 헤더를 numpy 없이 읽을 수 있다.
+    #
+    # **갈래가 하나로 줄면 안 된다.** 값이 하나뿐인 집합은 어긋날 수가 없어서 검사가
+    # 조용히 무력해진다. `slice_report.json` 은 REQUIRED 가 아니라 없을 수도 있으니
+    # 그것만 믿어서도 안 된다. 실제로 한 번 그 상태가 됐다 (S15P21A204-431).
+    counts = {
+        "stage1_section.npy": npy_rows(data / "stage1_section.npy"),
+        "features_v1.npz[X]": npz_rows(data / "features_v1.npz"),
+    }
     report = data / "slice_report.json"
     if report.exists():
         try:
@@ -189,7 +235,6 @@ d = sys.argv[1]
 mom = pd.read_parquet(d + "/moments.parquet", columns=["moment_id", "emb_row"])
 rows = {
     "moments": len(mom),
-    "moments_emb": int(np.load(d + "/moments_emb.npy", mmap_mode="r").shape[0]),
     "features_v1": int(np.load(d + "/features_v1.npz")["X"].shape[0]),
     "stage1_section": int(np.load(d + "/stage1_section.npy", mmap_mode="r").shape[0]),
 }
