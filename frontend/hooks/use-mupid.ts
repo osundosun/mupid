@@ -1,12 +1,12 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { guardPath, pageForPath, pagePaths } from '@/lib/routes';
 import { mupidService } from '@/lib/services';
 import { localDemoEnabled } from '@/lib/api/local-demo';
 import { login, logout, restoreSession, withdrawAccount } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
-import { isStreamed } from '@/lib/stream-catalog';
+import { isStreamed, musicIdOfTrackId } from '@/lib/stream-catalog';
 import {
   fetchNextTracks,
   fetchSimilarSections,
@@ -163,6 +163,28 @@ export function useMupid(bootstrap: Bootstrap) {
   const [history, setHistory] = useState(initial.history);
   const [moments, setMoments] = useState<SavedMoment[]>(initial.moments);
   const [playlists, setPlaylists] = useState<Playlist[]>(initial.playlists);
+  /**
+   * 카탈로그(앞 100곡) 밖에서 만난 곡 중 보관함이 가리키는 것 (S15P21A204-443).
+   *
+   * 좋아요·관심 없음·최근 감상은 곡 번호만 들고 있어서 화면이 곡을 찾아 그린다.
+   * 카탈로그에서만 찾으면 검색으로 찾아 좋아한 곡이 보관함에 뜨지 않고, 새로고침
+   * 하면 계정에서 되받아도 버려졌다. 그런 곡을 여기 모아 `knownTracks` 로 함께 찾는다.
+   * 목록 화면(홈·탐색)은 여전히 `tracks` 만 쓴다 — 보관함 곡이 섞여 들면 안 된다.
+   */
+  const [extraTracks, setExtraTracks] = useState<Track[]>([]);
+  const knownTracks = useMemo(() => {
+    const ids = new Set(tracks.map((track) => track.id));
+    return [...tracks, ...extraTracks.filter((track) => !ids.has(track.id))];
+  }, [tracks, extraTracks]);
+  const rememberTracks = (found: (Track | null | undefined)[]) => {
+    const fresh = found.filter((track): track is Track => !!track && typeof track.musicId === 'number');
+    if (!fresh.length) return;
+    setExtraTracks((current) => {
+      const ids = new Set([...tracks, ...current].map((track) => track.id));
+      const added = fresh.filter((track) => !ids.has(track.id) && ids.add(track.id));
+      return added.length ? [...current, ...added] : current;
+    });
+  };
   const [selectedPlaylist, setSelectedPlaylist] = useState<number | null>(null);
   const [libraryTab, setLibraryTab] = useState('playlists');
   const [query, setQuery] = useState('');
@@ -520,8 +542,9 @@ export function useMupid(bootstrap: Bootstrap) {
     if (localDemoEnabled()) return;
     const saved = await fetchReactions(tracks, signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
-    setLiked(saved.liked);
-    setIgnored(saved.ignored);
+    rememberTracks([...saved.liked, ...saved.ignored]);
+    setLiked(saved.liked.map((track) => track.id));
+    setIgnored(saved.ignored.map((track) => track.id));
   };
   /**
    * 계정에 저장된 최근 감상을 화면 상태로 가져온다.
@@ -532,8 +555,10 @@ export function useMupid(bootstrap: Bootstrap) {
    */
   const adoptServerHistory = async (signal?: AbortSignal) => {
     if (localDemoEnabled()) return;
-    const saved = await fetchHistory(tracks, signal);
-    if (!saved?.length || signal?.aborted || !mountedRef.current) return;
+    const found = await fetchHistory(tracks, signal);
+    if (!found?.length || signal?.aborted || !mountedRef.current) return;
+    rememberTracks(found);
+    const saved = found.map((track) => track.id);
     setHistory((current) =>
       [...saved, ...current.filter((id) => !saved.includes(id))].slice(0, HISTORY_LIMIT),
     );
@@ -794,7 +819,9 @@ export function useMupid(bootstrap: Bootstrap) {
    */
   const positionMs = () => Math.max(0, Math.round((getPlayer()?.store.get().positionSec ?? 0) * 1000));
   /** 화면이 쓰는 곡 번호(`id`)를 서버 음악 번호로 옮긴다. 이벤트는 서버 번호로 나간다. */
-  const musicIdOf = (id: number) => tracks.find((t) => t.id === id)?.musicId;
+  // 카탈로그 밖의 곡도 화면 번호에서 서버 번호를 안다 (S15P21A204-443).
+  const musicIdOf = (id: number) =>
+    knownTracks.find((t) => t.id === id)?.musicId ?? musicIdOfTrackId(id);
   /**
    * 이벤트에 실을 플레이리스트 번호. 범위를 벗어나면 0("모름")을 보낸다.
    *
@@ -865,6 +892,8 @@ export function useMupid(bootstrap: Bootstrap) {
     const id = ++requestId.current;
     loadTrack(track);
     setLastPlayedId(track.id);
+    // 최근 감상은 곡 번호만 든다. 카탈로그 밖의 곡이면 화면이 찾을 수 있게 기억한다.
+    rememberTracks([track]);
     setHistory((ids) =>
       [track.id, ...ids.filter((i) => i !== track.id)].slice(0, HISTORY_LIMIT),
     );
@@ -1514,7 +1543,7 @@ export function useMupid(bootstrap: Bootstrap) {
     ]);
     markMoments([saved]);
     // 구간을 저장하면 그 곡을 좋아한 것으로 본다. 계정에도 같이 남겨야 한다.
-    if (!liked.includes(saved.track.id)) toggleLike(saved.track.id);
+    if (!liked.includes(saved.track.id)) toggleLike(saved.track.id, saved.track);
     setToast('저장한 순간을 저장했어요. 내 플레이리스트에서 다시 만나요.');
   };
 
@@ -1700,7 +1729,9 @@ export function useMupid(bootstrap: Bootstrap) {
    *
    * 한 곡에 반응은 하나라 좋아요를 켜면 "관심 없음" 은 풀린다.
    */
-  const toggleLike = (id: number) => {
+  const toggleLike = (id: number, track?: Track) => {
+    // 좋아한 곡은 보관함이 그린다. 카탈로그 밖의 곡이면 곡 정보를 기억해 둔다.
+    rememberTracks([track ?? (activeRef.current?.id === id ? activeRef.current : null)]);
     const wasLiked = liked.includes(id);
     const wasIgnored = ignored.includes(id);
     // 듣고 있는 곡이면 지금 위치를, 목록에서 누른 것이면 0 을 싣는다. 0 이면 이벤트는
@@ -1725,8 +1756,10 @@ export function useMupid(bootstrap: Bootstrap) {
   };
 
   /** 추천에서 숨긴다. 좋아요와 같은 자리를 쓰므로 좋아요는 풀린다. */
-  const ignoreTrack = (id: number) => {
+  const ignoreTrack = (id: number, track?: Track) => {
     if (ignored.includes(id)) return;
+    // 숨긴 곡은 마이페이지가 그린다. 좋아요와 같은 까닭으로 곡 정보를 기억해 둔다.
+    rememberTracks([track ?? (activeRef.current?.id === id ? activeRef.current : null)]);
     const wasLiked = liked.includes(id);
     const at = activeRef.current?.id === id ? positionMs() : 0;
     const musicId = musicIdOf(id);
@@ -1893,6 +1926,8 @@ export function useMupid(bootstrap: Bootstrap) {
     onboardingSubmitted,
     completeOnboarding,
     tracks,
+    // 보관함·마이페이지가 곡 번호로 곡을 찾을 때 쓴다. 카탈로그 밖의 곡까지 들어 있다.
+    knownTracks,
     todayMoments,
     todayMomentNote,
     forYou,

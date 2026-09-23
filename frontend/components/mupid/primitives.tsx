@@ -407,7 +407,7 @@ export function LikeButton({
       aria-label={m.liked.includes(track.id) ? '좋아요 취소' : '좋아요'}
       aria-pressed={m.liked.includes(track.id)}
       className="icon-button like-button"
-      onClick={() => m.toggleLike(track.id)}
+      onClick={() => m.toggleLike(track.id, track)}
     >
       <Heart fill={m.liked.includes(track.id) ? 'currentColor' : 'none'} />
     </button>

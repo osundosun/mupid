@@ -18,6 +18,8 @@ export type Preferences = {
   lastPlayedId?: number | null;
 };
 export type Bootstrap = { tracks: Track[]; preferences: Preferences; session?: AccountSession | null };
+/** 화면 번호로 곡을 찾는다. 찾지 못한 번호는 결과에 없다. 실패해도 던지지 않는다. */
+export type TrackResolver = (trackIds: number[]) => Promise<Track[]>;
 export type SignupInput = {
   email: string; password: string; nickname: string; birthYear: number;
   gender: 'MALE' | 'FEMALE' | 'ETC';
@@ -30,8 +32,11 @@ export interface MupidService {
    *
    * @param catalog 서버에서 받아 온 곡 목록. 네트워크 호출은 화면 쪽에서 하고
    *   여기서는 합치기만 한다 — 이 계층은 브라우저 저장만 건드린다.
+   * @param resolve 저장한 순간이 가리키는 곡 중 `catalog` 에 없는 것을 화면 번호로
+   *   찾아 준다. 카탈로그는 앞 100곡뿐이라, 없으면 그 밖의 곡에 남긴 순간이
+   *   새로고침 때 버려진다 (S15P21A204-443). 네트워크 호출은 여전히 화면 쪽 몫이다.
    */
-  bootstrap(catalog?: Track[]): Promise<Bootstrap>;
+  bootstrap(catalog?: Track[], resolve?: TrackResolver): Promise<Bootstrap>;
   savePreferences(value: Preferences): Promise<void>;
   login(input: { email: string; password: string }): Promise<AccountSession>;
   logout(): Promise<void>;

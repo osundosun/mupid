@@ -142,7 +142,7 @@ export function PlayerView({ model: m }: { model: MupidModel }) {
             <span className="sr-only">볼륨</span>
             <VolumeSlider />
           </label>}>
-            <button className="secondary-button quick-like" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id)}>
+            <button className="secondary-button quick-like" aria-pressed={m.liked.includes(active.id)} aria-label={m.liked.includes(active.id) ? '좋아요 취소' : '좋아요'} onClick={() => m.toggleLike(active.id, active)}>
               <Heart className="pink" fill={m.liked.includes(active.id) ? 'currentColor' : 'none'} />
               좋아요
             </button>
@@ -479,7 +479,7 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
                   className="icon-button dismiss-track"
                   aria-label={`${t.title} 관심 없음`}
                   onClick={() => {
-                    m.ignoreTrack(t.id);
+                    m.ignoreTrack(t.id, t);
                     m.setToast('앞으로 이 곡은 추천에서 숨길게요.');
                   }}
                 >
