@@ -38,13 +38,16 @@
     control namespace  id = __center__  · vector = mu · metadata = 세대
 
 **물리 인덱스는 하나다.** 원본 Z 는 따로 저장하지 않고 `Z = mu + r·u` 로 되돌린다.
-곡명·장르·무드·보컬·악기·시간의 정본은 MySQL 이고 추천 서버는 Spring 내부 API 로
-읽는다 — Pinecone metadata 에 DB 소유값을 넣지 않는다.
+곡명·장르·무드·보컬·악기·시간의 정본은 MySQL 이고 추천 서버는 Spring 이 요청 본문으로
+준다 — Pinecone metadata 에 DB 소유값을 넣지 않는다.
 
 ## 적재 대상
 
-색인의 추천 풀(`MUPID_POOL`) ∩ Spring 카탈로그. 삭제곡·카탈로그 밖 순간·풀 밖
-소스는 올리지 않고, 인덱스에만 남아 있는 것(잔존)은 **갱신 때 함께 지운다.**
+색인의 추천 풀(`MUPID_POOL`) 전체(`recommender.index_pool`). **Spring 을 부르지
+않는다**(연동 계약 2026-09-23 절) — 예전에는 Spring 카탈로그와 교집합을 냈고, 그러려면
+ROLE_SYSTEM 토큰이 있어야 했다. 지워진 곡의 벡터가 남아도 Spring 이 보낸 후보에 없으므로
+추천되지 않는다. 풀 밖 소스(Jamendo 등)는 올리지 않고, 인덱스에만 남아 있는 것(잔존)은
+**갱신 때 함께 지운다.**
 
 종료 코드
     0 정상 · 2 설정·입력 오류 · 3 인덱스 없음·차원 불일치 · 4 대사 불일치
@@ -57,7 +60,7 @@ import sys
 
 import numpy as np
 
-from ..app import catalog_api, pinecone_store as ps
+from ..app import pinecone_store as ps
 
 
 def _say(message: str) -> None:
@@ -69,40 +72,30 @@ def _fail(message: str, code: int) -> None:
     raise SystemExit(code)
 
 
-def _catalog():
-    """Spring 카탈로그. **여기가 기준이다.**"""
-    snap = catalog_api.snapshot()
-    if snap is None:
-        try:
-            snap = catalog_api.load()
-        except Exception as e:
-            _fail(f"카탈로그를 읽지 못했다 — {type(e).__name__}: {e}", 2)
-    return snap
-
-
-def _pool():
+def _base():
+    """색인·모델만 올린 카탈로그. 후보 메타는 쓰지 않는다."""
     from ..app import recommender as rc
 
     if rc.CAT is None:
-        # 스냅샷을 **직접 넘긴다.** 서버와 달리 이 도구는 기동에서 카탈로그를 올려
-        # 두지 않는다 — 넘기지 않으면 "카탈로그를 읽지 못했다" 로 멈추는데, 실제로는
-        # 부르지도 않은 것이다(2026-09-23 최초 적재).
-        rc.CAT = rc.Catalog(_catalog())
+        rc.CAT = rc.Catalog()
     return rc.CAT
 
 
 def _targets():
-    """(id 목록, 벡터, 임베딩 버전). **풀 ∩ 카탈로그만.**"""
-    cat = _pool()
-    snap = _catalog()
-    ids = [m for m in cat.pool.moment_id.astype(str) if m in snap.sections]
-    skipped = len(cat.pool) - len(ids)
+    """(id 목록, 벡터, 임베딩 버전, 제외 수). **색인의 추천 풀 전체.**"""
+    from ..app import recommender as rc
+
+    cat = _base()
+    if cat.Z is None:
+        _fail("moments_emb.npy 가 없다 — 전체 색인을 가리킨다(적재 원본은 분석 배치 쪽에 있다)", 2)
+    pool = rc.index_pool(cat)
+    ids = pool.moment_id.astype(str).tolist()
     if not ids:
-        _fail("적재 대상이 0건이다 — 색인 풀과 카탈로그가 겹치지 않는다", 2)
-    rowmap = cat.mom.set_index(cat.mom.moment_id.astype(str)).emb_row
-    Z = np.asarray(cat.Z[rowmap.loc[ids].to_numpy()], dtype=np.float32)
+        _fail(f"적재 대상이 0건이다 — 색인에 추천 풀({sorted(rc.POOL_SOURCES)})이 없다", 2)
+    Z = np.asarray(cat.Z[pool.emb_row.to_numpy()], dtype=np.float32)
     version = (cat.info.get("embedding_version", "mert-v1-95m")
                if isinstance(cat.info, dict) else "mert-v1-95m")
+    skipped = int(len(cat._mom_index) - len(pool))
     return ids, Z, version, skipped
 
 
@@ -130,7 +123,7 @@ def cmd_reload(args) -> int:
     ids, Z, version, skipped = _targets()
     dim = int(Z.shape[1])
     snapshot = _snapshot(ids, Z, version)
-    _say(f"대상 {len(ids)}건 (풀·카탈로그 밖 {skipped}건 제외) · {dim}차 "
+    _say(f"대상 {len(ids)}건 (풀 밖 {skipped}건 제외) · {dim}차 "
          f"· 적재본 {snapshot[:12]}…")
 
     _require_index(dim)
@@ -294,7 +287,7 @@ def _audit() -> dict:
     have = set(ps.list_ids())
 
     out = {"namespace": ps.namespace(), "expected": len(want),
-           "skipped_outside_pool_or_catalog": skipped, "snapshot": snapshot,
+           "skipped_outside_pool": skipped, "snapshot": snapshot,
            "present": len(have),
            "missing": sorted(want - have)[:20], "missing_count": len(want - have),
            "stale": sorted(have - want)[:20], "stale_count": len(have - want)}

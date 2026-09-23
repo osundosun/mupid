@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ai_server.app import catalog_api, index_contract
+from ai_server.app import catalog_body, index_contract
 
 LABELS4 = ["intro", "verse", "chorus", "bridge"]
 # DB 코드표 어휘(`codes.code_name`). 합성이지만 모양을 실제와 맞춘다.
@@ -36,7 +36,7 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
     (d / "logs").mkdir(parents=True, exist_ok=True)
 
     # 색인에는 **벡터를 가리키는 행 번호와 오디오에서 잰 값만** 둔다. 구간 종류·
-    # 시각·악기는 MySQL 이 정본이고 `catalog_api` 가 읽는다(`_catalog_payload`).
+    # 시각은 MySQL 이 정본이고 요청 본문으로 온다(`_catalog_body`).
     rows, r = [], 0
     for t in range(n_tracks):
         tid = f"T{t:06d}"
@@ -86,54 +86,56 @@ def _build(root, n_tracks=6, per_track=4, emb_dim=16, feat_dim=12, seed=0):
         hist_max=np.asarray(hist_max, dtype=np.int64),
         in_dim=np.asarray(feat_dim, dtype=np.int64))
 
-    # 색인에 남는 곡 수준 축. **MySQL 에 컬럼이 없는 것만** 담는다.
-    tids = sorted(mom.track_id.unique())
-    pd.DataFrame([{
-        "track_id": t, "bpm": float(rng.uniform(70, 150)),
-        "language": ["ko", "en"][i % 2], "category": GENRES[i % 3],
-        "bpm_lo": 80.0, "bpm_hi": 120.0,
-    } for i, t in enumerate(tids)]).to_parquet(d / "track_features.parquet", index=False)
-
     (d / "index_meta.json").write_text(json.dumps(
-        index_contract.build_meta(rows=len(mom), tracks=len(tids),
+        index_contract.build_meta(rows=len(mom), tracks=len(set(mom.track_id)),
                                   built_at="1970-01-01T00:00:00Z"),
         ensure_ascii=False), encoding="utf-8")
     return d
 
 
-def _catalog_payload(n_tracks=6, per_track=4):
-    """Spring `GET /api/v1/internal/ai/catalog` 응답의 `tracks` 모양 그대로.
+def _catalog_body(n_tracks=6, per_track=4, drop=()):
+    """Spring 이 추천 요청에 싣는 `catalog` 본문 그대로(연동 계약 2026-09-23 절).
 
-    사전을 손으로 채우지 않고 이 모양을 지나가게 하는 이유는, 계약이 바뀌면 시험도
-    함께 깨지게 하려는 것이다. 값은 예전 `flow_meta` 합성값과 같게 두어 **이 변경이
+    열 단위다. 값은 예전 카탈로그·`track_features` 합성값과 같게 두어 **이 변경이
     추천 결과를 바꾸지 않았다**는 것을 다른 시험들이 그대로 확인할 수 있게 한다.
+    `drop` 에 준 곡은 싣지 않는다 — Spring 이 지워진 곡을 뺀 모양이다.
     """
-    # 추천 쪽 어휘는 소문자이고 MySQL ENUM 은 대문자다. 경계에서 한 번 바뀌는지가
-    # 이 시험이 지나가는 길이다.
+    rng = np.random.default_rng(7)
     enum_of = {"intro": "INTRO", "verse": "VERSE", "chorus": "CHORUS",
                "bridge": "BRIDGE"}
-    out = []
+    tracks = {k: [] for k in catalog_body.TRACK_COLS}
+    sections = {k: [] for k in catalog_body.SECTION_COLS}
     for t in range(n_tracks):
         tid = f"T{t:06d}"
-        out.append({
-            "music_id": 1000 + t,
-            "title": f"곡 {tid}",
-            "has_vocal": True,
-            "vocal_gender": ["F", "M"][t % 2],
-            "genres": [GENRES[t % 3]],
-            "moods": [MOODS[t % 2]],
-            "sections": [{
-                "external_id": f"{tid}#{s}",
-                "music_section_analysis_id": 500000 + t * 100 + s,
-                "section_label": enum_of[LABELS4[s % len(LABELS4)]],
-                "index": s,
-                "start_time_ms": s * 30 * 1000,
-                "end_time_ms": (s * 30 + 28) * 1000,
-                "instruments": [INSTRUMENTS[t % 2]],
-                "moods": [],
-            } for s in range(per_track)],
-        })
-    return out
+        bpm = float(rng.uniform(70, 150))
+        if tid in drop:
+            continue
+        for k, v in (("track", tid), ("duration_ms", per_track * 30 * 1000),
+                     ("bpm", bpm), ("bpm_requested_min", 80), ("bpm_requested_max", 120),
+                     ("language", ["ko", "en"][t % 2]), ("category", GENRES[t % 3]),
+                     ("genres", [GENRES[t % 3]]), ("moods", [MOODS[t % 2]]),
+                     ("has_vocal", True), ("vocal_gender", ["F", "M"][t % 2])):
+            tracks[k].append(v)
+        for s_ in range(per_track):
+            for k, v in (("external_id", f"{tid}#{s_}"),
+                         ("section_label", enum_of[LABELS4[s_ % len(LABELS4)]]),
+                         ("start_ms", s_ * 30 * 1000), ("end_ms", (s_ * 30 + 28) * 1000),
+                         ("energy", None)):
+                sections[k].append(v)
+    return {"tracks": tracks, "sections": sections}
+
+
+def _spring_filtered(svc, keep):
+    """Spring 이 검색 조건으로 거른 뒤의 요청 전용 카탈로그. `keep(external_id)` 가 참인 구간만."""
+    body = _catalog_body()
+    sec = body["sections"]
+    idx = [i for i, uid in enumerate(sec["external_id"]) if keep(uid)]
+    body["sections"] = {k: [v[i] for i in idx] for k, v in sec.items()}
+    return svc.CAT.with_catalog(catalog_body.from_body(body))
+
+
+def _label_of(uid: str) -> str:
+    return LABELS4[int(uid.split("#")[1]) % len(LABELS4)]
 
 
 @pytest.fixture(scope="module")
@@ -162,19 +164,16 @@ def svc(tmp_path_factory):
         from ai_server.app import recommender as mod
         return importlib.reload(mod)
 
-    # 곡·순간 메타데이터는 색인이 아니라 Spring 내부 API 에서 온다. 시험은 그
-    # 응답 모양 그대로를 꽂는다 — 망을 타지 않을 뿐 담기는 길은 운영과 같다.
-    catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))
-
+    # 곡·순간 메타데이터는 색인이 아니라 요청 본문으로 온다. 시험은 그 본문 모양
+    # 그대로를 묶는다 — 망을 타지 않을 뿐 담기는 길은 운영과 같다.
     rc = _reload()
-    rc.CAT = rc.Catalog()
+    rc.CAT = rc.Catalog().with_catalog(catalog_body.from_body(_catalog_body()))
     yield rc
 
     if saved_env is None:
         os.environ.pop("MUPID_AI_ARTIFACT_DIR", None)
     else:
         os.environ["MUPID_AI_ARTIFACT_DIR"] = saved_env
-    catalog_api.reset()
     back = _reload()
     back.CAT = None
 
@@ -222,13 +221,16 @@ def test_recommend_honours_exclusion(svc):
     assert first not in [r["track_id"] for r in again]
 
 
-def test_query_plan_actually_gates(svc):
-    """조건이 걸리지 않으면 자연어 검색이 무의미하다."""
-    out = svc.recommend("internal:1", 5, set(), True,
-                        {"filters": {"genre": [GENRES[0]]}})
-    assert out["diagnostics"]["nlp"]["applied"] == ["filters.genre"]
+def test_search_ranks_only_what_spring_sent(svc):
+    """조건 게이트는 Spring 이 건다. 이 서버는 받은 후보 밖으로 나가지 않는다."""
+    view = _spring_filtered(svc, lambda uid: int(uid[1:7]) % 3 == 0)   # GENRES[0] 곡만
+    with svc.using(view):
+        out = svc.recommend("internal:1", 5, set(), True,
+                            {"filters": {"genre": [GENRES[0]]}})
+    assert out["diagnostics"]["nlp"]["gates"] == "spring"
+    assert out["results"]
     for r in out["results"]:
-        assert svc.CAT.track_info(r["track_id"])["category"] == GENRES[0]
+        assert int(r["track_id"][1:]) % 3 == 0
 
 
 def test_query_plan_uses_only_matching_dna_moments(svc, monkeypatch):
@@ -241,8 +243,9 @@ def test_query_plan_uses_only_matching_dna_moments(svc, monkeypatch):
         svc, "other_positives",
         lambda _user: (_ for _ in ()).throw(AssertionError("검색에 타 사용자 이력을 사용했다")))
 
-    out = svc.recommend("internal:query-dna", 4, set(), True,
-                        {"filters": {"flow": "verse"}})
+    with svc.using(_spring_filtered(svc, lambda uid: _label_of(uid) == "verse")):
+        out = svc.recommend("internal:query-dna", 4, set(), True,
+                            {"filters": {"flow": "verse"}})
 
     assert out["diagnostics"]["query_source"] == "labels"
     assert sum(x["n_members"] for x in out["dna"]) == 1
@@ -254,8 +257,9 @@ def test_query_plan_searches_without_dna_when_none_match(svc, monkeypatch):
     pos = pd.DataFrame([{"section_key": "T000001#2", "track_id": "T000001"}])
     monkeypatch.setattr(svc, "user_positives", lambda _user: pos)
 
-    out = svc.recommend("internal:no-query-dna", 4, set(), True,
-                        {"filters": {"flow": "verse", "mood": [MOODS[0]]}})
+    with svc.using(_spring_filtered(svc, lambda uid: _label_of(uid) == "verse")):
+        out = svc.recommend("internal:no-query-dna", 4, set(), True,
+                            {"filters": {"flow": "verse", "mood": [MOODS[0]]}})
 
     assert out["dna"] == []
     assert out["diagnostics"]["query_source"] == "none"
@@ -278,10 +282,11 @@ def test_query_plan_ignores_history_onboarding_bpm_and_explore(svc, monkeypatch)
 
     kwargs = {"user": "internal:isolated-query", "n": 4, "exclude": {"T000005"},
               "explore": True, "onboarding": {"genres": ["ROCK"]}}
-    a = svc.recommend(**kwargs, query_plan={"filters": {"flow": "verse"}},
-                      beh_events=[{"type": "DISLIKE", "track_id": "T000000"}])
-    b = svc.recommend(**kwargs, query_plan={"filters": {"flow": "verse"}},
-                      beh_events=[{"type": "LIKE", "track_id": "T000004"}])
+    with svc.using(_spring_filtered(svc, lambda uid: _label_of(uid) == "verse")):
+        a = svc.recommend(**kwargs, query_plan={"filters": {"flow": "verse"}},
+                          beh_events=[{"type": "DISLIKE", "track_id": "T000000"}])
+        b = svc.recommend(**kwargs, query_plan={"filters": {"flow": "verse"}},
+                          beh_events=[{"type": "LIKE", "track_id": "T000004"}])
 
     assert calls["positives"] == 2  # DNA 확인만; 선호 BPM용 재조회 없음
     assert [x["moment_id"] for x in a["results"]] == [x["moment_id"] for x in b["results"]]
@@ -290,68 +295,6 @@ def test_query_plan_ignores_history_onboarding_bpm_and_explore(svc, monkeypatch)
     assert len({x["track_id"] for x in a["results"]}) == len(a["results"])
     assert a["diagnostics"]["bpm_pref"] == 0
     assert a["diagnostics"]["behavior_source"] == "disabled_for_query"
-
-
-def test_missing_vocal_and_instrument_data_do_not_drop_candidates(svc):
-    """카탈로그가 보컬·악기를 안 주면 그 조건은 **무시**한다 — 후보를 비우지 않는다.
-
-    악기는 이제 곡이 아니라 **구간**에 달린다(MySQL `music_analysis_instruments`).
-    그래서 곡 메타만 비워서는 "악기 데이터가 없다" 가 되지 않는다 — 구간 쪽도 함께
-    비워야 실제로 그 상태가 된다.
-    """
-    old_meta, old_pool, old_mom = svc.CAT.meta.copy(), svc.CAT.pool, svc.CAT.mom
-    svc.CAT.meta["vocal_type"] = ""
-    svc.CAT.meta["voice_label"] = ""
-    svc.CAT.meta["gender_label"] = ""
-    svc.CAT.meta["has_vocal"] = np.nan
-    svc.CAT.meta["vocal_gender"] = ""
-    svc.CAT.meta["instruments"] = ""
-    svc.CAT.pool = old_pool.copy()
-    svc.CAT.mom = old_mom.copy()
-    svc.CAT.pool["instruments"] = ""
-    svc.CAT.mom["instruments"] = ""
-    svc.CAT.__dict__.pop("_facets_cache", None)
-    svc.CAT.__dict__.pop("_facets_by_track", None)
-    try:
-        pool, diag = svc.filter_query_pool(
-            svc.CAT.pool, {"filters": {"vocal": ["female"], "instrument": ["piano"]}},
-            None, None)
-        assert len(pool) == len(svc.CAT.pool)
-        assert set(diag["ignored"]) == {
-            "vocal(카탈로그 데이터 없음)", "instrument(카탈로그 데이터 없음)"}
-    finally:
-        svc.CAT.meta, svc.CAT.pool, svc.CAT.mom = old_meta, old_pool, old_mom
-        svc.CAT.__dict__.pop("_facets_cache", None)
-        svc.CAT.__dict__.pop("_facets_by_track", None)
-
-
-def test_instrument_filter_uses_each_moments_instruments(svc):
-    old_pool, old_mom = svc.CAT.pool, svc.CAT.mom
-    svc.CAT.pool = old_pool.copy()
-    svc.CAT.mom = old_mom.copy()
-    svc.CAT.pool["instruments"] = svc.CAT.pool.section_idx.map(
-        lambda i: ["piano"] if i % 2 == 0 else ["guitar"])
-    svc.CAT.mom["instruments"] = svc.CAT.mom.section_idx.map(
-        lambda i: ["piano"] if i % 2 == 0 else ["guitar"])
-    svc.CAT.__dict__.pop("_facets_cache", None)
-    svc.CAT.__dict__.pop("_facets_by_track", None)
-    try:
-        pool, diag = svc.filter_query_pool(
-            svc.CAT.pool, {"filters": {"instrument": ["guitar"]}}, None, None)
-        assert not pool.empty and set(pool.section_idx) == {1, 3}
-        assert "filters.instrument" in diag["applied"]
-    finally:
-        svc.CAT.pool, svc.CAT.mom = old_pool, old_mom
-        svc.CAT.__dict__.pop("_facets_cache", None)
-        svc.CAT.__dict__.pop("_facets_by_track", None)
-
-
-def test_unsatisfiable_condition_returns_nothing_not_anything(svc):
-    """어휘에 없는 조건을 조용히 풀고 아무 곡이나 주면 안 된다."""
-    out = svc.recommend("internal:1", 5, set(), True,
-                        {"filters": {"genre": ["존재하지않는장르"]}})
-    assert out["results"] == []
-    assert out["diagnostics"]["nlp"]["unsatisfiable"]
 
 
 def test_mood_filter_reranks_without_dropping(svc):
@@ -406,25 +349,6 @@ def test_one_axis_left_still_makes_a_seed(svc):
     assert out["diagnostics"]["onboarding_source"] == "request"
 
 
-def test_a_value_already_in_the_vocabulary_is_not_rewritten_by_an_alias(svc):
-    """별칭표가 **어휘에 있는 값**을 덮으면 조건이 통째로 사라진다.
-
-    어휘 전환(2026-09-21) 뒤에 실제로 걸렸다. `calm`·`serene` 은 이제 코드 이름
-    그 자체인데 별칭표가 옛 카탈로그 태그(`relaxing`·`meditative`)로 바꿔 놓았고,
-    그 태그가 없어져 `filters.mood` 가 빈 목록이 됐다 — 사용자가 "고요한" 을
-    골랐는데 아무 곡이나 나오는 상태였다. 오류는 나지 않는다.
-    """
-    out = svc.recommend("internal:1", 6, set(), True,
-                        {"filters": {"mood": ["calm"]}})
-    assert out["diagnostics"]["nlp"]["plan"]["filters"]["mood"] == ["calm"]
-    assert "mood_rerank" in out["diagnostics"], "조건이 사라졌다"
-
-    # 어휘에 없는 말은 여전히 별칭을 거친다. 거쳐도 못 맞추면 그냥 떨어진다.
-    unknown = svc.recommend("internal:1", 6, set(), True,
-                            {"filters": {"mood": ["존재하지않는무드"]}})
-    assert unknown["diagnostics"]["nlp"]["plan"]["filters"]["mood"] == []
-
-
 def test_ranking_is_unchanged_when_no_mood_is_asked(svc):
     """soft rerank 를 넣기 전과 순위가 같아야 한다. 동결 약속의 실증이다."""
     a = [r["moment_id"] for r in svc.recommend("internal:1", 6, set(), False)["results"]]
@@ -464,7 +388,7 @@ def test_internal_api_end_to_end(svc):
 
     # `daily` 는 개수를 받지 않는다 — 4개 고정이다(`internal_api.DAILY_LIMIT`).
     r = c.post("/internal/recommendations/daily",
-               json={"recommendation_id": 1, "user_id": 7})
+               json={"recommendation_id": 1, "user_id": 7, "catalog": _catalog_body()})
     assert r.status_code == 200, r.text
     body = r.json()
     assert len(body["items"]) == internal_api.DAILY_LIMIT
@@ -482,7 +406,8 @@ def test_internal_api_end_to_end(svc):
         assert leaked not in raw, leaked
 
     assert c.get("/internal/ready").status_code == 200
-    assert c.get("/internal/facets").json()["fields"]["genre"]["values"]
+    # 조건 어휘는 Spring 이 만든다. 이 서버에는 그 경로가 없다.
+    assert c.get("/internal/facets").status_code == 404
 
 
 def test_pool_source_counts_are_reported(svc):
@@ -557,13 +482,12 @@ def test_facets_cache_dies_with_the_catalog(svc):
     a = svc.catalog_facets()
     assert svc.catalog_facets() is a, "같은 카탈로그인데 다시 만들었다"
 
-    old = svc.CAT
-    svc.CAT = svc.Catalog()                 # 산출물 교체 흉내
-    try:
+    # 요청마다 다른 본문 → 다른 사본. 사본의 어휘가 옛 사본에서 새면 안 된다.
+    other = svc.CAT.with_catalog(catalog_body.from_body(_catalog_body(drop={"T000000"})))
+    with svc.using(other):
         b = svc.catalog_facets()
-        assert b is not a, "카탈로그를 바꿨는데 옛 캐시를 돌려줬다"
-    finally:
-        svc.CAT = old
+    assert b is not a, "후보를 바꿨는데 옛 캐시를 돌려줬다"
+    assert "T000000" not in set(b["_df"].track_id)
 
 
 def test_facet_rows_match_the_dataframe(svc):
@@ -579,42 +503,6 @@ def test_facet_rows_match_the_dataframe(svc):
             assert list(meta[t].get(col) or []) == list(fac.loc[t].get(col) or []), (t, col)
 
 
-def test_query_gate_result_is_unchanged_by_the_cache(svc):
-    """두 번 불러도 같은 후보·같은 진단이어야 한다."""
-    fx = svc.catalog_facets()
-    pick = lambda k, n=2: [x["value"] for x in fx.get(k, [])[:n]]
-    plan = {"filters": {"genre": pick("genre", 3), "language": pick("language", 2)},
-            "exclude": {"mood": pick("mood", 1)}}
-    a_pool, a_diag = svc.filter_query_pool(svc.CAT.pool, dict(plan), None, None)
-    b_pool, b_diag = svc.filter_query_pool(svc.CAT.pool, dict(plan), None, None)
-    assert a_diag == b_diag
-    assert a_pool.moment_id.tolist() == b_pool.moment_id.tolist()
-
-
-# ------------------------------------- 메타데이터의 정본은 MySQL 이다 (색인이 아니다)
-
-def test_catalog_axes_actually_gate_candidates(svc):
-    """내부 API 가 준 장르·무드·보컬·악기가 **실제로 후보를 거른다.**
-
-    한 축이 안 실리면 오류가 아니라 "조건을 걸었는데 아무 곡도 안 걸러진" 결과가
-    나온다. 그래서 축마다 걸러진 수가 0보다 큰지 본다.
-    """
-    full = len(svc.CAT.pool)
-    for axis, value in (("genre", GENRES[0]), ("vocal", "female"),
-                        ("instrument", INSTRUMENTS[0])):
-        pool, diag = svc.filter_query_pool(
-            svc.CAT.pool, {"filters": {axis: [value]}}, None, None)
-        assert f"filters.{axis}" in diag["applied"], f"{axis} 축이 게이트에 안 걸렸다"
-        assert 0 < len(pool) < full, f"{axis}={value} 가 아무것도 거르지 않았다"
-
-    # 무드는 **거르지 않고 재정렬만** 한다(`MOOD_WEIGHT`) — 추론 가능성이 커서
-    # 그렇게 둔 것이다. 그래서 값이 실렸는지는 빼는 쪽으로 확인한다.
-    pool, diag = svc.filter_query_pool(
-        svc.CAT.pool, {"exclude": {"mood": [MOODS[0]]}}, None, None)
-    assert "exclude.mood" in diag["applied"], "무드 축이 카탈로그에서 안 실렸다"
-    assert 0 < len(pool) < full
-
-
 def test_moment_metadata_comes_from_the_catalog_not_the_index(svc):
     """구간 종류·시각·악기는 색인에 없고 카탈로그에서 붙는다."""
     mom = svc.CAT.mom.set_index(svc.CAT.mom.moment_id.astype(str))
@@ -623,7 +511,9 @@ def test_moment_metadata_comes_from_the_catalog_not_the_index(svc):
     assert row.section_label == "chorus", "MySQL ENUM 이 추천 어휘로 안 바뀌었다"
     assert float(row.start_sec) == 60.0 and float(row.end_sec) == 88.0
     assert float(row.dur_sec) == 28.0, "길이는 시각에서 다시 세야 한다"
-    assert row.instruments == INSTRUMENTS[0]
+    # 곡 안 상대 위치도 본문의 시각·곡 길이에서 다시 센다. 분석 때 경계로 굳어 있으면
+    # MySQL 에서 경계를 고쳐도 옛 위치로 점수가 나간다.
+    assert float(row.rel_start) == 60.0 / 120.0
 
 
 def test_a_song_missing_from_the_catalog_leaves_the_pool(svc):
@@ -632,28 +522,56 @@ def test_a_song_missing_from_the_catalog_leaves_the_pool(svc):
     남겨 두면 Spring 이 `external_id` 를 못 찾아 그 줄을 버린다 — 화면에는 오류가
     아니라 "추천이 몇 개 비어 보인다" 로 나온다.
     """
-    keep = [t for t in _catalog_payload() if t["music_id"] != 1000]
     before = svc.CAT
-    catalog_api.install(catalog_api.snapshot_from_tracks(keep))
-    try:
-        rebuilt = svc.Catalog()
-        assert "T000000" not in set(rebuilt.pool.track_id)
-        assert rebuilt.moments_outside_catalog == 4
-        assert len(rebuilt.pool) == len(before.pool) - 4
-    finally:
-        catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))
+    rebuilt = svc.CAT.with_catalog(catalog_body.from_body(_catalog_body(drop={"T000000"})))
+    assert "T000000" not in set(rebuilt.pool.track_id)
+    assert rebuilt.moments_outside_catalog == 4
+    assert len(rebuilt.pool) == len(before.pool) - 4
 
 
-def test_the_index_alone_cannot_serve(svc):
-    """카탈로그 없이 색인만으로는 추천하지 않는다.
+def test_the_index_alone_has_no_candidates(svc):
+    """본문 없이 색인만으로는 후보가 없다 — 추천은 언제나 Spring 이 보낸 후보 안에서다.
 
-    뜨게 두면 장르·무드·보컬·악기 조건이 통째로 빈 채 추천이 나가고, 그것은
-    응답만 봐서는 정상과 구분되지 않는다.
+    기동에서 Spring 을 부르지 않으므로 색인만 올린 기준 판이 뜬다. 그 판의 후보가 0 이라
+    본문 없는 추천이 나갈 길이 없다.
     """
-    catalog_api.reset()
-    try:
-        with pytest.raises(RuntimeError) as e:
-            svc.Catalog()
-        assert "카탈로그" in str(e.value)
-    finally:
-        catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))
+    base = svc.Catalog()
+    assert len(base.pool) == 0
+
+
+def test_the_catalog_body_is_refused_when_its_shape_is_wrong():
+    """모양이 계약과 다르면 조용히 고쳐 받지 않는다."""
+    body = _catalog_body()
+    body["sections"]["end_ms"] = body["sections"]["end_ms"][:-1]
+    with pytest.raises(catalog_body.CatalogBodyError):
+        catalog_body.from_body(body)
+    orphan = _catalog_body()
+    orphan["tracks"] = {k: v[1:] for k, v in orphan["tracks"].items()}
+    with pytest.raises(catalog_body.CatalogBodyError, match="tracks 에 없는 곡"):
+        catalog_body.from_body(orphan)
+
+
+def test_concurrent_requests_do_not_see_each_others_candidates(svc):
+    """요청마다 사본을 격리한다. 전역을 바꿔 끼우면 동시에 든 요청끼리 후보가 섞인다."""
+    import threading
+
+    only_a = _spring_filtered(svc, lambda uid: uid.startswith("T000001"))
+    only_b = _spring_filtered(svc, lambda uid: uid.startswith("T000002"))
+    seen: dict = {}
+    gate = threading.Barrier(2)
+
+    def run(name, view, want):
+        with svc.using(view):
+            gate.wait()
+            seen[name] = {r["track_id"] for r in
+                          svc.recommend("internal:1", 3, set(), True,
+                                        {"filters": {"genre": ["x"]}})["results"]}
+            seen[name + "_ok"] = seen[name] <= {want}
+
+    ts = [threading.Thread(target=run, args=("a", only_a, "T000001")),
+          threading.Thread(target=run, args=("b", only_b, "T000002"))]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert seen["a_ok"] and seen["b_ok"], seen

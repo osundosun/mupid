@@ -30,6 +30,28 @@ def restore_service_module():
     internal_api._SVC_MOD = saved
 
 
+# 요청 본문의 `catalog`(연동 계약 2026-09-23 절). 가짜 서비스는 값을 읽지 않는다 —
+# 계약상 필수라 싣는다. 모양 검증은 `catalog_body` 시험이 한다.
+CATALOG = {"tracks": {"track": ["A"]},
+           "sections": {"external_id": ["A#0"], "section_label": ["CHORUS"],
+                        "start_ms": [0], "end_ms": [10000]}}
+
+
+class _FakeCat:
+    """가짜 서비스의 카탈로그. 본문을 묶어도 후보가 하나 있는 자기 자신을 돌려준다."""
+
+    pool = [1]
+
+    def with_catalog(self, snap):
+        return self
+
+
+def _using(view):
+    import contextlib
+
+    return contextlib.nullcontext(view)
+
+
 @pytest.fixture
 def clean_env(monkeypatch):
     # 상태 디렉터리도 함께 지운다. 남아 있으면 라벨·이벤트 로그만 딴 곳을 가리켜
@@ -157,142 +179,31 @@ def test_track_id_is_the_part_before_the_hash():
 
 
 # ------------------------------------------------------------------ 자연어 검색
-def test_parse_nlp_query_reports_not_configured(monkeypatch):
-    """해석기가 없으면 일반 추천으로 조용히 넘어가지 않는다."""
-    from ai_server.app import recommender
+def test_search_requires_a_query_plan():
+    """조건은 Spring 이 건다. 원문만 오면 여기서 조건으로 바꿀 길이 없어 거절한다."""
+    from types import SimpleNamespace
 
-    monkeypatch.setattr(recommender, "NLP_PARSE_URL", "")
-    plan, error = recommender.parse_nlp_query("조용한 피아노 음악")
-    assert plan is None
-    assert error is not None and error[0] == "SEARCH_NOT_CONFIGURED"
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
 
-
-def test_parse_nlp_query_reports_call_failure(monkeypatch):
-    from ai_server.app import recommender
-
-    monkeypatch.setattr(recommender, "NLP_PARSE_URL", "http://127.0.0.1:9/parse")
-    plan, error = recommender.parse_nlp_query("조용한 피아노 음악")
-    assert plan is None
-    assert error is not None and error[0] == "INTERNAL_ERROR"
-    assert "127.0.0.1" not in error[1], "내부 주소를 메시지에 싣지 않는다"
+    app = FastAPI()
+    internal_api.install(app, SimpleNamespace(CAT=_FakeCat(), using=_using))
+    r = TestClient(app).post("/internal/recommendations/search",
+                             json={"catalog": CATALOG, "recommendation_id": 1, "user_id": 1,
+                                   "catalog": CATALOG, "query": "조용한 피아노 음악"})
+    assert r.status_code == 400, r.text
+    assert r.json()["error_code"] == "INVALID_REQUEST"
 
 
-def test_nlp_env_var_is_single():
-    """게이트와 호출부가 같은 변수를 봐야 한다. 예전엔 MUPID_NLP_URL 로 갈라져 있었다."""
+def test_nlp_interpreter_env_is_gone():
+    """원문 해석기를 되살리면 Spring 이 거를 수 없는 조건이 생긴다."""
     for f in (Path(__file__).resolve().parents[1] / "app").glob("*.py"):
-        assert "MUPID_NLP_URL" not in f.read_text(encoding="utf-8"), f.name
-
-
-def test_search_without_interpreter_returns_501():
-    """해석기 미설정은 400 이 아니라 501 이어야 한다 (Spring 재시도 정책이 코드를 본다)."""
-    from types import SimpleNamespace
-
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    fake = SimpleNamespace(NLP_PARSE_URL="", CAT=None)
-    app = FastAPI()
-    internal_api.install(app, fake)
-    r = TestClient(app).post("/internal/recommendations/search",
-                             json={"recommendation_id": 1, "user_id": 1,
-                                   "query": "조용한 피아노 음악"})
-    assert r.status_code == 501, r.text
-    assert r.json()["error_code"] == "SEARCH_NOT_CONFIGURED"
-
-
-def test_search_parse_failure_is_not_silently_downgraded():
-    """파싱에 실패했는데 200 + 일반 추천이 나가면 조건을 몰래 푼 것이다."""
-    from types import SimpleNamespace
-
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    called: list[str] = []
-
-    def _recommend(*a, **k):
-        called.append("recommend")
-        return {"results": [], "diagnostics": {}}
-
-    fake = SimpleNamespace(
-        NLP_PARSE_URL="http://interpreter/parse",
-        CAT=SimpleNamespace(pool=[1]),
-        parse_nlp_query=lambda t: (None, ("INTERNAL_ERROR", "자연어 해석기 호출 실패")),
-        recommend=_recommend)
-    app = FastAPI()
-    internal_api.install(app, fake)
-    r = TestClient(app).post("/internal/recommendations/search",
-                             json={"recommendation_id": 1, "user_id": 1,
-                                   "query": "조용한 피아노 음악"})
-    assert r.status_code == 500, r.text
-    assert r.json()["error_code"] == "INTERNAL_ERROR"
-    assert not called, "조건을 못 뽑았는데 추천을 계산했다"
+        text = f.read_text(encoding="utf-8")
+        assert "MUPID_NLP_URL" not in text, f.name
+        assert 'os.environ.get("MUPID_AI_NLP_URL"' not in text, f.name
 
 
 # ------------------------------------------------------------------ 태그 어휘
-def _fake_facets_svc():
-    """`catalog_facets()` 모양만 흉내 낸다. 산출물을 읽지 않는다."""
-    from types import SimpleNamespace
-
-    import pandas as pd
-
-    df = pd.DataFrame([{"track_id": "T1", "bpm": 90.0}, {"track_id": "T2", "bpm": 140.0}])
-    fac = {
-        "language": [{"value": "ko", "label": "ko", "tracks": 2}],
-        "vocal": [{"value": "female", "label": "female", "tracks": 1}],
-        "style": [{"value": "ko_ballad", "label": "ko_ballad", "tracks": 1}],
-        "genre": [{"value": "pop", "label": "pop", "tracks": 2}],
-        "mood": [{"value": "relaxing", "label": "relaxing", "tracks": 2}],
-        "instrument": [{"value": "piano", "label": "piano", "tracks": 2}],
-        "tempo": [], "section_label": [{"value": "chorus", "label": "chorus", "moments": 4}],
-        "_df": df,
-    }
-    pool = pd.DataFrame([{"track_id": "T1"}, {"track_id": "T2"}, {"track_id": "T2"}])
-    return SimpleNamespace(catalog_facets=lambda: fac, CAT=SimpleNamespace(pool=pool))
-
-
-@pytest.fixture
-def facets_payload(monkeypatch):
-    monkeypatch.setattr(internal_api, "_FACETS_CACHE", {})
-    return internal_api._facets_payload(_fake_facets_svc())
-
-
-def test_facets_reports_catalog_vocabulary(facets_payload):
-    assert facets_payload["catalog"] == {"tracks": 2, "moments": 3}
-    genre = facets_payload["fields"]["genre"]
-    assert {"value": "pop", "tracks": 2} in genre["values"]
-    # 장르 게이트는 style 에도 맞춰 본다 — 어휘를 함께 알려야 한다.
-    assert {"value": "ko_ballad", "tracks": 1} in genre["style_values"]
-    assert facets_payload["fields"]["flow"]["values"][0]["value"] == "chorus"
-    assert facets_payload["fields"]["bpm_min"]["range"] == [90, 140]
-
-
-def test_facets_states_how_each_field_is_enforced(facets_payload):
-    """`mood` 로 거를 수 있다고 믿게 두면 조건이 조용히 사라진다."""
-    f = facets_payload["fields"]
-    assert f["mood"]["enforcement"] == "score_only"
-    assert f["mood"]["excludable"] is True          # exclude.mood 는 게이트다
-    assert f["genre"]["enforcement"] == "gate"
-    assert f["activity"]["enforcement"] == "ignored"
-    assert f["tempo_direction"]["enforcement"] == "gate_with_reference"
-
-
-def test_facets_fields_match_the_recommender_plan_keys():
-    """어휘 표가 추천기가 실제로 읽는 키와 어긋나면 LLM 이 헛 조건을 만든다."""
-    src = (Path(__file__).resolve().parents[1] / "app" / "recommender.py").read_text(
-        encoding="utf-8")
-    body = src[src.index("def filter_query_pool"):src.index("def _flow_penalty")]
-    for name in internal_api._ENFORCEMENT:
-        assert f'"{name}"' in body, name
-
-
-def test_facets_payload_is_json_safe(facets_payload):
-    """`catalog_facets()` 는 DataFrame(`_df`)을 함께 돌려준다. 새면 직렬화가 터진다."""
-    import json
-
-    json.dumps(facets_payload)
-    assert "_df" not in json.dumps(facets_payload)
-
-
 def test_catalog_tags_match_service_vocal_fields_and_hide_missing_values():
     from ai_server.app import recommender
 
@@ -465,7 +376,7 @@ def test_search_requires_query_or_plan():
 def test_query_plan_keeps_only_readable_keys():
     from ai_server.app.internal_api import SearchRequest
 
-    req = SearchRequest(recommendation_id=1, user_id=1, query_plan={
+    req = SearchRequest(recommendation_id=1, user_id=1, catalog=CATALOG, query_plan={
         "filters": {"genre": ["pop"], "_clap_embedding": [0.1, 0.2]},
         "exclude": {"mood": ["aggressive"]},
         "junk": 1})
@@ -477,7 +388,7 @@ def test_query_plan_rejects_embedding_injection():
     """의미 점수 벡터는 내부 전용이다. 바깥에서 주입하지 못한다."""
     from ai_server.app.internal_api import SearchRequest
 
-    req = SearchRequest(recommendation_id=1, user_id=1,
+    req = SearchRequest(recommendation_id=1, user_id=1, catalog=CATALOG,
                         query_plan={"filters": {"_clap_embedding": [1.0]},
                                     "exclude": {"genre": ["rock"]}})
     assert "_clap_embedding" not in req.query_plan["filters"]
@@ -497,13 +408,13 @@ def test_query_plan_path_does_not_need_interpreter():
         seen.update(kw)      # 주입 인자가 늘어도 이 가짜는 깨지지 않는다
         return {"results": [], "diagnostics": {"shortfall": 0}}
 
-    fake = SimpleNamespace(NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]),
+    fake = SimpleNamespace(CAT=_FakeCat(), using=_using,
                            recommend=_recommend,
-                           parse_nlp_query=lambda t: (None, ("INTERNAL_ERROR", "불려선 안 된다")))
+                           )
     app = FastAPI()
     internal_api.install(app, fake)
     r = TestClient(app).post("/internal/recommendations/search",
-                             json={"recommendation_id": 1, "user_id": 1,
+                             json={"catalog": CATALOG, "recommendation_id": 1, "user_id": 1,
                                    "query_plan": {"filters": {"genre": ["pop"]}}})
     assert r.status_code == 404, r.text          # 후보 0 → NO_CANDIDATES (501 아님)
     assert r.json()["error_code"] == "NO_CANDIDATES"
@@ -527,7 +438,7 @@ def _daily_probe():
         seen["n"] = n
         return {"results": [], "diagnostics": {"shortfall": 0}}
 
-    fake = SimpleNamespace(NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]),
+    fake = SimpleNamespace(CAT=_FakeCat(), using=_using,
                            recommend=_recommend)
     app = FastAPI()
     internal_api.install(app, fake)
@@ -538,7 +449,7 @@ def test_daily_asks_for_exactly_four():
     """`limit` 을 안 보내면 4다. 화면이 아니라 서버가 그날의 크기를 정한다."""
     client, seen = _daily_probe()
     client.post("/internal/recommendations/daily",
-                json={"recommendation_id": 1, "user_id": 1})
+                json={"catalog": CATALOG, "recommendation_id": 1, "user_id": 1})
     assert seen["n"] == internal_api.DAILY_LIMIT == 4
 
 
@@ -546,7 +457,7 @@ def test_daily_accepts_the_fixed_count_spelled_out():
     """이미 `limit: 4` 를 보내던 호출자를 깨뜨리지 않는다."""
     client, seen = _daily_probe()
     r = client.post("/internal/recommendations/daily",
-                    json={"recommendation_id": 1, "user_id": 1, "limit": 4})
+                    json={"catalog": CATALOG, "recommendation_id": 1, "user_id": 1, "limit": 4})
     assert r.status_code == 404, r.text          # 후보 0 → NO_CANDIDATES
     assert seen["n"] == 4
 
@@ -560,7 +471,7 @@ def test_daily_refuses_any_other_count():
     client, seen = _daily_probe()
     for n in (1, 3, 5, 10, 50):
         r = client.post("/internal/recommendations/daily",
-                        json={"recommendation_id": 1, "user_id": 1, "limit": n})
+                        json={"catalog": CATALOG, "recommendation_id": 1, "user_id": 1, "limit": n})
         assert r.status_code == 400, (n, r.text)
         assert r.json()["error_code"] == "INVALID_REQUEST"
     assert "n" not in seen, "거부했는데 추천을 계산했다"
@@ -568,8 +479,10 @@ def test_daily_refuses_any_other_count():
 
 def test_next_and_search_still_choose_their_own_count():
     """고정은 `daily` 만이다. 이어 듣기·검색까지 4로 묶으면 다른 화면이 망가진다."""
-    assert internal_api.NextRequest(recommendation_id=1, user_id=1, limit=10).limit == 10
-    assert internal_api.SearchRequest(recommendation_id=1, user_id=1, query="잔잔한",
+    assert internal_api.NextRequest(recommendation_id=1, user_id=1, catalog=CATALOG,
+                                    limit=10).limit == 10
+    assert internal_api.SearchRequest(recommendation_id=1, user_id=1, catalog=CATALOG,
+                                      query_plan={"filters": {"mood": ["calm"]}},
                                       limit=20).limit == 20
 
 
@@ -656,12 +569,12 @@ def _onboarding_probe(catalog: list, moods: list, genres: list) -> dict:
     metrics.reset()
     app = FastAPI()
     internal_api.install(app, SimpleNamespace(
-        NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]),
+        CAT=_FakeCat(), using=_using,
         recommend=lambda *a, **k: {"results": [], "diagnostics": {"shortfall": 0}},
         catalog_facets=lambda: {"genre": [{"value": v} for v in catalog],
                                 "style": []}))
     TestClient(app).post("/internal/recommendations/daily",
-                         json={"recommendation_id": 1, "user_id": 1,
+                         json={"catalog": CATALOG, "recommendation_id": 1, "user_id": 1,
                                "onboarding": {"moods": moods, "genres": genres}})
     return metrics.snapshot()["onboarding_unmapped"]
 
@@ -747,9 +660,9 @@ def test_behavior_failure_falls_back_to_dna_not_to_the_stale_file(behavior_env, 
 
     app = FastAPI()
     internal_api.install(app, SimpleNamespace(
-        NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]), recommend=_recommend))
+        CAT=_FakeCat(), using=_using, recommend=_recommend))
     TestClient(app).post("/internal/recommendations/daily",
-                         json={"recommendation_id": 1, "user_id": 1})
+                         json={"catalog": CATALOG, "recommendation_id": 1, "user_id": 1})
 
     assert "beh_events" in seen, "추천을 아예 부르지 않았다"
     assert seen["beh_events"] == [], \
@@ -1001,7 +914,7 @@ def test_env_files_are_ignored():
 def _similar_svc(rows):
     from types import SimpleNamespace
 
-    return SimpleNamespace(CAT=SimpleNamespace(pool=[1]),
+    return SimpleNamespace(CAT=_FakeCat(), using=_using,
                            similar_moments=lambda uid, n, drop: rows[:n])
 
 
@@ -1027,7 +940,7 @@ def similar_client():
 def test_similar_returns_string_ids(similar_client):
     """숫자 ID·시간·구간 종류를 싣지 않는다 — Spring 이 external_id 로 찾는다."""
     c = similar_client([_srow("B", 1, sim=0.91), _srow("C", 2, sim=0.77)])
-    r = c.post("/internal/similar", json={"external_id": "A#0", "limit": 5})
+    r = c.post("/internal/similar", json={"catalog": CATALOG, "external_id": "A#0", "limit": 5})
     assert r.status_code == 200, r.text
     body = r.json()
     assert [i["external_id"] for i in body["items"]] == ["B#1", "C#2"]
@@ -1042,7 +955,7 @@ def test_similar_returns_string_ids(similar_client):
 def test_similar_has_no_personalization_field(similar_client):
     """개인화가 없으므로 사유·점수 필드를 만들어 붙이지 않는다."""
     c = similar_client([_srow("B", 1)])
-    body = c.post("/internal/similar", json={"external_id": "A#0"}).json()
+    body = c.post("/internal/similar", json={"catalog": CATALOG, "external_id": "A#0"}).json()
     assert "reason" not in body["items"][0]
     assert "reason_code" not in body["items"][0]
 
@@ -1050,14 +963,14 @@ def test_similar_has_no_personalization_field(similar_client):
 def test_similar_reports_shortfall(similar_client):
     """후보가 모자라면 임의로 채우지 않고 부족분을 적는다."""
     c = similar_client([_srow("B", 1)])
-    body = c.post("/internal/similar", json={"external_id": "A#0", "limit": 3}).json()
+    body = c.post("/internal/similar", json={"catalog": CATALOG, "external_id": "A#0", "limit": 3}).json()
     assert len(body["items"]) == 1 and body["shortfall"] == 2
 
 
 def test_similar_rejects_user_id(similar_client):
     """개인화 API 가 아니다. user_id 를 받으면 계약을 오해한 것이다."""
     c = similar_client([_srow("B", 1)])
-    r = c.post("/internal/similar", json={"external_id": "A#0", "user_id": 1})
+    r = c.post("/internal/similar", json={"catalog": CATALOG, "external_id": "A#0", "user_id": 1})
     assert r.status_code == 400
 
 
@@ -1104,7 +1017,7 @@ def test_error_rate_and_codes(fresh_metrics):
 
 def test_metrics_endpoint_includes_ready(similar_client, fresh_metrics):
     c = similar_client([_srow("B", 1)])
-    c.post("/internal/similar", json={"external_id": "A#0"})
+    c.post("/internal/similar", json={"catalog": CATALOG, "external_id": "A#0"})
     body = c.get("/internal/metrics").json()
     assert body["requests"]["total"] >= 1
     assert "/internal/similar" in body["requests"]["by_path"]
@@ -1126,13 +1039,13 @@ def test_internal_is_open_by_default(similar_client, monkeypatch):
     """기본은 꺼져 있어야 한다. 켜 두고 Spring 에 넣어 주지 않으면 추천이 통째로 막힌다."""
     monkeypatch.delenv("MUPID_AI_INTERNAL_TOKEN", raising=False)
     c = similar_client([_srow("B", 1)])
-    assert c.post("/internal/similar", json={"external_id": "A#0"}).status_code == 200
+    assert c.post("/internal/similar", json={"catalog": CATALOG, "external_id": "A#0"}).status_code == 200
 
 
 def test_internal_token_is_enforced_when_set(similar_client, monkeypatch):
     monkeypatch.setenv("MUPID_AI_INTERNAL_TOKEN", "s3cret")
     c = similar_client([_srow("B", 1)])
-    body = {"external_id": "A#0"}
+    body = {"external_id": "A#0", "catalog": CATALOG}
 
     r = c.post("/internal/similar", json=body)
     assert r.status_code == 401 and r.json()["error_code"] == "UNAUTHORIZED"
@@ -2172,12 +2085,12 @@ def test_missing_genre_catalog_does_not_kill_the_request():
     def _boom():
         raise RuntimeError("색인 없음")
 
-    fake = SimpleNamespace(NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]),
+    fake = SimpleNamespace(CAT=_FakeCat(), using=_using,
                            recommend=_recommend, catalog_facets=_boom)
     app = FastAPI()
     internal_api.install(app, fake)
     r = TestClient(app).post("/internal/recommendations/daily",
-                             json={"recommendation_id": 1, "user_id": 1,
+                             json={"catalog": CATALOG, "recommendation_id": 1, "user_id": 1,
                                    "onboarding": {"moods": ["고요한"],
                                                   "genres": ["Jazz"]}})
     assert r.status_code == 404, r.text          # 후보 0 → NO_CANDIDATES (500 아님)
@@ -2581,12 +2494,12 @@ def test_request_carries_onboarding_into_recommend():
         return {"results": [], "diagnostics": {"shortfall": 0}}
 
     fake = SimpleNamespace(
-        NLP_PARSE_URL="", CAT=SimpleNamespace(pool=[1]), recommend=_recommend,
+        CAT=_FakeCat(), using=_using, recommend=_recommend,
         catalog_facets=lambda: {"genre": [{"value": "modern_jazz"}]})
     app = FastAPI()
     internal_api.install(app, fake)
     TestClient(app).post("/internal/recommendations/daily",
-                         json={"recommendation_id": 1, "user_id": 1,
+                         json={"catalog": CATALOG, "recommendation_id": 1, "user_id": 1,
                                "onboarding": {"moods": ["고요한"],
                                               "genres": ["modern_jazz"]}})
     assert seen["onboarding"] is not None, "온보딩이 추천기까지 닿지 않았다"
@@ -2967,7 +2880,7 @@ def test_run_labeler_builds_the_catalog_from_the_sections_table(monkeypatch, cap
     """라벨러는 스냅샷을 **넘겨서** Catalog 를 만든다. 전역 카탈로그를 보지 않는다."""
     import sys
 
-    from ai_server.app import catalog_api, recommender, track_sections
+    from ai_server.app import recommender, track_sections
     from ai_server.app import main as appmain
     from ai_server.tools import run_labeler
 
@@ -2982,8 +2895,6 @@ def test_run_labeler_builds_the_catalog_from_the_sections_table(monkeypatch, cap
 
     monkeypatch.setattr(appmain, "check_integrity", lambda: {"ok": True, "errors": []})
     monkeypatch.setattr(track_sections, "load", lambda: snap)
-    monkeypatch.setattr(catalog_api, "snapshot",
-                        lambda: pytest.fail("전역 카탈로그를 봤다"))
     monkeypatch.setattr(recommender, "Catalog", _Cat)
     monkeypatch.setattr(recommender, "learn", lambda req: {
         "users": [], "labels": 0, "preferences_saved": 0, "path": "x"})

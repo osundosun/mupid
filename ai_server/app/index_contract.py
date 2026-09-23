@@ -15,15 +15,10 @@
 것이 맞다 — 그 상태로 뜨면 장르 없는 추천이 조용히 나간다. 판을 되돌릴 때는 코드도
 함께 되돌린다.
 
-## 카탈로그와의 대조
+## 카탈로그와의 대조는 하지 않는다
 
-표식만으로는 "이 판이 **이 카탈로그**와 짝인가" 를 알 수 없다. 그래서 풀의
-`moment_id`(= `external_id`) 가 카탈로그에 얼마나 있는지를 함께 본다.
-
-  · 0% — 판과 카탈로그가 아예 다른 세계다. 기동을 막는다.
-  · 100% 미만 — 지워진 곡이 있으면 정상이다. 수를 남기고 계속한다.
-  · `MUPID_AI_CATALOG_MIN_COVERAGE` 아래 — 판이 잘못 올라갔다고 본다(기본 0.5).
-    합법적인 삭제가 한 번에 절반을 넘는 일은 없다.
+예전에는 기동 때 Spring 카탈로그와 풀의 겹침을 쟀다. 이제 후보는 요청마다 본문으로
+오고(연동 계약 2026-09-23 절), 본문에 있는데 색인에 없는 구간은 그 요청에서 빠질 뿐이다.
 """
 from __future__ import annotations
 
@@ -35,12 +30,13 @@ from . import paths
 
 CONTRACT = 2
 SOURCE = "spring-internal-v1"
-DEFAULT_MIN_COVERAGE = 0.5
 
 # 새 판에 있어서는 **안 되는** 파일. 걷어낸 사본이 그대로 실려 오면, 다음 사람이
 # "있으니까 읽어도 되겠지" 로 되돌린다. 있으면 알린다(기동은 막지 않는다 — 파일이
 # 있다는 것과 그것을 읽는다는 것은 다르고, 읽지 않는다는 보장은 코드가 한다).
-RETIRED_FILES = ("flow_meta.parquet", "content.parquet")
+# `track_features.parquet` 도 걷어냈다 — BPM·언어·스타일은 MySQL 이 정본이고 요청
+# 본문으로 온다(연동 계약 2026-09-23 절).
+RETIRED_FILES = ("flow_meta.parquet", "content.parquet", "track_features.parquet")
 
 
 def min_coverage() -> float:
@@ -94,49 +90,9 @@ def check_plate() -> dict:
         warnings.append(
             f"걷어낸 파일이 판에 남아 있다(읽지 않는다): {', '.join(leftovers)}")
 
-    if not paths.track_features_path().exists():
-        errors.append(
-            f"{paths.track_features_path().name} 이 없다 — BPM·언어·스타일 축이 "
-            f"통째로 빈다")
-
     return {"ok": not errors, "contract": contract, "catalog_source": source,
             "errors": errors, "warnings": warnings,
             "built_at": meta.get("built_at"), "rows": meta.get("rows")}
-
-
-def check_catalog(pool_moment_ids, snapshot) -> dict:
-    """풀의 구간이 카탈로그에 얼마나 있는지.
-
-    `snapshot` 이 None 이면 아직 못 읽은 것이다 — 준비되지 않았다고만 말하고
-    비율을 지어내지 않는다.
-    """
-    total = len(pool_moment_ids)
-    if snapshot is None:
-        return {"ok": False, "reason": "카탈로그를 아직 읽지 못했다",
-                "moments_total": total, "moments_matched": 0, "coverage": 0.0,
-                "min_coverage": min_coverage(), "sample_unmatched": []}
-
-    sections = snapshot.sections
-    unmatched = [str(m) for m in pool_moment_ids if str(m) not in sections]
-    matched = total - len(unmatched)
-    coverage = (matched / total) if total else 0.0
-    floor = min_coverage()
-
-    reason = None
-    if total == 0:
-        reason = "추천 풀이 비어 있다"
-    elif matched == 0:
-        reason = ("색인의 구간이 카탈로그에 하나도 없다 — 판과 카탈로그가 다른 "
-                  "세계다(external_id 규약이나 배포 대상을 확인한다)")
-    elif coverage < floor:
-        reason = (f"색인 구간의 {coverage:.1%} 만 카탈로그에 있다 "
-                  f"(기준 {floor:.0%}) — 판이 잘못 올라갔을 가능성이 높다")
-
-    return {"ok": reason is None, "reason": reason,
-            "moments_total": total, "moments_matched": matched,
-            "moments_unmatched": len(unmatched),
-            "coverage": round(coverage, 4), "min_coverage": floor,
-            "sample_unmatched": unmatched[:5]}
 
 
 def build_meta(rows: int, tracks: int, built_at: str,

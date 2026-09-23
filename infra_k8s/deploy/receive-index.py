@@ -65,12 +65,16 @@ ALLOWED = {
 }
 # 없으면 파드가 뜨더라도 /internal/ready 가 영영 false 인 것들.
 #
-# `track_features.parquet` 이 없으면 BPM·언어·스타일 축이 통째로 비고,
 # `index_meta.json` 이 없으면 추천 서버가 옛 판으로 보고 거절한다.
+#
+# `track_features.parquet` 은 **요구하지 않는다.** BPM·언어·스타일은 MySQL
+# `music_analysis` 로 옮겨 Spring 이 요청 본문으로 보낸다(연동 계약 2026-09-23 절).
+# 새 판에는 없다. 허용 목록에는 남겨 둔다 — 그 전에 구운 판도 받을 수 있어야 전환
+# 중에 업로드가 막히지 않는다. 서버는 읽지 않는다.
 # `moments_emb.npy` 는 **여기 없다.** slice_index 가 배송에서 뺐으므로 요구하면 정상
 # 묶음이 통째로 거부된다 — 실제로 그렇게 막혔다.
 REQUIRED = {"moments.parquet", "features_v1.npz", "stage1_section.npy",
-            "track_features.parquet", "index_meta.json"}
+            "index_meta.json"}
 
 
 def fail(message, code=65):

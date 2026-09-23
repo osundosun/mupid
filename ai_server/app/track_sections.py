@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 
 from . import clickhouse
-from .catalog_api import Snapshot
+from .catalog_body import Snapshot
 from .log import log
 
 VIEW = "v_track_sections_current"

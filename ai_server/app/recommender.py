@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import copy
 import json
 import os
@@ -18,7 +20,6 @@ import threading
 import time
 import uuid
 import warnings
-from urllib.request import Request as UrlRequest, urlopen
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -29,7 +30,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
-from . import catalog_api, labels_store, metrics, paths, pinecone_store, stage1_np
+from . import catalog_body, labels_store, metrics, paths, pinecone_store, stage1_np
 from .log import log
 
 warnings.filterwarnings("ignore")
@@ -47,10 +48,8 @@ warnings.filterwarnings("ignore")
 # 음원·표지 경로는 두지 않는다. 이 서비스는 스트리밍을 하지 않고(main.py), 그 값을 읽는
 # 곳도 없었다. 개발자 홈 디렉터리(Path.home())를 가리키고 있어 컨테이너에서는 존재하지도
 # 않는 경로였고, 추천 결과 딕셔너리에 실려 로그로 새어 나갈 수 있었다.
-# 자연어 해석기 주소. 게이트(설정 여부 판단)와 호출부가 **같은 변수**를 본다.
-# 기본값을 두지 않는다 — 기본값이 있으면 "미설정" 이 존재할 수 없어, 해석기가 없는 배포에서
-# 조건을 뽑지 못한 채 일반 추천이 나간다.
-NLP_PARSE_URL = os.environ.get("MUPID_AI_NLP_URL", "").strip()
+# 자연어 원문을 조건으로 바꾸는 해석기(`MUPID_AI_NLP_URL`)는 두지 않는다. 조건은 Spring 이
+# 걸어야 하므로(연동 계약 2026-09-23 절) Spring 의 LLM 이 QueryPlan 으로 바꿔 보낸다.
 
 # ---------------------------- 설정 (조정 대상) ----------------------------
 POOL_SOURCE = os.environ.get("MUPID_POOL", "flow")
@@ -155,53 +154,21 @@ def now_iso() -> str:
 # 추천 계산부는 예전과 **같은 열 이름**을 읽는다. 값의 출처만 바뀌었다 — 점수·가중치·
 # 필터·후보 생성·랭킹에는 손대지 않는다. 그래서 여기서 이름을 맞춰 둔다.
 
-# 색인이 계속 들고 있는 곡 수준 축. MySQL 에 컬럼 자체가 없어 API 로 옮길 수 없다.
-# 색인이 계속 들고 있는 곡 수준 축. **읽는 곳이 있는 것만** 남긴다.
+# 곡 수준 값 가운데 추천이 읽는 것. **전부 요청 본문(`catalog`)에서 온다** — MySQL
+# `music_analysis` 가 정본이다(연동 계약 2026-09-23 절). 예전에는 색인의
+# `track_features.parquet` 이 들고 있었다.
 #   bpm            템포 게이트 · tempo_direction · _flow_penalty
-#   bpm_lo/bpm_hi  bpm_requested → catalog_facets 가 측정 BPM 보다 우선 사용
-#   language       filter_query_pool 게이트 · 온보딩 track_ok
-#   category       parse_style() → style 게이트
-# `dur_sec`(곡)·`sound_raw` 는 track_info dict 에 담기기만 하고 읽는 곳이 없어 뺐다.
-TRACK_FEATURE_COLS = ("bpm", "language", "category", "bpm_lo", "bpm_hi")
-# `flow_meta` 가 하던 일 가운데 색인에 남는 몫. 나머지(제목·장르·무드·보컬)는 카탈로그다.
-META_FROM_FEATURES = ("language", "category", "bpm_lo", "bpm_hi")
+#   bpm_lo/bpm_hi  요청 BPM 범위 → catalog_facets 가 측정 BPM 보다 우선 사용
+#   language       온보딩 track_ok
+#   category       parse_style() → style
+META_FROM_CATALOG = ("language", "category", "bpm_lo", "bpm_hi")
 
 
-def _track_features() -> pd.DataFrame:
-    """`track_features.parquet`. 없으면 **빈 표**가 아니라 실패다.
-
-    빈 표로 넘어가면 BPM·언어·스타일 조건이 조용히 아무 곡도 못 고르게 된다.
-    """
-    path = paths.track_features_path()
-    if not path.exists():
-        raise RuntimeError(
-            f"{path.name} 이 없다 — BPM·언어·스타일 축이 통째로 빈다. "
-            f"`python -m ai_server.tools.slice_index` 로 다시 구운 판을 올린다")
-    frame = pd.read_parquet(path)
-    if "track_id" not in frame.columns:
-        raise RuntimeError(f"{path.name} 에 track_id 열이 없다")
-    for col in TRACK_FEATURE_COLS:
-        if col not in frame.columns:
-            frame[col] = "" if col in META_FROM_FEATURES else 0.0
-    return frame.set_index(frame.track_id.astype(str)).drop(columns=["track_id"])
-
-
-def _merge_track_meta(snap, features: pd.DataFrame) -> pd.DataFrame:
-    """카탈로그(제목·장르·무드·보컬)와 색인(언어·스타일·요청 BPM)을 한 표로.
-
-    합치는 기준은 카탈로그다 — 카탈로그에 없는 곡은 추천 후보가 아니므로 메타도
-    필요 없다. 반대로 색인에 없는 곡은 `language`·`category` 가 빈 값이 되는데,
-    그것은 "그 축을 모른다" 이고 해당 게이트가 그 곡을 거를 뿐 오류가 아니다.
-    """
+def _merge_track_meta(snap) -> pd.DataFrame:
+    """본문의 곡 메타를 한 표로. 곡 수준 악기는 **그 곡 구간들의 합집합**이다."""
     meta = snap.track_frame()
     if meta.empty:
         return meta
-    for col in META_FROM_FEATURES:
-        source = features[col] if col in features.columns else pd.Series(dtype=object)
-        meta[col] = meta.index.map(source)
-    # 곡 수준 악기는 **그 곡 구간들의 합집합**이다. 예전에는 `flow_meta` 가 곡마다
-    # 한 줄로 들고 있었는데, MySQL 은 구간에만 악기를 단다(`music_analysis_instruments`).
-    # 곡 단위로 묻는 자리(`filter_query_pool` 의 폴백)가 남아 있으므로 여기서 만든다.
     by_track: dict[str, list] = {}
     for row in snap.sections.values():
         tid = row.get("track_id")
@@ -217,26 +184,24 @@ def _merge_track_meta(snap, features: pd.DataFrame) -> pd.DataFrame:
 
 
 def _attach_section_meta(mom: pd.DataFrame, snap) -> pd.DataFrame:
-    """구간 종류·시각·악기를 **카탈로그에서** 붙인다.
+    """구간 종류·시각·에너지를 **본문에서** 붙인다.
 
-    색인은 이 값들을 더 들고 있지 않다. 붙지 않는 행(카탈로그에 없는 구간)은
-    `section_label` 이 빈 문자열이 되고, 곧바로 후보에서 빠진다.
+    색인은 이 값들을 들고 있지 않다(서빙 판은 `MOMENT_DROP` 으로 뗐다). 붙지 않는 행
+    (본문에 없는 구간)은 `section_label` 이 빈 문자열이 되고 후보에서 빠진다.
 
-    `dur_sec` 는 시각에서 다시 센다. 색인에 남겨 두면 MySQL 이 고쳐진 뒤에도 옛
-    길이가 살아남아 `MIN_MOMENT_SEC` 판정이 둘로 갈린다.
+    `dur_sec` 는 시각에서 다시 센다. `rel_start`·`rel_end` 도 곡 길이를 알면 시각에서
+    다시 센다 — 분석 때의 경계로 굳어 있으면 MySQL 에서 경계를 고쳐도 옛 위치로
+    점수가 나간다. `rms` 는 MySQL `energy` 가 있으면 그것을 쓴다.
     """
     sec = snap.section_frame()
-    # 색인이 들고 있던 옛 사본은 버린다. 남겨 두고 병합하면 접미사가 붙은 두 열이
-    # 생기고, 어느 쪽을 읽느냐가 자리마다 갈린다.
     drop = [c for c in ("section_label", "start_sec", "end_sec", "dur_sec",
                         "instruments", "moment_moods", "section_idx",
-                        "music_section_analysis_id", "start_ms", "end_ms")
+                        "music_section_analysis_id", "start_ms", "end_ms", "energy")
             if c in mom.columns]
     out = mom.drop(columns=drop).merge(
         sec.drop(columns=["track_id"]), how="left",
         left_on=mom.moment_id.astype(str), right_on="moment_id",
         suffixes=("", "_cat"))
-    # merge 가 만든 키 열과 중복 이름 열을 정리한다.
     out = out.drop(columns=[c for c in ("key_0", "moment_id_cat") if c in out.columns])
 
     start = pd.to_numeric(out.pop("start_ms"), errors="coerce") / 1000.0
@@ -244,23 +209,57 @@ def _attach_section_meta(mom: pd.DataFrame, snap) -> pd.DataFrame:
     out["start_sec"] = start.fillna(0.0)
     out["end_sec"] = end.fillna(0.0)
     out["dur_sec"] = (out.end_sec - out.start_sec).clip(lower=0.0)
-    # 구간 종류는 카탈로그가 ENUM 이름(`CHORUS`)으로 준다. 추천 쪽 어휘는 소문자다
-    # (`features.LABELS` · 조사 선택지 · QueryPlan 의 `flow`). 경계에서 한 번만 맞춘다.
     out["section_label"] = (out.section_label.fillna("").astype(str)
                             .str.strip().str.lower())
     out["instruments"] = out.instruments.fillna("").astype(str)
     out["moment_moods"] = out.moment_moods.fillna("").astype(str)
+
+    energy = pd.to_numeric(out.pop("energy"), errors="coerce")
+    if "rms" in out.columns:
+        out["rms"] = energy.where(energy.notna(), out.rms)
+    else:
+        out["rms"] = energy.fillna(0.0)
+    dur_ms = out.track_id.astype(str).map(
+        {t: r.get("duration_ms") for t, r in snap.tracks.items()})
+    dur = pd.to_numeric(dur_ms, errors="coerce") / 1000.0
+    known = (dur.notna() & (dur > 0) & end.notna()).to_numpy()
+    if "rel_start" not in out.columns:
+        out["rel_start"] = 0.0
+        out["rel_end"] = 0.0
+    out.loc[known, "rel_start"] = (out.start_sec[known] / dur[known]).clip(0.0, 1.0)
+    out.loc[known, "rel_end"] = (out.end_sec[known] / dur[known]).clip(0.0, 1.0)
     return out
+
+
+# 요청마다 다른 카탈로그를 **스레드마다 격리**한다. FastAPI 는 동기 경로를 스레드
+# 풀에서 돌리므로 전역 `CAT` 을 바꿔 끼우면 동시에 들어온 요청끼리 후보가 섞인다.
+_CURRENT: contextvars.ContextVar = contextvars.ContextVar("mupid_catalog", default=None)
+
+
+def current() -> "Catalog":
+    """지금 요청의 카탈로그. 요청 밖(배치·시험)에서는 전역 `CAT` 이다."""
+    got = _CURRENT.get()
+    return got if got is not None else CAT
+
+
+@contextlib.contextmanager
+def using(cat: "Catalog"):
+    """이 블록 안에서만 `current()` 가 `cat` 이다."""
+    token = _CURRENT.set(cat)
+    try:
+        yield cat
+    finally:
+        _CURRENT.reset(token)
 
 
 class Catalog:
     def __init__(self, snap=None) -> None:
-        """`snap` 은 곡·구간 메타 스냅샷이다. **부르는 쪽이 준다.**
+        """색인·모델을 올린다. `snap` 은 곡·구간 메타 스냅샷이다. **부르는 쪽이 준다.**
 
-        배치는 ClickHouse 구간 표(`track_sections.load()`)를 넘긴다. 주지 않으면
-        서빙 기동이 미리 적재해 둔 스냅샷을 쓴다. 전역만 보던 때에는 적재를 빠뜨린
-        호출이 "카탈로그를 읽지 못했다" 로 멈췄는데, 실제로는 부르지도 않은 것이었다
-        (라벨러·Pinecone 적재, S15P21A204-423).
+        서빙은 기동 때 빈 스냅샷으로 올리고, 요청마다 본문의 `catalog` 로
+        `with_catalog()` 사본을 만든다. 배치는 ClickHouse 구간 표
+        (`track_sections.load()`)를 넘긴다. 전역 스냅샷을 몰래 꺼내 쓰던 때에는
+        적재를 빠뜨린 호출이 "카탈로그를 읽지 못했다" 로 멈췄다(S15P21A204-423).
         """
         from . import features as feat
 
@@ -274,48 +273,8 @@ class Catalog:
         self.Z = np.load(emb, mmap_mode="r") if emb.exists() else None
         self.X, self.idx, self.info = feat.load()
 
-        # ── 곡·순간 메타데이터의 정본은 **MySQL** 이다. 색인에는 없다.
-        #
-        # 예전에는 `content.parquet` 과 `flow_meta.parquet` 이 이 자리에 있었다.
-        # 그 두 파일이 제목·장르·무드·보컬을 한 벌 더 들고 있어서, DB 에서 곡을
-        # 지우거나 장르를 고쳐도 추천은 옛 값으로 계속 돌았다 — 색인을 다시 굽기
-        # 전까지 아무 오류도 나지 않는다.
-        #
-        # 이제 그 값들은 `catalog_api` 가 Spring 내부 API 로 읽어 메모리에 둔다.
-        # 색인에 남은 것은 **DB 에 컬럼 자체가 없는 축**뿐이다(BPM·언어·스타일).
-        if snap is None:
-            snap = catalog_api.snapshot()
-        if snap is None:
-            # 없이 뜨면 장르·무드·보컬·악기 조건이 통째로 빈 채 추천이 나간다.
-            # 그것은 오류가 아니라 "조건에 맞는 곡이 없다" 로 보이므로 여기서 멈춘다.
-            raise RuntimeError(
-                "카탈로그를 읽지 못했다 — Spring 내부 API(/api/v1/internal/ai/catalog)를 "
-                "먼저 적재해야 한다. MUPID_API_BASE_URL · MUPID_API_REFRESH_TOKEN 확인")
-        self.catalog = snap
-        self.catalog_stats = snap.stats()
-
-        features = _track_features()
-        self.content = features                    # bpm 을 읽는 자리
-        self.meta = _merge_track_meta(snap, features)
-        self.mom = _attach_section_meta(self.mom, snap)
-
-        # 카탈로그에 없는 구간은 **후보에서 뺀다.** 지워진 곡이거나 아직 적재되지
-        # 않은 곡이다. 색인에 남아 있다는 이유로 추천하면 화면이 그 곡을 열지
-        # 못한다(Spring 이 external_id 를 못 찾아 그 줄을 버린다).
-        in_catalog = self.mom.moment_id.astype(str).isin(snap.sections).to_numpy()
-        self.moments_outside_catalog = int((~in_catalog).sum())
-        self.pool = self.mom[self.mom.source.isin(POOL_SOURCES) & in_catalog
-                             ].reset_index(drop=True)
-        # 출처별 구간 수. 설정했는데 0건인 출처는 오타이거나 아직 안 실린 것이다.
-        counts = self.pool.source.value_counts().to_dict()
-        self.pool_sources = {src: int(counts.get(src, 0)) for src in sorted(POOL_SOURCES)}
-        self.pool_sources_empty = sorted(k for k, v in self.pool_sources.items() if not v)
-        if self.pool_sources_empty:
-            log(f"설정된 출처인데 구간이 0건이다 — {', '.join(self.pool_sources_empty)}"
-                f" (MUPID_POOL / MUPID_POOL_EXTRA 확인)")
-        self.pool_rows = self.pool.emb_row.to_numpy()
-        self.pool_x = np.asarray([self.idx.get(m, -1) for m in self.pool.moment_id])
-        self.by_track = {t: g for t, g in self.pool.groupby("track_id", sort=False)}
+        self._mom_index = self.mom
+        self._bind(snap if snap is not None else catalog_body.empty())
         self.clap_idx, self.clap_emb = {}, None
         clap_path = paths.data_dir() / "clap_moments.npz"
         if clap_path.exists():
@@ -412,6 +371,35 @@ class Catalog:
                          "threshold": float(d.get("suggested_threshold", P_MIN)),
                          "eval": d.get("eval", [])}
         self.loaded_at = now_iso()
+
+    def _bind(self, snap) -> None:
+        """후보 메타를 묶는다. 색인·모델은 건드리지 않는다 — 사본끼리 공유한다."""
+        self.catalog = snap
+        self.catalog_stats = snap.stats()
+        self.meta = _merge_track_meta(snap)
+        bpm = self.meta.bpm if "bpm" in self.meta.columns else pd.Series(dtype=float)
+        self.content = pd.DataFrame(
+            {"bpm": pd.to_numeric(bpm, errors="coerce").fillna(0.0)}, index=self.meta.index)
+        self.mom = _attach_section_meta(self._mom_index, snap)
+        in_catalog = self.mom.moment_id.astype(str).isin(snap.sections).to_numpy()
+        self.moments_outside_catalog = int((~in_catalog).sum())
+        self.pool = self.mom[self.mom.source.isin(POOL_SOURCES) & in_catalog
+                             ].reset_index(drop=True)
+        counts = self.pool.source.value_counts().to_dict()
+        self.pool_sources = {src: int(counts.get(src, 0)) for src in sorted(POOL_SOURCES)}
+        self.pool_sources_empty = sorted(k for k, v in self.pool_sources.items() if not v)
+        self.pool_rows = self.pool.emb_row.to_numpy()
+        self.pool_x = np.asarray([self.idx.get(m, -1) for m in self.pool.moment_id])
+        self.by_track = {t: g for t, g in self.pool.groupby("track_id", sort=False)}
+        # 후보에 딸린 캐시는 사본마다 따로다. 남기면 다른 본문의 어휘가 샌다.
+        for attr in ("_facets_cache", "_facets_by_track", "_mu_g"):
+            self.__dict__.pop(attr, None)
+
+    def with_catalog(self, snap) -> "Catalog":
+        """같은 색인·모델에 다른 후보를 묶은 사본. 요청마다 만든다(본문 해시로 재사용)."""
+        out = copy.copy(self)
+        out._bind(snap)
+        return out
 
     def track_info(self, tid: str) -> dict:
         m = self.meta.loc[tid].to_dict() if tid in getattr(self.meta, "index", []) else {}
@@ -574,7 +562,7 @@ def catalog_facets() -> dict:
     객체에 붙여** 두어, `CAT` 을 새로 만들면 캐시도 함께 사라진다(`_pool_mean` 과 같은
     방식). 전역 dict 에 두면 산출물을 교체했을 때 옛 어휘가 남는다.
     """
-    c = CAT
+    c = current()
     hit = getattr(c, "_facets_cache", None)
     if hit is not None:
         return hit
@@ -651,7 +639,7 @@ def catalog_facet_rows() -> dict:
     행 수만큼 쌓인다 — 게이트 다섯 개면 곡 수의 다섯 배다. 값은 같고 만드는 방식만
     다르다.
     """
-    c = CAT
+    c = current()
     if getattr(c, "_facets_by_track", None) is None:
         catalog_facets()
     return c._facets_by_track
@@ -706,7 +694,7 @@ def onboarding_of(user: str, injected: dict | None = None) -> dict | None:
 def onboarding_seeds(user: str,
                      injected: dict | None = None) -> tuple[np.ndarray, np.ndarray, list[dict]]:
     """조사 답변으로 씨앗 질의 벡터를 만든다. 라벨이 없어도 개인화가 된다."""
-    c = CAT
+    c = current()
     ans = onboarding_of(user, injected)
     if not ans:
         return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
@@ -903,9 +891,10 @@ def run_labeler() -> dict:
     argv = [sys.executable, "-m", "ai_server.app.labeler", "--events", str(src_events),
             "--out", str(paths.labels_path()), "--pool", "service"]
     payload = None
-    if CAT is not None:
-        cols = [c for c in _lab.MOMENT_COLS if c in CAT.mom.columns]
-        payload = json.dumps(CAT.mom[cols].to_dict("records"),
+    cat = current()
+    if cat is not None:
+        cols = [c for c in _lab.MOMENT_COLS if c in cat.mom.columns]
+        payload = json.dumps(cat.mom[cols].to_dict("records"),
                              ensure_ascii=False, default=str)
         argv += ["--moments", "-"]
     r = subprocess.run(
@@ -1071,7 +1060,7 @@ def learn(req: "LearnReq") -> dict:
     if not r["ok"]:
         raise RuntimeError(f"라벨 생성 실패: {r.get('reason') or r.get('stderr', '')[-300:]}")
     lab = labels_all()
-    c = CAT
+    c = current()
     minfo = c.mom.set_index("moment_id")
     rows = []
     users = [req.user_ref] if req.user_ref else sorted(lab.user_ref.unique())
@@ -1198,7 +1187,7 @@ def _seed_rows(user: str) -> list[dict]:
         return []
     if not len(C):
         return []
-    c = CAT
+    c = current()
     minfo = c.mom.set_index("moment_id")
     out = []
     for m, w in zip(meta, W):
@@ -1226,7 +1215,7 @@ def _pref_sections(user: str, include_dismissed: bool = False) -> list[dict]:
     mine = lab[lab.grade.isin(["L1", "L2"])]
     if mine.empty:
         return []
-    c = CAT
+    c = current()
     minfo = c.mom.set_index("moment_id")
     ov = load_overrides()
     rows = []
@@ -1492,7 +1481,7 @@ def _pool_mean() -> np.ndarray:
     때와 다른 공간으로 질의가 나가 유사도가 통째로 내려앉는다 — 오류 없이 품질만
     나빠지는 종류다. 고정본이 없으면 멈춘다(지어내지 않는다).
     """
-    c = CAT
+    c = current()
     if vector_backend() == "pinecone":
         # control 이 들고 있다. **읽을 때마다 상태와 세대를 함께 본다** —
         # UPDATING 이면 여기서 멈추고, 세대가 바뀌었으면 새 μ 로 갈아 끼운다.
@@ -1518,7 +1507,7 @@ def raw_vectors(moment_ids) -> tuple[np.ndarray, list[str]]:
         return np.zeros((0, _vector_dim()), np.float32), []
     if vector_backend() == "local":
         Z = _require_local_vectors("raw_vectors")
-        rowmap = CAT.mom.set_index(CAT.mom.moment_id.astype(str)).emb_row
+        rowmap = current().mom.set_index(current().mom.moment_id.astype(str)).emb_row
         keep = [i for i in ids if i in rowmap.index]
         if not keep:
             return np.zeros((0, _vector_dim()), np.float32), []
@@ -1540,11 +1529,23 @@ def candidate_search(query_vector: np.ndarray, top_k: int) -> list[tuple[str, fl
     q = np.asarray(query_vector, dtype=np.float32).reshape(-1)
     if vector_backend() == "pinecone":
         return pinecone_store.search(q, top_k)
-    c = CAT
+    c = current()
     Z = _require_local_vectors("candidate_search")
     sim = center(np.asarray(Z[c.pool_rows], dtype=np.float32)) @ q
     order = np.argsort(-sim)[:top_k]
     return [(str(c.pool.moment_id.iloc[int(i)]), float(sim[int(i)])) for i in order]
+
+
+def index_pool(c: Optional["Catalog"] = None) -> pd.DataFrame:
+    """색인의 추천 풀 — Pinecone 적재 대상. **카탈로그와 교집합을 내지 않는다.**
+
+    적재 도구도 Spring 을 부르지 않는다(연동 계약 2026-09-23 절). 지워진 곡의 벡터가
+    남아도 Spring 이 보낸 `catalog` 에 없으므로 후보가 되지 않는다. 적재본 지문도
+    이것으로 잰다 — 요청마다 다른 후보로 재면 배치와 서버가 서로 다른 값을 본다.
+    """
+    c = c if c is not None else current()
+    mom = c._mom_index
+    return mom[mom.source.isin(POOL_SOURCES)].reset_index(drop=True)
 
 
 def current_snapshot() -> str:
@@ -1553,9 +1554,10 @@ def current_snapshot() -> str:
     풀 전체 벡터를 한 번 훑는다(mmap). 기동에서 한 번뿐이고, 이 한 번이 "평균만
     옛 것" 인 상태를 잡는다 — 그 상태는 오류가 아니라 유사도 저하로만 드러난다.
     """
-    c = CAT
-    ids = c.pool.moment_id.astype(str).tolist()
-    Z = np.asarray(_require_local_vectors("current_snapshot")[c.pool_rows],
+    c = current()
+    pool = index_pool(c)
+    ids = pool.moment_id.astype(str).tolist()
+    Z = np.asarray(_require_local_vectors("current_snapshot")[pool.emb_row.to_numpy()],
                    dtype=np.float32)
     version = (c.info.get("embedding_version", "mert-v1-95m")
                if isinstance(c.info, dict) else "mert-v1-95m")
@@ -1563,7 +1565,7 @@ def current_snapshot() -> str:
 
 
 def _vector_dim() -> int:
-    c = CAT
+    c = current()
     if c is not None and getattr(c, "Z", None) is not None:
         return int(c.Z.shape[1])
     return pinecone_store.center().dim
@@ -1571,7 +1573,7 @@ def _vector_dim() -> int:
 
 def _require_local_vectors(what: str):
     """local 갈래에서만 쓰는 저장본. 운영(Pinecone)에는 없어도 된다."""
-    c = CAT
+    c = current()
     if getattr(c, "Z", None) is None:
         raise RuntimeError(
             f"{what}: moments_emb.npy 가 판에 없다. 운영은 Pinecone 을 켜고 "
@@ -1599,7 +1601,7 @@ def similar_moments(moment_id: str, n: int, exclude_tracks: set[str] | None = No
     한 곡당 가장 닮은 구간 하나만 남긴다. 같은 곡의 인접 구간이 목록을 채우면 "비슷한
     곡" 으로서 쓸모가 없다.
     """
-    c = CAT
+    c = current()
     hit = c.pool.index[c.pool.moment_id == moment_id]
     if not len(hit):
         return []
@@ -1652,23 +1654,20 @@ def build_dna(user: str, query_plan: Optional[dict] = None,
     """규칙 경로. 군집은 **원공간**에서(구조가 살아 있음), 점수용 변환은 center() 로 통일."""
     from scipy.cluster.hierarchy import fcluster, linkage
 
-    c = CAT
+    c = current()
     pos = user_positives(user)
     if query_plan is not None and not pos.empty:
-        plan = copy.deepcopy(query_plan)
-        matched = c.mom[c.mom.moment_id.isin(pos.section_key)]
-        matched, qdiag = filter_query_pool(matched, plan, current_track_id, current_moment_id)
-        want_mood = _qvals((plan.get("filters") or {}).get("mood"))
+        # 조건 검색이다. **후보는 Spring 이 이미 조건으로 걸렀다**(연동 계약 2026-09-23
+        # 절). 그 안에 있는 선호 구간만 취향 묶음에 쓴다 — 조건 밖의 취향이 섞이면 "피아노
+        # 곡" 을 물었는데 좋아하는 록 곡 쪽으로 끌려간다.
+        matched = c.pool[c.pool.moment_id.isin(pos.section_key)]
+        want_mood = _qvals(((query_plan or {}).get("filters") or {}).get("mood"))
         if want_mood:
             meta = catalog_facet_rows()
             matched = matched.loc[np.asarray([
                 _qmatch((meta.get(t) or {}).get("moods", []), want_mood)
                 for t in matched.track_id
             ], dtype=bool)]
-            qdiag["applied"].append("filters.mood")
-        # 판정할 수 없는 조건이 하나라도 있으면 DNA 전체를 섞지 않는다.
-        if qdiag.get("ignored") or not qdiag.get("applied"):
-            matched = matched.iloc[0:0]
         pos = pos[pos.section_key.isin(matched.moment_id)]
     if pos.empty:
         return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
@@ -1720,7 +1719,7 @@ def build_dna(user: str, query_plan: Optional[dict] = None,
 
 
 def model_user_vec(user: str) -> Optional[np.ndarray]:
-    c = CAT
+    c = current()
     if c.model is None:
         return None
     pos = user_positives(user)
@@ -1764,7 +1763,7 @@ FEATS_ALL = (["rule_sim", "model_sim", "log_dur", "rel_center", "rms_pct", "bpm_
 def serve_features(pool: pd.DataFrame, rule_sim: np.ndarray, model_sim: np.ndarray,
                    bpm_pref: float) -> np.ndarray:
     """전체 특징을 만든 뒤 결합기가 선언한 이름 순서로 고른다."""
-    c = CAT
+    c = current()
     n = len(pool)
     F = np.zeros((n, len(FEATS_ALL)), dtype=np.float64)
     F[:, 0] = rule_sim
@@ -1790,7 +1789,7 @@ def serve_features(pool: pd.DataFrame, rule_sim: np.ndarray, model_sim: np.ndarr
 
 
 def logistic_prob(F: np.ndarray) -> np.ndarray:
-    cb = CAT.comb
+    cb = current().comb
     Z = (F - cb["mean"]) / np.where(cb["scale"] == 0, 1.0, cb["scale"])
     return 1.0 / (1.0 + np.exp(-(Z @ cb["coef"] + cb["b"])))
 
@@ -1831,37 +1830,6 @@ def mood_match_ratio(pool: pd.DataFrame, wanted: list, fac: pd.DataFrame) -> np.
                       dtype=np.float32)
 
 
-def parse_nlp_query(text: str) -> tuple[Optional[dict], Optional[tuple[str, str]]]:
-    """QueryPlan v1 해석기 호출. 실패를 **삼키지 않는다.**
-
-    반환은 `(plan, error)` 이고 `error` 는 `None` 또는 `(error_code, message)` 다.
-    호출부가 그대로 응답 오류로 쓴다.
-
-    실패했는데 일반 추천으로 넘어가면 사용자가 말한 조건("조용한 피아노")이 소리 없이
-    사라진 채 200 이 나간다. 조건을 몰래 푸는 것과 같아서, 조건을 못 뽑았으면 실패로 답한다.
-    """
-    if not NLP_PARSE_URL:
-        return None, ("SEARCH_NOT_CONFIGURED",
-                      "자연어 해석기가 설정되지 않았습니다. MUPID_AI_NLP_URL 을 지정하세요.")
-    try:
-        body = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
-        req = UrlRequest(NLP_PARSE_URL, data=body, headers={"Content-Type": "application/json"})
-        with urlopen(req, timeout=10) as res:
-            data = json.loads(res.read().decode("utf-8"))
-        plan = data.get("plan") if data.get("ok") else None
-        if not isinstance(plan, dict):
-            # 해석기 주소는 내부 정보다. 메시지에 싣지 않는다. 해석기가 돌려준 문자열은
-            # 남의 출력이므로 길이를 잘라서 넣는다(스택 추적·경로가 통째로 실릴 수 있다).
-            why = str(data.get("error") or "QueryPlan 없음")[:200]
-            return None, ("INTERNAL_ERROR", f"자연어 해석에 실패했습니다: {why}")
-        emb = data.get("clap_embedding")
-        if isinstance(emb, list):
-            plan["_clap_embedding"] = emb
-        return plan, None
-    except Exception as e:
-        return None, ("INTERNAL_ERROR", f"자연어 해석기 호출 실패: {type(e).__name__}")
-
-
 def _qvals(v) -> list[str]:
     if v is None:
         return []
@@ -1873,184 +1841,15 @@ def _qvals(v) -> list[str]:
             for x in v if str(x).strip()]
 
 
-# 해석기가 어휘 밖의 말을 보낼 때만 쓰는 별칭. **어휘에 있는 값은 건드리지 않는다**
-# (`_canonicalize_query_tags` 가 값 자체를 먼저 본다).
-#
-# 오른쪽 값들은 어휘 전환(2026-09-21) 전의 카탈로그 태그라 **지금은 하나도 맞지
-# 않는다.** 지우지 않고 남겨 둔 이유: 무엇을 코드 이름으로 다시 이어야 하는지가
-# 여기 적혀 있고, 그 대응은 코드표가 정할 일이지 여기서 지어낼 일이 아니다.
-# 맞지 않는 별칭은 조건을 만들지 못하고 그대로 떨어진다 — 조용히 다른 곡을
-# 고르는 것보다 낫다. 이어야 할 것은 보고에 남겼다.
-_TAG_ALIASES = {
-    "mood": {
-        "quiet": ("relaxing", "meditative"),
-        "peaceful": ("relaxing", "meditative"),
-        "chill": ("relaxing",),
-        "soft": ("relaxing",),
-        "잔잔한": ("relaxing", "meditative"),
-        "차분한": ("relaxing", "meditative"),
-        "편안한": ("relaxing",),
-    }
-}
-
-
-def _canonicalize_query_tags(data: dict, fac: pd.DataFrame,
-                             pool: pd.DataFrame) -> dict:
-    """QueryPlan 태그를 현재 카탈로그 어휘로만 제한한다."""
-    out = dict(data or {})
-
-    def collect(*columns: str) -> set[str]:
-        values: set[str] = set()
-        for column in columns:
-            if column in fac:
-                for value in fac[column]:
-                    values.update(_qvals(value))
-        return values
-
-    allowed = {
-        "genre": collect("genre", "style"),
-        "language": collect("language"),
-        "mood": collect("moods"),
-        "instrument": collect("instruments"),
-        "vocal": {value for row in fac.itertuples()
-                  for value in _vocal_values(row.has_vocal, row.vocal_gender)},
-        "flow": set(_qvals(pool["section_label"].tolist())),
-    }
-    for name, vocab in allowed.items():
-        normalized = []
-        for value in _qvals(out.get(name)):
-            # **그 값이 이미 어휘에 있으면 그대로 쓴다.** 별칭은 어휘에 없는 말을
-            # 받아 주려고 두는 것이지, 있는 말을 바꾸라고 두는 것이 아니다.
-            #
-            # 어휘 전환(2026-09-21) 뒤에 실제로 걸렸다: `calm`·`serene` 은 이제
-            # 코드 이름 그 자체인데, 별칭표가 옛 카탈로그 태그(`relaxing`·
-            # `meditative`)로 바꿔 놓고 그 태그가 없어져 **조건이 통째로 사라졌다.**
-            # 사용자가 "고요한" 을 골랐는데 아무 곡이나 나오는 상태였다.
-            if value in vocab:
-                if value not in normalized:
-                    normalized.append(value)
-                continue
-            for candidate in _TAG_ALIASES.get(name, {}).get(value, ()):
-                if candidate in vocab and candidate not in normalized:
-                    normalized.append(candidate)
-        out[name] = normalized if name != "flow" else (normalized[0] if normalized else None)
-    return out
+# 조건 어휘 맞춤(`_canonicalize_query_tags`)·별칭·"없는 조건" 진단·조건 게이트
+# (`filter_query_pool`)는 **Spring 으로 옮겼다**(연동 계약 2026-09-23 절). Spring 이
+# MySQL 에서 조건을 걸어 후보를 보낸다. 남은 것은 무드 가점이 쓰는 `_qmatch` 뿐이다.
 
 
 def _qmatch(values, wanted) -> bool:
     have = _qvals(values)
     return any(w == h or f"_{w}_" in f"_{h}_"
                for w in _qvals(wanted) for h in have)
-
-
-def filter_query_pool(pool: pd.DataFrame, plan: dict, current_track_id: Optional[str],
-                      current_moment_id: Optional[str]) -> tuple[pd.DataFrame, dict]:
-    """QueryPlan 의 명시 조건만 후보 게이트로 적용한다."""
-    c = CAT
-    facets = catalog_facets()
-    fac = facets["_df"].set_index("track_id")
-    meta = catalog_facet_rows()          # track_id -> dict. .loc 대신 쓴다
-    raw_f = plan.get("filters") or {}
-    f = _canonicalize_query_tags(raw_f, fac, pool)
-    ex = _canonicalize_query_tags(plan.get("exclude") or {}, fac, pool)
-    available = {
-        "instrument": any(_qvals(v) for v in fac.instruments),
-        "vocal": any(_vocal_values(r.has_vocal, r.vocal_gender)
-                     for r in fac.itertuples()),
-    }
-    ignored = []
-    for name, ok in available.items():
-        if not ok and (_qvals(raw_f.get(name)) or _qvals((plan.get("exclude") or {}).get(name))):
-            ignored.append(name + "(카탈로그 데이터 없음)")
-            f[name], ex[name] = [], []
-    plan["filters"], plan["exclude"] = f, ex
-
-    # 사전에 없어 통째로 사라진 필수 조건을 찾는다. 조용히 넘기면 조건을 푼 것이 된다.
-    unsat = []
-    for name in ("genre", "language", "vocal", "instrument"):
-        asked = _qvals(raw_f.get(name))
-        if asked and available.get(name, True) and not _qvals(f.get(name)):
-            unsat.append({"field": name, "requested": asked})
-    if unsat:
-        return pool.iloc[0:0].copy(), {
-            "applied": [], "ignored": [], "dropped": len(pool),
-            "unsatisfiable": unsat,
-            "reason": "요청한 조건이 현재 카탈로그 어휘에 없다",
-            "plan": {k: v for k, v in plan.items() if not k.startswith("_")}}
-    keep = np.ones(len(pool), dtype=bool)
-    applied = []
-
-    def gate(name: str, values, negate: bool = False) -> None:
-        nonlocal keep
-        wanted = (ex if negate else f).get(name)
-        if not _qvals(wanted):
-            return
-        rows = (values(t) for t in pool.track_id) if callable(values) else values
-        hit = np.asarray([_qmatch(value, wanted) for value in rows])
-        keep &= ~hit if negate else hit
-        applied.append(("exclude." if negate else "filters.") + name)
-
-    _m = lambda t: meta.get(t) or {}          # noqa: E731  (fac.loc[t] 과 같은 값)
-    gate("genre", lambda t: [_m(t).get("genre", ""), _m(t).get("style", "")])
-    gate("language", lambda t: _m(t).get("language", ""))
-    instruments = ([_instrument_list(value) or _m(track_id).get("instruments", [])
-                    for track_id, value in zip(pool.track_id, pool.instruments)]
-                   if "instruments" in pool.columns
-                   else [_m(t).get("instruments", []) for t in pool.track_id])
-    gate("instrument", instruments)
-    gate("vocal", lambda t: _vocal_values(_m(t).get("has_vocal"),
-                                           _m(t).get("vocal_gender")))
-    # mood/activity/goal은 추론 가능성이 커서 CLAP 점수로만 반영한다.
-    gate("genre", lambda t: [_m(t).get("genre", ""), _m(t).get("style", "")], True)
-    gate("language", lambda t: _m(t).get("language", ""), True)
-    gate("mood", lambda t: _m(t).get("moods", []), True)
-    gate("instrument", instruments, True)
-    gate("vocal", lambda t: _vocal_values(_m(t).get("has_vocal"),
-                                           _m(t).get("vocal_gender")), True)
-
-    flow = f.get("flow")
-    if _qvals(flow):
-        keep &= np.asarray([_qmatch(v, flow) for v in pool.section_label])
-        applied.append("filters.flow")
-    flow_ex = ex.get("flow")
-    if _qvals(flow_ex):
-        keep &= ~np.asarray([_qmatch(v, flow_ex) for v in pool.section_label])
-        applied.append("exclude.flow")
-
-    bpms = np.asarray([float(_m(t).get("bpm", 0) or 0) for t in pool.track_id])
-    if f.get("bpm_min") is not None:
-        keep &= bpms >= float(f["bpm_min"]); applied.append("filters.bpm_min")
-    if f.get("bpm_max") is not None:
-        keep &= bpms <= float(f["bpm_max"]); applied.append("filters.bpm_max")
-
-    tempo_dir = str(f.get("tempo_direction") or "").lower()
-    ref_bpm = (float(_m(current_track_id).get("bpm", 0) or 0)
-               if current_track_id in meta else 0.0)
-    if tempo_dir in ("up", "faster", "fast") and ref_bpm:
-        keep &= bpms > ref_bpm; applied.append("filters.tempo_direction")
-    elif tempo_dir in ("down", "slower", "slow") and ref_bpm:
-        keep &= (bpms > 0) & (bpms < ref_bpm); applied.append("filters.tempo_direction")
-    elif tempo_dir:
-        ignored.append("filters.tempo_direction(기준곡 없음)")
-
-    energy_dir = str(f.get("energy_direction") or "").lower()
-    ref = c.mom[c.mom.moment_id == current_moment_id] if current_moment_id else c.mom.iloc[0:0]
-    if ref.empty and current_track_id:
-        ref = c.mom[c.mom.track_id == current_track_id]
-    ref_rms = float(ref.rms.mean()) if not ref.empty else 0.0
-    if energy_dir in ("up", "higher", "energetic") and ref_rms:
-        keep &= pool.rms.to_numpy() > ref_rms; applied.append("filters.energy_direction")
-    elif energy_dir in ("down", "lower", "calm") and ref_rms:
-        keep &= pool.rms.to_numpy() < ref_rms; applied.append("filters.energy_direction")
-    elif energy_dir:
-        ignored.append("filters.energy_direction(기준곡 없음)")
-
-    for name in ("activity", "goal"):
-        if _qvals(f.get(name)) or _qvals(ex.get(name)):
-            ignored.append(name + "(카탈로그 필드 없음)")
-    return pool[keep].copy(), {"applied": applied, "ignored": ignored,
-                               "dropped": int((~keep).sum()),
-                               "plan": {k: v for k, v in plan.items() if not k.startswith("_")}}
 
 
 # -------------------------------------------------------------------- 추천
@@ -2064,7 +1863,7 @@ def _flow_penalty(pool: pd.DataFrame, current_track_id: Optional[str],
     """
     if not current_track_id:
         return None
-    c = CAT
+    c = current()
     ref_bpm = float(c.content.bpm.get(current_track_id, 0.0) or 0.0)
     ref = c.mom[c.mom.moment_id == current_moment_id] if current_moment_id else c.mom.iloc[0:0]
     if ref.empty:
@@ -2092,7 +1891,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
               current_track_id: Optional[str] = None, current_moment_id: Optional[str] = None,
               beh_events: Optional[list] = None,
               onboarding: Optional[dict] = None) -> dict:
-    c = CAT
+    c = current()
     C, W, dna_meta = build_dna(user, query_plan, current_track_id, current_moment_id)
     query_source = "labels" if len(C) else "none"
     onb_empty = ""
@@ -2138,8 +1937,11 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     pool = pool[pool.dur_sec >= MIN_MOMENT_SEC]
     diag["dropped_short"] = int((c.pool.dur_sec < MIN_MOMENT_SEC).sum())
     if query_plan is not None:
-        pool, qdiag = filter_query_pool(pool, query_plan, current_track_id, current_moment_id)
-        diag["nlp"] = qdiag
+        # 조건 게이트는 Spring 이 걸었다. 여기서 다시 걸지 않는다 — 두 곳이 같은 규칙을
+        # 따로 들고 있으면 한쪽만 고쳐진다. 무드 가점과 CLAP 은 아래에서 한다.
+        diag["nlp"] = {"gates": "spring",
+                       "plan": {k: v for k, v in query_plan.items()
+                                if not str(k).startswith("_")}}
     # ── 후보 검색. Pinecone 갈래는 **여기서** 후보를 좁힌다.
     #
     # DNA 중심마다 닮은 순간을 받아 그 합집합만 남긴다. 좁힌 뒤의 점수 계산은 아래가

@@ -13,13 +13,14 @@
 
 메타데이터는 따라가지 않는다
     곡명·장르·무드·보컬·악기·순간 메타데이터는 **MySQL 이 정본**이고 추천 서버는
-    Spring 내부 카탈로그 API 로 읽는다(`app/catalog_api.py`). 그래서 이 도구는
+    Spring 이 요청 본문으로 준다(연동 계약 2026-09-23 절). 그래서 이 도구는
     `content.parquet` 과 `flow_meta.parquet` 을 **보내지 않고**, `moments.parquet`
     에서도 그 열들을 뗀다(`MOMENT_DROP`).
 
-    대신 **DB 에 컬럼 자체가 없는 축**만 `track_features.parquet` 한 파일로 뽑는다 —
-    BPM·길이·언어·스타일·요청 BPM. 이것들은 오디오에서 잰 값이거나 곡을 만들 때의
-    생성 조건이라 옮길 자리가 없다.
+    BPM·언어·스타일·요청 BPM 도 보내지 않는다. 예전에는 MySQL 에 자리가 없어
+    `track_features.parquet` 으로 따로 뽑았는데, 이제 `music_analysis` 가 정본이다
+    (`music-preprocessing analysis-values` 가 옮겼다). 사본이 묶음에 남으면 다음 사람이
+    "있으니까 읽어도 되겠지" 로 되돌린다 — `NOT_SHIPPED` 가 막는다.
 
     판이 어떤 계약으로 구워졌는지는 `index_meta.json` 에 적는다. 그것이 없으면
     추천 서버가 옛 판으로 보고 거절한다 — 옛 판을 새 코드로 읽으면 장르·무드 축이
@@ -101,21 +102,16 @@ COPY_AS_IS = ("stage1_weights.npz", "stage1.pt", "logistic_flow_stage1.json",
 # `moments_emb.npy` 도 나가지 않는다. 순간 벡터의 운영 정본은 Pinecone 이고,
 # 이 파일은 분석 배치가 그것을 채울 때만 읽는 입력 산출물이다. 배송에 실으면
 # 같은 벡터를 파일과 인덱스 두 곳에서 관리하게 된다.
-NOT_SHIPPED = ("content.parquet", "flow_meta.parquet", "moments_emb.npy")
+NOT_SHIPPED = ("content.parquet", "flow_meta.parquet", "moments_emb.npy",
+               "track_features.parquet")
 
 # `moments.parquet` 에서 떼는 열. 전부 `music_section_analysis` 와 그에 딸린 표가
-# 정본이고, 추천 서버는 `catalog_api` 로 읽는다.
+# 정본이고, 추천 서버는 요청 본문으로 받는다.
 #
 # 남겨 두면 **둘 중 어느 쪽이 이기는지가 자리마다 갈린다.** 지워진 곡의 구간이
 # 색인에 남아 계속 추천되던 것이 그 상태였다.
 MOMENT_DROP = ("section_label", "section_idx", "start_sec", "end_sec", "dur_sec",
                "instruments", "moment_moods", "title")
-
-# `track_features.parquet` 에 담는 곡 수준 축. **MySQL 에 컬럼 자체가 없다** —
-# BPM 은 오디오에서 잰 값이고 언어·스타일은 생성 조건이다. ERD 에 자리가 생기면
-# 그때 API 로 옮긴다 (`infra/AI-API-BLOCKERS.md`).
-FEATURE_FROM_CONTENT = ("bpm",)
-FEATURE_FROM_FLOW_META = ("language", "category", "bpm_lo", "bpm_hi")
 
 
 def pool_sources() -> set[str]:
@@ -190,7 +186,6 @@ def slice_index(src: Path, dst: Path, *, src_data: Path | None = None) -> dict:
     np.save(out / "stage1_section.npy", np.asarray(section[rows], dtype=section.dtype))
 
     tracks = set(sliced.track_id.astype(str))
-    track_features = _write_track_features(data, out, tracks)
     _slice_clap(data, out, set(sliced.moment_id.astype(str)))
 
     for name in COPY_AS_IS:
@@ -208,69 +203,16 @@ def slice_index(src: Path, dst: Path, *, src_data: Path | None = None) -> dict:
         json.dumps(index_contract.build_meta(
             rows=len(sliced), tracks=len(tracks),
             built_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            extra={"dropped_moment_columns": dropped_cols,
-                   "track_features": track_features}),
+            extra={"dropped_moment_columns": dropped_cols}),
             ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     report = _verify(out)
     report["metadata_source"] = index_contract.SOURCE
-    report["track_features"] = track_features
     report["dropped_moment_columns"] = dropped_cols
     report["dropped"] = int(len(mom) - len(sliced))
     (out / "slice_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
-
-
-def _write_track_features(data: Path, out: Path, tracks: set[str]) -> dict:
-    """`content` + `flow_meta` 에서 **MySQL 에 없는 축만** 뽑아 한 파일로.
-
-    두 파일을 그대로 보내지 않는 이유가 이것이다 — 둘은 제목·장르·무드·보컬까지
-    들고 있어서, 보내는 순간 MySQL 과 두 벌이 된다. 여기서 뽑는 것은 DB 에 컬럼
-    자체가 없는 값뿐이다.
-
-    `content.parquet` 이 없으면 멈춘다. BPM 이 빠지면 템포 조건과 이어 듣기 감점이
-    통째로 사라지는데, 그것은 오류가 아니라 "추천이 좀 이상하다" 로만 보인다.
-    """
-    content_path = data / "content.parquet"
-    if not content_path.exists():
-        fail(f"content.parquet 이 없다 — BPM·길이 축을 만들 수 없다: {content_path}")
-    content = pd.read_parquet(content_path)
-    content = content[content.track_id.astype(str).isin(tracks)]
-    frame = pd.DataFrame({"track_id": content.track_id.astype(str)})
-    for col in FEATURE_FROM_CONTENT:
-        frame[col] = (pd.to_numeric(content[col], errors="coerce").to_numpy()
-                      if col in content.columns else 0.0)
-
-    meta_path = data / "flow_meta.parquet"
-    missing_axes = []
-    if meta_path.exists():
-        meta = pd.read_parquet(meta_path)
-        meta = meta[meta.track_id.astype(str).isin(tracks)].drop_duplicates("track_id")
-        by_track = meta.set_index(meta.track_id.astype(str))
-        for col in FEATURE_FROM_FLOW_META:
-            if col in by_track.columns:
-                frame[col] = frame.track_id.map(by_track[col]).to_numpy()
-            else:
-                frame[col] = None
-                missing_axes.append(col)
-    else:
-        for col in FEATURE_FROM_FLOW_META:
-            frame[col] = None
-        missing_axes = list(FEATURE_FROM_FLOW_META)
-
-    if missing_axes:
-        # 막지는 않는다 — 그 축을 쓰지 않는 카탈로그도 있을 수 있다. 다만 조용히
-        # 비면 "조건을 걸었는데 아무 곡도 안 걸러진" 결과가 되므로 세어서 말한다.
-        print(f"[경고] 곡 수준 축이 비었다: {', '.join(missing_axes)} "
-              f"— 해당 조건이 아무 곡도 고르지 못한다.", file=sys.stderr)
-
-    frame = frame.drop_duplicates("track_id").reset_index(drop=True)
-    frame.to_parquet(out / "track_features.parquet", index=False)
-    return {"tracks": int(len(frame)),
-            "columns": [c for c in frame.columns if c != "track_id"],
-            "empty_axes": missing_axes,
-            "tracks_without_features": int(len(tracks) - len(frame))}
 
 
 def _slice_clap(data: Path, out: Path, moments: set[str]) -> None:

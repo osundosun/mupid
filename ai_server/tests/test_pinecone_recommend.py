@@ -20,12 +20,12 @@ import types
 import numpy as np
 import pytest
 
-from ai_server.app import catalog_api, pinecone_store as ps
+from ai_server.app import catalog_body, pinecone_store as ps
 
 # `ai_server/tests` 에는 `__init__.py` 가 없다. pytest 가 이 디렉터리를 sys.path 에
 # 넣으므로 같은 폴더의 시험 모듈은 평범한 import 로 가져온다.
 from test_pinecone_store import INDEX, NS, FakePinecone     # noqa: E402
-from test_pipeline_synthetic import _build, _catalog_payload  # noqa: E402
+from test_pipeline_synthetic import _build, _catalog_body, _spring_filtered  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -50,14 +50,13 @@ def wired(tmp_path_factory):
     })
     os.environ.pop("MUPID_PINECONE_ENABLED", None)      # 처음엔 local 로 연다
 
-    catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))
     for name in ("features", "labeler", "stage1_torch"):
         full = f"ai_server.app.{name}"
         if full in sys.modules:
             importlib.reload(sys.modules[full])
     from ai_server.app import recommender as rc
     rc = importlib.reload(rc)
-    rc.CAT = rc.Catalog()
+    rc.CAT = rc.Catalog().with_catalog(catalog_body.from_body(_catalog_body()))
 
     # 평균은 **현재 추천 가능한 풀 전체**에서 잰다. control 에 넣고 그 평균으로
     # 쪼개어 올린다 — 운영 배치가 하는 것과 같은 순서다.
@@ -72,7 +71,6 @@ def wired(tmp_path_factory):
     yield rc
 
     ps.reset()
-    catalog_api.reset()
     sys.modules.pop("pinecone", None)
     for k, v in saved.items():
         if v is None:
@@ -182,12 +180,15 @@ def test_a_candidate_missing_from_the_catalog_is_dropped(pinecone_on):
         ps.delete([ghost])
 
 
-def test_filters_come_from_the_catalog_not_pinecone(pinecone_on):
-    """장르·무드·보컬·악기는 Spring 카탈로그 기준으로 건다. metadata 를 쓰지 않는다."""
-    pool, diag = pinecone_on.filter_query_pool(
-        pinecone_on.CAT.pool, {"filters": {"genre": ["contemporary_pop"]}}, None, None)
-    assert "filters.genre" in diag["applied"]
-    assert 0 < len(pool) < len(pinecone_on.CAT.pool)
+def test_filters_come_from_spring_not_pinecone(pinecone_on):
+    """조건은 Spring 이 MySQL 에서 건다. Pinecone metadata 를 쓰지 않는다 — Pinecone 이
+    넓게 찾아도 결과는 Spring 이 보낸 후보 밖으로 나가지 않는다."""
+    view = _spring_filtered(pinecone_on, lambda uid: int(uid[1:7]) % 3 == 0)
+    with pinecone_on.using(view):
+        out = pinecone_on.recommend("internal:1", 3, set(), True,
+                                    {"filters": {"genre": ["contemporary_pop"]}})
+    assert out["results"]
+    assert all(int(r["track_id"][1:]) % 3 == 0 for r in out["results"])
 
 
 # ------------------------------------------------------------------ 실패 모양
@@ -232,10 +233,11 @@ def test_daily_and_next_agree_between_backends(wired, monkeypatch):
     seed = str(wired.CAT.pool.moment_id.iloc[1])
     calls = {
         "daily": ("/internal/recommendations/daily",
-                  {"recommendation_id": 1, "user_id": 7}),
+                  {"recommendation_id": 1, "user_id": 7, "catalog": _catalog_body()}),
         "next": ("/internal/recommendations/next",
                  {"recommendation_id": 2, "user_id": 7, "limit": 3,
-                  "current_track": seed.split("#")[0], "current_section": seed}),
+                  "current_track": seed.split("#")[0], "current_section": seed,
+                  "catalog": _catalog_body()}),
     }
 
     got: dict = {}

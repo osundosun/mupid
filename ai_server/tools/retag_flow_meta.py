@@ -6,7 +6,7 @@
 ## 서빙에는 더 이상 필요하지 않다 (S15P21A204-416)
 
 장르·무드·`music_id` 는 이제 **Spring 내부 카탈로그 API** 가 준다
-(`app/catalog_api.py`). 서빙용 배송 묶음에는 `flow_meta.parquet` 이 아예 들어가지
+(요청 본문 `catalog`). 서빙용 배송 묶음에는 `flow_meta.parquet` 이 아예 들어가지
 않고(`tools/slice_index.py` 의 `NOT_SHIPPED`), 숫자 환산 근거도 이 파일이 아니라
 MySQL 이다.
 
