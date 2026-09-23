@@ -1,0 +1,21 @@
+---
+# 노드마다 설치할 배포 수신기. **파일 이름이 곧 설치 이름이다** —
+# `receive-ai-env.py` 는 `/usr/local/sbin/mupid-receive-ai-env` 로 간다.
+#
+# 역할(node_role)로 나눈다. CI 가 부르는 동사가 노드마다 다르기 때문이다.
+#
+#   edge (node-a)  api·web 이미지, APK, 웹 번들, 환경변수 둘, 매니페스트
+#   ai   (node-b)  ai 이미지(파드가 뜨는 노드여야 한다), 추천 색인
+#
+# 한 노드에 쓰지 않는 수신기를 두지 않는다. root 로 도는 코드가 늘면 그만큼 감사할
+# 자리가 는다.
+receivers_by_role:
+  edge: [k8s, apk, web, env, ai-env, manifests]
+  ai: [k8s, index]
+
+# 배포 계정. 강제 명령(authorized_keys 의 command=)은 이 계정에 걸려 있고, 그 공개키는
+# 저장소에 없으므로 이 역할이 만들지 않는다. 없으면 멈춘다.
+deploy_user: mupid-deploy-k8s
+
+sbin_dir: /usr/local/sbin
+sudoers_dir: /etc/sudoers.d

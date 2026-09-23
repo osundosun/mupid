@@ -1,0 +1,25 @@
+---
+# 배포 수신기(infra_k8s/deploy/)를 두 노드에 설치한다. 제어 노드(Pi)에서 돌린다.
+#
+#   set -a; . ../.env; set +a
+#   ansible-playbook -i inventory.ini receivers.yml --check --diff   # 무엇이 바뀌나
+#   ansible-playbook -i inventory.ini receivers.yml
+#
+# infra_k8s/deploy/ 를 고친 커밋이 master 에 들어가면 한 번 돌린다. 같은 내용이면
+# 아무것도 바꾸지 않으므로 몇 번 돌려도 된다. 바꾼 파일은 옆에 `.<날짜>~` 백업이 남는다.
+#
+# 한 노드만: --limit node-a  /  --limit node-b
+
+- name: Check the connection values from .env before any SSH
+  hosts: k3s
+  gather_facts: false
+  become: false
+  connection: local
+  tags: [always]
+  roles: [env_check]
+
+- name: Install the deploy receivers
+  hosts: k3s
+  gather_facts: false
+  become: true
+  roles: [deploy_receivers]
