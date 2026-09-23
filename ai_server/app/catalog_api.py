@@ -55,7 +55,7 @@ DEFAULT_PAGE_SIZE = 200
 # Spring 쪽 `AiCatalogController.MAX_SIZE` 와 같은 값이다. 여기서 먼저 막는 것은
 # 400 을 받고 나서야 알면 원인이 "카탈로그를 못 읽는다" 로만 보이기 때문이다.
 MAX_PAGE_SIZE = 500
-# 페이지가 이보다 많으면 무언가 잘못됐다고 본다. `totalPages` 를 믿고 도는데 그 값이
+# 페이지가 이보다 많으면 무언가 잘못됐다고 본다. `total_pages` 를 믿고 도는데 그 값이
 # 이상하면 영원히 돌 수 있다 — 상한 없이 도는 고리를 기동 경로에 두지 않는다.
 MAX_PAGES = 10_000
 
@@ -216,16 +216,19 @@ def fetch() -> Snapshot:
             raise CatalogUnavailable(
                 f"{PATH} page={page} 호출 실패: {type(e).__name__}: {e}") from e
 
+        # **키는 snake_case 다.** Spring 이 응답 전체에 SNAKE_CASE 를 건다
+        # (`spring.jackson.property-naming-strategy`). camelCase 로 읽어서 시험은
+        # 통과하고 실서버에서만 "total_pages 가 없다" 로 막힌 적이 있다(2026-09-23).
         data = body.get("data")
         if not isinstance(data, dict):
             raise CatalogUnavailable(f"{PATH} 응답에 data 가 없다 (page={page})")
         try:
-            total_pages = int(data["totalPages"])
+            total_pages = int(data["total_pages"])
         except (KeyError, TypeError, ValueError) as e:
             # 개수로 끝을 판정하지 않는다. 중간 페이지가 비면 카탈로그가 조용히 잘린다.
-            raise CatalogUnavailable("응답에 totalPages 가 없다 — 끝을 판정할 수 없다") from e
+            raise CatalogUnavailable("응답에 total_pages 가 없다 — 끝을 판정할 수 없다") from e
 
-        stamp = data.get("generatedAt")
+        stamp = data.get("generated_at")
         if generated_first is None:
             generated_first = stamp
         generated_last = stamp or generated_last
@@ -255,11 +258,11 @@ def _ingest_track(t: dict, tracks: dict, sections: dict) -> None:
     raw_sections = t.get("sections") or []
     if not raw_sections:
         return
-    music_id = t.get("musicId")
+    music_id = t.get("music_id")
     track_id = None
     staged = []
     for s in raw_sections:
-        uid = str(s.get("externalId") or "").strip()
+        uid = str(s.get("external_id") or "").strip()
         if not uid:
             continue
         tid = uid.split("#", 1)[0]
@@ -280,17 +283,17 @@ def _ingest_track(t: dict, tracks: dict, sections: dict) -> None:
         "title": t.get("title"),
         "genre_code": _tags(t.get("genres")),
         "mood_codes": _tags(t.get("moods")),
-        "has_vocal": t.get("hasVocal"),
-        "vocal_gender": t.get("vocalGender"),
+        "has_vocal": t.get("has_vocal"),
+        "vocal_gender": t.get("vocal_gender"),
     }
     for uid, s in staged:
         sections[uid] = {
             "track_id": track_id,
-            "music_section_analysis_id": s.get("musicSectionAnalysisId"),
+            "music_section_analysis_id": s.get("music_section_analysis_id"),
             "section_idx": s.get("index"),
-            "section_label": s.get("sectionLabel"),
-            "start_ms": s.get("startTimeMs"),
-            "end_ms": s.get("endTimeMs"),
+            "section_label": s.get("section_label"),
+            "start_ms": s.get("start_time_ms"),
+            "end_ms": s.get("end_time_ms"),
             "instruments": _tags(s.get("instruments")),
             "moment_moods": _tags(s.get("moods")),
         }
