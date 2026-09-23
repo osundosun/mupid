@@ -36,6 +36,7 @@ import com.osundosun.mupid.api.music.repository.MusicAnalysisRepository;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.repository.MusicSectionAnalysisRepository;
 import com.osundosun.mupid.api.music.response.MusicAnalysisResponse;
+import com.osundosun.mupid.api.music.response.MusicBulkResponse;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
 import com.osundosun.mupid.api.storage.error.StorageErrorCode;
@@ -272,6 +273,15 @@ public class MusicServiceImpl implements MusicService {
         Music music = repository.findDetail(musicId)
             .orElseThrow(() -> new BusinessException(MusicErrorCode.MUSIC_NOT_FOUND));
         return assembler.assemble(List.of(music)).get(0);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MusicBulkResponse getMusicSummaries(List<Integer> musicIds) {
+        // 한 곡 조회(`getMusicSummary`)와 달리 없는 곡·삭제된 곡으로 404·410 을 내지
+        // 않는다. 목록 하나에 지워진 곡이 섞였다고 나머지를 못 받으면 안 된다 —
+        // 빠진 번호로 알린다. 순서와 삭제 곡 걸러내기는 조립기가 한다.
+        return new MusicBulkResponse(assembler.byIds(musicIds));
     }
 
     @Override

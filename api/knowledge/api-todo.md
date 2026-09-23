@@ -20,6 +20,7 @@
 | 이메일 | `GET/POST /api/v1/mail/verification`, `GET /{id}` | 연결 완료 |
 | 비밀번호 재설정 | `GET/POST /api/v1/user/reset` | 화면 미연결 |
 | 곡 조회 | `GET /api/v1/music`, `GET /api/v1/music/{musicId}` | 인증 불필요 · 연결 완료 |
+| 곡 일괄 조회 | `GET /api/v1/music/bulk?ids=` | 액세스 토큰 필요 · 프론트 연결은 S15P21A204-446 |
 | 콘텐츠 등록 | `POST/PATCH/DELETE` — music · album · artist · lyric | **album·artist·lyric 은 쓰기 전용** |
 | 스트리밍 | 스트림·청크 생성/업로드/조회/다운로드 | 연결 완료 |
 | 이미지 | `POST/GET/DELETE /api/v1/storage/image/…` | 연결 완료 · 조회는 `{fileId}`, 쓰기는 `{category}/{key}` |

@@ -17,9 +17,11 @@ import com.osundosun.mupid.api.music.enumerate.MusicSort;
 import com.osundosun.mupid.api.music.enumerate.VocalFilter;
 import com.osundosun.mupid.api.music.request.MusicSortRequest;
 import com.osundosun.mupid.api.music.response.MusicAnalysisResponse;
+import com.osundosun.mupid.api.music.response.MusicBulkResponse;
 import com.osundosun.mupid.api.music.response.MusicPageResponse;
 import com.osundosun.mupid.api.music.response.ExploreFilterOptionResponse;
 import com.osundosun.mupid.api.music.service.ExploreFilterOptionService;
+import com.osundosun.mupid.api.music.service.MusicBulkQuery;
 import com.osundosun.mupid.api.music.service.MusicService;
 import com.osundosun.mupid.api.music.service.MusicServiceImpl;
 
@@ -134,6 +136,27 @@ public class MusicQueryController {
         }
         return MusicSortRequest.of(MusicSort.parse(sort)
             .orElseThrow(() -> new BusinessException(GlobalErrorCode.INVALID_REQUEST_BODY)));
+    }
+
+    /**
+     * 곡 여러 개를 한 번에 (S15P21A204-445).
+     *
+     * <p>화면은 좋아요·재생 목록·플레이리스트를 곡 번호로 들고 있다가 이것으로 곡 정보를
+     * 채운다. 곡마다 {@code /{musicId}} 를 부르면 곡 수만큼 요청이 나가서 만들었다.
+     *
+     * <p><b>없거나 삭제된 곡은 404·410 이 아니라 결과에서 빠진다.</b> 순서는 보낸
+     * 그대로다. 번호 규칙(쉼표·반복·중복·상한 {@value MusicBulkQuery#MAX_SIZE})은
+     * {@link MusicBulkQuery} 에 있다.
+     *
+     * <p>경로는 {@code /{musicId}} 보다 먼저 맞는다(스프링은 고정 경로를 먼저 본다).
+     *
+     * @param ids 곡 번호. {@code ids=1,2,3} 또는 {@code ids=1&ids=2}
+     */
+    @GetMapping("/bulk")
+    public ResponseEntity<BaseResponse<MusicBulkResponse>> getMusicBulk(
+        @RequestParam(name = "ids", required = false) List<String> ids
+    ) {
+        return ResponseEntity.ok(BaseResponse.of(musicService.getMusicSummaries(MusicBulkQuery.parse(ids))));
     }
 
     @GetMapping("/{musicId}")
