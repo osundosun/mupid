@@ -176,7 +176,12 @@ export function useMupid(bootstrap: Bootstrap) {
     const ids = new Set(tracks.map((track) => track.id));
     return [...tracks, ...extraTracks.filter((track) => !ids.has(track.id))];
   }, [tracks, extraTracks]);
-  const rememberTracks = (found: (Track | null | undefined)[]) => {
+  /*
+   * 참조를 고정한다. 검색 결과 화면이 그린 목록을 효과에서 알려 주는데
+   * (`explore.tsx`, S15P21A204-441), 매 렌더 새로 만들어지면 그 효과가 헛돈다.
+   * 더할 것이 없으면 같은 배열을 돌려주므로 여기서 멈춘다.
+   */
+  const rememberTracks = useCallback((found: (Track | null | undefined)[]) => {
     const fresh = found.filter((track): track is Track => !!track && typeof track.musicId === 'number');
     if (!fresh.length) return;
     setExtraTracks((current) => {
@@ -184,7 +189,7 @@ export function useMupid(bootstrap: Bootstrap) {
       const added = fresh.filter((track) => !ids.has(track.id) && ids.add(track.id));
       return added.length ? [...current, ...added] : current;
     });
-  };
+  }, [tracks]);
   const [selectedPlaylist, setSelectedPlaylist] = useState<number | null>(null);
   const [libraryTab, setLibraryTab] = useState('playlists');
   const [query, setQuery] = useState('');
@@ -603,8 +608,12 @@ export function useMupid(bootstrap: Bootstrap) {
      * 아래의 효과가 카탈로그가 도착한 뒤 다시 부른다.
      */
     if (!tracks.length) return;
-    const saved = await queueApi.fetchQueue(tracks, signal);
+    const saved = await queueApi.fetchQueue(signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
+    // 계정 큐에는 카탈로그 밖의 곡(검색으로 찾아 담은 곡)이 섞여 있다. 먼저
+    // 기억해 두지 않으면 화면이 그 줄을 그리지 못하고, 그렇게 줄어든 목록이
+    // 곧바로 계정에 저장돼 담아 둔 곡이 지워진다.
+    rememberTracks(saved.tracks);
     queueAdopted.current = true;
     queueRevision.current = saved.revision;
     /*
@@ -632,6 +641,7 @@ export function useMupid(bootstrap: Bootstrap) {
    */
   const adoptServerChange = (saved: queueApi.QueueSnapshot | null) => {
     if (!saved || !mountedRef.current) return;
+    rememberTracks(saved.tracks);
     queueRevision.current = saved.revision;
     setQueue(toQueueEntries(saved.ids));
     savedQueue.current = { ids: saved.ids, currentId: savedQueue.current?.currentId ?? null };
@@ -949,6 +959,9 @@ export function useMupid(bootstrap: Bootstrap) {
    * 않으면 이번처럼 한 경로가 조용히 빠진다.
    */
   const placePlayedTrack = (track: Track) => {
+    // 카탈로그 밖의 곡(검색 결과 등)일 수 있다. 자리만 만들고 곡을 기억하지
+    // 않으면 그 자리는 곡으로 되돌려지지 못해 화면에서 빈다.
+    rememberTracks([track]);
     const placed = placeInQueue(
       queue,
       track.id,
@@ -1100,7 +1113,8 @@ export function useMupid(bootstrap: Bootstrap) {
    */
   const queueTracks: QueueTrack[] = queue
     .map(({ uid, trackId }) => {
-      const track = tracks.find((t) => t.id === trackId);
+      // 카탈로그 밖의 곡(검색으로 찾아 담은 곡)도 줄로 그려야 한다 (S15P21A204-441).
+      const track = knownTracks.find((t) => t.id === trackId);
       return track ? { ...track, uid } : null;
     })
     .filter((t): t is QueueTrack => !!t && !ignored.includes(t.id))
@@ -1284,8 +1298,11 @@ export function useMupid(bootstrap: Bootstrap) {
        * 그래서 떠날 때 같은 내용을 한 번 더 보낼 수 있다. 판본이 함께 가므로
        * 앞의 것이 이미 성공했다면 뒤의 것은 409 로 거절되고 아무것도 바뀌지 않는다.
        */
-      void queueApi.saveQueue(ids, currentId, revision, tracks).then((saved) => {
+      void queueApi.saveQueue(ids, currentId, revision, knownTracks).then((saved) => {
         if (!saved || !mountedRef.current) return;
+        // 판본이 어긋나 다른 기기의 큐를 받아 왔을 수 있다. 그 목록에도 카탈로그
+        // 밖의 곡이 있다.
+        rememberTracks(saved.tracks);
         pendingQueueSave.current = null;
         queueRevision.current = saved.revision;
         savedQueue.current = { ids: saved.ids, currentId };
@@ -1301,7 +1318,7 @@ export function useMupid(bootstrap: Bootstrap) {
     }, QUEUE_SAVE_DELAY);
 
     return () => clearTimeout(timer);
-  }, [queue, active?.id, demoSession, tracks]);
+  }, [queue, active?.id, demoSession, knownTracks, rememberTracks]);
 
   /**
    * 카탈로그가 도착한 뒤에 계정 큐를 받아 온다.
@@ -1337,7 +1354,7 @@ export function useMupid(bootstrap: Bootstrap) {
       // 한 번만 보낸다. 숨김 → 복귀 → 다시 숨김에서 같은 판본으로 두 번 보내면
       // 두 번째는 판본이 어긋나 거절된다.
       pendingQueueSave.current = null;
-      void queueApi.saveQueue(pending.ids, pending.currentId, pending.revision, tracks);
+      void queueApi.saveQueue(pending.ids, pending.currentId, pending.revision, knownTracks);
     };
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') flush();
@@ -1348,7 +1365,7 @@ export function useMupid(bootstrap: Bootstrap) {
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', flush);
     };
-  }, [tracks]);
+  }, [knownTracks]);
 
   /**
    * 대기열에서 다음에 올 스트리밍 곡들의 앞 5초를 미리 받아 둔다.
@@ -1942,6 +1959,14 @@ export function useMupid(bootstrap: Bootstrap) {
     tracks,
     // 보관함·마이페이지가 곡 번호로 곡을 찾을 때 쓴다. 카탈로그 밖의 곡까지 들어 있다.
     knownTracks,
+    /**
+     * 카탈로그 밖에서 받아 온 곡을 화면이 알려 준다.
+     *
+     * 검색 결과처럼 서버에서 곡을 직접 받아 그리는 화면은 그 목록을 여기에
+     * 넘긴다. 담기·재생·좋아요는 스스로도 기억하지만, 목록을 그린 시점에 미리
+     * 알아 두면 그 줄의 어떤 길로 들어와도 곡을 잃지 않는다 (S15P21A204-441).
+     */
+    rememberTracks,
     todayMoments,
     todayMomentNote,
     forYou,
@@ -2110,6 +2135,8 @@ export function useMupid(bootstrap: Bootstrap) {
      * 100곡이 차 있어도 거절하지 않고 가장 오래 머문 자리를 밀어낸다.
      */
     addToQueue: (track: Track) => {
+      // 담는 곡이 카탈로그 밖일 수 있다 — 검색 결과의 담기 버튼이 그 길이다.
+      rememberTracks([track]);
       const result = placeInQueue(queue, track.id, queueInsertPosition, currentUidRef.current, QUEUE_LIMIT);
       setQueue(result.entries);
       if (result.evictedTrackId !== null) {
