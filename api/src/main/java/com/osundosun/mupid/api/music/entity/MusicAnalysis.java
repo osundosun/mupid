@@ -55,5 +55,34 @@ public class MusicAnalysis {
     @Enumerated(EnumType.STRING)
     @Column
     private VocalGender vocalGender;
-    
+
+    /**
+     * 측정 BPM. 분석 파이프라인이 오디오에서 잰다. 자기상관 추정이라 옥타브 오류가 있다 —
+     * 요청 범위(아래)가 있으면 추천은 그쪽을 먼저 쓴다.
+     */
+    @Column
+    private Double bpm;
+
+    /**
+     * 생성 때 요청한 BPM 범위. 생성 음원에만 있다.
+     */
+    @Column(columnDefinition = "SMALLINT")
+    private Integer bpmRequestedMin;
+
+    @Column(columnDefinition = "SMALLINT")
+    private Integer bpmRequestedMax;
+
+    /**
+     * 가사 언어(`korean`·`english`·`japanese`…). 생성 조건에서 온다. 모르면 비운다.
+     */
+    @Column(length = 32)
+    private String language;
+
+    /**
+     * 생성 스타일 원문(`female_korean_ballad`). 추천이 보컬·언어 접두어를 떼어
+     * 스타일 조건으로 쓴다.
+     */
+    @Column(length = 64)
+    private String category;
+
 }

@@ -4,6 +4,8 @@ import com.osundosun.mupid.api.music.enumerate.SectionLabel;
 
 import java.util.List;
 
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -55,7 +57,17 @@ public record MusicSectionBulkLine(
      * 센다. 비워 둬도 된다. 악기는 곡이 아니라 구간에 달린다
      * (`music_analysis_instruments` 의 외래키가 구간 번호다).
      */
-    List<@Size(max = 50) String> instruments
+    List<@Size(max = 50) String> instruments,
+
+    /**
+     * 구간 에너지 — 오디오 RMS(0~1). 모르면 비운다.
+     *
+     * 추천이 이어 듣기 흐름 감점과 "더 차분하게" 조건에 쓴다. 예전에는 AI 색인에만
+     * 있었다(연동 계약 2026-09-23 절).
+     */
+    @DecimalMin(value = "0.0", message = "구간 에너지는 0 이상이어야 합니다.")
+    @DecimalMax(value = "1.0", message = "구간 에너지는 1 이하여야 합니다.")
+    Double energy
 
 ) {
 
