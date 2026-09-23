@@ -1371,6 +1371,20 @@ export function useMupid(bootstrap: Bootstrap) {
     getPlayer()?.setQueue(upcoming);
   }, [queue, currentUid, active?.id, ignored, demoSession]);
   const playPlaylist = (playlist: Playlist, track?: Track) => {
+    /*
+     * 수록곡 줄에서 **지금 재생기가 들고 있는 곡**을 다시 누른 것이면 일시정지·재개다.
+     * 예전에는 이 길이 늘 큐를 새로 깔고 처음부터 다시 틀어서, 버튼은 Pause 모양인데
+     * 눌러도 멈추지 않았다. `play()` 의 토글 조건과 같다 — 큐·구간 상태는 건드리지 않는다.
+     */
+    if (track && activeRef.current?.id === track.id) {
+      const player = getPlayer();
+      const status = player?.store.get().status;
+      if (player && (status === 'playing' || status === 'buffering' || status === 'paused')) {
+        if (status === 'paused') void player.play();
+        else player.pause();
+        return;
+      }
+    }
     const playable = playlist.tracks.filter((t) => !ignored.includes(t.id));
     if (!playable.length) {
       setToast('재생할 수 있는 곡이 없어요.');
