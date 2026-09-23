@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.ai.catalog.RecommenderCatalogService;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
 import com.osundosun.mupid.api.ai.error.AiErrorCode;
@@ -68,6 +69,7 @@ public class NextTrackService {
     private static final int MAX_LIMIT = 50;
 
     private final RecommenderClient recommender;
+    private final RecommenderCatalogService catalogService;
     private final MusicSectionService musicSectionService;
     private final MusicSummaryAssembler assembler;
     private final OnboardingService onboardingService;
@@ -95,7 +97,7 @@ public class NextTrackService {
         long recommendationId = SEQUENCE.incrementAndGet();
         List<RecommenderDto.Item> items = recommender.next(new RecommenderDto.NextRequest(
             recommendationId, userId, limit, List.copyOf(excludeTracks),
-            currentTrack, currentSection, onboardingOf(userId)));
+            currentTrack, currentSection, onboardingOf(userId), catalogService.current().body()));
 
         List<NextTrack> tracks = withMusic(items);
         // 사유를 화면이 되돌려줄 때까지 들고 있는다. 이 응답에는 사유 문장이 있지만

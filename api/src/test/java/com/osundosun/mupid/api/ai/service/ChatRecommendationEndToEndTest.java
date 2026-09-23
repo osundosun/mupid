@@ -1,5 +1,7 @@
 package com.osundosun.mupid.api.ai.service;
 
+import com.osundosun.mupid.api.ai.catalog.TestCatalogs;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -116,14 +118,14 @@ class ChatRecommendationEndToEndTest {
     }
 
     /**
-     * 추천 서버 대역. `/internal/facets` 는 <b>실제 응답 모양</b>으로, 추천 경로는
-     * 계약대로 `external_id` 만 돌려준다.
+     * 추천 서버 대역. 추천 경로는 계약대로 `external_id` 만 돌려준다. 조건 어휘는 이제
+     * 추천 서버가 아니라 MySQL 후보에서 만든다(`TestCatalogs`, 연동 계약 2026-09-23 절).
      */
     private RecommenderClient recommender() throws IOException {
         recommender = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         recommender.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
-            String body = path.endsWith("/facets") ? FACETS : RECOMMENDATION;
+            String body = RECOMMENDATION;
             byte[] out = body.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, out.length);
@@ -142,33 +144,6 @@ class ChatRecommendationEndToEndTest {
             .requestFactory(factory)
             .build(), props);
     }
-
-    /**
-     * `ai_server/app/internal_api.py._facets_payload` 가 실제로 만드는 모양이다.
-     * `enforcement`·`excludable` 이 붙고 장르만 `style_values` 를 따로 갖는다.
-     */
-    private static final String FACETS = """
-        { "catalog": { "tracks": 111, "moments": 65540 },
-          "fields": {
-            "genre": { "enforcement": "gate", "excludable": true,
-                       "values": [ { "value": "poprock", "tracks": 42 } ],
-                       "style_values": [ { "value": "ko_ballad", "tracks": 9 } ] },
-            "language": { "enforcement": "gate", "excludable": true,
-                          "values": [ { "value": "ko", "tracks": 30 } ] },
-            "vocal": { "enforcement": "gate", "excludable": true,
-                       "values": [ { "value": "female", "tracks": 20 } ] },
-            "instrument": { "enforcement": "gate", "excludable": true,
-                            "values": [ { "value": "piano", "tracks": 11 } ] },
-            "mood": { "enforcement": "score_only", "excludable": true,
-                      "values": [ { "value": "잔잔한", "tracks": 18 } ] },
-            "flow": { "enforcement": "gate", "excludable": true,
-                      "values": [ { "value": "CHORUS", "moments": 900 } ] },
-            "bpm_min": { "enforcement": "gate", "excludable": false, "range": [60, 180] },
-            "bpm_max": { "enforcement": "gate", "excludable": false, "range": [60, 180] },
-            "tempo_direction": { "enforcement": "gate_with_reference", "excludable": false,
-                                 "values": [ { "value": "up" }, { "value": "down" } ] } },
-          "example": { "filters": { "genre": ["pop"], "instrument": ["piano"] } } }
-        """;
 
     /** `RecommendationResponse` 계약. 숫자 ID·시간은 오지 않는다. */
     private static final String RECOMMENDATION = """
@@ -238,7 +213,7 @@ class ChatRecommendationEndToEndTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(List.of(first, second));
 
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
-            client, musicRepository, sectionService, TestMusicSummaries.assembler(),
+            client, TestCatalogs.fixed(), musicRepository, sectionService, TestMusicSummaries.assembler(),
             onboardingService, mock(RecommendationReasonCache.class));
         return new AiChatServiceImpl(gateway(toolArguments), tool, musicRepository,
             new AiProperties("x", "test-key", "gpt-5-mini",
@@ -289,7 +264,8 @@ class ChatRecommendationEndToEndTest {
         assertThat(first).contains("\"required\":[\"query\"]");
         // 어휘가 스키마에 실렸다 = 모델이 카탈로그에 있는 말로만 조건을 만들 수 있다.
         assertThat(first).contains("\"poprock\"");
-        assertThat(first).contains("\"ko_ballad\"");
+        // 스타일은 category 에서 보컬·언어 접두어를 뗀 것이다(female_korean_ballad → ballad).
+        assertThat(first).contains("\"ballad\"");
         assertThat(first).contains("\"piano\"");
         // 두 번째 요청에는 우리가 실행한 툴 결과가 tool 메시지로 붙는다.
         assertThat(gatewayRequests.get(1)).contains("\"role\":\"tool\"");

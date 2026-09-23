@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.ai.catalog.RecommenderCatalogService;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
 import com.osundosun.mupid.api.common.exception.BusinessException;
@@ -45,6 +46,7 @@ public class SimilarSectionService {
     private static final int MAX_LIMIT = 50;
 
     private final RecommenderClient recommender;
+    private final RecommenderCatalogService catalogService;
     private final MusicSectionService musicSectionService;
     private final MusicSummaryAssembler assembler;
 
@@ -62,7 +64,8 @@ public class SimilarSectionService {
         List<RecommenderDto.SimilarItem> items = recommender.similar(
             new RecommenderDto.SimilarRequest(
                 base.getExternalId(), size,
-                excludeTrack == null ? List.of() : List.of(excludeTrack)));
+                excludeTrack == null ? List.of() : List.of(excludeTrack),
+                catalogService.current().body()));
 
         List<SimilarSection> tracks = withMusic(items);
         return new SimilarSectionResponse(musicSectionId, tracks,

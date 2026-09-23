@@ -1,5 +1,7 @@
 package com.osundosun.mupid.api.ai.service;
 
+import com.osundosun.mupid.api.ai.catalog.TestCatalogs;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -92,7 +94,7 @@ class AiChatServiceToolDeclarationTest {
         factory.setReadTimeout(props.readTimeout());
         return new AiRecommendToolImpl(new RecommenderClient(RestClient.builder()
             .baseUrl(props.isConfigured() ? props.baseUrl() : "http://recommender.invalid")
-            .requestFactory(factory).build(), props), null, null, null, null, null);
+            .requestFactory(factory).build(), props), TestCatalogs.fixed(), null, null, null, null, null);
     }
 
     /**

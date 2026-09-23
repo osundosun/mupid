@@ -27,7 +27,7 @@ class RecommenderDtoTest {
         RecommenderDto.SearchRequest request = new RecommenderDto.SearchRequest(
             5001L, 15, 3, List.of("T000901"), null,
             Map.of("filters", Map.of("genre", List.of("pop"))),
-            new RecommenderDto.Onboarding(List.of("잔잔한"), List.of("Jazz")));
+            new RecommenderDto.Onboarding(List.of("잔잔한"), List.of("Jazz")), null);
 
         String json = new String(AiJson.writeBytes(request), StandardCharsets.UTF_8);
 
@@ -46,7 +46,7 @@ class RecommenderDtoTest {
     @DisplayName("이어 듣기 요청도 같은 규칙을 따른다")
     void writeNextRequest() {
         RecommenderDto.NextRequest request =
-            new RecommenderDto.NextRequest(7L, 15, 5, List.of(), "T000901", null, null);
+            new RecommenderDto.NextRequest(7L, 15, 5, List.of(), "T000901", null, null, null);
 
         String json = new String(AiJson.writeBytes(request), StandardCharsets.UTF_8);
 
