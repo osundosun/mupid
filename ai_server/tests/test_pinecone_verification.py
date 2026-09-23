@@ -402,3 +402,25 @@ def test_9_e_resume_rechecks_before_it_lets_serving_back(staged):
     # 우회 스위치가 아예 없어야 한다.
     with pytest.raises(SystemExit):
         sync.main(["--resume", "--force"])
+
+
+def test_pool_loads_the_catalog_itself_when_nothing_is_installed(staged, monkeypatch):
+    """도구는 서버와 달리 기동에서 카탈로그를 올려 두지 않는다. `_pool()` 이 먼저 올린다."""
+    from ai_server.app import catalog_api as ca
+    from ai_server.app import recommender as rc
+    from ai_server.tools import pinecone_sync as sync
+
+    payload = ca.snapshot_from_tracks(_catalog_payload())
+    calls = []
+
+    def fake_load():
+        calls.append(1)
+        ca.install(payload)
+        return payload
+
+    ca.reset()
+    monkeypatch.setattr(rc, "CAT", None)
+    monkeypatch.setattr(ca, "load", fake_load)
+    cat = sync._pool()
+    assert calls == [1]
+    assert len(cat.pool) > 0
