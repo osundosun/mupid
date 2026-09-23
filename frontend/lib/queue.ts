@@ -208,6 +208,53 @@ export function placeInQueue(
   };
 }
 
+/**
+ * 자동 추천을 판정하는 순간의 재생 상태. 요청 전과 응답 후를 비교한다.
+ *
+ * `playback` 은 재생을 새로 걸 때마다 오르는 번호다 — 같은 곡을 다시 틀어도 바뀌므로
+ * "사용자가 그 사이 무언가를 틀었다" 를 곡 번호보다 정확히 가린다.
+ */
+export type AutoRecommendSnapshot = {
+  playback: number;
+  currentUid: string | null;
+  queue: QueueEntry[];
+};
+
+/**
+ * 재생 목록 끝에서 추천 한 곡을 받아 **맨 아래에** 놓는다.
+ *
+ * 응답을 기다리는 사이 사용자가 다른 곡을 틀었거나 큐가 바뀌었으면 결과를 버린다 —
+ * 늦게 온 추천이 사용자가 방금 만든 상태를 덮으면 안 된다. 실패와 빈 응답도 조용히
+ * null 이다(재시도·대체곡 없음).
+ */
+export async function autoRecommendAtEnd<T extends { id: number }>(
+  read: () => AutoRecommendSnapshot,
+  recommend: () => Promise<T[]>,
+  limit: number,
+): Promise<{ track: T; placement: QueuePlacement } | null> {
+  const before = read();
+  let found: T[];
+  try {
+    found = await recommend();
+  } catch {
+    return null;
+  }
+  const after = read();
+  if (
+    after.playback !== before.playback ||
+    after.currentUid !== before.currentUid ||
+    after.queue !== before.queue
+  ) {
+    return null;
+  }
+  const track = found[0];
+  if (!track) return null;
+  return {
+    track,
+    placement: placeInQueue(after.queue, track.id, 'bottom', after.currentUid, limit),
+  };
+}
+
 /** 자동 스크롤이 반응하는 위아래 가장자리 폭(px). */
 export const AUTO_SCROLL_EDGE = 56;
 /** 한 프레임에 밀 수 있는 최대 거리(px). */

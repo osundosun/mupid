@@ -253,7 +253,7 @@ footer{border-top:1px solid var(--rule);padding-top:18px;font-size:12.5px;color:
     <div class="set"><div class="k">target</div><div class="v"><em>TRACK</em><em>SECTION</em></div></div>
     <div class="set"><div class="k">rec_type</div><div class="v"><em>HOME</em><em>SECTION</em><em>CUSTOM</em></div></div>
   </div>
-  <p class="note"><code>AUTOPLAY</code> 는 <code>entry_path</code> 에서 뺐다. 인플레이어 다음곡 추천이 없으므로 <b>검색 결과를 이어 듣는 것도 <code>SEARCH</code> 로 남긴다</b> — 그래야 나중에 “검색 유입이었는데 추천이 정확했다” 를 구분해 검색 노출 순서를 조정할 수 있다.</p>
+  <p class="note"><code>AUTOPLAY</code> 는 <code>entry_path</code> 에서 뺐다. <b>검색 결과를 이어 듣는 것은 <code>SEARCH</code> 로 남긴다</b> — 그래야 나중에 “검색 유입이었는데 추천이 정확했다” 를 구분해 검색 노출 순서를 조정할 수 있다. 목록이 끝나 추천이 이어 붙인 곡은 <code>RECOMMEND</code> 다 (S15P21A204-439) — 곡을 고른 것은 추천이기 때문이고, 값을 따로 파지 않는 이유는 <code>decision/0014</code> 에 있다.</p>
   <p class="note">값 검증은 수집기가 한다. 값 집합만 어긋난 경우 <b>그 칸만 비우고 이벤트는 받는다.</b> ClickHouse <code>CONSTRAINT</code> 로 막지 않는 이유는, 한 건이 어긋나면 블록 전체가 거부돼 Kafka 소비가 멈추기 때문이다.</p>
 </section>
 

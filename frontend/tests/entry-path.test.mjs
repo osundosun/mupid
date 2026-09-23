@@ -76,6 +76,22 @@ test('큐가 자동으로 넘긴 재생도 QUEUE 다 — 한 목록을 듣는 �
   assert.equal(hook.match(/'QUEUE'/g).length, 3);
 });
 
+test('목록이 끝나 추천이 이어 튼 곡은 RECOMMEND 다 — 화면으로 갈음하지 않는다', () => {
+  /*
+   * 곡을 고른 것은 추천이므로 `RECOMMEND` 인데, **직접 넘겨야** 한다. `entryPathOf` 에
+   * 맡기면 화면으로 갈음해 버려서, 목록이 끝난 그 순간 사용자가 검색 화면에 있었으면
+   * `SEARCH`, 보관함에 있었으면 `PLAYLIST` 가 된다 — 같은 자동 재생인데 어느 화면을
+   * 보고 있었는지에 따라 값이 갈린다.
+   *
+   * `AUTOPLAY` 는 두지 않는다. 이유와 그 대가는 `decision/0014` 에 있다.
+   */
+  assert.ok(
+    hook.includes("startPlayback(track, track.recommended?.start, placement.uid, 'RECOMMEND')"),
+  );
+  // 값 집합 자체는 맨 위 시험이 못박는다. 여기서는 훅만 본다.
+  assert.ok(!/'AUTOPLAY'/.test(hook), '쓰지 않기로 한 AUTOPLAY 가 들어왔다');
+});
+
 test('아티스트 패널에서 찾아 튼 곡은 ARTIST 다 — 코드 순서에 매달리지 않는다', () => {
   // 패널은 모든 곡 줄의 아티스트명에서 열린다. 화면으로 갈음하면 같은 행동이
   // RECOMMEND·SEARCH·PLAYLIST 로 흩어진다.
