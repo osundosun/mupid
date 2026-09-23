@@ -2948,14 +2948,8 @@ img.report-cupid {
     height: min(570px, calc(100dvh - var(--dock-height) - 42px));
     border-radius: 21px;
   }
-  /* 입력 중에는 화면 위에서 키보드 바로 위까지 펼친다. 독 위에 떠 있던 자리
-     그대로면 키보드가 패널을 덮어 치는 글자가 보이지 않는다(`chat.tsx`). */
-  .mupid-shell .chat-panel.composing {
-    top: calc(var(--safe-area-inset-top, 0px) + 12px);
-    bottom: calc(var(--keyboard-inset, 0px) + 12px);
-    height: auto;
-    max-height: none;
-  }
+  /* 폰에서 패널의 틀은 `chat-fullscreen.css` 가 정한다 — 화면 전체를 채우고,
+     입력 중(`.composing`)에도 틀을 바꾸지 않는다(S15P21A204-438). */
   .chat-header {
     padding: 12px;
   }

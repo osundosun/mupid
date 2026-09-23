@@ -30,6 +30,7 @@
 @import './queue-dock.css';
 @import './listening-calendar.css';
 @import './inquiry.css';
+@import './chat-fullscreen.css';
 @custom-variant dark (&:is(.dark *));
 /*
  * Pretendard 는 직접 담는다.
