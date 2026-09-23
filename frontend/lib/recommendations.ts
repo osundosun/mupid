@@ -121,13 +121,20 @@ export async function fetchTodayMoments(
  * **빈 목록은 오류가 아니다.** 조건에 맞는 곡이 없다는 뜻이다.
  */
 export async function fetchNextTracks(
-  options: { currentMusicId?: number; currentSectionId?: number; limit?: number } = {},
+  options: {
+    currentMusicId?: number;
+    currentSectionId?: number;
+    limit?: number;
+    /** 이번 목록에서 뺄 서버 곡 번호. 자동 추천은 이미 큐에 있는 곡을 넘긴다. */
+    excludeMusicIds?: number[];
+  } = {},
   signal?: AbortSignal,
 ): Promise<Track[]> {
   const result = await api.recommendation.next(
     {
       current_music_id: options.currentMusicId,
       current_music_section_id: options.currentSectionId,
+      exclude_music_ids: options.excludeMusicIds,
       limit: options.limit,
     },
     signal,
