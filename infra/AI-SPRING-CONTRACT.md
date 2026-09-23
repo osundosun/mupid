@@ -10,6 +10,167 @@
 
 ---
 
+## 2026-09-23 계약 변경 — AI 는 Spring 을 부르지 않는다
+
+**이 절이 아래 모든 절보다 우선한다.** 대상 `S15P21A204-423`.
+
+### 무엇이 어긋나 있었나
+
+§0 은 처음부터 "FastAPI 는 추천 계산만. 상태를 갖지 않는다" 였다. 2026-09-22(416)에
+추천 서버가 기동 때 Spring 내부 카탈로그 API(`GET /api/v1/internal/ai/catalog`)를
+ROLE_SYSTEM 리프레시 토큰으로 불러 곡·구간 메타를 통째로 들고 있게 바뀌었고, 이 문서는
+고쳐지지 않았다. 하루 만에 그 구조에서 장애가 여럿 났다.
+
+| 증상 | 원인 |
+|---|---|
+| 라벨러가 6일째 매일 실패 (423) | 곡 번호 매핑이 비어 재생 신호 전부 폐기 |
+| 추천 서버 배포 롤백 | 토큰 7일 만료 → 카탈로그 적재 실패 → Ready 불가 |
+| 카탈로그 0건 | Spring 은 snake_case, AI 는 camelCase 로 읽음 |
+| 기동 순서 의존 | Spring → AI 호출에 AI → Spring 호출이 더해져 서로를 기다림 |
+
+### 흐름
+
+| 흐름 | 방향 | 무엇이 오가나 |
+|---|---|---|
+| 추천 요청 | Spring → AI | 후보와 그 값(`catalog`, 아래) + 기존 필드 |
+| 행동 데이터 | AI → ClickHouse (읽기 전용) | 청취·구간 신호 (Q8, 그대로) |
+| 배치의 곡 번호·구간 경계 | AI 배치 → ClickHouse `v_track_sections_current` | Spring 이 MySQL 구간을 저장할 때 함께 씀(435) |
+| **AI → Spring** | **없다** | |
+
+적재 파이프라인(`music_preprocessing`, `ai_server/tools/register_*`)이 분석 결과를 Spring
+API 로 **등록**하는 것은 그대로다. MySQL 에 쓰는 길은 Spring 하나라는 계약이고, 추천
+서버가 Spring 을 읽는 것과 다른 일이다.
+
+### 역할
+
+**Spring 이 한다** — MySQL 이 정본인 판단은 전부 여기서 끝낸다.
+
+| 일 | 전에는 | 설명 |
+|---|---|---|
+| 후보 제외 | AI (카탈로그 교집합) | 삭제된 곡(`music.is_deleted`), 재생할 수 없는 곡(스트림 없음) |
+| 검색 조건 필터 | AI `filter_query_pool` | 아래 "검색 조건" |
+| 조건 어휘·선택지(`facets`) | AI `/internal/facets` | 코드표와 새 컬럼에서 만든다. AI 의 `/internal/facets` 는 없앤다 |
+
+**AI 가 한다** — 벡터와 모델이 필요한 계산만.
+
+- 벡터 검색(Pinecone), 선호 구간 묶음(DNA), 학습 점수, 로지스틱 결합
+- 온보딩 씨앗 (조건을 단계적으로 풀며 씨앗 12개를 찾는 계산 — 후보 **값**이 필요해 Spring
+  이 미리 걸러 줄 수 없다)
+- 무드 가점(`filters.mood` 는 게이트가 아니라 재정렬 재료), CLAP 가점, 이어 듣기 흐름 감점,
+  선호 BPM 게이트
+
+### 요청 본문 `catalog`
+
+모든 추천 경로(`next`·`daily`·`search`·`similar`)에 **필수**로 싣는다. 열 단위 배열이다 —
+같은 위치가 같은 행이다. 행 객체 배열보다 약 60% 작다(실측, 아래).
+
+```json
+"catalog": {
+  "tracks": {
+    "track":       ["T000001", "T000002"],
+    "duration_ms": [151978, 203000],
+    "bpm":         [128.0, null],
+    "bpm_requested_min": [120, null],
+    "bpm_requested_max": [130, null],
+    "language":    ["korean", null],
+    "category":    ["female_korean_ballad", null],
+    "genres":      [["ballad"], []],
+    "moods":       [["calm", "warm"], []],
+    "has_vocal":   [true, null],
+    "vocal_gender":["F", null]
+  },
+  "sections": {
+    "external_id":   ["T000001#0", "T000001#1"],
+    "section_label": ["INTRO", "CHORUS"],
+    "start_ms":      [0, 15500],
+    "end_ms":        [15500, 45000],
+    "energy":        [0.031, 0.087]
+  }
+}
+```
+
+| 필드 | MySQL | 값 |
+|---|---|---|
+| `track` | `music_section_analysis.external_id` 의 `#` 앞 | 문자열 곡 ID |
+| `duration_ms` | `streams.duration_ms` | 곡 길이. AI 가 `rel_start = start_ms / duration_ms` 를 센다 |
+| `bpm` | `music_analysis.bpm` **(신규)** | 측정 BPM. 모르면 `null` |
+| `bpm_requested_min`·`_max` | `music_analysis.bpm_requested_min`·`_max` **(신규)** | 생성 때 요청한 BPM 범위 |
+| `language` | `music_analysis.language` **(신규)** | `korean`·`english`·`japanese`… |
+| `category` | `music_analysis.category` **(신규)** | 생성 스타일 원문(`female_korean_ballad`) |
+| `genres`·`moods` | `music_genres`·`music_moods` → `codes.code_name` | 코드 이름 그대로 |
+| `has_vocal`·`vocal_gender` | `music_analysis` | 그대로 |
+| `section_label` | `music_section_analysis.section_label` | ENUM 이름 그대로(`CHORUS`) |
+| `start_ms`·`end_ms` | `music_section_analysis` | 그대로 |
+| `energy` | `music_section_analysis.energy` **(신규)** | 구간 RMS(0~1). 모르면 `null` |
+
+**`sections` 에 없는 구간은 후보가 아니다.** `tracks` 에 없는 곡의 구간은 보내지 않는다.
+`exclude_tracks` 는 지금처럼 따로 싣는다 — 사용자마다 다른 것을 `catalog` 에 섞으면 본문이
+사용자마다 달라져 AI 가 파생 결과를 재사용할 수 없다.
+
+**크기** (2026-09-23 실측, 1,034곡·9,098구간, 조건 없는 최악): 열 단위 본문 약 317KB
+(gzip 62KB), AI 파싱 4ms. 구간이 10만을 넘으면 다시 설계한다.
+
+**AI 는 본문 없이는 계산하지 않는다.** 같은 본문이 거듭 오면 파생 결과(곡 메타 표·온보딩
+표)를 **본문 해시로** 재사용해도 된다 — 캐시이지 상태가 아니다. 본문이 바뀌면 다시 만든다.
+
+### 검색 조건 (Spring 이 건다)
+
+`search` 는 Spring 이 QueryPlan 의 조건으로 `catalog` 를 **걸러서** 보낸다. 옮기는 규칙은
+지금 AI(`recommender.filter_query_pool`, `_canonicalize_query_tags`, `_qmatch`)와 같다.
+
+| 조건 | 대상 값 | 비교 |
+|---|---|---|
+| `filters.genre` / `exclude.genre` | 곡 장르 코드 ∪ 스타일(`category` 에서 보컬·언어 접두어를 뗀 것) | 토큰 일치 |
+| `filters.language` / `exclude.language` | `language` | 토큰 일치 |
+| `filters.instrument` / `exclude.instrument` | 구간 악기, 없으면 곡의 구간 악기 합집합. `other`·`그 외 악기` 는 근거로 쓰지 않는다 | 토큰 일치 |
+| `filters.vocal` / `exclude.vocal` | `instrumental` / `voice` + `male`·`female`·`mixed` | 토큰 일치 |
+| `exclude.mood` | 곡 무드 | 토큰 일치 |
+| `filters.flow` / `exclude.flow` | 구간 라벨(소문자) | 토큰 일치 |
+| `filters.bpm_min`·`bpm_max` | 요청 BPM 범위의 중간값, 없으면 측정 BPM | 이상·이하 |
+| `filters.tempo_direction` | 위와 같은 BPM, 기준은 `current_track` | 더 빠름/느림 |
+| `filters.energy_direction` | `energy`, 기준은 `current_section`(없으면 곡 평균) | 더 높음/낮음 |
+
+"토큰 일치" 는 `_` 경계 부분 일치다 — `rock` 은 `alternative_rock` 에 맞는다. 값은 소문자,
+`-`·공백은 `_` 로 바꿔 비교한다.
+
+**어휘에 없는 필수 조건은 조용히 버리지 않는다.** `genre`·`language`·`vocal`·`instrument`
+중 요청했는데 카탈로그 어휘로 하나도 옮겨지지 않은 것이 있으면 AI 를 부르지 않고 빈 결과와
+`unsatisfiable` 을 돌려준다 — 조건을 몰래 풀면 사용자가 말한 것과 다른 곡이 나간다.
+
+`filters.mood` 는 거르지 않는다(가점). `activity`·`goal` 은 카탈로그 필드가 없어 무시하고
+그 사실을 진단에 남긴다. QueryPlan 원문은 지금처럼 `query_plan` 으로 함께 보낸다 — AI 가
+무드 가점과 진단에 쓴다.
+
+### MySQL 신규 컬럼
+
+| 표 | 컬럼 | 형 | 적재 |
+|---|---|---|---|
+| `music_analysis` | `bpm` | `DOUBLE NULL` | `PUT /api/v1/music/{id}/analysis` |
+| `music_analysis` | `bpm_requested_min`·`bpm_requested_max` | `SMALLINT NULL` | 같음 |
+| `music_analysis` | `language` | `VARCHAR(32) NULL` | 같음 |
+| `music_analysis` | `category` | `VARCHAR(64) NULL` | 같음 |
+| `music_section_analysis` | `energy` | `DOUBLE NULL` | `PUT /api/v1/music/{id}/section` 의 줄마다 |
+
+전부 오디오 분석·생성 조건에서 나온 값이고 쓰는 쪽이 분석 파이프라인 하나라 `music_analysis`
+에 모은다. 기존 행은 AI 색인(`track_features.parquet`, `moments.parquet` 의 `rms`)에서
+한 번 옮긴다.
+
+### Pinecone 적재 대상
+
+색인의 추천 풀(`MUPID_POOL`) 전체다. **카탈로그와 교집합을 내지 않는다** — 적재 도구도
+Spring 을 부르지 않는다. 지워진 곡의 벡터가 남아도 Spring 이 보낸 `catalog` 에 없으므로
+후보가 되지 않는다.
+
+### 걷어내는 것
+
+| 쪽 | 무엇 |
+|---|---|
+| AI | `app/catalog_api.py`, `app/spring_api.py` 의 카탈로그 경로, 기동 적재·TTL 갱신, `/internal/catalog/refresh`, `/internal/facets`, `index_contract.check_catalog` |
+| Spring | `AiCatalogController`·`Service`·`Repository`·DTO·응답 3종·시험 (`ai/` 아래 10개 파일) |
+| 설정 | AI 파드의 `MUPID_API_BASE_URL`·`MUPID_API_REFRESH_TOKEN` (`MUPID_AI_SERVER_ENV`) |
+
+---
+
 ## 2026-09-16 계약 변경 — 숫자 ID 를 AI 에 보내지 않는다
 
 **아래 §1·§4·§5 의 ID 규약이 바뀌었다.** 옛 내용은 맥락을 위해 남겨 두되, 지금 구현은
