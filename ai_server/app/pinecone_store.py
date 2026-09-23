@@ -498,8 +498,27 @@ def delete_all() -> None:
     """데이터 namespace 를 비운다. **control 은 건드리지 않는다.**
 
     전체 갱신의 첫 단계다. 지우고 다시 넣으면 잔존이 남을 자리가 없다.
+
+    **404 는 "이미 비었다" 다.** serverless 는 한 번도 쓰지 않은 namespace 를 지우라면
+    Not Found 를 준다. 최초 적재가 정확히 그 경우라, 실패로 올리면 첫 적재가 영영
+    시작되지 못한다(2026-09-23). 인덱스 자체가 없는 404 는 `_require_index` 가 이미
+    앞에서 막았다.
     """
-    _wrap("delete_all", _index().delete, delete_all=True, namespace=namespace())
+    try:
+        _index().delete(delete_all=True, namespace=namespace())
+    except Exception as e:                       # SDK 예외 종류가 판마다 다르다
+        if _not_found(e):
+            return
+        _wrap("delete_all", _raise, e)
+
+
+def _not_found(e: Exception) -> bool:
+    return (getattr(e, "status", None) == 404
+            or type(e).__name__ in ("NotFoundException", "NotFoundError"))
+
+
+def _raise(e: Exception):
+    raise e
 
 
 def search(query_vector: np.ndarray, top_k: int) -> list[tuple[str, float]]:
