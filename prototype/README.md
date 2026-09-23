@@ -36,7 +36,7 @@ npm run start
 
 ## 주요 파일
 
-- `components/mufeed-app.tsx`: 음악 서비스 화면 및 상호작용
+- `components/mupid-app.tsx`: 음악 서비스 화면 및 상호작용
 - `app/globals.css`: 공통 스타일과 반응형 레이아웃
 - `app/page.tsx`, `app/mupid/page.tsx`: 페이지 진입점
 - `components/ui/`: 공용 UI 컴포넌트

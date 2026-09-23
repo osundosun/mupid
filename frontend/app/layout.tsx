@@ -111,7 +111,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ko">
+    <html lang="ko" suppressHydrationWarning>
+      <head>
+        {/* 다크 모드를 첫 화면 그리기 전에 적용한다. 없으면 로딩 화면이 밝게 번쩍인다. */}
+        <script dangerouslySetInnerHTML={{ __html: "try{if(localStorage.getItem('mupid-theme')==='dark'){document.documentElement.classList.add('dark');document.documentElement.style.colorScheme='dark'}}catch(e){}" }} />
+      </head>
       <body id="page-content" className="font-sans antialiased">
         <ThemeProvider>{children}</ThemeProvider>
         {/*

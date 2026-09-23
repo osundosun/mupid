@@ -17,7 +17,7 @@
 | [integrations.md](integrations.md) | S3 호환 스토리지, Gmail API, 메일 템플릿, 자격증명 취급 |
 | [configuration.md](configuration.md) | `MUPID_` 규약, `application.yaml`↔`.env`↔compose 3중 구조, 환경변수 목록 |
 | [deployment.md](deployment.md) | compose·Dockerfile 용도 구분, nginx, CI 파이프라인, 배포·롤백·백업 |
-| [frontend.md](frontend.md) | `frontend/`↔`App/` 구분, vinext + React 19 RSC + Workers, 린트·테스트 |
+| [frontend.md](frontend.md) | `frontend/`↔`prototype/` 구분, vinext + React 19 RSC + Workers, 린트·테스트 |
 
 ## 읽는 순서
 

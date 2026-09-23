@@ -7,7 +7,7 @@ Mupid 가 어떤 조각으로 이루어져 있고, 요청과 데이터가 그 �
 | 구성요소 | 기술 / 버전 | 저장소 위치 | 역할 |
 |---|---|---|---|
 | 프런트 | vinext 1.0.0-beta.5 + React 19.2.6, Tailwind 4 | `frontend/` | 정적 export(`dist/client`). 서버에서 nginx 가 직접 서빙 |
-| 프런트(구) | 같음 | `App/` | 분리 이전 프로토타입 사본. CI 대상이 아니다 |
+| 프런트(구) | 같음 | `prototype/` | 분리 이전 프로토타입 사본. CI 대상이 아니다 |
 | 리버스 프록시 | nginx 1.27-alpine | `api/nginx/templates/default.conf.template`, `infra/deploy/nginx.conf` | 유일한 외부 노출 지점. TLS 종료 · `/api/` 프록시 · 정적 서빙 |
 | API | Java 21(Azul Zulu) · Spring Boot 4.1.2-SNAPSHOT · Gradle 9.7.1 | `api/` | 인증 · 회원 · 메일 · 파일. 포트 8800 |
 | RDBMS | MySQL 8.4 | compose 4벌 | 회원 · 이메일 인증 · 파일 메타데이터 |
