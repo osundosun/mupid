@@ -18,8 +18,9 @@ import java.util.Map;
  * <h2>접지 않는다</h2>
  *
  * <p>곡 목록은 곡 번호로 접지만({@code LinkedHashMap}) 이 기록은 **접지 않는다.**
- * {@code ai.max-tool-rounds} 가 3 이라 같은 툴이 한 턴에 두 번 불릴 수 있고,
- * **몇 번 불렀는지가 정보**다.
+ * 실제로 실행한 호출을 전부 남긴다. 다만 추천은 요청 한 번에 한 번만 실행하므로
+ * ({@code AiChatServiceImpl.runTool}, S15P21A204-437) {@code recommend_music} 기록은
+ * 많아야 한 줄이다.
  */
 public record AiToolCallRecord(
 

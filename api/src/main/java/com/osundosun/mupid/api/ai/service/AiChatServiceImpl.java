@@ -38,6 +38,7 @@ import lombok.extern.slf4j.Slf4j;
  * 1. 시스템 프롬프트 + 이전 대화 + 이번 메시지로 messages 를 만든다
  * 2. 게이트웨이에 보낸다 (툴 선언을 함께)
  * 3. 툴 호출이 돌아오면 실행하고 결과를 messages 에 붙여 다시 보낸다 ← 최대 ai.max-tool-rounds 회
+ *    추천은 이 중 한 번만 실제로 돈다 (S15P21A204-437, {@link #runTool})
  * 4. 본문이 돌아오면 그것이 답변이다. 그동안 모은 곡을 함께 돌려준다
  * </pre>
  *
@@ -107,9 +108,10 @@ public class AiChatServiceImpl implements AiChatService {
         appendHistory(messages, request.history());
         messages.add(OpenAiMessage.user(request.message()));
 
-        // 툴이 여러 번 불려도 화면에는 한 번만 보여야 한다. 곡 번호로 접는다.
+        // 같은 곡이 두 번 실리지 않게 곡 번호로 접는다.
         Map<Integer, AiRecommendedTrack> tracks = new LinkedHashMap<>();
-        // **접지 않는다.** 호출 순서대로 전부 남긴다 — 몇 번 불렀는지가 정보다.
+        // **접지 않는다.** 실제로 실행한 호출을 순서대로 전부 남긴다. 추천은 요청당 한 번만
+        // 돌므로 recommend_music 기록도 많아야 한 줄이다 (S15P21A204-437).
         List<AiToolCallRecord> toolCalls = new ArrayList<>();
         // 마지막으로 곡을 돌려준 추천 묶음의 번호. 화면이 재생 이벤트에 되돌려 싣는다.
         long[] recommendationId = {0L};
@@ -217,6 +219,26 @@ public class AiChatServiceImpl implements AiChatService {
         long[] recommendationId
     ) {
         String name = call.function() != null ? call.function().name() : null;
+        if (AiRecommendTool.NAME.equals(name) && ranRecommend(records)) {
+            /*
+             * 추천은 요청 한 번에 한 번만 실행한다 (S15P21A204-437).
+             *
+             * 사용자는 추천을 한 번 청했는데 추천이 연달아 두 번 돌아, 화면에 "1번째·2번째
+             * 음악 추천" 이 붙고 두 묶음의 곡이 섞였다. 모델은 한 응답에 호출을 둘 싣거나,
+             * 결과를 받은 뒤 말을 살짝 바꿔 다시 불렀다. 요청 쪽에서도 막지만
+             * ({@code OpenAiChatRequest.of} — parallel_tool_calls=false, 결과 뒤 tool_choice=none)
+             * 게이트웨이가 그 값을 따른다는 보장은 없어서 여기서 한 번 더 막는다.
+             *
+             * 두 번째 호출은 **실행하지 않고 기록에도 남기지 않는다** — 일어나지 않은 추천이다.
+             * 합치지 않고 첫 호출만 쓰는 것은, 첫 호출이 사용자 말을 그대로 옮긴 것이고 뒤의
+             * 것은 모델이 조건을 바꿔 본 것이라서다. 결과 메시지는 빼먹을 수 없다 — 호출 id
+             * 마다 tool 메시지가 없으면 게이트웨이가 다음 요청을 거부한다.
+             */
+            log.info("이번 요청에서 이미 추천했다 — 추가 recommend_music 호출은 실행하지 않는다 user_id={}",
+                user.getUserId());
+            return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of(
+                "message", "이번 요청의 추천은 이미 앞의 결과로 끝났습니다. 툴을 다시 부르지 말고 그 결과로 답하세요.")));
+        }
         if (!AiRecommendTool.NAME.equals(name)) {
             log.warn("선언하지 않은 툴을 불렀다 name={}", name);
             // 사용자에게는 우리가 아는 이름으로 보여준다. 모르는 툴이면 이름 그대로가 정직하다.
@@ -250,7 +272,10 @@ public class AiChatServiceImpl implements AiChatService {
                 AiRecommendTool.NAME, labelOf(AiRecommendTool.NAME), argumentsOf(arguments),
                 e.getMessage()));
             return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of(
-                "error", "지금은 곡을 찾을 수 없습니다. 잠시 후 다시 시도해 주세요.")));
+                // "잠시 후 다시 시도" 라고 쓰면 모델이 그 말을 자기에게 한 것으로 읽고 툴을
+                // 다시 불렀다 (S15P21A204-437). 다시 부르지 말라고 분명히 적는다.
+                "error", "추천 서버가 응답하지 않아 지금은 곡을 찾을 수 없습니다. "
+                    + "툴을 다시 부르지 말고, 지금은 곡을 찾아 드릴 수 없다고 사용자에게 답하세요.")));
         }
         found.forEach(track -> tracks.putIfAbsent(track.musicId(), track));
         records.add(AiToolCallRecord.succeeded(
@@ -259,11 +284,20 @@ public class AiChatServiceImpl implements AiChatService {
         if (found.isEmpty()) {
             // 빈 배열만 주면 모델이 "오류" 로 읽고 곡을 지어내는 일이 있다. 조건에 맞는
             // 곡이 없다는 것은 정상 결과이므로 그렇게 말해 준다.
+            //
+            // "조건을 줄이거나 다른 분위기를 제안하세요" 라고만 쓰면 모델이 조건을 줄여 툴을
+            // 다시 불렀다 (S15P21A204-437). 제안은 사용자에게 말로 하는 것이다.
             return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of(
                 "tracks", modelView(found),
-                "message", "조건에 맞는 곡이 없습니다. 조건을 줄이거나 다른 분위기를 제안하세요.")));
+                "message", "조건에 맞는 곡이 없습니다. 툴을 다시 부르지 말고, "
+                    + "조건을 줄이거나 다른 분위기를 말해 달라고 사용자에게 답하세요.")));
         }
         return OpenAiMessage.tool(call.id(), AiJson.writeString(Map.of("tracks", modelView(found))));
+    }
+
+    /** 이번 요청에서 추천 툴이 이미 돌았는가. 성공이든 실패든 한 번 돈 것이다. */
+    private boolean ranRecommend(List<AiToolCallRecord> records) {
+        return records.stream().anyMatch(record -> AiRecommendTool.NAME.equals(record.name()));
     }
 
     /**

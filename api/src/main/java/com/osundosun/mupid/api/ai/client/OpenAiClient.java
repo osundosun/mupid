@@ -46,7 +46,8 @@ public class OpenAiClient {
             throw new BusinessException(AiErrorCode.AI_NOT_CONFIGURED);
         }
 
-        OpenAiChatRequest request = new OpenAiChatRequest(props.model(), messages, tools);
+        // 툴 결과 뒤에는 툴을 닫는다 — 규칙은 OpenAiChatRequest.of 주석 (S15P21A204-437).
+        OpenAiChatRequest request = OpenAiChatRequest.of(props.model(), messages, tools);
 
         byte[] body;
         try {
