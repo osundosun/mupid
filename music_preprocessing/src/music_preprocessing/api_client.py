@@ -395,6 +395,23 @@ class MupidClient:
         body = self._request("GET", f"/api/v1/music/{music_id}/lyric")
         return body["data"]["lines"]
 
+    def replace_analysis(self, music_id: int, body: dict) -> dict:
+        """한 곡의 분석 값을 통째로 갈아 끼운다 (`PUT /api/v1/music/{id}/analysis`).
+
+        보컬 유무·성별과 BPM·요청 BPM 범위·언어·스타일이 한 행이다. **교체라 보내지
+        않은 값은 비워진다** — 부분만 보내지 않는다.
+
+        추천이 이 값을 Spring 요청 본문으로 받는다(연동 계약 2026-09-23 절). 예전에는
+        AI 색인 파일에만 있었다.
+
+        Args:
+            body: `has_vocal`(필수) · `vocal_gender` · `bpm` · `bpm_requested_min` ·
+                `bpm_requested_max` · `language` · `category`. 모르는 값은 `None`.
+        """
+        got = self._request("PUT", f"/api/v1/music/{int(music_id)}/analysis",
+                            json_body=body)
+        return got["data"]
+
     def replace_lyrics(self, music_id: int, lines: list[tuple[int, str]]) -> dict:
         """한 곡의 가사를 통째로 갈아 끼운다. **기존 가사는 지워진다.**
 

@@ -378,54 +378,6 @@ def test_nonspecific_list_matches_the_preprocessing_canon():
     assert missing["moods"] == [] and missing["instruments"] == []
 
 
-def test_register_analysis_never_stores_gender_for_instrumental():
-    from ai_server.tools import register_analysis
-
-    assert register_analysis.payload_from("instrumental", "female") == (
-        {"has_vocal": False, "vocal_gender": None}, "")
-    assert register_analysis.payload_from("voice", "female") == (
-        {"has_vocal": True, "vocal_gender": "F"}, "")
-    body, why = register_analysis.payload_from("unknown", "unknown")
-    assert body is None and "unknown" in why
-
-
-def test_register_analysis_maps_every_gender_label_the_erd_enum_has():
-    """`ENUM('M','F','MIX')` 세 값이 모두 나갈 수 있어야 한다.
-
-    혼성 곡이 성별 없이 등록돼 있던 원인이 `GENDER_BY_LABEL` 에 `mixed` 가 없어
-    `.get()` 이 조용히 `None` 을 돌려준 것이었다(S15P21A204-414).
-    """
-    from ai_server.tools import register_analysis as ra
-
-    assert ra.payload_from("voice", "female") == (
-        {"has_vocal": True, "vocal_gender": "F"}, "")
-    assert ra.payload_from("voice", "male") == (
-        {"has_vocal": True, "vocal_gender": "M"}, "")
-    assert ra.payload_from("voice", "mixed") == (
-        {"has_vocal": True, "vocal_gender": "MIX"}, "")
-    assert ra.payload_from("voice", "mix") == (
-        {"has_vocal": True, "vocal_gender": "MIX"}, "")
-
-    # `unknown` 은 "모른다" 다. 혼성으로 승격하지 않는다.
-    assert ra.payload_from("voice", "unknown") == (
-        {"has_vocal": True, "vocal_gender": None}, "")
-    # `other`("남/여로 판정 못 함") 도 마찬가지다.
-    assert ra.payload_from("voice", "other") == (
-        {"has_vocal": True, "vocal_gender": None}, "")
-
-    # 연주곡은 성별 분류기가 무엇을 냈든 성별을 남기지 않는다.
-    for label in ("female", "male", "mixed", "unknown", ""):
-        assert ra.payload_from("instrumental", label) == (
-            {"has_vocal": False, "vocal_gender": None}, "")
-
-    # 와이어는 snake_case 다. camelCase 로 보내면 400 이 난다.
-    body, _ = ra.payload_from("voice", "mixed")
-    assert set(body) == {"has_vocal", "vocal_gender"}
-
-    # 이 도구가 내보내는 성별은 ERD 의 enum 안에만 있어야 한다.
-    assert set(ra.GENDER_BY_LABEL.values()) <= {"M", "F", "MIX"}
-
-
 def test_catalog_gender_vocabulary_matches_the_server_enum():
     """`ETC` 는 S15P21A204-402 이후 존재하지 않는다. 카탈로그도 `MIX` 를 쓴다."""
     from ai_server.app import recommender
@@ -2368,6 +2320,15 @@ def test_register_sections_drops_labels_outside_the_erd_enum():
     assert [r["section_label"] for r in rows] == ["INTRO", "CHORUS"]
     assert stat["unknown_label"] == 1
     assert stat["bad_range"] == 1
+
+
+def test_register_sections_carries_section_energy():
+    """교체라 에너지를 빼면 저장된 값이 지워진다. 색인의 `rms` 를 함께 싣는다."""
+    from ai_server.tools import register_sections as rs
+
+    frame = _moments_frame().assign(rms=[0.031, 0.087, 0.05, float("nan")])
+    rows, _ = rs.build_payload(frame)
+    assert [r.get("energy") for r in rows] == [0.031, 0.087]
 
 
 def test_register_sections_converts_seconds_to_int_ms():

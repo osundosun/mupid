@@ -1,4 +1,4 @@
-"""Spring 배치 API 인증. `register_sections`·`register_analysis` 가 쓴다.
+"""Spring 배치 API 인증. `register_sections` 가 쓴다.
 
 **실물은 `app/spring_api.py` 에 있다.** 서빙(`app/catalog_api.py`)도 같은 흐름으로
 Spring 을 부르게 되면서 한 벌로 합쳤다 — 두 곳이 각자 들고 있으면 한쪽만 고쳐져

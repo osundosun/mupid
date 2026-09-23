@@ -447,8 +447,8 @@ _MISSING_TEXT = {"", "unknown", "nan", "none", "null", "<na>", "nat"}
 # 어긋나게 두면 같은 곡을 두 이름으로 부르게 된다.
 # **`etc`·`other` 는 넣지 않는다.** 예전 `ETC` 자리는 S15P21A204-402 에서 `MIX` 로
 # 바뀌었고, `other`("남/여로 판정 못 함")를 `MIX`("혼성으로 판정함")로 옮기는 것은
-# 모르는 것을 판정으로 만드는 일이다 — `register_analysis` 가 `unknown` 을 비우는
-# 것과 같은 원칙이다. 받지 않은 라벨은 `None`("모른다")으로 남는다.
+# 모르는 것을 판정으로 만드는 일이다 — 분석 적재(`music_preprocessing` 의
+# `analysis.api.vocal_of`)가 `unknown` 을 비우는 것과 같은 원칙이다. 받지 않은 라벨은 `None`("모른다")으로 남는다.
 _VOCAL_GENDER = {
     "m": "M", "male": "M", "f": "F", "female": "F",
     "mix": "MIX", "mixed": "MIX",
