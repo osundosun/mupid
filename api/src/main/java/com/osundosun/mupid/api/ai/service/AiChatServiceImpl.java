@@ -68,17 +68,28 @@ public class AiChatServiceImpl implements AiChatService {
 
     /**
      * gpt-5 계열의 시스템 프롬프트 역할은 `system` 이 아니라 `developer` 다.
+     *
+     * <p><b>툴을 부르지 않을 때를 적는다</b> (S15P21A204-436). 예전 프롬프트는 "추천을
+     * 원하면 반드시 부른다" 만 있고 원하지 않을 때의 규칙이 없었다. 거기에 역할은 "다음
+     * 음악으로 건너가도록 돕는다", 무관한 질문에는 "음악 이야기로 돌아온다" 여서 모델에게
+     * 주어진 문장이 전부 추천 쪽으로 기울어 있었다. 코드는 툴을 강제하지 않는데도(요청에
+     * `tool_choice` 가 없다) 인사 한마디에 곡 카드가 붙던 것이 이것이다.
      */
     private static final String DEVELOPER_PROMPT = """
         당신은 음악 감상 서비스 Mupid 의 AI 큐레이터입니다.
-        사용자가 "저장한 순간"(곡에서 마음에 남은 순간)에서 다음 음악으로 건너가도록 돕습니다.
+        사용자가 "저장한 순간"(곡에서 마음에 남은 순간)을 이야기하고, 원할 때 다음 음악을 찾도록 돕습니다.
 
         규칙:
         - 한국어로, 다정하지만 담백하게 두세 문장 안에서 답합니다.
-        - 곡/분위기/장르 추천을 원하면 반드시 recommend_music 툴을 먼저 부릅니다.
+        - recommend_music 툴은 사용자가 이번 말에서 곡을 찾아 달라고 할 때만 부릅니다.
+          예: "추천해 줘", "비슷한 곡 있어?", "잔잔한 노래 틀어 줘", "다른 걸로", "신나는 느낌으로 듣고 싶어".
+          이런 요청에는 반드시 recommend_music 툴을 먼저 부릅니다.
+        - 인사, 고마움, 곡·아티스트에 대한 질문, 감상 나누기, 사용법 질문처럼 곡을 찾아 달라는 말이 없으면
+          툴을 부르지 않고 말로만 답합니다. 묻지 않은 곡을 먼저 권하지 않습니다.
+        - 앞선 턴에서 추천했다고 이번 턴에 다시 추천하지 않습니다. 이번 말이 요청일 때만 부릅니다.
         - 툴 결과에 있는 곡만 이야기합니다. 제목이나 아티스트를 지어내지 않습니다.
         - 곡 목록은 화면이 따로 그려 줍니다. 답변에 목록을 나열하지 말고, 어떤 결로 골랐는지만 말합니다.
-        - 음악과 무관한 질문에는 짧게 답하고 음악 이야기로 돌아옵니다.
+        - 음악과 무관한 질문에는 짧게 답합니다. 곡 추천으로 화제를 돌리지 않습니다.
         """;
 
     private final OpenAiClient openAiClient;
@@ -367,12 +378,23 @@ public class AiChatServiceImpl implements AiChatService {
     /**
      * 이전 대화를 붙인다. `ai.max-history` 를 넘으면 최근 것부터 남긴다.
      * 오래된 쪽을 버리는 것은 프롬프트가 무한정 길어지는 것을 막기 위해서다.
+     *
+     * <p><b>사용자가 말하기 전의 AI 말은 싣지 않는다</b> (S15P21A204-436). 그 자리에 오는
+     * 것은 화면이 대화창을 열 때 그리는 인사말("새로운 음악을 찾아볼까요? 원하는 느낌을
+     * 들려주세요.")뿐인데, 모델이 한 말이 아니다. 그대로 실으면 모델은 자기가 먼저 곡을
+     * 권했다고 읽어, 사용자의 첫마디가 "안녕" 이어도 그 제안에 대한 답으로 받아 곡을 찾았다.
+     * 잘라 내는 것은 <b>전체 기록의 앞머리</b>다 — 개수 제한으로 잘린 뒤 맨 앞에 온 AI 말은
+     * 모델이 실제로 한 답이라 남긴다.
      */
     private void appendHistory(List<OpenAiMessage> messages, List<AiChatTurn> history) {
         if (history == null || history.isEmpty()) {
             return;
         }
-        int from = Math.max(0, history.size() - props.maxHistory());
+        int firstUser = 0;
+        while (firstUser < history.size() && history.get(firstUser).role() != AiMessageType.USER) {
+            firstUser++;
+        }
+        int from = Math.max(firstUser, history.size() - props.maxHistory());
         for (AiChatTurn turn : history.subList(from, history.size())) {
             switch (turn.role()) {
                 case USER -> messages.add(OpenAiMessage.user(turn.content()));
