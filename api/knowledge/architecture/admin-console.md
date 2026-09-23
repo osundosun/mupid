@@ -18,6 +18,8 @@
 | `admin/service/AdminTimelineServiceImpl.java` | 곡의 가사·구간 타임라인 (MySQL 자원) |
 | `admin/service/AdminUserTimelineServiceImpl.java` | 회원의 행동 타임라인 (ClickHouse 이벤트) |
 | `analytics/repository/UserActivityRepository.java` | 그 타임라인이 읽는 ClickHouse 질의 |
+| `admin/service/AdminAiPreferenceServiceImpl.java` | AI 선호도 추이 (ClickHouse 집계 표) |
+| `analytics/repository/AiPreferenceRepository.java` · `analytics/service/AiPreferenceBatch.java` | 그 집계를 계산·적재하는 쿼리와 매시 배치 |
 | `admin/controller/AdminClickHouseController.java` | ClickHouse 화면 프록시 (`/api/admin/clickhouse/**`) |
 | `admin/service/AdminClickHouseConsoleServiceImpl.java` | 열람권 발급·검사, 프록시 본체 |
 | `admin/service/AdminValueCodec.java` | JSON 값 → 엔티티 필드 타입 변환 |
@@ -72,6 +74,30 @@
 
 `position_ms - from_ms` 를 그냥 빼지 않는 것도 같은 부류다. 뒤집힌 하트비트에서 `UInt32`
 언더플로가 나 40억에 가까운 양수가 되고, 그 한 건이 그날 청취 시간을 통째로 망가뜨린다.
+
+## AI 선호도는 원본이 아니라 집계 표를 읽는다
+
+왼쪽 목록의 **AI 선호도** (S15P21A204-427). AI 가 추천한 곡을 사람들이 실제로 듣는지를
+시간별 선 그래프로 그린다. 지표 정의·배치·표는 [domain/ai-preference.md](../domain/ai-preference.md).
+
+회원 행동 타임라인과 달리 **`listen_events` 를 화면에서 훑지 않는다.** 이레치(168칸)를
+화면을 열 때마다 재생 단위로 접으면 무겁고, 한 시간 칸의 값은 그 시간이 지나면 거의 안
+바뀐다. 그래서 `AiPreferenceBatch` 가 매시 5분에 `ai_preference_hourly` 로 쌓아 두고,
+`GET /api/v1/admin/ai-preference` 는 그것만 읽는다. 표가 비어 있는 기간은 화면의 **다시
+집계** 단추(`POST …/ai-preference/aggregate`)로 채운다 — 몇 번을 눌러도 같은 값이다.
+
+화면 쪽에서 지킨 것:
+
+- **그래프는 인라인 SVG 문자열이다.** 차트 라이브러리를 넣지 않는다(380-C 와 같은 제약) —
+  `innerHTML` 한 번으로 다른 화면과 같은 방식으로 그린다.
+- 가로 위치는 **칸의 번호**에서 나온다. 서버가 빈틈없는 `hours[]` 를 주므로 시각 문자열을
+  `Date` 로 파싱하지 않는다(브라우저 시간대를 타면 칸이 밀린다).
+- 비율이 `null` 인 칸(재생 0회)과 **계산 안 된 칸**(`computed=false`)에서 선을 끊는다.
+  이어 그리면 모르는 구간을 아는 것처럼 보인다. 계산 안 된 칸은 옅은 붉은 띠로 칠한다.
+- AI 선과 기준선(AI 아닌 재생, 점선)을 **한 그래프에 겹친다.** AI 선호율만으로는 좋은지
+  나쁜지 읽히지 않는다.
+- 지표 선택(선호율·완주율·스킵률…)은 응답을 다시 부르지 않는다 — 한 응답에 전부 있다.
+  창과 지표는 주소(`?view=aiPreference&from=…&to=…&metric=…`)에 실린다.
 
 ## 자원 목록은 손으로 관리하지 않는다
 
@@ -299,6 +325,9 @@ DENY·SAMEORIGIN 모드에서 기존 헤더를 확인하지 않고 `setHeader` �
   마우스를 올리면 곡·진입 경로·실제 청취 시간이 설명에 전부 나온다.
 - 하루 이벤트가 800건(재생 세션 300건)을 넘으면 **그날의 뒤쪽이 잘린다.** 잘린 사실은
   밴드에 표시되지만, 뒤쪽을 보려면 ClickHouse 콘솔을 써야 한다.
+- **AI 선호도는 노출 대비 재생률이 아니다.** 추천 노출(`rec_impressions`)을 쓰는 코드가
+  없어 분모가 없다. 틀었을 때 충분히 들었는가만 잰다. 구간 추천과 챗봇도 한 선(`SECTION`)이다.
+- AI 선호도에는 지금 진행 중인 시간이 없다. 다음 정시 5분에 들어온다.
 - 관리자 행동이 감사 로그로 남지 않는다. ClickHouse 콘솔은 **연 사람과 시각만**
   서버 로그에 남는다 — 거기서 무슨 쿼리를 돌렸는지는 ClickHouse 의 `system.query_log`
   를 봐야 한다.

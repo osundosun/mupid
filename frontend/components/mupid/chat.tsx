@@ -22,9 +22,10 @@ export function FloatingChat({ model: m }: { model: MupidModel }) {
    * 폰에서 입력칸에 커서를 두면 화상 키보드가 화면 아래 절반을 덮는다. 패널은
    * 재생 독 위에 떠 있어 그대로 키보드 뒤로 들어가고, 치는 글자가 보이지 않았다.
    *
-   * 입력 중(`composing`)에는 패널을 화면 위에서 키보드 바로 위까지 펼친다
-   * (`mupid.css` 의 `.chat-panel.composing`). 독을 덮지만 키보드가 떠 있는 동안은
-   * 어차피 누를 수 없는 자리다. 키보드가 가린 높이는 `--keyboard-inset` 으로 건넨다.
+   * 폰에서는 패널이 화면 전체를 채우고(`chat-fullscreen.css`), 키보드가 가린 높이
+   * (`--keyboard-inset`)만큼 아래를 비운다. **입력 중(`composing`)이라고 틀을 바꾸지
+   * 않는다** — 전에는 바꿨고, 그래서 X 를 누르는 순간 입력칸의 포커스가 빠지며 패널이
+   * 내려앉아 첫 탭이 뒤쪽 화면에 떨어졌다(S15P21A204-438).
    */
   const keyboardInset = useKeyboardInset();
   const [inputFocused, setInputFocused] = useState(false);

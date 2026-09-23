@@ -403,3 +403,53 @@ SELECT
     search_query,
     ext
 FROM kafka_listen_events;
+
+
+-- AI 추천곡이 실제로 들리는가 — 시간별 집계 (S15P21A204-427).
+--
+-- 원본은 listen_events 이고 채우는 것은 스프링 배치(`AiPreferenceBatch`)다. 매시 5분에
+-- 직전 6시간을 **통째로 다시 계산해** 덮어쓴다. 재생은 시작한 시각의 시간대에 속하고,
+-- 그 재생의 하트비트·스킵·종료가 다음 시간대로 넘어가도 따라온다.
+--
+-- 지표 정의는 knowledge/domain/ai-preference.md 에 있다. 요약하면 한 행은
+-- (시간, 구분) 하나이고, 구분은 PLAY_START 의 추천 표식으로 가른다.
+--   HOME · SECTION · CUSTOM   entry_path = 'RECOMMEND' 이고 rec_id 가 있는 재생 (rec_type 별)
+--   UNTYPED                   추천 표식은 있는데 rec_type 을 모르는 재생
+--   NON_AI                    그 밖의 모든 재생. 비교 기준선이다
+--
+-- 왜 mupid_all 인가
+--   사용자별 행이 아니라 전체 합계라 샤딩할 키가 없다. 시간당 다섯 줄이라 모든 노드가
+--   전부 갖고 있어도 가볍다 — track_sections 와 같은 토폴로지, 같은 쓰기 방식(로컬 표에
+--   바로 INSERT)이다.
+--
+-- 왜 ReplacingMergeTree 인가 — 멱등
+--   같은 (hour, segment) 를 몇 번 다시 넣어도 computed_at 이 가장 큰 행 하나만 남는다.
+--   배치를 두 번 돌리거나 두 인스턴스가 동시에 돌아도 값이 같다. 병합 전에는 옛 행이
+--   함께 보이므로 **읽을 때 FINAL 을 붙인다** (`AiPreferenceRepository`).
+--
+--   배치는 창 안의 모든 시간 × 다섯 구분을 **0 으로라도** 넣는다. 한 번 값이 있던
+--   칸이 재계산에서 사라져도 옛 값이 남지 않게 하려는 것이고, 화면에서 "0회" 와
+--   "아직 계산 안 함" 을 가를 수 있게 하려는 것이기도 하다.
+CREATE TABLE IF NOT EXISTS ai_preference_hourly_local ON CLUSTER mupid_all
+(
+    hour              DateTime('Asia/Seoul'),
+    segment           LowCardinality(String),
+    plays             UInt32,
+    users             UInt32,
+    engaged_plays     UInt32,
+    completed_plays   UInt32,
+    skipped_plays     UInt32,
+    early_skip_plays  UInt32,
+    liked_plays       UInt32,
+    listened_ms       UInt64,
+    computed_at       DateTime64(3, 'Asia/Seoul')
+)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/ai_preference_hourly', '{replica}', computed_at)
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, segment)
+TTL hour + INTERVAL 18 MONTH;
+
+
+CREATE TABLE IF NOT EXISTS ai_preference_hourly ON CLUSTER mupid_all
+AS ai_preference_hourly_local
+ENGINE = Distributed(mupid_all, currentDatabase(), ai_preference_hourly_local);

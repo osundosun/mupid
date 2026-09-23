@@ -45,8 +45,9 @@ public record AiChatResponse(
      * <p>그냥 대화만 한 턴이면 빈 배열이다(null 이 아니다). 화면은 **비어 있으면 아무것도
      * 그리지 않는다** — 툴 호출이 없던 턴에 "도구 호출" 줄을 띄우면 거짓말이 된다.
      *
-     * <p>곡 목록({@link #tracks})과 달리 **접지 않는다.** {@code ai.max-tool-rounds} 가 3 이라
-     * 같은 툴이 한 턴에 두 번 불릴 수 있고, 몇 번 불렀는지가 그 자체로 정보다.
+     * <p>곡 목록({@link #tracks})과 달리 **접지 않는다.** 실제로 실행한 호출을 전부 담는다.
+     * 다만 추천({@code recommend_music})은 요청 한 번에 한 번만 실행하므로 그 기록은 많아야
+     * 한 줄이다 — 모델이 다시 부른 것은 실행하지 않고 기록에도 없다 (S15P21A204-437).
      *
      * <p>실패한 호출도 담는다. 예전에는 {@code AiChatServiceImpl.runTool} 이
      * {@code RECOMMENDER_UNAVAILABLE} 을 삼키고 대화를 이어 가서, 사용자에게는

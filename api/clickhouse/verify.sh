@@ -101,8 +101,8 @@ objects="SELECT concat(
   FROM system.tables WHERE database='default'"
 o1=$(q "$CH1" "$objects")
 o2=$(q "$CH2" "$objects")
-check "ch-01 replicated/distributed/view/kafka/dict" "$o1" "5/5/5/1/1"
-check "ch-02 replicated/distributed/view/kafka/dict" "$o2" "5/5/5/1/1"
+check "ch-01 replicated/distributed/view/kafka/dict" "$o1" "6/6/5/1/1"
+check "ch-02 replicated/distributed/view/kafka/dict" "$o2" "6/6/5/1/1"
 
 echo "==> 3. ON CLUSTER DDL 큐에 실패 없음"
 check "DDL 큐 실패 건수" \

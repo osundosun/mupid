@@ -1,0 +1,163 @@
+info:
+  name: AI 선호도
+  type: http
+  seq: 13
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/admin/ai-preference"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+  params:
+    - name: from
+      value: ""
+      type: query
+      enabled: false
+    - name: to
+      value: ""
+      type: query
+      enabled: false
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 조회 성공
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "from": "2026-09-17",
+              "to": "2026-09-23",
+              "time_zone": "Asia/Seoul",
+              "engaged_threshold_ms": 30000,
+              "computed_at": "2026-09-23 10:05:02",
+              "hours": [
+                { "hour": "2026-09-17 00:00", "computed": true },
+                { "hour": "2026-09-17 01:00", "computed": false }
+              ],
+              "series": [
+                {
+                  "key": "AI",
+                  "label": "AI 추천 전체",
+                  "ai": true,
+                  "total": {
+                    "plays": 120, "users": null, "engaged_plays": 66, "completed_plays": 31,
+                    "skipped_plays": 40, "early_skip_plays": 22, "liked_plays": 9,
+                    "listened_ms": 9876000, "engaged_rate": 0.55, "completion_rate": 0.2583,
+                    "skip_rate": 0.3333, "early_skip_rate": 0.1833, "like_rate": 0.075, "share": 0.31
+                  },
+                  "points": [
+                    {
+                      "plays": 4, "users": null, "engaged_plays": 3, "completed_plays": 1,
+                      "skipped_plays": 1, "early_skip_plays": 0, "liked_plays": 0,
+                      "listened_ms": 412000, "engaged_rate": 0.75, "completion_rate": 0.25,
+                      "skip_rate": 0.25, "early_skip_rate": 0.0, "like_rate": 0.0, "share": 0.4
+                    },
+                    {
+                      "plays": 0, "users": null, "engaged_plays": 0, "completed_plays": 0,
+                      "skipped_plays": 0, "early_skip_plays": 0, "liked_plays": 0,
+                      "listened_ms": 0, "engaged_rate": null, "completion_rate": null,
+                      "skip_rate": null, "early_skip_rate": null, "like_rate": null, "share": null
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+  - name: 400 기간이 올바르지 않음
+    response:
+      status: 400
+      statusText: Bad Request
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_INVALID_DATE_RANGE",
+            "message": "조회 기간이 올바르지 않습니다.",
+            "error_details": null
+          }
+  - name: 503 ClickHouse 를 읽지 못함
+    response:
+      status: 503
+      statusText: Service Unavailable
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_ANALYTICS_UNAVAILABLE",
+            "message": "분석 데이터를 읽지 못했습니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # AI 선호도
+
+  `GET /api/v1/admin/ai-preference` · `ROLE_ADMIN`
+
+  AI 가 추천한 곡을 사람들이 **실제로 듣는가** 를 시간별로 줍니다 (S15P21A204-427).
+  관리자 화면 왼쪽 목록의 **AI 선호도** 가 이걸 부릅니다. 지표 정의는
+  `api/knowledge/domain/ai-preference.md` 에 있습니다.
+
+  ## 원본은 집계 표입니다
+
+  배치(`AiPreferenceBatch`, 매시 5분)가 ClickHouse `ai_preference_hourly` 에 쌓아 둔
+  값을 읽기만 합니다. 청취 원본을 훑지 않으므로 창이 한 달이어도 빠릅니다.
+  **지금 진행 중인 시간은 없습니다** — 창의 끝이 오늘이어도 마지막 칸은 직전 정시에서
+  끝납니다.
+
+  ## 요청
+
+  | 파라미터 | 설명 |
+  | --- | --- |
+  | `from`·`to` | 창(`YYYY-MM-DD`, 양끝 포함). **둘 다 주거나 둘 다 생략합니다.** 생략하면 오늘로 끝나는 7일 |
+
+  창은 **31일**까지입니다. 시간 단위 선이라 그보다 길면 칸이 1px 아래로 내려갑니다.
+
+  ## 응답 읽는 법
+
+  - `hours[]` 가 가로축이고 **빈틈이 없습니다.** `series[].points[]` 는 같은 순서·같은 길이입니다.
+  - `hours[].computed` 가 거짓이면 그 칸은 **모릅니다**(배치가 아직 안 셌다). 수치가 0 이어도
+    "재생이 없었다" 로 읽지 마세요.
+  - 비율은 **분모가 0 이면 `null`** 입니다. 선은 거기서 끊습니다.
+  - `users` 는 구분 하나의 한 시간 칸에만 있습니다. 칸끼리·구분끼리 더하면 같은 사람을
+    두 번 세므로 합계(`total`)와 `AI` 선에서는 `null` 입니다.
+  - `computed_at` 이 `null` 이면 이 창은 한 번도 집계된 적이 없습니다 → `다시 집계` 를 부릅니다.
+
+  ## 선
+
+  | `key` | 무엇 |
+  | --- | --- |
+  | `AI` | 아래 AI 구분을 전부 더한 것. 비율은 건수를 더한 뒤 나눕니다 |
+  | `HOME` | 오늘의 모먼트 |
+  | `SECTION` | 구간 추천(홈 이어 듣기) + 챗봇. 이벤트로는 둘을 가를 수 없습니다 |
+  | `CUSTOM`·`UNTYPED` | 창 안에 재생이 있을 때만 나옵니다 |
+  | `NON_AI` | AI 가 고르지 않은 재생 — 비교 기준선 |
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_DATE_RANGE` | 400 | 창이 한쪽만 있거나, 뒤집혔거나, 미래를 포함하거나, 31일을 넘음 |
+  | `MUPID_ANALYTICS_UNAVAILABLE` | 503 | ClickHouse 를 읽지 못함. 표를 아직 안 만든 환경도 여기로 옵니다 |
+  | `MUPID_FORBIDDEN` | 403 | `ROLE_ADMIN` 이 아님 |

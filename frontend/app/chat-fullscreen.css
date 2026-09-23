@@ -1,0 +1,57 @@
+/*
+ * 폰에서는 AI 음악 탐색(파생곡 추천) 패널이 화면 전체를 채운다 (S15P21A204-438).
+ *
+ * 패널 상자는 뷰포트 끝까지 붙이고, 시스템 바가 가리는 몫은 **안쪽 여백**으로
+ * 비운다. 배경은 상태표시줄·제스처바 밑까지 이어지고 내용은 세이프에어리어
+ * 안쪽 전체를 쓴다. 인셋은 `env()` 가 아니라 `--safe-area-inset-*` 로 읽는다
+ * (`globals.css` 의 설명 참고).
+ *
+ * ## 입력 중에도 틀이 움직이지 않아야 한다 — X 버튼이 한 번에 안 닫히던 원인
+ *
+ * 전에는 입력칸에 커서가 있으면(`.composing`) 패널이 화면 위에서 키보드 위까지
+ * 펼쳐지고, 커서가 빠지면 독 위 원래 자리로 내려앉았다. 패널은 열리자마자
+ * 입력칸에 커서를 두므로 폰에서는 늘 펼친 상태로 뜬다. 거기서 X 를 누르면
+ * `mousedown` 이 입력칸의 포커스를 빼앗고 → `.composing` 이 풀려 패널이
+ * 147px 내려앉고 → 이어지는 `mouseup`·`click` 은 **그 자리에 새로 들어온 뒤쪽
+ * 화면**에 떨어졌다. 첫 탭은 포커스만 옮기고 두 번째 탭에야 닫혔다.
+ *
+ * 그래서 여기서는 `.composing` 이든 아니든 **같은 틀**을 쓴다. 달라지는 것은
+ * 아래 여백뿐이다 — 키보드가 가린 몫(`--keyboard-inset`, `chat.tsx` 가 패널에
+ * 적는다)과 제스처바 몫 중 큰 쪽을 비운다. 둘을 더하지 않는 이유는
+ * `dialog-viewport.css` 와 같다: 키보드는 제스처바 자리까지 덮고 올라온다.
+ * 머리줄(X 버튼)은 위에 붙어 있으므로 아래 여백이 바뀌어도 움직이지 않는다.
+ *
+ * ## 언제 적용하나
+ *
+ * 폭이 좁은 화면(767px 이하)과, 터치 기기를 가로로 눕힌 경우(높이 520px 이하)다.
+ * 가로로 눕힌 폰은 폭이 767px 을 넘어 데스크톱 규칙을 받기 때문에 따로 잡는다.
+ * 데스크톱·태블릿은 떠 있는 패널 그대로다.
+ *
+ * ## `!important` 를 쓰는 이유
+ *
+ * 패널의 자리를 정하는 규칙이 여러 파일에 흩어져 있고 일부가 이미 `!important`
+ * 다(`mupid.css` 의 `max-height: 520px` 규칙, `playback-details.css`,
+ * `responsive-polish.css` 의 `page-player`, `.composing`). 이 파일이 맨 마지막에
+ * 들어오지만 그 규칙들을 전부 이기려면 틀을 잡는 속성에 한해 `!important` 가
+ * 필요하다.
+ */
+@media (max-width: 767px), (pointer: coarse) and (max-height: 520px) {
+  .mupid-shell .chat-panel,
+  .mupid-shell .chat-panel.composing {
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: var(--safe-area-inset-top, 0px) var(--safe-area-inset-right, 0px)
+      max(var(--safe-area-inset-bottom, 0px), var(--keyboard-inset, 0px))
+      var(--safe-area-inset-left, 0px);
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}

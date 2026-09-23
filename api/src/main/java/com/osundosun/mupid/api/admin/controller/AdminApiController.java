@@ -21,8 +21,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.osundosun.mupid.api.admin.dto.AdminAiPreferenceRange;
 import com.osundosun.mupid.api.admin.dto.AdminConsoleTicket;
 import com.osundosun.mupid.api.admin.dto.AdminUserTimelineRange;
+import com.osundosun.mupid.api.admin.response.AdminAiPreferenceAggregateResponse;
+import com.osundosun.mupid.api.admin.response.AdminAiPreferenceResponse;
 import com.osundosun.mupid.api.admin.response.AdminClickHouseConsoleResponse;
 import com.osundosun.mupid.api.admin.response.AdminDashboardResponse;
 import com.osundosun.mupid.api.admin.response.AdminMusicTimelineResponse;
@@ -30,6 +33,7 @@ import com.osundosun.mupid.api.admin.response.AdminResourceSummary;
 import com.osundosun.mupid.api.admin.response.AdminRowPageResponse;
 import com.osundosun.mupid.api.admin.response.AdminSchemaResponse;
 import com.osundosun.mupid.api.admin.response.AdminUserTimelineResponse;
+import com.osundosun.mupid.api.admin.service.AdminAiPreferenceService;
 import com.osundosun.mupid.api.admin.service.AdminClickHouseConsoleService;
 import com.osundosun.mupid.api.admin.service.AdminClickHouseConsoleServiceImpl;
 import com.osundosun.mupid.api.admin.service.AdminDashboardService;
@@ -71,6 +75,7 @@ public class AdminApiController {
     private final AdminClickHouseConsoleService consoleService;
     private final AdminTimelineService adminTimelineService;
     private final AdminUserTimelineService adminUserTimelineService;
+    private final AdminAiPreferenceService adminAiPreferenceService;
 
     @GetMapping("/dashboard")
     public ResponseEntity<BaseResponse<AdminDashboardResponse>> dashboard() {
@@ -222,6 +227,53 @@ public class AdminApiController {
             from, to, date, LocalDate.now(AdminUserTimelineServiceImpl.ZONE));
         return ResponseEntity.ok(
             BaseResponse.of(adminUserTimelineService.timeline(id, range))
+        );
+    }
+
+    /**
+     * AI 추천곡을 사람들이 실제로 듣는가 — <b>AI 선호도</b>의 시간별 추이 (S15P21A204-427).
+     *
+     * <p>배치(`AiPreferenceBatch`)가 한 시간에 한 번 쌓아 둔 ClickHouse
+     * {@code ai_preference_hourly} 를 읽기만 한다. 원본을 훑지 않으므로 창이 한 달이어도
+     * 빠르다. 지금 진행 중인 시간은 아직 집계 전이라 들어 있지 않다.
+     *
+     * @param from 창의 시작일(`YYYY-MM-DD`). 포함. {@code to} 와 둘 다 주거나 둘 다 생략한다.
+     *             둘 다 없으면 오늘로 끝나는 7일이다
+     * @param to   창의 종료일. 포함
+     * @return 400 {@code MUPID_INVALID_DATE_RANGE} — 창이 뒤집혔거나 미래를 포함하거나 31일을
+     *         넘을 때. 503 {@code MUPID_ANALYTICS_UNAVAILABLE} — ClickHouse 를 못 읽을 때
+     */
+    @GetMapping("/ai-preference")
+    public ResponseEntity<BaseResponse<AdminAiPreferenceResponse>> aiPreference(
+        @RequestParam(required = false)
+        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+        @RequestParam(required = false)
+        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to
+    ) {
+        AdminAiPreferenceRange range = AdminAiPreferenceRange.of(
+            from, to, LocalDate.now(AdminUserTimelineServiceImpl.ZONE));
+        return ResponseEntity.ok(
+            BaseResponse.of(adminAiPreferenceService.preference(range))
+        );
+    }
+
+    /**
+     * AI 선호도를 원본에서 <b>다시 집계</b>한다 (S15P21A204-427).
+     *
+     * <p>표를 처음 만든 뒤 지난 기간을 채우거나, 배치가 여섯 시간 넘게 멈췄던 구간을 메울 때
+     * 부른다. 몇 번을 불러도 같은 값이 된다 — 덧셈이 아니라 대입이다. 창 규칙은 조회와 같다.
+     */
+    @PostMapping("/ai-preference/aggregate")
+    public ResponseEntity<BaseResponse<AdminAiPreferenceAggregateResponse>> aggregateAiPreference(
+        @RequestParam(required = false)
+        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+        @RequestParam(required = false)
+        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to
+    ) {
+        AdminAiPreferenceRange range = AdminAiPreferenceRange.of(
+            from, to, LocalDate.now(AdminUserTimelineServiceImpl.ZONE));
+        return ResponseEntity.ok(
+            BaseResponse.of("다시 집계했습니다.", adminAiPreferenceService.aggregate(range))
         );
     }
 

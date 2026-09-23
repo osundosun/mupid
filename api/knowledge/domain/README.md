@@ -14,6 +14,7 @@
 | [mubti-report.md](mubti-report.md) | '내 취향' 일간 리포트 — 집계 쿼리, MuBTI 네 축 판정 규칙, 적재 시점 |
 | [event-spec.html](event-spec.html) | 위 문서를 렌더한 한 장짜리 페이지 (브라우저로 열어 본다) |
 | [recommendation.md](recommendation.md) | 선호 신호 축적, 노출 기록, 평가 |
+| [ai-preference.md](ai-preference.md) | AI 선호도 — 추천곡을 실제로 듣는가. 지표 정의, 시간별 배치, `ai_preference_hourly` |
 | [decision/0025](../decision/0025-mood-codes-32-48-are-frozen.md) | ⛔ **무드 코드 `code_id` 32~48 동결** — 17종의 번호·이름·표시명. 바꾸기 전 확인 필수 |
 
 ## 핵심 개념 하나
