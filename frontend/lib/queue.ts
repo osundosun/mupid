@@ -215,24 +215,30 @@ export function placeInQueue(
  * "사용자가 그 사이 무언가를 틀었다" 를 곡 번호보다 정확히 가린다.
  */
 export type AutoRecommendSnapshot = {
+  enabled: boolean;
   playback: number;
   currentUid: string | null;
   queue: QueueEntry[];
 };
 
 /**
- * 재생 목록 끝에서 추천 한 곡을 받아 **맨 아래에** 놓는다.
+ * 추천 곡을 받아 **큐 맨 아래에** 이어 붙인다.
  *
- * 응답을 기다리는 사이 사용자가 다른 곡을 틀었거나 큐가 바뀌었으면 결과를 버린다 —
- * 늦게 온 추천이 사용자가 방금 만든 상태를 덮으면 안 된다. 실패와 빈 응답도 조용히
- * null 이다(재시도·대체곡 없음).
+ * 꺼져 있으면 묻지도 않는다. 응답을 기다리는 사이 이어듣기를 껐거나, 다른 곡을 틀었거나,
+ * 큐가 바뀌었으면 결과를 버린다 — 늦게 온 추천이 사용자가 방금 만든 상태를 덮으면
+ * 안 된다. 실패와 빈 응답도 조용히 null 이다(재시도·대체곡 없음).
+ *
+ * **한 곡이 아니라 받은 만큼 붙인다.** 한 곡씩 붙이면 곡이 끝날 때마다 추천을 새로
+ * 물어야 하는데, 그 응답이 몇 초씩 걸려 목록 끝마다 소리가 끊긴다. 미리 여러 곡을
+ * 받아 두면 기존 오디오 미리 받기(`upcomingQueue` 로 고른 다음 3곡)가 그대로 데워 준다.
  */
 export async function autoRecommendAtEnd<T extends { id: number }>(
   read: () => AutoRecommendSnapshot,
   recommend: () => Promise<T[]>,
   limit: number,
-): Promise<{ track: T; placement: QueuePlacement } | null> {
+): Promise<{ tracks: T[]; entries: QueueEntry[]; firstUid: string } | null> {
   const before = read();
+  if (!before.enabled) return null;
   let found: T[];
   try {
     found = await recommend();
@@ -241,18 +247,22 @@ export async function autoRecommendAtEnd<T extends { id: number }>(
   }
   const after = read();
   if (
+    !after.enabled ||
     after.playback !== before.playback ||
     after.currentUid !== before.currentUid ||
     after.queue !== before.queue
   ) {
     return null;
   }
-  const track = found[0];
-  if (!track) return null;
-  return {
-    track,
-    placement: placeInQueue(after.queue, track.id, 'bottom', after.currentUid, limit),
-  };
+  if (!found.length) return null;
+  let entries = after.queue;
+  let firstUid = '';
+  for (const track of found) {
+    const placed = placeInQueue(entries, track.id, 'bottom', after.currentUid, limit);
+    entries = placed.entries;
+    if (!firstUid) firstUid = placed.uid;
+  }
+  return { tracks: found, entries, firstUid };
 }
 
 /** 자동 스크롤이 반응하는 위아래 가장자리 폭(px). */
