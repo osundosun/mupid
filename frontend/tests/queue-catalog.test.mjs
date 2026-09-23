@@ -5,33 +5,37 @@ import { readFile } from 'node:fs/promises';
 /*
  * 카탈로그 밖의 곡도 재생 목록에 담긴다 (S15P21A204-441).
  *
- * 앱이 처음 받아 오는 곡은 앞 100곡뿐인데(`lib/stream-catalog.ts`), 큐·좋아요·
- * 기록은 모두 **곡 번호**만 들고 있다. 번호를 곡으로 되돌리는 곳은 모델의 곡
- * 목록 하나여서, 검색으로 찾은 곡(카탈로그 밖)은 담아도 그 줄이 그려지지 않았다 —
- * 담기·재생 버튼을 눌러도 재생 목록에 아무 일도 없는 것처럼 보였다.
+ * 앱이 처음 받아 오는 곡은 앞 100곡뿐인데(`lib/stream-catalog.ts`), 큐는 **곡 번호**만
+ * 들고 있다. 번호를 곡으로 되돌리지 못하면 그 줄은 그려지지 않는다 — 검색으로 찾은 곡의
+ * 담기·재생 버튼을 눌러도 재생 목록에 아무 일도 없는 것처럼 보이던 원인이다.
  *
- * 이 파일이 지키는 것은 "만난 곡은 기억한다" 하나다. 소스를 읽어 확인하는 이유는
- * 모델(`hooks/use-mupid.ts`)이 브라우저 없이는 실행되지 않기 때문이다.
+ * 보관함은 같은 문제를 `knownTracks`(카탈로그 + 밖에서 만난 곡)로 이미 풀었다
+ * (S15P21A204-443). 큐도 거기서 곡을 찾고, 검색 결과·담기·재생이 그 목록에 곡을 보탠다.
+ *
+ * 소스를 읽어 확인하는 이유는 모델(`hooks/use-mupid.ts`)이 브라우저 없이는 실행되지
+ * 않기 때문이다.
  */
 
 const read = (path) => readFile(new URL('../' + path, import.meta.url), 'utf8');
 
-test('모델은 카탈로그 밖에서 만난 곡을 곡 목록에 흡수한다', async () => {
+test('재생 목록은 카탈로그가 아니라 knownTracks 에서 곡을 찾는다', async () => {
   const model = await read('hooks/use-mupid.ts');
-  // 카탈로그(bootstrap)와 새로 만난 곡을 합친 것이 화면이 보는 곡 목록이다.
-  assert.match(model, /const \{ tracks: catalog, preferences: initial \} = bootstrap;/);
-  assert.match(model, /const \[discovered, setDiscovered\] = useState<Track\[\]>\(\[\]\);/);
-  assert.match(model, /const tracks = useMemo\(\s*\(\) => \(discovered\.length \? \[\.\.\.catalog, \.\.\.discovered\] : catalog\),/);
-  // 더할 것이 없으면 같은 배열을 돌려준다 — 새 배열이면 `tracks` 를 보는 효과들이 헛돈다.
-  assert.match(model, /return added\.length \? \[\.\.\.current, \.\.\.added\] : current;/);
-  // 화면도 쓸 수 있어야 한다.
-  assert.match(model, /^\s*rememberTracks,$/m);
+  assert.match(model, /const track = knownTracks\.find\(\(t\) => t\.id === trackId\);/);
+  assert.doesNotMatch(model, /const track = tracks\.find\(\(t\) => t\.id === trackId\);/);
+  // 계정에 올릴 서버 번호도 같은 목록에서 찾는다. 카탈로그만 보면 검색으로 담은 곡이
+  // 저장에서 빠지고, 그 줄어든 목록이 계정을 덮는다.
+  assert.match(model, /queueApi\.saveQueue\(ids, currentId, revision, knownTracks\)/);
+  assert.match(model, /queueApi\.saveQueue\(pending\.ids, pending\.currentId, pending\.revision, knownTracks\)/);
 });
 
 test('담기와 목록 밖 재생은 그 곡을 먼저 기억한다', async () => {
   const model = await read('hooks/use-mupid.ts');
   assert.match(model, /addToQueue: \(track: Track\) => \{[\s\S]{0,200}?rememberTracks\(\[track\]\);\s*const result = placeInQueue\(/);
+  // 재생은 `startPlayback` 도 기억하지만, 울리던 곡을 목록 밖에서 다시 눌러 토글로
+  // 갈리는 길은 거기까지 가지 않는다. 자리를 만드는 곳에서 기억해야 빠짐이 없다.
   assert.match(model, /const placePlayedTrack = \(track: Track\) => \{[\s\S]{0,300}?rememberTracks\(\[track\]\);\s*const placed = placeInQueue\(/);
+  // 효과 의존성에 넣으므로 참조가 고정돼야 한다.
+  assert.match(model, /const rememberTracks = useCallback\(/);
 });
 
 test('계정 큐로 받아 온 곡도 기억한다 — 새로고침해도 담아 둔 곡이 남는다', async () => {
@@ -48,11 +52,8 @@ test('계정 큐로 받아 온 곡도 기억한다 — 새로고침해도 담아
   assert.match(model, /rememberTracks\(saved\.tracks\);\s*queueRevision\.current = saved\.revision;/);
 });
 
-test('검색 결과 목록은 그린 곡을 모델에 알려 두고, 곡 목록이 자라도 결과를 되감지 않는다', async () => {
+test('검색 결과 목록은 그린 곡을 모델에 알려 둔다', async () => {
   const explore = await read('components/mupid/explore.tsx');
   assert.match(explore, /useEffect\(\(\) => \{\s*rememberTracks\(listing\.tracks\);\s*\}, \[listing\.tracks, rememberTracks\]\);/);
-  // 곡 목록은 이제 자란다. 검색 효과가 그것을 보고 있으면 한 곡을 담는 순간
-  // 검색이 처음부터 다시 돌아 이어 붙인 결과가 8곡으로 되감긴다.
-  assert.doesNotMatch(explore, /appliedGenre, m\.tracks\]/);
-  assert.match(explore, /demoCatalog\.current\.filter/);
+  assert.match(explore, /const \{ rememberTracks \} = m;/);
 });

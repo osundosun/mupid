@@ -15,7 +15,7 @@
  */
 
 import type { Playlist, SavedMoment, Track } from '../mupid-data';
-import type { Bootstrap, MupidService, Preferences } from '../services/contracts';
+import type { Bootstrap, MupidService, Preferences, TrackResolver } from '../services/contracts';
 import { invoke } from './bridge';
 
 /** 아직 이름을 정하지 않은 사람에게 보여 줄 값. 데모 저장소와 같다. */
@@ -55,7 +55,7 @@ export function createSqliteService(): MupidService {
     // 취향까지 들고 있게 될 때를 위해 비워 둔다.
     mode: 'demo',
 
-    async bootstrap(catalog: Track[] = []): Promise<Bootstrap> {
+    async bootstrap(catalog: Track[] = [], resolve?: TrackResolver): Promise<Bootstrap> {
       const byId = new Map(catalog.map((track) => [track.id, track]));
       let stored: StoredPreferences;
       try {
@@ -67,8 +67,17 @@ export function createSqliteService(): MupidService {
       }
 
       const keep = (ids: number[]) => ids.filter((id) => byId.has(id));
+      // 순간이 가리키는 곡은 카탈로그(앞 100곡) 밖에 있을 수 있다. 못 찾으면 아래에서
+      // 버려지고 곧바로 다시 저장돼 기기에서도 지워진다 (S15P21A204-443).
+      // 좋아요·기록과 달리 순간은 이 기기에만 있어서 되찾을 곳이 없다.
+      const momentTracks = new Map(byId);
+      const missing = [...new Set(stored.moments.map((moment) => moment.trackId))]
+        .filter((id) => !byId.has(id));
+      if (missing.length && resolve) {
+        for (const track of await resolve(missing).catch(() => [])) momentTracks.set(track.id, track);
+      }
       const moments: SavedMoment[] = stored.moments.flatMap((moment) => {
-        const track = byId.get(moment.trackId);
+        const track = momentTracks.get(moment.trackId);
         // 곡보다 긴 구간은 저장 당시의 길이가 바뀐 것이다. 그리면 파형이 깨진다.
         if (!track || moment.end <= moment.start || moment.end > track.duration) {
           return [];

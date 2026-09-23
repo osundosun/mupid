@@ -79,7 +79,8 @@ const LIBRARY_TAB_TITLES: Record<string, string> = {
   liked: '좋아한 곡',
 };
 export function LibraryView({ model: m }: { model: MupidModel }) {
-  const tracks = m.tracks;
+  // 좋아한 곡은 카탈로그 밖의 곡일 수 있다 (S15P21A204-443).
+  const tracks = m.knownTracks;
   const selected = m.playlists.find((p) => p.id === m.selectedPlaylist);
   /*
    * 지금 울리는 곡이 이 목록의 곡인가.
@@ -577,10 +578,13 @@ export function ReportView({ model: m }: { model: MupidModel }) {
   const mubti = report?.mubti ?? null;
   // 판정하기엔 이른 하루인가. 서버가 표본 하한(5분·3곡)으로 정한다.
   const tooEarly = !!report && !report.sample.sufficient;
+  // 불러오기 실패는 본문 문구가 아니라 잠깐 뜨는 알림으로 알린다. 30초 폴링이 계속
+  // 실패해도 문구가 같으면 다시 띄우지 않는다.
+  const { setToast } = m;
+  useEffect(() => { if (error) setToast(error); }, [error, setToast]);
   return (
     <div className="content-page">
       <PageHeader title="내 취향 리포트" onBack={() => m.go('home')} />
-      {error && <p className="demo-note" role="alert">{error}</p>}
       <div className="report-grid">
         <DailyAlbumTreemap
           model={m}
@@ -717,7 +721,8 @@ function NicknameForm({ model: m }: { model: MupidModel }) {
 }
 
 export function ProfileView({ model: m }: { model: MupidModel }) {
-  const tracks = m.tracks;
+  // 숨긴 곡·최근 감상은 카탈로그 밖의 곡일 수 있다 (S15P21A204-443).
+  const tracks = m.knownTracks;
   const ignoredTracks = tracks.filter(track => m.ignored.includes(track.id));
   const historyTracks = m.history.flatMap(id => { const found = tracks.find(track => track.id === id); return found ? [found] : []; });
   return (

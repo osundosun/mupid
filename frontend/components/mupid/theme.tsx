@@ -7,19 +7,18 @@ const ThemeContext = createContext({ theme: 'light' as Theme, toggle: () => {} }
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>('light');
   useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    // 기본은 밝은 화면이다. 시스템 설정을 따르지 않고, 사용자가 직접 켠 경우에만 다크 모드.
     const sync = () => {
       let saved: string | null = null;
       try { saved = localStorage.getItem('mupid-theme'); } catch {}
-      const next = saved === 'dark' || saved === 'light' ? saved : media.matches ? 'dark' : 'light';
+      const next = saved === 'dark' ? 'dark' : 'light';
       setTheme(next);
       document.documentElement.classList.toggle('dark', next === 'dark');
       document.documentElement.style.colorScheme = next;
     };
     sync();
-    media.addEventListener('change', sync);
     window.addEventListener('storage', sync);
-    return () => { media.removeEventListener('change', sync); window.removeEventListener('storage', sync); };
+    return () => window.removeEventListener('storage', sync);
   }, []);
   const toggle = () => {
     const next = theme === 'dark' ? 'light' : 'dark';

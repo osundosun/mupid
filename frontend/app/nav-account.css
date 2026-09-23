@@ -28,7 +28,9 @@
 .recent-search-word mark { padding: 0 1px; border-radius: 3px; background: var(--color-accent); color: var(--primary); font-weight: 700; }
 .recent-search-remove { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; margin-right: 4px; border-radius: 8px; color: #8fa3c2; }
 .recent-search-remove:hover, .recent-search-remove:focus-visible { background: #dfe8f8; color: var(--ink-strong); }
-.nav-account { position: relative; flex-shrink: 0; margin-left: auto; }
+/* z-index: 768~1100px 에서 검색창이 order: 4 로 둘째 줄에 내려가면, flex 는 order 순서대로
+   그리므로 검색창이 계정 메뉴 위에 그려져 첫 항목(마이페이지)을 가렸다. */
+.nav-account { position: relative; z-index: 2; flex-shrink: 0; margin-left: auto; }
 .nav-avatar { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: #edf3ff; color: #5279b9; overflow: hidden; }
 .nav-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 .nav-account-panel { position: absolute; right: 0; top: calc(100% + 10px); width: 160px; padding: 6px; background: #fff; border: 1px solid #dce6f5; border-radius: 14px; box-shadow: 0 8px 28px #42628c26; }

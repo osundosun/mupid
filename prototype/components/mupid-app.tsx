@@ -846,7 +846,7 @@ function DnaView({ nickname, moods, savedMoments, onPlayMoment }: { nickname: st
   );
 }
 
-export function MufeedApp() {
+export function MupidApp() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const chatMessageIdRef = useRef(2);
   const [stage, setStage] = useState<Stage>('auth');

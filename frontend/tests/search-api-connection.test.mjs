@@ -12,7 +12,7 @@ test('submitted header search moves to explore and calls the integrated music AP
   ]);
 
   assert.match(header, /m\.submitSearch\(keyword\);\s*m\.go\('search', true\);/);
-  assert.match(header, /placeholder="곡, 아티스트, 앨범 검색"/);
+  assert.match(header, /placeholder="곡, 아티스트 검색"/);
   assert.match(model, /setSearchRevision\(revision => revision \+ 1\)/);
   assert.match(explore, /api\.music\.search\(\{ q: query, vocal: appliedVocal, mood: appliedMood, genre: appliedGenre, page: 0, size: PAGE_SIZE \}, controller\.signal\)/);
   assert.doesNotMatch(explore, /q: query \|\| undefined/, '빈 검색어도 q= 로 요청해야 한다');
