@@ -1,5 +1,5 @@
 import { initialMoments, initialPlaylists } from '../mupid-data';
-import type { MupidService, Preferences } from './contracts';
+import type { MupidService, Preferences, TrackResolver } from './contracts';
 import type { Track } from '../mupid-data';
 
 const preferencesKey = 'mupid.sky.preferences.v1';
@@ -19,7 +19,7 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
   // 저장소를 주입받아 테스트와 브라우저 실행을 분리한다. 현재 데이터는 기기 간 동기화되지 않는다.
   return {
     mode: 'demo',
-    async bootstrap(catalog: Track[] = []) {
+    async bootstrap(catalog: Track[] = [], resolve?: TrackResolver) {
       const preferences = structuredClone(defaults);
       // 저장된 좋아요·기록이 서버 곡을 가리킬 수도 있다. 검증은 합친 목록으로 한다.
       const allTracks = catalog;
@@ -46,9 +46,18 @@ export function createDemoService(storage: Pick<Storage, 'getItem' | 'setItem' |
            * 가입한 계정에도 앞사람의 것이 보이고, 예전 빌드가 상수로 들고 있던
            * 데모 목록('규원의 Mupid Mix' 등)이 남은 기기에서는 그것이 보인다.
            */
+          /*
+           * 순간이 가리키는 곡은 카탈로그(앞 100곡) 밖에 있을 수 있다. 그런 곡은
+           * 화면 번호로 찾아 온다 — 못 찾으면 아래에서 버려지고, 그 목록이 곧바로
+           * 다시 저장돼 **기기에서도 지워진다** (S15P21A204-443).
+           */
+          const trackIdOf = (m: unknown) => record(m) && record(m.track) && typeof m.track.id === 'number' ? m.track.id : null;
+          const missing = [...new Set((Array.isArray(saved.moments) ? saved.moments : []).map(trackIdOf)
+            .filter((id): id is number => id !== null && !allTracks.some(t => t.id === id)))];
+          const momentTracks = missing.length && resolve ? [...allTracks, ...await resolve(missing).catch(() => [])] : allTracks;
           if (Array.isArray(saved.moments)) preferences.moments = saved.moments.flatMap((m: unknown) => {
             if (!record(m) || !record(m.track)) return [];
-            const id = m.track.id, track = allTracks.find(t => t.id === id);
+            const id = m.track.id, track = momentTracks.find(t => t.id === id);
             if (!track || typeof m.id !== 'number' || !Number.isFinite(m.id) || typeof m.start !== 'number' || typeof m.end !== 'number' || !Number.isFinite(m.start) || !Number.isFinite(m.end) || m.start < 0 || m.end <= m.start || m.end > track.duration) return [];
             return [{ id: m.id, track, start: m.start, end: m.end, section: typeof m.section === 'string' ? m.section : '' }];
           });
@@ -104,7 +113,7 @@ let native: Promise<MupidService> | null = null;
 const shell = () => (native ??= import('../platform/service').then(m => m.createSqliteService()));
 const nativeService: MupidService = {
   mode: 'demo', // 역할은 데모 저장소와 같다 — 기기에만 남는 저장.
-  bootstrap: async catalog => (await shell()).bootstrap(catalog),
+  bootstrap: async (catalog, resolve) => (await shell()).bootstrap(catalog, resolve),
   savePreferences: async value => (await shell()).savePreferences(value),
   login: async input => (await shell()).login(input),
   logout: async () => (await shell()).logout(),

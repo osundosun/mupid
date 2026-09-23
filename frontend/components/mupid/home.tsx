@@ -52,12 +52,12 @@ export function HomeView({ model: m }: { model: MupidModel }) {
             onAction={() => m.go('profile')}
           />
           <div className="recent-grid">
-            {!m.history.some(id => tracks.some(track => track.id === id)) && (
+            {!m.history.some(id => m.knownTracks.some(track => track.id === id)) && (
               <p className="listening-history-empty">아직 감상 기록이 없어요.<br />음악을 들으면 여기에 차곡차곡 모아둘게요.</p>
             )}
             {m.history
               .slice(0, 4)
-              .map((id) => tracks.find((t) => t.id === id)!)
+              .map((id) => m.knownTracks.find((t) => t.id === id)!)
               .filter(Boolean)
               .map((t) => (
                 /*

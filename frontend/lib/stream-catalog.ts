@@ -131,3 +131,7 @@ export async function fetchCatalog(signal?: AbortSignal): Promise<Track[]> {
 export const isStreamed = (
   track: Pick<Track, 'musicId'> | null | undefined,
 ): track is Track & { musicId: number } => typeof track?.musicId === 'number';
+
+/** 화면 번호 → 서버 번호. 서버 곡이 아니면(데모 곡 1~8 등) `undefined`. */
+export const musicIdOfTrackId = (trackId: number): number | undefined =>
+  trackId > ID_OFFSET ? trackId - ID_OFFSET : undefined;
