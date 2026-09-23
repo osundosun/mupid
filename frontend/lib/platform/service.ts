@@ -8,8 +8,8 @@
  * 계약(`lib/services/contracts.ts`)은 그대로다. SQL 은 전부 Rust 안에 있고
  * (`app/src/store/`), 여기서는 화면이 쓰는 모양으로 옮기기만 한다.
  *
- * **곡은 번호로만 저장한다.** 곡 정보는 서버 카탈로그의 것이고, 복사해 두면
- * 제목이 바뀐 곡이 이 기기에서만 옛 이름으로 남는다. 읽을 때 카탈로그에서
+ * **곡은 번호로만 저장한다.** 곡 정보는 서버의 것이고, 복사해 두면
+ * 제목이 바뀐 곡이 이 기기에서만 옛 이름으로 남는다. 읽을 때 서버에서
  * 찾지 못한 번호는 조용히 버린다 — 없어진 곡을 목록에 그리면 눌러도 아무 일도
  * 일어나지 않는 줄이 생긴다.
  */
@@ -55,29 +55,31 @@ export function createSqliteService(): MupidService {
     // 취향까지 들고 있게 될 때를 위해 비워 둔다.
     mode: 'demo',
 
-    async bootstrap(catalog: Track[] = [], resolve?: TrackResolver): Promise<Bootstrap> {
-      const byId = new Map(catalog.map((track) => [track.id, track]));
+    async bootstrap(resolve?: TrackResolver): Promise<Bootstrap> {
       let stored: StoredPreferences;
       try {
         stored = await invoke<StoredPreferences>('store_load_preferences', {});
       } catch (error) {
         // 저장소가 깨져도 앱은 열려야 한다. 이번 실행에서 고른 것만 못 남는다.
         console.warn('[mupid] 저장한 설정을 읽지 못했어요.', error);
-        return { tracks: [...catalog], preferences: emptyPreferences(), session: null };
+        return { knownTracks: [], preferences: emptyPreferences(), session: null };
       }
 
-      const keep = (ids: number[]) => ids.filter((id) => byId.has(id));
-      // 순간이 가리키는 곡은 카탈로그(앞 100곡) 밖에 있을 수 있다. 못 찾으면 아래에서
-      // 버려지고 곧바로 다시 저장돼 기기에서도 지워진다 (S15P21A204-443).
-      // 좋아요·기록과 달리 순간은 이 기기에만 있어서 되찾을 곳이 없다.
-      const momentTracks = new Map(byId);
-      const missing = [...new Set(stored.moments.map((moment) => moment.trackId))]
-        .filter((id) => !byId.has(id));
-      if (missing.length && resolve) {
-        for (const track of await resolve(missing).catch(() => [])) momentTracks.set(track.id, track);
-      }
+      /*
+       * 곡을 알아야 하는 값(저장한 순간·플레이리스트·마지막 재생 곡)이 가리키는 곡을
+       * 화면 번호로 찾아 온다. 곡 목록을 미리 받아 두지 않는다 (S15P21A204-446).
+       * 못 찾은 순간은 아래에서 버려지고 곧바로 다시 저장돼 기기에서도 지워진다
+       * (S15P21A204-443). 좋아요·기록은 번호만 보면 되고 로그인하면 계정 값으로 덮인다.
+       */
+      const wanted = [...new Set([
+        ...stored.moments.map((moment) => moment.trackId),
+        ...stored.playlists.flatMap((playlist) => playlist.trackIds),
+        ...(stored.lastPlayedId === null ? [] : [stored.lastPlayedId]),
+      ])];
+      const knownTracks = wanted.length && resolve ? await resolve(wanted).catch(() => []) : [];
+      const byId = new Map(knownTracks.map((track) => [track.id, track]));
       const moments: SavedMoment[] = stored.moments.flatMap((moment) => {
-        const track = momentTracks.get(moment.trackId);
+        const track = byId.get(moment.trackId);
         // 곡보다 긴 구간은 저장 당시의 길이가 바뀐 것이다. 그리면 파형이 깨진다.
         if (!track || moment.end <= moment.start || moment.end > track.duration) {
           return [];
@@ -107,9 +109,9 @@ export function createSqliteService(): MupidService {
         nickname: stored.nickname.trim() || DEFAULT_NICKNAME,
         moods: stored.moods,
         genres: [...new Set(stored.genres)],
-        liked: keep(stored.liked),
-        ignored: keep(stored.ignored),
-        history: keep(stored.history),
+        liked: stored.liked,
+        ignored: stored.ignored,
+        history: stored.history,
         moments,
         playlists,
         lastPlayedId:
@@ -120,7 +122,7 @@ export function createSqliteService(): MupidService {
 
       // 로그인 상태는 기기 저장으로 되살리지 않는다. 표시만 되살아나는 것은
       // 인증이 아니다 — `lib/api/session` 이 서버에 물어 복원한다.
-      return { tracks: [...catalog], preferences, session: null };
+      return { knownTracks, preferences, session: null };
     },
 
     async savePreferences(value) {

@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { guardPath, pageForPath, pagePaths } from '@/lib/routes';
 import { mupidService } from '@/lib/services';
@@ -7,6 +7,7 @@ import { localDemoEnabled } from '@/lib/api/local-demo';
 import { login, logout, restoreSession, withdrawAccount } from '@/lib/api/session';
 import { getPlayer } from '@/lib/player';
 import { isStreamed, musicIdOfTrackId } from '@/lib/stream-catalog';
+import { fetchPopularTracks, resolveTrackIds } from '@/lib/server-tracks';
 import {
   fetchNextTracks,
   fetchSimilarSections,
@@ -127,13 +128,13 @@ export function useMupid(bootstrap: Bootstrap) {
   const router = useRouter();
   const pathname = usePathname() || '/';
   // 화면들은 이 훅의 모델을 공유한다. 재생기나 로그인 상태를 화면마다 별도로 만들지 않는다.
-  const { tracks, preferences: initial } = bootstrap;
+  const { knownTracks: seededTracks, preferences: initial } = bootstrap;
   // Local preferences are not proof of authentication or account onboarding.
   // 완료 **시각**은 들고 있지 않는다. 화면이 묻는 것은 "설문으로 보내야
   // 하는가" 하나뿐이고, 서버도 `GET /api/v1/user` 로 불리언만 준다.
   const [onboardingSubmitted, setOnboardingSubmitted] = useState(false);
   /**
-   * 서버 추천. 못 받으면 빈 배열이고, 화면이 카탈로그로 물러난다.
+   * 서버 추천. 못 받으면 빈 배열이고, 화면이 인기곡(`popularTracks`)으로 물러난다.
    *
    * 물러났다는 사실을 `recommendationsReady` 로 알린다 — 조용히 대신 채우면
    * "추천이 도는 줄" 알고 넘어간다.
@@ -152,7 +153,7 @@ export function useMupid(bootstrap: Bootstrap) {
   // 마지막으로 들은 곡을 기억해 미니 플레이어를 계속 띄워 둔다. 한 곡도 듣지 않았다면 null.
   const [lastPlayedId, setLastPlayedId] = useState<number | null>(initial.lastPlayedId ?? null);
   const [active, setActive] = useState<Track | null>(
-    tracks.find((t) => t.id === initial.lastPlayedId) ?? null,
+    seededTracks.find((t) => t.id === initial.lastPlayedId) ?? null,
   );
   const [playing, setPlaying] = useState(false);
   // 청크를 기다리는 중. 화면은 이 값으로 스피너를 띄운다.
@@ -164,18 +165,17 @@ export function useMupid(bootstrap: Bootstrap) {
   const [moments, setMoments] = useState<SavedMoment[]>(initial.moments);
   const [playlists, setPlaylists] = useState<Playlist[]>(initial.playlists);
   /**
-   * 카탈로그(앞 100곡) 밖에서 만난 곡 중 보관함이 가리키는 것 (S15P21A204-443).
+   * 이 기기가 만난 곡. **곡 번호 → 곡을 찾는 유일한 자리다** (S15P21A204-446).
    *
-   * 좋아요·관심 없음·최근 감상은 곡 번호만 들고 있어서 화면이 곡을 찾아 그린다.
-   * 카탈로그에서만 찾으면 검색으로 찾아 좋아한 곡이 보관함에 뜨지 않고, 새로고침
-   * 하면 계정에서 되받아도 버려졌다. 그런 곡을 여기 모아 `knownTracks` 로 함께 찾는다.
-   * 목록 화면(홈·탐색)은 여전히 `tracks` 만 쓴다 — 보관함 곡이 섞여 들면 안 된다.
+   * 좋아요·관심 없음·최근 감상·재생 목록은 곡 번호만 들고 있어서 화면이 여기서 곡을
+   * 찾아 그린다. 예전에는 앱을 열 때 받은 앞 100곡(카탈로그)에서 찾아, 그 밖의 곡이
+   * 조용히 사라졌다(S15P21A204-441·443). 이제 곡 목록을 미리 받지 않고, 서버 응답
+   * (검색·추천·큐·보관함)으로 만난 곡을 여기 쌓는다. 모르는 번호는 곡 일괄 조회로
+   * 묻는다(`lib/server-tracks.ts`).
+   *
+   * 목록이 아니다 — 화면에 "곡 목록" 으로 그리지 않는다. 대체 목록은 `popularTracks`.
    */
-  const [extraTracks, setExtraTracks] = useState<Track[]>([]);
-  const knownTracks = useMemo(() => {
-    const ids = new Set(tracks.map((track) => track.id));
-    return [...tracks, ...extraTracks.filter((track) => !ids.has(track.id))];
-  }, [tracks, extraTracks]);
+  const [knownTracks, setKnownTracks] = useState<Track[]>(seededTracks);
   /*
    * 참조를 고정한다. 검색 결과 화면이 그린 목록을 효과에서 알려 주는데
    * (`explore.tsx`, S15P21A204-441), 매 렌더 새로 만들어지면 그 효과가 헛돈다.
@@ -184,12 +184,36 @@ export function useMupid(bootstrap: Bootstrap) {
   const rememberTracks = useCallback((found: (Track | null | undefined)[]) => {
     const fresh = found.filter((track): track is Track => !!track && typeof track.musicId === 'number');
     if (!fresh.length) return;
-    setExtraTracks((current) => {
-      const ids = new Set([...tracks, ...current].map((track) => track.id));
+    setKnownTracks((current) => {
+      const ids = new Set(current.map((track) => track.id));
       const added = fresh.filter((track) => !ids.has(track.id) && ids.add(track.id));
       return added.length ? [...current, ...added] : current;
     });
-  }, [tracks]);
+  }, []);
+  /**
+   * 인기곡. **추천이 아직 없을 때만** 쓰는 대체 목록이다 (S15P21A204-446).
+   *
+   * 홈의 For You·오늘의 모먼트, 비슷한 순간 화면이 추천을 못 받았을 때 채우고,
+   * 처음 쓰는 사람의 재생 목록을 채운다. 곡을 찾는 데 쓰지 않는다(`knownTracks`).
+   * 로그인한 뒤 화면을 막지 않고 한 번 받는다. 못 받으면 빈 채로 둔다.
+   */
+  const [popularTracks, setPopularTracks] = useState<Track[]>([]);
+  /** 받는 중이거나 받아 온 인기곡. 재생 목록 기본값과 화면이 같은 요청을 나눠 쓴다. */
+  const popularRequest = useRef<Promise<Track[]> | null>(null);
+  const loadPopularTracks = () => {
+    popularRequest.current ??= fetchPopularTracks()
+      .then((found) => {
+        if (mountedRef.current) setPopularTracks(found);
+        rememberTracks(found);
+        return found;
+      })
+      .catch((error) => {
+        console.warn('[mupid] 인기곡을 불러오지 못했어요.', error);
+        popularRequest.current = null;
+        return [];
+      });
+    return popularRequest.current;
+  };
   const [selectedPlaylist, setSelectedPlaylist] = useState<number | null>(null);
   const [libraryTab, setLibraryTab] = useState('playlists');
   const [query, setQuery] = useState('');
@@ -200,11 +224,9 @@ export function useMupid(bootstrap: Bootstrap) {
   // 셔플은 재생 목록 안에서 중복 없이 섞어 재생한다. 반복과 함께 켤 수 있다.
   const [shuffle, setShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
-  // 자리마다 번호를 새로 만드는 일은 처음 한 번뿐이다. 매 렌더마다 만들면
-  // 화면의 key 가 계속 바뀌어 목록이 통째로 다시 그려진다.
-  const [queue, setQueue] = useState<QueueEntry[]>(() =>
-    toQueueEntries(tracks.slice(0, QUEUE_LIMIT).map((t) => t.id)),
-  );
+  // 처음에는 비어 있다. 계정 큐를 받아 오거나(`adoptServerQueue`), 한 번도 저장한 적
+  // 없는 계정이면 인기곡으로 채운다. 예전에는 카탈로그 앞 100곡이었다.
+  const [queue, setQueue] = useState<QueueEntry[]>([]);
   /**
    * 지금 듣고 있는 **자리**.
    *
@@ -217,8 +239,6 @@ export function useMupid(bootstrap: Bootstrap) {
   const pendingRemoval = useRef<string | null>(null);
   /** 담은 곡이 들어갈 자리. 기기에 기억해 두고 화면에서 바꾼다. */
   const [queueInsertPosition, setInsertPosition] = useState<QueueInsertPosition>(readInsertPosition);
-  /** 계정 큐를 이미 받아 왔는가. 카탈로그가 늦게 와도 한 번은 받아 오게 한다. */
-  const queueAdopted = useRef(false);
   /**
    * 서버 큐의 판본. 저장할 때 함께 보내 다른 기기의 변경을 덮지 않게 한다.
    *
@@ -380,7 +400,7 @@ export function useMupid(bootstrap: Bootstrap) {
    * 서버 추천을 한 번 받아 둔다.
    *
    * 실패해도 화면을 세우지 않는다 — 추천 서버가 아직 준비되지 않았거나(색인 미적재)
-   * 배치가 한 번도 안 돌았을 수 있다. 그때는 카탈로그로 물러나고, 물러났다는 것은
+   * 배치가 한 번도 안 돌았을 수 있다. 그때는 인기곡으로 물러나고, 물러났다는 것은
    * `recommendationsReady` 가 말한다.
    */
   useEffect(() => {
@@ -541,11 +561,11 @@ export function useMupid(bootstrap: Bootstrap) {
    * 계정에 저장된 좋아요·관심없음을 화면 상태로 가져온다.
    *
    * 브라우저에 있던 값은 덮는다. 계정 쪽이 기준이다 — 기기를 바꿔도 따라오는
-   * 것이 이 API 의 목적이다. 지금 카탈로그에 없는 곡은 버려진다.
+   * 것이 이 API 의 목적이다. 이 기기가 모르는 곡은 곡 번호로 받아 온다. 지워진 곡만 빠진다.
    */
   const adoptServerReactions = async (signal?: AbortSignal) => {
     if (localDemoEnabled()) return;
-    const saved = await fetchReactions(tracks, signal);
+    const saved = await fetchReactions(knownTracks, signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
     rememberTracks([...saved.liked, ...saved.ignored]);
     setLiked(saved.liked.map((track) => track.id));
@@ -560,7 +580,7 @@ export function useMupid(bootstrap: Bootstrap) {
    */
   const adoptServerHistory = async (signal?: AbortSignal) => {
     if (localDemoEnabled()) return;
-    const found = await fetchHistory(tracks, signal);
+    const found = await fetchHistory(knownTracks, signal);
     if (!found?.length || signal?.aborted || !mountedRef.current) return;
     rememberTracks(found);
     const saved = found.map((track) => track.id);
@@ -585,47 +605,45 @@ export function useMupid(bootstrap: Bootstrap) {
     localDemoEnabled() ? '로컬 데모에서는 플레이리스트를 쓸 수 없어요. 서버 연결이 필요해요.' : retryable;
   const adoptServerPlaylists = async (signal?: AbortSignal) => {
     if (localDemoEnabled()) return;
-    const saved = await playlistApi.fetchPlaylists(tracks, signal);
+    const saved = await playlistApi.fetchPlaylists(knownTracks, signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
     setPlaylists(saved);
   };
   /**
    * 계정에 저장된 재생 목록을 가져온다. **서버가 기준이다.**
    *
-   * 로그인 전 화면이 들고 있던 큐(카탈로그 앞 100곡)는 사용자가 고른 것이 아니라
-   * 그냥 채워 둔 기본값이라 덮어도 잃을 것이 없다. 다만 계정 큐가 **비어 있으면**
-   * 덮지 않는다 — 처음 쓰는 사람에게 빈 목록을 안기는 대신 기본값을 그대로 둔다.
+   * 서버 응답에 곡 정보가 통째로 실려 오므로 곡 목록 없이 바로 화면에 옮긴다. 예전에는
+   * 카탈로그가 도착할 때까지 기다렸다(S15P21A204-446 에서 없앴다).
    *
    * 여기서 받은 판본이 들어와야 저장이 열린다.
    */
   const adoptServerQueue = async (signal?: AbortSignal) => {
     if (localDemoEnabled()) return;
-    /*
-     * **곡 목록이 없으면 아직 받지 않는다.** 서버 큐는 곡 번호라 카탈로그가
-     * 있어야 화면 번호로 옮길 수 있는데, 로그인 직후에는 카탈로그를 아직
-     * 받아오는 중이다. 그때 받아 오면 전부 걸러져 빈 큐로 읽히고, 그 빈 큐가
-     * 곧바로 계정에 저장돼 **담아 둔 목록이 지워진다.**
-     * 아래의 효과가 카탈로그가 도착한 뒤 다시 부른다.
-     */
-    if (!tracks.length) return;
     const saved = await queueApi.fetchQueue(signal);
     if (!saved || signal?.aborted || !mountedRef.current) return;
     // 계정 큐에는 카탈로그 밖의 곡(검색으로 찾아 담은 곡)이 섞여 있다. 먼저
     // 기억해 두지 않으면 화면이 그 줄을 그리지 못하고, 그렇게 줄어든 목록이
     // 곧바로 계정에 저장돼 담아 둔 곡이 지워진다.
     rememberTracks(saved.tracks);
-    queueAdopted.current = true;
     queueRevision.current = saved.revision;
     /*
-     * 계정 큐가 비어 있을 때 화면의 기본값(카탈로그 앞 100곡)을 그대로 둘지는
-     * **판본으로 가른다.**
+     * 계정 큐가 비어 있을 때 기본값(인기곡)으로 채울지는 **판본으로 가른다.**
      *
      * 판본 0 은 한 번도 저장한 적이 없다는 뜻이다 — 처음 쓰는 사람에게 빈 목록을
-     * 안기는 대신 기본값을 둔다. 판본이 1 이상이면 사용자가 만든 상태이므로 **빈
-     * 것도 그대로 존중한다.** 예전에는 둘을 구분하지 않아, 목록을 통째로 비우고
-     * 새로고침하면 담은 적 없는 곡이 우르르 되살아났다.
+     * 안기는 대신 인기곡으로 채운다. 채운 목록은 다음 저장에 실려 계정에 남는다.
+     * 판본이 1 이상이면 사용자가 만든 상태이므로 **빈 것도 그대로 존중한다.** 예전에는
+     * 둘을 구분하지 않아, 목록을 통째로 비우고 새로고침하면 담은 적 없는 곡이 우르르
+     * 되살아났다.
      */
-    if (!saved.ids.length && saved.revision === 0) return;
+    if (!saved.ids.length && saved.revision === 0) {
+      const popular = await loadPopularTracks();
+      if (signal?.aborted || !mountedRef.current || !popular.length) return;
+      // 기다리는 사이 사용자가 곡을 담았으면 그것을 지우지 않는다.
+      setQueue((current) =>
+        current.length ? current : toQueueEntries(popular.slice(0, QUEUE_LIMIT).map((track) => track.id)),
+      );
+      return;
+    }
     // 서버는 곡 번호만 들고 있다. 자리 번호는 이 기기에서 새로 붙인다.
     setQueue(toQueueEntries(saved.ids));
     // 방금 받아 온 것을 곧바로 되돌려 보내지 않는다. 재생 중인 곡은 화면 쪽이
@@ -783,20 +801,24 @@ export function useMupid(bootstrap: Bootstrap) {
     return () => abort.abort();
   }, [active?.id]);
   /*
-   * 로그인 뒤에 곡 목록이 들어오면 마지막으로 들었던 곡만 복원한다.
+   * 마지막으로 들었던 곡을 복원한다. 복원하더라도 재생을 시작하지는 않는다.
    *
-   * 목록은 로그인한 사람만 받을 수 있어서, 비로그인으로 앱이 열릴 때는 비어
-   * 있다가 로그인 뒤에 채워진다. `active` 는 처음 한 번만 정해지므로 여기서
-   * 뒤늦게 들어온 목록을 받아 준다. 재생 이력이 없으면 빈 상태를 유지한다.
-   * 복원하더라도 재생을 시작하지는 않는다.
+   * 보통은 부트스트랩이 이미 찾아 둬서 `active` 가 처음부터 있다. 여기는 그때 곡을
+   * 못 찾았을 때(요청 실패 등) 로그인한 뒤 한 번 더 묻는 자리다. 곡 조회는 로그인한
+   * 사람만 할 수 있다. 재생 이력이 없으면 빈 상태를 유지한다.
    */
   useEffect(() => {
-    if (active || !tracks.length) return;
-    const pick = tracks.find((t) => t.id === lastPlayedId);
-    if (!pick) return;
-    activeRef.current = pick;
-    setActive(pick);
-  }, [tracks, active, lastPlayedId]);
+    if (active || lastPlayedId === null || demoSession?.kind !== 'authenticated') return;
+    const abort = new AbortController();
+    void resolveTrackIds([lastPlayedId], knownTracks, abort.signal).then(([pick]) => {
+      if (abort.signal.aborted || !pick || activeRef.current) return;
+      rememberTracks([pick]);
+      activeRef.current = pick;
+      setActive(pick);
+    });
+    return () => abort.abort();
+    // `knownTracks` 는 찾을 때 먼저 볼 곳일 뿐이다. 늘 때마다 다시 묻지 않는다.
+  }, [demoSession, active, lastPlayedId, rememberTracks]); // eslint-disable-line react-hooks/exhaustive-deps
   const seek = (value: number) => {
     // 내부 위치 이동 함수. 화면에서 호출하는 seek는 반환 모델에서 순간 미리듣기도 해제한다.
     if (!activeRef.current) return;
@@ -1107,8 +1129,8 @@ export function useMupid(bootstrap: Bootstrap) {
     void startPlayback(target, 0, target.uid, 'QUEUE');
   };
   /**
-   * 화면에 보이는 재생 목록. 큐의 자리 순서 그대로이고, 건너뛴 곡과 카탈로그에서
-   * 사라진 곡만 빠진다. 자리 번호(`uid`)를 곡에 붙여 내보내므로 같은 곡이 여러
+   * 화면에 보이는 재생 목록. 큐의 자리 순서 그대로이고, 건너뛴 곡과 곡 정보를 아직
+   * 모르는 곡만 빠진다. 자리 번호(`uid`)를 곡에 붙여 내보내므로 같은 곡이 여러
    * 번 담겨 있어도 화면이 줄마다 다른 것으로 다룰 수 있다.
    */
   const queueTracks: QueueTrack[] = queue
@@ -1321,19 +1343,16 @@ export function useMupid(bootstrap: Bootstrap) {
   }, [queue, active?.id, demoSession, knownTracks, rememberTracks]);
 
   /**
-   * 카탈로그가 도착한 뒤에 계정 큐를 받아 온다.
+   * 인기곡을 한 번 받아 둔다. 로그인한 뒤, 화면을 막지 않는다.
    *
-   * 로그인과 곡 목록은 따로 도착한다. 로그인 직후의 한 번은 카탈로그가 없어
-   * 건너뛰므로(위 `adoptServerQueue`), 목록이 채워지면 여기서 이어받는다.
-   * 한 번 받아 오면 다시 받지 않는다 — 다시 받으면 그 사이의 조작이 덮인다.
+   * 추천이 없을 때의 대체 목록이다(`popularTracks`). 재생 목록 기본값이 먼저 불렀으면
+   * 그 요청을 같이 쓴다.
    */
   useEffect(() => {
-    if (demoSession?.kind !== 'authenticated') return;
-    if (queueAdopted.current || !tracks.length) return;
-    void adoptServerQueue();
-    // `adoptServerQueue` 는 매 렌더 새로 만들어져 의존성에 넣을 수 없다.
-    // 이 효과가 보는 것은 "로그인했고 곡 목록이 왔는가" 두 가지뿐이다.
-  }, [demoSession, tracks]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (demoSession?.kind !== 'authenticated' && !localDemoEnabled()) return;
+    void loadPopularTracks();
+    // `loadPopularTracks` 는 요청을 하나로 묶어 두므로 여러 번 불러도 한 번만 받는다.
+  }, [demoSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * 화면을 떠나기 직전에 남은 저장을 밀어낸다.
@@ -1470,9 +1489,16 @@ export function useMupid(bootstrap: Bootstrap) {
   useEffect(() => {
     if (pathname !== '/player') return;
     const id = Number(new URLSearchParams(window.location.search).get('track'));
-    const track = tracks.find(t => t.id === id);
-    if (track) loadTrack(track);
-  }, [pathname, tracks]);
+    // 공유 링크의 곡은 이 기기가 모르는 곡일 수 있다. 번호로 물어 온다.
+    const abort = new AbortController();
+    void resolveTrackIds([id], knownTracks, abort.signal).then(([track]) => {
+      if (abort.signal.aborted || !track) return;
+      rememberTracks([track]);
+      loadTrack(track);
+    });
+    return () => abort.abort();
+    // 주소가 바뀔 때만 본다. `knownTracks` 가 늘 때마다 곡을 다시 걸면 안 된다.
+  }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   const openMoment = (track: Track | null = activeRef.current, editing: SavedMoment | null = null) => {
     if (!track) return;
     const state = getPlayer()?.store.get();
@@ -1778,7 +1804,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setLiked((ids) => (wasLiked ? ids.filter((i) => i !== id) : [...ids, id]));
     if (!wasLiked && wasIgnored) setIgnored((ids) => ids.filter((i) => i !== id));
     if (demoSession?.kind !== 'authenticated') return;
-    pushReaction(tracks, id, wasLiked ? null : 'LIKE').catch(() => {
+    pushReaction(knownTracks, id, wasLiked ? null : 'LIKE').catch(() => {
       if (!mountedRef.current) return;
       setLiked((ids) => (wasLiked ? [...ids, id] : ids.filter((i) => i !== id)));
       if (!wasLiked && wasIgnored) setIgnored((ids) => (ids.includes(id) ? ids : [...ids, id]));
@@ -1801,7 +1827,7 @@ export function useMupid(bootstrap: Bootstrap) {
     setIgnored((ids) => [...ids, id]);
     if (wasLiked) setLiked((ids) => ids.filter((i) => i !== id));
     if (demoSession?.kind !== 'authenticated') return;
-    pushReaction(tracks, id, 'DISLIKE').catch(() => {
+    pushReaction(knownTracks, id, 'DISLIKE').catch(() => {
       if (!mountedRef.current) return;
       setIgnored((ids) => ids.filter((i) => i !== id));
       if (wasLiked) setLiked((ids) => (ids.includes(id) ? ids : [...ids, id]));
@@ -1818,7 +1844,7 @@ export function useMupid(bootstrap: Bootstrap) {
     }
     setIgnored([]);
     if (demoSession?.kind !== 'authenticated' || !before.length) return;
-    Promise.all(before.map((id) => pushReaction(tracks, id, null))).catch(() => {
+    Promise.all(before.map((id) => pushReaction(knownTracks, id, null))).catch(() => {
       if (!mountedRef.current) return;
       setIgnored(before);
       setToast('숨긴 곡을 되돌리지 못했어요. 다시 시도해 주세요.');
@@ -1832,7 +1858,7 @@ export function useMupid(bootstrap: Bootstrap) {
     if (musicId !== undefined) analytics.undislike('TRACK', musicId);
     setIgnored((ids) => ids.filter((i) => i !== id));
     if (demoSession?.kind !== 'authenticated') return;
-    pushReaction(tracks, id, null).catch(() => {
+    pushReaction(knownTracks, id, null).catch(() => {
       if (!mountedRef.current) return;
       setIgnored((ids) => (ids.includes(id) ? ids : [...ids, id]));
       setToast('숨긴 곡을 되돌리지 못했어요. 다시 시도해 주세요.');
@@ -1956,11 +1982,12 @@ export function useMupid(bootstrap: Bootstrap) {
   return {
     onboardingSubmitted,
     completeOnboarding,
-    tracks,
-    // 보관함·마이페이지가 곡 번호로 곡을 찾을 때 쓴다. 카탈로그 밖의 곡까지 들어 있다.
+    // 추천이 없을 때의 대체 목록. 곡을 찾는 데는 `knownTracks` 를 쓴다.
+    popularTracks,
+    // 곡 번호로 곡을 찾는 유일한 자리. 보관함·재생 목록·마이페이지가 여기서 찾는다.
     knownTracks,
     /**
-     * 카탈로그 밖에서 받아 온 곡을 화면이 알려 준다.
+     * 서버에서 받아 온 곡을 화면이 알려 준다.
      *
      * 검색 결과처럼 서버에서 곡을 직접 받아 그리는 화면은 그 목록을 여기에
      * 넘긴다. 담기·재생·좋아요는 스스로도 기억하지만, 목록을 그린 시점에 미리

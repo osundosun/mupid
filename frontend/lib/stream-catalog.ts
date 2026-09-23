@@ -1,15 +1,13 @@
 /**
- * 서버 곡 카탈로그.
+ * 서버 곡 → 화면의 곡(`Track`) 변환과 번호 규칙.
  *
- * `GET /api/v1/music` 로 받아 화면이 쓰는 `Track` 으로 옮긴다. 화면에 보이는
- * 곡은 **이것이 전부다** — 데모 곡은 없앴다. 없는 곡을 틀려다 실패하고,
- * 좋아요·기록도 서버에 남길 수 없는 번호를 갖게 되기 때문이다.
+ * 화면에 보이는 곡은 전부 서버에서 온다 — 데모 곡은 없앴다. 앱을 열 때 앞 100곡을
+ * 받아 두던 "카탈로그" 도 없앴다(S15P21A204-446). 곡을 받아 오는 일은
+ * `lib/server-tracks.ts` 가 한다. 이 파일 이름은 그 시절에 붙은 것이다.
  *
  * 재생은 청크 스트리밍 한 경로뿐이다 (`lib/player/`).
  */
 
-import { api } from './api/session';
-import { localDemoEnabled } from './api/local-demo';
 import type { MusicSummary } from './api/endpoints';
 import { DEFAULT_ALBUM_COVER, moodLabel, type Track } from './mupid-data';
 import { toImageSource } from './platform';
@@ -25,11 +23,8 @@ import { toImageSource } from './platform';
  */
 export const ID_OFFSET = 1000;
 
-/** 한 번에 받아 올 곡 수. 카탈로그가 커지면 화면별 페이징으로 바꾼다. */
-const CATALOG_SIZE = 100;
-
 /**
- * 서버 곡 → 화면의 곡. **카탈로그와 추천이 같은 변환을 쓴다.**
+ * 서버 곡 → 화면의 곡. **검색·추천·큐·보관함이 모두 같은 변환을 쓴다.**
  *
  * 두 벌이 되면 커버를 고르는 규칙이나 `id` 규칙이 한쪽만 고쳐져, 같은 곡이 목록에
  * 따라 다르게 보인다.
@@ -90,36 +85,6 @@ export const toTrack = (music: MusicSummary): Track => {
       : [],
   };
 };
-
-/**
- * 서버 곡 목록을 가져온다.
- *
- * **못 받아 오면 예외를 던진다.** 예전에는 빈 배열로 삼켰는데, 데모 곡 위에
- * 얹는 값이라 앱이 열리기만 하면 됐기 때문이다. 이제는 이것이 곡 목록의
- * 전부라, 삼키면 화면이 서버 장애를 "아직 등록된 음악이 없어요" 로 잘못
- * 알린다 — 사용자는 다시 불러올 일이 아니라고 여기고 떠난다. 둘은 다른
- * 사정이니 다르게 알려야 한다.
- *
- * 중간에 취소된 것은 실패가 아니다. 빈 배열로 조용히 끝낸다.
- *
- * 앱도 기기에 남겨 둔 목록으로 대신하지 않는다. 서버에 닿지 않으면 서비스를
- * 열지 않는다(`components/mupid/server-gate.tsx`, S15P21A204-444).
- */
-export async function fetchCatalog(signal?: AbortSignal): Promise<Track[]> {
-  if (localDemoEnabled()) {
-    const response = await fetch('/local-demo/catalog.json', { signal });
-    if (!response.ok) throw new Error('로컬 음악 데이터를 찾지 못했어요.');
-    return response.json();
-  }
-  try {
-    const page = await api.music.search({ size: CATALOG_SIZE }, signal);
-    return page.items.map(toTrack);
-  } catch (error) {
-    if (signal?.aborted) return [];
-    console.warn('[mupid] 곡 카탈로그를 불러오지 못했어요.', error);
-    throw error;
-  }
-}
 
 /** 이 곡을 청크 스트리밍으로 재생해야 하는가. */
 export const isStreamed = (

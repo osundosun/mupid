@@ -24,8 +24,8 @@ export function ArtistInfo({ model: m }: { model: MupidModel }) {
 function ArtistContent({ model: m }: { model: MupidModel }) {
   const [tab, setTab] = useState('info');
   const [album, setAlbum] = useState<string | null>(null);
-  // 추천·대기열의 곡은 초기 카탈로그 100곡에 없을 수도 있다.
-  const knownTracks = [...m.tracks, ...(m.active ? [m.active] : [])]
+  // 이 기기가 이미 만난 곡에서 먼저 찾는다. 서버 검색 결과(`remoteTracks`)가 뒤를 채운다.
+  const knownTracks = [...m.knownTracks, ...(m.active ? [m.active] : [])]
     .filter(track => track.artist === m.selectedArtist);
   const [remoteTracks, setRemoteTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);

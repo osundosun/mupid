@@ -2,7 +2,7 @@
  * 재생 큐의 서버 연동. 저장소는 Redis 이고 규칙은 decision/0022 에 있다.
  *
  * 화면은 큐를 `Track[]` 로 다루고 서버는 곡 번호 목록으로 다룬다. 여기서만 옮긴다.
- * **화면 번호(`Track.id`)와 서버 번호(`Track.musicId`)는 다르다** — 카탈로그가
+ * **화면 번호(`Track.id`)와 서버 번호(`Track.musicId`)는 다르다** — `toTrack` 이
  * `ID_OFFSET` 을 더해 화면 번호를 만든다(`lib/stream-catalog.ts`). 서버로 나가는
  * 것은 언제나 `musicId` 다.
  *
@@ -26,7 +26,7 @@ export type QueueSnapshot = {
   /**
    * 그 자리에 담긴 곡들. `ids` 와 같은 순서다.
    *
-   * **카탈로그에 없던 곡도 들어 있다.** 받는 쪽은 이것을 카탈로그에 합쳐 두어야
+   * **이 기기가 모르던 곡도 들어 있다.** 받는 쪽은 이것을 `knownTracks` 에 합쳐 두어야
    * 한다 — 합치지 않으면 곡 번호를 곡으로 바꾸지 못해 그 줄이 화면에서 사라진다.
    */
   tracks: Track[];
@@ -39,7 +39,7 @@ const isServerTrack = (track: Track): track is Track & { musicId: number } =>
   typeof track.musicId === 'number';
 
 /**
- * 서버 번호 → 화면 번호. 규칙은 카탈로그와 같은 `ID_OFFSET` 하나뿐이라 카탈로그를
+ * 서버 번호 → 화면 번호. 규칙은 `toTrack` 과 같은 `ID_OFFSET` 하나뿐이라 곡을
  * 뒤지지 않는다 (`lib/stream-catalog.ts`).
  */
 const toScreenId = (musicId: number): number => ID_OFFSET + musicId;

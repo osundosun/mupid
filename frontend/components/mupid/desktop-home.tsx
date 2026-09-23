@@ -20,8 +20,7 @@ import { AlbumDeck } from './album-deck';
 import { GenreName } from './genre-name';
 
 export function DesktopHome({ model: m }: { model: MupidModel }) {
-  const tracks = m.tracks;
-  const recommendations = pickForYou(m.forYou, tracks, m.ignored);
+  const recommendations = pickForYou(m.forYou, m.popularTracks, m.ignored);
   const forYou = forYouHeading(m.recommendationsReady);
   const recent = m.history.slice(0, 4).flatMap((id) => {
     const track = m.knownTracks.find((item) => item.id === id);

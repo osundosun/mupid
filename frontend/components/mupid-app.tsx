@@ -6,8 +6,7 @@ import { mupidService } from '@/lib/services';
 import { clearBootstrap, readBootstrap, writeBootstrap } from '@/lib/services/bootstrap-cache';
 import { profilePhoto, profilePhotoStore } from '@/lib/profile-photo';
 import { useStore } from '@/lib/store';
-import { fetchCatalog } from '@/lib/stream-catalog';
-import { resolveTrackIds } from '@/lib/catalog-lookup';
+import { resolveTrackIds } from '@/lib/server-tracks';
 import { restoreSession, sessionStore } from '@/lib/api/session';
 import { watchSafeArea, watchCrashReports } from '@/lib/platform';
 import { watchKeyboardInset } from '@/hooks/use-keyboard-inset';
@@ -81,12 +80,13 @@ const mobileNavigation = [
 ] as const;
 export function MupidApp() {
   /*
-   * 곡 목록은 **로그인한 사람만** 받을 수 있다(`SecurityConfig`). 그래서 세션을
-   * 먼저 복원하고 그 다음에 받는다. 순서가 뒤집히면 첫 방문자의 요청이 401 로
-   * 떨어져 로그인 화면에 "음악을 불러오지 못했어요" 가 뜬다.
+   * 기기에 저장된 설정을 읽고, 그 설정이 가리키는 곡(저장한 순간·마지막 재생 곡)만
+   * 찾아 온다. **곡 목록을 미리 받지 않는다** — 앞 100곡을 받아 두던 카탈로그는
+   * 없앴다(S15P21A204-446). 목록은 화면마다 서버에서 받는다.
    *
-   * 비로그인이면 빈 목록으로 연다 — 곡이 없어도 앱은 그대로 돌아간다. 로그인
-   * 하면 계정이 바뀐 것을 보고 여기서 다시 받는다.
+   * 곡 조회는 **로그인한 사람만** 할 수 있다(`SecurityConfig`). 그래서 세션을
+   * 먼저 복원하고, 로그인했을 때만 곡을 찾는다. 로그인하면 계정이 바뀐 것을 보고
+   * 여기서 다시 읽는다.
    */
   const accountId = useStore(sessionStore, s =>
     s.status === 'authenticated' ? s.user?.user_id ?? 0 : 0);
@@ -116,8 +116,8 @@ export function MupidApp() {
   // 훅은 인증 뒤에만 돌기 때문이다. 두 곳에 두면 매니페스트를 중복으로 받는다.
   // 웹 갈래(번들 활성화)도 `checkForUpdates` 안에 있으므로 그대로 함께 돈다.
   useEffect(() => {
-    // 같은 계정 몫을 이미 받아 뒀으면 그대로 쓴다. 화면을 옮길 때마다 카탈로그를
-    // 다시 받으면 그동안 로딩 화면이 뜨고 재생이 끊긴다. 계정이 바뀌었을 때는
+    // 같은 계정 몫을 이미 받아 뒀으면 그대로 쓴다. 화면을 옮길 때마다 다시
+    // 받으면 그동안 로딩 화면이 뜨고 재생이 끊긴다. 계정이 바뀌었을 때는
     // 열쇠가 달라 여기서 걸리지 않으므로 아래로 내려가 새로 받는다.
     const cached = readBootstrap(accountId);
     if (cached) { setData(cached); return; }
@@ -125,13 +125,10 @@ export function MupidApp() {
     void (async () => {
       try {
         const session = await restoreSession();
-        const catalog = session.status === 'authenticated' ? await fetchCatalog() : [];
-        // 서버 카탈로그는 화면 쪽에서 받아 서비스 계층에 넘긴다.
+        // 서버 호출은 화면 쪽에서 해서 서비스 계층에 넘긴다.
         // 서비스 계층은 브라우저 저장만 건드린다 (docs/server-integration.md).
-        // 카탈로그 밖의 곡에 남긴 순간은 곡을 따로 받아 붙인다 (S15P21A204-443).
         const value = await mupidService.bootstrap(
-          catalog,
-          session.status === 'authenticated' ? (ids) => resolveTrackIds(ids, catalog) : undefined,
+          session.status === 'authenticated' ? (ids) => resolveTrackIds(ids, []) : undefined,
         );
         // 저장은 `live` 와 무관하게 남긴다. 화면이 먼저 사라졌더라도 받아 온
         // 값은 다음 마운트가 쓸 수 있고, 그래야 두 번 받지 않는다.

@@ -17,7 +17,14 @@ export type Preferences = {
   /** 마지막으로 재생한 곡. null이면 아직 한 곡도 듣지 않은 계정이다. */
   lastPlayedId?: number | null;
 };
-export type Bootstrap = { tracks: Track[]; preferences: Preferences; session?: AccountSession | null };
+/**
+ * 기기에 저장된 설정과, 그 설정이 가리키는 곡.
+ *
+ * `knownTracks` 는 곡 **목록**이 아니다 — 저장한 순간·마지막 재생 곡처럼 저장된 값이
+ * 곡 번호로 가리키는 곡을 찾아 둔 것이다. 화면은 이것으로 곡 찾기를 시작한다.
+ * 예전 `tracks`(앞 100곡 카탈로그)는 없앴다 (S15P21A204-446).
+ */
+export type Bootstrap = { knownTracks: Track[]; preferences: Preferences; session?: AccountSession | null };
 /** 화면 번호로 곡을 찾는다. 찾지 못한 번호는 결과에 없다. 실패해도 던지지 않는다. */
 export type TrackResolver = (trackIds: number[]) => Promise<Track[]>;
 export type SignupInput = {
@@ -30,13 +37,11 @@ export interface MupidService {
   /**
    * 데모 저장소에서 곡·설정을 읽는다.
    *
-   * @param catalog 서버에서 받아 온 곡 목록. 네트워크 호출은 화면 쪽에서 하고
-   *   여기서는 합치기만 한다 — 이 계층은 브라우저 저장만 건드린다.
-   * @param resolve 저장한 순간이 가리키는 곡 중 `catalog` 에 없는 것을 화면 번호로
-   *   찾아 준다. 카탈로그는 앞 100곡뿐이라, 없으면 그 밖의 곡에 남긴 순간이
-   *   새로고침 때 버려진다 (S15P21A204-443). 네트워크 호출은 여전히 화면 쪽 몫이다.
+   * @param resolve 저장된 값이 가리키는 곡을 화면 번호로 찾아 준다. 네트워크 호출은
+   *   화면 쪽 몫이라 주입받는다 — 이 계층은 기기 저장만 건드린다. 없으면(로그인 전)
+   *   찾지 않고, 곡을 알아야 하는 값(저장한 순간·마지막 재생 곡)은 비운다.
    */
-  bootstrap(catalog?: Track[], resolve?: TrackResolver): Promise<Bootstrap>;
+  bootstrap(resolve?: TrackResolver): Promise<Bootstrap>;
   savePreferences(value: Preferences): Promise<void>;
   login(input: { email: string; password: string }): Promise<AccountSession>;
   logout(): Promise<void>;
