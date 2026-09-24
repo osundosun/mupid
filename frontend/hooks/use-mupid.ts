@@ -125,6 +125,17 @@ const readInsertPosition = (): QueueInsertPosition => {
   return 'bottom';
 };
 
+/** AI 이어듣기. 담을 위치처럼 계정이 아니라 이 기기에만 기억한다. */
+const AUTO_RECOMMEND_KEY = 'mupid.queue.auto-recommend';
+
+const readAutoRecommend = (): boolean => {
+  try {
+    return localStorage.getItem(AUTO_RECOMMEND_KEY) === 'true';
+  } catch {
+    return false;
+  }
+};
+
 export function useMupid(bootstrap: Bootstrap) {
   const router = useRouter();
   const pathname = usePathname() || '/';
@@ -224,9 +235,47 @@ export function useMupid(bootstrap: Bootstrap) {
   const [moodFilter, setMoodFilter] = useState('전체');
   // 셔플은 재생 목록 안에서 중복 없이 섞어 재생한다. 반복과 함께 켤 수 있다.
   const [shuffle, setShuffle] = useState(false);
-  const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
-  /** 자동 추천을 묻는 중이다. 한 번의 종료로 요청이 두 번 나가지 않게 한다. */
-  const autoRecommending = useRef(false);
+  const [repeatMode, setRepeatModeState] = useState<RepeatMode>('off');
+  /**
+   * AI 이어듣기 — 목록을 다 들으면 추천 한 곡을 이어 붙여 튼다. 기본은 꺼짐이다.
+   *
+   * **반복과 상호 배제다.** 둘 다 "목록이 끝나면 무엇을 하는가" 에 답하므로 동시에
+   * 켜지면 답이 둘이 된다(전체 반복 중에는 목록이 끝나지 않아 이어듣기가 영영 돌지
+   * 않는다). 한쪽을 켜면 다른 쪽을 끈다.
+   *
+   * 응답을 기다리는 사이 꺼졌는지 봐야 하므로 참조도 함께 둔다.
+   */
+  const [autoRecommend, setAutoRecommendState] = useState(readAutoRecommend);
+  const autoRecommendRef = useRef(autoRecommend);
+  const setAutoRecommend = (value: boolean) => {
+    autoRecommendRef.current = value;
+    setAutoRecommendState(value);
+    try {
+      localStorage.setItem(AUTO_RECOMMEND_KEY, String(value));
+    } catch {
+      // 저장이 막혀도 이번 세션 동안은 고른 대로 동작한다.
+    }
+    if (value) setRepeatModeState('off');
+  };
+  const setRepeatMode = (mode: RepeatMode) => {
+    setRepeatModeState(mode);
+    if (mode !== 'off') setAutoRecommend(false);
+  };
+  /**
+   * 이어듣기가 큐를 채우는 규칙 (S15P21A204-439).
+   *
+   * **한 곡씩 붙이지 않는다.** 그러면 곡이 끝날 때마다 추천을 새로 물어야 하는데 응답이
+   * 몇 초씩 걸려(행동 로그를 훑는다) 목록 끝마다 소리가 끊긴다. 게다가 그렇게 받은 곡은
+   * 큐에 없던 곡이라 오디오 미리 받기 대상도 아니라서 두 번 기다린다.
+   *
+   * 미리 여러 곡을 채워 두면 **기존 장치가 그대로 일한다** — 재생기는 다음 3곡을 미리
+   * 받아 두고(`setQueue`), 스킵도 그냥 다음 곡이라 기다림이 없다. 서버도 이 쓰임을
+   * 전제로 만들어졌다(`limit` 기본 5 · 최대 50, `요구 3 · 자동재생 다음 곡`).
+   */
+  const AUTO_QUEUE_TARGET = 5;
+  const AUTO_QUEUE_MIN = 3;
+  /** 큐를 채우는 중이다. 같은 자리에서 요청이 겹치지 않게 한다. */
+  const autoFilling = useRef(false);
   // 처음에는 비어 있다. 계정 큐를 받아 오거나(`adoptServerQueue`), 한 번도 저장한 적
   // 없는 계정이면 인기곡으로 채운다. 예전에는 카탈로그 앞 100곡이었다.
   const [queue, setQueue] = useState<QueueEntry[]>([]);
@@ -1113,6 +1162,69 @@ export function useMupid(bootstrap: Bootstrap) {
     }
     void startPlayback(track, fromMoment ? track.moment : undefined, picked, from);
   };
+  /**
+   * 큐를 추천 곡으로 채운다. 남은 곡이 {@link AUTO_QUEUE_MIN} 이하일 때 부른다.
+   *
+   * 큐에 이미 있는 곡은 모두 빼 달라고 한다 — 서버는 지금 곡만 알아서 뺀다. 큐 반영과
+   * 계정 저장은 담기와 같은 길(`setQueue` → 모아서 올리기)을 탄다.
+   *
+   * `play` 는 **채운 첫 곡을 곧바로 틀지** 정한다. 목록이 이미 끝나 버린 자리(곡이 끝났는데
+   * 다음이 없거나, 마지막 자리에서 다음을 누른 경우)에서만 참이다. 미리 채우는 길은
+   * 지금 재생을 건드리지 않는다.
+   */
+  const fillQueueWithRecommendations = (
+    { play = false, remaining = 0 }: { play?: boolean; remaining?: number } = {},
+  ) => {
+    if (autoFilling.current) return;
+    const want = Math.max(1, AUTO_QUEUE_TARGET - remaining);
+    autoFilling.current = true;
+    const currentMusicId = activeRef.current?.musicId;
+    const excludeMusicIds = [
+      ...new Set(
+        queueRef.current
+          .map((entry) => musicIdOf(entry.trackId))
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    ];
+    void autoRecommendAtEnd(
+      () => ({
+        enabled: autoRecommendRef.current,
+        playback: requestId.current,
+        currentUid: currentUidRef.current,
+        queue: queueRef.current,
+      }),
+      () => fetchNextTracks({ limit: want, currentMusicId, excludeMusicIds }),
+      QUEUE_LIMIT,
+    )
+      .then((result) => {
+        if (!result || !mountedRef.current) return;
+        const { tracks: found, entries, firstUid } = result;
+        /*
+         * 추천 곡은 카탈로그(앞 100곡) 밖일 수 있다. 자리만 만들고 곡을 기억하지
+         * 않으면 그 자리는 곡으로 되돌려지지 못해 화면에서 빈다 — `placePlayedTrack`
+         * 이 같은 이유로 같은 일을 한다 (S15P21A204-443).
+         */
+        rememberTracks(found);
+        queueRef.current = entries;
+        setQueue(entries);
+        if (!play) return;
+        /*
+         * **곡 처음부터 튼다.** 추천 응답은 권하는 구간(`recommended.start`)도 함께
+         * 주지만 여기서는 쓰지 않는다. 목록을 끝까지 듣고 그대로 이어지는 자리라,
+         * 사용자가 고르지도 않았는데 갑자기 후렴 한가운데서 소리가 나면 곡이 끊긴 것
+         * 처럼 들린다. 화면에서 추천 곡을 **눌러서** 트는 길(`play()`)은 그 구간을
+         * 들려주려고 누른 것이므로 거기서는 그대로 구간에서 시작한다.
+         *
+         * **출처를 직접 넘긴다.** 곡을 고른 것은 추천이므로 `RECOMMEND` 인데,
+         * `entryPathOf` 에 맡기면 화면으로 갈음해 버려 목록이 끝난 그 순간 사용자가
+         * 검색 화면에 있었으면 `SEARCH`, 보관함에 있었으면 `PLAYLIST` 로 흩어진다.
+         */
+        void startPlayback(found[0], 0, firstUid, 'RECOMMEND');
+      })
+      .finally(() => {
+        autoFilling.current = false;
+      });
+  };
   const next = (direction = 1) => {
     previewEnd.current = null;
     momentSequence.current = null;
@@ -1120,6 +1232,25 @@ export function useMupid(bootstrap: Bootstrap) {
     // 화면에 보이는 목록과 같은 순서로 넘긴다. 끌어 바꾼 순서가 그대로 다음 곡이다.
     const pool = queueTracks;
     if (!pool.length) return;
+    /*
+     * **마지막 자리에서 다음을 누르면 맨 앞으로 되감지 않는다** (S15P21A204-439).
+     *
+     * `stepQueue` 는 나머지 연산으로 순환하므로 원래는 1번 곡으로 돌아갔다. 목록 끝이
+     * 곧 "AI 가 고른 곡" 이 된 지금, 거기서의 다음은 **"이거 말고 딴 거"** 라는 뜻이지
+     * "처음부터 다시" 가 아니다.
+     *
+     * 평소에는 미리 채워 둔 곡이 뒤에 있어 이 갈래로 오지 않는다. 채우기가 실패했거나
+     * 아직 도착하지 않았을 때의 대비다.
+     *
+     * 셔플은 건드리지 않는다 — 무작위로 고르는 중이라 '마지막 자리' 라는 개념이 없다.
+     */
+    const atLastSlot =
+      !shuffle && queueIndexOf(pool, currentUidRef.current) === pool.length - 1;
+    if (direction > 0 && autoRecommendRef.current && repeatMode === 'off' && atLastSlot) {
+      analytics.skip(positionMs(), 'NEXT_BUTTON');
+      fillQueueWithRecommendations({ play: true });
+      return;
+    }
     const candidates = pool.filter((t) => t.id !== activeRef.current?.id);
     const target =
       shuffle && candidates.length
@@ -1416,6 +1547,28 @@ export function useMupid(bootstrap: Bootstrap) {
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
+  /**
+   * 뒤에 남은 곡이 얼마 없으면 미리 채운다.
+   *
+   * **곡이 끝날 때 묻지 않는다.** 추천은 몇 초가 걸리고(행동 로그를 훑는다) 받아 온 곡은
+   * 오디오까지 새로 받아야 해서, 그때 물으면 목록 끝에서 소리가 몇 초간 끊긴다. 미리
+   * 채워 두면 재생기가 다음 3곡을 알아서 데워 두므로(`setQueue`) 이어짐이 끊기지 않고,
+   * 스킵도 그냥 다음 곡이라 기다림이 없다.
+   *
+   * 꺼져 있거나 반복 중이면 채우지 않는다 — 쓸 자리가 없다. 이어듣기를 **켜는 순간**에도
+   * 돌아야 하므로 `autoRecommend` 를 의존성에 둔다.
+   */
+  useEffect(() => {
+    if (!autoRecommend || repeatMode !== 'off') return;
+    const pool = queueTracks;
+    const index = queueIndexOf(pool, currentUid);
+    // 목록 밖의 곡을 듣는 중이면 '남은 곡' 을 셀 자리가 없다.
+    if (index < 0) return;
+    const remaining = pool.length - 1 - index;
+    if (remaining > AUTO_QUEUE_MIN) return;
+    fillQueueWithRecommendations({ remaining });
+    // 매 렌더 새로 만들어지지만 안에서 참조만 읽는다.
+  }, [autoRecommend, repeatMode, currentUid, queue, ignored]); // eslint-disable-line react-hooks/exhaustive-deps
   const playPlaylist = (playlist: Playlist, track?: Track) => {
     /*
      * 수록곡 줄에서 **지금 재생기가 들고 있는 곡**을 다시 누른 것이면 일시정지·재개다.
@@ -1457,52 +1610,6 @@ export function useMupid(bootstrap: Bootstrap) {
    * 큐에 이미 있는 곡은 모두 빼 달라고 한다 — 서버는 지금 곡만 알아서 뺀다. 큐 반영과
    * 계정 저장은 담기와 같은 길(`setQueue` → 모아서 올리기)을 탄다.
    */
-  const continueWithRecommendation = (currentMusicId: number) => {
-    if (autoRecommending.current) return;
-    autoRecommending.current = true;
-    const excludeMusicIds = [
-      ...new Set(
-        queueRef.current
-          .map((entry) => musicIdOf(entry.trackId))
-          .filter((id): id is number => typeof id === 'number'),
-      ),
-    ];
-    void autoRecommendAtEnd(
-      () => ({
-        playback: requestId.current,
-        currentUid: currentUidRef.current,
-        queue: queueRef.current,
-      }),
-      () => fetchNextTracks({ limit: 1, currentMusicId, excludeMusicIds }),
-      QUEUE_LIMIT,
-    )
-      .then((result) => {
-        if (!result || !mountedRef.current) return;
-        const { track, placement } = result;
-        /*
-         * 추천 곡은 카탈로그(앞 100곡) 밖일 수 있다. 자리만 만들고 곡을 기억하지
-         * 않으면 그 자리는 곡으로 되돌려지지 못해 화면에서 빈다 — `placePlayedTrack`
-         * 이 같은 이유로 같은 일을 한다 (S15P21A204-443).
-         */
-        rememberTracks([track]);
-        queueRef.current = placement.entries;
-        setQueue(placement.entries);
-        /*
-         * 서버가 권한 구간에서 시작한다. `play()` 가 추천 곡을 트는 규칙과 같다 —
-         * 여기만 0초로 틀면 같은 추천 API 의 곡이 어디서 왔는지에 따라 다른 지점에서
-         * 시작한다. 끝 지점은 두지 않는다(구간 끝 정지는 명시적 미리듣기만이다).
-         *
-         * **출처를 직접 넘긴다.** 곡을 고른 것은 추천이므로 `RECOMMEND` 인데,
-         * `entryPathOf` 에 맡기면 화면으로 갈음해 버려 목록이 끝난 그 순간 사용자가
-         * 검색 화면에 있었으면 `SEARCH`, 보관함에 있었으면 `PLAYLIST` 로 흩어진다.
-         * 같은 자동 재생인데 어느 화면을 보고 있었는지에 따라 값이 갈린다.
-         */
-        void startPlayback(track, track.recommended?.start, placement.uid, 'RECOMMEND');
-      })
-      .finally(() => {
-        autoRecommending.current = false;
-      });
-  };
   /**
    * 곡이 끝났다. 반복·셔플 규칙에 따라 다음 곡을 고른다.
    *
@@ -1532,21 +1639,22 @@ export function useMupid(bootstrap: Bootstrap) {
     if (!pool.length || (finished && repeatMode === 'off')) {
       getPlayer()?.pause(); setPlaying(false);
       /*
-       * 셔플 한 바퀴의 끝은 목록의 끝이 아니다. 목록 마지막 자리를 끝까지 들은
-       * 일반 재생에서만 추천을 잇는다(미리듣기·저장한 순간은 위에서 이미 빠졌다).
+       * 목록을 다 들었으면 추천을 잇는다. **셔플도 센다** — 섞어 듣든 순서대로 듣든
+       * "다 들었다" 는 사실은 같다. 그 판정은 `finished` 가 이미 셔플까지 반영해
+       * 계산해 두었으므로 그대로 쓴다(미리듣기·저장한 순간은 위에서 이미 빠졌다).
        *
-       * 반복 설정도 다시 본다 — 위 갈래는 **목록이 빈 경우**로도 들어오는데, 그때는
-       * `index` 와 `pool.length - 1` 이 나란히 -1 이라 전체 반복 중에도 통과한다.
+       * 반복 설정도 다시 본다 — 위 갈래는 **목록이 빈 경우**로도 들어오는데, 셔플일
+       * 때 빈 목록은 `remaining.length === 0` 이라 `finished` 를 통과한다. 그래서
+       * `pool.length > 0` 을 따로 건다. `uid` 는 듣던 곡이 목록 안의 자리라는 뜻이다.
        */
       if (
+        autoRecommendRef.current &&
         repeatMode === 'off' &&
-        !shuffle &&
         uid &&
         pool.length > 0 &&
-        index === pool.length - 1 &&
-        typeof current.musicId === 'number'
+        finished
       ) {
-        continueWithRecommendation(current.musicId);
+        fillQueueWithRecommendations({ play: true });
       }
       return;
     }
@@ -2138,6 +2246,9 @@ export function useMupid(bootstrap: Bootstrap) {
     setShuffle,
     repeatMode,
     setRepeatMode,
+    autoRecommend,
+    /** AI 이어듣기를 켜고 끈다. 켜면 반복이 꺼진다(상호 배제). */
+    setAutoRecommend,
     toast,
     setToast,
     chatOpen,
