@@ -77,8 +77,14 @@ import lombok.extern.slf4j.Slf4j;
 @Transactional(readOnly = true)
 public class DailyRecommendationServiceImpl implements DailyRecommendationService {
 
-    /** 한 사람에게 하루에 보여 줄 곡 수. */
-    private static final int DAILY_LIMIT = 10;
+    /**
+     * 한 사람에게 하루에 보여 줄 곡 수. **추천 서버의 고정값과 같아야 한다.**
+     *
+     * <p>추천 서버는 오늘의 모먼트를 4개로 고정하고 다른 값은 400 으로 거절한다
+     * (`ai_server/app/internal_api.py` 의 `DAILY_LIMIT`). 여기가 10 이던 채로 그쪽이
+     * 먼저 배포되자 정오 배치가 전원 실패했다(2026-09-24).
+     */
+    static final int DAILY_LIMIT = 4;
 
     /** `daily_recommendations.title`·`reason` 이 VARCHAR(100) 이다. */
     private static final int TEXT_LIMIT = 100;
@@ -88,7 +94,7 @@ public class DailyRecommendationServiceImpl implements DailyRecommendationServic
     /**
      * 저장된 추천이 하나도 없을 때 대신 골라 줄 곡 수.
      *
-     * <p>배치가 만드는 {@link #DAILY_LIMIT} 보다 적다. 취향 한 줄로 고른 목록이라
+     * <p>배치가 만드는 {@link #DAILY_LIMIT} 을 넘지 않는다. 취향 한 줄로 고른 목록이라
      * 길수록 근거가 옅어지고, 화면은 첫 화면에서 네 곡이면 비어 보이지 않는다.
      */
     private static final int FALLBACK_LIMIT = 4;
