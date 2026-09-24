@@ -10,14 +10,18 @@
 추천 로직은 그대로 두고 입출력 경계에서만 형식을 바꾼다 — 이 파일은 `recommend()` 결과를
 계약 DTO 로 옮겨 담는 얇은 어댑터일 뿐이고 점수·가중치·필터·중복 제거에 손대지 않는다.
 
-상태는 들고 있지 않는다. 온보딩은 요청에 실려 오고(`app/onboarding.py` 가 어휘를 옮긴다),
-행동은 요청마다 ClickHouse 에서 직접 읽는다(`app/clickhouse.py`).
+상태는 들고 있지 않는다. **이 서버는 Spring 을 부르지 않는다**(연동 계약 2026-09-23 절).
+곡·구간 메타는 요청 본문의 `catalog` 로 오고(Spring 이 삭제·재생 불가·검색 조건을 이미
+걸렀다), 온보딩도 요청에 실려 오고(`app/onboarding.py` 가 어휘를 옮긴다), 행동은 요청마다
+ClickHouse 에서 직접 읽는다(`app/clickhouse.py`).
 """
 from __future__ import annotations
 
 import hmac
 import os
+import threading
 import time
+from collections import OrderedDict
 from typing import Optional
 
 from fastapi import APIRouter, FastAPI, Request
@@ -26,7 +30,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
-from . import (catalog_api, clickhouse, metrics, onboarding as onb, paths,
+from . import (catalog_body, clickhouse, metrics, onboarding as onb, paths,
                pinecone_store)
 from .log import log
 
@@ -105,6 +109,9 @@ class _Base(BaseModel):
         default_factory=list, description="이미 보여 준 곡의 문자열 ID")
     onboarding: Optional[OnboardingInput] = Field(
         None, description="이력이 없는 사용자의 첫 추천 근거. 없으면 콜드스타트다")
+    catalog: dict = Field(
+        ..., description="후보와 그 값(열 단위). Spring 이 삭제·재생 불가·검색 조건을 "
+                         "걸러 싣는다 — 연동 계약 2026-09-23 절")
 
 
 class NextRequest(_Base):
@@ -144,27 +151,20 @@ class DailyRequest(_Base):
 
 
 class SearchRequest(_Base):
-    """자연어 검색. 조건을 **누가 뽑았느냐**에 따라 둘 중 하나를 채운다.
+    """조건 검색. **`query_plan` 이 필수다.**
 
-    · `query_plan` — 호출자(Spring 의 LLM)가 이미 QueryPlan 으로 바꿔 보낸 경우.
-      해석기가 필요 없다. 쓸 수 있는 태그는 `GET /internal/facets` 가 알려준다.
-    · `query` — 원문만 보낸 경우. AI 서버가 `MUPID_AI_NLP_URL` 해석기를 부른다.
-      해석기가 없으면 501 이다.
-
-    둘 다 없으면 400 이다. 조건 없는 요청은 `daily`·`next` 로 보내야 한다 — 여기서
-    받아 주면 "검색했는데 조건이 안 걸린 결과" 가 나가고, 그게 이 API 의 실패 모드다.
+    조건 게이트는 Spring 이 MySQL 에서 걸고 통과한 후보만 `catalog` 로 보낸다(연동 계약
+    2026-09-23 절). 이 서버는 그 안에서 순위를 매기고, `filters.mood` 가점과 진단에
+    `query_plan` 을 쓴다. 원문(`query`)은 기록용으로만 받는다 — 여기서 원문을 조건으로
+    바꾸면 Spring 이 거를 수 없어 조건이 걸리지 않은 결과가 나간다.
     """
 
     query: Optional[StrictStr] = Field(None, min_length=1, max_length=500)
-    query_plan: Optional[dict] = Field(
-        None, description="QueryPlan v1. filters/exclude 만 읽는다")
+    query_plan: dict = Field(..., description="QueryPlan v1. filters/exclude 만 읽는다")
 
     @model_validator(mode="after")
-    def _one_of(self):
-        if not (self.query and self.query.strip()) and self.query_plan is None:
-            raise ValueError("query 또는 query_plan 중 하나는 있어야 합니다")
-        if self.query_plan is not None:
-            self.query_plan = _clean_plan(self.query_plan)
+    def _clean(self):
+        self.query_plan = _clean_plan(self.query_plan)
         return self
 
 
@@ -196,6 +196,7 @@ class SimilarRequest(BaseModel):
     external_id: StrictStr = Field(..., min_length=1, max_length=UID_MAX)
     limit: StrictInt = Field(5, ge=1, le=MAX_LIMIT)
     exclude_tracks: list[StrictStr] = Field(default_factory=list)
+    catalog: dict = Field(..., description="후보와 그 값. `_Base.catalog` 와 같다")
 
 
 class SimilarItem(BaseModel):
@@ -221,7 +222,7 @@ class RecommendationResponse(BaseModel):
 def _clean_plan(plan: dict) -> dict:
     """바깥에서 온 QueryPlan 을 읽는 키만 남긴다.
 
-    `filter_query_pool` 은 `filters`·`exclude` 만 본다. `_clap_embedding` 같은 밑줄 키는
+    `filters`·`exclude` 만 본다. `_clap_embedding` 같은 밑줄 키는
     **내부 전용**이다 — 바깥에서 넣을 수 있게 두면 호출자가 의미 점수 벡터를 직접
     주입하게 된다.
     """
@@ -357,9 +358,40 @@ def _svc():
         except pinecone_store.PineconeError as e:
             raise ApiError("INDEX_NOT_READY", f"순간 벡터 저장소를 읽지 못했습니다: {e}")
     svc = _svc_mod()
-    if getattr(svc, "CAT", None) is None or len(svc.CAT.pool) == 0:
+    # 후보는 요청마다 본문으로 온다. 여기서 보는 것은 **색인·모델이 올라왔는가** 뿐이다.
+    if getattr(svc, "CAT", None) is None:
         raise ApiError("INDEX_NOT_READY", "추천 색인이 아직 준비되지 않았습니다.")
     return svc
+
+
+# 같은 본문이 거듭 온다(`daily`·`next` 는 사용자마다 후보가 같다). 파생 결과를 해시로
+# 재사용한다 — **캐시이지 상태가 아니다.** 본문이 바뀌면 새로 만든다. 색인 판이 바뀌면
+# 기준 판 객체가 바뀌므로 그것도 열쇠에 넣는다.
+_VIEWS: "OrderedDict[tuple, object]" = OrderedDict()
+_VIEWS_MAX = 8
+_VIEWS_LOCK = threading.Lock()
+
+
+def _view(svc, body: dict):
+    """본문의 `catalog` 를 묶은 요청 전용 카탈로그. 모양이 틀리면 400 이다."""
+    try:
+        snap = catalog_body.from_body(body)
+    except catalog_body.CatalogBodyError as e:
+        raise ApiError("INVALID_CATALOG", str(e)) from None
+    key = (id(svc.CAT), snap.digest)
+    with _VIEWS_LOCK:
+        hit = _VIEWS.get(key)
+        if hit is not None:
+            _VIEWS.move_to_end(key)
+            return hit
+    view = svc.CAT.with_catalog(snap)
+    if len(view.pool) == 0:
+        raise ApiError("NO_CANDIDATES", "해당되는 노래가 없습니다.")
+    with _VIEWS_LOCK:
+        _VIEWS[key] = view
+        while len(_VIEWS) > _VIEWS_MAX:
+            _VIEWS.popitem(last=False)
+    return view
 
 
 # 행동을 얼마나 거슬러 읽을 것인가. Early Skip 감점의 반감기가 7일이라 90일이면
@@ -474,10 +506,11 @@ def next_(req: NextRequest) -> RecommendationResponse:
     # 문자열로 왔으므로 번역이 없다. 구간만 주고 곡을 안 줬으면 `#` 앞에서 뽑는다.
     cur_m = req.current_section
     cur_t = req.current_track or (_track_of(cur_m) if cur_m else None)
-    out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
-                        True, None, cur_t, cur_m,
-                        beh_events=_behavior_events(req.user_id),
-                        onboarding=_onboarding(req, svc))
+    with svc.using(_view(svc, req.catalog)):
+        out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
+                            True, None, cur_t, cur_m,
+                            beh_events=_behavior_events(req.user_id),
+                            onboarding=_onboarding(req, svc))
     return to_response(req.recommendation_id, out, req.limit, False)
 
 
@@ -490,113 +523,29 @@ def daily(req: DailyRequest) -> RecommendationResponse:
     통과하지만, 개수의 출처를 한 곳으로 두면 나중에 값을 바꿀 때 상수만 고치면 된다.
     """
     svc = _svc()
-    out = svc.recommend(_user_ref(req.user_id), DAILY_LIMIT, _exclude(req),
-                        True, None, None, None,
-                        beh_events=_behavior_events(req.user_id),
-                        onboarding=_onboarding(req, svc))
+    with svc.using(_view(svc, req.catalog)):
+        out = svc.recommend(_user_ref(req.user_id), DAILY_LIMIT, _exclude(req),
+                            True, None, None, None,
+                            beh_events=_behavior_events(req.user_id),
+                            onboarding=_onboarding(req, svc))
     return to_response(req.recommendation_id, out, DAILY_LIMIT, False)
 
 
-# 자연어 검색은 외부 해석기가 있어야 조건을 뽑는다. 해석기 없이 열어 두면 사용자가 적은
-# 조건을 말없이 무시한 채 아무 곡이나 돌려주게 된다 — 조건을 몰래 푸는 것과 같다.
-# 설정 여부 판단과 실제 호출은 **같은 환경변수**(MUPID_AI_NLP_URL)를 본다. 확장은
-# S15P21A204-219.
-
-
 @router.post("/recommendations/search", response_model=RecommendationResponse,
-             responses=ERRORS, summary="자연어 검색 추천")
+             responses=ERRORS, summary="조건 검색 추천")
 def search(req: SearchRequest) -> RecommendationResponse:
-    svc = _svc_mod()
-    if req.query_plan is not None:
-        # 호출자가 이미 조건을 뽑아 보냈다. 해석기가 필요 없다.
-        _svc()                              # 색인 준비 확인
-        plan = req.query_plan
-    else:
-        if not getattr(svc, "NLP_PARSE_URL", ""):
-            raise ApiError("SEARCH_NOT_CONFIGURED",
-                           "자연어 해석기가 설정되지 않았습니다. "
-                           "MUPID_AI_NLP_URL 을 지정하거나 query_plan 을 보내세요. "
-                           "(S15P21A204-219)")
-        _svc()                              # 색인 준비 확인
-        plan, error = svc.parse_nlp_query(req.query.strip())
-        if error is not None:
-            # 조건을 뽑지 못했다. 일반 추천으로 조용히 넘어가지 않는다.
-            raise ApiError(*error)
-    out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
-                        True, plan, None, None,
-                        beh_events=_behavior_events(req.user_id),
-                        onboarding=_onboarding(req, _svc()))
+    """조건은 Spring 이 이미 걸었다. 여기서는 그 후보 안에서 순위를 매긴다."""
+    svc = _svc()
+    with svc.using(_view(svc, req.catalog)):
+        out = svc.recommend(_user_ref(req.user_id), req.limit, _exclude(req),
+                            True, req.query_plan, None, None,
+                            beh_events=_behavior_events(req.user_id),
+                            onboarding=_onboarding(req, svc))
     return to_response(req.recommendation_id, out, req.limit, True)
 
 
-# ------------------------------------------------------------------ 태그 어휘
-# 대화형 추천은 자연어를 QueryPlan 으로 바꿔야 한다. 그 변환을 누가 하든(외부 해석기든
-# Spring 의 LLM 이든) **이 카탈로그에 실제로 있는 말**을 써야 조건이 걸린다. 없는 태그를
-# 지어내면 `filter_query_pool` 이 "어휘에 없음" 으로 후보를 0 으로 만든다.
-#
-# 필드별 적용 방식이 다르다는 점이 중요하다. 이걸 알려주지 않으면 LLM 이 `mood` 로 거를 수
-# 있다고 믿고 조건을 만드는데, 실제로는 걸리지 않는다 — 조건이 조용히 사라지는 것과 같다.
-_ENFORCEMENT = {
-    "genre": "gate", "language": "gate", "vocal": "gate", "instrument": "gate",
-    "flow": "gate",
-    # filters.mood 는 게이트가 아니다. 무드는 추론 폭이 커서 의미 점수로만 반영한다.
-    # 반대로 exclude.mood 는 게이트다 ("이건 빼줘" 는 명시 조건으로 본다).
-    "mood": "score_only",
-    "bpm_min": "gate", "bpm_max": "gate",
-    # 기준 곡이 있어야 방향을 정할 수 있다. 없으면 무시되고 진단에 남는다.
-    "tempo_direction": "gate_with_reference", "energy_direction": "gate_with_reference",
-    # 카탈로그에 해당 필드가 없다. 받기는 하지만 아무 일도 하지 않는다.
-    "activity": "ignored", "goal": "ignored",
-}
-_EXCLUDABLE = {"genre", "language", "vocal", "instrument", "mood", "flow"}
-_FACETS_CACHE: dict = {}
-
-
-def _facets_payload(svc) -> dict:
-    """카탈로그가 기동 후 바뀌지 않으므로 한 번만 만든다."""
-    if _FACETS_CACHE:
-        return _FACETS_CACHE
-    fac = svc.catalog_facets()
-    df = fac["_df"]
-    bpm = [float(v) for v in df.bpm if float(v or 0) > 0]
-
-    def vals(key):
-        return [{"value": x["value"], "tracks": x.get("tracks", x.get("moments", 0))}
-                for x in fac.get(key, [])]
-
-    fields: dict = {}
-    for name in _ENFORCEMENT:
-        fields[name] = {"enforcement": _ENFORCEMENT[name],
-                        "excludable": name in _EXCLUDABLE}
-    fields["genre"]["values"] = vals("genre")
-    # 장르 게이트는 genre 와 style 양쪽에 맞춰 본다. 둘 다 골라도 된다.
-    fields["genre"]["style_values"] = vals("style")
-    fields["language"]["values"] = vals("language")
-    fields["vocal"]["values"] = vals("vocal")
-    fields["instrument"]["values"] = vals("instrument")
-    fields["mood"]["values"] = vals("mood")
-    fields["flow"]["values"] = [{"value": x["value"], "moments": x.get("moments", 0)}
-                                for x in fac.get("section_label", [])]
-    fields["bpm_min"]["range"] = fields["bpm_max"]["range"] = (
-        [round(min(bpm)), round(max(bpm))] if bpm else None)
-    fields["tempo_direction"]["values"] = [{"value": "up"}, {"value": "down"}]
-    fields["energy_direction"]["values"] = [{"value": "up"}, {"value": "down"}]
-
-    _FACETS_CACHE.update({
-        "catalog": {"tracks": int(svc.CAT.pool.track_id.nunique()),
-                    "moments": int(len(svc.CAT.pool))},
-        "fields": fields,
-        "example": {"filters": {"genre": ["pop"], "instrument": ["piano"],
-                                "vocal": ["female"], "flow": ["chorus"]},
-                    "exclude": {"mood": ["aggressive"]}},
-    })
-    return _FACETS_CACHE
-
-
-@router.get("/facets", summary="QueryPlan 에 쓸 수 있는 태그 어휘")
-def facets() -> dict:
-    """자연어를 QueryPlan 으로 바꾸는 쪽이 읽는다. 카탈로그에서 직접 만든다."""
-    return _facets_payload(_svc())
+# 조건 어휘(`/internal/facets`)는 **Spring 이 만든다**(연동 계약 2026-09-23 절). 어휘의
+# 정본이 MySQL 코드표이고, 조건을 거는 쪽도 Spring 이다.
 
 
 @router.post("/similar", response_model=SimilarResponse, responses=ERRORS,
@@ -604,8 +553,9 @@ def facets() -> dict:
 def similar(req: SimilarRequest) -> SimilarResponse:
     """`recommend` 와 달리 사용자 취향을 섞지 않는다. 같은 질문에 늘 같은 답이다."""
     svc = _svc()
-    rows = svc.similar_moments(req.external_id, req.limit,
-                               {str(x) for x in req.exclude_tracks})
+    with svc.using(_view(svc, req.catalog)):
+        rows = svc.similar_moments(req.external_id, req.limit,
+                                   {str(x) for x in req.exclude_tracks})
     items = [SimilarItem(external_id=str(r["moment_id"]), rank_order=i + 1,
                          similarity=float(r["similarity"]))
              for i, r in enumerate(rows)]
@@ -646,10 +596,11 @@ def behavior_store_status() -> dict:
 
 @router.get("/ready", summary="실서비스 준비 완료 여부")
 def ready() -> dict:
-    """색인이 올라왔는가.
+    """색인·모델이 올라왔는가.
 
-    **숫자 ID 매핑은 더 이상 보지 않는다.** 번역을 Spring 이 하므로 이 서버가 확인할
-    매핑이 없다.
+    **카탈로그는 보지 않는다.** 후보는 요청마다 본문으로 오므로 기동할 때 준비할 것이
+    없다 — 예전에는 Spring 카탈로그를 당겨 오지 못하면(토큰 만료 등) 파드가 Ready 가
+    되지 못했다(S15P21A204-423).
 
     행동 저장소 상태는 **싣기만 하고 막지는 않는다.** ClickHouse 가 죽으면 개인화가
     빠진 콜드스타트 추천이 나가지만 추천 자체는 된다. 그때 준비 완료를 거두면 모든
@@ -660,65 +611,14 @@ def ready() -> dict:
     # 표시를 지우면서 일어난다.
     svc = _svc()                       # 색인 미적재면 INDEX_NOT_READY (503)
     return {"ready": True,
-            "tracks": int(svc.CAT.pool.track_id.nunique()),
-            "moments": int(len(svc.CAT.pool)),
-            # 곡·순간 메타데이터의 출처. 이것이 비면 장르·무드·보컬 조건이
-            # 통째로 빈 채 추천이 나가므로, 준비 판정을 보는 자리에서 함께 읽는다.
-            "metadata_source": catalog_api.status(),
+            "index_moments": int(len(svc.CAT._mom_index)),
+            "metadata_source": "request",
             # 벡터 검색 갈래. Pinecone 장애는 여기서 드러나야 하고, 로컬 옛 벡터로
             # 조용히 내려가지 않는다.
             "vector_search": {"backend": svc.vector_backend(),
                               **pinecone_store.settings()},
             "behavior_store": behavior_store_status(),
             "paths": paths.check()}
-
-
-def refresh_catalog() -> dict:
-    """카탈로그를 다시 읽고, 성공하면 색인과 다시 묶는다. **구현은 여기 하나다.**
-
-    부르는 자리가 둘이다 — 운영자가 치는 `/internal/catalog/refresh` 와 TTL 주기
-    갱신. 두 곳이 각자 들고 있으면 한쪽만 고쳐져 "손으로 부르면 반영되는데 주기로는
-    안 된다" 같은 상태가 생긴다.
-
-    실패는 두 단계로 갈린다.
-
-      · 받아오기 실패 — 옛 카탈로그를 그대로 쓴다(`catalog_api.refresh`).
-      · 받아왔는데 색인과 못 묶음 — **옛 `Catalog` 객체를 그대로 둔다.** 반쯤 바뀐
-        상태로 추천하지 않는다. 다만 `catalog_api` 쪽 스냅샷은 이미 새것이므로,
-        다음 갱신에서 다시 묶기를 시도한다.
-    """
-    result = catalog_api.refresh()
-    svc = _svc_mod()
-    if result["ok"] and getattr(svc, "CAT", None) is not None:
-        # 색인은 그대로 두고 **메타데이터만** 갈아 끼운다. 판을 다시 읽지 않으므로
-        # 벡터·행 번호는 건드리지 않는다 — 어긋날 자리가 생기지 않는다.
-        try:
-            svc.CAT = svc.Catalog()
-            result["reloaded"] = True
-        except Exception as e:
-            result["reloaded"] = False
-            result["reload_error"] = f"{type(e).__name__}: {e}"
-            log(f"카탈로그 갱신 후 색인 재구성 실패 — {result['reload_error']}")
-    else:
-        result["reloaded"] = False
-    return result
-
-
-@router.post("/catalog/refresh", summary="곡·순간 메타데이터를 다시 읽는다")
-def catalog_refresh() -> dict:
-    """MySQL 쪽이 바뀐 것을 **재기동 없이** 반영한다.
-
-    곡을 지우거나 장르를 고친 뒤 부른다. 시간으로도 갱신되게 하려면
-    `MUPID_AI_CATALOG_TTL_SEC` 를 켠다 — 기본은 꺼져 있다.
-
-    **실패해도 200 이다.** 돌려주는 `ok` 가 거짓이면 갱신을 못 했다는 뜻이고,
-    그때도 들고 있던 카탈로그로 추천은 계속된다. 여기서 500 을 내면 부르는 쪽이
-    재시도하다 서비스를 멈추게 만들기 쉬운데, 멈춰야 할 상황이 아니다.
-
-    토큰 검사 안에 있다(`PUBLIC_PATHS` 밖). 카탈로그를 다시 읽게 하는 것은 Spring 을
-    향한 호출을 일으키는 일이라 아무나 부를 자리가 아니다.
-    """
-    return refresh_catalog()
 
 
 # ------------------------------------------------------------------ 설치
@@ -757,8 +657,7 @@ def install(app: FastAPI, service_module=None) -> None:
     @app.exception_handler(ApiError)
     async def _api(request: Request, exc: ApiError):
         status = {"NO_CANDIDATES": 404, "INDEX_NOT_READY": 503,
-                  "RELOAD_IN_PROGRESS": 503,
-                  "SEARCH_NOT_CONFIGURED": 501, "INTERNAL_ERROR": 500}.get(exc.code, 400)
+                  "RELOAD_IN_PROGRESS": 503, "INTERNAL_ERROR": 500}.get(exc.code, 400)
         return _err(exc.code, exc.message, status)
 
     @app.exception_handler(RequestValidationError)

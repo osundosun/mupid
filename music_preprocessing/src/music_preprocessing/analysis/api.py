@@ -328,6 +328,8 @@ class HttpRegistrar:
     registered: list = field(default_factory=list)
     errors: list = field(default_factory=list)
     codes_added: list = field(default_factory=list)
+    # 보컬 유무를 몰라 분석 값을 넣지 못한 곡(생성 요청도 분류기 판정도 없다).
+    analysis_skipped: list = field(default_factory=list)
 
     def available(self) -> tuple[bool, str]:
         if self.client is None:
@@ -357,8 +359,16 @@ class HttpRegistrar:
                              "external_id": _uid_to_moment(str(s["external_id"])),
                              "music_section_analysis_id":
                                  int(s["music_section_analysis_id"])})
+            # 곡 분석 값(보컬·BPM·언어·스타일). 구간과 같은 곡 단위 교체다.
+            body = analysis_payload(getattr(t, "meta_row", {}) or {},
+                                    getattr(t, "content_row", {}) or {})
+            if body is not None:
+                self.client.replace_analysis(int(api_id), body)
+            else:
+                self.analysis_skipped.append(mid)
             self.registered.append({"track_id": mid,
-                                    "sections": int(d.get("replaced") or len(got))})
+                                    "sections": int(d.get("replaced") or len(got)),
+                                    "analysis": body is not None})
         if missing:
             # 숫자 ID 를 모르는 곡이 있으면 **여기서 멈춘다.** 지어낸 ID 로 등록하면
             # 엉뚱한 곡에 구간이 붙고, 그 상태로 교체되면 되돌리기 어렵다.
@@ -367,7 +377,8 @@ class HttpRegistrar:
                 f"예: {missing[:5]}")
         n = merge_id_map(Path(new_dir), rows)
         return {"tracks": len(self.registered), "sections": len(rows),
-                "id_map_rows": n, "codes_added": len(self.codes_added)}
+                "id_map_rows": n, "codes_added": len(self.codes_added),
+                "analysis_skipped": len(self.analysis_skipped)}
 
     def ensure_instrument_codes(self, tracks: Sequence) -> None:
         """구간을 올리기 **전에** 악기 코드를 만들어 둔다.
@@ -401,6 +412,71 @@ class HttpRegistrar:
                                          "name": row.get("code_name")})
 
 
+# 생성 요청의 보컬 종류 → (has_vocal, vocal_gender). **이것이 정답이다.**
+#
+# 보컬 분류기(Essentia)는 확률 0.60 미만이면 `unknown` 을 낸다(`t01_pipeline.flat_class`).
+# 그 135곡은 전부 연주곡으로 요청한 곡이었고 들어 보니 연주곡이었다(2026-09-23). 생성
+# 음원은 무엇을 만들라고 했는지가 남아 있으므로 그것을 먼저 쓰고, 요청이 없을 때만
+# 분류기를 쓴다.
+VOCAL_BY_REQUEST = {"instrumental": (False, None), "male": (True, "M"),
+                    "female": (True, "F"), "mixed": (True, "MIX")}
+GENDER_BY_LABEL = {"female": "F", "male": "M", "mixed": "MIX", "mix": "MIX"}
+_UNKNOWN = {"", "unknown", "nan", "none", "null"}
+
+
+def _known(v) -> Optional[str]:
+    text = "" if v is None else str(v).strip()
+    return None if text.lower() in _UNKNOWN else text
+
+
+def _num(v) -> Optional[float]:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if x == x and x > 0 else None       # NaN·0 은 "모른다"
+
+
+def vocal_of(meta: dict) -> tuple[Optional[bool], Optional[str], str]:
+    """`(has_vocal, vocal_gender, 근거)`. 판정할 수 없으면 `has_vocal` 이 `None`."""
+    requested = str(meta.get("vocal_type") or "").strip().lower()
+    if requested in VOCAL_BY_REQUEST:
+        has, gender = VOCAL_BY_REQUEST[requested]
+        return has, gender, "requested"
+    voice = str(meta.get("voice_label") or "").strip().lower()
+    if voice == "instrumental":
+        return False, None, "classifier"
+    if voice == "voice":
+        gender = GENDER_BY_LABEL.get(str(meta.get("gender_label") or "").strip().lower())
+        return True, gender, "classifier"
+    return None, None, "unknown"
+
+
+def analysis_payload(meta: dict, content: dict) -> Optional[dict]:
+    """곡 한 줄 → `PUT /music/{id}/analysis` 본문. 보컬 유무를 모르면 `None`.
+
+    값의 출처는 색인의 `track_features` 와 같다 — BPM 은 `content.bpm`, 언어·스타일·
+    요청 BPM 범위는 `flow_meta` 다(`ai_server/tools/slice_index.py`). 다른 열(태깅
+    산출물의 `bpm_allin1` 등)을 쓰면 추천이 지금과 다른 BPM 으로 돈다 — 실측으로 1,061곡
+    중 409곡이 달랐다.
+
+    교체라 **모든 필드를 한 번에** 보낸다. `has_vocal` 은 ERD 가 `NOT NULL` 이라, 그것을
+    모르면 행을 만들지 않는다(요청이 있는 flow 곡에서는 생기지 않는다).
+    """
+    has, gender, _src = vocal_of(meta)
+    if has is None:
+        return None
+    lo, hi = _num(meta.get("bpm_lo")), _num(meta.get("bpm_hi"))
+    if lo is None or hi is None:
+        lo = hi = None
+    return {"has_vocal": has, "vocal_gender": gender,
+            "bpm": round(_num(content.get("bpm")), 3) if _num(content.get("bpm")) else None,
+            "bpm_requested_min": int(round(lo)) if lo is not None else None,
+            "bpm_requested_max": int(round(hi)) if hi is not None else None,
+            "language": _known(meta.get("language")),
+            "category": _known(meta.get("category"))}
+
+
 def sections_payload(new_track) -> list[dict]:
     """`NewTrack` → 요구 1 본문. **`external_id` 는 `<music_id>#<index>`** 다."""
     mid = str(new_track.track_id)
@@ -421,6 +497,11 @@ def sections_payload(new_track) -> list[dict]:
         names = [str(x) for x in (s.get("instruments") or [])]
         if names:
             line["instruments"] = names
+        # 구간 에너지(RMS). 추천의 흐름 감점·"더 차분하게" 조건이 쓴다 — 예전에는
+        # 색인에만 있었다(연동 계약 2026-09-23 절). 못 쟀으면 싣지 않는다(null).
+        rms = _num(s.get("rms"))
+        if rms is not None and rms <= 1.0:
+            line["energy"] = round(rms, 6)
         out.append(line)
     return out
 
@@ -499,4 +580,5 @@ def collect(api: InternalApi, work_dir: Path, *, limit: int = 200,
 
 __all__ = ["ApiError", "InternalApi", "StatusReporter", "HttpRegistrar",
            "prepare", "collect", "meta_row", "sections_payload", "merge_id_map",
+           "analysis_payload", "vocal_of",
            "SECTION_ENUM"]

@@ -85,7 +85,7 @@ def read_moments(source: str | None) -> pd.DataFrame:
     """구간 표를 읽는다. `-` 면 **stdin 의 JSON records** 다.
 
     구간 종류·시각·순서는 MySQL 이 정본이라 색인의 `moments.parquet` 에 더는 없다
-    (`app/catalog_api.py`). 서빙에서 이 도구를 부를 때는 이미 합쳐 둔 표를
+    (요청 본문 `catalog`, 배치는 ClickHouse 구간 표). 서빙에서 이 도구를 부를 때는 이미 합쳐 둔 표를
     **stdin 으로 넘긴다** — 파일로 떨구면 그 파일이 곧 두 번째 사본이 되고, 다음
     사람은 그것을 읽어도 되는 줄 안다.
 

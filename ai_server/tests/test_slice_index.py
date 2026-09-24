@@ -145,12 +145,11 @@ def test_pca_basis_is_carried_over_not_refitted(sliced):
     assert np.array_equal(before["side_cols"], after["side_cols"])
 
 
-def test_track_features_are_narrowed_to_pool_tracks(sliced):
-    _, out, _ = sliced
-    mom = pd.read_parquet(out / "moments.parquet")
-    features = pd.read_parquet(out / "track_features.parquet")
-
-    assert set(features.track_id) == set(mom.track_id)
+def test_track_features_never_ships(sliced):
+    """BPM·언어·스타일은 이제 MySQL `music_analysis` 가 정본이다. 사본을 보내지 않는다."""
+    _, out, report = sliced
+    assert not (out / "track_features.parquet").exists()
+    assert "track_features" not in report
 
 
 def test_mysql_owned_metadata_never_ships(sliced):
@@ -163,12 +162,6 @@ def test_mysql_owned_metadata_never_ships(sliced):
 
     assert not (out / "content.parquet").exists()
     assert not (out / "flow_meta.parquet").exists()
-
-    # 곡 축에는 DB 에 컬럼이 없는 것만 남는다.
-    features = pd.read_parquet(out / "track_features.parquet")
-    # 읽는 곳이 있는 열만 남는다. `dur_sec`(곡)·`sound_raw` 는 뺐다.
-    assert set(features.columns) == {
-        "track_id", "bpm", "language", "category", "bpm_lo", "bpm_hi"}
 
     # 구간 축에서도 MySQL 이 정본인 열은 떨어져 나간다.
     mom = pd.read_parquet(out / "moments.parquet")
@@ -268,41 +261,6 @@ def test_id_map_file_never_ships(tmp_path, monkeypatch):
 
     slice_index.slice_index(src, dst)
     assert not (dst / "data" / "proc" / "mupid" / "id_map.parquet").exists()
-
-
-def test_empty_track_axes_are_reported_not_swallowed(tmp_path, monkeypatch, capsys):
-    """비면 조용히 무너진다 — 그 조건이 아무 곡도 고르지 못한다. 말은 한다.
-
-    오류가 아니라 "조건에 맞는 곡이 없다" 로 나오므로, 세어서 말하지 않으면
-    응답만 봐서는 정상과 구분되지 않는다.
-    """
-    monkeypatch.setenv("MUPID_POOL", "flow")
-    from ai_server.tools import slice_index
-
-    src, dst = tmp_path / "full", tmp_path / "serving"
-    data = _build(src)
-    pd.read_parquet(data / "content.parquet")[["track_id"]].to_parquet(
-        data / "flow_meta.parquet", index=False)      # language·category 가 없다
-
-    report = slice_index.slice_index(src, dst)
-
-    assert set(report["track_features"]["empty_axes"]) == {
-        "language", "category", "bpm_lo", "bpm_hi"}
-    assert "곡 수준 축이 비었다" in capsys.readouterr().err
-
-
-def test_refuses_when_bpm_cannot_be_carried(tmp_path, monkeypatch):
-    """BPM 이 빠지면 템포 조건과 이어 듣기 감점이 통째로 사라진다 — 그 전에 멈춘다."""
-    monkeypatch.setenv("MUPID_POOL", "flow")
-    from ai_server.tools import slice_index
-
-    src, dst = tmp_path / "full", tmp_path / "serving"
-    data = _build(src)
-    (data / "content.parquet").unlink()
-
-    with pytest.raises(SystemExit) as e:
-        slice_index.slice_index(src, dst)
-    assert e.value.code == 65
 
 
 def test_every_shipped_file_is_one_the_receiver_accepts(sliced):

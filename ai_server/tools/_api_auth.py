@@ -1,8 +1,7 @@
-"""Spring 배치 API 인증. `register_sections`·`register_analysis` 가 쓴다.
+"""Spring 배치 API 인증. `register_sections` 가 쓴다.
 
-**실물은 `app/spring_api.py` 에 있다.** 서빙(`app/catalog_api.py`)도 같은 흐름으로
-Spring 을 부르게 되면서 한 벌로 합쳤다 — 두 곳이 각자 들고 있으면 한쪽만 고쳐져
-인증 방식이 갈라진다. 이 파일은 **도구용 실패 방식**만 덧입힌다: 도구는 그 자리에서
+**실물은 `app/spring_api.py` 에 있다.** 적재 도구만 Spring 을 부른다 — 추천 서버는
+부르지 않는다(연동 계약 2026-09-23 절). 이 파일은 **도구용 실패 방식**만 덧입힌다: 도구는 그 자리에서
 `SystemExit` 으로 멈추는 편이 낫고, 서버는 죽으면 안 되기 때문이다.
 
     MUPID_API_BASE_URL       Spring 주소 (`/api/v1` 앞까지)

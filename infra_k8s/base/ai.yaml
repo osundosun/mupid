@@ -82,16 +82,16 @@ spec:
           image: mupid-ai:placeholder
           imagePullPolicy: IfNotPresent
           ports: [{containerPort: 8100}]
-          # 곡·순간 메타데이터를 읽을 Spring 자격과 카탈로그 설정. GitLab File 변수
-          # `MUPID_AI_SERVER_ENV` → 노드 수신기(`receive-ai-env.py`) → 이 Secret 으로 온다.
+          # Pinecone 키·인덱스 설정. GitLab File 변수 `MUPID_AI_SERVER_ENV` → 노드
+          # 수신기(`receive-ai-env.py`) → 이 Secret 으로 온다.
           #
-          # **공용 `mupid-secrets` 와 나눠 둔다.** 여기에는 `ROLE_SYSTEM` 리프레시
-          # 토큰이 들어 있어서, 섞으면 Spring 파드도 쓰지 않는 자격을 함께 받는다.
+          # **Spring 자격은 없다.** 추천 서버는 Spring 을 부르지 않는다(연동 계약
+          # 2026-09-23 절) — 곡·구간 메타는 Spring 이 추천 요청 본문에 싣는다. 예전에는
+          # 여기 ROLE_SYSTEM 토큰이 들어 있었고, 그것이 만료되자 파드가 Ready 가 되지
+          # 못해 배포가 롤백됐다(S15P21A204-423).
           #
           # `optional: true` 인 것은 **아직 안 올린 클러스터에서도 파드가 뜨게** 하려는
-          # 것이다. 값이 없으면 카탈로그를 못 읽어 `/internal/ready` 가 false 로 남고,
-          # 그 이유는 `/health` 의 `metadata_source` 에 그대로 적힌다 — 파드가 뜨지도
-          # 않고 이유도 알 수 없는 상태보다 낫다.
+          # 것이다. Pinecone 을 켜지 않았다면 이 Secret 없이도 추천이 된다.
           envFrom:
             - secretRef: {name: mupid-ai-secrets, optional: true}
           env:
@@ -101,9 +101,9 @@ spec:
             # 나간다. 오류가 아니라 '재생이 안 되는 추천' 이라 화면만 보고는
             # 무엇이 잘못됐는지 알기 어렵다.
             #
-            # 코드 기본값이 `MUPID_POOL_EXTRA=jamendo` 다(recommender.py). 매니페스트가
-            # 덮지 않으면 그 값이 그대로 적용되고, 실제로 그렇게 나가고 있었다 —
-            # 배포 직후 받은 추천 3건이 전부 JAMENDO_* 였다.
+            # 코드 기본값이 `MUPID_POOL_EXTRA=jamendo` 이던 때 매니페스트가 덮지 않아
+            # 배포 직후 받은 추천 3건이 전부 JAMENDO_* 였다. 기본값은 이제 비어
+            # 있지만(recommender.py), 운영 값은 여기서도 못 박아 둔다.
             #
             # 빈 값은 '없음' 이다. recommender 가 쉼표로 쪼갠 뒤 빈 항목을 버린다.
             - {name: MUPID_POOL, value: flow}
@@ -126,9 +126,6 @@ spec:
             - name: MUPID_AI_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef: {name: mupid-secrets, key: MUPID_AI_INTERNAL_TOKEN, optional: true}
-            # Empty leaves /internal/recommendations/search answering 501, which
-            # is the defined behaviour until the resolver exists (S15P21A204-219).
-            - {name: MUPID_AI_NLP_URL, value: ''}
             # torch and numpy start one thread per HOST core by default. This node
             # has 4 vCPU and the CPU limit below is 3, so without these the pod
             # oversubscribes its own quota and gets slower, not faster.

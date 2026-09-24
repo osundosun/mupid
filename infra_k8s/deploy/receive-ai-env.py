@@ -34,10 +34,10 @@ RELEASE = re.compile(r"^[0-9a-f]{40}$")
 CHECKSUM = re.compile(r"^[0-9a-f]{64}$")
 KEY = re.compile(r"^MUPID_[A-Z0-9_]+$")
 
-# 이 둘이 없으면 추천 서버가 **뜨지 못한다.** 카탈로그를 못 읽으면 장르·무드·보컬
-# 조건이 통째로 빈 채 추천이 나가므로, 그 상태로 뜨지 않게 기동에서 막아 두었다
-# (`ai_server/app/main.py`). 그러니 잘린 업로드는 여기서 거부한다.
-REQUIRED = {"MUPID_API_BASE_URL", "MUPID_API_REFRESH_TOKEN"}
+# 반드시 있어야 하는 키가 없다. 예전에는 Spring 주소·ROLE_SYSTEM 토큰이 필수였는데,
+# 추천 서버가 Spring 을 부르지 않게 되면서(연동 계약 2026-09-23 절) 쓰는 곳이 없어졌다
+# — 곡·구간 메타는 요청 본문으로 온다. 남아 있어도 막지 않지만 파드는 읽지 않는다.
+REQUIRED: set = set()
 
 # Pinecone 을 켜 두었다면 이 셋도 있어야 한다. 켜 놓고 값을 빼면 추천 서버가
 # 뜨기는 하는데 **모든 검색이 실패**한다 — 켜는 것과 값을 넣는 것을 한 번에 검사한다.

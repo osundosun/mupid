@@ -50,22 +50,33 @@ public class MusicAnalysisServiceImpl implements MusicAnalysisService {
 
         if (existing == null) {
             // `@MapsId` 가 PK 를 관계에서 채운다. 빈 키 대신 곡을 넘긴다.
-            existing = MusicAnalysis.builder()
-                .music(music)
-                .hasVocal(request.hasVocal())
-                .vocalGender(request.vocalGender())
-                .build();
-        } else {
-            existing.setHasVocal(request.hasVocal());
-            existing.setVocalGender(request.vocalGender());
+            existing = MusicAnalysis.builder().music(music).build();
         }
+        // **교체다.** 보내지 않은 필드는 비운다(요청 DTO 주석).
+        existing.setHasVocal(request.hasVocal());
+        existing.setVocalGender(request.vocalGender());
+        existing.setBpm(request.bpm());
+        existing.setBpmRequestedMin(request.bpmRequestedMin());
+        existing.setBpmRequestedMax(request.bpmRequestedMax());
+        existing.setLanguage(blankToNull(request.language()));
+        existing.setCategory(blankToNull(request.category()));
         musicAnalysisRepository.save(existing);
 
         return new MusicAnalysisBulkResponse(
             musicId,
             existing.getHasVocal(),
             existing.getVocalGender() == null ? null : existing.getVocalGender().name(),
+            existing.getBpm(),
+            existing.getBpmRequestedMin(),
+            existing.getBpmRequestedMax(),
+            existing.getLanguage(),
+            existing.getCategory(),
             replaced);
+    }
+
+    /** 빈 문자열은 "모른다" 다. 그대로 두면 조건 필터가 빈 값을 어휘로 센다. */
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
     }
 
 }

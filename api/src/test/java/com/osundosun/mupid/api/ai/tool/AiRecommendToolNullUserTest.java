@@ -1,5 +1,7 @@
 package com.osundosun.mupid.api.ai.tool;
 
+import com.osundosun.mupid.api.ai.catalog.TestCatalogs;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
@@ -44,7 +46,7 @@ class AiRecommendToolNullUserTest {
 
     /** 조건이 없으면 {@code next} 경로다. 지금 곡도 없으면 협력자를 하나도 건드리지 않는다. */
     private AiRecommendToolImpl tool(RecommenderClient recommender) {
-        return new AiRecommendToolImpl(recommender, null, null, null, null,
+        return new AiRecommendToolImpl(recommender, TestCatalogs.fixed(), null, null, null, null,
             mock(RecommendationReasonCache.class));
     }
 
@@ -87,14 +89,14 @@ class AiRecommendToolNullUserTest {
         Integer absent = null;
 
         assertThatCode(() -> new RecommenderDto.NextRequest(
-            7L, absent, 3, List.of(), "T000901", null, null))
+            7L, absent, 3, List.of(), "T000901", null, null, null))
             .doesNotThrowAnyException();
         assertThatCode(() -> new RecommenderDto.SearchRequest(
             7L, absent, 3, List.of(), null,
-            Map.of("filters", Map.of("genre", List.of("pop"))), null))
+            Map.of("filters", Map.of("genre", List.of("pop"))), null, null))
             .doesNotThrowAnyException();
         assertThatCode(() -> new RecommenderDto.DailyRequest(
-            7L, absent, 3, List.of(), null))
+            7L, absent, 3, List.of(), null, null))
             .doesNotThrowAnyException();
     }
 
@@ -104,7 +106,7 @@ class AiRecommendToolNullUserTest {
         Integer absent = null;
 
         String json = new String(AiJson.writeBytes(new RecommenderDto.NextRequest(
-            7L, absent, 3, List.of(), "T000901", null, null)), StandardCharsets.UTF_8);
+            7L, absent, 3, List.of(), "T000901", null, null, null)), StandardCharsets.UTF_8);
 
         // primitive 였다면 언박싱 자체가 터졌다. Integer 라 터지지 않는데, 그렇다고
         // `"user_id":0` 이 나가면 계약(`ge=1`) 위반이 아니라 **다른 사용자 조회**가 된다.

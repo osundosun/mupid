@@ -18,10 +18,20 @@ import pytest
 ART = os.environ.get("MUPID_AI_ARTIFACT_DIR", "")
 MOM = Path(ART) / "data/proc/mupid/moments.parquet" if ART else None
 
+# 추천 요청에는 Spring 이 싣는 `catalog` 본문이 필수다(연동 계약 2026-09-23 절). 실제
+# 후보 값은 MySQL 에만 있으므로, Spring 이 보낸 본문을 JSON 으로 떠 둔 파일을 준다.
+CATALOG_FILE = os.environ.get("MUPID_SMOKE_CATALOG", "")
+
 pytestmark = pytest.mark.skipif(
-    not ART or not (MOM and MOM.exists()),
-    reason="MUPID_AI_ARTIFACT_DIR 이 없거나 moments.parquet 을 찾지 못했다",
+    not ART or not (MOM and MOM.exists()) or not (CATALOG_FILE and Path(CATALOG_FILE).exists()),
+    reason="MUPID_AI_ARTIFACT_DIR · moments.parquet · MUPID_SMOKE_CATALOG(본문 JSON) 중 하나가 없다",
 )
+
+
+def _catalog() -> dict:
+    import json
+
+    return json.loads(Path(CATALOG_FILE).read_text(encoding="utf-8"))
 
 POOL_SOURCES = ("flow", "jamendo", "own")
 
@@ -43,8 +53,9 @@ def test_health(client):
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok"
-    assert body["catalog_loaded"] is True, body["error"]
-    assert body["catalog"]["moments"] > 0
+    assert body["index_loaded"] is True, body["error"]
+    assert body["index"]["moments"] > 0
+    assert body["metadata_source"] == "request"
 
 
 def test_integrity_checks_ran(client):
@@ -64,7 +75,7 @@ def test_ready(client):
 def _items(client, path="/internal/recommendations/daily", **extra):
     # `limit` 을 넣지 않는다. `daily` 는 4개로 고정이라 다른 값을 보내면 400 이고,
     # `next` 는 제 기본값(5)으로 간다.
-    body = {"recommendation_id": 5001, "user_id": 15, **extra}
+    body = {"recommendation_id": 5001, "user_id": 15, "catalog": _catalog(), **extra}
     r = client.post(path, json=body)
     assert r.status_code == 200, r.json()
     return r.json()
@@ -134,7 +145,7 @@ def test_no_candidates_is_not_a_server_error(client):
     """조건에 맞는 곡이 없을 때 아무거나 채우지 않고 사유를 돌려준다."""
     r = client.post("/internal/recommendations/next",
                     json={"recommendation_id": 5002, "user_id": 15, "limit": 3,
-                          "exclude_tracks": []})
+                          "exclude_tracks": [], "catalog": _catalog()})
     assert r.status_code in (200, 404)
     if r.status_code == 404:
         assert r.json()["error_code"] == "NO_CANDIDATES"
@@ -147,12 +158,10 @@ def test_bad_request_is_rejected(client):
     assert r.json()["error_code"] == "INVALID_REQUEST"
 
 
-def test_search_without_interpreter_is_explicit(client):
-    """해석기가 없으면 조건을 조용히 무시하지 않고 준비되지 않음을 알린다."""
+def test_search_needs_a_query_plan(client):
+    """조건은 Spring 이 건다. 원문만 오면 조건으로 바꿀 길이 없어 거절한다."""
     r = client.post("/internal/recommendations/search",
-                    json={"recommendation_id": 5003, "user_id": 15, "query": "잔잔한 노래"})
-    if os.environ.get("MUPID_AI_NLP_URL", "").strip():
-        assert r.status_code in (200, 404)
-    else:
-        assert r.status_code == 501
-        assert r.json()["error_code"] == "SEARCH_NOT_CONFIGURED"
+                    json={"recommendation_id": 5003, "user_id": 15, "query": "잔잔한 노래",
+                          "catalog": _catalog()})
+    assert r.status_code == 400
+    assert r.json()["error_code"] == "INVALID_REQUEST"

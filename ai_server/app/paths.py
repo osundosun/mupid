@@ -59,7 +59,7 @@ def track_features_path() -> Path:
 
     `content.parquet` + `flow_meta.parquet` 이 서빙에서 하던 일을 대신하는데, 둘과
     달리 제목·장르·무드·보컬을 담지 않는다 — 그것들은 MySQL 이 정본이고
-    `catalog_api` 가 읽는다. 여기 남는 것은 DB 에 컬럼 자체가 없는 축이다.
+    Spring 이 요청 본문으로 준다. 여기 남는 것은 DB 에 컬럼 자체가 없는 축이다.
 
         bpm · bpm_lo · bpm_hi · dur_sec · language · category · sound_raw
 
@@ -142,7 +142,7 @@ def check() -> dict:
     """
     root, data = artifact_root(), data_dir()
     idm, mom = id_map_path(), moments_path()
-    feat, meta = track_features_path(), index_meta_path()
+    meta = index_meta_path()
     return {
         "artifact_dir": str(root),
         "artifact_dir_from_env": bool(os.environ.get("MUPID_AI_ARTIFACT_DIR")),
@@ -151,7 +151,6 @@ def check() -> dict:
         "state_dir_split": bool(os.environ.get("MUPID_AI_STATE_DIR")),
         "data_dir_exists": data.is_dir(),
         "moments": {"path": str(mom), "exists": mom.exists()},
-        "track_features": {"path": str(feat), "exists": feat.exists()},
         "index_meta": {"path": str(meta), "exists": meta.exists()},
         "id_map": {"path": str(idm), "exists": idm.exists(),
                    "overridden": bool(os.environ.get("MUPID_ID_MAP"))},

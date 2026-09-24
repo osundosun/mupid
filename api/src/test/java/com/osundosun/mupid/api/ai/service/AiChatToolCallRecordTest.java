@@ -1,5 +1,7 @@
 package com.osundosun.mupid.api.ai.service;
 
+import com.osundosun.mupid.api.ai.catalog.TestCatalogs;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -251,7 +253,7 @@ class AiChatToolCallRecordTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(List.of(first, second));
 
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
-            client, musicRepository, sectionService, TestMusicSummaries.assembler(),
+            client, TestCatalogs.fixed(), musicRepository, sectionService, TestMusicSummaries.assembler(),
             onboardingService, mock(RecommendationReasonCache.class));
         return new AiChatServiceImpl(gateway(twoRounds), tool, musicRepository,
             new AiProperties("x", "test-key", "gpt-5-mini",
@@ -367,7 +369,7 @@ class AiChatToolCallRecordTest {
         RecommenderClient client = recommender();
         MusicRepository musicRepository = mock(MusicRepository.class);
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
-            client, musicRepository, mock(MusicSectionService.class),
+            client, TestCatalogs.fixed(), musicRepository, mock(MusicSectionService.class),
             TestMusicSummaries.assembler(),
             mock(OnboardingService.class), mock(RecommendationReasonCache.class));
         return new AiChatServiceImpl(openAiClient("http://127.0.0.1:" + plain.getAddress().getPort()),
@@ -443,7 +445,7 @@ class AiChatToolCallRecordTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(List.of(first));
 
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
-            client, musicRepository, sectionService, TestMusicSummaries.assembler(),
+            client, TestCatalogs.fixed(), musicRepository, sectionService, TestMusicSummaries.assembler(),
             mock(OnboardingService.class),
             mock(RecommendationReasonCache.class));
         return new AiChatServiceImpl(

@@ -22,21 +22,18 @@
 | `MUPID_BUILD_STAMP` | Variable | `sh infra/ci/build-stamp.sh` 가 값의 출처를 찾을 때 **가장 먼저** 본다 | 위 두 값의 유일한 출처다. 사람이 수동 배포하거나 값을 고정하고 싶을 때 여기에 넣는다. 없으면 `CI_COMMIT_TIMESTAMP` → `git show` → 현재 시각 순으로 내려간다 |
 | `MUPID_DATA_ENV` | **File** | `music_preprocessing/deploy.env.example` 를 채운 것 | `data-deploy`·`data-batch`·`data-check` (JupyterHub). 접속 정보·배치 설정·토큰이 **전부 이 파일 하나** 안에 있다 |
 | `MUPID_API_ENV` | **File** | **GitLab CI/CD 변수**에 넣은 운영 환경변수 내용. 노드의 `/srv/mupid-k8s/.env` 는 **수신기가 쓰는 결과물**이지 사람이 넣는 입력이 아니다 | `k8s-deploy-env` (`infra_k8s/ci/deploy-env.sh`). 내용을 그대로 노드로 보내면 **노드의 root 수신기(`receive-env.py`)가 Secret `mupid-secrets` 를 갈아 끼우고 api 를 재시작**한다. CI 는 Secret 을 직접 만들지 않는다 — 배포 계정의 RBAC 이 `secrets` 를 막고 있다(`rbac.yaml`). 열면 CI 키를 훔친 쪽이 DB 비밀번호·JWT 서명키·S3 키를 전부 읽게 된다 |
-| `MUPID_AI_SERVER_ENV` | **File** | 추천 서버(`ai`) 전용 환경변수 내용. 키 목록은 아래 | `k8s-deploy-ai-env` (`infra_k8s/ci/deploy-ai-env.sh`) → 노드 수신기 `receive-ai-env.py` → Secret **`mupid-ai-secrets`** → **`ai` 만** 롤아웃. `MUPID_API_ENV` 와 나눠 둔 것은 여기에 `ROLE_SYSTEM` 리프레시 토큰이 들어 있기 때문이다 — 섞으면 Spring 파드도 쓰지 않는 자격을 함께 받고, AI 값 하나 고치자고 api 까지 재시작된다 |
+| `MUPID_AI_SERVER_ENV` | **File** | 추천 서버(`ai`) 전용 환경변수 내용. 키 목록은 아래 | `k8s-deploy-ai-env` (`infra_k8s/ci/deploy-ai-env.sh`) → 노드 수신기 `receive-ai-env.py` → Secret **`mupid-ai-secrets`** → **`ai` 만** 롤아웃. `MUPID_API_ENV` 와 나눠 둔 것은 AI 비밀(Pinecone 키)을 Spring 파드가 받지 않고, AI 값 하나 고치자고 api 까지 재시작되지 않게 하려는 것이다 |
 
-> **`MUPID_AI_SERVER_ENV` 에 넣는 키** (2026-09-22 추가, S15P21A204-416)
+> **`MUPID_AI_SERVER_ENV` 에 넣는 키** (2026-09-23 갱신, S15P21A204-423)
 >
-> 추천 서버가 곡·순간 메타데이터를 **MySQL 에서** 읽게 되면서 생겼다. 색인은 더 이상
-> 제목·장르·무드·보컬·악기 사본을 들고 있지 않다.
+> **추천 서버는 Spring 을 부르지 않는다.** 후보와 곡·구간 값은 추천 요청 본문(`catalog`)으로
+> 온다(연동 계약 2026-09-23 절). 그래서 2026-09-22(416)에 넣었던 `MUPID_API_BASE_URL`·
+> `MUPID_API_REFRESH_TOKEN`·`MUPID_AI_CATALOG_*` 는 **빼야 한다** — 남겨 둬도 읽지 않지만,
+> 쓰지 않는 ROLE_SYSTEM 토큰이 파드에 있을 이유가 없다. 이 파일은 키가 전부 선택이라
+> 비어 있어도 배포된다.
 >
 > | 키 | 필수 | 뜻 |
 > |---|---|---|
-> | `MUPID_API_BASE_URL` | **예** | Spring 주소(`/api/v1` 앞까지). 클러스터 안이면 `http://api:8080` |
-> | `MUPID_API_REFRESH_TOKEN` | **예** | `ROLE_SYSTEM` 계정의 리프레시 토큰. `POST /api/v1/user/system` 으로 발급한다(관리자 권한) |
-> | `MUPID_AI_CATALOG_PAGE_SIZE` | 아니오 | 한 번에 받을 곡 수 (기본 200, 서버 상한 500) |
-> | `MUPID_AI_CATALOG_TTL_SEC` | 아니오 | 주기 갱신 간격(초). 비우면 꺼짐 — `POST /internal/catalog/refresh` 가 정규 경로다 |
-> | `MUPID_AI_CATALOG_TIMEOUT` | 아니오 | 호출 하나의 제한 시간(초, 기본 15) |
-> | `MUPID_AI_CATALOG_MIN_COVERAGE` | 아니오 | 색인–카탈로그 최소 일치율 (0~1, 기본 0.5) |
 > | `MUPID_PINECONE_API_KEY` | 켤 때 **예** | Pinecone API 키. 값은 어디에도 찍지 않는다 |
 > | `MUPID_PINECONE_INDEX` | 켤 때 **예** | 순간 벡터 인덱스 이름. **하나다** — 평균은 `<namespace>__control` 에 들어간다 |
 > | `MUPID_PINECONE_NAMESPACE` | 아니오 | 환경 + 승인된 임베딩 버전. 예: `prod__mert-v1-95m` |

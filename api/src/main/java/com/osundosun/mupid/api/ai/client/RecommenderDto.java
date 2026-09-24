@@ -3,6 +3,8 @@ package com.osundosun.mupid.api.ai.client;
 import java.util.List;
 import java.util.Map;
 
+import com.osundosun.mupid.api.ai.catalog.CatalogBody;
+
 /**
  * 추천 서버 `/internal` 계약의 요청·응답.
  *
@@ -22,6 +24,12 @@ import java.util.Map;
  * {@code music_id} 대신 {@code external_id} 로 두는 것뿐이라 쿼리 수는 같다.
  *
  * <p>예외는 {@code userId} 다. 추천 서버가 ClickHouse 를 그 번호로 조회한다.
+ *
+ * <h2>후보는 본문으로 보낸다</h2>
+ *
+ * <p>모든 요청에 {@code catalog} 가 <b>필수</b>다({@link CatalogBody}). 추천 서버는 Spring 을
+ * 부르지 않는다 — 곡·구간 메타의 정본은 MySQL 이고, 삭제·재생 불가·검색 조건은 우리가 걸러서
+ * 보낸다(연동 계약 2026-09-23 절, S15P21A204-423).
  */
 public final class RecommenderDto {
 
@@ -44,6 +52,7 @@ public final class RecommenderDto {
      *                         추천 서버가 {@code missing} 으로 판정한다
      * @param excludeTracks    이미 보여 준 곡의 문자열 ID. 지금 듣는 곡도 여기 넣는다
      * @param onboarding       이력이 없는 사용자의 첫 추천 근거. 없으면 콜드스타트다
+     * @param catalog          후보와 그 값
      */
     public record NextRequest(
         long recommendationId,
@@ -52,7 +61,8 @@ public final class RecommenderDto {
         List<String> excludeTracks,
         String currentTrack,
         String currentSection,
-        Onboarding onboarding
+        Onboarding onboarding,
+        CatalogBody catalog
     ) {
     }
 
@@ -69,16 +79,11 @@ public final class RecommenderDto {
     }
 
     /**
-     * 자연어 검색 요청.
+     * 조건 검색 요청. <b>{@code queryPlan} 이 필수다.</b>
      *
-     * <p>{@code queryPlan} 과 {@code query} 중 **하나는 있어야 한다.** 둘 다 없으면 400 이다.
-     *
-     * <ul>
-     *   <li>{@code queryPlan} — 조건을 우리가 이미 뽑아 보내는 경우. 해석기가 필요 없다
-     *   <li>{@code query} — 원문만 보내는 경우. 추천 서버에 해석기가 없으면 501 이다
-     * </ul>
-     *
-     * <p>우리는 {@code queryPlan} 만 쓴다. 대화 모델이 조건을 뽑아 주기 때문이다.
+     * <p>조건 게이트는 우리가 {@link com.osundosun.mupid.api.ai.catalog.QueryPlanFilter} 로
+     * 걸고, 통과한 후보만 {@code catalog} 로 보낸다. 추천 서버는 그 안에서 순위를 매기고
+     * {@code queryPlan} 을 무드 가점과 진단에 쓴다. {@code query} 원문은 보내지 않는다.
      *
      * @param userId 호출자의 사용자 번호. **null 을 허용하는 것은 `NextRequest` 와 같은
      *               이유다** — 언박싱 지점을 만들지 않는다 (S15P21A204-377)
@@ -90,7 +95,8 @@ public final class RecommenderDto {
         List<String> excludeTracks,
         String query,
         Map<String, Object> queryPlan,
-        Onboarding onboarding
+        Onboarding onboarding,
+        CatalogBody catalog
     ) {
     }
 
@@ -109,7 +115,8 @@ public final class RecommenderDto {
         Integer userId,
         int limit,
         List<String> excludeTracks,
-        Onboarding onboarding
+        Onboarding onboarding,
+        CatalogBody catalog
     ) {
     }
 
@@ -122,7 +129,8 @@ public final class RecommenderDto {
     public record SimilarRequest(
         String externalId,
         int limit,
-        List<String> excludeTracks
+        List<String> excludeTracks,
+        CatalogBody catalog
     ) {
     }
 
@@ -184,7 +192,8 @@ public final class RecommenderDto {
     }
 
     /**
-     * `/internal/facets` — QueryPlan 에 쓸 수 있는 태그 어휘.
+     * QueryPlan 에 쓸 수 있는 태그 어휘. {@link com.osundosun.mupid.api.ai.catalog.RecommenderFacets}
+     * 가 MySQL 로 만든다(예전에는 추천 서버의 `/internal/facets` 가 만들었다).
      *
      * <p>{@code fields} 의 값 모양은 필드마다 다르다(값 목록이 있는 것, 범위만 있는 것).
      * 여기서 굳히지 않고 {@code Map} 으로 받아 쓰는 쪽이 필요한 것만 꺼낸다 — 저쪽이 필드를
