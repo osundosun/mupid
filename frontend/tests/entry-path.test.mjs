@@ -85,7 +85,9 @@ test('목록이 끝나 추천이 이어 튼 곡은 RECOMMEND 다 — 화면으�
    *
    * `AUTOPLAY` 는 두지 않는다. 이유와 그 대가는 `decision/0014` 에 있다.
    */
-  assert.ok(hook.includes("startPlayback(found[0], 0, firstUid, 'RECOMMEND')"));
+  assert.ok(
+    hook.includes("startPlayback(track, track.recommended?.start, placement.uid, 'RECOMMEND')"),
+  );
   // 값 집합 자체는 맨 위 시험이 못박는다. 여기서는 훅만 본다.
   assert.ok(!/'AUTOPLAY'/.test(hook), '쓰지 않기로 한 AUTOPLAY 가 들어왔다');
 });
