@@ -150,7 +150,7 @@ def _startup() -> None:
                 got.require_snapshot(recommender.current_snapshot())
             _STATE["vector_search"] = {"backend": "pinecone", **got.stats(),
                                        **pinecone_store.stats()}
-            log(f"벡터 검색 — Pinecone · namespace {got.namespace!r} · 평균 {got.rows}건")
+            log(f"벡터 검색 — Pinecone · namespace {pinecone_store.namespace()!r} · 평균 {got.rows}건")
         except Exception as e:
             _STATE["error"] = f"{type(e).__name__}: {e}"
             log(f"벡터 검색 준비 실패 — {_STATE['error']}")
