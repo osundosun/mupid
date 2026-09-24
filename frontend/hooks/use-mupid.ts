@@ -11,7 +11,6 @@ import { fetchPopularTracks, resolveTrackIds } from '@/lib/server-tracks';
 import {
   fetchNextTracks,
   fetchSimilarSections,
-  fetchTodayMoments,
 } from '@/lib/recommendations';
 import {
   autoRecommendAtEnd,
@@ -41,6 +40,8 @@ import { closeTopOverlay } from '@/lib/overlay-stack';
 import type { Bootstrap, AccountSession } from '@/lib/services/contracts';
 import {
   getSongSectionAt,
+  similarSeedAt,
+  type SimilarSeed,
   type Track,
   type Page,
   type Playlist,
@@ -151,8 +152,13 @@ export function useMupid(bootstrap: Bootstrap) {
    * 물러났다는 사실을 `recommendationsReady` 로 알린다 — 조용히 대신 채우면
    * "추천이 도는 줄" 알고 넘어간다.
    */
-  const [todayMoments, setTodayMoments] = useState<Track[]>([]);
-  const [todayMomentNote, setTodayMomentNote] = useState('');
+  /*
+   * 오늘의 모먼트는 앱이 켜질 때 받지 않는다 (S15P21A204-447). 배치가 저장한 것을
+   * 전하는 길과 비었을 때의 대체 목록은 서버 몫이라, 여기서는 빈 채로 두고 화면이
+   * 인기곡으로 물러난다.
+   */
+  const [todayMoments] = useState<Track[]>([]);
+  const [todayMomentNote] = useState('');
   const [forYou, setForYou] = useState<Track[]>([]);
   const [recommendationsReady, setRecommendationsReady] = useState(false);
   const onboardingRef = useRef(false);
@@ -355,6 +361,8 @@ export function useMupid(bootstrap: Bootstrap) {
   const [deletePlaylist, setDeletePlaylist] = useState<number | null>(null);
   const [renamePlaylist, setRenamePlaylist] = useState<number | null>(null);
   const [showAllSimilar, setShowAllSimilar] = useState(false);
+  // 파생곡 찾기를 누른 순간의 곡·구간. 화면은 이것으로만 묻는다 (`openSimilar`).
+  const [similarSeed, setSimilarSeed] = useState<SimilarSeed | null>(null);
   /*
    * 뒤로가기로 닫혀야 하는 오버레이들을 스택에 등록한다 (S15P21A204-410).
    *
@@ -461,17 +469,10 @@ export function useMupid(bootstrap: Bootstrap) {
     if (!ready || !sessionRef.current || localDemoEnabled()) return;
     const ac = new AbortController();
     void (async () => {
-      const [today, next] = await Promise.all([
-        fetchTodayMoments(ac.signal).catch(() => null),
-        fetchNextTracks({ limit: 6 }, ac.signal).catch(() => null),
-      ]);
+      const next = await fetchNextTracks({ limit: 6 }, ac.signal).catch(() => null);
       if (!mountedRef.current || ac.signal.aborted) return;
-      if (today?.tracks.length) {
-        setTodayMoments(today.tracks);
-        setTodayMomentNote(today.note);
-      }
       if (next?.length) setForYou(next);
-      setRecommendationsReady(Boolean(today?.tracks.length || next?.length));
+      setRecommendationsReady(Boolean(next?.length));
     })();
     return () => ac.abort();
   }, [ready]);
@@ -1673,6 +1674,18 @@ export function useMupid(bootstrap: Bootstrap) {
     loadTrack(track);
     go('player');
   };
+  /**
+   * 파생곡 찾기. **누른 이 순간의 구간이 기준이다.**
+   *
+   * 듣던 곡이면 지금 위치의 구간, 아니면 그 곡의 대표 순간의 구간이다. 화면에
+   * 들어간 뒤 재생 위치가 다른 구간으로 넘어가도 기준은 그대로다.
+   */
+  const openSimilar = (track: Track) => {
+    const at = activeRef.current?.id === track.id ? time || track.moment : track.moment;
+    setSimilarSeed(similarSeedAt(track, at));
+    openTrack(track);
+    go('similar');
+  };
   // 공유 링크는 곡만 선택하고 자동 재생하지 않는다.
   useEffect(() => {
     if (pathname !== '/player') return;
@@ -2397,6 +2410,8 @@ export function useMupid(bootstrap: Bootstrap) {
     setSelectedArtist,
     showAllSimilar,
     setShowAllSimilar,
+    similarSeed,
+    openSimilar,
     messageEndRef,
     chatBoxRef,
     chatInputRef,
