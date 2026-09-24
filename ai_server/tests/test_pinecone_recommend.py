@@ -84,9 +84,9 @@ def wired(tmp_path_factory):
 @pytest.fixture
 def pinecone_on(wired, monkeypatch):
     monkeypatch.setenv("MUPID_PINECONE_ENABLED", "1")
-    wired.CAT._mu_g = None
+    wired.CAT._index_cache.clear()
     yield wired
-    wired.CAT._mu_g = None
+    wired.CAT._index_cache.clear()
 
 
 # ------------------------------------------------------------------ 동등성
@@ -127,11 +127,11 @@ def test_recommend_agrees_between_backends(wired, monkeypatch):
     ans = _answers()
 
     monkeypatch.delenv("MUPID_PINECONE_ENABLED", raising=False)
-    wired.CAT._mu_g = None
+    wired.CAT._index_cache.clear()
     local = wired.recommend("internal:41", 5, set(), False, None, onboarding=ans)
 
     monkeypatch.setenv("MUPID_PINECONE_ENABLED", "1")
-    wired.CAT._mu_g = None
+    wired.CAT._index_cache.clear()
     remote = wired.recommend("internal:41", 5, set(), False, None, onboarding=ans)
 
     assert local["results"], "local 이 빈 결과라 비교가 성립하지 않는다"
@@ -246,7 +246,7 @@ def test_daily_and_next_agree_between_backends(wired, monkeypatch):
             monkeypatch.setenv("MUPID_PINECONE_ENABLED", "1")
         else:
             monkeypatch.delenv("MUPID_PINECONE_ENABLED", raising=False)
-        wired.CAT._mu_g = None
+        wired.CAT._index_cache.clear()
         for name, (url, payload) in calls.items():
             r = client.post(url, json=payload)
             assert r.status_code == 200, (backend, name, r.text)
