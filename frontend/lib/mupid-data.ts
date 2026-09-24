@@ -288,6 +288,30 @@ export const getSongSectionAt = (track: Track, at: number): SongSection => {
   );
 };
 
+/**
+ * 파생곡 찾기의 기준. 누른 순간의 곡과 구간이다 (S15P21A204-447).
+ *
+ * 화면이 재생 위치로 매번 다시 고르면, 듣는 사이 구간이 넘어갈 때마다 답이 바뀐다.
+ * 그래서 누른 순간 한 번 정해 두고 화면은 이것만 읽는다. 분석 전 곡은 구간 번호가
+ * 없어(`sectionId` 없음) 물어볼 대상이 없다.
+ */
+export type SimilarSeed = {
+  track: Track;
+  musicId?: number;
+  sectionId?: number;
+  label: string;
+};
+
+export const similarSeedAt = (track: Track, at: number): SimilarSeed => {
+  const part = getSongSectionAt(track, at);
+  return {
+    track,
+    musicId: track.musicId,
+    sectionId: part.sectionId,
+    label: part.label,
+  };
+};
+
 /** `Track.mood`(화면용 한국어) → 에너지 1~5. 표에 없으면 3 으로 본다. */
 const moodEnergy: Record<string, number> = {
   잔잔한: 1,

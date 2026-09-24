@@ -397,11 +397,15 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
 }
 export { SearchView } from './explore';
 export function SimilarView({ model: m }: { model: MupidModel }) {
-  const active = m.active;
-  // 지금 듣고 있는 구간이 질문이다. 「이 순간과 닮은 것」이므로 곡이 아니라 구간이다.
-  const part = active ? getSongSectionAt(active, m.time || active.moment) : null;
-  const musicId = active?.musicId;
-  const sectionId = part?.sectionId;
+  /*
+   * 파생곡 찾기를 누른 순간의 구간이 질문이다. 「이 순간과 닮은 것」이므로 곡이 아니라
+   * 구간이다. 재생 위치로 다시 고르지 않는다 — 듣는 사이 구간이 넘어가도 처음 받은
+   * 답과 기준 구간이 그대로여야 한다 (S15P21A204-447).
+   */
+  const seed = m.similarSeed;
+  const active = seed?.track ?? m.active;
+  const musicId = seed?.musicId;
+  const sectionId = seed?.sectionId;
   /**
    * 무엇을 물었는지 답과 함께 들고 있는다.
    *
@@ -456,7 +460,7 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
     <div className="content-page similar-page">
       <PageHeader title="비슷한 순간 추천" onBack={() => m.go('moment')} />
       <p className="eyebrow source-label">
-        {part ? `${part.label} 구간에서 시작했어요` : '이 순간에서 시작했어요'}
+        {seed ? `${seed.label} 구간에서 시작했어요` : '이 순간에서 시작했어요'}
       </p>
       <TrackRow model={m} track={active} />
       <div className="intro-copy">
