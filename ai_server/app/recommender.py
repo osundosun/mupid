@@ -120,7 +120,9 @@ UI_TO_LABELER = {
     "LIKE": ("TRACK_LIKE", {}),          # 최종 상태가 활성일 때만 전달
     "DISLIKE": ("DISLIKE", {}),          # 최종 상태가 활성일 때만 전달
     "UNLIKE": None, "UNDISLIKE": None, "PLAYLIST_REMOVE": None,
-    "SECTION_UNMARK": None,          # 구간 해제는 DISMISS override 로 처리한다
+    # 구간 해제는 부정 신호가 아니라 **저장 취소**다. 그 자체는 넘기지 않고,
+    # `normalized_events` 가 순간별 최종 상태를 접어 취소된 MARK 를 넘기지 않는다.
+    "SECTION_UNMARK": None,
     "PLAYLIST_ADD": ("PLAYLIST_ADD", {}),   # 최종 보관 상태일 때만 전달
 }
 _SEEN_EVENT_IDS: set = set()
@@ -798,22 +800,78 @@ def append_event(ev: dict) -> None:
         f.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
 
+def _event_ts(e: dict) -> float:
+    """`occurred_at` 을 시각으로. 문자열로 비교하면 `...05Z` 가 `...05.5Z` 보다 뒤로 간다."""
+    try:
+        return datetime.fromisoformat(
+            str(e.get("occurred_at")).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _bounds_key(e: dict) -> tuple:
+    return (str(e.get("track_id")), round(float(e.get("start_sec", 0.0)), 3),
+            round(float(e.get("end_sec", 0.0)), 3))
+
+
+def _section_mark_winners(events: list[dict]) -> set:
+    """순간 저장(MARK·UNMARK)을 접어 **지금 저장된 순간**의 대표 MARK event_id 를 낸다.
+
+    키는 `(user_ref, moment_id)` — 곡이 아니라 순간이다. `moment_id` 는 ClickHouse
+    `section_uid`(= external_id) 로, `pull_signals` 가 싣는다. 그 전에 쌓인 줄은
+    `moment_id` 가 없으므로 같은 곡·경계를 가진 줄의 `moment_id` 로 맞추고, 그것도 없으면
+    곡·경계를 그대로 키로 쓴다.
+
+    순서는 `(occurred_at, event_id)` 다. 같은 시각이어도 결과가 줄 순서에 따라 달라지지
+    않는다. 같은 event_id 는 한 번만 센다 — 재적재된 MARK 가 취소를 뒤집지 않는다.
+    대표는 지금의 저장 상태를 **연 MARK 하나**다(해제 뒤 다시 저장했으면 그 MARK).
+    라벨러는 `moment_like` 를 더하므로 중복 MARK 를 모두 넘기면 한 번 저장한 순간이
+    두 배로 센다.
+    """
+    marks = [e for e in events if e.get("event_type") in ("SECTION_MARK", "SECTION_UNMARK")]
+    alias = {_bounds_key(e): str(e["moment_id"]) for e in marks if e.get("moment_id")}
+    seen: set = set()
+    state: dict = {}                       # (user, moment) -> 저장 중이면 대표 event_id
+    for e in sorted(marks, key=lambda x: (_event_ts(x), str(x.get("event_id") or ""))):
+        eid = str(e.get("event_id") or "")
+        if eid and eid in seen:
+            continue
+        seen.add(eid)
+        mid = e.get("moment_id") or alias.get(_bounds_key(e)) or _bounds_key(e)
+        k = (e.get("user_ref"), mid)
+        if e["event_type"] == "SECTION_MARK":
+            state.setdefault(k, None)
+            if state[k] is None:           # 이미 저장 중이면 처음 MARK 를 둔다
+                state[k] = eid
+        else:
+            state[k] = None                # 해제 — positive 만 걷는다. negative 는 없다
+    return {v for v in state.values() if v is not None}
+
+
 def normalized_events() -> Path:
     """라벨러에 넘길 정규화 사본을 만든다. 원본 로그는 그대로 둔다.
 
     LIKE/DISLIKE 는 토글이라 **최종 상태가 활성인 것만** TRACK_LIKE/DISLIKE 로 넘긴다.
     (UNLIKE/UNDISLIKE 로 취소된 것은 라벨에 남지 않아야 한다.)
+    SECTION_MARK 도 같다 — 순간별로 접어 해제되지 않은 것만 MOMENT_LIKE 로 넘긴다.
+
+    **로그 전체를 접는다.** 라벨은 매 배치 새 판으로 통째 적재되고 서빙은 최신 판만
+    읽으므로(`labels_store`), 어제 배치의 MARK 를 오늘 배치의 UNMARK 가 지우려면
+    두 줄이 한 자리에서 만나야 한다.
     """
     out = paths.events_path().parent / "events_service_normalized.jsonl"
     if not paths.events_path().exists():
         return paths.events_path()
     raw = [ln for ln in paths.events_path().read_text(encoding="utf-8").splitlines() if ln.strip()]
     state: dict = {}                       # (user, track) -> {"like": bool, "dislike": bool}
+    parsed = []
     for ln in raw:
         try:
-            e = json.loads(ln)
+            parsed.append(json.loads(ln))
         except Exception:
             continue
+    marked = _section_mark_winners(parsed)
+    for e in parsed:
         et = str(e.get("event_type"))
         if et in ("PLAYLIST_ADD", "PLAYLIST_REMOVE"):
             # 플레이리스트별로 센다. 다른 플레이리스트에 남아 있으면 긍정 상태를 유지한다.
@@ -849,6 +907,11 @@ def normalized_events() -> Path:
             k = (e.get("user_ref"), str(e.get("track_id")))
             if not state.get(k, {}).get("like" if et == "LIKE" else "dislike"):
                 continue
+        if et == "SECTION_MARK":
+            eid = str(e.get("event_id") or "")
+            if eid not in marked:
+                continue                    # 해제됐거나 같은 저장의 중복 MARK
+            marked.discard(eid)             # 같은 줄이 두 번 쌓여도 한 번만 넘긴다
         if et == "PLAYLIST_ADD":
             k = (e.get("user_ref"), str(e.get("track_id")))
             if not state.get(k, {}).get("pl"):     # 전부 빠졌으면 가점을 넘기지 않는다

@@ -244,6 +244,9 @@ def to_event(r: dict, bounds: dict, im, why: Optional[Counter] = None) -> dict |
             "user_ref": f"internal:{int(r['user_id'])}",
             "track_id": track,
             "event_type": sig,
+            # 순간 저장·해제를 접는 키(`recommender._section_mark_winners`). 경계는
+            # MySQL 에서 고쳐질 수 있으므로 곡·경계로 순간을 추측하지 않는다.
+            "moment_id": uid,
             "start_sec": float(b[0]),
             "end_sec": float(b[1]),
             "occurred_at": utc_iso(r),

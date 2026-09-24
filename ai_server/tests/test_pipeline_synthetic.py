@@ -506,6 +506,59 @@ def test_clickhouse_signals_become_labels(svc, monkeypatch):
     assert set(mine.grade) & {"L1", "L2"}, f"등급이 붙지 않았다: {list(mine.grade)}"
 
 
+def test_unmark_in_a_later_batch_removes_the_earlier_positive(svc):
+    """1일 차 배치의 SECTION_MARK 를 2일 차 배치의 SECTION_UNMARK 가 지운다.
+
+    라벨은 판 단위로 통째 다시 만들어진다. 해제가 정규화에서 버려지기만 하면 지난
+    MARK 가 매 판 다시 L1 이 되어 DNA·히스토리에 영영 남는다(S15P21A204-442).
+    """
+    from ai_server.tools import pull_signals as pl
+
+    mom = svc.CAT.mom
+    uid = str(mom.iloc[5].moment_id)
+    other = str(mom.iloc[6].moment_id)
+    tid = str(mom.iloc[5].track_id)
+    bounds = {u: (float(r.start_sec), float(r.end_sec))
+              for u, r in mom.set_index(mom.moment_id.astype(str)).loc[[uid, other]].iterrows()}
+    user = "internal:442"
+
+    class _IM:
+        def source_track_id(self, n):
+            return {5: tid, 6: str(mom.iloc[6].track_id)}[n]
+
+    def pull(sig, ts, section=uid, n=5, user_id=442):
+        ev = pl.to_event({"user_id": user_id, "section_uid": section, "track_id": n,
+                          "signal": sig, "entry_path": "", "ts": ts,
+                          "play_id": "0-0", "weight": 1.0}, bounds, _IM())
+        svc.append_event(ev)
+
+    def positives(u=user):
+        res = svc.run_labeler()
+        assert res["ok"], res
+        return set(svc.user_positives(u).get("section_key", []))
+
+    # 1일 차: 두 순간 저장 + 다른 사용자도 같은 순간 저장
+    pull("SECTION_MARK", "2026-09-20 10:00:00.000")
+    pull("SECTION_MARK", "2026-09-20 10:01:00.000", section=other, n=6)
+    pull("SECTION_MARK", "2026-09-20 10:02:00.000", user_id=443)
+    assert {uid, other} <= positives(), "저장한 순간이 L1 이 되지 않았다"
+
+    # 2일 차: 한 순간만 해제
+    pull("SECTION_UNMARK", "2026-09-21 09:00:00.000")
+    pos = positives()
+    assert uid not in pos, "다음 배치의 해제가 지난 배치의 positive 를 지우지 못했다"
+    assert other in pos, "해제하지 않은 순간까지 사라졌다"
+    assert uid in positives("internal:443"), "다른 사용자의 저장이 함께 사라졌다"
+
+    lab = pd.read_parquet(svc.paths.labels_path())
+    mine = lab[(lab.user_ref == user) & (lab.section_key == uid)]
+    assert mine.empty, f"해제한 순간에 라벨이 남았다(부정 포함): {list(mine.grade)}"
+
+    # DNA 는 user_positives 를 읽는다 — 해제한 순간이 대표로 나오지 않는다
+    _, _, meta = svc.build_dna(user)
+    assert all(m.get("rep_moment_id") != uid for m in meta)
+
+
 # ---------------------------------------------------------------- 성능 캐시
 def test_facets_cache_dies_with_the_catalog(svc):
     """캐시를 전역에 두면 산출물을 교체해도 옛 어휘가 남는다. 카탈로그에 붙여 둔다."""
