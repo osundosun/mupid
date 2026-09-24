@@ -90,10 +90,13 @@ spec:
                   set -e
                   python -m ai_server.tools.pull_signals
                   python -m ai_server.tools.run_labeler --json
-              # Spring 카탈로그 자격과 Pinecone 키. 서빙 파드와 **같은 Secret** 을 읽는다.
+              # Pinecone 키. 서빙 파드와 **같은 Secret** 을 읽는다 — 선호 구간 묶음이
+              # 원본 벡터를 Pinecone 에서 읽는다.
               #
-              # 카탈로그 자격은 Pinecone 이전에도 필요하다 — `pull_signals` 가 숫자 ID
-              # 환산을 `app/ids.py` 로 하고, 그쪽 근거가 Spring 내부 카탈로그 API 다.
+              # **Spring 자격은 쓰지 않는다.** 곡 번호 환산과 구간 경계는 ClickHouse
+              # `v_track_sections_current` 에서 읽는다(`app/track_sections.py`). 예전에는
+              # Spring 내부 카탈로그 API 를 불렀고, 그 매핑이 비어 재생 신호가 전부
+              # 버려지면서 이 작업이 매일 실패했다(S15P21A204-423).
               envFrom:
                 - secretRef: {name: mupid-ai-secrets, optional: true}
               env:

@@ -116,19 +116,19 @@ def _catalog_payload(n_tracks=6, per_track=4):
     for t in range(n_tracks):
         tid = f"T{t:06d}"
         out.append({
-            "musicId": 1000 + t,
+            "music_id": 1000 + t,
             "title": f"곡 {tid}",
-            "hasVocal": True,
-            "vocalGender": ["F", "M"][t % 2],
+            "has_vocal": True,
+            "vocal_gender": ["F", "M"][t % 2],
             "genres": [GENRES[t % 3]],
             "moods": [MOODS[t % 2]],
             "sections": [{
-                "externalId": f"{tid}#{s}",
-                "musicSectionAnalysisId": 500000 + t * 100 + s,
-                "sectionLabel": enum_of[LABELS4[s % len(LABELS4)]],
+                "external_id": f"{tid}#{s}",
+                "music_section_analysis_id": 500000 + t * 100 + s,
+                "section_label": enum_of[LABELS4[s % len(LABELS4)]],
                 "index": s,
-                "startTimeMs": s * 30 * 1000,
-                "endTimeMs": (s * 30 + 28) * 1000,
+                "start_time_ms": s * 30 * 1000,
+                "end_time_ms": (s * 30 + 28) * 1000,
                 "instruments": [INSTRUMENTS[t % 2]],
                 "moods": [],
             } for s in range(per_track)],
@@ -625,7 +625,7 @@ def test_a_song_missing_from_the_catalog_leaves_the_pool(svc):
     남겨 두면 Spring 이 `external_id` 를 못 찾아 그 줄을 버린다 — 화면에는 오류가
     아니라 "추천이 몇 개 비어 보인다" 로 나온다.
     """
-    keep = [t for t in _catalog_payload() if t["musicId"] != 1000]
+    keep = [t for t in _catalog_payload() if t["music_id"] != 1000]
     before = svc.CAT
     catalog_api.install(catalog_api.snapshot_from_tracks(keep))
     try:

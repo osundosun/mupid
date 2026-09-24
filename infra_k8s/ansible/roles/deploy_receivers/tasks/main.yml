@@ -1,0 +1,106 @@
+---
+# infra_k8s/deploy/ 의 강제 명령과 수신기를 노드에 설치한다.
+#
+# 예전에는 사람이 scp → install → sudoers 를 손으로 했다(OPERATIONS-K8S.md).
+# 저장소에 새 동사가 들어가도 노드에는 닿지 않아서, CI 가 옛 entrypoint 에 막혀
+# `Only versioned k8s deployment uploads are accepted` 로 실패했다(2026-09-23,
+# upload-ai-env).
+#
+# **CI 가 이것을 돌리지 않는 것은 그대로다.** root 로 도는 코드를 CI 가 실어 보내면
+# CI 키를 훔친 쪽이 노드의 root 를 얻는다(receive-manifests.py 의 ALLOWED 설명).
+# 이 역할은 노드 관리자 키를 가진 제어 노드에서만 돈다.
+
+- name: The deploy account exists
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ deploy_user }}"
+  # 없으면 getent 가 실패한다. 계정·authorized_keys 는 이 역할이 만들지 않는다.
+
+- name: Receivers for this node
+  ansible.builtin.set_fact:
+    node_receivers: "{{ receivers_by_role[node_role] }}"
+
+# 셸 문법을 **설치 전에** 본다. 강제 명령이 깨지면 모든 배포 동사가 한꺼번에 막힌다.
+- name: Install the forced command
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../deploy/ssh-entrypoint-k8s.sh"
+    dest: "{{ sbin_dir }}/mupid-ssh-entrypoint-k8s"
+    owner: root
+    group: root
+    mode: '0755'
+    backup: true
+    validate: bash -n %s
+
+# py_compile 은 옆에 __pycache__ 를 만든다. ast 로 문법만 본다.
+- name: Install the receivers
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../deploy/receive-{{ item }}.py"
+    dest: "{{ sbin_dir }}/mupid-receive-{{ item }}"
+    owner: root
+    group: root
+    mode: '0755'
+    backup: true
+    validate: python3 -c "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8').read())" %s
+  loop: "{{ node_receivers }}"
+
+- name: Install the manifest applier
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../deploy/apply.sh"
+    dest: "{{ sbin_dir }}/mupid-apply"
+    owner: root
+    group: root
+    mode: '0755'
+    backup: true
+    validate: bash -n %s
+  when: "'manifests' in node_receivers"
+
+# 파일을 두는 것과 배포 계정이 그것을 실행하도록 허용하는 것은 **다른 일**이다.
+# 규칙이 빠지면 `sudo: a password is required` 로 죽는다(2026-09-18, app-web-release).
+#
+# visudo 가 통과한 것만 놓는다. sudoers 가 깨지면 sudo 자체가 막혀 배포가 전부 멈춘다.
+- name: Allow the deploy account to run each receiver
+  ansible.builtin.copy:
+    content: "{{ deploy_user }} ALL=(root) NOPASSWD: {{ sbin_dir }}/mupid-receive-{{ item }}\n"
+    dest: "{{ sudoers_dir }}/mupid-deploy-{{ item }}"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: visudo -cf %s
+  loop: "{{ node_receivers }}"
+
+- name: The whole sudoers tree still parses
+  ansible.builtin.command: visudo -c
+  changed_when: false
+
+# 강제 명령이 동사를 아는지 본다. 진짜 업로드를 보내지 않는다 — 배포 계정으로
+# 명령을 흉내 내고, entrypoint 의 거절 문구가 **나오지 않으면** 통과다.
+# 수신기는 빈 입력·틀린 체크섬으로 스스로 거절하므로 아무것도 바뀌지 않는다.
+#
+# deploy-k8s 는 **찔러 보지 않는다.** 그 수신기는 입력을 읽기 전에 배포 잠금을 잡고
+# releases/<component>/<commit> 디렉터리를 만든다 — 진행 중인 배포를 75 로 튕기거나
+# 가짜 릴리스 자리를 남길 수 있다. 가장 오래된 동사라 모를 일도 없다.
+#
+# 변수는 sudo **안쪽**에서 env 로 준다. 바깥에 두면 sudo 가 환경을 비워 entrypoint 가
+# 빈 명령을 받고, 모든 동사가 거절 문구로 떨어져 멀쩡한 설치가 실패로 보인다.
+- name: Each verb reaches its receiver
+  ansible.builtin.shell: |
+    sudo -n -u {{ deploy_user }} env SSH_ORIGINAL_COMMAND="{{ probe[item] }}" \
+      {{ sbin_dir }}/mupid-ssh-entrypoint-k8s < /dev/null 2>&1 || true
+  vars:
+    zero_commit: "{{ '0' * 40 }}"
+    zero_sum: "{{ '0' * 64 }}"
+    probe:
+      apk: "upload-apk {{ zero_commit }} {{ zero_sum }} 1"
+      web: "upload-web {{ zero_commit }} {{ zero_sum }}"
+      env: "upload-env {{ zero_commit }} {{ zero_sum }}"
+      ai-env: "upload-ai-env {{ zero_commit }} {{ zero_sum }}"
+      manifests: "apply-manifests {{ zero_commit }} {{ zero_sum }}"
+      index: "upload-index {{ zero_commit }} {{ zero_sum }}"
+  loop: "{{ node_receivers | difference(['k8s']) }}"
+  register: probed
+  changed_when: false
+  # --check 에서는 설치가 일어나지 않았으므로 옛 entrypoint 를 찔러 보게 된다.
+  when: not ansible_check_mode
+  failed_when: >-
+    'Only versioned k8s deployment uploads are accepted' in probed.stdout
+    or 'a password is required' in probed.stdout

@@ -31,14 +31,20 @@ def main() -> int:
     a = ap.parse_args()
 
     from ai_server.app import main as appmain
-    from ai_server.app import recommender
+    from ai_server.app import recommender, track_sections
 
-    # 카탈로그가 있어야 구간 메타를 붙일 수 있다. 서비스와 같은 적재 경로를 쓴다.
     integrity = appmain.check_integrity()
     if not integrity["ok"]:
         print("산출물 무결성 실패 — " + "; ".join(integrity["errors"]), file=sys.stderr)
         return 1
-    recommender.CAT = recommender.Catalog()
+    # 구간 종류·시각은 MySQL 이 정본이다. 배치는 그 사본을 ClickHouse 구간 표에서
+    # 읽는다 — Spring 을 부르지 않는다(S15P21A204-423).
+    try:
+        sections = track_sections.load()
+    except track_sections.TrackSectionsUnavailable as e:
+        print(f"구간 표를 읽지 못했다 — {e}", file=sys.stderr)
+        return 1
+    recommender.CAT = recommender.Catalog(sections)
 
     t0 = time.time()
     try:
