@@ -26,6 +26,10 @@ from .catalog_api import Snapshot
 from .log import log
 
 VIEW = "v_track_sections_current"
+# 뷰가 내놓는 열 **그대로**다(`api/clickhouse/init/01-schema.sql`). 표에는 `section_index`
+# 가 있지만 뷰에는 없다 — 그걸 SELECT 해서 운영 첫 실행이 "Unknown identifier" 로
+# 죽었다(2026-09-24). 구간 순번은 `section_uid` 의 `#` 뒤에서 읽는다.
+COLUMNS = ("track_id", "music_section_analysis_id", "section_uid", "fn", "start_ms", "end_ms")
 
 
 class TrackSectionsUnavailable(Exception):
@@ -38,8 +42,7 @@ def load() -> Snapshot:
     if not clickhouse.configured():
         raise TrackSectionsUnavailable(
             "MUPID_CLICKHOUSE_URL 이 없다 — 배치는 구간 표를 ClickHouse 에서 읽는다")
-    sql = (f"SELECT track_id, music_section_analysis_id, section_index, section_uid, "
-           f"fn, start_ms, end_ms FROM {VIEW} FORMAT JSONEachRow")
+    sql = f"SELECT {', '.join(COLUMNS)} FROM {VIEW} FORMAT JSONEachRow"
     try:
         text = clickhouse.query(sql, timeout=30)
     except Exception as e:
@@ -51,7 +54,7 @@ def load() -> Snapshot:
 def from_rows(rows) -> Snapshot:
     """ClickHouse 행 → 스냅샷. 시험도 이 길을 지난다.
 
-    곡의 문자열 ID 는 `section_uid` 의 `#` 앞이다. 숫자에서 문자열을 **지어내지
+    곡의 문자열 ID 는 `section_uid` 의 `#` 앞, 구간 순번은 `#` 뒤다. 숫자에서 문자열을 **지어내지
     않는다** — `T000001` 을 1 에서 만드는 식의 규칙은 시딩이 그렇게 했을 뿐이다.
 
     한 숫자 곡이 서로 다른 문자열 곡을 가리키면(또는 그 반대면) 그 곡을 통째로
@@ -63,10 +66,10 @@ def from_rows(rows) -> Snapshot:
     staged: list[tuple[int, str, dict]] = []
     for r in rows:
         uid = str(r.get("section_uid") or "").strip()
-        if "#" not in uid:
+        src, _, idx = uid.partition("#")
+        if not src or not idx.isdigit():
             continue
         num = int(r["track_id"])
-        src = uid.split("#", 1)[0]
         # 두 방향을 **모두** 기록한 뒤 비교한다. `or` 로 이으면 앞이 참일 때 뒤가
         # 돌지 않아 반대편 곡이 기록되지 않는다.
         seen_src = by_num.setdefault(num, src)
@@ -92,7 +95,7 @@ def from_rows(rows) -> Snapshot:
         sections[uid] = {
             "track_id": src,
             "music_section_analysis_id": int(r["music_section_analysis_id"]),
-            "section_idx": int(r["section_index"]),
+            "section_idx": int(uid.partition("#")[2]),
             "section_label": str(r.get("fn") or ""),
             "start_ms": int(r["start_ms"]),
             "end_ms": int(r["end_ms"]),
