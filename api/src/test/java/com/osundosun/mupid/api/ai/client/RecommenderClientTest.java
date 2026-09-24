@@ -93,7 +93,7 @@ class RecommenderClientTest {
 
     private RecommenderDto.SearchRequest request() {
         return new RecommenderDto.SearchRequest(1L, 15, 3, List.of(), null,
-            Map.of("filters", Map.of("genre", List.of("pop"))), null);
+            Map.of("filters", Map.of("genre", List.of("pop"))), null, null);
     }
 
     @Test
@@ -194,19 +194,6 @@ class RecommenderClientTest {
             .isInstanceOf(BusinessException.class)
             .extracting(e -> ((BusinessException) e).getErrorCode())
             .isEqualTo(AiErrorCode.RECOMMENDER_NOT_CONFIGURED);
-        assertThat(client.facets()).isNull();
-    }
-
-    @Test
-    @DisplayName("태그 어휘는 한 번만 받아 다시 쓴다")
-    void facetsAreCached() throws IOException {
-        AtomicInteger calls = new AtomicInteger();
-        RecommenderClient client = start(calls, List.of(Map.entry(200,
-            "{ \"catalog\": {\"tracks\": 1}, \"fields\": {\"genre\": {\"values\": []}} }")));
-
-        assertThat(client.facets()).isNotNull();
-        assertThat(client.facets()).isNotNull();
-        assertThat(calls).hasValue(1);
     }
 
     @Test

@@ -143,7 +143,7 @@ class MusicAnalysisReplaceTest {
     void rejectsUnknownMusic() {
         BusinessException thrown = assertThrows(BusinessException.class,
             () -> analysisService.replaceAnalysis(Integer.MAX_VALUE,
-                new MusicAnalysisRequest(true, VocalGender.M)));
+                new MusicAnalysisRequest(true, VocalGender.M, null, null, null, null, null)));
 
         assertEquals(MusicErrorCode.MUSIC_NOT_FOUND, thrown.getErrorCode());
     }
@@ -184,11 +184,87 @@ class MusicAnalysisReplaceTest {
         assertTrue(share > 0.0, "보컬 있는 곡 하나이므로 1.0 이어야 한다: " + share);
     }
 
+    @Test
+    @DisplayName("BPM·요청 BPM·언어·스타일이 함께 저장된다 — 추천이 요청 본문으로 받는 값이다")
+    void storesTheAudioValuesTheRecommenderNeeds() {
+        MusicAnalysisBulkResponse result = analysisService.replaceAnalysis(
+            music.getMusicId(),
+            new MusicAnalysisRequest(true, VocalGender.F, 128.5, 120, 130, "korean",
+                "female_korean_ballad"));
+        em.flush();
+        em.clear();
+
+        assertEquals(128.5, result.bpm());
+        MusicAnalysis row = stored().get(0);
+        assertEquals(128.5, row.getBpm());
+        assertEquals(120, row.getBpmRequestedMin());
+        assertEquals(130, row.getBpmRequestedMax());
+        assertEquals("korean", row.getLanguage());
+        assertEquals("female_korean_ballad", row.getCategory());
+    }
+
+    @Test
+    @DisplayName("교체다 — 다시 보낼 때 빠진 값은 비워진다. 재분석 사이에 옛 값이 섞이지 않는다")
+    void omittedValuesAreClearedOnReplace() {
+        analysisService.replaceAnalysis(music.getMusicId(),
+            new MusicAnalysisRequest(true, VocalGender.F, 128.5, 120, 130, "korean", "ballad"));
+        em.flush();
+        em.clear();
+
+        replace(false, null);
+
+        MusicAnalysis row = stored().get(0);
+        assertNull(row.getBpm());
+        assertNull(row.getBpmRequestedMin());
+        assertNull(row.getLanguage());
+        assertNull(row.getCategory());
+    }
+
+    @Test
+    @DisplayName("빈 언어·스타일은 null 로 저장한다 — 빈 문자열이 조건 어휘로 세어지지 않게")
+    void blankTextIsStoredAsNull() {
+        analysisService.replaceAnalysis(music.getMusicId(),
+            new MusicAnalysisRequest(false, null, null, null, null, "  ", ""));
+        em.flush();
+        em.clear();
+
+        assertNull(stored().get(0).getLanguage());
+        assertNull(stored().get(0).getCategory());
+    }
+
+    @Test
+    @DisplayName("검증: 보컬 없는 곡의 성별, 한쪽만 있는 요청 BPM, 뒤집힌 범위, 측정 범위 밖 BPM 을 거절한다")
+    void rejectsInconsistentValues() {
+        assertTrue(violations(new MusicAnalysisRequest(false, VocalGender.F, null, null, null, null, null))
+            .contains("isVocalGenderConsistent"));
+        assertTrue(violations(new MusicAnalysisRequest(true, null, null, 120, null, null, null))
+            .contains("isRequestedBpmRangeValid"));
+        assertTrue(violations(new MusicAnalysisRequest(true, null, null, 140, 120, null, null))
+            .contains("isRequestedBpmRangeValid"));
+        assertTrue(violations(new MusicAnalysisRequest(true, null, 500.0, null, null, null, null))
+            .contains("bpm"));
+        assertTrue(violations(new MusicAnalysisRequest(null, null, null, null, null, null, null))
+            .contains("hasVocal"), "hasVocal 은 여전히 필수다");
+        assertTrue(violations(new MusicAnalysisRequest(true, VocalGender.M, 120.0, 115, 125, "korean", "x"))
+            .isEmpty());
+    }
+
     // ------------------------------------------------------------------ 도우미
+
+    @Autowired
+    private jakarta.validation.Validator validator;
+
+    private java.util.Set<String> violations(MusicAnalysisRequest request) {
+        return validator.validate(request).stream()
+            .map(v -> v.getPropertyPath().toString())
+            .map(p -> p.startsWith("vocalGenderConsistent") ? "isVocalGenderConsistent"
+                : p.startsWith("requestedBpmRangeValid") ? "isRequestedBpmRangeValid" : p)
+            .collect(java.util.stream.Collectors.toSet());
+    }
 
     private MusicAnalysisBulkResponse replace(Boolean hasVocal, VocalGender gender) {
         MusicAnalysisBulkResponse result = analysisService.replaceAnalysis(
-            music.getMusicId(), new MusicAnalysisRequest(hasVocal, gender));
+            music.getMusicId(), new MusicAnalysisRequest(hasVocal, gender, null, null, null, null, null));
         em.flush();
         em.clear();
         return result;

@@ -9,6 +9,10 @@ import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Component;
 
+import com.osundosun.mupid.api.ai.catalog.QueryPlanFilter;
+import com.osundosun.mupid.api.ai.catalog.RecommenderCatalog;
+import com.osundosun.mupid.api.ai.catalog.RecommenderCatalogService;
+import com.osundosun.mupid.api.ai.catalog.RecommenderFacets;
 import com.osundosun.mupid.api.ai.client.OpenAiTool;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
@@ -34,11 +38,12 @@ import lombok.extern.slf4j.Slf4j;
  * 한다. 어떤 곡의 어느 순간이 나올지는 추천 파이프라인이 정한다 — 모델에게 카탈로그를
  * 통째로 물릴 수도 없고, 물리면 없는 곡을 지어낸다.
  *
- * <h2>왜 자연어 원문을 보내지 않는가</h2>
+ * <h2>조건은 여기서 건다</h2>
  *
- * 추천 서버의 `search` 는 원문을 받으면 별도의 자연어 해석기(GPU 가 필요하다)를 부른다.
- * 그게 없으면 501 이다. 우리는 이미 대화 모델을 쓰고 있으므로, 모델에게 조건을 뽑게 해
- * `query_plan` 으로 보낸다. 해석기를 세우지 않아도 조건이 걸린다.
+ * 대화 모델이 조건을 뽑으면 {@link QueryPlanFilter} 가 MySQL 후보에 걸고, 통과한 후보만
+ * 추천 서버에 보낸다(연동 계약 2026-09-23 절). 어휘에 없는 필수 조건이 있으면 추천 서버를
+ * 부르지 않고 빈 결과다 — 조건을 몰래 풀면 사용자가 말한 것과 다른 곡이 나간다.
+ * 조건에 쓸 어휘도 같은 후보로 만든다({@link RecommenderFacets}).
  *
  * 대신 CLAP 임베딩 기반의 의미 재정렬은 빠진다. 무드는 추천 서버가 태그 일치로 부드럽게
  * 재정렬해 그 자리를 메운다.
@@ -57,11 +62,12 @@ public class AiRecommendToolImpl implements AiRecommendTool {
     private static final int DEFAULT_LIMIT = 3;
     private static final int MAX_LIMIT = 5;
 
-    /** 조건에 쓸 수 있는 칸. 추천 서버의 `/internal/facets` 가 정하는 이름이다. */
+    /** 조건에 쓸 수 있는 칸. {@link RecommenderFacets} 가 값을 채운다. */
     private static final List<String> FILTER_FIELDS =
         List.of("genre", "language", "vocal", "instrument", "mood", "flow");
 
     private final RecommenderClient recommender;
+    private final RecommenderCatalogService catalogService;
     private final MusicRepository musicRepository;
     private final MusicSectionService musicSectionService;
     private final MusicSummaryAssembler musicSummaryAssembler;
@@ -106,19 +112,17 @@ public class AiRecommendToolImpl implements AiRecommendTool {
     }
 
     /**
-     * 태그 어휘를 받아 온다. **어떤 실패도 툴 선언을 막지 않는다.**
+     * 태그 어휘. **어떤 실패도 툴 선언을 막지 않는다.**
      *
-     * <p>{@link RecommenderClient#facets()} 는 실패를 이미 {@code null} 로 뭉갠다. 그런데도
-     * 여기서 한 번 더 막는 이유는, 대화의 **첫 문장**이 툴 선언이고 그 선언이 추천 서버에
-     * 매달려 있기 때문이다. 저쪽 계약이 깨지거나(예: 새 실패 모드) 어휘 해석에서 예상 못 한
-     * 예외가 나면 툴 선언을 만들지도 못하고 LLM 호출도 가지 않는다 — 사용자 눈에는 정확히
-     * "도구 호출이 안 되는" 상태로 보인다. 어휘가 없으면 enum 없이 진행하면 된다.
+     * <p>대화의 **첫 문장**이 툴 선언이다. 어휘를 만들다 예외가 나면 선언을 만들지도 못하고
+     * LLM 호출도 가지 않는다 — 사용자 눈에는 "도구 호출이 안 되는" 상태로 보인다. 어휘가
+     * 없으면 enum 없이 진행하면 된다. 이제 MySQL 에서 만들므로 추천 서버가 죽어도 선언은 된다.
      */
     private RecommenderDto.Facets facetsOrNull() {
         try {
-            return recommender.facets();
+            return RecommenderFacets.of(catalogService.current());
         } catch (RuntimeException e) {
-            log.warn("추천 서버 어휘 조회가 예외로 끝났다 — 조건 값 목록 없이 툴 선언을 만든다", e);
+            log.warn("조건 어휘를 만들지 못했다 — 조건 값 목록 없이 툴 선언을 만든다", e);
             return null;
         }
     }
@@ -126,8 +130,9 @@ public class AiRecommendToolImpl implements AiRecommendTool {
     /**
      * 조건 칸의 JSON Schema. 값 목록은 카탈로그에서 받아 채운다.
      *
-     * 어휘를 못 받으면 열거 없이 자유 문자열로 둔다. 그래도 조건이 조용히 사라지지는
-     * 않는다 — 추천 서버가 어휘에 없는 조건을 "만족시킬 수 없음" 으로 보고 결과 0 을 준다.
+     * 어휘를 못 만들면 열거 없이 자유 문자열로 둔다. 그래도 조건이 조용히 사라지지는
+     * 않는다 — {@link QueryPlanFilter} 가 어휘에 없는 조건을 "만족시킬 수 없음" 으로 보고
+     * 결과 0 을 준다.
      */
     private Map<String, Object> conditionSchema(RecommenderDto.Facets facets, String description) {
         Map<String, Object> properties = new LinkedHashMap<>();
@@ -201,16 +206,27 @@ public class AiRecommendToolImpl implements AiRecommendTool {
             if (!exclude.isEmpty()) {
                 plan.put("exclude", exclude);
             }
+            // 조건은 **여기서** 건다. 통과한 후보만 보낸다(연동 계약 2026-09-23 절).
+            RecommenderCatalog catalog = catalogService.current();
+            QueryPlanFilter.Outcome outcome = QueryPlanFilter.apply(catalog, plan, null, null);
+            if (!outcome.satisfiable() || outcome.kept().isEmpty()) {
+                // 추천 서버를 부르지 않는다. 조건을 풀어 아무 곡이나 주면 안 된다.
+                log.info("조건을 만족하는 후보가 없다 user_id={} 만족 불가={} 무시={}",
+                    userId, outcome.unsatisfiable(), outcome.ignored());
+                return Result.empty();
+            }
+            java.util.Set<String> keep = outcome.keptIds();
             // userId 는 Integer 다. 여기서 primitive 로 언박싱하면 null 에서 NPE 가 나고
             // 대화 한 번이 통째로 500 이 된다 (S15P21A204-377). null 이면 요청 본문에서
             // 빠지고 추천 서버가 "필수 칸 없음" 으로 400 을 낸다 — 계약 위반이 계약대로
             // 드러나는 편이, 우리 코드가 터지는 것보다 낫다.
             items = recommender.search(new RecommenderDto.SearchRequest(
-                recommendationId, userId, limit, excludeTracks, null, plan, onboarding));
+                recommendationId, userId, limit, excludeTracks, null, plan, onboarding,
+                catalog.body(s -> keep.contains(s.externalId()))));
         } else {
             items = recommender.next(new RecommenderDto.NextRequest(
                 recommendationId, userId, limit, excludeTracks, currentTrack, null,
-                onboarding));
+                onboarding, catalogService.current().body()));
         }
         if (items.isEmpty()) {
             log.info("조건에 맞는 곡이 없다 user_id={} 조건={}", userId, filters);

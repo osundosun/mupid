@@ -1,5 +1,7 @@
 package com.osundosun.mupid.api.ai.service;
 
+import com.osundosun.mupid.api.ai.catalog.TestCatalogs;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -193,7 +195,7 @@ class AiChatUnsolicitedRecommendTest {
     void toolDescriptionSaysWhenNotToCall() {
         // 어휘를 못 받는 추천 서버(facets 가 null). 설명 문장은 어휘와 무관하다.
         AiRecommendToolImpl impl = new AiRecommendToolImpl(
-            mock(RecommenderClient.class), null, null, null, null, null);
+            mock(RecommenderClient.class), TestCatalogs.fixed(), null, null, null, null, null);
 
         String description = impl.declaration().function().description();
 

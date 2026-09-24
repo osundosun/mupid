@@ -76,5 +76,15 @@ public class MusicSectionAnalysis {
      */
     @Column(nullable = false)
     private String externalId;
-    
+
+    /**
+     * 구간 에너지 — 오디오 RMS(0~1). 분석 파이프라인이 잰다. 모르면 비운다.
+     *
+     * 추천이 이어 듣기 흐름 감점·"더 차분하게" 조건·학습 특징(`rms_pct`)에 쓴다.
+     * 예전에는 AI 색인에만 있어서 구간 경계를 고쳐도 옛 값이 남았다
+     * (연동 계약 2026-09-23 절).
+     */
+    @Column
+    private Double energy;
+
 }

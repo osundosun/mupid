@@ -164,6 +164,11 @@ CREATE TABLE IF NOT EXISTS `music_analysis` (
   `music_id` INT NOT NULL,
   `has_vocal` TINYINT(1) NOT NULL,
   `vocal_gender` ENUM('M', 'F', 'MIX') DEFAULT NULL,
+  `bpm` DOUBLE DEFAULT NULL COMMENT '측정 BPM',
+  `bpm_requested_min` SMALLINT DEFAULT NULL COMMENT '생성 때 요청한 BPM 범위 아래',
+  `bpm_requested_max` SMALLINT DEFAULT NULL COMMENT '생성 때 요청한 BPM 범위 위',
+  `language` VARCHAR(32) DEFAULT NULL COMMENT '가사 언어',
+  `category` VARCHAR(64) DEFAULT NULL COMMENT '생성 스타일 원문',
   PRIMARY KEY (`music_id`)
 );
 CREATE TABLE IF NOT EXISTS `music_analysis_instruments` (
@@ -211,6 +216,7 @@ CREATE TABLE IF NOT EXISTS `music_section_analysis` (
   `start_time_ms` INT NOT NULL,
   `end_time_ms` INT NOT NULL,
   `external_id` VARCHAR(64) NOT NULL,
+  `energy` DOUBLE DEFAULT NULL COMMENT '구간 에너지 (오디오 RMS, 0~1)',
   PRIMARY KEY (`music_section_analysis_id`)
 );
 CREATE UNIQUE INDEX `ux_music_section_analysis_external_id` ON `music_section_analysis` (`external_id`);

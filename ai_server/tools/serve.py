@@ -59,7 +59,7 @@ def preflight() -> tuple[bool, list[str]]:
 
     돌려주는 것은 (치명적인 문제가 없는가, 사람이 읽을 줄들).
     """
-    from ai_server.app import (catalog_api, clickhouse, index_contract, main,
+    from ai_server.app import (clickhouse, index_contract, main,
                                paths, recommender)
 
     lines: list[str] = []
@@ -104,22 +104,9 @@ def preflight() -> tuple[bool, list[str]]:
         if not status["files"].get(name, {}).get("exists"):
             lines.append(f"  ! {name} 없음 — {why}")
 
-    # 곡·순간 메타데이터. **없으면 뜨지 못한다** — 장르·무드·보컬·악기 조건이
-    # 통째로 빈 채 추천이 나가는 상태를 기동에서 막아 두었기 때문이다.
-    if catalog_api.configured():
-        try:
-            snap = catalog_api.load()
-            lines.append(f"카탈로그  {len(snap.tracks):,}곡 {len(snap.sections):,}구간 "
-                         f"✓ (MySQL, Spring 내부 API)")
-        except Exception as e:
-            fatal = True
-            lines.append(f"카탈로그  ✗ {type(e).__name__}: {e}")
-            lines.append("  ✗ 곡명·장르·무드·보컬·악기가 통째로 빈다 — 뜨지 않는다")
-    else:
-        fatal = True
-        lines.append("카탈로그  ✗ 미설정 "
-                     "(MUPID_API_BASE_URL · MUPID_API_REFRESH_TOKEN)")
-        lines.append("  ✗ 색인에는 메타데이터가 없다. 이 값 없이는 추천할 수 없다")
+    # 곡·순간 메타데이터는 **요청 본문으로 온다**(연동 계약 2026-09-23 절). 기동에서
+    # 확인할 것이 없다 — 예전에는 Spring 카탈로그를 당겨 오지 못하면 뜨지 못했다.
+    lines.append("카탈로그  요청 본문(catalog) — Spring 이 후보와 값을 싣는다")
 
     if clickhouse.configured():
         try:

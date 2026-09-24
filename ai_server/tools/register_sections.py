@@ -185,6 +185,15 @@ def build_payload(group: pd.DataFrame,
             "end_time_ms": e_ms,
             "moods": list(moods or []),
         }
+        # 구간 에너지(RMS)도 **함께 보낸다.** 교체라 빼면 저장된 에너지가 지워진다 —
+        # 추천의 흐름 감점과 "더 차분하게" 조건이 이 값을 쓴다(연동 계약 2026-09-23 절).
+        rms = getattr(r, "rms", None)
+        try:
+            rms = float(rms)
+        except (TypeError, ValueError):
+            rms = None
+        if rms is not None and rms == rms and 0.0 <= rms <= 1.0:
+            row["energy"] = round(rms, 6)
         if instruments is not None and i < len(instruments):
             names = [str(x) for x in (instruments[i] or [])]
             if names:

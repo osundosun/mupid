@@ -31,8 +31,6 @@ import lombok.extern.slf4j.Slf4j;
  * <ul>
  *   <li>{@code NO_CANDIDATES} (404) — **장애가 아니다.** 조건에 맞는 곡이 없다는 뜻이라
  *       빈 목록으로 돌려준다. 재시도하면 사용자만 기다린다
- *   <li>{@code SEARCH_NOT_CONFIGURED} (501) — 추천 서버에 해석기가 없다. 우리는
- *       {@code query_plan} 을 보내므로 여기 걸리면 안 된다. 걸렸다면 우리 쪽 실수다
  *   <li>{@code INDEX_NOT_READY} (503) · 500 · 타임아웃 — 재시도 대상. 한 번만 더 부른다
  *   <li>400·그 밖의 404 — 다시 불러도 같은 답이다. 바로 올린다
  * </ul>
@@ -49,7 +47,6 @@ public class RecommenderClient {
     private static final String NEXT = "/internal/recommendations/next";
     private static final String DAILY = "/internal/recommendations/daily";
     private static final String SIMILAR = "/internal/similar";
-    private static final String FACETS = "/internal/facets";
 
     /** 추천 서버가 `/internal` 을 지킬 때 쓰는 공유 비밀 헤더. `/health` 는 검사 밖이다. */
     private static final String AUTH_HEADER = "X-Internal-Token";
@@ -60,15 +57,13 @@ public class RecommenderClient {
     private final RestClient recommenderRestClient;
     private final RecommenderProperties props;
 
-    /** 카탈로그는 기동 후 바뀌지 않는다. 대화마다 다시 받을 이유가 없다. */
-    private final AtomicReference<RecommenderDto.Facets> facetsCache = new AtomicReference<>();
-
     public boolean isConfigured() {
         return props.isConfigured();
     }
 
     /**
-     * 조건 기반 추천. {@code queryPlan} 은 `/internal/facets` 의 어휘로 만든다.
+     * 조건 기반 추천. 조건은 이미 걸어서 통과한 후보만 {@code catalog} 로 보낸다
+     * ({@link com.osundosun.mupid.api.ai.catalog.QueryPlanFilter}).
      */
     public List<RecommenderDto.Item> search(RecommenderDto.SearchRequest request) {
         return items(SEARCH, request);
@@ -109,38 +104,6 @@ public class RecommenderClient {
         throw new BusinessException(first.retryable()
             ? AiErrorCode.RECOMMENDER_UNAVAILABLE
             : AiErrorCode.RECOMMENDER_REQUEST_FAILED);
-    }
-
-    /**
-     * 쓸 수 있는 태그 어휘. 실패하면 {@code null} 이다 — 어휘 없이도 대화는 되어야 하므로
-     * 여기서는 예외를 올리지 않는다. 대신 툴 스키마에 값 목록이 빠진다.
-     */
-    public RecommenderDto.Facets facets() {
-        RecommenderDto.Facets cached = facetsCache.get();
-        if (cached != null) {
-            return cached;
-        }
-        if (!isConfigured()) {
-            return null;
-        }
-        try {
-            byte[] body = recommenderRestClient.get()
-                .uri(FACETS)
-                .accept(MediaType.APPLICATION_JSON)
-                .headers(this::authorize)
-                .retrieve()
-                .body(byte[].class);
-            if (body == null || body.length == 0) {
-                return null;
-            }
-            RecommenderDto.Facets facets = AiJson.read(body, RecommenderDto.Facets.class);
-            facetsCache.set(facets);
-            return facets;
-        } catch (RuntimeException e) {
-            // 색인이 아직 안 올라왔을 수 있다. 다음 호출에서 다시 받는다 (캐시에 넣지 않는다).
-            log.warn("추천 서버 태그 어휘를 받지 못했다 — 조건 값 목록 없이 진행한다", e);
-            return null;
-        }
     }
 
     private List<RecommenderDto.Item> items(String path, Object request) {

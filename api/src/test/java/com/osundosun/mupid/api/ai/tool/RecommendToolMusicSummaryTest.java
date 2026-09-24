@@ -1,5 +1,7 @@
 package com.osundosun.mupid.api.ai.tool;
 
+import com.osundosun.mupid.api.ai.catalog.TestCatalogs;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -91,7 +93,7 @@ class RecommendToolMusicSummaryTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(catalog);
 
         AiRecommendToolImpl tool = new AiRecommendToolImpl(
-            recommender, musicRepository, sectionService,
+            recommender, TestCatalogs.fixed(), musicRepository, sectionService,
             TestMusicSummaries.assembler(notPlayable),
             null, mock(RecommendationReasonCache.class));
         return tool.recommend(15, null,

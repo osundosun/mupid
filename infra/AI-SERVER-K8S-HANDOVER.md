@@ -239,14 +239,15 @@ GPU 는 필요 없다. 서빙 경로에 torch 가 없다.
 |---|---|---|
 | `MUPID_AI_PORT` | `8100` | 수신 포트 |
 | `MUPID_POOL` | `flow` | 추천 후보 풀 |
-| `MUPID_POOL_EXTRA` | `jamendo` | 추가 풀 (쉼표 구분) |
+| `MUPID_POOL_EXTRA` | (비움) | 추가 풀 (쉼표 구분). `jamendo` 는 서비스 곡이 아니라 넣지 않는다 |
 | `MUPID_COMBINER` | | 점수 결합기 파일명 |
 | `MUPID_ID_MAP` | | 매핑표 경로 재정의 |
-| `MUPID_AI_NLP_URL` | | 자연어 해석기. 비우면 QueryPlan 경로만 쓴다 |
 | `MUPID_CLICKHOUSE_URL` / `_USER` | | 배치용. **읽기 전용 계정** |
-| `MUPID_API_BASE_URL` | | 배치용. Spring 주소 |
 
-서버 파드에는 `MUPID_CLICKHOUSE_*` 와 `MUPID_API_*` 가 필요 없다. 배치에만 준다.
+서버 파드와 배치(`ai-labeler`) 어느 쪽도 `MUPID_API_*` 를 쓰지 않는다 — 추천 서버는
+Spring 을 부르지 않고(연동 계약 2026-09-23 절), 라벨러는 곡 번호·구간 경계를 ClickHouse
+`v_track_sections_current` 에서 읽는다. `MUPID_API_*` 는 사람이 돌리는 적재 도구
+(`tools/register_sections` 등)에만 쓴다.
 
 ---
 

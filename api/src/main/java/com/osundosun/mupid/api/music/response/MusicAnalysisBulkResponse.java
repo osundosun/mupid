@@ -14,6 +14,14 @@ public record MusicAnalysisBulkResponse(
     Boolean hasVocal,
     /** 저장된 보컬 성별. {@code M} · {@code F} · {@code MIX} · 비었으면 {@code null}. */
     String vocalGender,
+    /** 저장된 측정 BPM. */
+    Double bpm,
+    /** 저장된 요청 BPM 범위. */
+    Integer bpmRequestedMin,
+    Integer bpmRequestedMax,
+    /** 저장된 언어·스타일. */
+    String language,
+    String category,
     /** 이전에 판정이 있었는가. 재분석이 덮어썼는지 확인하는 근거다. */
     boolean replaced
 

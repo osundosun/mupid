@@ -1,10 +1,9 @@
-"""Spring 호출 한 벌. 배치 도구와 서빙이 **같은 인증 흐름**을 쓴다.
+"""Spring 호출 한 벌. **적재 도구만 쓴다.**
 
-예전에는 이 흐름이 `tools/_api_auth.py` 에만 있었다. 그때는 Spring 을 부르는 것이
-적재 도구뿐이었기 때문이다. 이제 서빙(`app/catalog_api.py`)도 부르는데, 거기에
-한 벌을 더 만들면 **한쪽만 고쳐져 인증 방식이 갈라진다** — `_api_auth` 의 첫 문단이
-바로 그것을 경계한다. 그래서 실물은 여기 하나이고 `tools/_api_auth.py` 는 이 모듈을
-감싸기만 한다.
+추천 서버는 Spring 을 부르지 않는다(연동 계약 2026-09-23 절) — 곡·구간 메타는 요청
+본문으로 온다. 예전에는 서빙도 이 모듈로 Spring 카탈로그를 당겨 왔고, 토큰이 만료되면
+파드가 Ready 가 되지 못했다(S15P21A204-423). `tools/_api_auth.py` 가 이 모듈을 감싸
+도구용 실패 방식(`SystemExit`)을 입힌다.
 
     MUPID_API_BASE_URL       Spring 주소 (`/api/v1` 앞까지)
     MUPID_API_REFRESH_TOKEN  ROLE_SYSTEM 계정의 리프레시 토큰

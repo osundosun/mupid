@@ -482,6 +482,71 @@ def waveform(
     _report_errors(console, result)
 
 
+@app.command("analysis-values")
+def analysis_values(
+    config: ConfigOpt = None,
+    data_dir: Annotated[
+        Path | None,
+        typer.Option(help="전체 색인 디렉터리 (<artifact>/data/proc/mupid)", show_default=False),
+    ] = None,
+    energy_sql: Annotated[
+        Path | None,
+        typer.Option(help="구간 에너지 UPDATE 문을 쓸 파일", show_default=False),
+    ] = None,
+    api_base_url: Annotated[
+        str | None, typer.Option(help="Mupid API 루트", show_default=False)
+    ] = None,
+    dry_run: DryRunOpt = False,
+    yes: YesOpt = False,
+    log_file: LogFileOpt = None,
+    no_log_file: NoLogOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """이미 등록된 곡에 분석 값·구간 에너지를 한 번 채운다. [b]새 곡은 analysis 가 한다.[/]"""
+    import os
+
+    from . import analysis_values as av
+
+    console = _start("analysis-values", log_file, no_log_file, config, verbose)
+    cfg = ChunkConfig.from_file(str(config)) if config else ChunkConfig()
+    if api_base_url:
+        cfg.api_base_url = api_base_url
+    if data_dir is None:
+        root = cfg.analysis_artifact_dir or os.environ.get("MUPID_AI_ARTIFACT_DIR", "")
+        if not root:
+            console.print("[red]✖[/] 색인 위치를 모른다 — --data-dir 또는 MUPID_AI_ARTIFACT_DIR")
+            raise typer.Exit(2)
+        data_dir = Path(root) / "data" / "proc" / "mupid"
+
+    registry = Registry(cfg.api_registry_log)
+    p = av.plan(data_dir, registry.catalog_music_id)
+
+    table = Table(title="분석 값 채우기" + (" (dry-run)" if dry_run else ""), title_style="bold")
+    table.add_column("항목")
+    table.add_column("값", justify="right")
+    table.add_row("보낼 곡 (PUT /analysis)", str(len(p.bodies)))
+    table.add_row("보컬 근거가 없어 건너뜀", str(len(p.skipped_no_vocal)))
+    table.add_row("번호가 없어 건너뜀 (미등록·Jamendo)", str(p.unregistered))
+    table.add_row("구간 에너지", str(len(p.energy)))
+    console.print(table)
+    if p.skipped_no_vocal:
+        console.print(f"[yellow]보컬 근거 없음 예[/]: {p.skipped_no_vocal[:10]}")
+
+    if energy_sql:
+        energy_sql.write_text(av.energy_sql(p.energy), encoding="utf-8")
+        console.print(f"구간 에너지 UPDATE 문 → [cyan]{energy_sql}[/] (사람이 MySQL 에 적용한다)")
+    if dry_run:
+        return
+    _confirm(console, yes, dry_run,
+             f"곡 {len(p.bodies)}개의 분석 값을 {cfg.api_base_url} 에 교체합니다.")
+    result = av.send(_client(cfg), p.bodies)
+    console.print(f"보냄 {result['sent']} · 실패 {len(result['failed'])}")
+    for f in result["failed"][:10]:
+        console.print(f"  [red]{f['music_id']}[/] {f['error']}")
+    if result["failed"]:
+        raise typer.Exit(1)
+
+
 @app.command()
 def classify(
     config: ConfigOpt = None,

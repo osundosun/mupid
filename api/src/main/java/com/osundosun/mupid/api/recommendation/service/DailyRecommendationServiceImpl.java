@@ -17,6 +17,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.ai.catalog.RecommenderCatalogService;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
 import com.osundosun.mupid.api.ai.tool.RecommendReason;
@@ -121,6 +122,7 @@ public class DailyRecommendationServiceImpl implements DailyRecommendationServic
     private final DailyRecommendationTrackRepository trackRepository;
     private final MusicSummaryAssembler assembler;
     private final RecommenderClient recommender;
+    private final RecommenderCatalogService catalogService;
     private final MusicSectionService musicSectionService;
     private final MusicRepository musicRepository;
     private final MusicSectionAnalysisMoodRepository moodRepository;
@@ -144,7 +146,8 @@ public class DailyRecommendationServiceImpl implements DailyRecommendationServic
         // 번호는 아래 INSERT 가 발급한다. (사용자·날짜마다 하나로 정해져 재현된다.)
         long correlationId = date.toEpochDay() * 1_000_000L + userId;
         List<RecommenderDto.Item> items = recommender.daily(new RecommenderDto.DailyRequest(
-            correlationId, userId, DAILY_LIMIT, List.of(), onboardingOf(userId)));
+            correlationId, userId, DAILY_LIMIT, List.of(), onboardingOf(userId),
+            catalogService.current().body()));
         if (items.isEmpty()) {
             log.info("오늘의 모먼트: 추천 결과가 없다 user_id={} date={}", userId, date);
             return false;

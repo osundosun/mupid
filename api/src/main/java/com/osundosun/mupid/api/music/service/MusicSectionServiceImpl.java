@@ -94,6 +94,7 @@ public class MusicSectionServiceImpl implements MusicSectionService {
                 .startTimeMs(line.startTimeMs())
                 .endTimeMs(line.endTimeMs())
                 .externalId(line.externalId().strip())
+                .energy(line.energy())
                 .build())
             .toList();
         repository.saveAll(rows);

@@ -22,15 +22,16 @@ import types
 import numpy as np
 import pytest
 
-from ai_server.app import catalog_api, pinecone_store as ps
+from ai_server.app import pinecone_store as ps
 
 from test_pinecone_store import INDEX, NS, FakePinecone
-from test_pipeline_synthetic import _build, _catalog_payload
+from test_pipeline_synthetic import _build, _catalog_body
 
 
 @pytest.fixture
 def staged(tmp_path, monkeypatch):
-    """판 하나 + 카탈로그 + 가짜 Pinecone. 적재는 시험이 한다."""
+    """판 하나 + 가짜 Pinecone. 적재는 시험이 한다. **Spring 카탈로그는 없다.**"""
+    from ai_server.app import recommender as rc
     from ai_server.tools import pinecone_sync as sync
 
     module = types.ModuleType("pinecone")
@@ -43,14 +44,13 @@ def staged(tmp_path, monkeypatch):
 
     data = _build(tmp_path)
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
-    catalog_api.install(catalog_api.snapshot_from_tracks(_catalog_payload()))
+    monkeypatch.setattr(rc, "CAT", None)          # 이 판으로 새로 올린다
 
     ids, Z, version, skipped = sync._targets()
     snapshot = sync._snapshot(ids, Z, version)
     yield types.SimpleNamespace(data=data, ids=ids, Z=Z, version=version,
                                 snapshot=snapshot, skipped=skipped)
     ps.reset()
-    catalog_api.reset()
 
 
 def _server_says(snapshot):
@@ -173,19 +173,22 @@ def test_4_a_ghost_in_the_index_is_reported_as_stale(staged):
     assert "SANSIL_DELETED#0" in rep["stale"]
 
 
-def test_4_a_targets_exclude_moments_the_catalog_does_not_know(staged):
-    """MySQL/Spring 등록이 먼저다. 카탈로그에 없는 순간은 적재 대상이 아니다."""
-    from ai_server.app import catalog_api as ca
+def test_4_a_targets_are_the_whole_index_pool_without_spring(staged, monkeypatch):
+    """적재 도구도 Spring 을 부르지 않는다(연동 계약 2026-09-23 절). 대상은 색인 풀 전체다.
+
+    예전에는 Spring 카탈로그와 교집합을 냈고, 그러려면 ROLE_SYSTEM 토큰이 있어야 했다.
+    지워진 곡의 벡터가 남아도 Spring 이 보낸 후보에 없으므로 추천되지 않는다.
+    """
+    from ai_server.app import recommender as rc
+    from ai_server.app import spring_api
     from ai_server.tools import pinecone_sync as sync
 
-    snap = ca.snapshot()
-    snap.sections = {k: v for k, v in snap.sections.items() if k != staged.ids[0]}
-    try:
-        ids, _Z, _v, skipped = sync._targets()
-        assert staged.ids[0] not in ids
-        assert skipped >= 1
-    finally:
-        ca.install(ca.snapshot_from_tracks(_catalog_payload()))
+    monkeypatch.setattr(spring_api, "access_token",
+                        lambda *a, **k: pytest.fail("적재 도구가 Spring 을 불렀다"))
+    ids, _Z, _v, skipped = sync._targets()
+    pool = rc.index_pool(sync._base())
+    assert ids == pool.moment_id.astype(str).tolist()
+    assert skipped == len(sync._base()._mom_index) - len(pool)
 
 
 def test_4_b_only_flow_moments_are_loaded(staged):
@@ -193,10 +196,10 @@ def test_4_b_only_flow_moments_are_loaded(staged):
     from ai_server.app import recommender as rc
     from ai_server.tools import pinecone_sync as sync
 
-    cat = sync._pool()
-    assert set(cat.pool.source.unique()) <= rc.POOL_SOURCES
-    assert (cat.pool.source == "flow").all(), "flow 밖 소스가 후보에 섞였다"
-    assert set(cat.pool.moment_id.astype(str)) == set(staged.ids)
+    pool = rc.index_pool(sync._base())
+    assert set(pool.source.unique()) <= rc.POOL_SOURCES
+    assert (pool.source == "flow").all(), "flow 밖 소스가 후보에 섞였다"
+    assert set(pool.moment_id.astype(str)) == set(staged.ids)
 
 
 # ------------------------------------------------- 6 실패에서 내려가지 않는다
@@ -244,10 +247,12 @@ def test_7_dropped_columns_are_gone_everywhere(staged):
     from ai_server.app import recommender as rc
     from ai_server.tools import slice_index as si
 
-    assert "dur_sec" not in rc.TRACK_FEATURE_COLS
-    assert "sound_raw" not in rc.TRACK_FEATURE_COLS
-    assert si.FEATURE_FROM_CONTENT == ("bpm",)
-    assert "sound_raw" not in si.FEATURE_FROM_FLOW_META
+    from ai_server.app import catalog_body as cb
+
+    # 곡 수준 값은 이제 요청 본문으로 온다. 읽는 곳 없는 열은 계약에도 없다.
+    assert "dur_sec" not in cb.TRACK_COLS and "sound_raw" not in cb.TRACK_COLS
+    assert not hasattr(si, "FEATURE_FROM_CONTENT"), "색인이 곡 값을 다시 뽑는다"
+    assert "track_features.parquet" in si.NOT_SHIPPED
     assert "sound_raw" not in inspect.getsource(rc.Catalog.track_info)
 
 
@@ -262,21 +267,24 @@ def test_8_every_remaining_column_reaches_a_caller(staged):
     """남긴 열은 **실제 호출 경로**가 있어야 한다."""
     from ai_server.app import recommender as rc
 
-    assert set(rc.TRACK_FEATURE_COLS) == {
-        "bpm", "language", "category", "bpm_lo", "bpm_hi"}
+    from ai_server.app import catalog_body as cb
+
+    # 본문의 곡 값이 **실제로 읽히는지** 본다. 조건 게이트(bpm 범위·언어·스타일)는
+    # Spring 으로 옮겼으므로 여기 남는 호출자는 점수·온보딩·표시다.
+    assert set(rc.META_FROM_CATALOG) == {"language", "category", "bpm_lo", "bpm_hi"}
+    assert {"bpm", "language", "category", "bpm_requested_min",
+            "bpm_requested_max", "duration_ms"} <= set(cb.TRACK_COLS)
 
     facets = inspect.getsource(rc.catalog_facets)
-    gate = inspect.getsource(rc.filter_query_pool)
     seeds = inspect.getsource(rc.onboarding_seeds)
     info = inspect.getsource(rc.Catalog.track_info)
 
-    assert "bpm_source" in facets and "bpm_min" in gate
-    assert "tempo_direction" in gate
+    assert "bpm_source" in facets
     assert "bpm" in inspect.getsource(rc._flow_penalty)
     assert "bpm_lo" in info and "bpm_requested" in facets
-    assert 'gate("language"' in gate and "want_lang" in seeds
+    assert "want_lang" in seeds
     assert "category" in info and "parse_style" in facets
-    assert '_m(t).get("style"' in gate
+    assert "duration_ms" in inspect.getsource(rc._attach_section_meta)
 
 
 # ------------------------------------------------- 9 전체 갱신 · 중단 · 재개
@@ -334,7 +342,8 @@ def test_9_b_serving_is_not_ready_while_paused(staged, monkeypatch):
     ps.set_state(ps.UPDATING)
     try:
         r = client.post("/internal/recommendations/daily",
-                        json={"recommendation_id": 1, "user_id": 7})
+                        json={"recommendation_id": 1, "user_id": 7,
+                              "catalog": _catalog_body()})
         assert r.status_code == 503, r.text
         assert r.json()["error_code"] == "RELOAD_IN_PROGRESS"
         assert client.get("/internal/ready").status_code == 503
@@ -402,25 +411,3 @@ def test_9_e_resume_rechecks_before_it_lets_serving_back(staged):
     # 우회 스위치가 아예 없어야 한다.
     with pytest.raises(SystemExit):
         sync.main(["--resume", "--force"])
-
-
-def test_pool_loads_the_catalog_itself_when_nothing_is_installed(staged, monkeypatch):
-    """도구는 서버와 달리 기동에서 카탈로그를 올려 두지 않는다. `_pool()` 이 먼저 올린다."""
-    from ai_server.app import catalog_api as ca
-    from ai_server.app import recommender as rc
-    from ai_server.tools import pinecone_sync as sync
-
-    payload = ca.snapshot_from_tracks(_catalog_payload())
-    calls = []
-
-    def fake_load():
-        calls.append(1)
-        ca.install(payload)
-        return payload
-
-    ca.reset()
-    monkeypatch.setattr(rc, "CAT", None)
-    monkeypatch.setattr(ca, "load", fake_load)
-    cat = sync._pool()
-    assert calls == [1]
-    assert len(cat.pool) > 0

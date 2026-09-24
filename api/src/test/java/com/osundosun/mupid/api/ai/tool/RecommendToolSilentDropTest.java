@@ -1,5 +1,7 @@
 package com.osundosun.mupid.api.ai.tool;
 
+import com.osundosun.mupid.api.ai.catalog.TestCatalogs;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -78,7 +80,7 @@ class RecommendToolSilentDropTest {
         when(musicRepository.findDetailAllByIds(any())).thenReturn(catalog);
 
         AiRecommendToolImpl tool =
-            new AiRecommendToolImpl(recommender, musicRepository, sectionService,
+            new AiRecommendToolImpl(recommender, TestCatalogs.fixed(), musicRepository, sectionService,
                 TestMusicSummaries.assembler(), null,
                 mock(RecommendationReasonCache.class));
         // 현재 곡이 없으면 조건 없는 next 경로다. userId 는 온보딩 조회에만 쓰이는데
