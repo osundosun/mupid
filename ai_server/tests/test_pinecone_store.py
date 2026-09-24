@@ -272,6 +272,24 @@ def test_delete_all_empties_data_but_keeps_control(pc):
     assert ps.CONTROL_ID in _store(CONTROL_NS), "control 까지 지웠다"
 
 
+def test_delete_all_on_a_namespace_that_never_existed_is_empty(pc):
+    """serverless 는 한 번도 쓰지 않은 namespace 를 지우라면 404 를 준다 — 최초 적재."""
+    class NotFoundException(Exception):
+        status = 404
+
+    _seed_center()
+    FakePinecone.last.indexes[INDEX].fail = NotFoundException("(404) Not Found")
+    ps.delete_all()                               # 예외가 없어야 한다
+
+
+def test_delete_all_still_fails_on_other_errors(pc):
+    _seed_center()
+    FakePinecone.last.indexes[INDEX].fail = RuntimeError("connection reset pckey-secret-value")
+    with pytest.raises(ps.PineconeError) as got:
+        ps.delete_all()
+    assert "pckey-secret-value" not in str(got.value), "키가 메시지에 실렸다"
+
+
 def test_upsert_refuses_mismatched_lengths(pc):
     _seed_center()
     with pytest.raises(ValueError):

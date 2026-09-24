@@ -17,10 +17,15 @@
 `music_id` 열이 근거였는데, 그것도 결국 색인 안의 사본이었다 — 곡이 지워지거나
 번호가 바뀌면 색인을 다시 굽기 전까지 옛 값이 살아 있었다.
 
-이제 근거는 Spring 내부 카탈로그 API 다(`app/catalog_api.py`). 곡 수준
-(`track_id` → `music_id`)과 구간 수준(`external_id` →
-`music_section_analysis_id`)을 **둘 다** 그쪽이 준다 — 예전 `flow_meta` 경로는
-곡 수준밖에 만들지 못했다.
+이제 근거는 ClickHouse `v_track_sections_current` 다(`app/track_sections.py`).
+Spring 이 MySQL 구간을 저장할 때 같은 내용을 그곳에 쓰고, 한 행이 숫자 곡 번호와
+문자열 구간 ID(`T000901#2`)를 함께 들고 있다. 곡 수준(`track_id` → `music_id`)과
+구간 수준(`external_id` → `music_section_analysis_id`)이 **둘 다** 거기서 나온다.
+
+한때 Spring 내부 카탈로그 API 를 ROLE_SYSTEM 토큰으로 불러 이 매핑을 받았다. 토큰이
+만료되거나 파드에 없으면 매핑이 조용히 비어 재생 신호가 전부 버려졌고, 라벨러가
+"이벤트 로그가 없다" 로 매일 실패했다(S15P21A204-423). AI 가 Spring 을 부르지 않는다는
+계약으로 되돌렸다.
 
 숫자가 필요한 곳은 배치 도구 둘뿐이고 둘 다 **곡 수준만** 쓴다 — `push_sections` 의
 `im.music_id(tid)` 와 `pull_signals` 의 `im.source_track_id(...)`. 구간 PK
@@ -102,7 +107,7 @@ class IdMap:
             if self.path.exists():
                 print(f"[ids] 규칙상 없어야 할 매핑표가 있다(무시): {self.path}",
                       file=sys.stderr)
-            self._from_catalog()
+            self._from_track_sections()
             return
         try:
             df = pd.read_parquet(self.path)
@@ -128,29 +133,24 @@ class IdMap:
             return
         self.loaded = True
 
-    def _from_catalog(self) -> None:
-        """Spring 내부 카탈로그로 곡·구간 매핑을 만든다.
+    def _from_track_sections(self) -> None:
+        """ClickHouse 구간 표로 곡·구간 매핑을 만든다(`app/track_sections.py`).
 
-        **지어내지 않는다.** 카탈로그를 읽지 못하면 빈 채로 둔다 — `T000001` 에서
-        1 을 뽑는 식의 규칙은 시딩이 그렇게 만들었을 뿐 계약이 아니고, 실제로
-        `T000847_1` 처럼 규칙 밖 값이 있었다. 어긋난 순간 오류 없이 엉뚱한 곡을
-        추천하게 된다.
+        **지어내지 않는다.** 표를 읽지 못하면 빈 채로 두고 이유를 `error` 에 남긴다 —
+        `T000001` 에서 1 을 뽑는 식의 규칙은 시딩이 그렇게 만들었을 뿐 계약이 아니고,
+        실제로 `T000847_1` 처럼 규칙 밖 값이 있었다.
 
-        이미 적재된 스냅샷이 있으면 그것을 쓴다. 없으면 한 번 받아온다 — 이 길로
-        오는 것은 배치 도구(`push_sections`·`pull_signals`)뿐이고, 그쪽은 어차피
-        같은 자격으로 Spring 을 부른다. 서빙은 기동 때 이미 적재해 둔다.
+        이 길로 오는 것은 배치 도구(`push_sections`·`pull_signals`)뿐이다. 서빙은
+        숫자를 다루지 않는다 — 계약이 문자열 `external_id` 이고 환산은 Spring 이 한다.
         """
-        from . import catalog_api      # 순환 import 를 피해 쓰는 자리에서 가져온다
+        from . import track_sections   # 순환 import 를 피해 쓰는 자리에서 가져온다
 
-        self.source = "catalog_api"
-        snap = catalog_api.snapshot()
-        if snap is None:
-            try:
-                snap = catalog_api.load()
-            except Exception as e:
-                self.error = (f"카탈로그를 읽지 못했다 — {type(e).__name__}: {e} "
-                              f"(MUPID_API_BASE_URL · MUPID_API_REFRESH_TOKEN 확인)")
-                return
+        self.source = "track_sections"
+        try:
+            snap = track_sections.load()
+        except Exception as e:
+            self.error = f"구간 표를 읽지 못했다 — {type(e).__name__}: {e}"
+            return
         rows = [{"source_track_id": tid,
                  "music_id": row.get("music_id"),
                  "external_id": pd.NA,
@@ -171,7 +171,7 @@ class IdMap:
                 raise
             return
         if not self.track_to_num:
-            self.error = "카탈로그의 music_id 가 전부 비어 있다"
+            self.error = "구간 표의 곡 번호가 전부 비어 있다"
             return
         self.loaded = True
 

@@ -2807,93 +2807,99 @@ def test_pull_signals_seoul_string_with_z_would_be_read_as_future(tmp_path, monk
 
 
 # ------------------------------------- 매핑 근거는 MySQL 이다 (파일도 색인도 아니다)
+#
+# 배치는 그 사본을 ClickHouse `v_track_sections_current` 에서 읽는다. Spring 을 부르지
+# 않는다 — 토큰이 만료되면 매핑이 조용히 비어 재생 신호가 전부 버려졌다(S15P21A204-423).
 
 @pytest.fixture
-def catalog():
-    """Spring 카탈로그 응답 모양으로 스냅샷을 꽂아 준다. 시험이 끝나면 비운다.
+def sections_table(monkeypatch):
+    """ClickHouse 구간 표를 **조회 결과 모양 그대로** 꽂아 준다.
 
-    사전을 직접 채우지 않고 응답 모양을 지나가게 하는 이유는, 계약이 바뀌면 시험도
-    함께 깨지게 하려는 것이다.
+    사전을 직접 채우지 않고 `from_rows` 를 지나가게 하는 이유는, 표의 모양이 바뀌면
+    시험도 함께 깨지게 하려는 것이다.
     """
-    from ai_server.app import catalog_api
+    from ai_server.app import track_sections
 
-    def install(pairs, *, with_music_id=True, per_track=1):
-        tracks = [{
-            "musicId": mid if with_music_id else None,
-            "title": f"곡 {tid}",
-            "hasVocal": None, "vocalGender": None, "genres": [], "moods": [],
-            "sections": [{
-                "externalId": f"{tid}#{s}",
-                "musicSectionAnalysisId": 9000 + mid * 10 + s,
-                "sectionLabel": "CHORUS", "index": s,
-                "startTimeMs": s * 1000, "endTimeMs": (s + 1) * 1000,
-                "instruments": [], "moods": [],
-            } for s in range(per_track)],
-        } for tid, mid in pairs]
-        catalog_api.install(catalog_api.snapshot_from_tracks(tracks))
+    def install(pairs, *, per_track=1, fail=None):
+        rows = [{"track_id": mid, "music_section_analysis_id": 9000 + mid * 10 + s,
+                 "section_index": s, "section_uid": f"{tid}#{s}", "fn": "CHORUS",
+                 "start_ms": s * 1000, "end_ms": (s + 1) * 1000}
+                for tid, mid in pairs for s in range(per_track)]
 
-    yield install
-    catalog_api.reset()
+        def load():
+            if fail is not None:
+                raise fail
+            return track_sections.from_rows(rows)
+
+        monkeypatch.setattr(track_sections, "load", load)
+
+    return install
 
 
-def test_id_map_comes_from_the_catalog(clean_env, tmp_path, monkeypatch, catalog):
-    """별도 매핑 파일도, 색인 안의 사본도 두지 않는다 — 근거는 MySQL 이다.
-
-    예전 근거였던 `flow_meta.music_id` 도 결국 색인 안의 사본이라, 곡이 지워지거나
-    번호가 바뀌면 색인을 다시 굽기 전까지 옛 값이 살아 있었다.
-    """
+def test_id_map_comes_from_the_track_sections_table(clean_env, tmp_path, monkeypatch,
+                                                    sections_table):
+    """별도 매핑 파일도, 색인 안의 사본도, Spring 호출도 두지 않는다."""
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
     from ai_server.app import ids as idsmod
 
-    catalog([("T000001", 1), ("T000002", 2)])
+    sections_table([("T000001", 1), ("T000002", 2)])
     im = idsmod.IdMap(strict=True)
 
-    assert im.loaded and im.stats()["source"] == "catalog_api"
+    assert im.loaded and im.stats()["source"] == "track_sections"
     assert im.music_id("T000001") == 1
     assert im.source_track_id(2) == "T000002"
 
 
-def test_section_conversion_now_comes_from_the_catalog(clean_env, tmp_path,
-                                                       monkeypatch, catalog):
-    """구간 PK 환산이 생겼다. 예전 `flow_meta` 경로는 곡 수준밖에 못 만들었다."""
+def test_section_conversion_comes_from_the_track_sections_table(
+        clean_env, tmp_path, monkeypatch, sections_table):
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
     from ai_server.app import ids as idsmod
 
-    catalog([("T000001", 1)], per_track=2)
+    sections_table([("T000001", 1)], per_track=2)
     im = idsmod.IdMap(strict=True)
 
     assert im.stats()["sections"] == 2
     assert im.music_section_analysis_id("T000001#0") == 9010
     assert im.external_id(9011) == "T000001#1"
-    # 카탈로그에 없는 구간은 **지어내지 않는다.**
+    # 표에 없는 구간은 **지어내지 않는다.**
     with pytest.raises(idsmod.MappingError):
         im.music_section_analysis_id("T000001#9")
 
 
-def test_missing_music_id_is_not_guessed(clean_env, tmp_path, monkeypatch, catalog):
-    """`T000001` 에서 1 을 뽑지 않는다.
-
-    시딩이 그렇게 만들었을 뿐 계약이 아니다 — `T000847_1` 처럼 규칙 밖 값이 실제로
-    있었다. 어긋나면 오류 없이 엉뚱한 곡을 추천하게 된다.
-    """
+def test_an_unreadable_table_leaves_the_map_empty_with_a_reason(
+        clean_env, tmp_path, monkeypatch, sections_table):
+    """읽지 못하면 **지어내지 않고** 비운 채 이유를 남긴다. 부르는 쪽이 멈춘다."""
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
     from ai_server.app import ids as idsmod
 
-    catalog([("T000001", 1)], with_music_id=False)
+    sections_table([], fail=RuntimeError("connection refused"))
     im = idsmod.IdMap(strict=False)
 
     assert not im.loaded
-    assert "music_id" in (im.error or "")
+    assert "connection refused" in (im.error or "")
     with pytest.raises(idsmod.MappingError):
         im.music_id("T000001")
 
 
-def test_a_stray_map_file_is_ignored_not_obeyed(clean_env, tmp_path, monkeypatch,
-                                                capsys, catalog):
-    """판 자리의 매핑표는 규칙상 없어야 한다. 있어도 읽지 않는다.
+def test_a_track_number_pointing_at_two_tracks_is_dropped():
+    """한 숫자 곡이 두 문자열 곡을 가리키면 그 곡을 뺀다 — 섞으면 신호가 엉뚱한 곡에 붙는다."""
+    from ai_server.app import track_sections
 
-    조용히 그쪽이 이기면 낡은 표가 카탈로그를 덮어 **오류 없이** 엉뚱한 곡을 가리킨다.
-    """
+    snap = track_sections.from_rows([
+        {"track_id": 1, "music_section_analysis_id": 10, "section_index": 0,
+         "section_uid": "T000001#0", "fn": "VERSE", "start_ms": 0, "end_ms": 1000},
+        {"track_id": 1, "music_section_analysis_id": 11, "section_index": 1,
+         "section_uid": "T000999#1", "fn": "VERSE", "start_ms": 1000, "end_ms": 2000},
+        {"track_id": 2, "music_section_analysis_id": 20, "section_index": 0,
+         "section_uid": "T000002#0", "fn": "CHORUS", "start_ms": 0, "end_ms": 1000},
+    ])
+    assert set(snap.tracks) == {"T000002"}
+    assert snap.sections["T000002#0"]["section_label"] == "CHORUS"
+
+
+def test_a_stray_map_file_is_ignored_not_obeyed(clean_env, tmp_path, monkeypatch,
+                                                capsys, sections_table):
+    """판 자리의 매핑표는 규칙상 없어야 한다. 있어도 읽지 않는다."""
     import pandas as pd
 
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
@@ -2905,13 +2911,125 @@ def test_a_stray_map_file_is_ignored_not_obeyed(clean_env, tmp_path, monkeypatch
                   "external_id": ["T000001#0"],
                   "music_section_analysis_id": [9330]}
                  ).to_parquet(data / "id_map.parquet", index=False)
-    catalog([("T000001", 1)])
+    sections_table([("T000001", 1)])
 
     im = idsmod.IdMap(strict=True)
 
-    assert im.stats()["source"] == "catalog_api"
+    assert im.stats()["source"] == "track_sections"
     assert im.music_id("T000001") == 1              # 표의 999 가 아니다
     assert "규칙상 없어야 할 매핑표" in capsys.readouterr().err
+
+
+# ------------------------------------- S15P21A204-423: 라벨러가 매일 실패하던 것
+#
+# 운영 로그: "재생신호 328건 · 적재 0 · 제외 328" → "라벨 생성 실패: 이벤트 로그가 없다".
+# 곡 번호 매핑이 비어 재생 신호가 전부 버려졌고, 워터마크까지 전진해 그 신호를 다시 읽을
+# 길도 막혔다.
+
+def _pull_env(tmp_path, monkeypatch, sections_table, pairs, plays):
+    """`pull_signals.run` 을 ClickHouse 없이 돌릴 판을 깐다. 적재된 이벤트를 돌려준다."""
+    import pandas as pd
+    from ai_server.tools import pull_signals as pl
+
+    monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
+    data = tmp_path / "data" / "proc" / "mupid"
+    data.mkdir(parents=True, exist_ok=True)
+    # 서빙 판처럼 **구간 경계 열이 없다**(slice_index 의 MOMENT_DROP).
+    pd.DataFrame({"moment_id": [f"{t}#0" for t, _ in pairs],
+                  "track_id": [t for t, _ in pairs]}).to_parquet(
+        data / "moments.parquet", index=False)
+    sections_table(pairs)
+    ids.id_map(reload=True)
+    monkeypatch.setattr(ids, "_MAP", None)
+    monkeypatch.setattr(pl, "watermark_path", lambda: tmp_path / "wm.json")
+    monkeypatch.setattr(pl, "fetch", lambda since, limit: [])
+    monkeypatch.setattr(pl, "fetch_plays", lambda since, limit: plays)
+    appended: list = []
+    monkeypatch.setattr(pl.recommender, "append_event", appended.append)
+    return pl, appended
+
+
+def _play(track_id, ts="2026-09-18 10:00:00.000"):
+    return {"user_id": 7, "track_id": track_id, "signal": "PLAY_END",
+            "entry_path": "RECOMMEND", "reason": "COMPLETE", "position_ms": 30000,
+            "from_ms": 0, "play_id": f"p{track_id}", "ts": ts, "ts_utc": ts}
+
+
+def test_play_signals_map_through_the_sections_table(clean_env, tmp_path, monkeypatch,
+                                                     sections_table):
+    """숫자 곡 번호가 구간 표를 거쳐 문자열 곡이 된다. Spring 을 부르지 않는다."""
+    pl, appended = _pull_env(tmp_path, monkeypatch, sections_table,
+                             [("T000001", 1), ("T000002", 2)], [_play(1), _play(2)])
+
+    out = pl.run(limit=100, dry_run=False)
+
+    assert out["appended"] == 2 and out["dropped"] == 0, out
+    assert {e["track_id"] for e in appended} == {"T000001", "T000002"}
+
+
+def test_an_empty_map_stops_the_batch_and_keeps_the_watermark(
+        clean_env, tmp_path, monkeypatch, sections_table):
+    """매핑이 비면 **멈춘다.** 예전에는 전부 버리고 워터마크를 전진시켰다."""
+    pl, appended = _pull_env(tmp_path, monkeypatch, sections_table,
+                             [("T000001", 1)], [_play(1)])
+    from ai_server.app import track_sections
+    sections_table([], fail=track_sections.TrackSectionsUnavailable("connection refused"))
+
+    with pytest.raises(SystemExit):
+        pl.run(limit=100, dry_run=False)
+
+    assert appended == []
+    assert not (tmp_path / "wm.json").exists(), "실패했는데 워터마크가 전진했다"
+
+
+def test_section_bounds_come_from_the_table_not_the_index(clean_env, tmp_path):
+    """서빙 판은 `start_sec`/`end_sec` 를 뗀다. 경계는 구간 표에서 읽고 색인과 교차한다."""
+    import pandas as pd
+    from ai_server.app import track_sections
+    from ai_server.tools import pull_signals as pl
+
+    clean_env.setenv("MUPID_AI_ARTIFACT_DIR", str(tmp_path))
+    data = tmp_path / "data" / "proc" / "mupid"
+    data.mkdir(parents=True)
+    pd.DataFrame({"moment_id": ["T000001#1"]}).to_parquet(data / "moments.parquet")
+    snap = track_sections.from_rows([
+        {"track_id": 1, "music_section_analysis_id": 10, "section_index": 0,
+         "section_uid": "T000001#0", "fn": "VERSE", "start_ms": 2430, "end_ms": 39000},
+        {"track_id": 1, "music_section_analysis_id": 11, "section_index": 1,
+         "section_uid": "T000001#1", "fn": "CHORUS", "start_ms": 39000, "end_ms": 66420},
+    ])
+
+    assert pl.section_bounds(snap) == {"T000001#1": (39.0, 66.42)}
+
+
+def test_run_labeler_builds_the_catalog_from_the_sections_table(monkeypatch, capsys):
+    """라벨러는 스냅샷을 **넘겨서** Catalog 를 만든다. 전역 카탈로그를 보지 않는다."""
+    import sys
+
+    from ai_server.app import catalog_api, recommender, track_sections
+    from ai_server.app import main as appmain
+    from ai_server.tools import run_labeler
+
+    snap = track_sections.from_rows([
+        {"track_id": 1, "music_section_analysis_id": 10, "section_index": 0,
+         "section_uid": "T000001#0", "fn": "VERSE", "start_ms": 0, "end_ms": 1000}])
+    got: dict = {}
+
+    class _Cat:
+        def __init__(self, s=None):
+            got["snap"] = s
+
+    monkeypatch.setattr(appmain, "check_integrity", lambda: {"ok": True, "errors": []})
+    monkeypatch.setattr(track_sections, "load", lambda: snap)
+    monkeypatch.setattr(catalog_api, "snapshot",
+                        lambda: pytest.fail("전역 카탈로그를 봤다"))
+    monkeypatch.setattr(recommender, "Catalog", _Cat)
+    monkeypatch.setattr(recommender, "learn", lambda req: {
+        "users": [], "labels": 0, "preferences_saved": 0, "path": "x"})
+    monkeypatch.setattr(sys, "argv", ["run_labeler", "--json"])
+
+    assert run_labeler.main() == 0
+    assert got["snap"] is snap
 
 
 def test_an_explicitly_given_path_is_still_read(clean_env, tmp_path):

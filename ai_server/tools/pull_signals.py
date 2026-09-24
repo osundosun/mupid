@@ -29,7 +29,7 @@ from typing import Optional
 
 import pandas as pd
 
-from ai_server.app import ids, paths, recommender
+from ai_server.app import ids, paths, recommender, track_sections
 from ai_server.app.log import log
 from ai_server.tools.push_sections import query
 
@@ -251,14 +251,22 @@ def to_event(r: dict, bounds: dict, im, why: Optional[Counter] = None) -> dict |
             "source": "clickhouse"}
 
 
-def section_bounds() -> dict:
-    """구간 경계는 AI 색인이 정본이다. ClickHouse 는 판정만 했지 초 단위를 주지 않는다."""
+def section_bounds(snap) -> dict:
+    """구간 경계(초). **색인에 있는 구간만** 담는다.
+
+    경계는 MySQL 이 정본이고 `snap`(ClickHouse 구간 표)이 그 사본이다. 예전에는
+    `moments.parquet` 의 `start_sec`/`end_sec` 를 읽었는데, 서빙 판은 그 열을 뗀다
+    (`slice_index` 의 `MOMENT_DROP`) — 새 판이 올라가는 순간 여기서 깨진다.
+
+    색인과 교차하는 이유는 `section_not_in_index` 를 세기 위해서다. 아직 임베딩하지
+    않은 곡의 신호는 라벨러가 쓸 곳이 없다.
+    """
     p = paths.moments_path()
     if not p.exists():
         raise SystemExit(f"구간 파일이 없다: {p}")
-    mom = pd.read_parquet(p)
-    return {str(r.moment_id): (float(r.start_sec), float(r.end_sec))
-            for r in mom.itertuples()}
+    indexed = set(pd.read_parquet(p, columns=["moment_id"]).moment_id.astype(str))
+    return {uid: (row["start_ms"] / 1000.0, row["end_ms"] / 1000.0)
+            for uid, row in snap.sections.items() if uid in indexed}
 
 
 def run(limit: int, dry_run: bool) -> dict:
@@ -269,7 +277,17 @@ def run(limit: int, dry_run: bool) -> dict:
     if not sig_rows and not play_rows:
         return {"fetched": 0, "appended": 0, "watermark": since}
 
-    bounds, im = section_bounds(), ids.id_map()
+    try:
+        snap = track_sections.load()
+    except track_sections.TrackSectionsUnavailable as e:
+        raise SystemExit(f"구간 표를 읽지 못했다 — {e}")
+    im = ids.id_map()
+    # **빈 매핑으로 진행하지 않는다.** 예전에는 매핑표가 없으면 빈 채로 시작해 신호를
+    # 전부 "매핑 없음" 으로 버렸고, 워터마크까지 전진시켜 그 신호를 다시 읽을 길도
+    # 막았다. 라벨러는 "이벤트 로그가 없다" 로만 실패했다(S15P21A204-423).
+    if not im.loaded:
+        raise SystemExit(f"곡 번호 매핑이 비었다 — {im.error}. 워터마크를 전진시키지 않는다")
+    bounds = section_bounds(snap)
     known = recent_ids()
     appended, dup, dropped = 0, 0, 0
     why: Counter = Counter()

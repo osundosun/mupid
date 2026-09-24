@@ -24,19 +24,19 @@ from ai_server.app import catalog_api, index_contract, spring_api
 def _track(tid, music_id, *, sections=1, genres=("indie_rock",), moods=("calm",),
            instruments=("piano",), has_vocal=True, gender="F"):
     return {
-        "musicId": music_id,
+        "music_id": music_id,
         "title": f"곡 {tid}",
-        "hasVocal": has_vocal,
-        "vocalGender": gender,
+        "has_vocal": has_vocal,
+        "vocal_gender": gender,
         "genres": list(genres),
         "moods": list(moods),
         "sections": [{
-            "externalId": f"{tid}#{s}",
-            "musicSectionAnalysisId": 7000 + music_id * 10 + s,
-            "sectionLabel": "CHORUS",
+            "external_id": f"{tid}#{s}",
+            "music_section_analysis_id": 7000 + music_id * 10 + s,
+            "section_label": "CHORUS",
             "index": s,
-            "startTimeMs": s * 10_000,
-            "endTimeMs": s * 10_000 + 9_000,
+            "start_time_ms": s * 10_000,
+            "end_time_ms": s * 10_000 + 9_000,
             "instruments": list(instruments),
             "moods": ["dreamy"],
         } for s in range(sections)],
@@ -44,8 +44,8 @@ def _track(tid, music_id, *, sections=1, genres=("indie_rock",), moods=("calm",)
 
 
 def _page(tracks, page, total_pages, size=200):
-    return {"data": {"page": page, "size": size, "totalPages": total_pages,
-                     "totalElements": len(tracks), "generatedAt": "2026-09-22T00:00:00",
+    return {"data": {"page": page, "size": size, "total_pages": total_pages,
+                     "total_elements": len(tracks), "generated_at": "2026-09-22T00:00:00",
                      "tracks": tracks}}
 
 
@@ -74,7 +74,7 @@ def api(monkeypatch):
 # ------------------------------------------------------------------ 받아오기
 
 def test_a_catalog_is_read_whole_across_pages(api):
-    """`totalPages` 를 믿고 돈다. **개수로 끝을 판정하지 않는다.**
+    """`total_pages` 를 믿고 돈다. **개수로 끝을 판정하지 않는다.**
 
     중간 페이지가 비었을 때 거기서 멈추면 카탈로그가 조용히 잘린다.
     """
@@ -114,7 +114,7 @@ def test_every_recommendation_axis_survives_the_trip(api):
 def test_a_track_whose_sections_disagree_is_skipped(api):
     """한 곡의 구간이 두 문자열 곡을 가리키면 섞어 담지 않는다."""
     bad = _track("T000001", 1, sections=2)
-    bad["sections"][1]["externalId"] = "T000999#1"
+    bad["sections"][1]["external_id"] = "T000999#1"
     api["pages"] = [_page([bad, _track("T000002", 2)], 0, 1)]
 
     snap = catalog_api.load()

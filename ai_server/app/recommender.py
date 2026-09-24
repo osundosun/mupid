@@ -248,7 +248,14 @@ def _attach_section_meta(mom: pd.DataFrame, snap) -> pd.DataFrame:
 
 
 class Catalog:
-    def __init__(self) -> None:
+    def __init__(self, snap=None) -> None:
+        """`snap` 은 곡·구간 메타 스냅샷이다. **부르는 쪽이 준다.**
+
+        배치는 ClickHouse 구간 표(`track_sections.load()`)를 넘긴다. 주지 않으면
+        서빙 기동이 미리 적재해 둔 스냅샷을 쓴다. 전역만 보던 때에는 적재를 빠뜨린
+        호출이 "카탈로그를 읽지 못했다" 로 멈췄는데, 실제로는 부르지도 않은 것이었다
+        (라벨러·Pinecone 적재, S15P21A204-423).
+        """
         from . import features as feat
 
         self.mom = pd.read_parquet(paths.data_dir() / "moments.parquet")
@@ -270,7 +277,8 @@ class Catalog:
         #
         # 이제 그 값들은 `catalog_api` 가 Spring 내부 API 로 읽어 메모리에 둔다.
         # 색인에 남은 것은 **DB 에 컬럼 자체가 없는 축**뿐이다(BPM·언어·스타일).
-        snap = catalog_api.snapshot()
+        if snap is None:
+            snap = catalog_api.snapshot()
         if snap is None:
             # 없이 뜨면 장르·무드·보컬·악기 조건이 통째로 빈 채 추천이 나간다.
             # 그것은 오류가 아니라 "조건에 맞는 곡이 없다" 로 보이므로 여기서 멈춘다.

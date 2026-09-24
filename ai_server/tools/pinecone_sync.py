@@ -84,7 +84,10 @@ def _pool():
     from ..app import recommender as rc
 
     if rc.CAT is None:
-        rc.CAT = rc.Catalog()
+        # 스냅샷을 **직접 넘긴다.** 서버와 달리 이 도구는 기동에서 카탈로그를 올려
+        # 두지 않는다 — 넘기지 않으면 "카탈로그를 읽지 못했다" 로 멈추는데, 실제로는
+        # 부르지도 않은 것이다(2026-09-23 최초 적재).
+        rc.CAT = rc.Catalog(_catalog())
     return rc.CAT
 
 
