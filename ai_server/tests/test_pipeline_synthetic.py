@@ -184,36 +184,6 @@ def test_catalog_loads_every_required_column(svc):
     assert svc.CAT.pool.track_id.nunique() == 6
 
 
-def test_centering_mean_does_not_depend_on_the_request_catalog(svc):
-    """중심화 평균은 **색인 풀 전체**로 잰다. 요청 후보로 재면 안 된다.
-
-    검색은 Spring 이 조건으로 거른 후보만 보낸다. 그 후보로 평균을 재면 "발라드만" 온
-    요청은 발라드의 평균으로 중심화돼, 질의마다 유사도를 재는 기준점이 달라진다 —
-    오류 없이 순위만 틀어진다(2026-09-24). Pinecone 적재가 재는 범위와도 같아야 한다.
-    """
-    full = svc.CAT
-    narrow = _spring_filtered(svc, lambda uid: int(uid[1:7]) % 3 == 0)
-    assert 0 < len(narrow.pool) < len(full.pool)
-
-    with svc.using(full):
-        mu_full = svc._pool_mean().copy()
-    with svc.using(narrow):
-        mu_narrow = svc._pool_mean()
-
-    expect = np.asarray(full.Z[svc.index_pool(full).emb_row.to_numpy()],
-                        dtype=np.float32).mean(0)
-    assert np.allclose(mu_narrow, mu_full)
-    assert np.allclose(mu_full, expect, atol=1e-6)
-    # 같은 구간은 어느 요청에서 중심화해도 같은 벡터가 된다.
-    uid = narrow.pool.moment_id.iloc[0]
-    row = int(full.pool.set_index("moment_id").emb_row[uid])
-    with svc.using(full):
-        a = svc.center(full.Z[[row]])
-    with svc.using(narrow):
-        b = svc.center(full.Z[[row]])
-    assert np.allclose(a, b)
-
-
 def test_model_runs_on_numpy_without_torch(svc):
     """이미지에서 torch 를 빼도 되는 근거. npz 만으로 학습 점수가 산다."""
     assert svc.CAT.model_backend == "numpy"

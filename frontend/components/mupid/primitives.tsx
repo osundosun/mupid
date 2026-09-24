@@ -16,7 +16,6 @@ import {
   Repeat,
   Repeat1,
   Shuffle,
-  Infinity as InfinityIcon,
 } from 'lucide-react';
 import type { MupidModel, RepeatMode } from '@/hooks/use-mupid';
 import { formatTime, getSongSectionAt, resolveAlbumCover, type Track } from '@/lib/mupid-data';
@@ -345,11 +344,6 @@ export function PlayerControls({
         <SkipForward fill="currentColor" />
       </button>
       {!compact && <RepeatButton model={m} />}
-      {/*
-        AI 이어듣기는 **전체 컨트롤에만** 둔다. 하단 미니 플레이어(compact)는 재생·이전·
-        다음만 담는 자리라, 여기에 더하면 좁은 화면에서 재생 버튼이 밀린다.
-      */}
-      {!compact && <AutoContinueButton model={m} />}
     </div>
   );
 }
@@ -367,43 +361,6 @@ export function ShuffleButton({ model: m }: { model: MupidModel }) {
       }}
     >
       <Shuffle />
-    </button>
-  );
-}
-/**
- * AI 이어듣기 — 목록을 다 들으면 추천 한 곡을 이어 붙여 튼다.
- *
- * 셔플·반복과 같은 `toggle-control` 버튼이다. 유튜브식 스위치도 만들어 봤지만 알약이
- * 40×22 로 아이콘 버튼들 사이에서 혼자 커서, 여섯 칸이 한 줄에 서면 재생 버튼이 가운데
- * 를 잃었다.
- *
- * 아이콘은 `∞` 다. **반짝임(`Sparkles`)은 쓸 수 없다** — 이 앱에서 이미 '추천 이유' 가
- * 그 뜻으로 쓰고 있어, 같은 화면에서 두 가지를 가리키게 된다. `∞` 는 "끝나지 않는다" 를
- * 곧바로 말하고, 반복(↻)이 화살표인 것과 달라 한 줄에서 구분된다. 둘은 상호 배제라
- * 나란히 켜지는 일이 없어 헷갈릴 자리도 없다.
- */
-export function AutoContinueButton({ model: m }: { model: MupidModel }) {
-  const on = m.autoRecommend;
-  return (
-    <button
-      className="icon-button toggle-control"
-      aria-label={`AI 이어듣기 ${on ? '끄기' : '켜기'}`}
-      aria-pressed={on}
-      onClick={() => {
-        // 반복이 켜져 있었다면 모델이 그것을 끈다. 말없이 바뀌면 사용자가 나중에
-        // "반복을 켜 뒀는데 왜 꺼졌지" 를 겪으므로 알림에 함께 적는다.
-        const turnedOffRepeat = !on && m.repeatMode !== 'off';
-        m.setAutoRecommend(!on);
-        m.setToast(
-          on
-            ? 'AI 이어듣기 끔 · 목록이 끝나면 멈춰요.'
-            : `AI 이어듣기 켬 · 목록을 다 들으면 추천 곡을 이어 재생해요.${
-                turnedOffRepeat ? ' (반복을 껐어요)' : ''
-              }`,
-        );
-      }}
-    >
-      <InfinityIcon />
     </button>
   );
 }
@@ -428,12 +385,8 @@ export function RepeatButton({ model: m }: { model: MupidModel }) {
             ? '한곡 반복 · 이 곡을 계속 반복해요.'
             : next === 'all'
               ? '전체 반복 · 재생 목록을 계속 돌려요.'
-              /*
-                **목록 끝 이야기는 하지 않는다.** 반복을 끄면 멈출 수도(AI 이어듣기
-                꺼짐) 이어질 수도(켜짐) 있어서, 여기서 한쪽을 단정하면 다른 쪽에서
-                거짓말이 된다. 그 안내는 이어듣기 스위치가 전담한다.
-              */
-              : '반복 없음 · 목록을 한 번만 재생해요.',
+              // 반복을 끄면 멈추지 않는다. 목록 끝에서 추천 한 곡이 이어진다.
+              : '반복 없음 · 목록이 끝나면 추천 곡을 이어 재생해요.',
         );
       }}
     >
