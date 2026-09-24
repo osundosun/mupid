@@ -63,7 +63,6 @@ export const clientStub = inline(`
 const localDemoStub = inline(`export const localDemoEnabled = () => false;`);
 const platformStub = inline(`
   export const toImageSource = (url) => url ?? '';
-  export const withCache = async (_area, _key, load) => load();
 `);
 
 // ── 진짜 모듈들 ──────────────────────────────────────────────

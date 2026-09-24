@@ -34,7 +34,7 @@ export function toQueueEntries(trackIds: number[]): QueueEntry[] {
 /**
  * 보이는 자리들만 요청한 순서로 다시 놓는다.
  *
- * 화면은 건너뛴 곡(`ignored`)이나 카탈로그에서 사라진 곡을 감추므로
+ * 화면은 건너뛴 곡(`ignored`)이나 곡 정보를 모르는 곡을 감추므로
  * `orderedUids` 는 큐의 일부다. 예전에는 보이는 자리를 앞으로 몰고 감춘 자리를
  * 뒤에 이어 붙였는데, 그러면 사용자가 건드린 적 없는 자리까지 큐 맨 뒤로
  * 밀려났다. 여기서는 **감춘 자리를 원래 칸에 그대로 두고** 보이는 칸만 요청한
@@ -205,6 +205,53 @@ export function placeInQueue(
     stayed,
     evictedTrackId,
     uid: placed.uid,
+  };
+}
+
+/**
+ * 자동 추천을 판정하는 순간의 재생 상태. 요청 전과 응답 후를 비교한다.
+ *
+ * `playback` 은 재생을 새로 걸 때마다 오르는 번호다 — 같은 곡을 다시 틀어도 바뀌므로
+ * "사용자가 그 사이 무언가를 틀었다" 를 곡 번호보다 정확히 가린다.
+ */
+export type AutoRecommendSnapshot = {
+  playback: number;
+  currentUid: string | null;
+  queue: QueueEntry[];
+};
+
+/**
+ * 재생 목록 끝에서 추천 한 곡을 받아 **맨 아래에** 놓는다.
+ *
+ * 응답을 기다리는 사이 사용자가 다른 곡을 틀었거나 큐가 바뀌었으면 결과를 버린다 —
+ * 늦게 온 추천이 사용자가 방금 만든 상태를 덮으면 안 된다. 실패와 빈 응답도 조용히
+ * null 이다(재시도·대체곡 없음).
+ */
+export async function autoRecommendAtEnd<T extends { id: number }>(
+  read: () => AutoRecommendSnapshot,
+  recommend: () => Promise<T[]>,
+  limit: number,
+): Promise<{ track: T; placement: QueuePlacement } | null> {
+  const before = read();
+  let found: T[];
+  try {
+    found = await recommend();
+  } catch {
+    return null;
+  }
+  const after = read();
+  if (
+    after.playback !== before.playback ||
+    after.currentUid !== before.currentUid ||
+    after.queue !== before.queue
+  ) {
+    return null;
+  }
+  const track = found[0];
+  if (!track) return null;
+  return {
+    track,
+    placement: placeInQueue(after.queue, track.id, 'bottom', after.currentUid, limit),
   };
 }
 

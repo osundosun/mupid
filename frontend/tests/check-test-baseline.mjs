@@ -59,8 +59,14 @@ export function failingNames(output) {
     // `tests\x.test.mjs` 가 적히고 CI(Linux)의 `tests/x.test.mjs` 와 매칭되지
     // 않는다 — 실제로 그렇게 CI 가 이 항목 하나 때문에 빨간불이 됐다.
     // 기준선은 플랫폼과 무관해야 한다.
+    //
+    // **구분자가 연달아 온 것도 하나로 줄인다.** TAP 은 시험 이름 속 역슬래시를
+    // 이스케이프해서 Windows 의 파일 단위 실패를 `tests\\x.test.mjs` 로 찍는다.
+    // 한 글자씩 바꾸면 `tests//x.test.mjs` 가 되어, CI(Linux)에서 쓴 기준선의
+    // `tests/x.test.mjs` 와 또 어긋난다 — 고쳐 둔 그 증상이 로컬에만 남아,
+    // 윈도우에서는 손대지 않은 이 항목이 늘 "새로 깨졌다" 로 뜬다.
     if (/^tests[\\/].+\.test\.mjs$/.test(name)) {
-      names.add(`[파일 로드 실패] ${name.replaceAll('\\', '/')}`);
+      names.add(`[파일 로드 실패] ${name.replace(/[\\/]+/g, '/')}`);
       continue;
     }
     names.add(name);

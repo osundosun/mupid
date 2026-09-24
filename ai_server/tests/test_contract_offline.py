@@ -2696,7 +2696,7 @@ def sections_table(monkeypatch):
 
     def install(pairs, *, per_track=1, fail=None):
         rows = [{"track_id": mid, "music_section_analysis_id": 9000 + mid * 10 + s,
-                 "section_index": s, "section_uid": f"{tid}#{s}", "fn": "CHORUS",
+                 "section_uid": f"{tid}#{s}", "fn": "CHORUS",
                  "start_ms": s * 1000, "end_ms": (s + 1) * 1000}
                 for tid, mid in pairs for s in range(per_track)]
 
@@ -2760,15 +2760,67 @@ def test_a_track_number_pointing_at_two_tracks_is_dropped():
     from ai_server.app import track_sections
 
     snap = track_sections.from_rows([
-        {"track_id": 1, "music_section_analysis_id": 10, "section_index": 0,
+        {"track_id": 1, "music_section_analysis_id": 10,
          "section_uid": "T000001#0", "fn": "VERSE", "start_ms": 0, "end_ms": 1000},
-        {"track_id": 1, "music_section_analysis_id": 11, "section_index": 1,
+        {"track_id": 1, "music_section_analysis_id": 11,
          "section_uid": "T000999#1", "fn": "VERSE", "start_ms": 1000, "end_ms": 2000},
-        {"track_id": 2, "music_section_analysis_id": 20, "section_index": 0,
+        {"track_id": 2, "music_section_analysis_id": 20,
          "section_uid": "T000002#0", "fn": "CHORUS", "start_ms": 0, "end_ms": 1000},
     ])
     assert set(snap.tracks) == {"T000002"}
     assert snap.sections["T000002#0"]["section_label"] == "CHORUS"
+
+
+def test_track_sections_reads_only_the_columns_the_view_has():
+    """배치가 SELECT 하는 열은 뷰 정의(`api/clickhouse/init/01-schema.sql`)에 있어야 한다.
+
+    가짜 ClickHouse 로 도는 시험은 없는 열을 읽어도 통과한다. 운영 첫 실행이
+    `section_index`(표에는 있고 뷰에는 없다) 때문에 죽은 뒤 붙였다(2026-09-24).
+    """
+    import pathlib
+    import re as _re
+
+    from ai_server.app import track_sections
+
+    ddl = (pathlib.Path(__file__).resolve().parents[2] / "api" / "clickhouse" / "init"
+           / "01-schema.sql").read_text(encoding="utf-8")
+    m = _re.search(r"VIEW\s+v_track_sections_current.*?AS\s+SELECT\s+(.*?)\s+FROM",
+                   ddl, _re.S | _re.I)
+    assert m, "뷰 정의를 찾지 못했다"
+    view_cols = {c.strip() for c in m.group(1).split(",")}
+    assert set(track_sections.COLUMNS) <= view_cols, set(track_sections.COLUMNS) - view_cols
+
+    seen = {}
+
+    def fake_query(sql, timeout=None):
+        seen["sql"] = sql
+        return ('{"track_id": 1, "music_section_analysis_id": 10, "section_uid": "T000001#3",'
+                ' "fn": "CHORUS", "start_ms": 0, "end_ms": 1000}\n')
+
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    try:
+        mp.setattr(track_sections.clickhouse, "configured", lambda: True)
+        mp.setattr(track_sections.clickhouse, "query", fake_query)
+        snap = track_sections.load()
+    finally:
+        mp.undo()
+    selected = _re.search(r"SELECT\s+(.*?)\s+FROM", seen["sql"], _re.S).group(1)
+    assert {c.strip() for c in selected.split(",")} <= view_cols
+    # 순번은 `#` 뒤에서 온다 — 라벨러의 구간 키(`T000001#3+4`)가 이 값으로 만들어진다.
+    assert snap.sections["T000001#3"]["section_idx"] == 3
+
+
+def test_a_section_uid_without_a_numeric_suffix_is_skipped():
+    from ai_server.app import track_sections
+
+    snap = track_sections.from_rows([
+        {"track_id": 1, "music_section_analysis_id": 10, "section_uid": "T000001#x",
+         "fn": "VERSE", "start_ms": 0, "end_ms": 1000},
+        {"track_id": 1, "music_section_analysis_id": 11, "section_uid": "T000001#1",
+         "fn": "VERSE", "start_ms": 1000, "end_ms": 2000},
+    ])
+    assert set(snap.sections) == {"T000001#1"}
 
 
 def test_a_stray_map_file_is_ignored_not_obeyed(clean_env, tmp_path, monkeypatch,
@@ -2867,9 +2919,9 @@ def test_section_bounds_come_from_the_table_not_the_index(clean_env, tmp_path):
     data.mkdir(parents=True)
     pd.DataFrame({"moment_id": ["T000001#1"]}).to_parquet(data / "moments.parquet")
     snap = track_sections.from_rows([
-        {"track_id": 1, "music_section_analysis_id": 10, "section_index": 0,
+        {"track_id": 1, "music_section_analysis_id": 10,
          "section_uid": "T000001#0", "fn": "VERSE", "start_ms": 2430, "end_ms": 39000},
-        {"track_id": 1, "music_section_analysis_id": 11, "section_index": 1,
+        {"track_id": 1, "music_section_analysis_id": 11,
          "section_uid": "T000001#1", "fn": "CHORUS", "start_ms": 39000, "end_ms": 66420},
     ])
 
@@ -2885,7 +2937,7 @@ def test_run_labeler_builds_the_catalog_from_the_sections_table(monkeypatch, cap
     from ai_server.tools import run_labeler
 
     snap = track_sections.from_rows([
-        {"track_id": 1, "music_section_analysis_id": 10, "section_index": 0,
+        {"track_id": 1, "music_section_analysis_id": 10,
          "section_uid": "T000001#0", "fn": "VERSE", "start_ms": 0, "end_ms": 1000}])
     got: dict = {}
 

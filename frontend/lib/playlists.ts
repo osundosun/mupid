@@ -9,14 +9,14 @@
  * 들어가지 않아 그 이벤트가 실린 배치가 통째로 거부됐다. 서버 번호를 쓰면서
  * `PLAYLIST_ADD` · `PLAYLIST_REMOVE` 가 "어느 목록인지" 까지 싣게 됐다.
  *
- * 곡은 지금 불러온 카탈로그에서 찾아 붙이고, 없으면 곡 번호로 받아 온다. 예전에는
- * 카탈로그에 없는 곡을 버려서 검색으로 담은 곡이 새로고침하면 사라졌다
+ * 곡은 이 기기가 이미 아는 곡에서 찾아 붙이고, 없으면 곡 번호로 받아 온다. 예전에는
+ * 앞 100곡(카탈로그)에 없는 곡을 버려서 검색으로 담은 곡이 새로고침하면 사라졌다
  * (S15P21A204-443). 지워진 곡만 빠진다.
  */
 
 import { api } from './api/session';
 import type { Playlist, Track } from './mupid-data';
-import { trackResolver } from './catalog-lookup';
+import { trackResolver } from './server-tracks';
 
 /** 서버에 보낼 수 있는 곡인가. 서버에 없는 곡은 `musicId` 가 없다. */
 export const isServerTrack = (track: Track): track is Track & { musicId: number } =>
