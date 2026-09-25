@@ -1976,6 +1976,28 @@ def _flow_penalty(pool: pd.DataFrame, current_track_id: Optional[str],
     return pen
 
 
+def first_chorus_moments(pool: pd.DataFrame, picked: list[int]) -> dict[int, int]:
+    """뽑힌 순간(`pool` 행 번호)마다 **같은 곡의 가장 이른 chorus** 행 번호. 없으면 제자리.
+
+    오늘의 모먼트와 자연어 검색이 쓴다 (S15P21A204-448). 곡이 정해진 **뒤** 재생할
+    순간만 고른다 — chorus 가 없는 곡을 빼지도, 점수를 더하거나 빼지도 않는다.
+    같은 시작 시각이면 `moment_id`(= external_id) 순이다.
+    """
+    tids = pool.track_id.astype(str).to_numpy()
+    starts = pool.start_sec.to_numpy(dtype=float)
+    mids = pool.moment_id.astype(str).to_numpy()
+    want = {tids[i] for i in picked}
+    first: dict[str, tuple] = {}
+    for j in np.flatnonzero(pool.section_label.to_numpy() == "chorus"):
+        t = tids[j]
+        if t not in want:
+            continue
+        key = (starts[j], mids[j], int(j))
+        if t not in first or key < first[t]:
+            first[t] = key
+    return {i: first[tids[i]][2] if tids[i] in first else i for i in picked}
+
+
 def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_plan: Optional[dict] = None,
               current_track_id: Optional[str] = None, current_moment_id: Optional[str] = None,
               beh_events: Optional[list] = None,
@@ -2222,29 +2244,6 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         diag["dropped_prob_below_threshold"] = int((keep & below).sum())
         keep &= ~below
 
-    # 오늘의 모멘트는 **보컬 곡의 첫 후렴**만 낸다 (S15P21A204-448). 곡 순위는 위 점수가
-    # 그대로 정하고, 여기서는 자격 없는 곡을 빼기만 한다 — 보컬이 아니거나(`has_vocal`
-    # 이 거짓·모름) 후보 안에 chorus 가 없는 곡. verse 등으로 대신하지 않고, 모자라도
-    # 게이트를 풀어 채우지 않는다. 재생할 순간은 아래에서 그 곡의 첫 chorus 로 바꾼다.
-    first_chorus: dict[str, int] = {}
-    if daily:
-        tids = pool.track_id.astype(str).to_numpy()
-        starts = pool.start_sec.to_numpy(dtype=float)
-        sidx = pool.section_idx.to_numpy()
-        mids = pool.moment_id.astype(str).to_numpy()
-        for i in sorted(np.flatnonzero(pool.section_label.to_numpy() == "chorus"),
-                        key=lambda i: (starts[i], sidx[i], mids[i])):
-            first_chorus.setdefault(tids[i], int(i))
-        hv = catalog_facets()["_df"].set_index("track_id").has_vocal
-        vocal = {t for t, v in hv.items() if isinstance(v, (bool, np.bool_)) and bool(v)}
-        in_pool = set(tids)
-        keep &= np.fromiter((t in vocal and t in first_chorus for t in tids),
-                            dtype=bool, count=len(tids))
-        diag["daily_moment"] = {"rule": "vocal track, first chorus",
-                                "dropped_no_vocal_tracks": len(in_pool - vocal),
-                                "dropped_no_chorus_tracks": len((in_pool & vocal)
-                                                                - set(first_chorus))}
-
     # 묶음별 라운드로빈: 각 DNA 묶음이 슬롯을 나눠 갖는다.
     # max over clusters 만 쓰면 가중치가 큰 묶음이 top-k 를 독점해서
     # 새로 생긴 취향(작은 묶음)이 영원히 안 나온다.
@@ -2306,21 +2305,27 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
                                     else int(time.time()) // 60)
         gorder = np.argsort(-np.where(keep, final, -1e9))
         cands = [int(i) for i in gorder[n:n * 6]
-                 if pool.iloc[int(i)].track_id not in taken_tracks
-                 and (not daily or keep[int(i)])]
+                 if pool.iloc[int(i)].track_id not in taken_tracks]
         if cands:
             j = int(rng.choice(cands))
             picked[-1] = (j, float(final[j]), -1)
             taken_tracks.add(pool.iloc[j].track_id)
 
-    if daily:
-        # 곡 순서·점수는 그대로 두고 재생할 순간만 그 곡의 첫 chorus 로 바꾼다.
-        picked = [(first_chorus[str(pool.iloc[i].track_id)], fs, cj)
-                  for i, fs, cj in picked]
+    # 재생할 순간 (S15P21A204-448). 곡은 위에서 이미 정해졌다 — 여기서는 그 곡 안에서
+    # 어느 순간을 틀지만 고른다. 점수·순위·결과 수는 그대로다.
+    play: dict[int, int] = {}
+    wanted_flow = _qvals(((query_plan or {}).get("filters") or {}).get("flow"))
+    if (daily or query_plan is not None) and not wanted_flow:
+        play = first_chorus_moments(pool, [i for i, _, _ in picked])
+        diag["moment_rule"] = {"rule": "first_chorus_else_selected",
+                               "switched": sum(1 for i, j in play.items() if i != j)}
+    elif wanted_flow:
+        diag["moment_rule"] = {"rule": "explicit_flow", "flow": wanted_flow}
 
     out = []
     for rank, (i, fs, cj) in enumerate(picked, 1):
-        r = pool.iloc[i]
+        # 점수 칸은 곡을 뽑은 순간(`i`)의 값 그대로, 순간 칸은 재생할 순간(`r`)의 값이다.
+        r = pool.iloc[play.get(i, i)]
         ti = c.track_info(r.track_id)
         jj = cj if (cj is not None and cj >= 0) else int(best_j[i]) if len(C) else -1
         dm = dna_meta[jj] if (len(C) and 0 <= jj < len(dna_meta)) else {}
