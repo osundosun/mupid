@@ -399,6 +399,55 @@ kubectl -n mupid exec -i clickhouse-0 -- \
 않는다(`KAFKA_AUTO_CREATE_TOPICS_ENABLE` 이 false 다 — 파티션 1짜리가 자동 생성되면
 컨슈머 다섯이 놀게 되므로 일부러 껐다).
 
+### 7-1. Qdrant — 순간 벡터 저장소 (S15P21A204-456)
+
+`infra_k8s/base/qdrant.yaml`. node-b 에 StatefulSet 하나, 볼륨 둘(`storage`·`snapshots`, local-path),
+ClusterIP 만(밖에 열지 않는다). **떠도 ai 는 local 갈래로 돈다** — 전환은 벡터가 채워진 뒤(457)
+`MUPID_AI_SERVER_ENV` 에 `MUPID_VECTOR_BACKEND=qdrant` 를 넣는 것이다.
+
+**키 두 개.** 비면 Qdrant 가 무작위 키로 잠긴 채 뜬다(인증 없이 열리지 않는다).
+
+| 키 | 넣는 곳 | Secret | 받는 파드 |
+|---|---|---|---|
+| `MUPID_QDRANT_API_KEY` (쓰기) | `MUPID_API_ENV` (`infra/deploy/.env.example`) | `mupid-secrets` | qdrant · qdrant-snapshot · (457 뒤) api |
+| `MUPID_QDRANT_READ_ONLY_API_KEY` (읽기) | `MUPID_AI_SERVER_ENV` (`infra/ci/VARIABLES.md`) | `mupid-ai-secrets` | qdrant · ai |
+
+수신기는 api·ai 만 다시 띄운다. **키를 넣거나 바꾼 뒤에는 Qdrant 도 다시 띄운다:**
+
+```bash
+kubectl -n mupid rollout restart statefulset/qdrant
+kubectl -n mupid rollout status statefulset/qdrant --timeout=300s
+kubectl -n mupid logs qdrant-0 | grep -c 'locked with a random key'   # 0 이어야 한다
+```
+
+**컬렉션 만들기** — 멱등이라 다시 돌려도 된다. 쓰기 키를 표준 입력으로 준다(명령줄에 남지 않게).
+ai 파드에서 돌리는 것은 NetworkPolicy 가 ai 의 연결을 받기 때문이다.
+
+```bash
+kubectl -n mupid get secret mupid-secrets -o jsonpath='{.data.MUPID_QDRANT_API_KEY}' | base64 -d \
+  | kubectl -n mupid exec -i deploy/ai -- python -m ai_server.tools.qdrant_collection --api-key-stdin
+```
+
+**격리 확인** — 허용 목록 밖의 파드에서는 연결 자체가 막혀야 한다(키와 무관하게).
+
+```bash
+kubectl -n mupid run qdrant-probe --rm -i --restart=Never --image=curlimages/curl -- \
+  curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://qdrant:6333/readyz   # 000 (시간 초과)
+kubectl -n mupid exec deploy/ai -- python -c \
+  "import urllib.request;print(urllib.request.urlopen('http://qdrant:6333/readyz').status)"  # 200
+```
+
+**스냅샷** — CronJob `qdrant-snapshot` 이 매일 05:30(KST) 뜨고 3판을 남긴다. 파일은 Qdrant 파드의
+`snapshots` 볼륨(node-b 디스크)에만 있다. 복구:
+
+```bash
+kubectl -n mupid exec qdrant-0 -- ls /qdrant/snapshots/moments__mert-v1-95m
+# PUT /collections/moments__mert-v1-95m/snapshots/recover {"location":"file:///qdrant/snapshots/moments__mert-v1-95m/<이름>"}
+```
+
+node-b 디스크를 통째로 잃으면 스냅샷도 함께 잃는다 — 그때는 JupyterHub 분석 배치가 벡터를 Spring
+벡터 등록 API 로 다시 보낸다(설계 §6.1 백업).
+
 ### 8. DB Studio 클러스터 (선택)
 
 마스터 1(NODE_B) + 리플리카 1(NODE_A). 어느 쪽에 접속해도 같은 계정·같은 DB 목록을

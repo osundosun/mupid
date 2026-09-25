@@ -19,7 +19,14 @@
 잰 것
     cold    그 사본의 첫 요청 (사본마다 한 번 세는 준비가 들어간다)
     warm    같은 사본으로 거듭 부른 요청의 중앙값 — 운영에서 대부분의 요청이 이쪽이다
+    p95     cold 한 번과 warm `--repeat` 번을 합친 표본의 95 백분위 (설계 §13 5단계: < 1초)
     view    본문 `catalog` 로 요청 사본을 만드는 시간 (본문이 바뀔 때마다 한 번)
+
+**Qdrant 갈래** (S15P21A204-456) — 로컬 Qdrant 를 띄우고 판의 벡터를 넣은 뒤(개발 전용 적재
+`tools/qdrant_dev_load.py`) 같은 시나리오를 `MUPID_VECTOR_BACKEND=qdrant` 로 잰다:
+
+    docker run -d --name bench-qdrant -p 127.0.0.1:6333:6333         -e QDRANT__SERVICE__API_KEY=w -e QDRANT__SERVICE__READ_ONLY_API_KEY=r qdrant/qdrant:v1.19.1
+    python -m ai_server.tools.bench_request_path --backend qdrant --qdrant-url http://127.0.0.1:6333         --qdrant-write-key w --qdrant-read-key r --repeat 30
 """
 from __future__ import annotations
 
@@ -152,9 +159,12 @@ def _time(fn, repeat: int) -> dict:
         t0 = time.perf_counter()
         fn()
         warm.append(time.perf_counter() - t0)
+    every = sorted([cold] + warm)
+    p95 = every[min(len(every) - 1, int(np.ceil(0.95 * len(every))) - 1)]
     return {"cold_ms": round(cold * 1000, 1),
             "warm_ms": round(statistics.median(warm) * 1000, 1) if warm else None,
             "warm_max_ms": round(max(warm) * 1000, 1) if warm else None,
+            "p95_ms": round(p95 * 1000, 1),
             "returned": len(first.get("results", first) if isinstance(first, dict) else first)}
 
 
@@ -169,6 +179,10 @@ def main() -> int:
     ap.add_argument("--workdir", default="bench_artifacts")
     ap.add_argument("--label", default="")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--backend", choices=("local", "qdrant"), default="local")
+    ap.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
+    ap.add_argument("--qdrant-write-key", default="")
+    ap.add_argument("--qdrant-read-key", default="")
     a = ap.parse_args()
 
     root = Path(a.workdir).resolve()
@@ -178,6 +192,15 @@ def main() -> int:
     os.environ["MUPID_AI_ARTIFACT_DIR"] = str(root)
     os.environ.pop("MUPID_PINECONE_ENABLED", None)
     os.environ.pop("MUPID_CLICKHOUSE_URL", None)
+    os.environ["MUPID_VECTOR_BACKEND"] = a.backend
+    qdrant_load = None
+    if a.backend == "qdrant":
+        from ai_server.tools import qdrant_dev_load
+        qdrant_load = qdrant_dev_load.load(a.qdrant_url, a.qdrant_write_key,
+                                           root / "data" / "proc" / "mupid")
+        qdrant_load.pop("mu", None)
+        os.environ["MUPID_QDRANT_URL"] = a.qdrant_url
+        os.environ["MUPID_QDRANT_READ_ONLY_API_KEY"] = a.qdrant_read_key
 
     from ai_server.app import catalog_body as cb
     from ai_server.app import recommender as rc
@@ -224,9 +247,15 @@ def main() -> int:
             "internal:new", 10, set(), True, {"filters": {"mood": [MOODS[1]]}})),
         "similar": on(view, lambda: rc.similar_moments(seed, 10)),
     }
+    if a.backend == "qdrant":
+        with rc.using(view):
+            problem = rc.vector_store_problem()
+        if problem:
+            raise SystemExit(f"Qdrant 준비 안 됨: {problem}")
     results = {name: _time(fn, a.repeat) for name, fn in scenarios.items()}
     report = {
-        "label": a.label, "tracks": a.tracks, "moments": a.tracks * a.per_track,
+        "label": a.label, "backend": a.backend, "qdrant_load": qdrant_load,
+        "tracks": a.tracks, "moments": a.tracks * a.per_track,
         "dim": a.dim, "repeat": a.repeat,
         "build_s": round(build_s, 1), "catalog_load_s": round(load_s, 2),
         "view_build_s": round(view_s, 2), "search_view_build_s": round(s_view_s, 2),

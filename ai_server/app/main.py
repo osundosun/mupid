@@ -20,7 +20,7 @@ import pandas as pd
 from fastapi import FastAPI
 
 from . import (index_contract, internal_api, labels_store, model_bundle, paths,
-               pinecone_store, recommender)
+               pinecone_store, qdrant_store, recommender)
 from .log import log
 
 _STARTED = time.time()
@@ -154,10 +154,31 @@ def _startup() -> None:
         log(f"색인 적재 실패 — {_STATE['error']}")
         return
 
-    # ③ 벡터 검색 갈래. Pinecone 을 켜 두었으면 **평균·namespace·판이 한 묶음인지**
-    #    기동에서 본다. 하나만 갈아 끼운 상태는 오류가 아니라 유사도 저하로만
-    #    드러나므로 요청을 받기 전에 잡아야 한다.
-    if pinecone_store.enabled():
+    # ③ 벡터 검색 갈래. 모르는 값이면 여기서 멈춘다 — 조용히 local 로 내려가지 않는다.
+    try:
+        backend = recommender.vector_backend()
+    except ValueError as e:
+        _STATE["error"] = str(e)
+        log(f"벡터 검색 갈래 설정 오류 — {_STATE['error']}")
+        return
+
+    #    Pinecone 을 켜 두었으면 **평균·namespace·판이 한 묶음인지** 기동에서 본다.
+    #    하나만 갈아 끼운 상태는 오류가 아니라 유사도 저하로만 드러나므로 요청을
+    #    받기 전에 잡아야 한다.
+    if backend == "qdrant":
+        # Qdrant 는 **여기서 멈추지 않는다.** 판정은 `/internal/ready` 가 요청마다(몇 초 캐시)
+        # 다시 한다 — Qdrant 가 늦게 뜨거나 잠깐 죽었다 살아나도 재기동 없이 준비 완료로
+        # 돌아온다. 기동에서는 판정을 한 번 찍어 둔다.
+        why = recommender.vector_store_problem()
+        _STATE["vector_search"] = {"backend": "qdrant", **qdrant_store.settings(),
+                                   "problem": why}
+        if why:
+            log(f"벡터 검색 — Qdrant 준비 안 됨 (준비 판정 실패) — {why}")
+        else:
+            st = recommender.vector_store().status()
+            log(f"벡터 검색 — Qdrant · 컬렉션 {st['collection']!r} · {st.get('points')}구간 "
+                f"· μ {st['mu_source']}")
+    elif backend == "pinecone":
         try:
             got = pinecone_store.center()
             # control 의 세대가 지금 판과 같은가. **저장본이 있을 때만** 다시 잴 수
@@ -186,13 +207,39 @@ def _generation() -> dict:
     갱신 배치가 이 값을 읽어 "새 μ 가 서버 메모리에 반영됐는가" 를 판정한다.
     읽는 김에 캐시도 갱신되므로, 배치가 물어보는 행위 자체가 반영을 앞당긴다.
     """
-    if not pinecone_store.enabled():
+    try:
+        backend = recommender.vector_backend()
+    except ValueError as e:
+        return {"backend": None, "error": str(e)}
+    if backend == "qdrant":
+        if recommender.CAT is None:
+            return {"backend": "qdrant"}
+        try:
+            store = recommender.vector_store()
+            # 지난 판정만 싣는다 — /health 는 liveness 라 Qdrant 를 기다리면 안 된다.
+            return {"backend": "qdrant", "generation": store.generation,
+                    "status": store.cached_status()}
+        except Exception as e:                   # μ 가 없는 판 등 — /health 는 늘 답한다
+            return {"backend": "qdrant", "error": f"{type(e).__name__}: {e}"}
+    if backend != "pinecone":
         return {"backend": "local"}
     try:
         got = pinecone_store.center(reload=True)
         return {"backend": "pinecone", **got.stats()}
     except Exception as e:
         return {"backend": "pinecone", "error": f"{type(e).__name__}: {e}"}
+
+
+def _vector_settings() -> dict:
+    """갈래와 그 설정. **키는 있는지 여부만** 싣는다. 갈래 설정이 틀려도 /health 는 답한다."""
+    try:
+        backend = recommender.vector_backend()
+    except ValueError as e:
+        return {"backend": None, "error": str(e)}
+    out = {"backend": backend, **pinecone_store.settings()}
+    if backend == "qdrant":
+        out["qdrant"] = qdrant_store.settings()
+    return out
 
 
 def _model_status() -> dict:
@@ -239,8 +286,7 @@ def health() -> dict:
         "metadata_source": "request",
         # 순간 벡터를 어디서 읽는가. Pinecone 을 켜 두었는데 값이 비면 검색이
         # 통째로 실패하므로, 설정 여부가 준비 판정과 같은 화면에 있어야 한다.
-        "vector_search": {"backend": recommender.vector_backend(),
-                          **pinecone_store.settings()},
+        "vector_search": _vector_settings(),
         # 갱신 중인지, 어느 세대를 들고 있는지. 배치가 "서버가 새 세대를 읽었나" 를
         # 이 값으로 확인하고 그 뒤에 READY 로 넘어간다.
         "vector_generation": _generation(),
