@@ -849,3 +849,16 @@ def test_next_and_similar_do_not_use_the_moment_rule(svc, monkeypatch):
         sim = svc.similar_moments("T000000#1", 3)
     assert nxt["results"] and "moment_rule" not in nxt["diagnostics"]
     assert sim
+
+
+def test_reason_describes_the_basis_moment_and_says_where_playback_starts(svc, monkeypatch):
+    """사유 문장은 곡을 뽑은 순간으로 쓰고, 재생 순간이 다르면 그것을 덧붙인다(시연용 임시)."""
+    view = _daily_view(svc)
+    base = _baseline(svc, monkeypatch, lambda: _daily(svc, view))
+    got = _daily(svc, view)
+    for g, b in zip(got["results"], base["results"]):
+        if g["moment_id"] == b["moment_id"]:
+            assert g["reason"] == b["reason"]
+        else:
+            assert g["reason"].startswith(b["reason"])
+            assert f'재생은 첫 chorus {g["start_sec"]:.0f}~{g["end_sec"]:.0f}초' in g["reason"]

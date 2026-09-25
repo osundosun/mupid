@@ -2313,6 +2313,9 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
 
     # 재생할 순간 (S15P21A204-448). 곡은 위에서 이미 정해졌다 — 여기서는 그 곡 안에서
     # 어느 순간을 틀지만 고른다. 점수·순위·결과 수는 그대로다.
+    #
+    # **시연용 임시 처리다.** 곡을 뽑은 근거 순간과 들려주는 순간이 다를 수 있다. 본 수정은
+    # 점수를 매기기 전에 후보 순간을 곡마다 첫 chorus 로 좁혀 둘을 맞추는 것이다(후속 티켓).
     play: dict[int, int] = {}
     wanted_flow = _qvals(((query_plan or {}).get("filters") or {}).get("flow"))
     if (daily or query_plan is not None) and not wanted_flow:
@@ -2326,6 +2329,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     for rank, (i, fs, cj) in enumerate(picked, 1):
         # 점수 칸은 곡을 뽑은 순간(`i`)의 값 그대로, 순간 칸은 재생할 순간(`r`)의 값이다.
         r = pool.iloc[play.get(i, i)]
+        b = pool.iloc[i]          # 사유 문장은 근거 순간으로 쓴다 — 유사도가 그 순간의 값이다
         ti = c.track_info(r.track_id)
         jj = cj if (cj is not None and cj >= 0) else int(best_j[i]) if len(C) else -1
         dm = dna_meta[jj] if (len(C) and 0 <= jj < len(dna_meta)) else {}
@@ -2343,13 +2347,15 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             "matched_dna": dm.get("dna_id"), "matched_dna_rep": dm.get("rep_moment_id"),
             "reason": (
                 f"내 선호 구간 묶음 {dm.get('dna_id','(콜드스타트)')}"
-                f"(대표 {dm.get('rep_moment_id','-')})와 이 곡 {int(r.section_idx)}번 "
-                f"{r.section_label} 구간 {float(r.start_sec):.0f}~{float(r.end_sec):.0f}초가 "
+                f"(대표 {dm.get('rep_moment_id','-')})와 이 곡 {int(b.section_idx)}번 "
+                f"{b.section_label} 구간 {float(b.start_sec):.0f}~{float(b.end_sec):.0f}초가 "
                 f"유사도 {float(s_rule[i]):.3f}"
                 + (f" · 선호 확률 {float(prob[i]):.3f}" if mode == "logistic" else "")
                 + (f" · 학습모델 점수 {float(s_model[i]):.3f}" if zu is not None else "")
                 + (f" · BPM {ti['bpm']:.0f}(선호 {bpm_pref:.0f})" if bpm_pref else "")
                 + (f" · 자연어 의미 유사도 {float(clap_score[i]):.3f}" if clap_active else "")
+                + (f" · 재생은 첫 chorus {float(r.start_sec):.0f}~{float(r.end_sec):.0f}초"
+                   if play.get(i, i) != i else "")
             ),
         })
     diag.update({"n_pairs_compared": n_pairs, "candidates": len(pool),
