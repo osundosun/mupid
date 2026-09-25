@@ -373,17 +373,31 @@ _VIEWS_LOCK = threading.Lock()
 
 
 def _view(svc, body: dict):
-    """본문의 `catalog` 를 묶은 요청 전용 카탈로그. 모양이 틀리면 400 이다."""
+    """본문의 `catalog` 를 묶은 요청 전용 카탈로그. 모양이 틀리면 400 이다.
+
+    **해시를 먼저 보고 스냅샷은 처음 본 본문에만 만든다**(S15P21A204-452). 스냅샷을
+    만드는 것은 곡·구간마다 도는 파이썬 반복이라, 같은 본문이 거듭 오는 `daily`·`next`
+    에서 요청마다 그것을 치르면 캐시가 있으나 마나다. 해시가 같으면 이미 검증을 통과한
+    본문과 내용이 같으므로 모양 검사도 다시 할 필요가 없다. 해시(직렬화 + sha256) 자체는
+    본문 크기에 비례한다 — 본문에 `catalog` 가 있는 한 남는 비용이고, 계약 v3(458)에서
+    본문과 함께 사라진다.
+    """
+    if not isinstance(body, dict):
+        raise ApiError("INVALID_CATALOG", "catalog 는 객체여야 한다")
     try:
-        snap = catalog_body.from_body(body)
-    except catalog_body.CatalogBodyError as e:
-        raise ApiError("INVALID_CATALOG", str(e)) from None
-    key = (id(svc.CAT), snap.digest)
+        digest = catalog_body.digest_of(body)
+    except (TypeError, ValueError) as e:
+        raise ApiError("INVALID_CATALOG", f"catalog 를 읽지 못했다: {e}") from None
+    key = (id(svc.CAT), digest)
     with _VIEWS_LOCK:
         hit = _VIEWS.get(key)
         if hit is not None:
             _VIEWS.move_to_end(key)
             return hit
+    try:
+        snap = catalog_body.from_body(body, digest=digest)
+    except catalog_body.CatalogBodyError as e:
+        raise ApiError("INVALID_CATALOG", str(e)) from None
     view = svc.CAT.with_catalog(snap)
     if len(view.pool) == 0:
         raise ApiError("NO_CANDIDATES", "해당되는 노래가 없습니다.")
