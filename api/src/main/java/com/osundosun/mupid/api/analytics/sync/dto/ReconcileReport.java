@@ -12,7 +12,8 @@ import java.util.Set;
  * @param mismatchedTracks   한 레플리카에서라도 어긋난 곡. 미반영 기록에 넣는다
  * @param mismatchByReplica  레플리카마다 어긋난 곡 수
  * @param onlyInClickHouse   MySQL 에 구간이 하나도 없는데 ClickHouse 에는 있는 곡 수.
- *                           교체로는 고칠 수 없어(빈 목록은 쓰지 않는다) 세기만 한다 — 455 의 몫
+ *                           교체로는 고칠 수 없어(빈 목록은 쓰지 않는다) 세기만 한다. 곡 특징 대조에서는
+ *                           MySQL 에 곡 행이 없는 곡이다
  * @param staleVersions      MySQL 과 다른 옛 분석 버전 행이 ClickHouse 에 남은 곡 수. 불일치로
  *                           세지 않는다 — 딕셔너리는 현재 버전만 본다
  * @param error              대조 자체가 실패했으면 사유. 성공이면 null

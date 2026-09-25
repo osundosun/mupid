@@ -109,7 +109,7 @@ public class AdminDashboardServiceImpl implements AdminDashboardService {
         statuses.add(probeClickHouse());
         // 붙어 있는가가 아니라 **MySQL 과 같은가**다. ClickHouse 가 살아 있어도 구간 사본이
         // 밀리면 재생 신호가 버려진다 — 미반영 나이·마지막 대조 불일치로 판정한다 (451).
-        statuses.add(analyticsSyncMonitor.status());
+        statuses.addAll(analyticsSyncMonitor.statuses());
         statuses.add(probeStorage());
         statuses.add(probeKafka());
         return statuses;

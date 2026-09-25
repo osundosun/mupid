@@ -70,6 +70,16 @@ spec:
               esac
               # The address the other node fetches parts from.
               export CH_INTERSERVER_HOST="${HOSTNAME}.clickhouse"
+              # The serving account (users/20-serving-user.xml) opens with an EMPTY
+              # password when its variable is unset — ClickHouse 25.3 does not refuse
+              # a missing from_env. Until the secret is registered, lock the account
+              # with a random password nobody knows instead of leaving it open, and
+              # keep the node up. Backticks, not $(...): kubelet expands $( in args.
+              if [ -z "${MUPID_CLICKHOUSE_SERVING_PASSWORD:-}" ]; then
+                MUPID_CLICKHOUSE_SERVING_PASSWORD=`head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'`
+                export MUPID_CLICKHOUSE_SERVING_PASSWORD
+                echo "MUPID_CLICKHOUSE_SERVING_PASSWORD unset: serving account locked" >&2
+              fi
               exec /entrypoint.sh
           env:
             - {name: CH_HOST_1, value: clickhouse-0.clickhouse}
@@ -83,6 +93,10 @@ spec:
             - {name: CH_MAX_SERVER_MEMORY, value: '3221225472'}
             - name: MUPID_CLICKHOUSE_PASSWORD
               valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_CLICKHOUSE_PASSWORD}}
+            # Optional so that a deploy before the secret exists still starts the
+            # node; the script above locks the account in that case.
+            - name: MUPID_CLICKHOUSE_SERVING_PASSWORD
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_CLICKHOUSE_SERVING_PASSWORD, optional: true}}
           ports:
             - {containerPort: 8123}
             - {containerPort: 9000}
@@ -102,6 +116,7 @@ spec:
             - {name: server, mountPath: /etc/clickhouse-server/config.d/10-macros.xml, subPath: 10-macros.xml, readOnly: true}
             - {name: users, mountPath: /etc/clickhouse-server/users.d/00-profile.xml, subPath: 00-profile.xml, readOnly: true}
             - {name: users, mountPath: /etc/clickhouse-server/users.d/10-mupid-user.xml, subPath: 10-mupid-user.xml, readOnly: true}
+            - {name: users, mountPath: /etc/clickhouse-server/users.d/20-serving-user.xml, subPath: 20-serving-user.xml, readOnly: true}
           readinessProbe:
             # default is restricted to 127.0.0.1 by the image's own
             # users.d/default-user.xml, so the probe uses it from inside the pod

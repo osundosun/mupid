@@ -84,7 +84,7 @@ public class TrackSectionSync {
         SYNCED,
         /** 다른 인스턴스가 잡고 있거나 이미 누가 처리했다. */
         SKIPPED,
-        /** MySQL 에 구간이 없다. 지울 것은 455(곡 삭제 전파)의 몫이라 행만 치웠다. */
+        /** MySQL 에 구간이 없다. 교체로는 지울 수 없어 행만 치웠다 — 서빙에서는 곡 특징이 가린다. */
         NOTHING_TO_WRITE,
         /** ClickHouse 쓰기가 실패해 실패를 적었다. */
         FAILED
@@ -180,8 +180,9 @@ public class TrackSectionSync {
             List<MusicSectionAnalysis> current =
                 sectionRepository.findByMusic_MusicIdOrderByIndexAsc(musicId);
             if (current.isEmpty()) {
-                // 구간을 모두 지운 곡(관리자 화면). ClickHouse 쪽 행을 지우는 것은 곡 삭제
-                // 전파(455)가 맡는다 — 교체는 빈 목록을 받으면 아무것도 하지 않는다.
+                // 구간을 모두 지운 곡(관리자 화면). 교체는 빈 목록을 받으면 아무것도 하지 않아
+                // ClickHouse 쪽 행이 남는다. 서빙에는 안 보인다 — 그 곡의 track_features 버전이
+                // 빈 문자열이라 v_serving_sections 가 고르지 않는다 (S15P21A204-455).
                 pendingRepository.deletePending(musicId, KIND.name());
                 log.warn("미반영 곡에 MySQL 구간이 없어 기록만 치웠다. ClickHouse 쪽은 그대로다. "
                     + "musicId={}", musicId);
@@ -224,7 +225,8 @@ public class TrackSectionSync {
                 row.getExternalId(),
                 row.getSectionLabel().name(),
                 row.getStartTimeMs(),
-                row.getEndTimeMs()))
+                row.getEndTimeMs(),
+                row.getEnergy()))
             .toList();
     }
 

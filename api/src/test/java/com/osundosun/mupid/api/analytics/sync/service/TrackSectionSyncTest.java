@@ -69,7 +69,7 @@ class TrackSectionSyncTest {
     }
 
     private static List<TrackSectionRow> rows() {
-        return List.of(new TrackSectionRow(MUSIC_ID, 5001, "v1", 0, "T001001#0", "CHORUS", 0, 30_000));
+        return List.of(new TrackSectionRow(MUSIC_ID, 5001, "v1", 0, "T001001#0", "CHORUS", 0, 30_000, null));
     }
 
     @Test
@@ -132,8 +132,8 @@ class TrackSectionSyncTest {
         verify(clickHouse).replaceSections(eq(MUSIC_ID), eq("v1"), written.capture());
         // 실패했던 요청의 스냅숏이 아니라 **지금 MySQL 에 있는 행**이다.
         assertThat(written.getValue()).containsExactly(
-            new TrackSectionRow(MUSIC_ID, 9001, "v1", 0, "T001001#0", "CHORUS", 0, 12_000),
-            new TrackSectionRow(MUSIC_ID, 9002, "v1", 1, "T001001#1", "CHORUS", 12_000, 40_000));
+            new TrackSectionRow(MUSIC_ID, 9001, "v1", 0, "T001001#0", "CHORUS", 0, 12_000, null),
+            new TrackSectionRow(MUSIC_ID, 9002, "v1", 1, "T001001#1", "CHORUS", 12_000, 40_000, null));
         verify(pending).deletePending(MUSIC_ID, KIND);
     }
 

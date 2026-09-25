@@ -3,6 +3,7 @@ package com.osundosun.mupid.api.music.service;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.analytics.sync.service.TrackFeatureSync;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicAnalysis;
@@ -19,6 +20,7 @@ public class MusicAnalysisServiceImpl implements MusicAnalysisService {
 
     private final MusicService musicService;
     private final MusicAnalysisRepository musicAnalysisRepository;
+    private final TrackFeatureSync trackFeatureSync;
 
     /**
      * 곡당 한 행이라 <b>지우고 다시 넣지 않는다.</b>
@@ -61,6 +63,9 @@ public class MusicAnalysisServiceImpl implements MusicAnalysisService {
         existing.setLanguage(blankToNull(request.language()));
         existing.setCategory(blankToNull(request.category()));
         musicAnalysisRepository.save(existing);
+        // ClickHouse `track_features` 사본. 미반영 기록을 이 트랜잭션 안에서 남기고 커밋 뒤에 쓴다
+        // (S15P21A204-455, `TrackFeatureSync`).
+        trackFeatureSync.markChanged(musicId);
 
         return new MusicAnalysisBulkResponse(
             musicId,

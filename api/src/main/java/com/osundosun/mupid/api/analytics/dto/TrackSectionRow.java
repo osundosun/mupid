@@ -29,6 +29,8 @@ package com.osundosun.mupid.api.analytics.dto;
  * @param fn                     구간 종류({@code INTRO}·{@code CHORUS}…)
  * @param startMs                구간 시작
  * @param endMs                  구간 끝
+ * @param energy                 구간 RMS(0~1). 모르면 null. 서빙 특징 조회가 요청 본문
+ *                               {@code catalog.sections.energy} 대신 읽는다 (S15P21A204-455)
  */
 public record TrackSectionRow(
     int trackId,
@@ -38,7 +40,8 @@ public record TrackSectionRow(
     String sectionUid,
     String fn,
     int startMs,
-    int endMs
+    int endMs,
+    Double energy
 ) {
 
 }

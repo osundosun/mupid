@@ -5,8 +5,10 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -23,9 +25,17 @@ import com.osundosun.mupid.api.admin.error.AdminErrorCode;
 import com.osundosun.mupid.api.admin.response.AdminResourceSummary;
 import com.osundosun.mupid.api.admin.response.AdminRowPageResponse;
 import com.osundosun.mupid.api.admin.response.AdminSchemaResponse;
+import com.osundosun.mupid.api.analytics.sync.service.TrackFeatureSync;
 import com.osundosun.mupid.api.analytics.sync.service.TrackSectionSync;
+import com.osundosun.mupid.api.code.entity.Code;
+import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.common.exception.BusinessException;
+import com.osundosun.mupid.api.music.entity.Music;
+import com.osundosun.mupid.api.music.entity.MusicAnalysis;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
+import com.osundosun.mupid.api.music.mapping.entity.MusicGenre;
+import com.osundosun.mupid.api.music.mapping.entity.MusicMood;
+import com.osundosun.mupid.api.stream.entity.Stream;
 import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.enumerate.UserRole;
 import com.osundosun.mupid.api.user.enumerate.UserStatus;
@@ -93,6 +103,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
      * 남겨 재시도 작업이 1분 안에 MySQL 의 지금 구간으로 덮게 한다 (S15P21A204-451).
      */
     private final TrackSectionSync trackSectionSync;
+    private final TrackFeatureSync trackFeatureSync;
 
     /**
      * MySQL 쪽. `JdbcTemplate` 빈이 둘이라(ClickHouse 용이 따로 있다) 못 박아 둔다.
@@ -323,6 +334,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
 
         persist(entity);
         markSectionChanged(entity, null);
+        markFeaturesChanged(featureMusicIds(entity));
         return toRow(meta, entity);
     }
 
@@ -335,10 +347,13 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         // 값을 덮어쓰기 **전에** 막는다. 덮어쓴 뒤에 보면 "바뀌었는가" 를 알 수 없다.
         guardUserUpdate(meta, entity, body);
         Integer musicBefore = sectionMusicId(entity);
+        Set<Integer> featuresBefore = featureMusicIds(entity);
 
         apply(meta, entity, body, false);
         flush();
         markSectionChanged(entity, musicBefore);
+        featuresBefore.addAll(featureMusicIds(entity));
+        markFeaturesChanged(featuresBefore);
         return toRow(meta, entity);
     }
 
@@ -349,10 +364,13 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         Object entity = findOrThrow(meta, id);
 
         guardUserDelete(meta, entity);
+        // 지우기 전에 센다 — 코드를 쓰는 곡은 지운 뒤에는 질의로 찾을 수 없다.
+        Set<Integer> features = featureMusicIds(entity);
 
         entityManager.remove(entity);
         flush();
         markSectionChanged(entity, null);
+        markFeaturesChanged(features);
     }
 
     // ------------------------------------------------------------ 사본 동기화
@@ -375,6 +393,54 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         if (musicBefore != null && !musicBefore.equals(musicNow)) {
             trackSectionSync.markPending(musicBefore, section.getAnalysisVersion());
         }
+    }
+
+    /**
+     * 곡 특징({@code track_features}, S15P21A204-455)에 실리는 값을 바꾼 행이면 그 곡들을 올린다.
+     *
+     * <p>곡({@code is_deleted} — 삭제·복구), 곡 분석, 곡 장르·무드, 스트림(재생 가능 여부·길이),
+     * 구간(문자열 곡 ID·분석 버전), 그리고 장르·무드 <b>코드</b>다. 코드 이름을 고치면 그 코드를 단
+     * 곡 전부의 {@code genres}·{@code moods} 가 바뀐다. 무엇이 바뀌었는지 가리지 않는다 — 곡 특징은
+     * 곡 단위로 통째로 다시 쓰므로 안 바뀐 곡을 올려도 같은 값을 한 번 더 쓸 뿐이다.
+     */
+    private void markFeaturesChanged(Set<Integer> musicIds) {
+        musicIds.forEach(trackFeatureSync::markChanged);
+    }
+
+    /** 이 행이 곡 특징에 닿는 곡 번호. 수정은 고치기 전과 뒤를 합쳐 부른다(곡을 옮긴 경우). */
+    private Set<Integer> featureMusicIds(Object entity) {
+        Set<Integer> out = new LinkedHashSet<>();
+        if (entity instanceof Music music) {
+            out.add(music.getMusicId());
+        } else if (entity instanceof MusicAnalysis analysis) {
+            out.add(analysis.getMusicId());
+        } else if (entity instanceof MusicGenre genre && genre.getMusic() != null) {
+            out.add(genre.getMusic().getMusicId());
+        } else if (entity instanceof MusicMood mood && mood.getMusic() != null) {
+            out.add(mood.getMusic().getMusicId());
+        } else if (entity instanceof Stream stream && stream.getMusic() != null) {
+            out.add(stream.getMusic().getMusicId());
+        } else if (entity instanceof MusicSectionAnalysis section && section.getMusic() != null) {
+            out.add(section.getMusic().getMusicId());
+        } else if (entity instanceof Code code && code.getCodeId() != null) {
+            out.addAll(musicUsing(code));
+        }
+        out.remove(null);
+        return out;
+    }
+
+    private List<Integer> musicUsing(Code code) {
+        String jpql;
+        if (code.getCodeType() == CodeType.GENRE) {
+            jpql = "SELECT g.musicGenreId.musicId FROM MusicGenre g WHERE g.genreCode.codeId = :codeId";
+        } else if (code.getCodeType() == CodeType.MOOD) {
+            jpql = "SELECT m.musicMoodId.musicId FROM MusicMood m WHERE m.moodCode.codeId = :codeId";
+        } else {
+            return List.of();
+        }
+        return entityManager.createQuery(jpql, Integer.class)
+            .setParameter("codeId", code.getCodeId())
+            .getResultList();
     }
 
     private static Integer sectionMusicId(Object entity) {

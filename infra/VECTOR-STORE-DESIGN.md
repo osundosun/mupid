@@ -211,6 +211,9 @@ Spring: 번역 + **최종 필터(삭제·재생 가능, MySQL 기준)** ──�
 (§8.1). 그리고 **삭제된 26곡의 구간 223개가 ClickHouse 에 그대로 있다** — MySQL 도 논리 삭제라
 둘은 같지만, ClickHouse 는 삭제됐다는 사실을 모른다.
 
+> **455 에서**: 구간 사본은 그대로 두고(MySQL 도 지우지 않는다) 삭제를 `track_features.is_deleted` 로
+> 싣는다. 서빙은 그 표와 맞춰 삭제된 곡을 뺀다(§6.2). 배포 뒤 첫 대조·재시도가 26곡을 `is_deleted = true` 로 채운다.
+
 ### 5.4 소유권
 
 | 저장소 | 쓰는 쪽 | 정본인가 |
@@ -261,11 +264,15 @@ Spring API(§6.6)로 다시 보낸다 — 설계 기준 90만 구간이면 곡�
 |---|---|---|
 | `track_sections` | 구간 사본 (있음) | 그대로. `analysis_version` 을 MySQL 과 같은 값으로 |
 | **`track_features`** (신규) | — | 곡 단위 사본: `track_id`(music_id), `track`(문자열 곡 ID), `duration_ms`, `bpm`, `bpm_requested_min/max`, `language`, `category`, `genres` Array, `moods` Array, `has_vocal`, `vocal_gender`, **`is_deleted`, `playable`**, `analysis_version`, `version`(Spring 이 쓴 시각) |
-| **`section_features`** (선택) | — | 구간 단위 추가 값: `energy`. `track_sections` 에 열을 더할지 따로 둘지는 구현 때 정한다 |
+| ~~`section_features`~~ (선택) | — | → **`track_sections` 에 `energy` 열을 더했다 (455).** MySQL 에서 같은 행(`music_section_analysis.energy`)이라 같은 요청이 같이 바꾸고, 같은 곡 단위 교체·미반영 기록·대조를 그대로 탄다. 표를 나누면 구간 하나를 두 표에서 교체하고 옛 순번도 두 번 지워야 한다 |
 
 - 둘 다 `track_sections` 와 같은 방식: `ReplicatedReplacingMergeTree`, `mupid_all`, **곡 단위 교체**,
   버전 컬럼.
 - 값의 정의는 지금 `catalog` 열(연동 계약 2026-09-23 절 표)을 그대로 옮긴다.
+  → 455: Spring `TrackFeatureSource` 가 `RecommenderCatalogServiceImpl.build` 와 같은 규칙으로 만들고
+  (`TrackFeatureMysqlTest`), AI `feature_store.Lookup.body()` 가 본문과 같은 값·순서를 낸다(`test_feature_store.py`).
+- 미반영 기록은 종류를 나눈다(`kind = TRACK_FEATURES`) — 입구가 거의 겹치지 않고, 한쪽 실패가 다른 쪽을
+  막지 않게. 이유와 쓰기 입구 목록은 `api/knowledge/architecture/analytics-sync.md`.
 - **`is_deleted`·`playable` 을 싣는다.** 지금은 삭제된 곡의 구간이 ClickHouse 에서 살아 있는
   것처럼 보인다(§5.3). 곡 삭제·복구, 스트림 상태 변경도 Spring 이 ClickHouse 에 쓴다.
 
@@ -273,13 +280,14 @@ Spring API(§6.6)로 다시 보낸다 — 설계 기준 90만 구간이면 곡�
 
 | 용도 | 방법 |
 |---|---|
-| 후보 수백 개의 특징 | `track_features`·`track_sections` 를 `FINAL` 로, `WHERE section_uid IN (…)`. 서빙용으로 **`section_uid` 정렬 키를 가진 표(또는 딕셔너리)** 를 둔다 — 지금 정렬 키 `(analysis_version, track_id, section_index)` 로는 전체를 훑는다 |
+| 후보 수백 개의 특징 | `track_features`·`track_sections` 를 `FINAL` 로, `WHERE section_uid IN (…)`. 서빙용으로 **`section_uid` 정렬 키를 가진 표(또는 딕셔너리)** 를 둔다 — 지금 정렬 키 `(analysis_version, track_id, section_index)` 로는 전체를 훑는다. → **455: 딕셔너리 `dict_serving_sections`**(`section_uid` 키, `COMPLEX_KEY_HASHED_ARRAY`, 원본 `v_serving_sections` = 곡의 현재 분석 버전 구간만). 표를 하나 더 두면 Spring 이 두 표를 교체하고 옛 행을 두 번 지워야 하지만, 사전은 원본을 통째로 다시 읽어 지운 구간이 남지 않는다. 원본을 따라오는 데 최대 30초(`INVALIDATE_QUERY`). 곡 특징은 `track_features_local FINAL WHERE track_id IN (…)` — 조회 한 번에 둘 다 |
 | 조건 풀기 (검색) | `SELECT count() / section_uid … WHERE has(genres, …) AND language IN … AND NOT is_deleted` |
 | 곡 번호 ↔ 문자열 ID (배치) | 지금처럼 `v_track_sections_current` |
 
 - `ReplacingMergeTree` 는 병합 전에 옛 행이 잠깐 남는다. **읽을 때 `FINAL`(또는 곡 단위 최신 행)**
   로 읽는다. 표가 작아 비용은 작다.
-- AI 는 지금의 **읽기 전용 계정**으로 읽는다.
+- AI 는 **읽기 전용 서빙 계정** `mupid_serving`(`api/clickhouse/users/20-serving-user.xml`)으로 읽는다.
+  (지금 AI 가 쓰는 `mupid` 는 읽기 전용이 아니었다 — 라벨러가 `section_labels` 에 쓴다.)
 - **지연은 먼저 잰다** (§13 4단계). 1만 곡 합성에서 조건 풀기·특징 조회 p95 가 기준을 넘으면,
   그때 ClickHouse **앞에** 순수 캐시(ClickHouse 에서 파생, MySQL 과 무관)를 검토한다.
 
@@ -288,6 +296,12 @@ Spring API(§6.6)로 다시 보낸다 — 설계 기준 90만 구간이면 곡�
 ClickHouse 에는 관리자 대시보드·MUBTI 리포트 같은 분석 조회도 돈다. 서빙 조회가 밀리지 않게
 **서빙 전용 사용자·프로파일**(`max_execution_time`, 동시성 한도)을 두고, 서빙은 가까운
 레플리카(node-b 의 `clickhouse-0`)를 읽는다.
+
+→ **455**: 프로파일 `serving` — `readonly = 1`(질의에서 한도를 못 푼다), `max_execution_time = 2`,
+`max_concurrent_queries_for_user = 16`, `max_memory_usage = 1GB`, `max_result_rows = 20만`. 읽는 표·사전이 전부
+`mupid_all` 이라 붙은 노드 안에서 끝나므로, ai 는 헤드리스 이름 대신 `clickhouse-0.clickhouse:8123` 에 붙는다
+(`MUPID_CLICKHOUSE_SERVING_URL`). 비밀(`MUPID_CLICKHOUSE_SERVING_PASSWORD`)이 없으면 ClickHouse 가 빈 비밀번호로
+계정을 여므로(25.3 확인), 파드는 그때 난수로 계정을 잠그고 뜬다.
 
 ### 6.3 모델 묶음
 
@@ -714,6 +728,8 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 
 1. **쓰기 입구 전수 목록**: Spring 에서 곡·구간·분석·장르·무드·스트림·삭제를 바꾸는 API·배치를 모두
    찾아 미반영 기록을 남기게 한다. 하나라도 빠지면 불변식이 깨진다.
+   → **곡 특징 범위도 채웠다 (S15P21A204-455):** 분석 값·장르/무드·곡 삭제·스트림 생성/상태/삭제, 관리자 화면의
+   곡(복구 포함)·분석·장르·무드·스트림·**코드 이름**(그 코드를 단 곡 전부). 같은 문서의 표.
    → **`track_sections` 범위는 채웠다 (S15P21A204-451):**
    [`api/knowledge/architecture/analytics-sync.md`](../api/knowledge/architecture/analytics-sync.md) 의
    "쓰기 입구 전수 목록". 구간을 바꾸는 길은 요구 1(`PUT …/section`)과 관리자 자원 CRUD 둘이고 둘 다
@@ -721,7 +737,21 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
    같은 표에 행을 더한다.
 2. **선택도 기준**: 사전 필터 ID 목록 상한 (1만으로 시작).
 3. **`X` 의 라벨 의존**을 끊을지 — 재학습 때 라벨을 `X` 에서 빼고 ClickHouse 값으로 점수에 더하는 안. AI 담당.
-4. **ClickHouse 서빙 지연 기준**: 1만 곡에서 특징 조회·조건 풀기 p95 목표.
+4. ~~**ClickHouse 서빙 지연 기준**: 1만 곡에서 특징 조회·조건 풀기 p95 목표.~~
+   → **제안(2026-09-25, S15P21A204-455)**: 1만 곡에서 **서버 실행 p95 — 특징 조회(후보 300) 50ms, 조건 풀기
+   100ms.** 둘을 합쳐도 추천 p95 목표(1초, §13 5단계)의 15% 이내라 앞단 캐시는 아직 두지 않는다. 측정
+   (`ai_server/tools/bench_feature_store.py`, 로컬 dev 2노드 `mupid_all`, 합성 10,000곡 · 90,140구간, 각 300회):
+
+   | 조회 | 서버 p50 | 서버 p95 | 왕복 p50 | 왕복 p95 |
+   |---|---|---|---|---|
+   | 특징 조회 — 후보 300 (삭제·재생 불가·없는 ID 섞음) | 12ms | 16ms | 27ms | 45ms |
+   | 조건 풀기 — 조합 6가지 돌아가며 (맞는 구간 265 ~ 85,011) | 29ms | 56ms | 42ms | 75ms |
+
+   서버 = ClickHouse `X-ClickHouse-Summary.elapsed_ns`, 왕복 = Windows 호스트 → Docker Desktop 포트(JSON 해석
+   포함; 운영의 같은 노드 접속은 더 짧다). 사전 12MB·다시 읽기 0.08초. 병합이 덜 된 직후(파트 여러 개)에는 특징
+   조회 서버 p95 가 25ms 까지 올랐다. 조건 풀기의 느린 쪽은 조건 없는 조합(8.5만 ID 를 정렬)이다 — 사전 필터로
+   쓰는 것은 1만 이하일 때뿐이라(미결 2) 실제로는 앞쪽이다. 10만 곡은 dev 노드(4GiB 한도, 다른 표와 공유)가
+   적재·병합 중 메모리 한도에 걸려 재지 못했다 — 5단계 부하 측정에서 운영과 같은 노드로 잰다.
 5. **벡터 본문 형식**: base64(float32 LE) JSON 과 `application/octet-stream` 중 무엇으로 할지, 메타(`external_id` 순서·
    `analysis_version`·차원·모델 버전)를 어디에 실을지.
 6. **온보딩 매핑**: 온보딩 무드(1세대 코드)·장르 대분류가 곡 어휘로 옮겨지지 않아 대부분 사용자가
@@ -754,6 +784,9 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
   구조는 그대로다 (§8.1).~~ **정합성 기반을 넣었다(S15P21A204-451, 배포 대기).** 미반영 기록
   `analytics_sync_pending`·1분 재시도·매일 레플리카별 대조·`analysis_version` MySQL 컬럼·대시보드 지표,
   `push_sections.py` 삭제. 운영 MySQL 마이그레이션(`migrate-analytics-sync-2026-09-25.sql`)을 앱보다 먼저 건다.
+- 곡 삭제를 ClickHouse 가 모르던 것(§5.3)은 **`track_features.is_deleted` 로 싣게 했다(S15P21A204-455, 배포 대기).**
+  운영 ClickHouse 마이그레이션(`api/clickhouse/migrations/05-track-features.sql`)을 api 보다 먼저 걸고, 첫 대조(또는
+  손으로 넣는 미반영 행)가 1,060곡을 채운다. 서빙 읽기(`ai_server/app/feature_store.py`)는 아직 요청 경로에 없다(458).
 - node-b 단일 장애점(§10.1-8)은 지금도 마찬가지다.
 
 ---
@@ -766,7 +799,7 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 | 1 | **정합성 기반**: 쓰기 입구 전수 목록, 미반영 기록·재시도·대조, `analysis_version` MySQL 에, `push_sections` 우회 제거, 지표 | ① | 미반영·불일치 지표가 보이고, ClickHouse 를 잠깐 끊었다 이어도 불일치가 0 으로 돌아온다 |
 | 2 | `VectorStore` 인터페이스 + local 구현. **요청 경로의 O(N) 연산 전수 점검·제거**, 온보딩 씨앗 사전 계산 | ③ | 요청 경로에 풀 전체 연산이 없다 (점검표). 시험 통과 |
 | 3 | **배치용 Object Storage API — 모델 가중치 전용** (§6.5, Nginx `/upload/system/`, ERD) + `model-publish` CI 작업(JupyterHub → 체크섬 → 관문 → 업로드) + 모델 묶음 분리 (`model_versions`, μ 동결, `manifest.json`) + **CI 가 `models.lock` 으로 서빙 가중치를 이미지에 굽기** + ROLE_SYSTEM 계정 분리 | ② | `models.lock` 만 바꾼 MR 로 가중치 교체·롤백이 된다. ai_server 에 토큰이 없다. — API 는 453, CI·`models.lock`·이미지 굽기·ROLE_SYSTEM 장기 토큰은 454. 첫 채택(JupyterHub 묶음 → `models.lock` MR)과 μ 동결은 남았다 |
-| 4 | ClickHouse `track_features`(+`is_deleted`·`playable`) · 서빙 정렬 키·프로파일 · AI 읽기 · 지연 측정 | ①③ | 1만 곡 합성에서 특징 조회·조건 풀기 p95 가 기준 안 |
+| 4 | ClickHouse `track_features`(+`is_deleted`·`playable`) · 서빙 정렬 키·프로파일 · AI 읽기 · 지연 측정 | ①③ | 1만 곡 합성에서 특징 조회·조건 풀기 p95 가 기준 안 — 455: 표·`energy` 열·미반영/재시도/대조·서빙 사전·`mupid_serving`·`feature_store.py`, 서버 p95 16ms / 56ms (기준 제안 50 / 100ms, 미결 4). 요청 경로 연결은 458 |
 | 5 | Qdrant (node-b StatefulSet, 인증, 구간 지문, 로컬 스냅샷, NetworkPolicy) + **벡터 등록 API** (§6.6, 곡 전체 / 모델 재계산) + 재적재 시간 측정 | ①② | 1만 곡 합성 부하에서 추천 p95 < 1초. node-b 를 비운 뒤 JupyterHub 재전송으로 복구된다 |
 | 6 | **계약 v3**: `catalog` 제거, 조건 풀기 AI 로, `QueryPlanFilter` 걷어내기, `exclude_tracks` 상한, `limit + 여유분` | ①③ | 요청 본문 < 5KB, 오늘의 모먼트가 늘 4개 |
 | 7 | Pinecone 제거 (코드·SDK·CI 변수·문서·JupyterHub 야간 단계, 콘솔 인덱스 삭제) | — | `pinecone` 이 저장소에 없다 |
