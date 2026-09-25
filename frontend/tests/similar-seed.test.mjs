@@ -65,3 +65,28 @@ test('앱이 켜질 때 오늘의 모먼트를 묻지 않는다', async () => {
   // 당신을 위한 추천은 그대로 받는다.
   assert.match(hook, /fetchNextTracks\(\{ limit: 6 \}/);
 });
+
+test('닮은 순간 줄은 서버가 고른 그 구간에서 튼다', async () => {
+  /*
+   * 이 화면은 "고른 구간과 닮은 순간" 을 모아 놓은 자리다. 줄을 눌러도 곡 처음부터
+   * 울리면 왜 닮았는지 들리지 않는다 — `TrackRow` 의 기본 재생(`m.play(track)`)이
+   * 두 번째 인자를 넘기지 않아 실제로 그랬다.
+   */
+  const src = await read('../components/mupid/discovery.tsx');
+  const view = src.slice(src.indexOf('export function SimilarView'));
+  assert.match(view, /onPlay=\{\(\) => m\.play\(t, !!t\.recommended\)\}/);
+});
+
+test('인기곡으로 물러난 줄은 곡 처음부터 튼다 — 한가운데서 시작하면 안 된다', async () => {
+  /*
+   * 서버가 답하지 못하면 인기곡으로 물러나는데 그 줄에는 권한 구간이 없다. 거기까지
+   * `true` 를 넘기면 `play()` 가 `track.moment`(곡 길이의 30%, `toTrack`)로 떨어져
+   * 평범한 곡이 한가운데서 시작한다. 그 값은 서버가 고른 순간이 아니다.
+   */
+  const play = await read('../hooks/use-mupid.ts');
+  const branch = play.slice(play.indexOf('if (fromMoment && track.recommended)'));
+  assert.match(branch, /startPlayback\(track, track\.recommended\.start/);
+  // `recommended` 가 없으면 `track.moment` 로 떨어지는 갈래가 그대로 남아 있어야
+  // 위 `!!t.recommended` 가드가 의미를 갖는다.
+  assert.match(branch, /fromMoment \? track\.moment : undefined/);
+});

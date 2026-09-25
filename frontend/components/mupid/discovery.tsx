@@ -479,6 +479,17 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
             <TrackRow
               track={t}
               model={m}
+              /*
+               * **서버가 고른 그 구간에서 튼다.** 이 화면은 "고른 구간과 닮은 순간" 을
+               * 모아 놓은 자리인데, 줄을 눌러도 곡 처음부터 울리면 왜 닮았는지 들리지
+               * 않는다 — 들려주려던 그 순간까지 사용자가 직접 찾아가야 했다.
+               *
+               * **`recommended` 가 있을 때만 참이다.** 서버가 답하지 못해 인기곡으로
+               * 물러난 줄에는 권한 구간이 없는데, 거기까지 참을 넘기면 `play()` 가
+               * `track.moment`(곡 길이의 30%, `stream-catalog.toTrack`)로 떨어져
+               * **평범한 곡이 한가운데서 시작한다.** 그 값은 서버가 고른 순간이 아니다.
+               */
+              onPlay={() => m.play(t, !!t.recommended)}
               action={
                 <button
                   className="icon-button dismiss-track"
