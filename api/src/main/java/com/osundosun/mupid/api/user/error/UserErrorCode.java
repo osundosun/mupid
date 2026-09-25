@@ -41,7 +41,15 @@ public enum UserErrorCode implements ErrorCode {
      * <p>보낸 쪽이 할 일이 다르다 — 앞은 번호를 고쳐야 하고, 뒤는 그 계정을
      * 포기해야 한다. 배치·AI 도구가 탈퇴 회원 번호를 들고 있으면 여기서 멈춘다.
      */
-    USER_GONE(HttpStatus.GONE, "요청한 유저는 탈퇴했습니다.");
+    USER_GONE(HttpStatus.GONE, "요청한 유저는 탈퇴했습니다."),
+
+    /**
+     * 시스템 계정(ROLE_SYSTEM)이 아닙니다.
+     *
+     * <p>관리자의 토큰 발급·폐기(`/api/v1/user/system/{userId}/token`)는 배치 계정만 대상으로 한다.
+     * 사람 계정의 토큰을 관리자가 꺼내 쓰는 길이 되면 안 된다.
+     */
+    NOT_SYSTEM_USER(HttpStatus.BAD_REQUEST, "시스템 계정이 아닙니다.");
 
     private final HttpStatus status;
     private final String message;

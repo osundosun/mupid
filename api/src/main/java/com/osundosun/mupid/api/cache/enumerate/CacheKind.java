@@ -10,6 +10,17 @@ public enum CacheKind {
     BlockToken("block:token"),
 
     /**
+     * 사용자별 토큰 일괄 폐기 시각(epoch ms). 키는 유저 번호다 (S15P21A204-454).
+     *
+     * <p>{@link #BlockToken} 은 토큰 문자열 하나를 막는다 — 로그아웃처럼 가진 토큰을 알 때만 된다.
+     * ROLE_SYSTEM 의 리프레시 토큰은 회전하지 않고 6개월까지 살아서, 새어 나갔을 때 관리자는
+     * 그 문자열을 모른다. 그래서 "이 시각 이전에 발급된 그 사용자의 토큰은 전부 무효" 를 적는다.
+     * 수명은 가장 긴 토큰의 수명이다 — 그 뒤엔 막을 토큰이 남지 않는다. 운영 Redis 는 AOF 라
+     * 재시작으로 폐기가 풀리지 않는다.
+     */
+    TokenRevokedBefore("auth:revoked-before"),
+
+    /**
      * 이미 받은 청취 이벤트. 재시도로 같은 event_id 가 다시 와도 Kafka 에 두 번 넣지 않는다.
      */
     EventId("event:id"),

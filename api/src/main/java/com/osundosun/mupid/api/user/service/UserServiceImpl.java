@@ -118,6 +118,16 @@ public class UserServiceImpl implements UserService {
     public Optional<User> getUser(int userId) {
         return repository.findByUserIdAndStatusNot(userId, UserStatus.WITHDRAW);
     }
+
+    @Override
+    public User getSystemUser(int userId) {
+        User user = getUser(userId)
+            .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+        if (user.getRole() != UserRole.ROLE_SYSTEM) {
+            throw new BusinessException(UserErrorCode.NOT_SYSTEM_USER);
+        }
+        return user;
+    }
     
     @Override
     public Optional<User> getUserByEmail(String email) {

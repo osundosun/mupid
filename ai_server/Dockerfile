@@ -53,6 +53,10 @@ RUN --mount=type=bind,from=build,source=/wheels,target=/wheels \
 COPY --chown=mupid:mupid ai_server/app /app/ai_server/app
 # 배치 진입점(run_labeler 등)도 넣는다. 이미지 안에서 cron 이 부를 수 있어야 한다.
 COPY --chown=mupid:mupid ai_server/tools /app/ai_server/tools
+# 모델 자리(S15P21A204-454). CI 가 models.lock 대로 서빙 가중치와 model.json 을 채운다
+# (infra_k8s/ci/package-ai.sh). 채택된 모델이 없으면 비어 있고 판의 가중치를 읽는다 —
+# 로컬 빌드도 저장소의 빈 자리(.gitkeep)가 있어 깨지지 않는다. app/model_bundle.py 가 읽는다.
+COPY --chown=mupid:mupid ai_server/models /app/ai_server/models
 # 저장소에는 ai_server/__init__.py 가 없다(네임스페이스 패키지로 동작한다). 이미지에서는
 # `python -m ai_server.tools.*` 가 확실히 잡히도록 아래 RUN 에서 만든다.
 # 글로브로 COPY 하면 맞는 파일이 없을 때 **빌드가 실패한다.**

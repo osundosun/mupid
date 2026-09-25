@@ -400,8 +400,15 @@ stage1:
 
 | 계정 | 쓰는 곳 | 하는 일 | 토큰 보관 |
 |---|---|---|---|
-| `system-preprocessing` | music_preprocessing (JupyterHub) | 곡·구간·분석 값·벡터 등록(모델 재계산 포함), 분석용 가중치 받기 | JupyterHub 토큰 파일 (회전 결과를 다시 저장 — 지금 구조) |
-| `system-ci` | GitLab CI | 모델 가중치 올리기(④-d), 서빙 가중치 받기(④-e), 재계산 완료 확인(④-c), 채택 알림(④-g) | CI 변수. 회전 결과 저장이 필요하다 (§11 미결 10) |
+| `system-preprocessing` | music_preprocessing (JupyterHub) | 곡·구간·분석 값·벡터 등록(모델 재계산 포함), 분석용 가중치 받기 | JupyterHub 토큰 파일. 180일 토큰 — 회전하지 않아 파일을 다시 쓰는 코드가 같은 값을 받고 쓰지 않는다 |
+| `system-ci` | GitLab CI | 모델 가중치 올리기(④-d), 서빙 가중치 받기(④-e), 재계산 완료 확인(④-c), 채택 알림(④-g) | 보호된 CI 변수 `MUPID_SYSTEM_CI_REFRESH_TOKEN`. 180일 토큰 — 회전하지 않아 CI 가 변수를 다시 쓸 일이 없다 (§11 결정 기록) |
+
+**ROLE_SYSTEM 토큰 (S15P21A204-454, 미결 10 의 결정)** — ROLE_SYSTEM 만 로그인·계정 생성·관리자 발급
+(`POST /api/v1/user/system/{userId}/token`) 때 리프레시 토큰 만료를 **180일까지** 지정한다(비우면 7일).
+ROLE_SYSTEM 의 리프레시 토큰은 **회전하지 않는다** — 재발급은 액세스 토큰만 새로 주고 같은 리프레시 토큰이
+만료까지 쓰인다. 새면 관리자가 **계정 단위로 일괄 폐기**한다(`DELETE /api/v1/user/system/{userId}/token`,
+Redis 에 "이 시각 이전 발급분 무효" 경계, 액세스 토큰까지 막는다). 다른 역할은 지금과 같다(7일·회전).
+계정을 쓰는 곳마다 나누는 이유는 이제 회전 충돌이 아니라 **폐기 범위**다.
 | — | 학습 작업 (JupyterHub) | **갖지 않는다** — 산출물을 JupyterHub 에 두기만 한다 | — |
 | — | ai_server | **갖지 않는다** | — |
 
@@ -422,6 +429,15 @@ stage1:
   `WAVEFORM` 을 넣을 때와 같은 절차 — `migrate-waveform-2026-09-22.sql`).
 - Nginx 에 `/upload/system/` 블록을 청크 블록과 같은 모양으로 더한다. 파일 크기 상한은 Spring 이 갖는다.
 - **구현 (S15P21A204-453)**: `api/…/system/` (`SystemObjectController`·`ModelVersionController`), 표 `system_objects`·`model_versions`(`migrate-system-objects-2026-09-25.sql`), Nginx `/upload/system/`, 명세 `api/docs/System/`. 버전의 파일 목록은 ① 요청마다 싣는 `version_files`(= `models.lock` 의 `files` 키)로 정하고, `model_versions` 에 후보 앞 상태 `UPLOADING` 을 더했다.
+- **CI (S15P21A204-454)**: `models.lock`(저장소 루트, 처음엔 `stage1: null` — 채택 없음), `infra/ci/model_publish.py`
+  (`verify`·`publish`·`bake`·`adopt`), `infra/ci/model.yml`(`model-verify`·`model-publish`), `k8s-deploy-ai` 가
+  굽기·채택. 이미지의 모델 자리는 `/app/ai_server/models/stage1/`(+ CI 가 쓰는 `model.json`), ai_server 는
+  `app/model_bundle.py` 로 그 자리를 먼저 보고 없으면 판을 본다. 어긋난 점:
+  - **MR 대조(③)는 기능 브랜치에서 형식만 본다.** `MUPID_DATA_ENV` 가 보호 변수라 기능 브랜치 MR 파이프라인에
+    주어지지 않는다. sha256 대조는 병합 뒤 `model-publish` 가 **멈추는 쪽으로** 한다(④-b).
+  - **관문(④-c)은 스위치다** — `MUPID_MODEL_RECOMPUTE_GATE`(기본 꺼짐, 경고만). 확인 API 는 457 이 만들고 켠다.
+    지금 스크립트가 부르는 자리는 `GET /api/v1/system/models/{name}/{version}/recompute` → `data.complete`.
+  - 파드의 `stage1_v{N}` 존재 확인(④-f)은 456 이후다.
 
 ### 6.6 벡터 등록 API
 
@@ -683,7 +699,8 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 | 모델 가중치는 **Nginx → Filer** (Spring 은 인증·경로만) | 버전별로 보관하고 CI 가 받아 가는 파일이다. 음악 청크와 같은 원칙 | Spring API 본문 | — |
 | 서빙 가중치는 **CI 가 이미지에 굽는다** (`models.lock`) | ai_server 가 ROLE_SYSTEM 없이 뜬다. 버전이 git 에 남고 롤백이 이미지 하나 | 기동 때 AI 파드가 받기(토큰 만료·회전 충돌) | — |
 | 모델 가중치 업로드는 **CI 가 병합 뒤 JupyterHub 에서 받아서** | 운영 반영의 방아쇠가 git 병합 하나다. 학습 작업에 자격이 필요 없고, Object Storage 에는 채택된 버전만 쌓인다. 기존 CI 의 JupyterHub 자격(`MUPID_DATA_ENV`)을 그대로 쓴다 | 학습 작업이 직접 올리기(학습용 ROLE_SYSTEM 계정이 하나 더 필요, 실험 버전까지 쌓인다) | — |
-| ROLE_SYSTEM **계정은 쓰는 곳마다** | 회전 토큰 공유가 서로를 끊는다 | 계정 하나 공유 | — |
+| ROLE_SYSTEM **계정은 쓰는 곳마다** | 폐기가 계정 단위라 한 곳이 새면 그곳만 끊는다 (처음 이유였던 회전 충돌은 아래 결정으로 사라졌다) | 계정 하나 공유 | — |
+| ROLE_SYSTEM 토큰은 **회전하지 않고 180일까지**, 관리자가 **계정 단위 일괄 폐기** (2026-09-25, 미결 10) | CI 가 토큰을 보호 변수에 둔 채 다시 쓰지 않는다 — 변수 쓰기 권한(프로젝트 관리 토큰)을 CI 에 주지 않고, 쓰기 실패로 다음 빌드가 끊기는 일이 없다. 새면 폐기로 끊는다 | CI 가 회전 결과를 CI 변수에 다시 쓰기, Spring 에 별도 서비스 자격(API 키) | 토큰이 샌 사고가 나거나, 폐기 경계를 Redis 가 아니라 DB 에 둬야 할 때 |
 | Qdrant 스냅샷은 **node-b 로컬(PV)** | 다시 만들 수 있는 데이터, 복구 가속용 | Object Storage 로 백업 | 재적재가 너무 오래 걸리게 될 때 |
 | 벡터 DB = **Qdrant** (node-b) | 이그레스 요금 없음, named vector·양자화·필터, 스냅샷 | Pinecone 유료, 로컬 파일 | — |
 | **Pinecone 제거** | 운영에서 한도 소진, 두 백엔드를 유지할 이유가 없다 | 옵션으로 남기기 | — |
@@ -712,9 +729,12 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 7. **CLAP 적용 범위 23%**: 검색어 재정렬이 대부분 곡에서 안 된다. 분석 배치에서 채울지.
 8. **결합기 재현성**: `logistic_flow_stage1.json` 을 만드는 코드가 저장소에 없다.
 9. **적재 처리량 목표**: 10만 곡 기준 곡당 GPU 시간과 하루 처리량.
-10. **CI 계정의 토큰 회전**: CI 가 빌드 때 리프레시 토큰을 쓰면 회전된 새 토큰을 CI 변수에 다시 써야 한다
+10. ~~**CI 계정의 토큰 회전**: CI 가 빌드 때 리프레시 토큰을 쓰면 회전된 새 토큰을 CI 변수에 다시 써야 한다
     (쓰지 않으면 다음 빌드가 실패한다). CI 가 변수를 갱신할 권한을 가질지, 회전하지 않는 서비스 자격을
-    Spring 에 따로 둘지 정한다.
+    Spring 에 따로 둘지 정한다.~~
+    → **결정(2026-09-25, S15P21A204-454)**: ROLE_SYSTEM 만 리프레시 토큰 만료를 180일까지 지정하고 **회전하지
+    않는다.** 관리자가 계정 단위로 일괄 폐기한다. 결정 기록 표와 §6.4 를 본다. 대가: 만료가 밀리지 않아
+    사람이 만료 전에 갈아 끼운다(`User / 시스템 계정 토큰 발급`).
 11. **ERD 변경**: `object_storage_files.category` 에 `MODEL`, 새 표 `model_versions`,
     `music_section_analysis.analysis_version`, `analytics_sync_pending`(종류에 `VECTOR` 포함).
 12. **Qdrant 재적재 시간**: node-b 디스크를 잃었을 때 JupyterHub 가 전 곡의 벡터를 다시 보내는 데 걸리는
@@ -745,7 +765,7 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 | 0 | 판 배송이 `moments_emb.npy` 를 싣고 받게 한다 (지금 상태를 정식 경로로) | ① | 수신기로 올린 판에서 로컬 모드가 뜬다 |
 | 1 | **정합성 기반**: 쓰기 입구 전수 목록, 미반영 기록·재시도·대조, `analysis_version` MySQL 에, `push_sections` 우회 제거, 지표 | ① | 미반영·불일치 지표가 보이고, ClickHouse 를 잠깐 끊었다 이어도 불일치가 0 으로 돌아온다 |
 | 2 | `VectorStore` 인터페이스 + local 구현. **요청 경로의 O(N) 연산 전수 점검·제거**, 온보딩 씨앗 사전 계산 | ③ | 요청 경로에 풀 전체 연산이 없다 (점검표). 시험 통과 |
-| 3 | **배치용 Object Storage API — 모델 가중치 전용** (§6.5, Nginx `/upload/system/`, ERD) + `model-publish` CI 작업(JupyterHub → 체크섬 → 관문 → 업로드) + 모델 묶음 분리 (`model_versions`, μ 동결, `manifest.json`) + **CI 가 `models.lock` 으로 서빙 가중치를 이미지에 굽기** + ROLE_SYSTEM 계정 분리 | ② | `models.lock` 만 바꾼 MR 로 가중치 교체·롤백이 된다. ai_server 에 토큰이 없다 |
+| 3 | **배치용 Object Storage API — 모델 가중치 전용** (§6.5, Nginx `/upload/system/`, ERD) + `model-publish` CI 작업(JupyterHub → 체크섬 → 관문 → 업로드) + 모델 묶음 분리 (`model_versions`, μ 동결, `manifest.json`) + **CI 가 `models.lock` 으로 서빙 가중치를 이미지에 굽기** + ROLE_SYSTEM 계정 분리 | ② | `models.lock` 만 바꾼 MR 로 가중치 교체·롤백이 된다. ai_server 에 토큰이 없다. — API 는 453, CI·`models.lock`·이미지 굽기·ROLE_SYSTEM 장기 토큰은 454. 첫 채택(JupyterHub 묶음 → `models.lock` MR)과 μ 동결은 남았다 |
 | 4 | ClickHouse `track_features`(+`is_deleted`·`playable`) · 서빙 정렬 키·프로파일 · AI 읽기 · 지연 측정 | ①③ | 1만 곡 합성에서 특징 조회·조건 풀기 p95 가 기준 안 |
 | 5 | Qdrant (node-b StatefulSet, 인증, 구간 지문, 로컬 스냅샷, NetworkPolicy) + **벡터 등록 API** (§6.6, 곡 전체 / 모델 재계산) + 재적재 시간 측정 | ①② | 1만 곡 합성 부하에서 추천 p95 < 1초. node-b 를 비운 뒤 JupyterHub 재전송으로 복구된다 |
 | 6 | **계약 v3**: `catalog` 제거, 조건 풀기 AI 로, `QueryPlanFilter` 걷어내기, `exclude_tracks` 상한, `limit + 여유분` | ①③ | 요청 본문 < 5KB, 오늘의 모먼트가 늘 4개 |

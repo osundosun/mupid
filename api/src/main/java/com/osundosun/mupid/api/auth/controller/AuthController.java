@@ -1,6 +1,7 @@
 package com.osundosun.mupid.api.auth.controller;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 import org.springframework.http.HttpHeaders;
@@ -18,7 +19,6 @@ import org.springframework.web.bind.annotation.RestController;
 import com.osundosun.mupid.api.auth.dto.AuthLoginResult;
 import com.osundosun.mupid.api.auth.error.AuthErrorCode;
 import com.osundosun.mupid.api.auth.dto.TokenPair;
-import com.osundosun.mupid.api.auth.provider.JwtProvider;
 import com.osundosun.mupid.api.auth.request.AuthLoginRequest;
 import com.osundosun.mupid.api.auth.response.AuthLoginResponse;
 import com.osundosun.mupid.api.auth.response.AuthReissueTokenResponse;
@@ -42,7 +42,8 @@ public class AuthController {
         @Valid @RequestBody AuthLoginRequest request
     ) {
         // 로그인
-        AuthLoginResult result = authService.login(request.email(), request.password());
+        AuthLoginResult result = authService.login(
+            request.email(), request.password(), request.refreshTokenValidityDays());
         User user = result.user();
 
         // 리프레시 토큰 설정
@@ -52,7 +53,7 @@ public class AuthController {
             .httpOnly(true)
             .secure(true)
             // 쿠키가 먼저 사라지면 토큰이 살아 있어도 재발급을 못 한다.
-            .maxAge(Duration.ofMillis(JwtProvider.REFRESH_TOKEN_VALIDITY_MS))
+            .maxAge(result.refreshTokenValidity())
             .build();
 
         // 액세스 토큰 설정
@@ -92,8 +93,9 @@ public class AuthController {
             .sameSite("Strict")
             .httpOnly(true)
             .secure(true)
-            // 쿠키가 먼저 사라지면 토큰이 살아 있어도 재발급을 못 한다.
-            .maxAge(Duration.ofMillis(JwtProvider.REFRESH_TOKEN_VALIDITY_MS))
+            // 쿠키가 먼저 사라지면 토큰이 살아 있어도 재발급을 못 한다. 회전하지 않는
+            // ROLE_SYSTEM 은 같은 토큰이 돌아오므로 남은 수명만큼만 준다.
+            .maxAge(Duration.between(Instant.now(), tokenPair.refreshTokenExpiresAt()))
             .build();
 
         // 액세스 토큰 설정
