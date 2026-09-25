@@ -23,7 +23,9 @@ import com.osundosun.mupid.api.admin.error.AdminErrorCode;
 import com.osundosun.mupid.api.admin.response.AdminResourceSummary;
 import com.osundosun.mupid.api.admin.response.AdminRowPageResponse;
 import com.osundosun.mupid.api.admin.response.AdminSchemaResponse;
+import com.osundosun.mupid.api.analytics.sync.service.TrackSectionSync;
 import com.osundosun.mupid.api.common.exception.BusinessException;
+import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.enumerate.UserRole;
 import com.osundosun.mupid.api.user.enumerate.UserStatus;
@@ -85,6 +87,12 @@ public class AdminResourceServiceImpl implements AdminResourceService {
     private final EntityManagerFactory entityManagerFactory;
     private final AdminResourceRegistry registry;
     private final PasswordEncoder passwordEncoder;
+
+    /**
+     * 구간을 이 화면에서 고치면 ClickHouse 사본이 어긋난다. 같은 트랜잭션에 미반영 기록을
+     * 남겨 재시도 작업이 1분 안에 MySQL 의 지금 구간으로 덮게 한다 (S15P21A204-451).
+     */
+    private final TrackSectionSync trackSectionSync;
 
     /**
      * MySQL 쪽. `JdbcTemplate` 빈이 둘이라(ClickHouse 용이 따로 있다) 못 박아 둔다.
@@ -314,6 +322,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         }
 
         persist(entity);
+        markSectionChanged(entity, null);
         return toRow(meta, entity);
     }
 
@@ -325,9 +334,11 @@ public class AdminResourceServiceImpl implements AdminResourceService {
 
         // 값을 덮어쓰기 **전에** 막는다. 덮어쓴 뒤에 보면 "바뀌었는가" 를 알 수 없다.
         guardUserUpdate(meta, entity, body);
+        Integer musicBefore = sectionMusicId(entity);
 
         apply(meta, entity, body, false);
         flush();
+        markSectionChanged(entity, musicBefore);
         return toRow(meta, entity);
     }
 
@@ -341,6 +352,36 @@ public class AdminResourceServiceImpl implements AdminResourceService {
 
         entityManager.remove(entity);
         flush();
+        markSectionChanged(entity, null);
+    }
+
+    // ------------------------------------------------------------ 사본 동기화
+
+    /**
+     * 구간 행을 만들거나 고치거나 지웠으면 그 곡을 미반영으로 올린다.
+     *
+     * <p>ClickHouse 에 바로 쓰지 않는다. 쓰기는 {@code TrackSectionSync} 한 곳이 맡고, 곡 단위
+     * 교체라 행 하나를 고쳐도 곡 전체를 다시 쓴다 — 재시도 작업이 1분 안에 그 일을 한다.
+     * 곡을 옮겼으면(`music` 을 바꿨으면) 옛 곡도 올린다 — 옛 곡의 사본에 그 구간이 남는다.
+     */
+    private void markSectionChanged(Object entity, Integer musicBefore) {
+        if (!(entity instanceof MusicSectionAnalysis section)) {
+            return;
+        }
+        Integer musicNow = sectionMusicId(section);
+        if (musicNow != null) {
+            trackSectionSync.markPending(musicNow, section.getAnalysisVersion());
+        }
+        if (musicBefore != null && !musicBefore.equals(musicNow)) {
+            trackSectionSync.markPending(musicBefore, section.getAnalysisVersion());
+        }
+    }
+
+    private static Integer sectionMusicId(Object entity) {
+        if (entity instanceof MusicSectionAnalysis section && section.getMusic() != null) {
+            return section.getMusic().getMusicId();
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------ 질의 조립

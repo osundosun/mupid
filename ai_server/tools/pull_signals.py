@@ -29,9 +29,17 @@ from typing import Optional
 
 import pandas as pd
 
+from ai_server.app import clickhouse as _ch
 from ai_server.app import ids, paths, recommender, track_sections
 from ai_server.app.log import log
-from ai_server.tools.push_sections import query
+
+# 배치라 서빙(10초)보다 오래 기다린다. 접속부는 서빙과 같은 것을 쓴다(`app/clickhouse.py`).
+TIMEOUT = 60
+
+
+def query(sql: str, body: bytes | None = None) -> str:
+    return _ch.query(sql, body, timeout=TIMEOUT)
+
 
 # ClickHouse `signal` 은 UI 이름 그대로다. 라벨러 이름으로 바꾸는 표가 이미 있으므로
 # (`recommender.UI_TO_LABELER`) 여기서는 **원본 이름으로 적재**하고 변환은 맡긴다.
@@ -221,7 +229,7 @@ def to_event(r: dict, bounds: dict, im, why: Optional[Counter] = None) -> dict |
     버릴 때는 **왜 버렸는지 센다**(`why`). 예전에는 세 가지 원인이 한 숫자로
     뭉쳐 있었고 로그는 그중 하나라고 단정했다 — 매핑표에 색인 밖 곡까지 담은
     뒤로는 "색인에 없는 곡" 이 가장 흔한 원인이라, 그 단정이 사람을
-    `push_sections` 버전 쪽으로 잘못 보낸다.
+    ClickHouse 구간 표 버전 쪽으로 잘못 보낸다.
     """
     sig = str(r["signal"])
     if sig not in KNOWN:
@@ -321,7 +329,7 @@ def run(limit: int, dry_run: bool) -> dict:
         log("  제외 원인: " + " · ".join(f"{k}={v}" for k, v in why.most_common()))
         if why.get("section_not_in_index"):
             log(f"    section_not_in_index {why['section_not_in_index']}건 — 그 곡이 아직"
-                " 색인에 없거나 push_sections 버전이 어긋났다")
+                " 색인에 없거나 ClickHouse 구간 표의 버전이 어긋났다")
         if why.get("music_id_unmapped"):
             log(f"    music_id_unmapped {why['music_id_unmapped']}건 — id_map 을"
                 " 다시 뽑는다 (매핑에 없는 곡의 청취가 통째로 사라진다)")

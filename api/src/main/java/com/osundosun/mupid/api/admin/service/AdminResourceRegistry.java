@@ -231,7 +231,8 @@ public class AdminResourceRegistry {
         Map.entry("AiChatSession", "AI 대화 세션"),
         Map.entry("AiChatMessage", "AI 대화 메시지"),
         Map.entry("Code", "공통 코드"),
-        Map.entry("ObjectStorageFile", "스토리지 파일")
+        Map.entry("ObjectStorageFile", "스토리지 파일"),
+        Map.entry("AnalyticsSyncPending", "사본 미반영")
     );
 
     private static final Map<String, String> CATEGORIES = Map.ofEntries(
@@ -264,7 +265,8 @@ public class AdminResourceRegistry {
         Map.entry("AiChatSession", "AI"),
         Map.entry("AiChatMessage", "AI"),
         Map.entry("Code", "시스템"),
-        Map.entry("ObjectStorageFile", "시스템")
+        Map.entry("ObjectStorageFile", "시스템"),
+        Map.entry("AnalyticsSyncPending", "시스템")
     );
 
     private final Map<String, AdminResourceMeta> byName;

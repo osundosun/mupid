@@ -42,6 +42,17 @@ CREATE TABLE IF NOT EXISTS `ai_chat_sessions` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`ai_chat_session_id`)
 );
+CREATE TABLE IF NOT EXISTS `analytics_sync_pending` (
+  `music_id` INT NOT NULL COMMENT '곡 번호 (music.music_id)',
+  `kind` VARCHAR(16) NOT NULL COMMENT '반영할 곳 — CLICKHOUSE',
+  `analysis_version` VARCHAR(20) NOT NULL COMMENT '반영할 분석 버전',
+  `revision` BIGINT NOT NULL DEFAULT 1 COMMENT '같은 곡이 다시 기록될 때마다 오른다',
+  `attempts` INT NOT NULL DEFAULT 0 COMMENT '재시도 작업이 시도한 횟수',
+  `last_error` VARCHAR(500) DEFAULT NULL COMMENT '마지막 실패 사유',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '처음 미반영이 된 시각',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '마지막으로 기록·시도한 시각',
+  PRIMARY KEY (`music_id`, `kind`)
+) COMMENT='ClickHouse 등 사본에 아직 반영되지 않은 곡';
 CREATE TABLE IF NOT EXISTS `albums` (
   `album_id` INT AUTO_INCREMENT NOT NULL COMMENT '앨범 PK',
   `artist_id` INT NOT NULL COMMENT '아티스트 FK',
@@ -217,6 +228,7 @@ CREATE TABLE IF NOT EXISTS `music_section_analysis` (
   `end_time_ms` INT NOT NULL,
   `external_id` VARCHAR(64) NOT NULL,
   `energy` DOUBLE DEFAULT NULL COMMENT '구간 에너지 (오디오 RMS, 0~1)',
+  `analysis_version` VARCHAR(20) NOT NULL DEFAULT 'v1' COMMENT '구간 분석 버전',
   PRIMARY KEY (`music_section_analysis_id`)
 );
 CREATE UNIQUE INDEX `ux_music_section_analysis_external_id` ON `music_section_analysis` (`external_id`);

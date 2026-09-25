@@ -42,9 +42,9 @@ Spring 코드 이름을 그 어휘로 **옮겼다**(`onboarding.MOOD_MAP`). 옮�
 
 ## 숫자 환산을 색인이 들고 간다
 
-별도 매핑 파일을 두지 않는다(팀 규칙). 숫자가 필요한 곳은 배치 도구 둘뿐이고 둘 다
-**곡 수준만** 쓴다 — `push_sections` 의 `im.music_id(tid)`, `pull_signals` 의
-`im.source_track_id(...)`. 구간 PK 를 환산하는 코드는 저장소에 하나도 없다.
+별도 매핑 파일을 두지 않는다(팀 규칙). 숫자가 필요한 곳은 배치 도구뿐이고 **곡 수준만**
+쓴다 — `pull_signals` 의 `im.source_track_id(...)` (예전에는 `push_sections` 의
+`im.music_id(tid)` 도 있었다 — 451 에서 지웠다). 구간 PK 를 환산하는 코드는 저장소에 하나도 없다.
 
 순간 무드(32~39)는 **건드리지 않는다.** 별건이다.
 """
@@ -130,8 +130,8 @@ def build(plate: Path, snap: Path) -> dict:
     mid = tid.map(t2m)
 
     # `music_id` 를 **색인에 싣는다.** 별도 매핑 파일(`id_map.parquet`)을 두지
-    # 않기로 한 팀 규칙 때문이다 — 숫자 환산이 필요한 곳은 배치 도구 둘뿐이고
-    # (`push_sections` · `pull_signals`, 둘 다 곡 수준만 쓴다), 그 값은 지금 이
+    # 않기로 한 팀 규칙 때문이다 — 숫자 환산이 필요한 곳은 배치 도구뿐이고
+    # (`pull_signals`, 곡 수준만 쓴다), 그 값은 지금 이
     # 자리에서 DB 표를 읽어 이미 손에 있다. 색인과 함께 버전이 매겨져 함께
     # 배포되므로 판과 매핑이 어긋날 자리도 없어진다.
     #

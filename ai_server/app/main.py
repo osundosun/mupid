@@ -44,7 +44,7 @@ def artifact_status() -> dict:
 
     매핑표는 **서빙 산출물이 아니다.** 숫자↔문자열 번역은 Spring 이 하고
     `/internal/ready` 도 더는 보지 않는다(`internal_api.ready`). 그래도 상태는
-    싣는다 — 적재 도구(`push_sections`·`register_sections`)가 이 파일을 쓰므로
+    싣는다 — 배치 도구(`register_sections`·`pull_signals`)가 이 파일을 쓰므로
     운영 중에 "왜 적재가 안 되나" 를 여기서 먼저 본다. 대신 `missing` 에는 넣지
     않는다. 넣으면 기동 로그가 매번 "선택 산출물 없음" 을 찍어, 정작 개인화가
     빠진 배포와 구분이 되지 않는다.

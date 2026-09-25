@@ -222,8 +222,9 @@ AI 색인의 키는 문자열(`T000901#2`)이고 MySQL 은 정수다. 둘을 잇
 
 ### 남은 것
 
-- `id_map.parquet` 은 **배치에만** 남는다. ClickHouse `track_sections` 가 숫자 `track_id` 를
-  쓰기 때문에 `push_sections` 가 필요로 한다. 서빙은 읽지 않는다
+- `id_map.parquet` 은 **배치에만** 남는다. ClickHouse 행동 표가 숫자 `track_id` 를 쓰기
+  때문에 `pull_signals` 가 필요로 한다. 서빙은 읽지 않는다 (구간 표를 쓰던 `push_sections` 는
+  451 에서 지웠다 — 구간 표는 Spring 이 쓴다)
 - `labels_service.parquet`(선호 구간 등급)은 **배치 유지**. 전체 사용자 통계로 정해지고
   모델이 그 정의로 학습돼 있어, 요청마다 한 사람치로 바꾸면 점수 분포가 달라진다
 
@@ -777,44 +778,39 @@ MUPID_API_REFRESH_TOKEN=     # ROLE_SYSTEM 계정의 리프레시 토큰
 테스트가 지킨다 (`test_every_spring_code_reaches_the_catalog`). 카탈로그 어휘가 바뀌면
 이 테스트가 먼저 깨진다.
 
-### AI 가 구간 표를 넣을 때 (선행 조건)
+### 구간 표는 Spring 이 넣는다 (선행 조건)
 
 **이것이 없으면 행동 데이터가 통째로 버려진다.** `mv_user_section_signals` 는
 `dictGet(dict_track_sections, ...)` 로 재생 위치가 어느 구간인지 찾고, 못 찾으면 그
 이벤트를 버린다. 2026-09-15 에 실제로 재현했다 — 구간 표가 비어 있으니 좋아요를 눌러도
 `user_section_signals` 에 한 줄도 안 남았고, 구간 1건을 넣자 바로 통과했다.
 
-읽기 전용 원칙(Q8)의 유일한 예외다. `track_sections` 는 **AI 만이 만들 수 있는 분석
-결과**다. 행동 데이터는 여전히 읽기만 한다.
+> **2026-09-25 (S15P21A204-451) — AI 는 이 표를 쓰지 않는다.** 예전에는 읽기 전용 원칙(Q8)의
+> 예외로 `ai_server/tools/push_sections.py` 가 색인(`moments.parquet`)을 `id_map` 으로 번역해
+> HTTP 로 직접 넣었다. 쓰기 관문(Spring)을 우회했고 원천이 MySQL 이 아니라 색인이라 두 저장소가
+> 어긋날 여지가 있어 지웠다. AI 는 이제 **어떤 ClickHouse 표에도 쓰지 않는다**
+> (`test_ai_server_never_writes_track_sections`).
 
-**2026-09-22(S15P21A204-435)부터 이 표를 쓰는 곳이 둘이다.** 전처리 배치가 부르는
-요구 1(`PUT /api/v1/music/{musicId}/section`)이 MySQL 과 `track_sections` 에 함께
-적재한다. 배치가 도는 경로에서는 그쪽이 정상 경로이고, 아래 도구는 **일괄 시드와
-복구용**이다. 컬럼이 같은 모양이라 어느 쪽이 넣어도 결과가 같다.
-
-```
-moments.parquet ──(id_map)──> track_sections ──> dict_track_sections
-                                                       ↑
-                           listen_events ──> mv_user_section_signals
-```
-
-도구는 `ai_server/tools/push_sections.py` 다.
+쓰는 쪽은 Spring 하나다. 요구 1(`PUT /api/v1/music/{musicId}/section`)이 MySQL 에 구간을 넣고,
+같은 트랜잭션에 `analytics_sync_pending` 행을 남긴 뒤, 커밋되면 `track_sections_local` 에 쓴다.
+실패하면 그 행을 재시도 작업(1분)이 MySQL 의 지금 구간으로 메우고, 대조 작업(매일 04:40)이
+레플리카마다 MySQL 과 비교해 어긋난 곡을 다시 넣는다 → `api/knowledge/architecture/analytics-sync.md`.
 
 | 컬럼 | 값 |
 |---|---|
-| `track_id` | **MySQL 이 발급한 숫자.** `id_map` 에 없는 곡은 넣지 않고 센다 |
+| `track_id` | MySQL `music_id` |
 | `section_uid` | 문자열 구간 ID(`T001001#3`). MySQL `external_id` 와 같은 값이다 |
-| `analysis_version` | **`v1` 고정.** `v_track_sections_current` 가 이 값만 고른다 |
-| `fn` | MySQL `section_label` ENUM 어휘만. 밖의 라벨은 제외하고 센다 |
-| `music_section_analysis_id` | MySQL 구간 PK. `id_map` 에 없으면 **0 으로 두고 센다** — 곡과 달리 구간은 번호를 몰라도 넣는다. `dictGet` 에는 `section_uid` 면 충분하고, 빼면 그 구간의 이벤트가 통째로 버려진다 |
+| `analysis_version` | MySQL `music_section_analysis.analysis_version` (요청이 싣는 값, 지금 `v1`). `v_track_sections_current` 가 `v1` 만 고른다 |
+| `fn` | MySQL `section_label` |
+| `music_section_analysis_id` | MySQL 구간 PK |
 
 `peak_ms` 는 2026-09-22 에 없앴다. MySQL 에 대응 컬럼이 없고 구간 안 정점을 산출한 적도
 없어 줄곧 시작점이 들어가 있었다.
 
-넣은 뒤 **두 노드 모두** 딕셔너리를 갱신해야 한다(`ON CLUSTER mupid_all`). 한쪽만 하면
-그 샤드로 간 조회가 구간을 못 찾는다 — 초기화 직후 ch-02 만 `NOT_LOADED` 였다.
-갱신을 건너뛰어도 `LIFETIME(300~600초)` 로 언젠가는 반영되지만, 그때까지 들어온 이벤트는
-버려진다.
+딕셔너리는 `LIFETIME(300~600초)` 로 10분 안에 새 구간을 집는다. 그 사이 들어온 이벤트는
+버려진다 — 즉시 반영이 필요한 시나리오(시드·검증)는 `SYSTEM RELOAD DICTIONARY ON CLUSTER
+mupid_all dict_track_sections` 를 **두 노드 모두**에 건다(한쪽만 하면 그 샤드로 간 조회가
+구간을 못 찾는다 — 초기화 직후 ch-02 만 `NOT_LOADED` 였다).
 
 ### AI 배치가 행동 데이터를 읽을 때 (Q8)
 
@@ -847,16 +843,12 @@ ID 쪽이 최종 방어선이다.
 
 | 작업 | 언제 | 명령 |
 |---|---|---|
-| 구간 표 최초 적재 | `id_map` 이 갖춰진 뒤 한 번 | `push_sections --full` |
-| 구간 표 증분 | **신규 곡·재분석 뒤** | `push_sections` |
-| 구간 표 대사 | 하루 1회 | `push_sections --audit` (차이 있으면 종료 코드 3) |
+| 구간 표 적재·대사 | — | **AI 작업이 아니다.** Spring 이 적재 커밋 뒤 쓰고, 재시도(1분)·대조(매일)가 맞춘다 |
 | 신호 수집 | 짧은 주기 | `pull_signals` |
 | 라벨·선호 갱신 | 신호 수집 뒤 | `run_labeler` |
 
-**재생할 때마다 `push_sections` 를 돌리지 않는다.** 구간 표는 곡이 늘거나 경계가 바뀔 때만
-변하고, 재생은 아무것도 바꾸지 않는다. Kubernetes 로 가면 전처리 완료 이벤트로 Job 을
-띄우거나 짧은 주기 CronJob 으로 같은 명령을 돌리면 된다 — 증분이라 자주 돌려도 비용이
-거의 없다.
+**재생할 때마다 도는 것은 없다.** 구간 표는 곡이 늘거나 경계가 바뀔 때만 변하고, 재생은
+아무것도 바꾸지 않는다.
 
 **쓰기 권한을 주지 않는다.** AI 는 어떤 DB 에도 직접 쓰지 않는다
 ([decision/0011](../api/knowledge/decision/0011-jpa-manages-schema.md)).

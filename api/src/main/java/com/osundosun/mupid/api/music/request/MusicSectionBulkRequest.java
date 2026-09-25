@@ -24,11 +24,9 @@ public record MusicSectionBulkRequest(
     /**
      * 분석 버전. 현재 `v1`.
      *
-     * **MySQL 에는 남지 않는다.** `music_section_analysis` 에 버전 컬럼이 없기
-     * 때문이다. 실제로 기록하려면 ERD 변경이 선행이다.
-     *
-     * 반면 ClickHouse `track_sections` 에는 컬럼이 있어 그대로 들어간다
-     * (S15P21A204-435). 그리고 `v_track_sections_current` 가 **`v1` 만** 고르므로,
+     * MySQL `music_section_analysis.analysis_version` 과 ClickHouse `track_sections`
+     * 양쪽에 **같은 값**으로 들어간다 (S15P21A204-451 전에는 ClickHouse 에만 남았다).
+     * 재시도·대조 작업은 MySQL 의 이 값을 읽어 ClickHouse 에 쓴다. 그리고 `v_track_sections_current` 가 **`v1` 만** 고르므로,
      * 다른 값을 보내면 표에는 들어가되 딕셔너리가 보지 않아 구간 판정에 전혀 쓰이지
      * 않는다 — 오류 없이 그 곡의 행동 신호만 조용히 사라진다.
      */

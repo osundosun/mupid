@@ -27,8 +27,8 @@ Spring 이 MySQL 구간을 저장할 때 같은 내용을 그곳에 쓰고, 한 
 "이벤트 로그가 없다" 로 매일 실패했다(S15P21A204-423). AI 가 Spring 을 부르지 않는다는
 계약으로 되돌렸다.
 
-숫자가 필요한 곳은 배치 도구 둘뿐이고 둘 다 **곡 수준만** 쓴다 — `push_sections` 의
-`im.music_id(tid)` 와 `pull_signals` 의 `im.source_track_id(...)`. 구간 PK
+숫자가 필요한 곳은 배치 도구뿐이고 **곡 수준만** 쓴다 — `pull_signals` 의
+`im.source_track_id(...)`. (`im.music_id(tid)` 를 쓰던 `push_sections` 는 451 에서 지웠다.) 구간 PK
 (`music_section_analysis_id`)를 환산하는 코드는 저장소에 하나도 없다. 서빙은 아예
 숫자를 다루지 않는다 — 계약이 문자열 `external_id` 이고 환산은 Spring 이 한다.
 
@@ -140,7 +140,7 @@ class IdMap:
         `T000001` 에서 1 을 뽑는 식의 규칙은 시딩이 그렇게 만들었을 뿐 계약이 아니고,
         실제로 `T000847_1` 처럼 규칙 밖 값이 있었다.
 
-        이 길로 오는 것은 배치 도구(`push_sections`·`pull_signals`)뿐이다. 서빙은
+        이 길로 오는 것은 배치 도구(`pull_signals`·`register_sections`)뿐이다. 서빙은
         숫자를 다루지 않는다 — 계약이 문자열 `external_id` 이고 환산은 Spring 이 한다.
         """
         from . import track_sections   # 순환 import 를 피해 쓰는 자리에서 가져온다

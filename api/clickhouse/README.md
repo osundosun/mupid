@@ -409,11 +409,12 @@ public class SectionStatsService {
 | `analytics/repository/UserActivityRepository` | 관리자 화면의 사용자 타임라인 (원본 이벤트) |
 | `analytics/repository/TrackSectionRepository` | **유일하게 쓰는 쪽.** 구간 적재 (S15P21A204-435) |
 
-`TrackSectionRepository` 는 `MusicSectionServiceImpl.replaceSections` 가 부른다. 배치가
+`TrackSectionRepository` 는 `analytics.sync.service.TrackSectionSync` 만 부른다. 배치가
 `PUT /api/v1/music/{musicId}/section` 으로 올린 구간이 MySQL 과 `track_sections` 양쪽에
 들어간다. **MySQL 트랜잭션이 커밋된 뒤에** 넣고, 실패해도 MySQL 을 되돌리지 않는다 —
-분석 DB 가 죽었다고 곡 등록이 멈추면 배치가 곡마다 선다. 대신 곡 번호가 `ERROR` 로그에
-남고, 밀린 곡은 `ai_server/tools/push_sections.py` 로 메운다.
+분석 DB 가 죽었다고 곡 등록이 멈추면 배치가 곡마다 선다. 대신 같은 트랜잭션에
+`analytics_sync_pending` 행이 남고, 재시도(1분)·대조(매일)가 MySQL 의 지금 구간으로 메운다
+(S15P21A204-451, `knowledge/architecture/analytics-sync.md`).
 
 행동 데이터(`listen_events`)는 스프링이 직접 쓰지 않는다. Kafka 를 거쳐 들어온다.
 

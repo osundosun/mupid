@@ -268,18 +268,15 @@ python -m ai_server.tools.<이름>
 | 진입점 | 언제 | 하는 일 |
 |---|---|---|
 | `build_id_map <표>` | 곡 적재 뒤 | MySQL 내보내기 → `id_map.parquet` |
-| `push_sections --full` | 최초 1회 | 구간 전량을 ClickHouse 로 |
-| `push_sections` | **신규 곡·재분석 뒤** | 바뀐 구간만 |
-| `push_sections --audit` | 하루 1회 | 대사. 차이가 있으면 **종료 코드 3** |
 | `pull_signals` | 짧은 주기 | ClickHouse 신호 → 행동 로그 (워터마크 증분) |
 | `run_labeler` | 신호 수집 뒤 | 라벨·선호 구간 갱신 |
 | `export_stage1_npz` | 모델 교체 시 | `stage1.pt` → `stage1_weights.npz` |
 
-**재생할 때마다 도는 것은 하나도 없다.** `push_sections` 는 곡이 늘거나 경계가 바뀔 때만
-의미가 있다. 전처리 완료 이벤트로 Job 을 띄우거나 짧은 주기 CronJob 으로 돌리면 된다 —
-증분이라 자주 돌려도 비용이 거의 없다.
+**재생할 때마다 도는 것은 하나도 없다.** ClickHouse 구간 표(`track_sections`)는 AI 배치가
+아니라 Spring 이 채운다 — 구간 적재 커밋 뒤 쓰고, 밀린 곡은 Spring 의 재시도(1분)·대조(매일)가
+메운다(S15P21A204-451). 예전의 `push_sections`(`--full`·증분·`--audit`)는 지웠다.
 
-종료 코드로 성공을 판단한다. `0` 정상, `1` 실패, `3` 대사 차이 발견.
+종료 코드로 성공을 판단한다. `0` 정상, `1` 실패.
 
 CronJob 은 `concurrencyPolicy: Forbid` 를 권한다. 같은 워터마크를 두 파드가 동시에
 전진시키면 건너뛰는 구간이 생긴다.

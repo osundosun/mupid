@@ -834,7 +834,7 @@ def test_demo_only_schemas_are_gone():
 
 def test_section_enum_matches_spring():
     """Spring 의 SectionLabel 과 어긋나면 그 차이가 곧 적재 실패다."""
-    from ai_server.tools.push_sections import SECTION_ENUM
+    from ai_server.tools.register_sections import SECTION_ENUM
 
     java = (Path(__file__).resolve().parents[2] / "api/src/main/java/com/osundosun"
             / "mupid/api/music/enumerate/SectionLabel.java")
@@ -1836,202 +1836,29 @@ def test_raw_answer_is_kept_for_tracing():
 
 
 # ------------------------------------------------------------------ 구간 적재
-class _FakeMap:
-    loaded = True
+# `tools/push_sections.py` 는 S15P21A204-451 에서 지웠다. ClickHouse `track_sections` 에 HTTP 로
+# 직접 쓰던 복구 도구라 쓰기 관문(Spring)을 우회했다. 지금은 Spring 이 구간 교체 트랜잭션에
+# 미반영 기록을 남기고, 커밋 뒤 쓰기 → 1분 재시도 → 매일 대조가 사본을 맞춘다
+# (`api/knowledge/architecture/analytics-sync.md`). 그 도구의 시험도 함께 걷었다.
 
-    def music_id(self, s):
-        if s == "T000999":
-            raise KeyError("매핑 없음")
-        return {"T001001": 1001, "T001002": 1002}[s]
-
-    def music_section_analysis_id(self, uid):
-        # `T001002#3` 은 일부러 빼 둔다 — 곡은 매핑됐는데 구간만 없는 경우다.
-        return {"T001001#4": 50004}[uid]
+# 이 목록 밖의 파일이 `track_sections` 에 INSERT·ALTER 를 던지면 우회가 되살아난 것이다.
+# `seed_e2e` 는 dev 전용 시험 시드라 `listen_events` 와 같이 픽스처를 직접 넣는다.
+_TRACK_SECTIONS_WRITERS_ALLOWED = {"seed_e2e.py"}
 
 
-def _moments():
-    import pandas as pd
-
-    return pd.DataFrame([
-        {"track_id": "T001001", "moment_id": "T001001#4", "section_idx": 4,
-         "section_label": "verse", "start_sec": 30.0, "end_sec": 60.0},
-        {"track_id": "T001002", "moment_id": "T001002#9", "section_idx": 9,
-         "section_label": "weird", "start_sec": 80.0, "end_sec": 90.0},
-        {"track_id": "T000999", "moment_id": "T000999#1", "section_idx": 1,
-         "section_label": "chorus", "start_sec": 10.0, "end_sec": 20.0},
-        {"track_id": "T001001", "moment_id": "T001001#5", "section_idx": 5,
-         "section_label": "chorus", "start_sec": 70.0, "end_sec": 70.0},
-        {"track_id": "T001002", "moment_id": "T001002#3", "section_idx": 3,
-         "section_label": "intro", "start_sec": 0.0, "end_sec": 20.0},
-    ])
-
-
-def test_push_sections_never_invents_a_numeric_id():
-    """매핑에 없는 곡을 넣으면 실제 DB 와 어긋난 순간 엉뚱한 곡을 추천한다."""
-    from ai_server.tools import push_sections as ps
-
-    rows, stat = ps.build_rows(_moments(), _FakeMap(), "v1")
-    assert stat["unmapped_track"] == 1
-    assert "T000999" in stat["unmapped_sample"]
-    assert all(r["track_id"] in (1001, 1002) for r in rows)
-
-
-def test_push_sections_carries_the_mysql_section_id():
-    """구간 표에 MySQL PK 를 함께 싣는다 (S15P21A204-435).
-
-    ClickHouse 쪽에서 구간을 가리키는 값이 문자열 `section_uid` 뿐이면 분석 결과를
-    MySQL 구간 행에 붙이려고 매번 문자열로 조인해야 한다. 스프링이 구간을 적재할 때
-    넣는 것과 같은 컬럼이므로 이쪽도 채운다.
-    """
-    from ai_server.tools import push_sections as ps
-
-    rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1")
-    by_uid = {r["section_uid"]: r for r in rows}
-    assert by_uid["T001001#4"]["music_section_analysis_id"] == 50004
-
-
-def test_push_sections_keeps_sections_whose_number_is_unknown():
-    """**구간은 매핑이 없어도 넣는다.** 곡과 다르다.
-
-    이 표의 첫 번째 쓰임은 `dictGet` 으로 재생 위치를 구간에 붙이는 것이고 거기에는
-    `section_uid` 면 충분하다. 번호가 없다고 빼면 그 구간의 이벤트가 통째로 버려지고,
-    그건 이 도구가 막으려는 바로 그 침묵이다.
-    """
-    from ai_server.tools import push_sections as ps
-
-    rows, stat = ps.build_rows(_moments(), _FakeMap(), "v1")
-    by_uid = {r["section_uid"]: r for r in rows}
-    assert "T001002#3" in by_uid, "번호를 모른다고 구간을 버리면 안 된다"
-    assert by_uid["T001002#3"]["music_section_analysis_id"] == 0
-    assert stat["unmapped_section"] == 1
-
-
-def test_push_sections_drops_labels_outside_the_erd_enum():
-    """한쪽에만 있는 라벨을 넣으면 두 저장소를 맞출 때 어느 쪽이 맞는지 알 수 없다."""
-    from ai_server.tools import push_sections as ps
-
-    rows, stat = ps.build_rows(_moments(), _FakeMap(), "v1")
-    assert stat["unknown_label"] == 1
-    assert all(r["fn"] in ps.SECTION_ENUM for r in rows)
-
-
-def test_push_sections_drops_empty_ranges():
-    """RANGE_HASHED 딕셔너리는 start==end 를 어느 쪽으로도 못 고른다."""
-    from ai_server.tools import push_sections as ps
-
-    rows, stat = ps.build_rows(_moments(), _FakeMap(), "v1")
-    assert stat["bad_range"] == 1
-    assert all(r["end_ms"] > r["start_ms"] for r in rows)
-
-
-def test_push_sections_never_writes_a_local_clock_timestamp():
-    """`created_at` 은 `ReplacingMergeTree` 의 **버전 컬럼**이다.
-
-    예전에는 `pd.Timestamp.now("UTC")` 를 타임존 표시 없이 넣었는데, 서버 타임존이
-    `Asia/Seoul` 이라 **9시간 과거로 저장된다.** 그러면 이 도구가 고친 구간이
-    `DEFAULT now()` 로 들어간 행에 밀려 조용히 옛 값으로 되돌아간다.
-
-    비우면 아예 싣지 않아 ClickHouse 가 `DEFAULT now()` 로 채운다 — 어느 쪽이든
-    서버 시계다.
-    """
-    import inspect
-
-    from ai_server.tools import push_sections as ps
-
-    rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1")
-    assert all("created_at" not in r for r in rows), (
-        "시각을 싣지 않기로 했으면 서버 기본값에 맡긴다")
-
-    rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1", "2026-09-16 12:06:49")
-    assert {r["created_at"] for r in rows} == {"2026-09-16 12:06:49"}
-
-    # 로컬 시계로 돌아가지 않았는지 본다. 되돌아가도 시험은 다 통과하기 때문이다.
-    src = inspect.getsource(ps.build_rows)
-    assert "Timestamp.now" not in src and "datetime.now" not in src
-
-
-def test_push_sections_asks_the_server_for_the_time():
-    """시각은 ClickHouse 에 물어서 얻는다. 로컬 시계를 쓰지 않는다."""
-    from ai_server.tools import push_sections as ps
-
-    asked = {}
-
-    def fake_query(sql, body=None):
-        asked["sql"] = sql
-        return "2026-09-16 12:06:49\n"
-
-    orig, ps.query = ps.query, fake_query
-    try:
-        assert ps.server_now() == "2026-09-16 12:06:49"
-    finally:
-        ps.query = orig
-    assert "now()" in asked["sql"] and "UTC" not in asked["sql"]
-
-
-def test_push_sections_uses_the_version_the_dictionary_reads():
-    """v_track_sections_current 가 'v1' 만 고른다. 다른 값은 표에는 들어가지만
-    구간 판정에 전혀 쓰이지 않는다."""
-    from ai_server.tools import push_sections as ps
-
-    assert ps.DICT_VERSION == "v1"
-    rows, _ = ps.build_rows(_moments(), _FakeMap(), ps.DICT_VERSION)
-    assert {r["analysis_version"] for r in rows} == {"v1"}
-
-
-def test_push_sections_accepts_the_jdbc_url_shape(monkeypatch):
-    """.env 가 jdbc: 형태로 적혀 있다. 그대로 넣어도 붙어야 한다."""
-    from ai_server.tools import push_sections as ps
-
-    monkeypatch.setenv("MUPID_CLICKHOUSE_URL", "jdbc:clickhouse://localhost:18123/default")
-    assert ps._http_base() == "http://localhost:18123"
-    monkeypatch.setenv("MUPID_CLICKHOUSE_URL", "http://ch:8123")
-    assert ps._http_base() == "http://ch:8123"
-    monkeypatch.delenv("MUPID_CLICKHOUSE_URL")
-    with pytest.raises(SystemExit):
-        ps._http_base()
-
-
-# ------------------------------------------------------------------ 증분 적재
-def _remote(row: dict) -> tuple:
-    """`remote_state()` 가 돌려주는 모양. 컬럼이 늘면 여기만 고친다."""
-    return (row["start_ms"], row["end_ms"], row["fn"], row["music_section_analysis_id"])
-
-
-def test_push_sections_incremental_only_sends_changes():
-    """구간 1만 개를 매번 밀면 파트가 쌓이고 머지가 따라오지 못한다."""
-    from ai_server.tools import push_sections as ps
-
-    rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1")
-    same = {r["section_uid"]: _remote(r) for r in rows}
-    todo, d = ps.diff(rows, same)
-    assert todo == [] and d["new"] == 0 and d["changed"] == 0
-
-    moved = dict(same)
-    k = rows[0]["section_uid"]
-    moved[k] = (moved[k][0], moved[k][1] + 5000, moved[k][2], moved[k][3])
-    todo, d = ps.diff(rows, moved)
-    assert d["changed"] == 1 and [r["section_uid"] for r in todo] == [k]
-
-    # 경계는 그대로인데 MySQL 구간 번호만 비어 있는 행. 이것도 다시 보내야 한다 —
-    # 03 마이그레이션으로 되살렸거나 id_map 이 늦게 갖춰진 회차가 이 모양이다.
-    blank = dict(same)
-    blank[k] = (blank[k][0], blank[k][1], blank[k][2], 0)
-    todo, d = ps.diff(rows, blank)
-    assert d["changed"] == 1 and [r["section_uid"] for r in todo] == [k]
-
-    todo, d = ps.diff(rows, {})
-    assert d["new"] == len(rows) and len(todo) == len(rows)
-
-
-def test_push_sections_audit_spots_orphans():
-    """색인에서 사라진 구간이 ClickHouse 에 남아 있으면 옛 경계로 판정된다."""
-    from ai_server.tools import push_sections as ps
-
-    rows, _ = ps.build_rows(_moments(), _FakeMap(), "v1")
-    remote = {r["section_uid"]: _remote(r) for r in rows}
-    remote["T009999#0"] = (0, 1000, "INTRO", 0)
-    _, d = ps.diff(rows, remote)
-    assert d["orphan"] == 1 and "T009999#0" in d["orphan_sample"]
+def test_ai_server_never_writes_track_sections():
+    """ClickHouse `track_sections` 를 쓰는 쪽은 Spring 하나다 (저장소 재설계 §8.2-7)."""
+    root = Path(__file__).resolve().parents[1]
+    write = re.compile(
+        r"(INSERT\s+INTO|ALTER\s+TABLE)\s+`?track_sections(_local)?", re.I)
+    offenders = []
+    for path in list((root / "tools").glob("*.py")) + list((root / "app").rglob("*.py")):
+        if path.name in _TRACK_SECTIONS_WRITERS_ALLOWED:
+            continue
+        if write.search(path.read_text(encoding="utf-8")):
+            offenders.append(path.name)
+    assert offenders == []
+    assert not (root / "tools" / "push_sections.py").exists()
 
 
 # ------------------------------------------------------------------ Q8 읽기
@@ -2135,17 +1962,17 @@ def test_empty_genre_is_reported_and_raw_answer_survives():
 # ------------------------------------------------------------------ 5대 결함 회귀
 def test_clickhouse_url_scheme_is_never_downgraded(monkeypatch):
     """`https://` 로 적어 둔 ClickHouse 에 평문으로 붙으면 자격증명이 그대로 샌다."""
-    from ai_server.tools import push_sections as ps
+    from ai_server.app import clickhouse as ch
 
     monkeypatch.setenv("MUPID_CLICKHOUSE_URL", "https://ch.example.com:8443")
-    assert ps._http_base() == "https://ch.example.com:8443"
+    assert ch._http_base() == "https://ch.example.com:8443"
 
     monkeypatch.setenv("MUPID_CLICKHOUSE_URL", "jdbc:clickhouse://ch:8443/default")
     monkeypatch.setenv("MUPID_CLICKHOUSE_SECURE", "1")
-    assert ps._http_base() == "https://ch:8443"
+    assert ch._http_base() == "https://ch:8443"
 
     monkeypatch.setenv("MUPID_CLICKHOUSE_SECURE", "")
-    assert ps._http_base() == "http://ch:8443"
+    assert ch._http_base() == "http://ch:8443"
 
 
 def test_play_events_reach_the_behaviour_signals():
