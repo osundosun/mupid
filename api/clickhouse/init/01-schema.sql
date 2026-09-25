@@ -81,6 +81,11 @@ ENGINE = Distributed(mupid, currentDatabase(), listen_events_local, cityHash64(u
 -- `section_features` 표를 두지 않은 것은 MySQL 에서 **같은 행의 컬럼**이기 때문이다 —
 -- 같은 요청(`PUT …/section`)이 같이 바꾸고, 같은 곡 단위 교체·미반영 기록·대조를 그대로
 -- 탄다. 표를 나누면 구간 하나를 두 표에서 교체하고 옛 순번도 두 번 지워야 한다.
+--
+-- `instruments` 는 구간 악기의 코드 이름(`codes.code_name`), 코드 번호순이다 (S15P21A204-458).
+-- 계약 v3 에서 추천 서버가 악기 조건(`filters`/`exclude.instrument`)을 여기서 건다. `other` 같은
+-- 구체적이지 않은 이름도 그대로 싣고 거르는 것은 읽는 쪽 몫이다. 원천은 다른 표
+-- (`music_analysis_instruments`)지만 같은 요청이 같이 바꾸므로 energy 와 같은 이유로 이 표에 둔다.
 CREATE TABLE IF NOT EXISTS track_sections_local ON CLUSTER mupid_all
 (
     track_id                   UInt32,
@@ -92,6 +97,7 @@ CREATE TABLE IF NOT EXISTS track_sections_local ON CLUSTER mupid_all
     start_ms                   UInt32,
     end_ms                     UInt32,
     energy                     Nullable(Float64),
+    instruments                Array(String),
     created_at                 DateTime DEFAULT now()
 )
 ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/track_sections', '{replica}', created_at)
@@ -189,6 +195,7 @@ SELECT s.section_uid              AS section_uid,
        s.start_ms                 AS start_ms,
        s.end_ms                   AS end_ms,
        s.energy                   AS energy,
+       s.instruments              AS instruments,
        toString(s.analysis_version) AS analysis_version
 FROM track_sections_local AS s FINAL
 INNER JOIN
@@ -212,7 +219,11 @@ INNER JOIN
 -- `TABLE` 도 DB 를 적지 않아 'default' 를 본다(`dict_track_sections` 와 같다, README). 그 사이
 -- 삭제된 곡이 보이는 틈은 `track_features` 를 FINAL 로 함께 읽어 메우고, 끝의 틈은 Spring
 -- 최종 필터가 막는다(설계 §7.4).
-CREATE DICTIONARY IF NOT EXISTS dict_serving_sections ON CLUSTER mupid_all
+--
+-- `instruments` 는 Array 속성이다(25.3 의 COMPLEX_KEY_HASHED_ARRAY 가 받는다, 2026-09-25 dev 확인).
+-- 없는 키의 기본값은 빈 배열이다. 속성을 더하려고 `OR REPLACE` 로 만든다 — `IF NOT EXISTS` 로는
+-- 이미 있는 사전이 그대로 남는다.
+CREATE OR REPLACE DICTIONARY dict_serving_sections ON CLUSTER mupid_all
 (
     section_uid                String,
     track_id                   UInt32,
@@ -222,6 +233,7 @@ CREATE DICTIONARY IF NOT EXISTS dict_serving_sections ON CLUSTER mupid_all
     start_ms                   UInt32,
     end_ms                     UInt32,
     energy                     Nullable(Float64),
+    instruments                Array(String),
     analysis_version           String
 )
 PRIMARY KEY section_uid

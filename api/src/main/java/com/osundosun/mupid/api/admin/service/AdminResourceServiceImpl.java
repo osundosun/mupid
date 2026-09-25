@@ -34,8 +34,10 @@ import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicAnalysis;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
+import com.osundosun.mupid.api.music.mapping.entity.MusicAnalysisInstrument;
 import com.osundosun.mupid.api.music.mapping.entity.MusicGenre;
 import com.osundosun.mupid.api.music.mapping.entity.MusicMood;
+import com.osundosun.mupid.api.music.mapping.repository.MusicAnalysisInstrumentRepository;
 import com.osundosun.mupid.api.stream.entity.Stream;
 import com.osundosun.mupid.api.user.entity.User;
 import com.osundosun.mupid.api.user.enumerate.UserRole;
@@ -104,6 +106,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
      * 남겨 재시도 작업이 1분 안에 MySQL 의 지금 구간으로 덮게 한다 (S15P21A204-451).
      */
     private final TrackSectionSync trackSectionSync;
+    /** 악기 코드 이름을 고쳤을 때 그 악기를 단 곡을 찾는다 ({@link #instrumentMusic}). */
+    private final MusicAnalysisInstrumentRepository instrumentRepository;
     private final TrackFeatureSync trackFeatureSync;
     /**
      * 구간의 경계·라벨이 바뀌면 그 분석 버전의 벡터도 다시 필요하다 — 라벨은 {@code X} 원핫에 들어가
@@ -340,6 +344,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
 
         persist(entity);
         markSectionChanged(entity, null);
+        markInstrumentsChanged(instrumentMusic(entity));
         markFeaturesChanged(featureMusicIds(entity));
         return toRow(meta, entity);
     }
@@ -354,10 +359,14 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         guardUserUpdate(meta, entity, body);
         Integer musicBefore = sectionMusicId(entity);
         Set<Integer> featuresBefore = featureMusicIds(entity);
+        Map<Integer, String> instrumentsBefore = instrumentMusic(entity);
 
         apply(meta, entity, body, false);
         flush();
         markSectionChanged(entity, musicBefore);
+        // 악기 연결을 다른 구간으로 옮겼으면 옛 구간의 곡도 올린다 — 옛 사본에 그 악기가 남는다.
+        instrumentsBefore.putAll(instrumentMusic(entity));
+        markInstrumentsChanged(instrumentsBefore);
         featuresBefore.addAll(featureMusicIds(entity));
         markFeaturesChanged(featuresBefore);
         return toRow(meta, entity);
@@ -372,10 +381,12 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         guardUserDelete(meta, entity);
         // 지우기 전에 센다 — 코드를 쓰는 곡은 지운 뒤에는 질의로 찾을 수 없다.
         Set<Integer> features = featureMusicIds(entity);
+        Map<Integer, String> instruments = instrumentMusic(entity);
 
         entityManager.remove(entity);
         flush();
         markSectionChanged(entity, null);
+        markInstrumentsChanged(instruments);
         markFeaturesChanged(features);
     }
 
@@ -401,6 +412,35 @@ public class AdminResourceServiceImpl implements AdminResourceService {
             trackSectionSync.markPending(musicBefore, section.getAnalysisVersion());
             vectorSync.markPending(musicBefore, section.getAnalysisVersion());
         }
+    }
+
+    /**
+     * 구간 사본의 {@code instruments}(S15P21A204-458)를 바꾼 행이면 그 곡들을 구간 미반영으로 올린다.
+     *
+     * <p>악기 연결 한 줄({@code musicAnalysisInstrument})이거나 악기 <b>코드</b>다 — 사본에는 코드
+     * 이름이 들어가므로 이름을 고치면 그 악기를 단 곡 전부가 바뀐다. 벡터는 올리지 않는다 — 악기는
+     * 벡터 입력이 아니다(라벨과 다르다, 설계 §7.5). 기록만 남기고 재시도가 1분 안에 곡 전체를 교체한다.
+     */
+    private void markInstrumentsChanged(Map<Integer, String> musicVersions) {
+        musicVersions.forEach(trackSectionSync::markPending);
+    }
+
+    /** 이 행이 구간 사본의 악기에 닿는 곡 번호 → 그 구간의 분석 버전. */
+    private Map<Integer, String> instrumentMusic(Object entity) {
+        Map<Integer, String> out = new LinkedHashMap<>();
+        if (entity instanceof MusicAnalysisInstrument link
+            && link.getMusicSectionAnalysis() != null
+            && link.getMusicSectionAnalysis().getMusic() != null) {
+            MusicSectionAnalysis section = link.getMusicSectionAnalysis();
+            out.put(section.getMusic().getMusicId(), section.getAnalysisVersion());
+        } else if (entity instanceof Code code && code.getCodeId() != null
+            && code.getCodeType() == CodeType.INSTRUMENT) {
+            for (MusicAnalysisInstrumentRepository.MusicVersion row
+                : instrumentRepository.findMusicUsingCode(code.getCodeId())) {
+                out.putIfAbsent(row.musicId(), row.analysisVersion());
+            }
+        }
+        return out;
     }
 
     /**

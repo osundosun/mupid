@@ -5,12 +5,13 @@
 되나" 를 답한다. 둘은 나란히 쓴다.
 
     lookup(section_uids)        후보 수백 개의 곡·구간 특징 → Lookup
+    lookup_many(section_uids)   색인 풀 전체를 조각으로 나눠 읽는다 → Lookup (기준 풀 스냅샷)
     solve(conditions, limit)    조건에 맞는 구간 수와 ID (Qdrant 사전 필터 자리)
 
-**아직 요청 경로에 연결하지 않는다.** 지금 추천은 Spring 이 본문에 싣는 `catalog` 를
-읽는다(`catalog_body`). 458 이 그 본문을 `Lookup.body()` 로 바꿔 끼운다 — 그래서
-`Lookup.body()` 는 `catalog` 와 **같은 모양·같은 값·같은 순서**다. 값이 하나라도 다르면
-본문을 바꿔 끼운 날 순위가 바뀐다 (`tests/test_feature_store.py` 가 묶는다).
+추천 요청은 이것을 **직접 부르지 않는다**(계약 v3, S15P21A204-458). `pool_snapshot` 이
+백그라운드에서 `lookup_many` 로 기준 풀 스냅샷을 만들어 두고, 요청은 그 스냅샷만 본다.
+`Lookup.body()` 는 예전 요청 본문 `catalog` 와 **같은 모양·같은 값·같은 순서**다 — 본문을
+이것으로 바꿔 끼워도 순위가 바뀌지 않는다는 근거다 (`tests/test_feature_store.py` 가 묶는다).
 
     catalog.tracks    track_features_local FINAL — 곡 단위 사본
     catalog.sections  dict_serving_sections      — section_uid 로 바로 찾는 사전
@@ -38,6 +39,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterable, Optional, Sequence
 
 from . import catalog_body, clickhouse
+from .log import log
 
 SERVING_ENV = "MUPID_CLICKHOUSE_SERVING"
 # 서빙 조회 한 번의 HTTP 제한. 서버 쪽 `max_execution_time`(서빙 프로파일 2초)보다 조금 길다 —
@@ -52,7 +54,10 @@ _FEATURE_COLS = ("track_id", "track", "duration_ms", "bpm", "bpm_requested_min",
                  "bpm_requested_max", "language", "category", "genres", "moods",
                  "has_vocal", "vocal_gender", "is_deleted", "playable", "analysis_version")
 _SECTION_ATTRS = ("track_id", "section_label", "start_ms", "end_ms", "energy",
-                  "analysis_version")
+                  "analysis_version", "instruments")
+# `lookup_many` 한 조각의 구간 수. 서빙 프로파일의 `max_result_rows`(20만)보다 한참 작고,
+# 문장(구간 ID 배열 리터럴)이 수백 KB 를 넘지 않게 잡았다.
+CHUNK = 20_000
 
 
 class FeatureStoreError(Exception):
@@ -134,6 +139,9 @@ class Lookup:
         missing    사전에 없다 (모르는 ID, 곡 특징 행이 아직 없는 곡)
         dropped    삭제됐거나 재생할 수 없는 곡의 구간 (설계 §9.3-3)
         stale      구간 버전이 곡의 지금 분석 버전과 다르다 (재분석 직후)
+
+    `instruments` 는 구간 → 악기 코드 이름(MySQL 그대로, `other` 도 들어 있다)이다. 본문
+    `catalog` 에는 없던 값이라 `body()` 에 싣지 않는다 — 조건 풀기(`query_conditions`)만 읽는다.
     """
 
     tracks: list = field(default_factory=list)
@@ -141,6 +149,8 @@ class Lookup:
     missing: list = field(default_factory=list)
     dropped: list = field(default_factory=list)
     stale: list = field(default_factory=list)
+    instruments: dict = field(default_factory=dict)
+    versions: dict = field(default_factory=dict)
 
     def body(self) -> dict:
         """`catalog` 본문과 같은 모양. `catalog_body.from_body` 가 그대로 받는다."""
@@ -149,8 +159,11 @@ class Lookup:
         return {"tracks": tracks, "sections": sections}
 
     def snapshot(self) -> catalog_body.Snapshot:
-        """추천 계산부가 읽는 스냅샷. 본문을 거쳐 만든다 — 값을 옮기는 규칙이 한 벌이다."""
-        return catalog_body.from_body(self.body())
+        """추천 계산부가 읽는 스냅샷. 본문을 거쳐 만든다 — 값을 옮기는 규칙이 한 벌이다.
+        구간 지문(`versions`)은 본문에 없던 값이라 따로 붙인다."""
+        snap = catalog_body.from_body(self.body())
+        snap.versions = dict(self.versions)
+        return snap
 
 
 def assemble(section_rows: Iterable[dict], track_rows: Iterable[dict],
@@ -197,6 +210,9 @@ def assemble(section_rows: Iterable[dict], track_rows: Iterable[dict],
             "end_ms": int(r["end_ms"]),
             "energy": r["energy"],
         })
+        # 06 마이그레이션 전의 사전에는 열이 없다 — 빈 목록("악기를 모른다")으로 둔다.
+        out.instruments[uid] = [str(x) for x in (r.get("instruments") or [])]
+        out.versions[uid] = str(r["analysis_version"])
     for tid in used:
         t = by_track[tid]
         out.tracks.append({
@@ -224,6 +240,10 @@ class FeatureStore:
     def lookup(self, section_uids: Sequence[str]) -> Lookup:
         raise NotImplementedError
 
+    def lookup_many(self, section_uids: Sequence[str], chunk: int = CHUNK) -> Lookup:
+        """많은 ID 를 조각으로 나눠 읽고 **한 번에** 맞춘다. 기본은 조각마다 `lookup` 이다."""
+        raise NotImplementedError
+
     def solve(self, conditions: Conditions, limit: int = 10_000) -> Solved:
         raise NotImplementedError
 
@@ -246,6 +266,9 @@ class ClickHouseFeatureStore(FeatureStore):
         self.database = database
         self._dict = f"{database}.dict_serving_sections"
         self._features = f"{database}.track_features_local"
+        # 사전에서 꺼낼 구간 열. 악기 열(06 마이그레이션)이 아직 없는 사전을 만나면 한 번 빼고
+        # 다시 읽는다 — 마이그레이션 전후 어느 쪽에서도 특징 조회 자체가 멈추지 않게.
+        self._section_attrs = _SECTION_ATTRS
 
     # ------------------------------------------------------------------ 특징 조회
 
@@ -262,8 +285,8 @@ class ClickHouseFeatureStore(FeatureStore):
         """
         uids = _array(dict.fromkeys(str(u) for u in section_uids))
         d = _lit(self._dict)
-        attrs = "(" + ",".join(_lit(a) for a in _SECTION_ATTRS) + ")"
-        picks = ", ".join(f"c.s.{i + 1} AS {a}" for i, a in enumerate(_SECTION_ATTRS))
+        attrs = "(" + ",".join(_lit(a) for a in self._section_attrs) + ")"
+        picks = ", ".join(f"c.s.{i + 1} AS {a}" for i, a in enumerate(self._section_attrs))
         fcols = ", ".join(f"f.{c} AS f_{c}" for c in _FEATURE_COLS)
         return f"""
             WITH candidates AS (
@@ -281,14 +304,50 @@ class ClickHouseFeatureStore(FeatureStore):
         """
 
     def lookup(self, section_uids: Sequence[str]) -> Lookup:
-        if not section_uids:
+        return self.lookup_many(section_uids, chunk=max(len(section_uids), 1))
+
+    def lookup_many(self, section_uids: Sequence[str], chunk: int = CHUNK) -> Lookup:
+        """조각마다 문장 하나. 조각은 **곡 단위로 자른다** — 한 곡의 구간이 두 조각에 걸치면
+        곡 특징 행이 조각마다 한 번씩 와서 합칠 때 겹친다(값은 같지만 셀 이유가 없다).
+        맞추기(`assemble`)는 모든 조각을 모은 뒤 한 번 한다 — 정렬·셈이 조각에 따라 갈리지 않는다.
+        """
+        uids = list(dict.fromkeys(str(u) for u in section_uids))
+        if not uids:
             return Lookup()
-        rows = self._rows(self.lookup_sql(section_uids))
         sections, tracks = [], {}
-        for r in rows:
-            sections.append({a: r[a] for a in ("section_uid", *_SECTION_ATTRS)})
-            tracks[int(r["f_track_id"])] = {c: r[f"f_{c}"] for c in _FEATURE_COLS}
-        return assemble(sections, tracks.values(), section_uids)
+        for part in _chunks(uids, chunk):
+            for r in self._lookup_rows(part):
+                sections.append({a: r.get(a) for a in ("section_uid", *_SECTION_ATTRS)})
+                tracks[int(r["f_track_id"])] = {c: r[f"f_{c}"] for c in _FEATURE_COLS}
+        return assemble(sections, tracks.values(), uids)
+
+    def _lookup_rows(self, part: list) -> list:
+        try:
+            return self._rows(self.lookup_sql(part))
+        except FeatureStoreError as e:
+            if "instruments" not in self._section_attrs or "instruments" not in str(e):
+                raise
+            self._section_attrs = tuple(a for a in self._section_attrs if a != "instruments")
+            log("서빙 사전에 instruments 가 없다 — 악기 없이 읽는다 (06 마이그레이션 전)")
+            return self._rows(self.lookup_sql(part))
+
+    # ------------------------------------------------------------------ 바뀌었나
+    def change_token_sql(self) -> str:
+        """내용이 바뀌었는지 싸게 보는 문장. 곡 특징의 최신 버전·행 수와 서빙 사전이 마지막으로
+        다시 읽힌 시각. 사전은 두 표의 활성 파트가 바뀔 때만 다시 읽히므로(INVALIDATE_QUERY) 구간이
+        바뀌면 시각이 바뀐다 — 병합만 일어나도 바뀌지만 그때는 한 번 더 읽을 뿐이다."""
+        db, name = self.database, "dict_serving_sections"
+        return f"""
+            SELECT (SELECT concat(toString(max(version)), ':', toString(count()))
+                    FROM {self._features} FINAL) AS features,
+                   (SELECT toString(max(last_successful_update_time)) FROM system.dictionaries
+                    WHERE database = {_lit(db)} AND name = {_lit(name)}) AS sections
+            FORMAT JSONEachRow
+        """
+
+    def change_token(self) -> str:
+        rows = self._rows(self.change_token_sql())
+        return json.dumps(rows[0] if rows else {}, sort_keys=True)
 
     # ------------------------------------------------------------------ 조건 풀기
 
@@ -321,6 +380,21 @@ class ClickHouseFeatureStore(FeatureStore):
         except Exception as e:  # noqa: BLE001 — 접속·HTTP·서버 오류를 한 종류로 돌려준다
             raise FeatureStoreError(f"{type(e).__name__}: {e}") from e
         return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def _chunks(uids: list, size: int) -> list:
+    """곡(`#` 앞)이 바뀌는 자리에서만 자른다. 한 곡이 `size` 보다 크면 그 곡 하나가 한 조각이다."""
+    out, cur, last = [], [], None
+    for u in uids:
+        t = u.split("#", 1)[0]
+        if len(cur) >= size and t != last:
+            out.append(cur)
+            cur = []
+        cur.append(u)
+        last = t
+    if cur:
+        out.append(cur)
+    return out
 
 
 def _default_query() -> Query:

@@ -18,7 +18,7 @@ import pytest
 # 이 파일 하나만 돌릴 때와 전체를 돌릴 때가 같아진다.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "music_preprocessing" / "src"))
 
-from ai_server.app import ids, internal_api, paths    # noqa: E402
+from ai_server.app import ids, internal_api, paths, pool_snapshot    # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -30,11 +30,23 @@ def restore_service_module():
     internal_api._SVC_MOD = saved
 
 
-# 요청 본문의 `catalog`(연동 계약 2026-09-23 절). 가짜 서비스는 값을 읽지 않는다 —
-# 계약상 필수라 싣는다. 모양 검증은 `catalog_body` 시험이 한다.
-CATALOG = {"tracks": {"track": ["A"]},
+# 기준 풀 스냅샷(계약 v3)의 내용. 예전에는 요청 본문 `catalog` 로 왔다 — 모양이 같다.
+# 가짜 서비스는 값을 읽지 않지만, 조건 검색은 이 값으로 조건을 푼다(장르 `pop` 이 어휘에 있다).
+CATALOG = {"tracks": {"track": ["A"], "genres": [["pop"]]},
            "sections": {"external_id": ["A#0"], "section_label": ["CHORUS"],
                         "start_ms": [0], "end_ms": [10000]}}
+
+
+@pytest.fixture(autouse=True)
+def static_pool():
+    """피처 저장소 없이 기준 풀을 둔다. 요청 본문에 `catalog` 를 실은 시험은 **옛 Spring**
+    모양이다 — 받되 쓰지 않으므로 결과가 같아야 한다."""
+    prev = pool_snapshot.HOLDER
+    pool_snapshot.install_static(CATALOG)
+    internal_api._VIEWS.clear()
+    yield
+    pool_snapshot.install(prev)
+    internal_api._VIEWS.clear()
 
 
 class _FakeCat:

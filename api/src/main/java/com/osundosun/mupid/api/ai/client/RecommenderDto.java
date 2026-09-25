@@ -3,8 +3,6 @@ package com.osundosun.mupid.api.ai.client;
 import java.util.List;
 import java.util.Map;
 
-import com.osundosun.mupid.api.ai.catalog.CatalogBody;
-
 /**
  * 추천 서버 `/internal` 계약의 요청·응답.
  *
@@ -25,11 +23,18 @@ import com.osundosun.mupid.api.ai.catalog.CatalogBody;
  *
  * <p>예외는 {@code userId} 다. 추천 서버가 ClickHouse 를 그 번호로 조회한다.
  *
- * <h2>후보는 본문으로 보낸다</h2>
+ * <h2>후보는 보내지 않는다 — 계약 v3 (S15P21A204-458)</h2>
  *
- * <p>모든 요청에 {@code catalog} 가 <b>필수</b>다({@link CatalogBody}). 추천 서버는 Spring 을
- * 부르지 않는다 — 곡·구간 메타의 정본은 MySQL 이고, 삭제·재생 불가·검색 조건은 우리가 걸러서
- * 보낸다(연동 계약 2026-09-23 절, S15P21A204-423).
+ * <p>요청 본문에 {@code catalog} 가 <b>없다.</b> 추천 서버가 곡·구간 특징을 ClickHouse 피처
+ * 저장소({@code track_features}·{@code dict_serving_sections})에서 직접 읽고, 검색 조건도 그쪽이
+ * 건다(설계 {@code infra/VECTOR-STORE-DESIGN.md} §9). 예전(2026-09-23 절)에는 후보 전부를 약
+ * 500KB 본문으로 매번 실었고, 조건은 우리가 걸러 통과한 것만 보냈다. 본문을 좌우하는 것은 이제
+ * {@code exclude_tracks}(곡당 약 10B)뿐이라 받는 쪽 입구에서 상한을 둔다
+ * ({@code NextTrackRequest.excludeMusicIds}).
+ *
+ * <p>사본은 늦을 수 있다. 그래서 <b>최종 필터는 여기 남는다</b> — 응답의 구간을 MySQL 로 옮기면서
+ * 없는 구간·지운 곡·재생할 수 없는 곡을 빼고 {@code limit} 으로 자른다
+ * ({@code RecommendationFinalFilter}). 추천 서버는 그 몫까지 {@code limit} 보다 몇 개 더 준다.
  */
 public final class RecommenderDto {
 
@@ -52,7 +57,6 @@ public final class RecommenderDto {
      *                         추천 서버가 {@code missing} 으로 판정한다
      * @param excludeTracks    이미 보여 준 곡의 문자열 ID. 지금 듣는 곡도 여기 넣는다
      * @param onboarding       이력이 없는 사용자의 첫 추천 근거. 없으면 콜드스타트다
-     * @param catalog          후보와 그 값
      */
     public record NextRequest(
         long recommendationId,
@@ -61,8 +65,7 @@ public final class RecommenderDto {
         List<String> excludeTracks,
         String currentTrack,
         String currentSection,
-        Onboarding onboarding,
-        CatalogBody catalog
+        Onboarding onboarding
     ) {
     }
 
@@ -81,9 +84,9 @@ public final class RecommenderDto {
     /**
      * 조건 검색 요청. <b>{@code queryPlan} 이 필수다.</b>
      *
-     * <p>조건 게이트는 우리가 {@link com.osundosun.mupid.api.ai.catalog.QueryPlanFilter} 로
-     * 걸고, 통과한 후보만 {@code catalog} 로 보낸다. 추천 서버는 그 안에서 순위를 매기고
-     * {@code queryPlan} 을 무드 가점과 진단에 쓴다. {@code query} 원문은 보내지 않는다.
+     * <p>{@code queryPlan}({@code filters}·{@code exclude})을 <b>그대로</b> 보내고 조건은 추천 서버가
+     * 건다(계약 v3). 어휘에 없는 필수 조건이면 {@code UNSATISFIABLE_CONDITIONS}(404)로 답하고 우리는
+     * 빈 결과로 받는다 — 조건을 몰래 풀어 아무 곡이나 주지 않는다. {@code query} 원문은 보내지 않는다.
      *
      * @param userId 호출자의 사용자 번호. **null 을 허용하는 것은 `NextRequest` 와 같은
      *               이유다** — 언박싱 지점을 만들지 않는다 (S15P21A204-377)
@@ -95,8 +98,7 @@ public final class RecommenderDto {
         List<String> excludeTracks,
         String query,
         Map<String, Object> queryPlan,
-        Onboarding onboarding,
-        CatalogBody catalog
+        Onboarding onboarding
     ) {
     }
 
@@ -115,8 +117,7 @@ public final class RecommenderDto {
         Integer userId,
         int limit,
         List<String> excludeTracks,
-        Onboarding onboarding,
-        CatalogBody catalog
+        Onboarding onboarding
     ) {
     }
 
@@ -129,12 +130,15 @@ public final class RecommenderDto {
     public record SimilarRequest(
         String externalId,
         int limit,
-        List<String> excludeTracks,
-        CatalogBody catalog
+        List<String> excludeTracks
     ) {
     }
 
-    /** 닮은 구간 응답. 취향이 섞이지 않은 코사인 값만 온다. */
+    /**
+     * 닮은 구간 응답. 취향이 섞이지 않은 코사인 값만 온다.
+     *
+     * <p>{@code items} 는 {@link Response} 와 같이 {@code limit} 보다 많을 수 있다 — 최종 필터의 몫이다.
+     */
     public record SimilarResponse(
         String externalId,
         List<SimilarItem> items,
@@ -154,10 +158,18 @@ public final class RecommenderDto {
     ) {
     }
 
+    /**
+     * 추천 응답.
+     *
+     * <p><b>{@code items} 는 {@code limit} 보다 많을 수 있다</b>(계약 v3). 추천 서버는 순위대로
+     * {@code limit} + 여유분(절반, 최소 2 — 오늘의 모먼트 4 → 최대 6)을 준다. 사본이 늦어 지워진 곡이
+     * 섞여 와도 우리 최종 필터가 빼고 나서 {@code limit} 을 채울 수 있게 하려는 것이다. 자르는 것은
+     * 우리다({@code RecommendationFinalFilter}).
+     */
     public record Response(
         long recommendationId,
         List<Item> items,
-        /** 요청 수를 못 채운 만큼. 임의로 채우지 않는다는 뜻이다. */
+        /** {@code limit} 에서 못 채운 만큼. 여유분과는 무관하다. 임의로 채우지 않는다는 뜻이다. */
         int shortfall,
         String modelVersion
     ) {

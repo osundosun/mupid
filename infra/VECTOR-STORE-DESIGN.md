@@ -644,11 +644,20 @@ AI 는 이 지표를 직접 만들지 않는다(MySQL 을 읽지 않으므로). 
 `catalog` 는 없다. 크기를 좌우하는 것은 `exclude_tracks`(곡당 약 10B)뿐이라 **상한을 둔다**
 (`NextTrackRequest.excludeMusicIds` 에 지금 제한이 없다 → `@Size(max = 500)`, 약 5KB).
 
+→ **458**: Spring 실제 직렬화(`RecommenderRequestSizeTest`) — `daily` 175B · `next` 제외 200곡 2,232B ·
+`search`(조건 6칸) 407B · `similar` 66B, 상한 500곡 + 기준 곡이면 5,243B. `@Size(max = 500)` 을 걸었다.
+예전 본문은 합성 1만 곡에서 약 4.4MB 였다(`bench_request_path --api`).
+
 ### 9.2 응답
 
 AI 는 **`limit + 여유분`**(예: `limit` 의 절반, 최소 2)을 순위대로 돌려준다. Spring 이 최종 필터로
 빼고 앞에서부터 `limit` 개를 자른다. 오늘의 모먼트(4개 고정)가 삭제된 곡 때문에 3개로 나가지 않게
 한다. 여유분으로도 모자라면 `shortfall` 로 드러난다.
+
+→ **458**: 여유분 = `limit` 의 절반 올림, 최소 2(`internal_api.spare_for`). **앞의 `limit` 개는 여유분이 없을
+때와 같다**(분위 임계값·탐색 칸은 `limit` 으로 센다 — 탐색 칸에 자리를 내준 곡이 여유분 맨 앞). 본문에 `catalog`
+를 실은 옛 Spring 에게는 예전처럼 `limit` 개만 준다(옛 Spring 은 받은 것을 전부 저장한다). Spring 최종 필터는
+`RecommendationFinalFilter` 한 곳이고 네 호출부가 함께 쓴다.
 
 ### 9.3 AI 안에서 (node-b 안)
 
@@ -663,13 +672,36 @@ AI 는 **`limit + 여유분`**(예: `limit` 의 절반, 최소 2)을 순위대�
 
 **풀 전체를 읽는 경로는 없다.** 온보딩 씨앗은 모델 묶음의 사전 계산본을 쓴다.
 
+→ **458 구현 — 기준 풀 스냅샷.** 위 1·2 를 요청마다 ClickHouse 에 묻지 않는다. 갱신 스레드가 색인 풀 ID
+전부로 피처 저장소를 읽어(`feature_store.lookup_many`, 곡 단위 조각) **기준 풀 스냅샷**(`ai_server/app/pool_snapshot.py`)
+으로 원자적으로 갈아 끼우고(기본 60초 `MUPID_POOL_SNAPSHOT_TTL_SEC`, 내용이 그대로면 갈지 않는다), 요청은 그것을
+참조만 한다. 사본·풀 색인·조건 파생값도 갱신 스레드가 미리 만든다.
+
+- **왜 후보 K 개만 읽지 않나.** 추천기에 사용자와 무관한 풀 전체 값이 있다 — 콜드스타트 순서(풀 전체 에너지
+  백분위), 온보딩 씨앗의 곡 고르기(전 곡·단계 완화), 온보딩 고정 게이트, 곡 안 에너지 백분위, 8초 미만 제외,
+  온보딩 장르 어휘. 후보 값만으로는 같은 값을 못 만들어 본문 `catalog` 때와 순위가 달라진다. 그래서 본문 자리를
+  스냅샷이 그대로 대신한다(2026-09-25 결정). 두 길이 같은 순위를 내는 것은 `tests/test_contract_v3.py` 가 본다.
+- **대가**: 갱신이 풀 전체를 읽는다(요청 경로 밖). 설계 규모 비용은 §12 의 458 줄. **후속**: 풀 전체 값을
+  ClickHouse 집계(콜드스타트 순서·곡 어휘·온보딩 곡 고르기)로 대체하면 스냅샷 없이 후보 K 개만 읽을 수 있다.
+- 1 조건 풀기: `ai_server/app/query_conditions.py`(예전 Spring `QueryPlanFilter` 규칙 그대로)가 스냅샷에서 푼다.
+  같은 조건은 스냅샷 세대 안에서 재사용. 통과한 구간이 요청 사본의 풀이고, 허용 목록이 1만 이하면 Qdrant
+  `HasId`, 넘으면 넉넉히 뽑아 사후 필터(`QdrantVectorStore.HAS_ID_MAX` = `MUPID_PREFILTER_MAX`).
+  `feature_store.solve`(ClickHouse 조건 풀기)는 스냅샷을 걷어낼 후속에서 쓴다.
+- 2 특징: 스냅샷에서. 악기는 `track_sections.instruments`(06 마이그레이션)에서 온다.
+- 3 지문 대조: 스냅샷이 구간마다 분석 버전을 들고, Qdrant `fetch` 가 payload `analysis_version` 을 함께 읽어
+  다르면 그 후보를 버린다(`recommender.raw_vectors`, 지표 `stale_vectors`). 삭제·재생 불가·버전 불일치 구간은
+  스냅샷을 만들 때 빠진다(`feature_store.assemble`).
+- 장애: 갱신 실패 → 직전 스냅샷. 한 번도 못 읽음 → 벡터 전용(곡·구간 값 없이), 조건 검색 끔
+  (`CONDITIONS_UNAVAILABLE`), 준비 판정은 막지 않는다. `/internal/ready`·`/health` 의 `pool_snapshot`.
+
 ### 9.4 Spring 에 남는 일
 
 - **쓰기 관문**: MySQL·ClickHouse·Qdrant 쓰기, 미반영 기록·재시도·대조 (§8).
 - 조건 어휘를 대화 모델에 준다 (`RecommenderFacets`, MySQL 기반 — 그대로).
 - 응답 번역(`external_id` → 곡·구간)과 **최종 필터(삭제·재생 가능, MySQL 기준)**, `limit` 으로 자르기.
 - `QueryPlanFilter`(09-23 에 Java 로 옮긴 조건 규칙)는 **AI 로 되돌아간다.** 규칙을 두 곳에 두지
-  않도록 전환 때 Spring 쪽을 걷어낸다.
+  않도록 전환 때 Spring 쪽을 걷어낸다. → **458 에서 걷어냈다**(`QueryPlanFilter`·`CatalogBody` 와 시험. 시험 사례는
+  `ai_server/tests/test_query_conditions.py` 로).
 
 ---
 
@@ -827,6 +859,11 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
   손으로 넣는 미반영 행)가 1,060곡을 채운다. 서빙 읽기(`ai_server/app/feature_store.py`)는 아직 요청 경로에 없다(458).
 - 벡터 등록 API(S15P21A204-457, 배포 대기)가 들어갔다. 운영 컬렉션 생성(456 도구) → `vectors-freeze-mu` → `vectors-send`
   (1,060곡) → 대조 불일치 0 확인 뒤에야 `MUPID_VECTOR_BACKEND=qdrant` 를 검토한다. 그 전까지 ai 는 local 이다.
+- **계약 v3(S15P21A204-458, 배포 대기)**: 요청 본문에서 `catalog` 를 뺐다. AI 는 기준 풀 스냅샷(§9.3 "458 구현")
+  으로 곡·구간 값을 읽고 조건을 푼다. **v3 AI 먼저, Spring 나중** — v3 AI 는 옛 본문을 받되 무시한다. 전제는 455
+  서빙 설정·`track_features` 백필과 06 마이그레이션(`track_sections.instruments`, api 보다 먼저). 설계 규모 갱신
+  비용(합성, 벡터 없이 값만): 10만 곡에서 내용이 바뀐 갱신 약 77초(읽기·해석 37 · 스냅샷 6 · 사본 등 34)·메모리 +1.7GB, 1만 곡 약 6초·+180MB, 실제 dev ClickHouse 1만 곡 읽기 3.5초(`ai_server/tools/bench_pool_snapshot.py`). 바뀌지 않은 갱신은 변경 확인(`change_token`, 1만 곡 약 15ms)으로 읽기를 건너뛴다. 데모 규모는 1초 안쪽이지만 **10만 곡 전에 §9.3 후속(ClickHouse 집계)이 필요하다**. 5단계 항목이던 DNA 경로 p95(456 부하 856ms, 후보 약 1,600개 벡터의
+  JSON 해석)는 458 의 1만 곡 합성(`bench_request_path --api --backend qdrant`)에서 전 1,703ms → 후 1,065ms(본문 해석이 빠진 몫). 벡터 JSON 해석은 그대로라 1초 언저리다 — fetch 를 줄이거나 바이너리로 받는 것은 남았다.
 - node-b 단일 장애점(§10.1-8)은 지금도 마찬가지다.
 
 ---
@@ -841,5 +878,5 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 | 3 | **배치용 Object Storage API — 모델 가중치 전용** (§6.5, Nginx `/upload/system/`, ERD) + `model-publish` CI 작업(JupyterHub → 체크섬 → 관문 → 업로드) + 모델 묶음 분리 (`model_versions`, μ 동결, `manifest.json`) + **CI 가 `models.lock` 으로 서빙 가중치를 이미지에 굽기** + ROLE_SYSTEM 계정 분리 | ② | `models.lock` 만 바꾼 MR 로 가중치 교체·롤백이 된다. ai_server 에 토큰이 없다. — API 는 453, CI·`models.lock`·이미지 굽기·ROLE_SYSTEM 장기 토큰은 454. 첫 채택(JupyterHub 묶음 → `models.lock` MR)과 μ 동결은 남았다 |
 | 4 | ClickHouse `track_features`(+`is_deleted`·`playable`) · 서빙 정렬 키·프로파일 · AI 읽기 · 지연 측정 | ①③ | 1만 곡 합성에서 특징 조회·조건 풀기 p95 가 기준 안 — 455: 표·`energy` 열·미반영/재시도/대조·서빙 사전·`mupid_serving`·`feature_store.py`, 서버 p95 16ms / 56ms (기준 제안 50 / 100ms, 미결 4). 요청 경로 연결은 458 |
 | 5 | Qdrant (node-b StatefulSet, 인증, 구간 지문, 로컬 스냅샷, NetworkPolicy) + **벡터 등록 API** (§6.6, 곡 전체 / 모델 재계산) + 재적재 시간 측정 | ①② | 1만 곡 합성 부하에서 추천 p95 < 1초. node-b 를 비운 뒤 JupyterHub 재전송으로 복구된다 — Qdrant 는 456, 벡터 등록 API·미반영 `VECTOR`·대조·관문·배치 명령은 457(로컬 왕복: Spring 으로 넣은 합성 곡이 local 과 같은 순위·점수). 운영 적재·재적재 시간 측정·`qdrant` 전환은 배포 뒤 |
-| 6 | **계약 v3**: `catalog` 제거, 조건 풀기 AI 로, `QueryPlanFilter` 걷어내기, `exclude_tracks` 상한, `limit + 여유분` | ①③ | 요청 본문 < 5KB, 오늘의 모먼트가 늘 4개 |
+| 6 | **계약 v3**: `catalog` 제거, 조건 풀기 AI 로, `QueryPlanFilter` 걷어내기, `exclude_tracks` 상한, `limit + 여유분` | ①③ | 요청 본문 < 5KB, 오늘의 모먼트가 늘 4개 — 458: 기준 풀 스냅샷·`query_conditions`·지문 대조·`RecommendationFinalFilter`·06 `instruments`. 본문 175B~2.2KB(상한 500곡 5.2KB), 삭제 곡이 섞여도 4개(`DailyRecommendationFinalFilterTest`). 운영 배포는 배포 뒤 |
 | 7 | Pinecone 제거 (코드·SDK·CI 변수·문서·JupyterHub 야간 단계, 콘솔 인덱스 삭제) | — | `pinecone` 이 저장소에 없다 |

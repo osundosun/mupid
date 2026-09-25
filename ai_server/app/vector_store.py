@@ -254,13 +254,15 @@ class QdrantVectorStore(VectorStore):
     허용 목록(설계 §9.3-1):
       · 컬렉션 대부분이면(`POST_FILTER_FRACTION` 이상) 걸지 않고 넉넉히 뽑아 거른다 — 수천 개의
         UUID 를 검색마다 보내는 것보다 싸고, 대부분 통과하니 재현율도 그대로다.
-      · `HAS_ID_MAX` 이하면 `HasId` 사전 필터. 재현율이 줄지 않는다.
+      · `HAS_ID_MAX` 이하면 `HasId` 사전 필터. 재현율이 줄지 않는다. 기준은 설정이다
+        (`MUPID_PREFILTER_MAX`, 기본 1만 — 설계 §11 미결 2). 계약 v3(458)부터 조건 검색의 허용
+        목록도 이 길로 온다(조건을 통과한 구간 = 요청 사본의 풀).
       · 그 사이는 넉넉히 뽑아 거르고, 모자라면 한 번 더 넓힌다.
     `source` 는 언제나 payload 필터로 건다 — 추천 풀(flow) 밖의 구간이 상위를 차지하지 않게.
     """
 
     backend = "qdrant"
-    HAS_ID_MAX = 10_000
+    HAS_ID_MAX = int(os.environ.get("MUPID_PREFILTER_MAX") or 10_000)
     POST_FILTER_FRACTION = 0.5
     OVERSAMPLE = 3
     FETCH_BATCH = 256
@@ -429,15 +431,20 @@ class QdrantVectorStore(VectorStore):
 
     # ---------------------------------------------------------------- 원본
     def fetch(self, ids: Sequence[str]) -> dict:
+        return self.fetch_versioned(ids)[0]
+
+    def fetch_versioned(self, ids: Sequence[str]) -> tuple[dict, dict]:
+        """(원본, 구간 지문). 지문은 payload `analysis_version` — 쓴 쪽(Spring)이 그 구간을 분석한
+        버전이다. 부르는 쪽이 피처 저장소의 버전과 대조해 다르면 버린다(설계 §9.3-3)."""
         want = list(dict.fromkeys(str(i) for i in ids))
         if not want:
-            return {}
+            return {}, {}
         chunks = [want[a:a + self.FETCH_BATCH] for a in range(0, len(want), self.FETCH_BATCH)]
 
         def one(chunk):
             return self._http("POST", f"/collections/{self.collection}/points", {
                 "ids": [qdrant_schema.point_id(i) for i in chunk],
-                "with_vector": ["mert"], "with_payload": ["external_id", "r"]})
+                "with_vector": ["mert"], "with_payload": ["external_id", "r", "analysis_version"]})
 
         if len(chunks) == 1:
             rows = one(chunks[0])
@@ -445,15 +452,18 @@ class QdrantVectorStore(VectorStore):
             # 온보딩 씨앗처럼 수천 개를 부르는 경우가 있다. 조각을 나란히 보낸다.
             with ThreadPoolExecutor(max_workers=min(self.FETCH_WORKERS, len(chunks))) as ex:
                 rows = [p for got in ex.map(one, chunks) for p in got]
-        out = {}
+        out, versions = {}, {}
         for p in rows:
             vec = (p.get("vector") or {}).get("mert")
             pay = p.get("payload") or {}
             if vec is None or "r" not in pay:
                 continue                              # 반쯤 들어간 포인트는 없는 것으로 본다
             u = np.asarray(vec, dtype=np.float32)
-            out[str(pay["external_id"])] = self._mu + np.float32(pay["r"]) * u
-        return out
+            mid = str(pay["external_id"])
+            out[mid] = self._mu + np.float32(pay["r"]) * u
+            if pay.get("analysis_version") is not None:
+                versions[mid] = str(pay["analysis_version"])
+        return out, versions
 
 
 class PineconeVectorStore(VectorStore):

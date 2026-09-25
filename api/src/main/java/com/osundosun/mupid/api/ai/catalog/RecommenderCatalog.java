@@ -1,21 +1,18 @@
 package com.osundosun.mupid.api.ai.catalog;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.function.Predicate;
 
 /**
  * 추천 후보 한 벌. <b>만들고 나면 바꾸지 않는다.</b>
  *
- * <p>추천 서버는 Spring 을 부르지 않는다(연동 계약 2026-09-23 절, S15P21A204-423). 곡·구간
- * 메타의 정본은 MySQL 이고, 추천을 부를 때마다 이 객체가 만든 {@link CatalogBody} 를 요청
- * 본문에 싣는다. 예전에는 추천 서버가 ROLE_SYSTEM 토큰으로 내부 카탈로그 API 를 당겨 갔고,
- * 그 토큰이 만료되자 추천 서버가 뜨지 못했다.
+ * <p><b>쓰는 곳은 조건 어휘 하나다</b>({@link RecommenderFacets}) — 대화 모델에게 고를 수 있는 장르·
+ * 악기 값을 알려 준다. 계약 v3(S15P21A204-458)부터 추천 요청 본문에 후보를 싣지 않는다. 추천 서버는
+ * 같은 값을 ClickHouse 피처 저장소({@code track_features}·{@code track_sections})에서 읽고, 그 사본의
+ * 값 규칙이 여기와 같다({@code TrackFeatureSource}, {@code TrackFeatureMysqlTest}). 예전(2026-09-23 절)
+ * 에는 이 객체를 {@code catalog} 본문(약 500KB)으로 매번 실었다.
  *
  * <p>여기 드는 것은 <b>추천할 수 있는 것뿐이다</b> — 지워지지 않았고, 재생할 스트림이 있고,
  * 구간이 있는 곡. Jamendo 같은 학습용 곡은 MySQL 에 없으므로 들어올 길이 없다.
@@ -58,8 +55,8 @@ public record RecommenderCatalog(List<Track> tracks, List<Section> sections, Ins
      *
      * @param sectionLabel MySQL ENUM 이름 그대로({@code CHORUS})
      * @param energy       구간 RMS(0~1). 모르면 null
-     * @param instruments  이 구간의 악기 코드 이름. <b>본문에는 싣지 않는다</b> — 악기 조건은
-     *                     여기서 걸고, 추천 서버의 계산에는 쓰이지 않는다
+     * @param instruments  이 구간의 악기 코드 이름, 코드 번호순. ClickHouse {@code track_sections.instruments}
+     *                     와 같은 값이다 — 추천 서버가 악기 조건을 거기서 건다
      */
     public record Section(
         String externalId,
@@ -83,28 +80,6 @@ public record RecommenderCatalog(List<Track> tracks, List<Section> sections, Ins
             out.put(t.track(), t);
         }
         return out;
-    }
-
-    /** 전부 싣는다. {@code next}·{@code daily}·{@code similar} 가 쓴다. */
-    public CatalogBody body() {
-        return body(s -> true);
-    }
-
-    /**
-     * 조건을 통과한 구간만 싣는다. 곡은 <b>남은 구간이 있는 것만</b> 싣는다 — 받는 쪽은
-     * 구간 없이 온 곡을 거절하지 않지만, 본문만 부풀린다.
-     */
-    public CatalogBody body(Predicate<Section> keep) {
-        List<Section> kept = new ArrayList<>();
-        Set<String> used = new LinkedHashSet<>();
-        for (Section s : sections) {
-            if (keep.test(s)) {
-                kept.add(s);
-                used.add(s.track());
-            }
-        }
-        List<Track> keptTracks = tracks.stream().filter(t -> used.contains(t.track())).toList();
-        return CatalogBody.of(keptTracks, kept);
     }
 
 }

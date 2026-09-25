@@ -422,6 +422,11 @@ public class SectionStatsService {
 `TrackFeatureRepository` 는 `analytics.sync.service.TrackFeatureSync` 만 부른다. 분석 값·장르/무드·곡 삭제·스트림·
 구간 교체가 같은 방식(미반영 기록 → 커밋 뒤 쓰기 → 재시도 → 대조)으로 곡 특징 사본을 맞춘다.
 
+`track_sections.instruments`(S15P21A204-458)는 구간 악기의 코드 이름 배열이다. 계약 v3 에서 추천 서버가 악기
+조건을 여기서 건다. 서빙 뷰 `v_serving_sections` 와 사전 `dict_serving_sections` 에도 실린다. 떠 있는 클러스터는
+`migrations/06-section-instruments.sql` 을 **api 배포 전에** 한 번 건다(05 다음). 기존 행은 빈 배열이고, 구간 대조의
+체크섬에 악기가 들어 있어 다음 대조가 악기 있는 곡을 전부 다시 쓴다.
+
 ### 서빙 계정 `mupid_serving` (S15P21A204-455)
 
 `users/20-serving-user.xml`. 추천 서버의 특징 조회(`ai_server/app/feature_store.py`)가 쓰는 **읽기 전용** 계정이다

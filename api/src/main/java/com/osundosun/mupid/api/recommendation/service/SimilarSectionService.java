@@ -2,19 +2,13 @@ package com.osundosun.mupid.api.recommendation.service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.osundosun.mupid.api.ai.catalog.RecommenderCatalogService;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
 import com.osundosun.mupid.api.common.exception.BusinessException;
-import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.error.MusicSectionErrorCode;
 import com.osundosun.mupid.api.music.service.MusicSectionService;
@@ -46,7 +40,6 @@ public class SimilarSectionService {
     private static final int MAX_LIMIT = 50;
 
     private final RecommenderClient recommender;
-    private final RecommenderCatalogService catalogService;
     private final MusicSectionService musicSectionService;
     private final MusicSummaryAssembler assembler;
 
@@ -64,10 +57,9 @@ public class SimilarSectionService {
         List<RecommenderDto.SimilarItem> items = recommender.similar(
             new RecommenderDto.SimilarRequest(
                 base.getExternalId(), size,
-                excludeTrack == null ? List.of() : List.of(excludeTrack),
-                catalogService.current().body()));
+                excludeTrack == null ? List.of() : List.of(excludeTrack)));
 
-        List<SimilarSection> tracks = withMusic(items);
+        List<SimilarSection> tracks = withMusic(items, size);
         return new SimilarSectionResponse(musicSectionId, tracks,
             Math.max(0, size - tracks.size()), EMBEDDING_VERSION);
     }
@@ -80,33 +72,22 @@ public class SimilarSectionService {
      */
     private static final String EMBEDDING_VERSION = "mert-v1-95m";
 
-    private List<SimilarSection> withMusic(List<RecommenderDto.SimilarItem> items) {
-        List<String> externalIds = items.stream()
-            .map(RecommenderDto.SimilarItem::externalId)
-            .filter(Objects::nonNull).distinct().toList();
-        Map<String, MusicSectionAnalysis> sections =
-            musicSectionService.findByExternalIds(externalIds);
-
-        List<Integer> musicIds = sections.values().stream()
-            .map(row -> row.getMusic().getMusicId()).distinct().toList();
-        Map<Integer, MusicSummary> summaries = assembler.byIds(musicIds).stream()
-            .collect(Collectors.toMap(MusicSummary::musicId, Function.identity()));
+    /**
+     * 문자열 ID 를 곡으로 옮기고 최종 필터를 건다({@link RecommendationFinalFilter}). 추천과 같은
+     * 규칙이다 — 지운 곡·재생할 수 없는 곡을 빼고, 한 곡은 한 줄, 앞에서부터 {@code limit} 개.
+     */
+    private List<SimilarSection> withMusic(List<RecommenderDto.SimilarItem> items, int limit) {
+        RecommendationFinalFilter.Outcome<RecommenderDto.SimilarItem> outcome =
+            RecommendationFinalFilter.apply(items, RecommenderDto.SimilarItem::externalId, limit,
+                musicSectionService::findByExternalIds, assembler::byIds, log, "닮은 구간");
 
         List<SimilarSection> out = new ArrayList<>();
-        for (RecommenderDto.SimilarItem item : items) {
-            MusicSectionAnalysis section = sections.get(item.externalId());
-            if (section == null) {
-                log.warn("닮은 구간 external_id={} 가 DB 에 없다 — 구간 적재가 색인보다 낡았다",
-                    item.externalId());
-                continue;
-            }
-            MusicSummary music = summaries.get(section.getMusic().getMusicId());
-            if (music == null) {
-                continue;
-            }
+        for (RecommendationFinalFilter.Kept<RecommenderDto.SimilarItem> kept : outcome.kept()) {
+            RecommenderDto.SimilarItem item = kept.item();
+            MusicSectionAnalysis section = kept.section();
             out.add(new SimilarSection(
                 out.size() + 1,
-                music,
+                kept.music(),
                 section.getMusicSectionAnalysisId(),
                 section.getSectionLabel(),
                 section.getStartTimeMs(),

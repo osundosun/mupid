@@ -423,3 +423,34 @@ def test_serving_never_writes_to_qdrant():
 def test_the_pinecone_loader_does_not_know_qdrant():
     from ai_server.tools import pinecone_sync
     assert "qdrant" not in inspect.getsource(pinecone_sync).lower()
+
+
+def test_fetch_carries_the_section_fingerprint(small):
+    """원본과 함께 구간 지문(payload `analysis_version`)을 돌려준다 (설계 §9.3-3, 458)."""
+    fake, ids, Z, mu = small
+    fake.load(ids, Z, mu, versions={ids[3]: "v2"})
+    got, versions = _store(fake, mu).fetch_versioned([ids[3], ids[4]])
+    assert list(got) == [ids[3], ids[4]]
+    assert versions == {ids[3]: "v2", ids[4]: "v1"}
+
+
+def test_a_candidate_whose_fingerprint_differs_is_dropped(big, qdrant_on):
+    """재분석 직후 벡터 저장소와 피처 저장소가 다른 버전을 가리키면 그 후보를 버린다 — 같은
+    `T000001#3` 이 서로 다른 구간이라 오류 없이 엉뚱한 구간이 추천된다(§10.1-1)."""
+    from ai_server.app import metrics
+
+    pool = big.index_pool(big.CAT)
+    ids = pool.moment_id.astype(str).tolist()
+    Z = np.asarray(big.CAT.Z[pool.emb_row.to_numpy()], dtype=np.float32)
+    qdrant_on.load(ids, Z, Z.mean(0), versions={ids[0]: "v0"})
+    snap = catalog_body.from_body(_catalog_body(n_tracks=N_TRACKS, per_track=PER_TRACK))
+    snap.versions = {u: "v1" for u in snap.sections}
+    metrics.reset()
+    with big.using(big.CAT.with_catalog(snap)):
+        V, found = big.raw_vectors(ids[:3])
+    assert found == ids[1:3] and len(V) == 2
+    assert metrics.snapshot()["stale_vectors"] == {"dropped": 1}
+    # 지문이 없는 스냅샷(배치·본문 모양 시험)은 대조하지 않는다.
+    with big.using(_fresh(big)):
+        _, found = big.raw_vectors(ids[:3])
+    assert found == ids[:3]

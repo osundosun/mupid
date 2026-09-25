@@ -6,7 +6,6 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -17,7 +16,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.osundosun.mupid.api.ai.catalog.RecommenderCatalogService;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
 import com.osundosun.mupid.api.ai.tool.RecommendReason;
@@ -26,7 +24,6 @@ import com.osundosun.mupid.api.code.repository.CodeRepository;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.entity.Music;
-import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.mapping.repository.MusicSectionAnalysisMoodRepository;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.service.MusicSectionService;
@@ -83,6 +80,9 @@ public class DailyRecommendationServiceImpl implements DailyRecommendationServic
      * <p>추천 서버는 오늘의 모먼트를 4개로 고정하고 다른 값은 400 으로 거절한다
      * (`ai_server/app/internal_api.py` 의 `DAILY_LIMIT`). 여기가 10 이던 채로 그쪽이
      * 먼저 배포되자 정오 배치가 전원 실패했다(2026-09-24).
+     *
+     * <p>요청은 4 인데 응답은 <b>4 + 여유분</b>(최대 6)이 올 수 있다(계약 v3). 사본이 늦어 지워진 곡이
+     * 섞여도 최종 필터가 빼고 앞에서부터 4곡을 저장한다 — 모먼트가 3곡으로 나가지 않게.
      */
     static final int DAILY_LIMIT = 4;
 
@@ -128,7 +128,6 @@ public class DailyRecommendationServiceImpl implements DailyRecommendationServic
     private final DailyRecommendationTrackRepository trackRepository;
     private final MusicSummaryAssembler assembler;
     private final RecommenderClient recommender;
-    private final RecommenderCatalogService catalogService;
     private final MusicSectionService musicSectionService;
     private final MusicRepository musicRepository;
     private final MusicSectionAnalysisMoodRepository moodRepository;
@@ -152,34 +151,25 @@ public class DailyRecommendationServiceImpl implements DailyRecommendationServic
         // 번호는 아래 INSERT 가 발급한다. (사용자·날짜마다 하나로 정해져 재현된다.)
         long correlationId = date.toEpochDay() * 1_000_000L + userId;
         List<RecommenderDto.Item> items = recommender.daily(new RecommenderDto.DailyRequest(
-            correlationId, userId, DAILY_LIMIT, List.of(), onboardingOf(userId),
-            catalogService.current().body()));
+            correlationId, userId, DAILY_LIMIT, List.of(), onboardingOf(userId)));
         if (items.isEmpty()) {
             log.info("오늘의 모먼트: 추천 결과가 없다 user_id={} date={}", userId, date);
             return false;
         }
 
-        // 문자열 ID → 곡. 없는 것은 버리고 센다 (구간 적재가 색인보다 낡았다는 뜻).
-        List<String> externalIds = items.stream()
-            .map(RecommenderDto.Item::externalId).filter(Objects::nonNull).distinct().toList();
-        Map<String, MusicSectionAnalysis> sections =
-            musicSectionService.findByExternalIds(externalIds);
-
+        // 문자열 ID → 곡, 그리고 최종 필터. 없는 구간·지운 곡·재생할 수 없는 곡을 빼고, 같은 곡의
+        // 다른 구간은 앞선 순위만 남기고(오늘의 모먼트는 곡 목록이다), 앞에서부터 4곡으로 자른다.
+        // 예전에는 지운 곡도 그대로 저장해 화면이 읽을 때 빠졌고 모먼트가 3곡으로 보였다.
+        RecommendationFinalFilter.Outcome<RecommenderDto.Item> outcome = RecommendationFinalFilter.apply(
+            items, RecommenderDto.Item::externalId, DAILY_LIMIT,
+            musicSectionService::findByExternalIds, assembler::byIds, log,
+            "오늘의 모먼트(user_id=" + userId + ") 추천");
         LinkedHashMap<Integer, String> reasonByMusic = new LinkedHashMap<>();
-        for (RecommenderDto.Item item : items) {
-            MusicSectionAnalysis section = sections.get(item.externalId());
-            if (section == null) {
-                log.warn("추천된 external_id={} 가 DB 에 없다 user_id={}",
-                    item.externalId(), userId);
-                continue;
-            }
-            // 같은 곡의 다른 구간이 겹치면 앞선 순위만 남긴다. 오늘의 모먼트는
-            // 곡 목록이라 같은 곡이 두 줄로 보이면 안 된다.
-            reasonByMusic.putIfAbsent(section.getMusic().getMusicId(),
-                RecommendReason.ofTrack(item.reasonCode()));
+        for (RecommendationFinalFilter.Kept<RecommenderDto.Item> kept : outcome.kept()) {
+            reasonByMusic.put(kept.music().musicId(), RecommendReason.ofTrack(kept.item().reasonCode()));
         }
         if (reasonByMusic.isEmpty()) {
-            log.warn("오늘의 모먼트: 추천된 곡이 모두 DB 에 없다 user_id={}", userId);
+            log.warn("오늘의 모먼트: 추천된 곡이 모두 걸러졌다 user_id={}", userId);
             return false;
         }
 
@@ -202,7 +192,9 @@ public class DailyRecommendationServiceImpl implements DailyRecommendationServic
             repository.flush();
         });
 
-        String groupReason = RecommendReason.ofGroup(items.getFirst().reasonCode());
+        // 묶음 사유는 **저장되는** 첫 곡의 것이다. 걸러진 1위의 사유를 쓰면 목록에 없는 곡의 말이 된다.
+        String groupReason = RecommendReason.ofGroup(
+            outcome.kept().getFirst().item().reasonCode());
         DailyRecommendation group = repository.save(DailyRecommendation.builder()
             .user(user)
             .title(cut(TITLE))

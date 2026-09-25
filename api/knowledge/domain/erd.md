@@ -376,7 +376,8 @@ NULL 을 허용한다. 파형이 아직 없는 곡은 비정상이 아니다 —
 ## 2026-09-23 — 추천 값 (S15P21A204-423)
 
 추천 서버는 Spring 을 부르지 않는다(`infra/AI-SPRING-CONTRACT.md` 의 2026-09-23 절).
-후보와 그 값은 Spring 이 추천 요청마다 본문 `catalog` 로 싣는데, BPM·언어·스타일과
+후보와 그 값은 Spring 이 추천 요청마다 본문 `catalog` 로 싣는데(계약 v3 — 2026-09-25, S15P21A204-458 —
+부터는 싣지 않고 추천 서버가 ClickHouse 사본을 읽는다. 원천은 여전히 이 컬럼들이다), BPM·언어·스타일과
 구간 에너지는 **MySQL 에 자리가 없어** AI 색인 파일(`track_features.parquet`,
 `moments.parquet` 의 `rms`)에만 있었다. 그 자리를 만든다.
 

@@ -46,9 +46,11 @@ Spring 은 헤드리스 서비스 `clickhouse:8123` 하나에 붙는다. 대조�
 따로 센다. 레플리카 목록은 `clusterAllReplicas('mupid_all', system.one)` 로 데이터와 무관하게 얻는다 —
 통째로 빈 레플리카도 전 곡 불일치로 잡힌다. 한 레플리카가 안 닿으면 대조 자체가 실패로 남는다.
 
-체크섬은 `구간번호|순번|구간UID|라벨|시작ms|끝ms|에너지` 문자열 CRC32 의 합이다. 에너지는 실수라 두 DB 의
-문자열 표기가 다를 수 있어 `floor(energy × 10⁶)` 정수로 잇고, 없으면 -1 이다(455). MySQL `CRC32(CONCAT_WS('|',…))` 와
-ClickHouse `CRC32(concat(…))` 가 같은 값을 낸다(2026-09-25 dev 에서 한 행씩 확인).
+체크섬은 `구간번호|순번|구간UID|라벨|시작ms|끝ms|에너지|악기` 문자열 CRC32 의 합이다. 에너지는 실수라 두 DB 의
+문자열 표기가 다를 수 있어 `floor(energy × 10⁶)` 정수로 잇고, 없으면 -1 이다(455). 악기는 코드 이름을 코드 번호순
+`,` 로 잇고 없으면 빈 문자열이다 — MySQL 은 구간마다 `GROUP_CONCAT(… ORDER BY code_id)` 상관 부질의, ClickHouse 는
+`arrayStringConcat(instruments, ',')` (458). MySQL `CRC32(CONCAT_WS('|',…))` 와
+ClickHouse `CRC32(concat(…))` 가 같은 값을 낸다(2026-09-25 dev 에서 한 행씩 확인, 한국어 악기 이름 포함).
 두 문장은 `SectionDigestRepository`·`TrackSectionRepository.DIGESTS_BY_REPLICA` 에 있고 **같이 고쳐야 한다.**
 
 대조가 세기만 하고 넣지 않는 것:
@@ -113,7 +115,8 @@ MySQL 을 다시 읽으면 겹친 두 요청의 순서가 뒤집혀도 늦게 �
 
 따로 명령을 두지 않는다. 표를 막 만들면 대조가 전 곡을 "ClickHouse 에 없음" 으로 잡아 미반영에 넣고, 재시도가 1분에
 200곡씩 채운다(1,060곡 약 6분). 고치는 길이 하나여야 한 번 확인한 것으로 끝난다. 구간의 `energy` 도 같다 — 컬럼을
-더하면 기존 행이 NULL 이라 전 곡이 체크섬 불일치로 잡혀 재시도가 교체한다. 새벽을 기다리지 않으려면 아래 "손으로 할 일".
+더하면 기존 행이 NULL 이라 전 곡이 체크섬 불일치로 잡혀 재시도가 교체한다. 구간의 `instruments`(458, 마이그레이션 06)도
+같다 — 기존 행이 빈 배열이라 악기가 있는 곡이 전부 불일치로 잡힌다. 새벽을 기다리지 않으려면 아래 "손으로 할 일".
 
 ## 벡터 — `VECTOR` (S15P21A204-457)
 
@@ -143,7 +146,7 @@ Qdrant 순간 벡터도 같은 표에 행을 남긴다. 다른 두 종류와 **�
 
 | 입구 | 코드 | 무엇을 바꾸나 | 구간 | 곡 특징 |
 |---|---|---|---|---|
-| `PUT /api/v1/music/{musicId}/section` (분석 배치 ⑥, `register_sections.py`) | `MusicSectionServiceImpl.replaceSections` | 곡의 구간 전체 교체(`energy` 포함) | 기록 + 커밋 뒤 쓰기 | 기록 + 커밋 뒤 쓰기 (`track`·`analysis_version`) |
+| `PUT /api/v1/music/{musicId}/section` (분석 배치 ⑥, `register_sections.py`) | `MusicSectionServiceImpl.replaceSections` | 곡의 구간 전체 교체(`energy`·악기 포함) | 기록 + 커밋 뒤 쓰기 — 악기는 연결을 넣은 뒤 같은 트랜잭션에서 읽어 스냅숏에 싣는다 | 기록 + 커밋 뒤 쓰기 (`track`·`analysis_version`) |
 | `PUT /api/v1/music/{musicId}/analysis` | `MusicAnalysisServiceImpl.replaceAnalysis` | BPM·언어·범주·보컬 | — | 기록 + 커밋 뒤 쓰기 |
 | `PUT /api/v1/music/{musicId}/classification` | `MusicClassificationServiceImpl.replaceClassification` | 장르·무드 | — | 기록 + 커밋 뒤 쓰기 |
 | 곡 삭제 `DELETE /api/v1/music/{musicId}` | `MusicServiceImpl.deleteMusic` | `music.is_deleted` — 구간은 그대로 | — | 기록 + 커밋 뒤 쓰기 (`is_deleted`) |
@@ -151,11 +154,13 @@ Qdrant 순간 벡터도 같은 표에 행을 남긴다. 다른 두 종류와 **�
 | 관리자 화면 자원 CRUD `musicSectionAnalysis` | `AdminResourceServiceImpl.create·update·delete` | 구간 한 행 | 기록만 — 재시도가 1분 안에 곡 전체를 교체. 곡을 옮기면 옛 곡도 | 기록 + 커밋 뒤 쓰기 |
 | 관리자 화면 자원 CRUD `music`(삭제·**복구**)·`musicAnalysis`·`musicGenre`·`musicMood`·`stream` | 〃 | 곡 특징의 원천 한 행 | — | 기록 + 커밋 뒤 쓰기. 곡을 옮기면(연결을 바꾸면) 전·후 곡 둘 다 |
 | 관리자 화면 자원 CRUD `code`(장르·무드) | 〃 | 코드 이름 — 그 코드를 단 **모든 곡**의 `genres`·`moods` | — | 그 곡들 전부 기록 + 커밋 뒤 쓰기 |
+| 관리자 화면 자원 CRUD `musicAnalysisInstrument`(구간 악기 연결) | `AdminResourceServiceImpl.markInstrumentsChanged` | 구간 한 개의 `instruments` | 기록만 — 재시도가 곡 전체를 교체. 연결을 다른 구간으로 옮기면 전·후 곡 둘 다 (458) | 대상 아님 |
+| 관리자 화면 자원 CRUD `code`(악기) | 〃 | 코드 이름 — 그 악기를 단 **모든 곡**의 구간 `instruments` | 그 곡들 전부 기록만 (458) | 대상 아님 |
 | 구간 에너지 되채우기 (`music_preprocessing analysis-values` 가 만든 UPDATE 파일) | 사람이 MySQL 에 한 번 | `energy` | **대조가 잡는다** — Spring 을 거치지 않으므로 다음 04:40 에 체크섬 불일치로 들어간다. 급하면 아래 "손으로 할 일" | — |
 | 청크 커밋 `POST /stream/{id}/chunk/{i}` | `ChunkServiceImpl.commitChunk` | 스트림 `PENDING → IN_PROGRESS` | — | 대상 아님 — `DONE` 이 아닌 상태끼리라 `playable` 이 안 바뀐다 |
 | 곡 정보 수정 `PATCH /music/{id}` | `MusicServiceImpl.updateMusic` | 제목·앨범·아티스트·커버 | — | 대상 아님 — 사본에 없는 값이다 |
-| 공통 코드 부트스트랩 | `BootstrapRunner` | `codes` 이름 | — | **대조가 잡는다** — 기동 때 코드 이름이 바뀌면 다음 04:45 에 |
-| 구간 분위기·악기 (`music_section_analysis_mood`·`music_analysis_instruments`) | `replaceSections`·관리자 CRUD | 연결 표 | 대상 아님 | 대상 아님 — 사본에 없다 |
+| 공통 코드 부트스트랩 | `BootstrapRunner` | `codes` 이름 | **대조가 잡는다** — 악기 이름이 바뀌면 다음 04:40 에 (458) | **대조가 잡는다** — 기동 때 코드 이름이 바뀌면 다음 04:45 에 |
+| 구간 분위기 (`music_section_analysis_mood`) | `replaceSections`·관리자 CRUD | 연결 표 | 대상 아님 | 대상 아님 — 사본에 없다 |
 | e2e 시드 `ai_server/tools/seed_e2e.py` | MySQL·ClickHouse 에 직접 | dev 전용 시험 픽스처 | 대상 아님 | 대상 아님 |
 | 스케줄 배치 (`ReportDailyBatch`·`PlayCountBatch`·`DailyRecommendationBatch`·`AiPreferenceBatch`) | — | `play_count` 등 사본에 없는 값 | — | — |
 
@@ -190,4 +195,5 @@ HTTP 로 직접 썼다. 쓰기 관문을 우회했고, MySQL 이 아닌 색인�
 
 `api/src/main/java/com/osundosun/mupid/api/analytics/sync/`, `vector/`(457), `analytics/repository/TrackSectionRepository.java`·
 `TrackFeatureRepository.java`, `knowledge/domain/migrate-analytics-sync-2026-09-25.sql`,
-`clickhouse/migrations/05-track-features.sql`, 시험 `analytics/sync/**`·`ai/catalog/TrackFeatureMysqlTest`
+`clickhouse/migrations/05-track-features.sql`·`06-section-instruments.sql`, 시험 `analytics/sync/**`·
+`ai/catalog/TrackFeatureMysqlTest`

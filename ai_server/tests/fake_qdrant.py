@@ -23,7 +23,8 @@ class FakeQdrant:
         self.calls: list[tuple[str, str, dict]] = []
 
     # ------------------------------------------------------------ 채우기 (쓰는 쪽 흉내)
-    def load(self, ids, Z, mu, source="flow", stage1=None, model_version=None) -> None:
+    def load(self, ids, Z, mu, source="flow", stage1=None, model_version=None,
+             versions=None) -> None:
         """쓰는 쪽(Spring·457)이 하듯 `u = (Z-μ)/‖Z-μ‖`, `r = ‖Z-μ‖` 로 넣는다."""
         W = np.asarray(Z, dtype=np.float32) - np.asarray(mu, dtype=np.float32)
         r = np.linalg.norm(W, axis=1)
@@ -35,9 +36,10 @@ class FakeQdrant:
             vec = {"mert": u.tolist()}
             if model_version and stage1 is not None and i < len(stage1):
                 vec[qdrant_schema.model_vector(model_version)] = list(map(float, stage1[i]))
-            self.points[qdrant_schema.point_id(mid)] = {
-                "vector": vec, "payload": {"external_id": str(mid), "r": float(rr),
-                                           "source": source}}
+            payload = {"external_id": str(mid), "r": float(rr), "source": source}
+            if versions is not None:
+                payload["analysis_version"] = versions.get(str(mid), "v1")
+            self.points[qdrant_schema.point_id(mid)] = {"vector": vec, "payload": payload}
 
     # ------------------------------------------------------------ REST
     def __call__(self, method, path, body=None, timeout_s=None):

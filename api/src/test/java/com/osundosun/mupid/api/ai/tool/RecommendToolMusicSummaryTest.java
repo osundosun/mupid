@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -213,5 +214,29 @@ class RecommendToolMusicSummaryTest {
         assertThat(tracks.get(0).startTimeMs()).isEqualTo(10_000);
         assertThat(tracks.get(1).music().title()).isEqualTo("셋째 곡");
         assertThat(tracks.get(1).startTimeMs()).isEqualTo(30_000);
+    }
+
+    @Test
+    @DisplayName("여유분까지 온 응답에서 지운 곡을 빼고 limit(3) 으로 자른다 — 계약 v3")
+    void dropsDeletedAndCutsToLimit() {
+        // 추천 서버는 limit 3 + 여유분 2 를 준다(S15P21A204-458). 2위는 방금 지운 곡이라 상세 조회가
+        // 돌려주지 않는다 — 사본이 삭제를 아직 모르는 틈이다.
+        Map<String, MusicSectionAnalysis> sections = new LinkedHashMap<>();
+        List<Music> alive = new ArrayList<>();
+        for (int id = 1; id <= 5; id++) {
+            Music m = music(id, "곡" + id);
+            sections.put("T00090%d#1".formatted(id), section(m, "T00090%d#1".formatted(id), id * 10_000));
+            if (id != 2) {
+                alive.add(m);
+            }
+        }
+
+        List<AiRecommendedTrack> tracks = recommendWith(
+            List.of(item("T000901#1"), item("T000902#1"), item("T000903#1"),
+                item("T000904#1"), item("T000905#1")),
+            sections, alive);
+
+        assertThat(tracks).extracting(AiRecommendedTrack::musicId).containsExactly(1, 3, 4);
+        assertThat(tracks).extracting(AiRecommendedTrack::rankOrder).containsExactly(1, 2, 3);
     }
 }

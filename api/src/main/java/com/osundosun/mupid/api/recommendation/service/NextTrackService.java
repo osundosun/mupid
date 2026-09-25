@@ -2,22 +2,17 @@ package com.osundosun.mupid.api.recommendation.service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.osundosun.mupid.api.ai.catalog.RecommenderCatalogService;
 import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
 import com.osundosun.mupid.api.ai.error.AiErrorCode;
 import com.osundosun.mupid.api.ai.tool.RecommendReason;
 import com.osundosun.mupid.api.common.exception.BusinessException;
-import com.osundosun.mupid.api.music.dto.MusicSummary;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.service.MusicSectionService;
 import com.osundosun.mupid.api.music.service.MusicSummaryAssembler;
@@ -69,7 +64,6 @@ public class NextTrackService {
     private static final int MAX_LIMIT = 50;
 
     private final RecommenderClient recommender;
-    private final RecommenderCatalogService catalogService;
     private final MusicSectionService musicSectionService;
     private final MusicSummaryAssembler assembler;
     private final OnboardingService onboardingService;
@@ -97,9 +91,9 @@ public class NextTrackService {
         long recommendationId = SEQUENCE.incrementAndGet();
         List<RecommenderDto.Item> items = recommender.next(new RecommenderDto.NextRequest(
             recommendationId, userId, limit, List.copyOf(excludeTracks),
-            currentTrack, currentSection, onboardingOf(userId), catalogService.current().body()));
+            currentTrack, currentSection, onboardingOf(userId)));
 
-        List<NextTrack> tracks = withMusic(items);
+        List<NextTrack> tracks = withMusic(items, limit);
         // 사유를 화면이 되돌려줄 때까지 들고 있는다. 이 응답에는 사유 문장이 있지만
         // 재생 이벤트에는 없으므로, 여기서 적어 두지 않으면 재생 기록에 남길 값이 없다.
         for (NextTrack track : tracks) {
@@ -122,37 +116,23 @@ public class NextTrackService {
     }
 
     /**
-     * 문자열 ID 를 곡으로 옮긴다.
+     * 문자열 ID 를 곡으로 옮기고 최종 필터를 건다({@link RecommendationFinalFilter}).
      *
-     * <p>DB 에 없는 `external_id` 는 <b>버리고 센다.</b> 화면이 재생할 수 없는 줄을
-     * 그리게 되기 때문이다. 그런 일이 생겼다면 구간 적재가 색인보다 낡았다는 뜻이다.
+     * <p>DB 에 없는 구간·지운 곡·재생할 수 없는 곡은 <b>버리고 센다.</b> 화면이 재생할 수 없는 줄을
+     * 그리게 되기 때문이다. 추천 서버는 그 몫까지 {@code limit} 보다 몇 개 더 주므로 여기서 자른다.
      */
-    private List<NextTrack> withMusic(List<RecommenderDto.Item> items) {
-        List<String> externalIds = items.stream()
-            .map(RecommenderDto.Item::externalId).filter(Objects::nonNull).distinct().toList();
-        Map<String, MusicSectionAnalysis> sections =
-            musicSectionService.findByExternalIds(externalIds);
-
-        List<Integer> musicIds = sections.values().stream()
-            .map(row -> row.getMusic().getMusicId()).distinct().toList();
-        Map<Integer, MusicSummary> summaries = assembler.byIds(musicIds).stream()
-            .collect(Collectors.toMap(MusicSummary::musicId, Function.identity()));
+    private List<NextTrack> withMusic(List<RecommenderDto.Item> items, int limit) {
+        RecommendationFinalFilter.Outcome<RecommenderDto.Item> outcome = RecommendationFinalFilter.apply(
+            items, RecommenderDto.Item::externalId, limit,
+            musicSectionService::findByExternalIds, assembler::byIds, log, "이어 듣기 추천");
 
         List<NextTrack> out = new ArrayList<>();
-        for (RecommenderDto.Item item : items) {
-            MusicSectionAnalysis section = sections.get(item.externalId());
-            if (section == null) {
-                log.warn("추천된 external_id={} 가 DB 에 없다 — 구간 적재가 색인보다 낡았다",
-                    item.externalId());
-                continue;
-            }
-            MusicSummary music = summaries.get(section.getMusic().getMusicId());
-            if (music == null) {
-                continue;
-            }
+        for (RecommendationFinalFilter.Kept<RecommenderDto.Item> kept : outcome.kept()) {
+            RecommenderDto.Item item = kept.item();
+            MusicSectionAnalysis section = kept.section();
             out.add(new NextTrack(
                 out.size() + 1,                      // 버린 것이 있어도 순번은 이어 붙인다
-                music,
+                kept.music(),
                 section.getMusicSectionAnalysisId(),
                 section.getSectionLabel(),
                 section.getStartTimeMs(),

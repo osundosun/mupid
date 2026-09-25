@@ -14,7 +14,7 @@ MySQL `music_section_analysis` 한 행을 그대로 옮긴 것이다. 이름이 
 
 ```sql
 track_id, music_section_analysis_id, analysis_version, section_index,
-section_uid, fn, start_ms, end_ms, energy, created_at
+section_uid, fn, start_ms, end_ms, energy, instruments, created_at
 ```
 
 | 컬럼 | MySQL | 의미 |
@@ -27,6 +27,7 @@ section_uid, fn, start_ms, end_ms, energy, created_at
 | `fn` | `section_label` | 구간의 역할 분류 |
 | `analysis_version` | `analysis_version` | 구간 분석 버전. 버전이 다르면 구간 정의가 다르다 (MySQL 쪽은 451 에서 생겼다) |
 | `energy` | `energy` | 구간 RMS(0~1). 서빙 특징 조회가 요청 본문 대신 읽는다 (455). 같은 행의 컬럼이라 따로 표를 두지 않았다 |
+| `instruments` | `music_analysis_instruments` → `codes.code_name` | 구간 악기의 **코드 이름**, 코드 번호순(`Array(String)`, 없으면 `[]`). 추천 서버가 악기 조건을 여기서 건다 (458, 계약 v3). `other`·`그 외 악기` 도 그대로 싣고 거르는 것은 읽는 쪽 몫이다. 다른 표지만 같은 요청(`PUT …/section`)이 같이 바꾸므로 구간과 같은 교체·대조를 탄다 |
 | `created_at` | — | `ReplacingMergeTree` 의 버전 컬럼 |
 
 `peak_ms` 는 2026-09-22 에 없앴다. MySQL 에 대응이 없고, 구간 안 정점을 산출한 적이 없어 줄곧 구간 시작점이 그대로 들어가 있었다.
@@ -54,7 +55,8 @@ section_uid, fn, start_ms, end_ms, energy, created_at
 
 ## `track_features` — 곡 단위 특징 사본 (S15P21A204-455)
 
-추천 요청 본문 `catalog.tracks` 에 싣던 곡 값을 ClickHouse 에 둔 것이다. **모든 곡**이 한 행씩 있고,
+추천 요청 본문 `catalog.tracks` 에 싣던 곡 값을 ClickHouse 에 둔 것이다(계약 v3 에서 본문은 없어졌고
+추천 서버가 이 표를 읽는다, 458). **모든 곡**이 한 행씩 있고,
 본문이 후보를 고르던 조건을 값으로 들고 있다.
 
 | 컬럼 | 원천 (MySQL) |

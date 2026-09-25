@@ -112,7 +112,7 @@ class RecommenderCatalogServiceTest {
     }
 
     @Test
-    @DisplayName("분석 값·곡 길이·구간 에너지가 실린다 — 추천 서버가 요청 본문으로 받는 값이다")
+    @DisplayName("분석 값·곡 길이·구간 에너지가 실린다 — ClickHouse 사본(track_features·track_sections)과 같은 값이다")
     void carriesTheValuesTheRecommenderReads() {
         Music m = music("값 있는 곡", true, false);
         section(m, uid + "V", 0, SectionLabel.CHORUS, 0.0873);

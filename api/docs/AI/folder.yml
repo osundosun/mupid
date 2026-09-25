@@ -72,12 +72,17 @@ docs:
     보내고, 조건이 하나도 없으면 `POST /internal/recommendations/next` 를 부릅니다.
     자연어 원문은 보내지 않습니다 — 조건은 대화 모델이 뽑습니다 (S15P21A204-219).
 
-    **조건은 Spring 이 먼저 겁니다** (2026-09-23, S15P21A204-423). 추천 서버는 Spring 을
-    부르지 않으므로, 후보와 곡·구간 값을 요청마다 `catalog` 로 싣습니다
-    (`ai/catalog/RecommenderCatalogService`). 장르·언어·보컬·악기·flow·BPM 조건은
-    `QueryPlanFilter` 가 그 후보에서 걸러 남은 것만 보내고, 맞는 곡이 없으면 추천 서버를
-    부르지 않고 빈 결과로 끝냅니다. 툴의 조건 어휘(`enum`)도 같은 후보에서 만듭니다
-    (`RecommenderFacets`).
+    **조건은 추천 서버가 겁니다** (계약 v3, 2026-09-25, S15P21A204-458). 요청에 후보(`catalog`)를
+    싣지 않고 `query_plan` 을 그대로 보냅니다. 추천 서버가 곡·구간 값을 ClickHouse 피처 저장소
+    (`track_features`·`track_sections`, 악기는 `track_sections.instruments`)에서 읽어 장르·언어·보컬·
+    악기·flow·BPM 조건을 겁니다. 어휘에 없는 필수 조건이면 `UNSATISFIABLE_CONDITIONS`(404)로 답하고
+    Spring 은 빈 결과로 받습니다 — 조건을 풀어 아무 곡이나 주지 않습니다. 툴의 조건 어휘(`enum`)는
+    여전히 MySQL 로 만듭니다(`RecommenderFacets`).
+
+    응답은 `limit` 보다 몇 개 더(절반, 최소 2) 옵니다. Spring 이 MySQL 기준으로 없는 구간·지운 곡·
+    재생할 수 없는 곡·같은 곡을 빼고 앞에서부터 `limit` 개로 자릅니다
+    (`recommendation/service/RecommendationFinalFilter`). 예전(2026-09-23 절)에는 Spring 이
+    `QueryPlanFilter` 로 조건을 걸고 후보 전부를 약 500KB 본문으로 실었습니다.
 
     **다만 추천 서버의 `/internal/ready` 가 200 이어야 실제 곡이 나옵니다.**
     `music_section_analysis` 가 비어 있으면 숫자 ID 매핑을 만들 수 없어 503 이고,

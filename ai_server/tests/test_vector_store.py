@@ -299,32 +299,40 @@ def test_exported_seed_table_rebuilds_the_serving_seeds(big, tmp_path):
         assert int(got["count"][pick].sum()) == m["n_members"]
 
 
-def test_same_body_builds_the_snapshot_once(big, monkeypatch):
-    """같은 본문이면 스냅샷을 다시 만들지 않는다 — 해시를 먼저 보고 캐시에서 꺼낸다.
+def test_requests_never_build_the_pool(big, monkeypatch):
+    """요청은 기준 풀 스냅샷을 **참조만** 한다 — 스냅샷·사본·풀 색인을 요청마다 만들지 않는다
+    (계약 v3, S15P21A204-458).
 
-    스냅샷은 곡·구간마다 도는 파이썬 반복이다. 예전에는 캐시를 보기 **전에** 만들어서
-    `daily`·`next` 가 같은 본문을 보낼 때마다 요청당 O(N) 을 치렀다.
+    갱신(여기서는 `install_static` 의 첫 갱신)이 `internal_api.warm` 으로 사본과 풀 색인을 미리
+    만든다. 예전에는 요청 본문 `catalog` 의 해시를 요청마다 쟀고(O(본문)), 새 본문이면 요청이
+    스냅샷을 만들었다. 옛 Spring 이 본문을 실어 보내도 — 모양이 틀려도 — 읽지 않는다.
     """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from ai_server.app import internal_api
+    from ai_server.app import internal_api, pool_snapshot
 
-    built = []
-    real = catalog_body.from_body
-    monkeypatch.setattr(catalog_body, "from_body",
-                        lambda body, digest=None: built.append(1) or real(body, digest))
     internal_api._VIEWS.clear()
-    app = FastAPI()
-    internal_api.install(app, big)
-    client = TestClient(app)
+    prev = pool_snapshot.HOLDER
     body = _catalog_body(n_tracks=N_TRACKS, per_track=PER_TRACK)
-    for rid in (1, 2, 3):
-        r = client.post("/internal/recommendations/daily",
-                        json={"recommendation_id": rid, "user_id": 7, "catalog": body})
-        assert r.status_code == 200, r.text
-    assert len(built) == 1
-    bad = client.post("/internal/recommendations/daily",
-                      json={"recommendation_id": 4, "user_id": 7,
-                            "catalog": {**body, "extra": {}}})
-    assert bad.status_code == 400 and bad.json()["error_code"] == "INVALID_CATALOG"
+    pool_snapshot.install_static(body, on_swap=internal_api.warm(big))
+    built, indexed = [], []
+    monkeypatch.setattr(catalog_body, "from_body", lambda *a, **k: built.append(1))
+    real_index = big.PoolIndex
+    monkeypatch.setattr(big, "PoolIndex", lambda c: indexed.append(1) or real_index(c))
+    try:
+        app = FastAPI()
+        internal_api.install(app, big)
+        client = TestClient(app)
+        for rid in (1, 2, 3):
+            r = client.post("/internal/recommendations/daily",
+                            json={"recommendation_id": rid, "user_id": 7})
+            assert r.status_code == 200, r.text
+        legacy = client.post("/internal/recommendations/daily",
+                             json={"recommendation_id": 4, "user_id": 7,
+                                   "catalog": {**body, "extra": {}}})
+        assert legacy.status_code == 200, legacy.text
+        assert built == [] and indexed == []
+    finally:
+        pool_snapshot.install(prev)
+        internal_api._VIEWS.clear()

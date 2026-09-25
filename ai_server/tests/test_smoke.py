@@ -18,13 +18,16 @@ import pytest
 ART = os.environ.get("MUPID_AI_ARTIFACT_DIR", "")
 MOM = Path(ART) / "data/proc/mupid/moments.parquet" if ART else None
 
-# 추천 요청에는 Spring 이 싣는 `catalog` 본문이 필수다(연동 계약 2026-09-23 절). 실제
-# 후보 값은 MySQL 에만 있으므로, Spring 이 보낸 본문을 JSON 으로 떠 둔 파일을 준다.
+# 곡·구간 값은 기준 풀 스냅샷(계약 v3)이 ClickHouse 피처 저장소에서 읽는다. 피처 저장소
+# (`MUPID_CLICKHOUSE_SERVING_URL`)가 없으면, 옛 Spring 이 보낸 본문 `catalog` 를 JSON 으로 떠 둔
+# 파일을 스냅샷으로 둔다 — 모양이 같다. 둘 다 없으면 건너뛴다.
 CATALOG_FILE = os.environ.get("MUPID_SMOKE_CATALOG", "")
+FEATURE_STORE = bool(os.environ.get("MUPID_CLICKHOUSE_SERVING_URL", "").strip())
 
 pytestmark = pytest.mark.skipif(
-    not ART or not (MOM and MOM.exists()) or not (CATALOG_FILE and Path(CATALOG_FILE).exists()),
-    reason="MUPID_AI_ARTIFACT_DIR · moments.parquet · MUPID_SMOKE_CATALOG(본문 JSON) 중 하나가 없다",
+    not ART or not (MOM and MOM.exists())
+    or not (FEATURE_STORE or (CATALOG_FILE and Path(CATALOG_FILE).exists())),
+    reason="MUPID_AI_ARTIFACT_DIR · moments.parquet · (피처 저장소 또는 MUPID_SMOKE_CATALOG) 중 하나가 없다",
 )
 
 
@@ -42,9 +45,12 @@ def client():
 
     from fastapi.testclient import TestClient
 
+    from ai_server.app import internal_api, pool_snapshot, recommender
     from ai_server.app.main import app
 
     with TestClient(app) as c:
+        if pool_snapshot.current() is None and CATALOG_FILE:
+            pool_snapshot.install_static(_catalog(), on_swap=internal_api.warm(recommender))
         yield c
 
 
@@ -55,7 +61,8 @@ def test_health(client):
     assert body["status"] == "ok"
     assert body["index_loaded"] is True, body["error"]
     assert body["index"]["moments"] > 0
-    assert body["metadata_source"] == "request"
+    assert body["metadata_source"] == "feature_store"
+    assert body["pool_snapshot"]["source"] in ("feature_store", "static"), body["pool_snapshot"]
 
 
 def test_integrity_checks_ran(client):
@@ -75,7 +82,7 @@ def test_ready(client):
 def _items(client, path="/internal/recommendations/daily", **extra):
     # `limit` 을 넣지 않는다. `daily` 는 4개로 고정이라 다른 값을 보내면 400 이고,
     # `next` 는 제 기본값(5)으로 간다.
-    body = {"recommendation_id": 5001, "user_id": 15, "catalog": _catalog(), **extra}
+    body = {"recommendation_id": 5001, "user_id": 15, **extra}
     r = client.post(path, json=body)
     assert r.status_code == 200, r.json()
     return r.json()
@@ -90,10 +97,15 @@ def test_daily_returns_items(client):
 
 def test_daily_is_four_moments(client):
     """오늘의 모멘트는 **4개**다. 진짜 색인으로 세어 본다."""
-    from ai_server.app.internal_api import DAILY_LIMIT
+    from ai_server.app.internal_api import DAILY_LIMIT, spare_for
 
     assert DAILY_LIMIT == 4
-    assert len(_items(client)["items"]) == DAILY_LIMIT
+    # 새 호출자는 여유분까지 받는다(Spring 이 최종 필터 뒤 4개를 자른다). 옛 호출자는 4개다.
+    got = _items(client)["items"]
+    assert DAILY_LIMIT <= len(got) <= DAILY_LIMIT + spare_for(DAILY_LIMIT)
+    legacy = _items(client, catalog={"tracks": {"track": []}, "sections": {}})["items"]
+    assert len(legacy) == DAILY_LIMIT
+    assert [i["external_id"] for i in legacy] == [i["external_id"] for i in got][:DAILY_LIMIT]
 
 
 def test_daily_refuses_a_different_count(client):
@@ -145,7 +157,7 @@ def test_no_candidates_is_not_a_server_error(client):
     """조건에 맞는 곡이 없을 때 아무거나 채우지 않고 사유를 돌려준다."""
     r = client.post("/internal/recommendations/next",
                     json={"recommendation_id": 5002, "user_id": 15, "limit": 3,
-                          "exclude_tracks": [], "catalog": _catalog()})
+                          "exclude_tracks": []})
     assert r.status_code in (200, 404)
     if r.status_code == 404:
         assert r.json()["error_code"] == "NO_CANDIDATES"
@@ -159,9 +171,8 @@ def test_bad_request_is_rejected(client):
 
 
 def test_search_needs_a_query_plan(client):
-    """조건은 Spring 이 건다. 원문만 오면 조건으로 바꿀 길이 없어 거절한다."""
+    """원문을 조건으로 바꾸는 것은 Spring 의 대화 모델이다. 원문만 오면 거절한다."""
     r = client.post("/internal/recommendations/search",
-                    json={"recommendation_id": 5003, "user_id": 15, "query": "잔잔한 노래",
-                          "catalog": _catalog()})
+                    json={"recommendation_id": 5003, "user_id": 15, "query": "잔잔한 노래"})
     assert r.status_code == 400
     assert r.json()["error_code"] == "INVALID_REQUEST"
