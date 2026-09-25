@@ -399,6 +399,10 @@ stage1:
 - 기준: **1,060곡**(삭제 26곡 포함)의 구간 중 임베딩이 있는 것. 제목 ID 옛 행은 뺀다.
 - 이후 새 곡은 이 μ 로 `u`·`r` 을 계산해 upsert 만 한다. 전체 재적재는 임베딩 모델을 바꿀 때와
   드리프트가 기준을 넘을 때(§10.2-2)만.
+- → **457**: `music-preprocessing vectors-freeze-mu` 가 `registered.json` 에 번호가 있는 곡(= 1,060곡, 삭제 포함 —
+  제목 ID 옛 행과 Jamendo 는 번호가 없어 저절로 빠진다)으로 한 번 재어 `~/mupid_models/stage1/v1/mu.npy`(+ `mu.json`:
+  구간 수·sha256·판의 풀 평균과의 거리)에 쓴다. **있으면 덮지 않는다.** 모델 묶음 v1 에 서빙 파일로 싣는 것은
+  첫 채택 MR 의 일이다 — 그 전까지 ai 는 판의 풀 평균으로 읽으므로 `pool_mean_l2_diff` 를 보고 전환한다.
 
 ### 6.4 보안
 
@@ -453,8 +457,9 @@ Redis 에 "이 시각 이전 발급분 무효" 경계, 액세스 토큰까지 �
   `app/model_bundle.py` 로 그 자리를 먼저 보고 없으면 판을 본다. 어긋난 점:
   - **MR 대조(③)는 기능 브랜치에서 형식만 본다.** `MUPID_DATA_ENV` 가 보호 변수라 기능 브랜치 MR 파이프라인에
     주어지지 않는다. sha256 대조는 병합 뒤 `model-publish` 가 **멈추는 쪽으로** 한다(④-b).
-  - **관문(④-c)은 스위치다** — `MUPID_MODEL_RECOMPUTE_GATE`(기본 꺼짐, 경고만). 확인 API 는 457 이 만들고 켠다.
-    지금 스크립트가 부르는 자리는 `GET /api/v1/system/models/{name}/{version}/recompute` → `data.complete`.
+  - **관문(④-c)은 스위치다** — `MUPID_MODEL_RECOMPUTE_GATE`(기본 꺼짐, 경고만). 확인 API 는 457 이 만들었다 —
+    `GET /api/v1/system/vectors/stage1/{version}/status` → `data.complete`(스크립트도 이 경로로 맞췄다). 켜는 것은
+    운영 결정이고 방법은 `infra/ci/VARIABLES.md`.
   - 파드의 `stage1_v{N}` 존재 확인(④-f)은 456 이후다.
 
 ### 6.6 벡터 등록 API
@@ -494,6 +499,11 @@ Redis 에 "이 시각 이전 발급분 무효" 경계, 액세스 토큰까지 �
 - `analysis_version` 이 MySQL 의 현재 값과 같은가 (다르면 거절 — 옛 분석의 벡터가 새 구간에 붙지 않게)
 - NaN·무한대가 없는가
 
+> **457 의 결정(미결 5)**: **JSON 안에 벡터마다 float32 리틀엔디언 바이트의 base64.** 메타(구간 순서 = `sections[]` 의
+> 순서, `analysis_version`·`emb_version`·`feat_version`·`source`, 모델 버전 = `stage1` 사전의 키)는 같은 JSON 에 싣는다.
+> `application/octet-stream` 을 버린 이유 — 종류가 다섯이고 `clap` 은 구간마다 있거나 없어, 바이트 한 덩어리로는
+> 경계를 헤더에 적는 틀을 새로 만들어야 한다. 실측 구간당 약 10.5KB(4구간 곡 42KB) — 곡 9구간이면 약 95KB 다.
+
 **실패와 재시도 — 원본은 배치가 가진다.** Spring 은 벡터를 따로 보관하지 않는다.
 
 - Spring 은 **Qdrant 에 쓴 뒤에 응답한다.** 실패하면 오류를 돌려주고, 배치가 같은 요청을 다시 보낸다.
@@ -501,6 +511,28 @@ Redis 에 "이 시각 이전 발급분 무효" 경계, 액세스 토큰까지 �
   `VECTOR` 로 남는다(§8.2). 대조 작업이 이런 곡 목록을 내보내면 배치가 다시 보낸다.
 - 그 사이 AI 는 **벡터가 없는 구간을 후보에서 뺀다.** 틀린 곡이 나가는 게 아니라 그 곡이 잠시 추천되지
   않을 뿐이다.
+
+> **457 에서 (구현 위치)**
+>
+> | 무엇 | 어디 |
+> |---|---|
+> | 곡 전체 `PUT /api/v1/music/{id}/vectors` · 재계산 `PUT /api/v1/system/vectors/stage1/{v}` · 관문 `GET …/stage1/{v}/status` · 미반영 목록 `GET /api/v1/system/vectors/pending` | `api/…/vector/` (`MusicVectorController`·`SystemVectorController`·`VectorServiceImpl`), 명세 `api/docs/Vector/` |
+> | 컬렉션 정의 | `api/src/main/resources/qdrant/qdrant_collection.json` — `ai_server/app/qdrant_collection.json` 의 **바이트 사본**(api 빌드 문맥이 `api/` 뿐이다). 다르면 `ai_server/tests/test_qdrant_schema_copy.py` 가 멈춘다 |
+> | Qdrant REST (SDK 없음) · 전용 스레드 풀(동시 2 + 대기 8, 넘치면 429) | `QdrantRestClient`·`VectorWriteExecutor`, 설정 `qdrant.*`(`MUPID_QDRANT_URL`·`MUPID_QDRANT_API_KEY`) |
+> | 미반영 `VECTOR` · 매일 04:50 Qdrant 대조 | `VectorSync`·`VectorReconciler` (§8.2) |
+> | 배치 쪽 보내기 | `music_preprocessing` `vectors.py`, 명령 `vectors-freeze-mu`·`vectors-send [--pending]`·`vectors-stage1`, `api_client.put_vectors` 등 |
+>
+> - **payload 의 구간 지문·`track_id` 는 MySQL 에서 싣는다.** 배치가 보내는 것은 벡터·`r`·`source`·버전뿐이다.
+> - **곡 단위 교체는 upsert 뒤 삭제다** — 그 곡(`track_id`)의 포인트 중 이번에 없는 id 를 지운다. 순서를 뒤집으면 그 사이
+>   곡이 통째로 빈다.
+> - `stage1` 은 모델 버전 → 벡터 사전이다(`{"v1": …}`). 포인트를 통째로 갈아 끼우므로 재계산 중 새 곡은 두 버전을 함께 싣는다.
+>   모델 벡터 이름이 컬렉션에 없으면 Spring 이 덧붙인다(456 도구와 같은 본문). 컬렉션 자체는 만들지 않는다 — 운영 절차.
+> - `mert` 는 단위 벡터여야 받는다(‖u‖ = 1 ± 1e-3) — 원본 `Z` 를 잘못 보내면 거절된다. `Cosine` 벡터는 Qdrant 가 저장 때
+>   정규화하므로 `stage1` 의 원본 노름은 Qdrant 에 남지 않는다(458 이 Qdrant 에서 `stage1` 을 읽을 때 볼 것).
+> - 삭제된 곡은 벡터를 받지 않는다(410). 대조가 MySQL 에 살아 있지 않은 곡의 포인트를 지운다(§7.4) — MySQL 쪽이 비었거나
+>   Qdrant 곡의 절반 넘게를 지우게 되면 지우지 않고 알린다.
+> - 새 곡 야간 배치(`analysis` ⑥ 뒤)에 붙이는 것은 후속이다 — 지금은 명령으로 보낸다. 붙이기 전까지 새 곡은 미반영 `VECTOR` 로
+>   남고, `vectors-send --pending` 이 채운다.
 
 ---
 
@@ -575,10 +607,10 @@ MySQL 이 정본. Spring 이 ClickHouse `track_features.is_deleted`·`playable` 
 
 | # | 장치 | 하는 일 |
 |---|---|---|
-| 1 | **미반영 기록** | MySQL 트랜잭션 안에서 `analytics_sync_pending(music_id, kind, analysis_version, created_at)` 에 행을 남긴다. 커밋과 한 몸이라 빠지지 않는다. `kind` 는 `CLICKHOUSE`(Spring 이 재시도)·`VECTOR`(벡터가 아직 없음 — 배치가 보내면 지운다) |
+| 1 | **미반영 기록** | MySQL 트랜잭션 안에서 `analytics_sync_pending(music_id, kind, analysis_version, created_at)` 에 행을 남긴다. 커밋과 한 몸이라 빠지지 않는다. `kind` 는 `CLICKHOUSE`(Spring 이 재시도)·`VECTOR`(벡터가 아직 없음 — 배치가 보내면 지운다). → `VECTOR` 는 457: 구간 교체·관리자 구간 CRUD 가 올리고, 벡터 등록이 성공하면 검증 때 읽은 revision 으로 지운다. Spring 재시도는 이 종류를 돌지 않는다 |
 | 2 | **커밋 뒤 즉시 쓰기** | 지금처럼 `afterCommit` 에서 ClickHouse 에 쓰고, 성공하면 미반영 행을 지운다. Qdrant 는 벡터 등록 API 가 요청 안에서 쓴다 (§6.6) |
 | 3 | **재시도 작업** | Spring 스케줄 작업이 1분마다 남은 행을 다시 쓴다. 쓰기는 **곡 단위 교체**라 몇 번을 써도 결과가 같다(멱등). api 가 여러 벌이면 리더 잠금(예: ShedLock) |
-| 4 | **대조 작업** | Spring 이 매일 곡별 구간 수·값 체크섬을 MySQL 과 **두 레플리카** 에서 비교한다(2026-09-25 에 손으로 한 것을 자동화). 어긋난 곡은 미반영 기록에 넣는다. Qdrant 는 `analysis_version`·존재 여부를 비교한다 |
+| 4 | **대조 작업** | Spring 이 매일 곡별 구간 수·값 체크섬을 MySQL 과 **두 레플리카** 에서 비교한다(2026-09-25 에 손으로 한 것을 자동화). 어긋난 곡은 미반영 기록에 넣는다. Qdrant 는 `analysis_version`·존재 여부를 비교한다 → 457 `VectorReconciler`(04:50): 곡마다 `external_id` 집합과 구간 지문(`analysis_version`·`seg_start_ms`·`seg_end_ms`)을 payload 스크롤로 비교, 살아 있지 않은 곡의 포인트는 지운다 |
 | 5 | **같은 기준** | `analysis_version` 을 MySQL 에도 둔다. Spring 이 같은 값을 세 저장소에 쓴다 |
 | 6 | **읽기 규칙** | ClickHouse 는 `FINAL`(또는 곡 단위 최신 행)로 읽는다 |
 | 7 | **우회 제거** | `push_sections.py` 의 ClickHouse 직접 쓰기를 걷어낸다. 복구는 대조 작업 → 재시도가 맡는다 |
@@ -738,7 +770,7 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
    [`api/knowledge/architecture/analytics-sync.md`](../api/knowledge/architecture/analytics-sync.md) 의
    "쓰기 입구 전수 목록". 구간을 바꾸는 길은 요구 1(`PUT …/section`)과 관리자 자원 CRUD 둘이고 둘 다
    같은 트랜잭션에 미반영 기록을 남긴다. 곡 삭제·분석 값·장르·무드(`track_features`)는 455, 벡터는 457 에서
-   같은 표에 행을 더한다.
+   같은 표에 행을 더한다. → **벡터(457)**: 구간 교체(요구 1)·관리자 구간 CRUD 가 `VECTOR` 를 올린다(같은 문서의 표).
 2. **선택도 기준**: 사전 필터 ID 목록 상한 (1만으로 시작).
 3. **`X` 의 라벨 의존**을 끊을지 — 재학습 때 라벨을 `X` 에서 빼고 ClickHouse 값으로 점수에 더하는 안. AI 담당.
 4. ~~**ClickHouse 서빙 지연 기준**: 1만 곡에서 특징 조회·조건 풀기 p95 목표.~~
@@ -756,8 +788,10 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
    조회 서버 p95 가 25ms 까지 올랐다. 조건 풀기의 느린 쪽은 조건 없는 조합(8.5만 ID 를 정렬)이다 — 사전 필터로
    쓰는 것은 1만 이하일 때뿐이라(미결 2) 실제로는 앞쪽이다. 10만 곡은 dev 노드(4GiB 한도, 다른 표와 공유)가
    적재·병합 중 메모리 한도에 걸려 재지 못했다 — 5단계 부하 측정에서 운영과 같은 노드로 잰다.
-5. **벡터 본문 형식**: base64(float32 LE) JSON 과 `application/octet-stream` 중 무엇으로 할지, 메타(`external_id` 순서·
-   `analysis_version`·차원·모델 버전)를 어디에 실을지.
+5. ~~**벡터 본문 형식**: base64(float32 LE) JSON 과 `application/octet-stream` 중 무엇으로 할지, 메타(`external_id` 순서·
+   `analysis_version`·차원·모델 버전)를 어디에 실을지.~~
+   → **결정(2026-09-25, S15P21A204-457)**: JSON + 벡터마다 base64(float32 LE). 메타는 같은 JSON — 구간 순서는 `sections[]`
+   순서, 모델 버전은 `stage1` 사전의 키, 차원은 바이트 길이 ÷ 4 로 정의와 대조한다. 이유는 §6.6.
 6. **온보딩 매핑**: 온보딩 무드(1세대 코드)·장르 대분류가 곡 어휘로 옮겨지지 않아 대부분 사용자가
    콜드스타트다 (기존 문제). 코드표 쪽 대응표가 필요하다.
 7. **CLAP 적용 범위 23%**: 검색어 재정렬이 대부분 곡에서 안 된다. 분석 배치에서 채울지.
@@ -791,6 +825,8 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 - 곡 삭제를 ClickHouse 가 모르던 것(§5.3)은 **`track_features.is_deleted` 로 싣게 했다(S15P21A204-455, 배포 대기).**
   운영 ClickHouse 마이그레이션(`api/clickhouse/migrations/05-track-features.sql`)을 api 보다 먼저 걸고, 첫 대조(또는
   손으로 넣는 미반영 행)가 1,060곡을 채운다. 서빙 읽기(`ai_server/app/feature_store.py`)는 아직 요청 경로에 없다(458).
+- 벡터 등록 API(S15P21A204-457, 배포 대기)가 들어갔다. 운영 컬렉션 생성(456 도구) → `vectors-freeze-mu` → `vectors-send`
+  (1,060곡) → 대조 불일치 0 확인 뒤에야 `MUPID_VECTOR_BACKEND=qdrant` 를 검토한다. 그 전까지 ai 는 local 이다.
 - node-b 단일 장애점(§10.1-8)은 지금도 마찬가지다.
 
 ---
@@ -804,6 +840,6 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 | 2 | `VectorStore` 인터페이스 + local 구현. **요청 경로의 O(N) 연산 전수 점검·제거**, 온보딩 씨앗 사전 계산 | ③ | 요청 경로에 풀 전체 연산이 없다 (점검표). 시험 통과 |
 | 3 | **배치용 Object Storage API — 모델 가중치 전용** (§6.5, Nginx `/upload/system/`, ERD) + `model-publish` CI 작업(JupyterHub → 체크섬 → 관문 → 업로드) + 모델 묶음 분리 (`model_versions`, μ 동결, `manifest.json`) + **CI 가 `models.lock` 으로 서빙 가중치를 이미지에 굽기** + ROLE_SYSTEM 계정 분리 | ② | `models.lock` 만 바꾼 MR 로 가중치 교체·롤백이 된다. ai_server 에 토큰이 없다. — API 는 453, CI·`models.lock`·이미지 굽기·ROLE_SYSTEM 장기 토큰은 454. 첫 채택(JupyterHub 묶음 → `models.lock` MR)과 μ 동결은 남았다 |
 | 4 | ClickHouse `track_features`(+`is_deleted`·`playable`) · 서빙 정렬 키·프로파일 · AI 읽기 · 지연 측정 | ①③ | 1만 곡 합성에서 특징 조회·조건 풀기 p95 가 기준 안 — 455: 표·`energy` 열·미반영/재시도/대조·서빙 사전·`mupid_serving`·`feature_store.py`, 서버 p95 16ms / 56ms (기준 제안 50 / 100ms, 미결 4). 요청 경로 연결은 458 |
-| 5 | Qdrant (node-b StatefulSet, 인증, 구간 지문, 로컬 스냅샷, NetworkPolicy) + **벡터 등록 API** (§6.6, 곡 전체 / 모델 재계산) + 재적재 시간 측정 | ①② | 1만 곡 합성 부하에서 추천 p95 < 1초. node-b 를 비운 뒤 JupyterHub 재전송으로 복구된다 |
+| 5 | Qdrant (node-b StatefulSet, 인증, 구간 지문, 로컬 스냅샷, NetworkPolicy) + **벡터 등록 API** (§6.6, 곡 전체 / 모델 재계산) + 재적재 시간 측정 | ①② | 1만 곡 합성 부하에서 추천 p95 < 1초. node-b 를 비운 뒤 JupyterHub 재전송으로 복구된다 — Qdrant 는 456, 벡터 등록 API·미반영 `VECTOR`·대조·관문·배치 명령은 457(로컬 왕복: Spring 으로 넣은 합성 곡이 local 과 같은 순위·점수). 운영 적재·재적재 시간 측정·`qdrant` 전환은 배포 뒤 |
 | 6 | **계약 v3**: `catalog` 제거, 조건 풀기 AI 로, `QueryPlanFilter` 걷어내기, `exclude_tracks` 상한, `limit + 여유분` | ①③ | 요청 본문 < 5KB, 오늘의 모먼트가 늘 4개 |
 | 7 | Pinecone 제거 (코드·SDK·CI 변수·문서·JupyterHub 야간 단계, 콘솔 인덱스 삭제) | — | `pinecone` 이 저장소에 없다 |

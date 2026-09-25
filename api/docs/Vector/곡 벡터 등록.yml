@@ -1,0 +1,130 @@
+info:
+  name: 곡 벡터 등록
+  type: http
+  seq: 1
+
+http:
+  method: PUT
+  url: "{{BASE_URL}}/api/v1/music/{{MUSIC_ID}}/vectors"
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+  body:
+    type: json
+    data: |-
+      {
+        "analysis_version": "v1",
+        "emb_version": "mert-v1-95m",
+        "feat_version": "v1",
+        "source": "flow",
+        "sections": [
+          {
+            "external_id": "T001001#0",
+            "r": 0.9919,
+            "mert": "<base64 float32 LE × 1536>",
+            "feat_v1": "<base64 float32 LE × 285>",
+            "stage1": { "v1": "<base64 float32 LE × 128>" },
+            "clap": "<base64 float32 LE × 512 — 없으면 뺀다>"
+          },
+          {
+            "external_id": "T001001#1",
+            "r": 1.0412,
+            "mert": "<base64>",
+            "feat_v1": "<base64>",
+            "stage1": { "v1": "<base64>" }
+          }
+        ]
+      }
+
+runtime:
+  variables:
+    - name: MUSIC_ID
+      value: "1001"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 Qdrant 에 씀
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "벡터가 등록되었습니다.",
+            "data": {
+              "music_id": 1001,
+              "analysis_version": "v1",
+              "collection": "moments__mert-v1-95m",
+              "points": 2,
+              "vectors": ["mert", "feat_v1", "stage1_v1", "clap"],
+              "clap_sections": 1
+            }
+          }
+
+  - name: 409 구간 수·순서가 다름
+    response:
+      status: 409
+      statusText: Conflict
+      headers:
+        - name: X-Mupid-Error
+          value: MUPID_VECTOR_SECTIONS_MISMATCH
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_VECTOR_SECTIONS_MISMATCH",
+            "message": "구간 수·순서가 등록된 구간과 다릅니다. 구간을 먼저 등록하세요."
+          }
+
+docs: |-
+  # 곡 벡터 등록
+
+  `PUT /api/v1/music/{musicId}/vectors` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  분석 배치가 **구간 등록(`PUT …/section`) 바로 뒤에** 부릅니다(설계 §7.1 ③). 그 곡의 **모든 종류**를 한
+  요청에 담습니다 — 종류별로 나누면 `mert` 는 있는데 `stage1` 이 없는 반쯤 들어간 곡이 생깁니다.
+
+  **곡 단위 교체**입니다. 받은 구간의 포인트를 통째로 쓰고(`upsert`), 그 곡(`track_id`)의 옛 포인트 중
+  이번에 없는 것은 지웁니다. 같은 본문을 여러 번 보내도 결과가 같습니다.
+  포인트를 통째로 갈아 끼우므로 `stage1` 에 **빠진 모델 버전은 지워집니다** — 재계산 중이라 두 버전이
+  필요하면 둘 다 싣습니다(`{"v1": …, "v2": …}`).
+
+  ## 검증 — 하나라도 어긋나면 Qdrant 에 닿지 않는다
+
+  | 검사 | 어긋나면 |
+  | --- | --- |
+  | `emb_version` 이 컬렉션의 `embedding_version` 과 같다 | 409 `MUPID_EMBEDDING_VERSION_MISMATCH` |
+  | 차원이 정의와 같다 (base64 바이트 = 차원 × 4) | 400 `MUPID_VECTOR_DIMENSION_MISMATCH` |
+  | NaN·무한대가 없다 | 400 `MUPID_VECTOR_NOT_FINITE` |
+  | `mert` 가 단위 벡터다 (‖u‖ = 1 ± 1e-3) | 400 `MUPID_VECTOR_NOT_NORMALIZED` |
+  | `r` 이 0 보다 큰 유한한 값 | 400 `MUPID_VECTOR_NORM_INVALID` |
+  | 모든 구간이 같은 모델 버전 셋을 가진다 (하나 이상) | 400 `MUPID_VECTOR_MODEL_REQUIRED` |
+  | 곡이 살아 있다 | 404 `MUPID_MUSIC_NOT_FOUND` · 410 `MUPID_MUSIC_GONE` |
+  | 구간이 등록돼 있다 | 409 `MUPID_VECTOR_MUSIC_HAS_NO_SECTIONS` |
+  | `analysis_version` 이 MySQL 의 현재 값과 같다 | 409 `MUPID_VECTOR_ANALYSIS_VERSION_MISMATCH` |
+  | 구간 수·순서(`external_id`)가 MySQL(순번 오름차순)과 같다 | 409 `MUPID_VECTOR_SECTIONS_MISMATCH` |
+
+  ## 저장소
+
+  | 코드 | 상태 | 설명 | 할 일 |
+  | --- | --- | --- | --- |
+  | `MUPID_VECTOR_BUSY` | 429 | 쓰기 줄이 찼다 | 잠시 뒤 같은 본문 |
+  | `MUPID_VECTOR_STORE_UNAVAILABLE` | 503 | Qdrant 에 쓰지 못했다 (미반영 행에 사유가 남는다) | 같은 본문 |
+  | `MUPID_VECTOR_COLLECTION_MISSING` | 503 | 컬렉션이 없다 | 운영 절차로 만든다 (`OPERATIONS-K8S.md` 7-1) |
+  | `MUPID_VECTOR_STORE_NOT_CONFIGURED` | 503 | `MUPID_QDRANT_URL` 이 비었다 | 설정 |
+
+  성공하면 그 곡의 미반영 `VECTOR` 가 지워집니다(검증 때 읽은 revision 일 때만 — 그 사이 구간이 다시
+  바뀌었으면 남습니다).

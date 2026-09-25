@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.osundosun.mupid.api.analytics.sync.service.TrackFeatureSync;
 import com.osundosun.mupid.api.analytics.sync.service.TrackSectionSync;
+import com.osundosun.mupid.api.analytics.sync.service.VectorSync;
 import com.osundosun.mupid.api.code.entity.Code;
 import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.code.repository.CodeRepository;
@@ -50,6 +51,7 @@ public class MusicSectionServiceImpl implements MusicSectionService {
     private final CodeRepository codeRepository;
     private final TrackSectionSync trackSectionSync;
     private final TrackFeatureSync trackFeatureSync;
+    private final VectorSync vectorSync;
 
     @Override
     public MusicSectionBulkResponse replaceSections(int musicId, MusicSectionBulkRequest request) {
@@ -112,6 +114,9 @@ public class MusicSectionServiceImpl implements MusicSectionService {
         // 곡 특징의 `track`(문자열 곡 ID)·`analysis_version` 은 구간에서 온다. 함께 올린다
         // (S15P21A204-455 — 종류를 나눈 이유는 `AnalyticsSyncKind`).
         trackFeatureSync.markChanged(musicId);
+        // 이 분석 버전의 벡터는 아직 없다. 배치가 곧이어 `PUT …/vectors` 로 보내면 지워지고, 실패하면
+        // 남아 배치의 재전송 목록이 된다 (S15P21A204-457, `VectorSync`).
+        vectorSync.markPending(musicId, request.analysisVersion());
 
         return new MusicSectionBulkResponse(
             musicId,

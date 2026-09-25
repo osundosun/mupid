@@ -5,8 +5,9 @@ package com.osundosun.mupid.api.analytics.sync.enumerate;
  *
  * <p>MySQL 이 정본이고 이 종류들은 그 사본이다. 종류마다 "다시 쓰는 쪽" 이 다르다 —
  * {@link #CLICKHOUSE} 는 Spring 재시도 작업이 MySQL 의 현재 구간으로 다시 쓴다.
- * 벡터 사본({@code VECTOR})은 457 에서 더한다. DB 컬럼이 ENUM 이 아니라 {@code VARCHAR(16)}
- * 이라 여기에 값을 더하는 것만으로 된다.
+ * {@link #VECTOR} 는 <b>Spring 이 다시 쓸 수 없다</b> — 벡터의 원본은 배치(JupyterHub 전체 색인)에
+ * 있고 Spring 은 벡터를 보관하지 않는다(설계 §6.6). 대조가 목록을 내고 배치가 다시 보낸다
+ * (S15P21A204-457). DB 컬럼이 ENUM 이 아니라 {@code VARCHAR(16)} 이라 여기에 값을 더하는 것만으로 된다.
  *
  * <h2>구간과 곡 특징은 종류를 나눈다 (S15P21A204-455)</h2>
  *
@@ -23,6 +24,13 @@ public enum AnalyticsSyncKind {
     CLICKHOUSE,
 
     /** ClickHouse {@code track_features_local} — 곡 단위 특징 사본 (S15P21A204-455). */
-    TRACK_FEATURES
+    TRACK_FEATURES,
+
+    /**
+     * Qdrant 순간 벡터 — 구간은 MySQL 에 커밋됐는데 그 분석 버전의 벡터가 아직 없는 곡 (S15P21A204-457).
+     * 벡터 등록({@code PUT /api/v1/music/{id}/vectors})이 성공하면 지운다. 재시도 작업은 이 종류를 돌지
+     * 않는다 — 배치가 {@code GET /api/v1/system/vectors/pending} 으로 목록을 받아 다시 보낸다.
+     */
+    VECTOR
 
 }

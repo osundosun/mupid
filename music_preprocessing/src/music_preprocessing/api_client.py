@@ -510,6 +510,53 @@ class MupidClient:
         )
         return body["data"]
 
+    def put_vectors(self, music_id: int, body: dict) -> dict:
+        """한 곡의 벡터 전부를 Qdrant 에 쓴다 (S15P21A204-457, 설계 §6.6).
+
+        `PUT /section`(요구 1) **바로 뒤에** 부른다. 서버는 구간 수·순서·`analysis_version` 이
+        MySQL 과 같은지 보고 다르면 409 로 거절한다 — 옛 분석의 벡터가 새 구간에 붙지 않게.
+        **응답이 오면 이미 Qdrant 에 쓰였다.** 429(쓰기 줄이 찼다)·5xx 는 같은 본문을 다시
+        보내면 된다(곡 단위 교체라 멱등). 본문은 `vectors.track_body` 가 만든다 — 벡터마다
+        float32 리틀엔디언 바이트의 base64 다.
+
+        Returns:
+            `{ "music_id", "analysis_version", "collection", "points", "vectors", "clap_sections" }`
+        """
+        body = self._request("PUT", f"/api/v1/music/{music_id}/vectors", json_body=body)
+        return body["data"]
+
+    def put_stage1_vectors(self, version: str, sections: list[dict]) -> dict:
+        """모델 재계산 — 여러 구간에 `stage1_{version}` 만 덧붙인다 (최대 1,000구간).
+
+        다른 벡터는 건드리지 않는다. 구간이 Qdrant 에 곡 전체 벡터로 먼저 들어가 있어야 한다(409).
+
+        Args:
+            sections: `[{"external_id": …, "vector": base64(float32 LE × 128)}]`
+        """
+        body = self._request("PUT", f"/api/v1/system/vectors/stage1/{version}",
+                             json_body={"sections": sections})
+        return body["data"]
+
+    def stage1_status(self, version: str) -> dict:
+        """재계산 관문 — `stage1_{version}` 이 전 구간에 채워졌는가 (`complete`)."""
+        return self._request("GET", f"/api/v1/system/vectors/stage1/{version}/status")["data"]
+
+    def vector_pending(self, page_size: int = 500) -> list[dict]:
+        """벡터가 아직(또는 실패로) 없는 곡 전부 — 다시 보낼 목록 (곡 번호 순).
+
+        구간 등록 뒤 벡터가 실패한 곡, 매일 대조가 Qdrant 와 어긋났다고 찾은 곡이 여기 있다.
+        Spring 은 벡터를 보관하지 않아 스스로 고치지 못한다 — 배치가 이 목록을 다시 보낸다.
+        """
+        out: list[dict] = []
+        after = 0
+        while True:
+            data = self._request(
+                "GET", f"/api/v1/system/vectors/pending?after={after}&limit={page_size}")["data"]
+            out.extend(data.get("items") or [])
+            after = data.get("next")
+            if not after:
+                return out
+
     def create_stream(
         self,
         music_id: int,

@@ -120,6 +120,22 @@ recommender:
   # 양쪽을 동시에 설정한다. 추천 서버만 켜고 여기를 비우면 추천이 통째로 401 이다.
   internal-token: ${MUPID_RECOMMENDER_INTERNAL_TOKEN:}
 
+# 순간 벡터 저장소 Qdrant (S15P21A204-457, infra/VECTOR-STORE-DESIGN.md §6.6). **Spring 만 쓴다** —
+# 쓰기 키는 여기에만 있고 ai_server 는 읽기 전용 키를 받는다. 주소가 비면 벡터 API 만 503 이고 곡·구간
+# 등록은 그대로 된다. 컬렉션 이름·차원은 정의 파일(resources/qdrant/qdrant_collection.json =
+# ai_server/app/qdrant_collection.json 사본)에서 온다. 키는 로그에 찍지 않는다.
+qdrant:
+  url: ${MUPID_QDRANT_URL:}
+  api-key: ${MUPID_QDRANT_API_KEY:}
+  collection: ${MUPID_QDRANT_COLLECTION:}
+  connect-timeout: 2s
+  # wait=true 로 색인 반영까지 기다린다. 운영 nginx /api/ 의 proxy_read_timeout(60s) 보다 짧게.
+  read-timeout: 30s
+  # 사용자 요청과 다른 풀(VectorWriteExecutor). 동시 쓰기 2 + 대기 8 을 넘으면 429 — 배치가 다시 보낸다.
+  write-concurrency: ${MUPID_QDRANT_WRITE_CONCURRENCY:2}
+  write-queue: ${MUPID_QDRANT_WRITE_QUEUE:8}
+  write-wait: 45s
+
 redis:
   key-prefix: ${MUPID_REDIS_KEY_PREFIX}
 

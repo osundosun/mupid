@@ -9,6 +9,7 @@
 | 정의를 읽는 코드 | `ai_server/app/qdrant_schema.py` |
 | 읽기 (서빙) | `ai_server/app/vector_store.py` 의 `QdrantVectorStore`, REST 는 `app/qdrant_store.py` |
 | 컬렉션 만들기 (멱등, 운영은 배포 뒤 사람이) | `python -m ai_server.tools.qdrant_collection` |
+| **쓰기 (운영의 유일한 길)** — Spring 벡터 등록 API (457) | `api/…/vector/`, 명세 `api/docs/Vector/`, 배치 명령 `music-preprocessing vectors-send` |
 | 개발·시험용 적재 (**운영 경로 아님**, localhost 만) | `python -m ai_server.tools.qdrant_dev_load` |
 | 부하 측정 | `python -m ai_server.tools.bench_request_path --backend qdrant` |
 | 매니페스트 | `infra_k8s/base/qdrant.yaml` · `qdrant-networkpolicy.yaml` |
@@ -60,7 +61,8 @@ SHA-1(namespace 16바이트 ‖ 이름) 앞 16바이트, version 5·variant RFC 
 | 판의 색인 풀 평균 (`moments_emb.npy`) | 지금 (`models.lock` 이 null). local 갈래와 같은 값 |
 
 어느 쪽인지 `/health` 의 `vector_generation.status.mu_source` 에 실린다. 벡터를 쓰는 배치(457)는
-같은 μ 로 `u`·`r` 을 계산해야 한다.
+같은 μ 로 `u`·`r` 을 계산해야 한다 — `music-preprocessing vectors-freeze-mu` 가 한 번 잰 `mu.npy` 를 쓰고, 옆의
+`mu.json` 에 판의 풀 평균과의 거리(`pool_mean_l2_diff`)를 남긴다. 0 이 아니면 `mu.npy` 를 묶음에 먼저 싣는다.
 
 ## 4. 서빙 — 갈래와 준비 판정
 

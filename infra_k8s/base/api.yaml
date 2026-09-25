@@ -112,6 +112,12 @@ spec:
             - name: MUPID_MATTERMOST_WEBHOOK_URL
               valueFrom:
                 secretKeyRef: {name: mupid-secrets, key: MUPID_MATTERMOST_WEBHOOK_URL, optional: true}
+            # Qdrant 쓰기 키 (S15P21A204-457). 벡터를 Qdrant 에 쓰는 것은 api 하나다(설계 원칙 1) —
+            # 같은 키를 qdrant 파드·스냅샷 CronJob 이 받는다(qdrant.yaml). ai 는 읽기 전용 키만 갖는다.
+            # optional: true 다. 키가 없으면 Qdrant 가 벡터 쓰기를 401 로 거절하고 벡터 API 만 503 이다.
+            - name: MUPID_QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef: {name: mupid-secrets, key: MUPID_QDRANT_API_KEY, optional: true}
           resources:
             requests: {cpu: 500m, memory: 700Mi}
             limits: {memory: 2Gi}

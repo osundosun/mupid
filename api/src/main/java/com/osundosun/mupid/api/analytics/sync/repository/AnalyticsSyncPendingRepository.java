@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 
 import com.osundosun.mupid.api.analytics.sync.entity.AnalyticsSyncPending;
 import com.osundosun.mupid.api.analytics.sync.entity.AnalyticsSyncPending.AnalyticsSyncPendingId;
+import com.osundosun.mupid.api.analytics.sync.enumerate.AnalyticsSyncKind;
 
 /**
  * 미반영 기록 (S15P21A204-451).
@@ -110,6 +111,19 @@ public interface AnalyticsSyncPendingRepository
     @Query(value = "SELECT COUNT(*) FROM analytics_sync_pending WHERE kind = :kind",
         nativeQuery = true)
     long countPending(@Param("kind") String kind);
+
+    /**
+     * 한 종류의 미반영 곡을 곡 번호 순으로 준다 — {@code after} 다음부터 {@code limit} 개. 배치가 벡터를
+     * 다시 보낼 목록을 쪽 단위로 읽는다({@code GET /api/v1/system/vectors/pending}, S15P21A204-457).
+     */
+    @Query(value = """
+        SELECT p FROM AnalyticsSyncPending p
+        WHERE p.id.kind = :kind AND p.id.musicId > :after
+        ORDER BY p.id.musicId
+        LIMIT :limit
+        """)
+    List<AnalyticsSyncPending> findPage(@Param("kind") AnalyticsSyncKind kind,
+                                        @Param("after") int after, @Param("limit") int limit);
 
     /**
      * 가장 오래된 미반영의 나이(초). 없으면 null.

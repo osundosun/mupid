@@ -141,7 +141,7 @@ class AnalyticsSyncMonitorTest {
     }
 
     @Test
-    @DisplayName("대시보드에는 종류마다 한 줄 — 구간·곡 특징")
+    @DisplayName("대시보드에는 종류마다 한 줄 — 구간·곡 특징·벡터")
     void oneDashboardLinePerKind() {
         AnalyticsSyncPendingRepository pending = mock(AnalyticsSyncPendingRepository.class);
         when(pending.countPending("TRACK_FEATURES")).thenReturn(2L);
@@ -150,7 +150,7 @@ class AnalyticsSyncMonitorTest {
             new StaticListableBeanFactory().getBeanProvider(MeterRegistry.class));
 
         assertThat(monitor.statuses()).extracting(AdminDependencyStatus::name)
-            .containsExactly("ClickHouse 구간 동기화", "ClickHouse 곡 특징 동기화");
+            .containsExactly("ClickHouse 구간 동기화", "ClickHouse 곡 특징 동기화", "Qdrant 벡터 반영");
         assertThat(monitor.status(AnalyticsSyncKind.TRACK_FEATURES).status()).isEqualTo("WARN");
         assertThat(monitor.status(AnalyticsSyncKind.CLICKHOUSE).status()).isEqualTo("UP");
     }
