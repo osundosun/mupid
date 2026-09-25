@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -20,7 +21,7 @@ import threading
 import time
 import uuid
 import warnings
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -149,6 +150,21 @@ DNA_CANDIDATES_PER_SEED = 200
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# 오늘의 모멘트의 "하루" 는 서울 날짜다. 한국은 서머타임이 없어 고정 오프셋으로 충분하고,
+# 배포 이미지에 tz 데이터베이스가 있는지에 기대지 않는다.
+SEOUL = timezone(timedelta(hours=9))
+
+
+def daily_seed(user: str, now: Optional[datetime] = None) -> int:
+    """`user` + 서울 날짜(YYYY-MM-DD)로 정한 탐색 시드. 같은 날 안에서는 몇 번을 불러도 같다.
+
+    프로세스마다 값이 바뀌는 `hash()` 를 쓰지 않는다 — 워커가 여럿이면 같은 사용자가
+    워커마다 다른 "오늘" 을 받는다.
+    """
+    day = (now or datetime.now(timezone.utc)).astimezone(SEOUL).date().isoformat()
+    return int.from_bytes(hashlib.sha256(f"{user}|{day}".encode("utf-8")).digest()[:8], "big")
 
 
 # ------------------------------------------- 색인 + 카탈로그를 하나로 합치는 자리
@@ -1960,10 +1976,33 @@ def _flow_penalty(pool: pd.DataFrame, current_track_id: Optional[str],
     return pen
 
 
+def first_chorus_moments(pool: pd.DataFrame, picked: list[int]) -> dict[int, int]:
+    """뽑힌 순간(`pool` 행 번호)마다 **같은 곡의 가장 이른 chorus** 행 번호. 없으면 제자리.
+
+    오늘의 모먼트와 자연어 검색이 쓴다 (S15P21A204-448). 곡이 정해진 **뒤** 재생할
+    순간만 고른다 — chorus 가 없는 곡을 빼지도, 점수를 더하거나 빼지도 않는다.
+    같은 시작 시각이면 `moment_id`(= external_id) 순이다.
+    """
+    tids = pool.track_id.astype(str).to_numpy()
+    starts = pool.start_sec.to_numpy(dtype=float)
+    mids = pool.moment_id.astype(str).to_numpy()
+    want = {tids[i] for i in picked}
+    first: dict[str, tuple] = {}
+    for j in np.flatnonzero(pool.section_label.to_numpy() == "chorus"):
+        t = tids[j]
+        if t not in want:
+            continue
+        key = (starts[j], mids[j], int(j))
+        if t not in first or key < first[t]:
+            first[t] = key
+    return {i: first[tids[i]][2] if tids[i] in first else i for i in picked}
+
+
 def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_plan: Optional[dict] = None,
               current_track_id: Optional[str] = None, current_moment_id: Optional[str] = None,
               beh_events: Optional[list] = None,
-              onboarding: Optional[dict] = None) -> dict:
+              onboarding: Optional[dict] = None,
+              daily: bool = False, now: Optional[datetime] = None) -> dict:
     c = current()
     C, W, dna_meta = build_dna(user, query_plan, current_track_id, current_moment_id)
     query_source = "labels" if len(C) else "none"
@@ -2260,7 +2299,10 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             vecs.append(V[int(i)])
 
     if query_plan is None and explore and EXPLORE_SLOTS and len(picked) >= 3:
-        rng = np.random.default_rng(int(time.time()) // 60)
+        # 오늘의 모멘트는 사용자·서울 날짜로 시드를 고정한다 — 같은 날 다시 열어도 같은
+        # 네 곡이고, 날짜가 바뀌면 이 칸이 달라질 수 있다. 이어 듣기는 종전대로 분 단위다.
+        rng = np.random.default_rng(daily_seed(user, now) if daily
+                                    else int(time.time()) // 60)
         gorder = np.argsort(-np.where(keep, final, -1e9))
         cands = [int(i) for i in gorder[n:n * 6]
                  if pool.iloc[int(i)].track_id not in taken_tracks]
@@ -2269,9 +2311,25 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             picked[-1] = (j, float(final[j]), -1)
             taken_tracks.add(pool.iloc[j].track_id)
 
+    # 재생할 순간 (S15P21A204-448). 곡은 위에서 이미 정해졌다 — 여기서는 그 곡 안에서
+    # 어느 순간을 틀지만 고른다. 점수·순위·결과 수는 그대로다.
+    #
+    # **시연용 임시 처리다.** 곡을 뽑은 근거 순간과 들려주는 순간이 다를 수 있다. 본 수정은
+    # 점수를 매기기 전에 후보 순간을 곡마다 첫 chorus 로 좁혀 둘을 맞추는 것이다(후속 티켓).
+    play: dict[int, int] = {}
+    wanted_flow = _qvals(((query_plan or {}).get("filters") or {}).get("flow"))
+    if (daily or query_plan is not None) and not wanted_flow:
+        play = first_chorus_moments(pool, [i for i, _, _ in picked])
+        diag["moment_rule"] = {"rule": "first_chorus_else_selected",
+                               "switched": sum(1 for i, j in play.items() if i != j)}
+    elif wanted_flow:
+        diag["moment_rule"] = {"rule": "explicit_flow", "flow": wanted_flow}
+
     out = []
     for rank, (i, fs, cj) in enumerate(picked, 1):
-        r = pool.iloc[i]
+        # 점수 칸은 곡을 뽑은 순간(`i`)의 값 그대로, 순간 칸은 재생할 순간(`r`)의 값이다.
+        r = pool.iloc[play.get(i, i)]
+        b = pool.iloc[i]          # 사유 문장은 근거 순간으로 쓴다 — 유사도가 그 순간의 값이다
         ti = c.track_info(r.track_id)
         jj = cj if (cj is not None and cj >= 0) else int(best_j[i]) if len(C) else -1
         dm = dna_meta[jj] if (len(C) and 0 <= jj < len(dna_meta)) else {}
@@ -2289,13 +2347,15 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             "matched_dna": dm.get("dna_id"), "matched_dna_rep": dm.get("rep_moment_id"),
             "reason": (
                 f"내 선호 구간 묶음 {dm.get('dna_id','(콜드스타트)')}"
-                f"(대표 {dm.get('rep_moment_id','-')})와 이 곡 {int(r.section_idx)}번 "
-                f"{r.section_label} 구간 {float(r.start_sec):.0f}~{float(r.end_sec):.0f}초가 "
+                f"(대표 {dm.get('rep_moment_id','-')})와 이 곡 {int(b.section_idx)}번 "
+                f"{b.section_label} 구간 {float(b.start_sec):.0f}~{float(b.end_sec):.0f}초가 "
                 f"유사도 {float(s_rule[i]):.3f}"
                 + (f" · 선호 확률 {float(prob[i]):.3f}" if mode == "logistic" else "")
                 + (f" · 학습모델 점수 {float(s_model[i]):.3f}" if zu is not None else "")
                 + (f" · BPM {ti['bpm']:.0f}(선호 {bpm_pref:.0f})" if bpm_pref else "")
                 + (f" · 자연어 의미 유사도 {float(clap_score[i]):.3f}" if clap_active else "")
+                + (f" · 재생은 첫 chorus {float(r.start_sec):.0f}~{float(r.end_sec):.0f}초"
+                   if play.get(i, i) != i else "")
             ),
         })
     diag.update({"n_pairs_compared": n_pairs, "candidates": len(pool),

@@ -380,10 +380,15 @@ def test_one_axis_left_still_makes_a_seed(svc):
 
 
 def test_ranking_is_unchanged_when_no_mood_is_asked(svc):
-    """soft rerank 를 넣기 전과 순위가 같아야 한다. 동결 약속의 실증이다."""
-    a = [r["moment_id"] for r in svc.recommend("internal:1", 6, set(), False)["results"]]
-    b = [r["moment_id"] for r in svc.recommend("internal:1", 6, set(), False,
-                                               {"filters": {}})["results"]]
+    """soft rerank 를 넣기 전과 순위가 같아야 한다. 동결 약속의 실증이다.
+
+    곡·순서·점수를 본다. 재생할 순간은 검색에서만 첫 chorus 로 바뀌므로(S15P21A204-448)
+    `moment_id` 는 비교하지 않는다 — 곡을 뽑은 순간의 점수(`final_score`)는 그대로다.
+    """
+    a = [(r["track_id"], r["final_score"])
+         for r in svc.recommend("internal:1", 6, set(), False)["results"]]
+    b = [(r["track_id"], r["final_score"])
+         for r in svc.recommend("internal:1", 6, set(), False, {"filters": {}})["results"]]
     assert a == b
 
 
@@ -658,3 +663,202 @@ def test_concurrent_requests_do_not_see_each_others_candidates(svc):
     for t in ts:
         t.join()
     assert seen["a_ok"] and seen["b_ok"], seen
+
+
+# ------------------------------------------- 오늘의 모멘트: 서울 날짜 단위 시드 (S15P21A204-448)
+
+def _daily_at(svc, iso: str, user: str = "internal:1"):
+    from datetime import datetime
+    out = svc.recommend(user, 4, set(), True, None, None, None,
+                        daily=True, now=datetime.fromisoformat(iso))
+    return [(x["track_id"], x["moment_id"], x["slot_source"]) for x in out["results"]]
+
+
+def test_daily_is_fixed_within_a_seoul_day(svc, monkeypatch):
+    """같은 사용자·같은 서울 날짜면 곡·순서·순간이 같다. 분이 바뀌어도(시계를 옮겨도) 그대로다."""
+    clock = iter([1_790_000_000.0, 1_790_000_000.0 + 3_000.0])
+    monkeypatch.setattr(svc.time, "time", lambda: next(clock, 1_790_010_000.0))
+    a = _daily_at(svc, "2026-09-25T00:00:00+09:00")
+    b = _daily_at(svc, "2026-09-25T23:59:59+09:00")
+    assert a and a == b
+    # UTC 로 전날이어도 서울 날짜가 같으면 같은 날이다.
+    assert _daily_at(svc, "2026-09-24T15:30:00+00:00") == a
+
+
+def test_daily_explore_slot_can_change_with_the_date(svc):
+    days = [_daily_at(svc, f"2026-10-{d:02d}T12:00:00+09:00") for d in range(1, 15)]
+    assert len({tuple(d) for d in days}) > 1
+    # 바뀌는 것은 탐색 칸뿐이다 — 점수로 뽑은 앞 칸은 날짜와 무관하다.
+    assert len({tuple(d[:-1]) for d in days}) == 1
+
+
+def test_daily_seed_is_per_user_and_per_seoul_date(svc):
+    from datetime import datetime
+    t = datetime.fromisoformat("2026-09-25T09:00:00+09:00")
+    assert svc.daily_seed("internal:1", t) == svc.daily_seed("internal:1", t)
+    assert svc.daily_seed("internal:1", t) != svc.daily_seed("internal:2", t)
+    assert svc.daily_seed("internal:1", t) != svc.daily_seed(
+        "internal:1", datetime.fromisoformat("2026-09-26T09:00:00+09:00"))
+
+
+# ------------------------------------------- 재생할 순간: 첫 chorus, 없으면 뽑힌 순간 (S15P21A204-448)
+#
+# 오늘의 모먼트·자연어 검색에만 건다. 곡은 이미 정해진 뒤이고 순간만 바꾼다 — 곡을 빼지도,
+# 점수를 바꾸지도 않는다. 기준선은 순간 규칙을 끈(제자리를 돌려주는) 같은 호출이다.
+
+def _daily_view(svc, labels=None):
+    """`labels[external_id]` 로 구간 종류를 바꾼 본문."""
+    body = _catalog_body()
+    sec = body["sections"]
+    for i, uid in enumerate(sec["external_id"]):
+        if uid in (labels or {}):
+            sec["section_label"][i] = labels[uid]
+    return svc.CAT.with_catalog(catalog_body.from_body(body))
+
+
+def _daily(svc, view, explore=True):
+    from datetime import datetime
+    with svc.using(view):
+        return svc.recommend("internal:1", 4, set(), explore, None, None, None, daily=True,
+                             now=datetime.fromisoformat("2026-09-25T12:00:00+09:00"))
+
+
+def _search(svc, view, plan):
+    with svc.using(view):
+        return svc.recommend("internal:1", 4, set(), True, plan)
+
+
+def _baseline(svc, monkeypatch, call):
+    """순간 규칙을 끈 결과 — 곡을 뽑은 그 순간 그대로."""
+    with monkeypatch.context() as m:
+        m.setattr(svc, "first_chorus_moments", lambda pool, picked: {i: i for i in picked})
+        return call()
+
+
+def _rows(out):
+    return [(x["track_id"], x["moment_id"], x["final_score"]) for x in out["results"]]
+
+
+NO_CHORUS = {f"T{t:06d}#2": "VERSE" for t in range(6)}      # 합성 본문의 chorus 는 곡마다 #2
+SOME_CHORUS = {f"T{t:06d}#2": "VERSE" for t in (0, 2, 4)}   # 짝수 곡만 chorus 가 없다
+
+
+def test_daily_keeps_the_score_order_and_plays_each_tracks_chorus(svc, monkeypatch):
+    view = _daily_view(svc)
+    base = _baseline(svc, monkeypatch, lambda: _daily(svc, view))
+    got = _daily(svc, view)
+    # 곡·순서·점수는 기준선 그대로이고, 순간만 그 곡의 chorus(#2)다.
+    assert [(t, f) for t, _, f in _rows(got)] == [(t, f) for t, _, f in _rows(base)]
+    assert [x["moment_id"] for x in got["results"]] == [f'{x["track_id"]}#2' for x in got["results"]]
+    assert all(x["section_label"] == "chorus" for x in got["results"])
+    assert len({x["track_id"] for x in got["results"]}) == len(got["results"])
+
+
+def test_daily_keeps_tracks_without_a_chorus_and_their_selected_moment(svc, monkeypatch):
+    """chorus 가 없다고 곡을 빼지 않는다. 그 곡은 원래 뽑힌 순간을 그대로 튼다."""
+    view = _daily_view(svc, labels=NO_CHORUS)
+    base = _baseline(svc, monkeypatch, lambda: _daily(svc, view))
+    got = _daily(svc, view)
+    assert len(got["results"]) == len(base["results"]) == 4
+    assert _rows(got) == _rows(base)
+    assert got["diagnostics"]["moment_rule"]["switched"] == 0
+
+
+def test_daily_result_count_does_not_depend_on_choruses(svc, monkeypatch):
+    for labels in ({}, SOME_CHORUS, NO_CHORUS):
+        view = _daily_view(svc, labels=labels)
+        base = _baseline(svc, monkeypatch, lambda: _daily(svc, view))
+        got = _daily(svc, view)
+        assert len(got["results"]) == len(base["results"]) == 4
+        assert [(t, f) for t, _, f in _rows(got)] == [(t, f) for t, _, f in _rows(base)]
+        for x in got["results"]:
+            has_chorus = f'{x["track_id"]}#2' not in labels
+            assert (x["section_label"] == "chorus") == has_chorus
+
+
+def test_daily_picks_the_earliest_of_several_choruses(svc):
+    # 모든 곡의 #1(30초)·#2(60초)·#3(90초)이 chorus → 가장 이른 #1.
+    labels = {f"T{t:06d}#{s}": "CHORUS" for t in range(6) for s in (1, 3)}
+    out = _daily(svc, _daily_view(svc, labels=labels))["results"]
+    assert out and all(x["moment_id"] == f'{x["track_id"]}#1' for x in out)
+    assert all(x["start_sec"] == 30.0 for x in out)
+
+
+def test_search_without_a_moment_type_plays_the_first_chorus(svc, monkeypatch):
+    plan = {"filters": {"mood": ["calm"]}}
+    view = _daily_view(svc, labels=SOME_CHORUS)
+    base = _baseline(svc, monkeypatch, lambda: _search(svc, view, plan))
+    got = _search(svc, view, plan)
+    assert got["results"]
+    # 곡·순서·점수는 그대로다.
+    assert [(t, f) for t, _, f in _rows(got)] == [(t, f) for t, _, f in _rows(base)]
+    for g, b in zip(got["results"], base["results"]):
+        if f'{g["track_id"]}#2' in SOME_CHORUS:           # chorus 없는 곡 → 뽑힌 순간 그대로
+            assert g["moment_id"] == b["moment_id"]
+        else:                                             # chorus 있는 곡 → 그 chorus
+            assert g["moment_id"] == f'{g["track_id"]}#2'
+
+
+def test_search_without_any_chorus_keeps_the_selected_moments(svc, monkeypatch):
+    plan = {"filters": {"mood": ["calm"]}}
+    view = _daily_view(svc, labels=NO_CHORUS)
+    base = _baseline(svc, monkeypatch, lambda: _search(svc, view, plan))
+    assert _rows(_search(svc, view, plan)) == _rows(base)
+
+
+@pytest.mark.parametrize("flow", ["intro", "verse", "solo", "chorus"])
+def test_search_keeps_an_explicit_moment_type(svc, monkeypatch, flow):
+    """사용자가 순간 유형을 말했으면(`filters.flow`, 예: 인트로·벌스·솔로) chorus 로 바꾸지 않는다.
+
+    chorus 가 후보에 남아 있어도 그렇다 — 조건 게이트는 Spring 이 건다.
+    """
+    plan = {"filters": {"flow": [flow]}}
+    view = _daily_view(svc)
+    called = []
+    monkeypatch.setattr(svc, "first_chorus_moments",
+                        lambda pool, picked: called.append(1) or {i: i for i in picked})
+    got = _search(svc, view, plan)
+    assert not called
+    assert got["diagnostics"]["moment_rule"] == {"rule": "explicit_flow", "flow": [flow]}
+
+
+def test_first_chorus_ties_break_by_external_id():
+    from ai_server.app.recommender import first_chorus_moments
+
+    rows = {"A#3": ("A", "chorus", 30.0), "A#1": ("A", "chorus", 30.0),
+            "A#0": ("A", "verse", 0.0), "B#0": ("B", "verse", 0.0)}
+    for order in (["A#3", "A#1", "A#0", "B#0"], ["A#1", "A#3", "B#0", "A#0"]):
+        pool = pd.DataFrame({"moment_id": order,
+                             "track_id": [rows[m][0] for m in order],
+                             "section_label": [rows[m][1] for m in order],
+                             "start_sec": [rows[m][2] for m in order]})
+        picked = [order.index("A#0"), order.index("B#0")]
+        got = first_chorus_moments(pool, picked)
+        # A: 30초 chorus 둘 중 external_id 가 앞선 A#1 — 행 순서와 무관하다.
+        # B: chorus 가 없어 뽑힌 순간 그대로.
+        assert {order[i]: order[j] for i, j in got.items()} == {"A#0": "A#1", "B#0": "B#0"}
+
+
+def test_next_and_similar_do_not_use_the_moment_rule(svc, monkeypatch):
+    def forbidden(*_a, **_k):
+        raise AssertionError("next·similar 가 순간 규칙을 탔다")
+
+    monkeypatch.setattr(svc, "first_chorus_moments", forbidden)
+    with svc.using(_daily_view(svc)):
+        nxt = svc.recommend("internal:1", 4, set(), True, None, "T000000", "T000000#1")
+        sim = svc.similar_moments("T000000#1", 3)
+    assert nxt["results"] and "moment_rule" not in nxt["diagnostics"]
+    assert sim
+
+
+def test_reason_describes_the_basis_moment_and_says_where_playback_starts(svc, monkeypatch):
+    """사유 문장은 곡을 뽑은 순간으로 쓰고, 재생 순간이 다르면 그것을 덧붙인다(시연용 임시)."""
+    view = _daily_view(svc)
+    base = _baseline(svc, monkeypatch, lambda: _daily(svc, view))
+    got = _daily(svc, view)
+    for g, b in zip(got["results"], base["results"]):
+        if g["moment_id"] == b["moment_id"]:
+            assert g["reason"] == b["reason"]
+        else:
+            assert g["reason"].startswith(b["reason"])
+            assert f'재생은 첫 chorus {g["start_sec"]:.0f}~{g["end_sec"]:.0f}초' in g["reason"]

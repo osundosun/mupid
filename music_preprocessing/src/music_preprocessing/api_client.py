@@ -626,6 +626,16 @@ class MupidClient:
     def delete_stream(self, stream_id: int) -> None:
         self._request("DELETE", f"/api/v1/stream/{stream_id}")
 
+    def start_daily_recommendations(self) -> dict:
+        """오늘의 모먼트 하루치 생성을 **시작만** 시킨다. ``{"date", "started"}`` 를 돌려준다.
+
+        생성은 서버 안에서 따로 돌고 이 요청은 바로 202 로 끝난다. 서버가 날짜별 선점을
+        잡으므로 다시 보내도 같은 날이 두 번 돌지 않는다 — 이미 돌고 있으면
+        ``started`` 가 거짓이다. 날짜는 서버의 오늘(서울)이다.
+        """
+        body = self._request("POST", "/api/v1/recommendation/daily/start", json_body={})
+        return body["data"]
+
 
 # ─────────────────────────────────────────────────────────────
 # 유틸리티
