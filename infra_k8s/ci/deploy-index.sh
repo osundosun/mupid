@@ -40,9 +40,9 @@ printf '%s\n' "${commit:?커밋을 알 수 없다 — CI_COMMIT_SHA 를 지정�
 
 index=${1:-.release/ai-index}
 inner=$index/data/proc/mupid
-# `moments_emb.npy` 는 세지 않는다 — slice_index 의 NOT_SHIPPED 라 배송에 애초에
-# 들어오지 않는다. 요구하면 정상 묶음을 두고 여기서 exit 64 로 멈춘다.
-for name in moments.parquet features_v1.npz stage1_section.npy; do
+# `moments_emb.npy` 도 본다. 운영은 로컬 벡터 모드라 판 안의 이 파일로 추천하고,
+# 수신기도 REQUIRED 로 요구한다 — 빠진 묶음은 노드까지 보내 봐야 거기서 거절된다.
+for name in moments.parquet moments_emb.npy features_v1.npz stage1_section.npy; do
   [ -s "$inner/$name" ] || {
     echo "색인이 없다: $inner/$name" >&2
     echo '먼저 전체 색인이 있는 곳에서 아래를 돌린다:' >&2
