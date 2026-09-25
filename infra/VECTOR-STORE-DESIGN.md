@@ -720,8 +720,9 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 
 - node-b 판 `ea692ef6…-local-emb` 은 **수신기를 거치지 않고 수동으로** 만들었다(행을 맞춘
   `moments_emb.npy` 추가, `current` 교체). `MUPID_PINECONE_ENABLED=false`.
-- `receive-index.py` 는 `moments_emb.npy` 를 **거절**하고 `slice_index` 는 배송에서 뺀다.
-  **이대로 새 판을 올리면 임베딩이 빠져 추천이 멈춘다.** 0단계(§13) 전까지 판 업로드를 멈춘다.
+- ~~`receive-index.py` 는 `moments_emb.npy` 를 거절하고 `slice_index` 는 배송에서 뺀다.~~
+  **고쳤다(S15P21A204-450, 이 MR).** `slice_index` 가 싣고 수신기가 REQUIRED 로 받으며 행 수를 센다.
+  배포 뒤 Ansible 로 수신기를 다시 설치해야(`infra_k8s/ansible/receivers.yml`) 판 업로드가 정식 경로로 된다.
 - 로컬 중심화 평균이 요청 후보 기준으로 재지던 버그는 !285 로 고쳤다 (배포 대기).
 - MySQL–ClickHouse `track_sections` 는 2026-09-25 에 완전히 일치했지만, 쓰기 실패 시 로그만 남는
   구조는 그대로다 (§8.1).

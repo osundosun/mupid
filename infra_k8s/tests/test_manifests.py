@@ -2201,12 +2201,12 @@ class IndexUploadTest(unittest.TestCase):
         self.assertIn("ALLOWED = {", receiver)
         allowed = receiver[receiver.index("ALLOWED = {"):]
         allowed = allowed[:allowed.index("}")]
-        for name in ("moments.parquet", "features_v1.npz", "stage1_section.npy"):
+        # `moments_emb.npy` 도 받는다 — 운영이 로컬 벡터 모드라 판 안의 이 파일로
+        # 추천한다(S15P21A204-450). 허용 목록만 잘라서 본다.
+        for name in ("moments.parquet", "moments_emb.npy", "features_v1.npz",
+                     "stage1_section.npy"):
             with self.subTest(file=name):
                 self.assertIn(f'"{name}"', allowed)
-        # `moments_emb.npy` 는 **거절**한다. 이 이름이 파일 어딘가에 있는지만 보면
-        # 거절 메시지에 걸려 통과해 버린다 — 허용 목록만 잘라서 본다.
-        self.assertNotIn("moments_emb.npy", allowed)
         # 경로도 한 겹으로 묶는다. data/proc/mupid 바로 아래만 받는다.
         self.assertIn('INNER = "data/proc/mupid"', receiver)
         self.assertIn("parent != INNER", receiver)
@@ -2274,17 +2274,16 @@ class IndexUploadTest(unittest.TestCase):
         self.assertNotIn("서빙 경로가 읽지 않는다", text)
 
     def test_the_uploader_refuses_to_send_an_incomplete_index(self):
-        """배송되는 세 개가 다 있어야 한다. 하나라도 빠지면 ready 가 영영 false 다.
+        """행 정렬된 네 개가 다 있어야 한다. 하나라도 빠지면 수신기가 거절한다.
 
-        `moments_emb.npy` 를 여기 넣으면 안 된다 — slice_index 의 NOT_SHIPPED 라
-        정상 묶음에도 없고, 요구하면 업로드가 통째로 멈춘다."""
+        `moments_emb.npy` 도 본다 — 로컬 벡터 모드가 운영 경로라 수신기가 요구한다."""
         script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
-        for name in ("moments.parquet", "features_v1.npz", "stage1_section.npy"):
-            with self.subTest(file=name):
-                self.assertIn(name, script)
         loop = next(line for line in script.splitlines()
                     if line.startswith("for name in "))
-        self.assertNotIn("moments_emb.npy", loop)
+        for name in ("moments.parquet", "moments_emb.npy", "features_v1.npz",
+                     "stage1_section.npy"):
+            with self.subTest(file=name):
+                self.assertIn(name, loop)
         self.assertIn("slice_index", script)
 
     def test_the_uploader_demands_the_node_the_pod_runs_on(self):
@@ -2369,11 +2368,13 @@ class IndexReceiverCheckTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def _fill(self, feat_rows, sec_rows, report_rows=None):
-        """`moments_emb.npy` 는 만들지 않는다 — 배송에서 빠졌고 수신기가 거절한다."""
+    def _fill(self, feat_rows, sec_rows, report_rows=None, emb_rows=None):
+        """`emb_rows` 를 안 주면 `moments_emb.npy` 는 구간 벡터와 같은 행 수로 만든다."""
         _npz(self.data / "features_v1.npz", feat_rows)
         _npy(self.data / "stage1_section.npy", sec_rows)
+        _npy(self.data / "moments_emb.npy", sec_rows if emb_rows is None else emb_rows)
         (self.data / "moments.parquet").write_bytes(b"PAR1")
+        (self.data / "index_meta.json").write_text("{}", encoding="utf-8")
         if report_rows is not None:
             (self.data / "slice_report.json").write_text(
                 json.dumps({"rows": {"moments": report_rows}}), encoding="utf-8")
@@ -2431,6 +2432,59 @@ class IndexReceiverCheckTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             self.mod.verify(pathlib.Path(self.tmp))
         self.assertEqual(65, caught.exception.code)
+
+    def test_a_bundle_without_embeddings_is_refused(self):
+        """로컬 벡터 모드가 운영 경로다. 임베딩이 없는 판으로 current 를 갈아 끼우면
+        그 순간 추천이 멈춘다(S15P21A204-450)."""
+        self._fill(10007, 10007)
+        (self.data / "moments_emb.npy").unlink()
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.verify(pathlib.Path(self.tmp))
+        self.assertEqual(65, caught.exception.code)
+
+    def test_embeddings_from_another_plate_are_refused(self):
+        """`Z[emb_row]` 는 행이 하나만 어긋나도 오류 없이 다른 구간의 벡터를 쓴다."""
+        self._fill(10007, 10007, report_rows=10007, emb_rows=9334)
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.check_rows(self.data)
+        self.assertEqual(65, caught.exception.code)
+
+    def test_embeddings_must_match_the_moment_count_in_the_report(self):
+        """moments.parquet 은 numpy 없이 셀 수 없어 보고서의 moments 와 맞춘다."""
+        self._fill(9334, 9334, report_rows=10007, emb_rows=9334)
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.check_rows(self.data)
+        self.assertEqual(65, caught.exception.code)
+
+    def _bundle(self, names):
+        import io
+        import tarfile
+
+        archive = pathlib.Path(self.tmp) / "index.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            for name in names:
+                body = b"x"
+                info = tarfile.TarInfo(f"{self.mod.INNER}/{name}")
+                info.size = len(body)
+                tar.addfile(info, io.BytesIO(body))
+        return archive
+
+    def test_the_receiver_extracts_a_bundle_with_embeddings(self):
+        """거절하던 동안 node-b 판은 수신기를 거치지 않고 손으로 만들어야 했다."""
+        archive = self._bundle(["moments.parquet", "moments_emb.npy"])
+        target = pathlib.Path(self.tmp) / "tree"
+        target.mkdir()
+        self.mod.safe_extract(archive, target)
+        self.assertTrue((target / self.mod.INNER / "moments_emb.npy").exists())
+
+    def test_the_receiver_still_refuses_unknown_and_escaping_names(self):
+        """받는 이름을 늘렸다고 경계가 느슨해지면 안 된다 — 이건 root 로 돈다."""
+        for name in ("moments_emb.npy.sh", "../moments_emb.npy"):
+            with self.subTest(name=name):
+                archive = self._bundle([name])
+                with self.assertRaises(SystemExit) as caught:
+                    self.mod.safe_extract(archive, pathlib.Path(self.tmp))
+                self.assertEqual(65, caught.exception.code)
 
 class ApplyTagSubstitutionTest(unittest.TestCase):
     """`mupid-apply` 는 placeholder 가 클러스터에 올라가는 것을 막으려고 존재한다.

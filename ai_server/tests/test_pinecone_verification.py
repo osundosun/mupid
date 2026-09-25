@@ -256,11 +256,13 @@ def test_7_dropped_columns_are_gone_everywhere(staged):
     assert "sound_raw" not in inspect.getsource(rc.Catalog.track_info)
 
 
-def test_7_a_the_embedding_file_never_ships(staged):
-    """순간 벡터의 정본은 Pinecone 이다. 배송에 실으면 두 곳에서 관리하게 된다."""
+def test_7_a_the_embedding_file_ships(staged):
+    """운영은 2026-09-24 부터 로컬 벡터 모드다(Pinecone 이그레스 소진). 판 안의
+    `moments_emb.npy` 로 추천하므로 배송에서 빠지면 새 판을 올리는 순간 멈춘다."""
     from ai_server.tools import slice_index as si
 
-    assert "moments_emb.npy" in si.NOT_SHIPPED
+    assert "moments_emb.npy" not in si.NOT_SHIPPED
+    assert "moments_emb.npy" in si.SHIPPED_ALIGNED
 
 
 def test_8_every_remaining_column_reaches_a_caller(staged):
