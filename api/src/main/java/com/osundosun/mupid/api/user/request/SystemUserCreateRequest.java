@@ -2,6 +2,7 @@ package com.osundosun.mupid.api.user.request;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 public record SystemUserCreateRequest(
 
@@ -13,8 +14,12 @@ public record SystemUserCreateRequest(
     String email,
 
     /**
-     * 표시용 이름. 비우면 이메일 앞부분을 쓴다.
+     * 표시용 이름. 비우면 이메일 앞부분을 쓴다 (10자에서 자른다).
+     *
+     * <p>{@code users.nickname} 이 VARCHAR(10) 이다. 검사가 없으면 긴 이름은 INSERT 에서
+     * {@code Data too long} 으로 500 이 된다.
      */
+    @Size(max = 10, message = "닉네임은 10자 이하여야 합니다.")
     String nickname
 
 ) {

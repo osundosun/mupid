@@ -1,6 +1,10 @@
 package com.osundosun.mupid.api.storage.service;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Optional;
 
 import org.springframework.http.MediaType;
@@ -10,6 +14,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.storage.dto.StorageFileData;
+import com.osundosun.mupid.api.storage.dto.StorageObjectDigest;
 import com.osundosun.mupid.api.storage.dto.StorageObjectStat;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
 import com.osundosun.mupid.api.storage.enumerate.FileCategory;
@@ -123,6 +128,43 @@ public class StorageServiceImpl implements StorageService {
                 return Optional.empty();
             }
             throw e;
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<StorageObjectDigest> digestObject(String key) {
+        GetObjectRequest request = GetObjectRequest.builder()
+            .bucket(props.bucketName())
+            .key(key)
+            .build();
+        MessageDigest sha256;
+        try {
+            sha256 = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            // JDK 가 반드시 제공하는 알고리즘이다. 여기 오면 런타임이 망가진 것이다.
+            throw new IllegalStateException(e);
+        }
+        try (InputStream in = s3Client.getObject(request)) {
+            byte[] buffer = new byte[64 * 1024];
+            long total = 0;
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                sha256.update(buffer, 0, read);
+                total += read;
+            }
+            return Optional.of(new StorageObjectDigest(total, HexFormat.of().formatHex(sha256.digest())));
+        } catch (NoSuchKeyException e) {
+            return Optional.empty();
+        } catch (S3Exception e) {
+            // statObject 와 같은 사정 — SeaweedFS 는 없는 키에 404 만 줄 때가 있다.
+            if (e.statusCode() == 404) {
+                return Optional.empty();
+            }
+            throw e;
+        } catch (IOException e) {
+            log.error("오브젝트를 읽다 끊겼습니다. key={}", key, e);
+            throw new BusinessException(StorageErrorCode.FILE_PROCESSING_FAILED);
         }
     }
 

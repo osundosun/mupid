@@ -1,0 +1,69 @@
+info:
+  name: 모델 채택
+  type: http
+  seq: 7
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/system/models/{{MODEL_NAME}}/{{MODEL_VERSION}}/adopt"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MODEL_NAME
+      value: stage1
+    - name: MODEL_VERSION
+      value: v3
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 채택
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "모델 버전이 채택되었습니다.",
+            "data": {
+              "name": "stage1",
+              "version": "v3",
+              "status": "ADOPTED",
+              "current_version": "v3",
+              "adopted_at": "2026-09-25T19:50:02",
+              "retired_at": null
+            }
+          }
+
+docs: |-
+  # 모델 채택
+
+  `POST /api/v1/system/models/{name}/{version}/adopt` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  CI 가 **배포에 성공한 뒤** 부릅니다 (§6.3 ④-g, `system-ci`). 본문은 없습니다.
+
+  - `CANDIDATE` → `ADOPTED`. 채택 시각을 찍고, 이 버전이 `current_version` 이 됩니다.
+  - 이전 채택 버전은 **그대로 둡니다**. 폐기는 사람이 `모델 폐기` 로 합니다.
+  - 이미 `ADOPTED` 인 버전을 다시 채택하면 채택 시각만 새로 찍힙니다 — `models.lock` 을
+    되돌린 배포가 옛 버전을 다시 `current_version` 으로 만드는 길입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_MODEL_VERSION_NOT_FOUND` | 404 | 그런 버전이 없음 |
+  | `MUPID_MODEL_VERSION_NOT_READY` | 409 | 파일이 다 올라오지 않음 (`UPLOADING`) |
+  | `MUPID_MODEL_VERSION_RETIRED` | 409 | 폐기된 버전 |

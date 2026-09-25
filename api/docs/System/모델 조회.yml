@@ -1,0 +1,90 @@
+info:
+  name: 모델 조회
+  type: http
+  seq: 6
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/system/models/{{MODEL_NAME}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MODEL_NAME
+      value: stage1
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 버전 목록
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "name": "stage1",
+              "current_version": "v3",
+              "versions": [
+                {
+                  "version": "v3",
+                  "status": "ADOPTED",
+                  "manifest_sha256": "3f1a0000000000000000000000000000000000000000000000000000000000bb",
+                  "declared_file_count": 2,
+                  "files": [
+                    {
+                      "object_id": 15,
+                      "file_name": "manifest.json",
+                      "size_bytes": 812,
+                      "sha256": "3f1a0000000000000000000000000000000000000000000000000000000000bb",
+                      "status": "COMPLETED"
+                    },
+                    {
+                      "object_id": 16,
+                      "file_name": "user_encoder.npz",
+                      "size_bytes": 12582912,
+                      "sha256": "9c2e0000000000000000000000000000000000000000000000000000000000aa",
+                      "status": "COMPLETED"
+                    }
+                  ],
+                  "created_at": "2026-09-25T19:43:36",
+                  "candidate_at": "2026-09-25T19:43:37",
+                  "adopted_at": "2026-09-25T19:50:02",
+                  "retired_at": null
+                }
+              ]
+            }
+          }
+
+docs: |-
+  # 모델 조회
+
+  `GET /api/v1/system/models/{name}` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  모델 하나의 버전 목록(최근에 만든 것부터)·상태·파일과 **지금 쓰는 버전**을 줍니다.
+
+  - `current_version` — `ADOPTED` 중 **가장 늦게 채택된** 버전. 없으면 null.
+    채택해도 이전 채택 버전은 `ADOPTED` 로 남으므로 여럿일 수 있습니다.
+  - `declared_file_count` — 첫 요청의 `version_files` 개수. `files` 에는 **요청된** 파일만
+    나옵니다 — 둘이 다르면 아직 요청하지 않은 파일이 있습니다.
+  - `manifest_sha256` — 후보가 된 때 채워집니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_MODEL_NOT_FOUND` | 404 | 그런 이름의 버전이 하나도 없음 |

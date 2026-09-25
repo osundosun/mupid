@@ -1,0 +1,73 @@
+info:
+  name: 오브젝트 받기
+  type: http
+  seq: 4
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/system/objects/{{SYSTEM_OBJECT_ID}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 파일 바이트 (nginx 가 Filer 에서 보냄)
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/octet-stream
+        - name: Content-Disposition
+          value: attachment; filename="user_encoder.npz"
+      body:
+        type: text
+        data: (파일 바이트)
+  - name: 409 아직 완료 전
+    response:
+      status: 409
+      statusText: Conflict
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_OBJECT_NOT_COMPLETED",
+            "message": "아직 완료되지 않은 오브젝트입니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 오브젝트 받기
+
+  `GET /api/v1/system/objects/{objectId}` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  완료된 오브젝트의 바이트를 받습니다. 스프링은 인증 뒤 `X-Accel-Redirect:
+  /storage/buckets/mupid/system/model/…` 만 돌려주고, nginx 가 internal `/storage/` 로
+  Filer 에서 읽어 보냅니다 (`Stream / 청크 다운로드` 와 같은 길). nginx 없이 스프링만
+  띄운 곳에서는 본문 없는 200 입니다.
+
+  `Content-Type` 은 `.json` 이면 `application/json`, 나머지는 `application/octet-stream`.
+
+  이름·버전·파일명으로 받으려면 `모델 파일 받기` 를 쓰세요. 받은 뒤 sha256 은 `모델 조회`
+  의 값(또는 `models.lock`)과 대조합니다.
+
+  **폐기된 버전의 파일도 받을 수 있습니다** — 되돌리기를 위해 남긴 것입니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_FORBIDDEN` | 403 | SYSTEM/ADMIN 이 아닌 토큰 |
+  | `MUPID_SYSTEM_OBJECT_NOT_FOUND` | 404 | 그런 오브젝트가 없음 |
+  | `MUPID_OBJECT_NOT_COMPLETED` | 409 | 완료 전 |

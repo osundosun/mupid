@@ -1,0 +1,64 @@
+info:
+  name: 모델 폐기
+  type: http
+  seq: 8
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/system/models/{{MODEL_NAME}}/{{MODEL_VERSION}}/retire"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MODEL_NAME
+      value: stage1
+    - name: MODEL_VERSION
+      value: v2
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 409 지금 쓰는 버전
+    response:
+      status: 409
+      statusText: Conflict
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_MODEL_VERSION_IN_SERVICE",
+            "message": "지금 쓰는(가장 늦게 채택된) 버전은 폐기할 수 없습니다. 다음 버전을 먼저 채택하세요.",
+            "error_details": null
+          }
+
+docs: |-
+  # 모델 폐기
+
+  `POST /api/v1/system/models/{name}/{version}/retire` · `ROLE_ADMIN` / `ROLE_SYSTEM`
+
+  **사람이 운영 절차로** 부릅니다 (§6.3 표). 다음 버전이 채택되고 검증이 끝난 뒤,
+  Qdrant 의 그 버전 벡터(`stage1_v{N}`)를 지우는 것과 함께 합니다. 관리자 토큰으로 부르면
+  CI 계정의 토큰을 꺼낼 필요가 없습니다.
+
+  - 어느 상태에서든 `RETIRED` 로 갑니다 (올리다 버린 `UPLOADING` 버전도). 다시 부르면
+    같은 응답(멱등).
+  - **파일은 지우지 않습니다.** 되돌리기를 위해 남기고, 받기도 계속 됩니다.
+  - 폐기된 버전은 다시 채택할 수 없습니다.
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_MODEL_VERSION_NOT_FOUND` | 404 | 그런 버전이 없음 |
+  | `MUPID_MODEL_VERSION_IN_SERVICE` | 409 | 지금 쓰는(가장 늦게 채택된) 버전 — 다음 버전을 먼저 채택한다 |

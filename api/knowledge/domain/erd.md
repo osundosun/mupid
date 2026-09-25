@@ -36,7 +36,7 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 
 ## 테이블 한눈에 보기
 
-`erd.sql` 의 테이블 31개. **뷰는 없다** — 2026-09-15 재산출에서 `user_auth`
+`erd.sql` 의 테이블 33개. **뷰는 없다** — 2026-09-15 재산출에서 `user_auth`
 (`SELECT user_id, email, password FROM users WHERE status != 'WITHDRAW'`)가
 빠졌고, 코드도 이 뷰를 쓰지 않는다.
 
@@ -52,8 +52,9 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 | 추천·분석 | `daily_recommendations`, `daily_recommendation_tracks`, `reports`, `listening`, `mubti` |
 | AI 채팅 | `ai_chat_sessions`, `ai_chat_messages` |
 | 사본 동기화 | `analytics_sync_pending` |
+| 배치용 오브젝트 | `system_objects`, `model_versions` |
 
-**31개 모두 코드에 엔티티가 있다.** 2026-09-11 반입 때는 4개뿐이었지만 그 뒤로
+**33개 모두 코드에 엔티티가 있다.** 2026-09-11 반입 때는 4개뿐이었지만 그 뒤로
 도메인이 차례로 붙었다. 그래서 이제 ERD 를 고치면 **반드시 어딘가의 엔티티가
 함께 바뀐다** — 위쪽 "ERD 를 고치기 전에 반드시 물어본다" 가 그만큼 무거워졌다.
 
@@ -423,6 +424,35 @@ MySQL 이 정본이고 ClickHouse `track_sections` 는 그 사본인데, 커밋 
 > [migrate-analytics-sync-2026-09-25.sql](migrate-analytics-sync-2026-09-25.sql) 를 적용한다.
 > 새 표와 DEFAULT 있는 NOT NULL 컬럼 추가뿐이라 기존 행을 깨지 않는다. 앱이 먼저 올라가면
 > 구간 적재가 없는 컬럼에 쓰다 실패한다.
+
+## 2026-09-25 — 배치용 Object Storage API · 모델 버전 (S15P21A204-453)
+
+저장소 재설계(`infra/VECTOR-STORE-DESIGN.md` §6.3·§6.5)에서 합의한 변경이다. 모델 가중치
+파일을 음악 청크와 같은 3단계(요청 → Nginx 직행 업로드 → 완료)로 올리려면 "업로드 중" 을
+적어 둘 자리가 필요하다. `object_storage_files` 에는 상태 칸이 없고, 그 표는 "스토리지에
+있는 파일" 의 메타라 완료 전 행을 넣을 곳이 아니다.
+
+| 표 | 컬럼 | 형 | 뜻 |
+|---|---|---|---|
+| `object_storage_files` | `file_type`·`category` | ENUM 끝에 `MODEL` | 완료된 가중치 파일의 메타. 이미지 API 는 `IMG` 만 내보내므로 번호를 알아도 가중치가 새지 않는다 |
+| `model_versions` | `name`·`version` | `VARCHAR(32)`·`VARCHAR(16)`, 둘이 UNIQUE | `stage1`·`v3` |
+| `model_versions` | `status` | `ENUM('UPLOADING','CANDIDATE','ADOPTED','RETIRED')` | 선언한 파일이 모두 완료되면 `CANDIDATE`, 배포 성공 뒤 CI 가 `ADOPTED`, 사람이 `RETIRED`. 지금 쓰는 버전은 `ADOPTED` 중 `adopted_at` 이 가장 늦은 것 |
+| `model_versions` | `file_names` | `VARCHAR(2048)` | 첫 업로드 요청이 정한 파일 목록(정렬·쉼표). 다른 목록이 오면 거절한다 — 같은 버전 번호로 다른 묶음을 만들 수 없다 |
+| `model_versions` | `manifest_sha256` | `VARCHAR(64) NULL` | 후보가 될 때 `manifest.json` 의 sha256 |
+| `model_versions` | `candidate_at`·`adopted_at`·`retired_at` | `DATETIME NULL` | 상태가 바뀐 시각. `adopted_at` 은 다시 채택하면(되돌리기) 갱신된다 |
+| `system_objects` | `storage_object_key` | `VARCHAR(255)` UNIQUE | `system/model/{name}/{version}/{file}` — 이름·버전·파일명마다 한 행 |
+| `system_objects` | `size_bytes`·`sha256` | `BIGINT`·`VARCHAR(64)` | ① 에서 **신고한** 값. ③ 에서 서버가 스토리지를 흘려 읽어 잰 값과 같아야 완료된다. 다른 sha256 으로 같은 자리를 요청하면 거절(불변) |
+| `system_objects` | `status` | `ENUM('UPLOADING','COMPLETED')` | 받기는 `COMPLETED` 만 |
+| `system_objects` | `model_version_id`·`file_id` | `INT NULL` + FK | 버전, 완료 뒤 `object_storage_files` 행 |
+
+`system_objects.kind` 는 ENUM(`MODEL`) 이다. 이 길은 "버전별로 보관되고 CI 가 받아 가는
+파일" 전용이라 종류가 느는 것은 드문 일이고, 늘 때는 설계 결정이 먼저 있어야 한다 —
+`analytics_sync_pending.kind` 처럼 DDL 없이 더할 이유가 없다. 동작은 `api/docs/System/`.
+
+> ⚠️ **개발 DB 에만 적용했다** (2026-09-25). 운영 DB 는 앱 배포 **전에**
+> [migrate-system-objects-2026-09-25.sql](migrate-system-objects-2026-09-25.sql) 를 적용한다.
+> ENUM 끝에 값을 더하는 것과 새 표뿐이라 기존 행을 깨지 않는다. 앱이 먼저 올라가면 새
+> 엔티티가 없는 표를 가리켜 이 API 가 500 이 된다.
 
 ## 곡 식별자가 둘이다
 

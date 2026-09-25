@@ -421,6 +421,7 @@ stage1:
 - `object_storage_files.category` 는 ENUM 이라 `MODEL` 추가는 **ERD 변경**이다 (파형
   `WAVEFORM` 을 넣을 때와 같은 절차 — `migrate-waveform-2026-09-22.sql`).
 - Nginx 에 `/upload/system/` 블록을 청크 블록과 같은 모양으로 더한다. 파일 크기 상한은 Spring 이 갖는다.
+- **구현 (S15P21A204-453)**: `api/…/system/` (`SystemObjectController`·`ModelVersionController`), 표 `system_objects`·`model_versions`(`migrate-system-objects-2026-09-25.sql`), Nginx `/upload/system/`, 명세 `api/docs/System/`. 버전의 파일 목록은 ① 요청마다 싣는 `version_files`(= `models.lock` 의 `files` 키)로 정하고, `model_versions` 에 후보 앞 상태 `UPLOADING` 을 더했다.
 
 ### 6.6 벡터 등록 API
 

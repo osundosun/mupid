@@ -5,6 +5,7 @@ import java.util.Optional;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.osundosun.mupid.api.storage.dto.StorageFileData;
+import com.osundosun.mupid.api.storage.dto.StorageObjectDigest;
 import com.osundosun.mupid.api.storage.dto.StorageObjectStat;
 import com.osundosun.mupid.api.storage.entity.ObjectStorageFile;
 import com.osundosun.mupid.api.storage.enumerate.FileCategory;
@@ -40,6 +41,16 @@ public interface StorageService {
      * 스프링을 거치지 않고 올라온 파일(nginx → 스토리지 직행)을 검증할 때 쓴다.
      */
     Optional<StorageObjectStat> statObject(String key);
+
+    /**
+     * 오브젝트를 <b>흘려 읽으며</b> SHA-256 과 바이트 수를 잰다. 없으면 빈 값이다.
+     *
+     * <p>{@link #getFileDataByKey(String)} 처럼 통째로 힙에 올리지 않는다. 모델 가중치는
+     * 수백 MB 가 될 수 있어서, 버퍼 하나만 쓰고 읽은 것은 바로 버린다. 바이트가 요청
+     * 본문으로 들어오지 않는다는 원칙(저장소 재설계 원칙 5)은 그대로다 — 이것은 서버가
+     * 스토리지에서 읽는 내부 확인이다.
+     */
+    Optional<StorageObjectDigest> digestObject(String key);
 
     /**
      * 업로드 없이 메타데이터만 기록한다.
