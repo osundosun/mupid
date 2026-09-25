@@ -658,3 +658,107 @@ def test_concurrent_requests_do_not_see_each_others_candidates(svc):
     for t in ts:
         t.join()
     assert seen["a_ok"] and seen["b_ok"], seen
+
+
+# ------------------------------------------- 오늘의 모멘트: 서울 날짜 단위 시드 (S15P21A204-448)
+
+def _daily_at(svc, iso: str, user: str = "internal:1"):
+    from datetime import datetime
+    out = svc.recommend(user, 4, set(), True, None, None, None,
+                        daily=True, now=datetime.fromisoformat(iso))
+    return [(x["track_id"], x["moment_id"], x["slot_source"]) for x in out["results"]]
+
+
+def test_daily_is_fixed_within_a_seoul_day(svc, monkeypatch):
+    """같은 사용자·같은 서울 날짜면 곡·순서·순간이 같다. 분이 바뀌어도(시계를 옮겨도) 그대로다."""
+    clock = iter([1_790_000_000.0, 1_790_000_000.0 + 3_000.0])
+    monkeypatch.setattr(svc.time, "time", lambda: next(clock, 1_790_010_000.0))
+    a = _daily_at(svc, "2026-09-25T00:00:00+09:00")
+    b = _daily_at(svc, "2026-09-25T23:59:59+09:00")
+    assert a and a == b
+    # UTC 로 전날이어도 서울 날짜가 같으면 같은 날이다.
+    assert _daily_at(svc, "2026-09-24T15:30:00+00:00") == a
+
+
+def test_daily_explore_slot_can_change_with_the_date(svc):
+    days = [_daily_at(svc, f"2026-10-{d:02d}T12:00:00+09:00") for d in range(1, 15)]
+    assert len({tuple(d) for d in days}) > 1
+    # 바뀌는 것은 탐색 칸뿐이다 — 점수로 뽑은 앞 칸은 날짜와 무관하다.
+    assert len({tuple(d[:-1]) for d in days}) == 1
+
+
+def test_daily_seed_is_per_user_and_per_seoul_date(svc):
+    from datetime import datetime
+    t = datetime.fromisoformat("2026-09-25T09:00:00+09:00")
+    assert svc.daily_seed("internal:1", t) == svc.daily_seed("internal:1", t)
+    assert svc.daily_seed("internal:1", t) != svc.daily_seed("internal:2", t)
+    assert svc.daily_seed("internal:1", t) != svc.daily_seed(
+        "internal:1", datetime.fromisoformat("2026-09-26T09:00:00+09:00"))
+
+
+# ------------------------------------------- 오늘의 모멘트: 보컬 곡의 첫 chorus (S15P21A204-448)
+
+def _daily_view(svc, vocal=None, labels=None):
+    """`vocal[tid]` 로 `has_vocal` 을, `labels[external_id]` 로 구간 종류를 바꾼 본문."""
+    body = _catalog_body()
+    tr, sec = body["tracks"], body["sections"]
+    for i, tid in enumerate(tr["track"]):
+        if tid in (vocal or {}):
+            tr["has_vocal"][i] = vocal[tid]
+    for i, uid in enumerate(sec["external_id"]):
+        if uid in (labels or {}):
+            sec["section_label"][i] = labels[uid]
+    return svc.CAT.with_catalog(catalog_body.from_body(body))
+
+
+def _daily(svc, view, explore=True):
+    from datetime import datetime
+    with svc.using(view):
+        return svc.recommend("internal:1", 4, set(), explore, None, None, None, daily=True,
+                             now=datetime.fromisoformat("2026-09-25T12:00:00+09:00"))
+
+
+def test_daily_keeps_the_score_order_and_plays_each_tracks_chorus(svc):
+    """자격이 모두 같으면 곡 순서는 종전 점수 순서 그대로이고, 순간만 chorus 로 바뀐다."""
+    view = _daily_view(svc)
+    with svc.using(view):
+        plain = svc.recommend("internal:1", 4, set(), False, None, None, None)["results"]
+    got = _daily(svc, view, explore=False)["results"]
+    assert [x["track_id"] for x in got] == [x["track_id"] for x in plain]
+    assert all(x["section_label"] == "chorus" for x in got)
+    # 합성 본문에서 chorus 는 곡마다 #2 하나다.
+    assert [x["moment_id"] for x in got] == [f'{x["track_id"]}#2' for x in got]
+    assert len({x["track_id"] for x in got}) == len(got)
+
+
+def test_daily_drops_non_vocal_and_unknown_vocal_tracks(svc):
+    out = _daily(svc, _daily_view(svc, vocal={"T000000": False, "T000001": None}))
+    tracks = {x["track_id"] for x in out["results"]}
+    assert tracks and not tracks & {"T000000", "T000001"}
+    assert out["diagnostics"]["daily_moment"]["dropped_no_vocal_tracks"] == 2
+
+
+def test_daily_drops_tracks_without_a_chorus_instead_of_substituting(svc):
+    out = _daily(svc, _daily_view(svc, labels={"T000002#2": "VERSE", "T000003#2": "BRIDGE"}))
+    tracks = {x["track_id"] for x in out["results"]}
+    assert tracks and not tracks & {"T000002", "T000003"}
+    assert all(x["section_label"] == "chorus" for x in out["results"])
+    assert out["diagnostics"]["daily_moment"]["dropped_no_chorus_tracks"] == 2
+
+
+def test_daily_picks_the_earliest_of_several_choruses(svc):
+    # T000000..T000005 모두 #1(30초)·#2(60초)·#3(90초)이 chorus → 가장 이른 #1.
+    labels = {f"T{t:06d}#{s}": "CHORUS" for t in range(6) for s in (1, 3)}
+    out = _daily(svc, _daily_view(svc, labels=labels))["results"]
+    assert out and all(x["moment_id"] == f'{x["track_id"]}#1' for x in out)
+    assert all(x["start_sec"] == 30.0 for x in out)
+
+
+def test_daily_returns_fewer_than_four_rather_than_filling(svc):
+    """자격 있는 곡이 둘뿐이면 둘만 낸다. 무관한 곡·다른 구간으로 채우지 않는다."""
+    no = {f"T{t:06d}": False for t in range(2, 6)}
+    out = _daily(svc, _daily_view(svc, vocal=no))
+    assert {x["track_id"] for x in out["results"]} <= {"T000000", "T000001"}
+    assert len(out["results"]) <= 2
+    assert out["diagnostics"]["shortfall"] >= 2
+    assert all(x["section_label"] == "chorus" for x in out["results"])

@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -20,7 +21,7 @@ import threading
 import time
 import uuid
 import warnings
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -149,6 +150,21 @@ DNA_CANDIDATES_PER_SEED = 200
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# 오늘의 모멘트의 "하루" 는 서울 날짜다. 한국은 서머타임이 없어 고정 오프셋으로 충분하고,
+# 배포 이미지에 tz 데이터베이스가 있는지에 기대지 않는다.
+SEOUL = timezone(timedelta(hours=9))
+
+
+def daily_seed(user: str, now: Optional[datetime] = None) -> int:
+    """`user` + 서울 날짜(YYYY-MM-DD)로 정한 탐색 시드. 같은 날 안에서는 몇 번을 불러도 같다.
+
+    프로세스마다 값이 바뀌는 `hash()` 를 쓰지 않는다 — 워커가 여럿이면 같은 사용자가
+    워커마다 다른 "오늘" 을 받는다.
+    """
+    day = (now or datetime.now(timezone.utc)).astimezone(SEOUL).date().isoformat()
+    return int.from_bytes(hashlib.sha256(f"{user}|{day}".encode("utf-8")).digest()[:8], "big")
 
 
 # ------------------------------------------- 색인 + 카탈로그를 하나로 합치는 자리
@@ -1963,7 +1979,8 @@ def _flow_penalty(pool: pd.DataFrame, current_track_id: Optional[str],
 def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_plan: Optional[dict] = None,
               current_track_id: Optional[str] = None, current_moment_id: Optional[str] = None,
               beh_events: Optional[list] = None,
-              onboarding: Optional[dict] = None) -> dict:
+              onboarding: Optional[dict] = None,
+              daily: bool = False, now: Optional[datetime] = None) -> dict:
     c = current()
     C, W, dna_meta = build_dna(user, query_plan, current_track_id, current_moment_id)
     query_source = "labels" if len(C) else "none"
@@ -2205,6 +2222,29 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         diag["dropped_prob_below_threshold"] = int((keep & below).sum())
         keep &= ~below
 
+    # 오늘의 모멘트는 **보컬 곡의 첫 후렴**만 낸다 (S15P21A204-448). 곡 순위는 위 점수가
+    # 그대로 정하고, 여기서는 자격 없는 곡을 빼기만 한다 — 보컬이 아니거나(`has_vocal`
+    # 이 거짓·모름) 후보 안에 chorus 가 없는 곡. verse 등으로 대신하지 않고, 모자라도
+    # 게이트를 풀어 채우지 않는다. 재생할 순간은 아래에서 그 곡의 첫 chorus 로 바꾼다.
+    first_chorus: dict[str, int] = {}
+    if daily:
+        tids = pool.track_id.astype(str).to_numpy()
+        starts = pool.start_sec.to_numpy(dtype=float)
+        sidx = pool.section_idx.to_numpy()
+        mids = pool.moment_id.astype(str).to_numpy()
+        for i in sorted(np.flatnonzero(pool.section_label.to_numpy() == "chorus"),
+                        key=lambda i: (starts[i], sidx[i], mids[i])):
+            first_chorus.setdefault(tids[i], int(i))
+        hv = catalog_facets()["_df"].set_index("track_id").has_vocal
+        vocal = {t for t, v in hv.items() if isinstance(v, (bool, np.bool_)) and bool(v)}
+        in_pool = set(tids)
+        keep &= np.fromiter((t in vocal and t in first_chorus for t in tids),
+                            dtype=bool, count=len(tids))
+        diag["daily_moment"] = {"rule": "vocal track, first chorus",
+                                "dropped_no_vocal_tracks": len(in_pool - vocal),
+                                "dropped_no_chorus_tracks": len((in_pool & vocal)
+                                                                - set(first_chorus))}
+
     # 묶음별 라운드로빈: 각 DNA 묶음이 슬롯을 나눠 갖는다.
     # max over clusters 만 쓰면 가중치가 큰 묶음이 top-k 를 독점해서
     # 새로 생긴 취향(작은 묶음)이 영원히 안 나온다.
@@ -2260,14 +2300,23 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             vecs.append(V[int(i)])
 
     if query_plan is None and explore and EXPLORE_SLOTS and len(picked) >= 3:
-        rng = np.random.default_rng(int(time.time()) // 60)
+        # 오늘의 모멘트는 사용자·서울 날짜로 시드를 고정한다 — 같은 날 다시 열어도 같은
+        # 네 곡이고, 날짜가 바뀌면 이 칸이 달라질 수 있다. 이어 듣기는 종전대로 분 단위다.
+        rng = np.random.default_rng(daily_seed(user, now) if daily
+                                    else int(time.time()) // 60)
         gorder = np.argsort(-np.where(keep, final, -1e9))
         cands = [int(i) for i in gorder[n:n * 6]
-                 if pool.iloc[int(i)].track_id not in taken_tracks]
+                 if pool.iloc[int(i)].track_id not in taken_tracks
+                 and (not daily or keep[int(i)])]
         if cands:
             j = int(rng.choice(cands))
             picked[-1] = (j, float(final[j]), -1)
             taken_tracks.add(pool.iloc[j].track_id)
+
+    if daily:
+        # 곡 순서·점수는 그대로 두고 재생할 순간만 그 곡의 첫 chorus 로 바꾼다.
+        picked = [(first_chorus[str(pool.iloc[i].track_id)], fs, cj)
+                  for i, fs, cj in picked]
 
     out = []
     for rank, (i, fs, cj) in enumerate(picked, 1):
