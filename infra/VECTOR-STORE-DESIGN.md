@@ -17,7 +17,7 @@
 | 무엇 | 지금 | 바꾼 뒤 |
 |---|---|---|
 | 곡·구간 서비스 값 (장르·BPM·라벨·삭제…) | 요청마다 본문 `catalog` (약 497KB) | **ClickHouse 피처 저장소** — Spring 이 MySQL 과 함께 쓴다 |
-| 순간 벡터·특징 | 색인 판 파일 (Pinecone 은 이그레스 소진으로 꺼 둠) | **Qdrant** — AI 가 오디오에서 만든 파생 데이터 |
+| 순간 벡터·특징 | 색인 판 파일 (Pinecone 은 이그레스 소진으로 껐고 459 에서 지웠다) | **Qdrant** — AI 가 오디오에서 만든 파생 데이터 |
 | 모델 (가중치·보정기·PCA·통계·μ) | 색인 판에 섞여 있음 | **모델 묶음** — 배치용 API 로 Object Storage 에 올리고, **CI 가 이미지에 굽는다** |
 | 요청 본문 | 약 497KB, 곡 수에 비례 | **수백 B~2KB**, 곡 수와 무관 |
 | 검색 조건 | Spring `QueryPlanFilter` | AI 가 ClickHouse 로 풀어 Qdrant 에 넘김 |
@@ -845,7 +845,9 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 ## 12. 지금 운영 상태 — 전환 전 위험
 
 - node-b 판 `ea692ef6…-local-emb` 은 **수신기를 거치지 않고 수동으로** 만들었다(행을 맞춘
-  `moments_emb.npy` 추가, `current` 교체). `MUPID_PINECONE_ENABLED=false`.
+  `moments_emb.npy` 추가, `current` 교체). ai 는 local 갈래다(`MUPID_VECTOR_BACKEND` 비움).
+- Pinecone 은 **코드에서 지웠다(S15P21A204-459, 배포 대기).** 운영 `MUPID_AI_SERVER_ENV` 에 남은
+  `MUPID_PINECONE_*` 는 읽지 않고 이름만 경고한다 — 키 삭제·콘솔 인덱스(`mupid-moments`) 삭제는 배포 뒤.
 - ~~`receive-index.py` 는 `moments_emb.npy` 를 거절하고 `slice_index` 는 배송에서 뺀다.~~
   **고쳤다(S15P21A204-450, 이 MR).** `slice_index` 가 싣고 수신기가 REQUIRED 로 받으며 행 수를 센다.
   배포 뒤 Ansible 로 수신기를 다시 설치해야(`infra_k8s/ansible/receivers.yml`) 판 업로드가 정식 경로로 된다.
@@ -879,4 +881,4 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 | 4 | ClickHouse `track_features`(+`is_deleted`·`playable`) · 서빙 정렬 키·프로파일 · AI 읽기 · 지연 측정 | ①③ | 1만 곡 합성에서 특징 조회·조건 풀기 p95 가 기준 안 — 455: 표·`energy` 열·미반영/재시도/대조·서빙 사전·`mupid_serving`·`feature_store.py`, 서버 p95 16ms / 56ms (기준 제안 50 / 100ms, 미결 4). 요청 경로 연결은 458 |
 | 5 | Qdrant (node-b StatefulSet, 인증, 구간 지문, 로컬 스냅샷, NetworkPolicy) + **벡터 등록 API** (§6.6, 곡 전체 / 모델 재계산) + 재적재 시간 측정 | ①② | 1만 곡 합성 부하에서 추천 p95 < 1초. node-b 를 비운 뒤 JupyterHub 재전송으로 복구된다 — Qdrant 는 456, 벡터 등록 API·미반영 `VECTOR`·대조·관문·배치 명령은 457(로컬 왕복: Spring 으로 넣은 합성 곡이 local 과 같은 순위·점수). 운영 적재·재적재 시간 측정·`qdrant` 전환은 배포 뒤 |
 | 6 | **계약 v3**: `catalog` 제거, 조건 풀기 AI 로, `QueryPlanFilter` 걷어내기, `exclude_tracks` 상한, `limit + 여유분` | ①③ | 요청 본문 < 5KB, 오늘의 모먼트가 늘 4개 — 458: 기준 풀 스냅샷·`query_conditions`·지문 대조·`RecommendationFinalFilter`·06 `instruments`. 본문 175B~2.2KB(상한 500곡 5.2KB), 삭제 곡이 섞여도 4개(`DailyRecommendationFinalFilterTest`). 운영 배포는 배포 뒤 |
-| 7 | Pinecone 제거 (코드·SDK·CI 변수·문서·JupyterHub 야간 단계, 콘솔 인덱스 삭제) | — | `pinecone` 이 저장소에 없다 |
+| 7 | Pinecone 제거 (코드·SDK·CI 변수·문서·JupyterHub 야간 단계, 콘솔 인덱스 삭제) | — | `pinecone` 이 저장소에 없다 — 459: 코드·시험·수신기 규칙·`deploy-ai-env` 개수 검사(2→1)·JupyterHub 동기화 단계와 AI 자격 전달·문서. `pinecone` 모듈을 막고 앱이 뜨는 시험(`test_no_pinecone.py`). 남은 언급은 이력과 옛 설정을 무시하는 자리뿐이다. **남은 것**: `requirements.txt` 의 SDK 줄(러너 이미지 `mupid-ci-ai` 를 다시 구울 때 함께 — 바이트 대조), CI 변수 키·콘솔 인덱스 삭제(배포 뒤) |

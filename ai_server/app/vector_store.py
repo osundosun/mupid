@@ -11,17 +11,19 @@
     generation                         이 저장소 세대를 가리키는 싼 값 (캐시 열쇠)
     snapshot()                         적재본 지문 (비쌀 수 있다 — 기동·내보내기에서만)
 
-구현은 셋이고, 고르는 것은 `MUPID_VECTOR_BACKEND` 다(`backend_name`, 기본 local).
+구현은 둘이고, 고르는 것은 `MUPID_VECTOR_BACKEND` 다(`backend_name`, 기본 local).
 
     local     색인 판의 `moments_emb.npy`. 운영이 지금 이것이다 (2026-09-24~)
     qdrant    node-b 의 Qdrant 컬렉션 (S15P21A204-456). 읽기만 한다 — 쓰는 것은 Spring(457)
-    pinecone  예전 갈래. 459 에서 지운다 — 그래서 옮기기만 하고 고치지 않는다
+
+예전 Pinecone 갈래는 S15P21A204-459 에서 지웠다(무료 요금제 이그레스 소진, 되살리지 않는다).
 
 **점수는 저장소가 매기지 않는다.** 저장소는 후보를 좁히고 원본을 돌려줄 뿐이고, 순위는
 언제나 `recommender` 가 원본에서 다시 센다. 그래야 갈래가 바뀌어도 같은 값이 나온다.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -31,27 +33,70 @@ from typing import Callable, Iterable, Optional, Sequence
 
 import numpy as np
 
-from . import pinecone_store, qdrant_schema, qdrant_store
+from . import qdrant_schema, qdrant_store
 
-BACKENDS = ("local", "qdrant", "pinecone")
+BACKENDS = ("local", "qdrant")
+# 지운 갈래의 옛 설정. 운영 Secret(`MUPID_AI_SERVER_ENV`)에 아직 남아 있다 — 지워질 때까지
+# 기동을 막지 않고 **읽지도 않는다**(`ignored_env` 가 이름만 알린다).
+LEGACY_ENV_PREFIX = "MUPID_PINECONE_"
 
 
-def backend_name(pinecone_enabled: bool) -> str:
-    """`MUPID_VECTOR_BACKEND` 로 갈래를 고른다. 비어 있으면 **예전 스위치**를 따른다.
+def backend_name() -> str:
+    """`MUPID_VECTOR_BACKEND` 로 갈래를 고른다. **기본은 local** 이다.
 
-    예전 배포는 `MUPID_PINECONE_ENABLED` 하나로 local/pinecone 을 갈랐다. 그 값이 남아 있는
-    `MUPID_AI_SERVER_ENV` 도 그대로 받는다 — 새 변수가 있으면 새 변수가 이긴다. **기본은 local**
-    이다. Qdrant 에 벡터가 채워지기(457) 전에 기본을 qdrant 로 두면 배포가 곧 추천 중단이다.
+    Qdrant 에 벡터가 채워지기(457) 전에 기본을 qdrant 로 두면 배포가 곧 추천 중단이다.
+    예전 스위치(`MUPID_PINECONE_ENABLED`)는 더 보지 않는다 — 켜져 있어도 local 이다.
 
     모르는 값은 오류다. 조용히 local 로 내려가면 "qdrant 로 돌고 있다" 고 믿는 배포가 옛
-    판의 벡터로 추천한다.
+    판의 벡터로 추천한다. `pinecone` 은 지운 갈래라 따로 알린다 — 준비 판정이 이 문구로 실패한다.
     """
     raw = (os.environ.get("MUPID_VECTOR_BACKEND") or "").strip().lower()
-    if raw:
-        if raw not in BACKENDS:
-            raise ValueError(f"MUPID_VECTOR_BACKEND 는 {'|'.join(BACKENDS)} 중 하나다: {raw!r}")
-        return raw
-    return "pinecone" if pinecone_enabled else "local"
+    if not raw:
+        return "local"
+    if raw == "pinecone":
+        raise ValueError("MUPID_VECTOR_BACKEND=pinecone — Pinecone 갈래는 지웠다(S15P21A204-459). "
+                         f"{'|'.join(BACKENDS)} 중 하나를 고른다")
+    if raw not in BACKENDS:
+        raise ValueError(f"MUPID_VECTOR_BACKEND 는 {'|'.join(BACKENDS)} 중 하나다: {raw!r}")
+    return raw
+
+
+def ignored_env() -> list[str]:
+    """남아 있지만 읽지 않는 옛 설정의 **이름**. 값은 싣지 않는다(키가 섞여 있다)."""
+    return sorted(k for k in os.environ if k.startswith(LEGACY_ENV_PREFIX))
+
+
+def snapshot_hash(moment_ids, vectors, embedding_version: str,
+                  pool_sources) -> str:
+    """이 적재본의 지문. **id 목록만으로는 모자란다.**
+
+    재분석으로 같은 `external_id` 의 **벡터만** 바뀌는 경우가 흔하다. id 만 세면
+    그때 지문이 같게 나와, 옛 평균과 새 벡터가 섞인 상태를 아무도 잡지 못한다 —
+    오류 없이 유사도만 내려앉는다. 그래서 값까지 넣는다.
+
+        정렬된 external_id   구성이 같으면 차례가 달라도 같아야 한다
+        벡터 값              float32 바이트. 한 구간만 바뀌어도 달라진다
+        임베딩 버전          모델·층·풀링이 바뀌면 같은 값이라도 뜻이 다르다
+        추천 풀 설정         MUPID_POOL / MUPID_POOL_EXTRA. 대상이 달라진다
+
+    모델 묶음의 씨앗 표(`onboarding_seeds.npz`)가 이 값으로 판에 묶인다.
+    """
+    V = np.atleast_2d(np.asarray(vectors, dtype=np.float32))
+    ids = [str(m) for m in moment_ids]
+    if len(ids) != len(V):
+        raise ValueError(f"id {len(ids)}개와 벡터 {len(V)}개가 다르다")
+
+    h = hashlib.sha256()
+    h.update(b"snapshot-v1\x00")
+    h.update(str(embedding_version).encode("utf-8") + b"\x00")
+    for src in sorted(str(s) for s in pool_sources):
+        h.update(src.encode("utf-8") + b"\x00")
+    h.update(b"--\x00")
+    for position in sorted(range(len(ids)), key=lambda i: ids[i]):
+        # 구분자를 넣는다. 넣지 않으면 `A`+`BC` 와 `AB`+`C` 가 같은 지문이 된다.
+        h.update(ids[position].encode("utf-8") + b"\x00")
+        h.update(np.ascontiguousarray(V[position], dtype=np.float32).tobytes())
+    return h.hexdigest()
 
 
 class AllowList:
@@ -79,7 +124,7 @@ class AllowList:
 
 
 def _center_rows(V: np.ndarray, mu: np.ndarray) -> np.ndarray:
-    """`(V - mu) / ‖V - mu‖`. `pinecone_store.Center.split` 과 **같은 식**이다."""
+    """`(V - mu) / ‖V - mu‖`. Qdrant 컬렉션의 `mert` 를 쓴 쪽(Spring·배치)과 **같은 식**이다."""
     W = np.atleast_2d(np.asarray(V, dtype=np.float32)) - mu
     W /= np.clip(np.linalg.norm(W, axis=1, keepdims=True), 1e-9, None)
     return W
@@ -95,7 +140,7 @@ def _top_k(sim: np.ndarray, k: int) -> np.ndarray:
 
 
 class VectorStore:
-    """인터페이스. 구현은 아래 셋이다 (local · qdrant · pinecone)."""
+    """인터페이스. 구현은 아래 둘이다 (local · qdrant)."""
 
     backend = "abstract"
 
@@ -180,7 +225,7 @@ class LocalVectorStore(VectorStore):
 
     def snapshot(self) -> str:
         if self._snapshot is None:
-            self._snapshot = pinecone_store.snapshot_hash(
+            self._snapshot = snapshot_hash(
                 self._pool_ids, np.asarray(self.Z[self._pool_rows], dtype=np.float32),
                 self._version, self._sources)
         return self._snapshot
@@ -245,7 +290,7 @@ class QdrantVectorStore(VectorStore):
 
     **컬렉션에 든 것은 원본이 아니라 중심화 방향이다.** `mert` = `u = (Z-μ)/‖Z-μ‖`, payload
     `r = ‖Z-μ‖`. 그래서 검색 점수가 곧 로컬 갈래의 `sim` 이고(같은 μ 로 중심화한 질의의
-    코사인), 원본은 `μ + r·u` 로 되돌린다 — Pinecone 갈래와 같은 쪼갬이다.
+    코사인), 원본은 `μ + r·u` 로 되돌린다 — 정확한 복원이다(부동소수점 반올림만 남는다).
 
     μ 는 **쓴 쪽과 같아야 한다.** 동결 μ(모델 묶음 `mu.npy`, 설계 §6.3)가 이미지에 있으면 그것을,
     없으면 지금처럼 판의 색인 풀 평균을 쓴다(`recommender._frozen_mu`). 다른 μ 로 쓴 컬렉션을
@@ -465,42 +510,3 @@ class QdrantVectorStore(VectorStore):
                 versions[mid] = str(pay["analysis_version"])
         return out, versions
 
-
-class PineconeVectorStore(VectorStore):
-    """예전 Pinecone 갈래를 인터페이스 뒤로 옮긴 것. **459 에서 지운다.**
-
-    동작은 옮기기 전과 같다 — 평균은 control 이 들고 있고(읽을 때마다 상태·세대를
-    본다), 검색은 조건 없이 namespace 를 찾은 뒤 허용 목록으로 거른다. 실패하면 로컬로
-    내려가지 않고 예외가 그대로 올라간다.
-    """
-
-    backend = "pinecone"
-
-    @property
-    def dim(self) -> int:
-        return pinecone_store.center().dim
-
-    @property
-    def mu(self) -> np.ndarray:
-        return pinecone_store.serving_center().mu
-
-    @property
-    def generation(self) -> str:
-        return f"pinecone:{pinecone_store.center().snapshot}"
-
-    def snapshot(self) -> str:
-        return pinecone_store.center().snapshot
-
-    def search_many(self, queries: np.ndarray, top_k: int,
-                    allow: Optional[AllowList] = None) -> list[list[tuple[str, float]]]:
-        out = []
-        for q in np.atleast_2d(np.asarray(queries, dtype=np.float32)):
-            got = pinecone_store.search(q, top_k)
-            out.append(got if allow is None else [(m, s) for m, s in got if m in allow])
-        return out
-
-    def fetch(self, ids: Sequence[str]) -> dict:
-        return pinecone_store.fetch_raw([str(i) for i in ids])
-
-
-PINECONE = PineconeVectorStore()

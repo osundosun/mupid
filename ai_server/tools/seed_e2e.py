@@ -325,8 +325,7 @@ def seed_track_sections(m: Manifest) -> int:
     if count:
         ch("INSERT INTO track_sections_local (track_id, music_section_analysis_id, "
            "analysis_version, section_index, section_uid, fn, start_ms, end_ms) "
-           "FORMAT TabSeparated
-" + rows)
+           "FORMAT TabSeparated\n" + rows)
         # 딕셔너리는 10분까지 늦는다. 시험은 바로 다음 단계에서 신호를 만든다.
         ch("SYSTEM RELOAD DICTIONARY ON CLUSTER mupid_all dict_track_sections")
     log(f"ClickHouse 구간 {count}건 적재")

@@ -10,7 +10,7 @@ SDK(`qdrant-client`)를 쓰지 않고 표준 라이브러리 HTTP 로 부른다.
 
 ## 환경변수
 
-    MUPID_VECTOR_BACKEND             local | qdrant | pinecone. 기본 local (`vector_store.backend_name`)
+    MUPID_VECTOR_BACKEND             local | qdrant. 기본 local (`vector_store.backend_name`)
     MUPID_QDRANT_URL                 기본 http://qdrant:6333 (클러스터 안 ClusterIP)
     MUPID_QDRANT_READ_ONLY_API_KEY   비밀. Secret `mupid-ai-secrets` 에서만 온다. 로그·응답에 싣지 않는다
     MUPID_QDRANT_COLLECTION          기본은 정의 파일의 이름 (`moments__mert-v1-95m`)

@@ -8,7 +8,7 @@
 정한 동작이다.
 
   - 씨앗이 있는 경로: 결합기 특징(규칙 유사도·학습 점수·길이·위치·BPM)이 코사인 상위
-    K 밖의 구간을 더 높게 칠 수 있다. Pinecone 갈래는 처음부터 이렇게 돌았다.
+    K 밖의 구간을 더 높게 칠 수 있다. qdrant 갈래도 같은 후보 단계를 거친다.
   - 분위 임계값(`P_TOP_FRAC`)·백분위(`pct`)가 풀이 아니라 후보 안에서 센다.
 
 콜드스타트는 순서(에너지 백분위·위치)를 사본 전체로 세므로 뽑히는 곡이 예전과 같다 —
@@ -34,9 +34,9 @@ N_TRACKS, PER_TRACK = 60, 4
 def big(tmp_path_factory):
     root = tmp_path_factory.mktemp("vs")
     _build(root, n_tracks=N_TRACKS, per_track=PER_TRACK)
-    saved = {k: os.environ.get(k) for k in ("MUPID_AI_ARTIFACT_DIR", "MUPID_PINECONE_ENABLED")}
+    saved = {k: os.environ.get(k) for k in ("MUPID_AI_ARTIFACT_DIR", "MUPID_VECTOR_BACKEND")}
     os.environ["MUPID_AI_ARTIFACT_DIR"] = str(root)
-    os.environ.pop("MUPID_PINECONE_ENABLED", None)
+    os.environ.pop("MUPID_VECTOR_BACKEND", None)
 
     def _reload():
         for name in ("features", "labeler", "stage1_torch"):
@@ -336,3 +336,47 @@ def test_requests_never_build_the_pool(big, monkeypatch):
     finally:
         pool_snapshot.install(prev)
         internal_api._VIEWS.clear()
+
+
+# ------------------------------------------------------------------ 적재본 지문
+# 판의 지문(`snapshot_hash`)이 씨앗 표를 판에 묶는다. 예전 Pinecone 저장소에서 옮겼다(459).
+
+def _unit(n, dim=8, seed=0):
+    Z = np.random.default_rng(seed).standard_normal((n, dim)).astype(np.float32)
+    return Z / np.linalg.norm(Z, axis=1, keepdims=True)
+
+
+def test_snapshot_changes_when_only_a_vector_changes():
+    """재분석으로 값만 바뀐 경우. id 만 세면 못 잡는다."""
+    ids = ["A#0", "A#1", "A#2"]
+    Z = _unit(3, seed=1)
+    base = vstore.snapshot_hash(ids, Z, "mert-v1-95m", {"flow"})
+
+    changed = Z.copy()
+    changed[1] = -changed[1]
+    assert vstore.snapshot_hash(ids, changed, "mert-v1-95m", {"flow"}) != base
+
+
+def test_snapshot_ignores_order():
+    ids = ["A#0", "A#1", "A#2"]
+    Z = _unit(3, seed=1)
+    order = [2, 0, 1]
+    shuffled = vstore.snapshot_hash([ids[i] for i in order], Z[order], "mert-v1-95m", {"flow"})
+    assert shuffled == vstore.snapshot_hash(ids, Z, "mert-v1-95m", {"flow"})
+
+
+def test_snapshot_covers_version_and_pool_config():
+    ids = ["A#0"]
+    Z = _unit(1)
+    base = vstore.snapshot_hash(ids, Z, "mert-v1-95m", {"flow"})
+    assert vstore.snapshot_hash(ids, Z, "mert-v2", {"flow"}) != base
+    assert vstore.snapshot_hash(ids, Z, "mert-v1-95m", {"flow", "jamendo"}) != base
+
+
+def test_the_embedding_file_ships():
+    """운영은 판 안의 `moments_emb.npy` 로 추천한다(local 갈래). 배송에서 빠지면 새 판을
+    올리는 순간 멈춘다."""
+    from ai_server.tools import slice_index as si
+
+    assert "moments_emb.npy" not in si.NOT_SHIPPED
+    assert "moments_emb.npy" in si.SHIPPED_ALIGNED

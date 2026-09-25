@@ -261,7 +261,6 @@ def main() -> int:
     build(root, a.tracks, a.per_track, a.dim, a.feat_dim, a.s1_dim)
     build_s = time.perf_counter() - t0
     os.environ["MUPID_AI_ARTIFACT_DIR"] = str(root)
-    os.environ.pop("MUPID_PINECONE_ENABLED", None)
     os.environ.pop("MUPID_CLICKHOUSE_URL", None)
     os.environ["MUPID_VECTOR_BACKEND"] = a.backend
     qdrant_load = None

@@ -69,26 +69,26 @@ def test_model_vector_names_only_take_versions():
 
 @pytest.mark.parametrize("new,legacy,want", [
     (None, None, "local"),                 # 기본은 local — 457 전 운영이 그대로 돈다
-    (None, "1", "pinecone"),               # 예전 스위치도 계속 받는다
+    (None, "1", "local"),                  # 지운 갈래의 옛 스위치는 보지 않는다 (459)
     ("qdrant", None, "qdrant"),
-    ("local", "true", "local"),            # 새 변수가 이긴다
+    ("local", "true", "local"),
     (" Qdrant ", "1", "qdrant"),
 ])
 def test_backend_selection(monkeypatch, new, legacy, want):
-    from ai_server.app import pinecone_store, recommender
+    from ai_server.app import recommender
     for k, v in (("MUPID_VECTOR_BACKEND", new), ("MUPID_PINECONE_ENABLED", legacy)):
         if v is None:
             monkeypatch.delenv(k, raising=False)
         else:
             monkeypatch.setenv(k, v)
-    assert vstore.backend_name(pinecone_store.enabled()) == want
+    assert vstore.backend_name() == want
     assert recommender.vector_backend() == want
 
 
 def test_an_unknown_backend_is_an_error_not_a_fallback(monkeypatch):
     monkeypatch.setenv("MUPID_VECTOR_BACKEND", "qdarnt")
     with pytest.raises(ValueError):
-        vstore.backend_name(False)
+        vstore.backend_name()
 
 
 def test_the_manifest_default_keeps_ai_on_local():
@@ -253,10 +253,9 @@ def test_status_is_remembered_for_a_few_seconds(small):
 def big(tmp_path_factory):
     root = tmp_path_factory.mktemp("qd")
     _build(root, n_tracks=N_TRACKS, per_track=PER_TRACK)
-    keys = ("MUPID_AI_ARTIFACT_DIR", "MUPID_PINECONE_ENABLED", "MUPID_VECTOR_BACKEND")
+    keys = ("MUPID_AI_ARTIFACT_DIR", "MUPID_VECTOR_BACKEND")
     saved = {k: os.environ.get(k) for k in keys}
     os.environ["MUPID_AI_ARTIFACT_DIR"] = str(root)
-    os.environ.pop("MUPID_PINECONE_ENABLED", None)
     os.environ.pop("MUPID_VECTOR_BACKEND", None)
 
     def _reload():
@@ -418,11 +417,6 @@ def test_serving_never_writes_to_qdrant():
     src = inspect.getsource(qs) + inspect.getsource(vstore.QdrantVectorStore)
     for verb in ('"PUT"', '"DELETE"', '"PATCH"', "/points/delete", "/points/payload"):
         assert verb not in src, f"서빙 코드에 쓰기 호출이 생겼다: {verb}"
-
-
-def test_the_pinecone_loader_does_not_know_qdrant():
-    from ai_server.tools import pinecone_sync
-    assert "qdrant" not in inspect.getsource(pinecone_sync).lower()
 
 
 def test_fetch_carries_the_section_fingerprint(small):

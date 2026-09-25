@@ -157,7 +157,7 @@ def plate(tmp_path, monkeypatch):
     model = tmp_path / "models" / "stage1"
     monkeypatch.setenv("MUPID_AI_ARTIFACT_DIR", str(root))
     monkeypatch.setenv("MUPID_AI_MODEL_DIR", str(model))
-    monkeypatch.delenv("MUPID_PINECONE_ENABLED", raising=False)
+    monkeypatch.delenv("MUPID_VECTOR_BACKEND", raising=False)
     monkeypatch.delenv("MUPID_COMBINER", raising=False)
     model_bundle.reset()
 

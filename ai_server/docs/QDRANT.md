@@ -66,8 +66,10 @@ SHA-1(namespace 16바이트 ‖ 이름) 앞 16바이트, version 5·variant RFC 
 
 ## 4. 서빙 — 갈래와 준비 판정
 
-`MUPID_VECTOR_BACKEND=local|qdrant|pinecone`, **기본 local**. 비어 있으면 예전 `MUPID_PINECONE_ENABLED`
-를 따른다. 모르는 값은 기동 오류다(조용히 local 로 내려가지 않는다).
+`MUPID_VECTOR_BACKEND=local|qdrant`, **기본 local**. 모르는 값은 기동 오류다(조용히 local 로
+내려가지 않는다). `pinecone` 은 지운 갈래라(S15P21A204-459) "지웠다" 는 문구로 준비 판정이 실패한다.
+옛 `MUPID_PINECONE_*` 가 남아 있으면 읽지 않고 기동 로그와 `/health` 의 `vector_search.ignored_env`
+에 이름만 싣는다.
 
 qdrant 를 고르면 `/internal/ready` 와 추천 요청 입구가 컬렉션을 본다(10초 캐시):
 

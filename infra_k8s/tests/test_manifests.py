@@ -2863,7 +2863,7 @@ class QdrantManifestTest(unittest.TestCase):
     def test_ai_stays_on_the_local_backend(self):
         """병합이 곧 배포다. 매니페스트가 갈래를 바꾸면 벡터가 채워지기 전에 추천이 멈춘다."""
         text = (K8S / "base" / "ai.yaml").read_text(encoding="utf-8")
-        self.assertNotRegex(text, re.compile(r"name:\s*MUPID_VECTOR_BACKEND\s*,\s*value:\s*'?(qdrant|pinecone)"))
+        self.assertNotRegex(text, re.compile(r"name:\s*MUPID_VECTOR_BACKEND\s*,\s*value:\s*'?qdrant"))
 
     def test_the_keys_are_written_down(self):
         doc = (ROOT / "infra" / "ci" / "VARIABLES.md").read_text(encoding="utf-8")
@@ -2873,6 +2873,45 @@ class QdrantManifestTest(unittest.TestCase):
         runbook = (K8S / "OPERATIONS-K8S.md").read_text(encoding="utf-8")
         self.assertIn("rollout restart statefulset/qdrant", runbook)
         self.assertIn("qdrant_collection", runbook)
+
+
+class PineconeRemovedTest(unittest.TestCase):
+    """Pinecone 을 지웠다 (S15P21A204-459). 운영 Secret 에는 옛 키가 지워질 때까지 남는다 —
+    남아 있어도 배포가 막히지 않아야 하고, 배치가 AI 비밀을 받지도 않아야 한다."""
+
+    def _receiver(self):
+        spec = importlib.util.spec_from_file_location(
+            "receive_ai_env", K8S / "deploy" / "receive-ai-env.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_receiver_accepts_leftover_pinecone_keys(self):
+        """예전에는 `MUPID_PINECONE_ENABLED=true` 에 키가 없으면 업로드를 거부했다."""
+        receiver = self._receiver()
+        self.assertFalse(hasattr(receiver, "PINECONE_REQUIRED"))
+        got = receiver.parse(b"MUPID_PINECONE_ENABLED=true\nMUPID_QDRANT_READ_ONLY_API_KEY=k\n")
+        self.assertEqual({"MUPID_PINECONE_ENABLED", "MUPID_QDRANT_READ_ONLY_API_KEY"}, set(got))
+
+    def test_one_entry_is_enough_to_deploy_the_ai_env(self):
+        """Pinecone 키를 지우면 Qdrant 읽기 키 하나만 남을 수 있다. 예전 기준(2 개)이면 배포가 멈춘다."""
+        script = (K8S / "ci" / "deploy-ai-env.sh").read_text(encoding="utf-8")
+        self.assertIn('[ "$lines" -ge 1 ]', script)
+        self.assertNotIn('-ge 2', script)
+
+    def test_the_batch_no_longer_gets_the_ai_secrets(self):
+        script = (ROOT / "infra" / "ci" / "deploy-jupyter.py").read_text(encoding="utf-8")
+        self.assertNotIn('AI_ENV = "MUPID_AI_SERVER_ENV"', script)
+        self.assertNotIn("extra_env", script)
+        batch = (ROOT / "music_preprocessing" / "run_batch.sh").read_text(encoding="utf-8")
+        self.assertNotIn("pinecone", batch.lower())
+
+    def test_no_manifest_or_ci_script_mentions_pinecone(self):
+        for folder in ("base", "ci", "deploy"):
+            for path in sorted((K8S / folder).glob("*")):
+                if path.is_file():
+                    with self.subTest(path=path.name):
+                        self.assertNotIn("pinecone", path.read_text(encoding="utf-8").lower())
 
 
 if __name__ == "__main__":

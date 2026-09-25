@@ -22,7 +22,7 @@ import pandas as pd
 from fastapi import FastAPI
 
 from . import (feature_store, index_contract, internal_api, labels_store, model_bundle, paths,
-               pinecone_store, pool_snapshot, qdrant_store, recommender)
+               pool_snapshot, qdrant_store, recommender, vector_store)
 from .log import log
 
 _STARTED = time.time()
@@ -84,9 +84,8 @@ def check_integrity() -> dict:
     out: dict = {"ok": False, "checks": {}, "errors": []}
     try:
         mom = pd.read_parquet(d / "moments.parquet", columns=["moment_id", "emb_row"])
-        # `moments_emb.npy` 는 **운영 판에 없다.** 순간 벡터의 정본은 Pinecone 이고
-        # 이 파일은 분석 배치의 입력 산출물이다. 있으면 함께 세고, 없어도 실패가
-        # 아니다 — 대신 벡터 쪽 정합은 control namespace 의 세대 검증이 본다.
+        # `moments_emb.npy` 는 local 갈래의 벡터다. 있으면 함께 세고, 없어도 실패가
+        # 아니다 — qdrant 갈래는 판 없이 돈다(벡터 쪽 정합은 Qdrant 준비 판정이 본다).
         rows = {
             "moments": len(mom),
             "features_v1": int(np.load(d / "features_v1.npz")["X"].shape[0]),
@@ -164,9 +163,11 @@ def _startup() -> None:
         log(f"벡터 검색 갈래 설정 오류 — {_STATE['error']}")
         return
 
-    #    Pinecone 을 켜 두었으면 **평균·namespace·판이 한 묶음인지** 기동에서 본다.
-    #    하나만 갈아 끼운 상태는 오류가 아니라 유사도 저하로만 드러나므로 요청을
-    #    받기 전에 잡아야 한다.
+    #    지운 Pinecone 갈래의 옛 설정이 남아 있으면 **알리기만 한다.** 운영 Secret 에 아직
+    #    있다 — 지워질 때까지 기동을 막으면 배포가 곧 추천 중단이다. 값은 읽지 않는다.
+    legacy = vector_store.ignored_env()
+    if legacy:
+        log(f"경고: 쓰지 않는 옛 설정 {', '.join(legacy)} — Pinecone 갈래는 지웠다(무시한다)")
     if backend == "qdrant":
         # Qdrant 는 **여기서 멈추지 않는다.** 판정은 `/internal/ready` 가 요청마다(몇 초 캐시)
         # 다시 한다 — Qdrant 가 늦게 뜨거나 잠깐 죽었다 살아나도 재기동 없이 준비 완료로
@@ -180,20 +181,6 @@ def _startup() -> None:
             st = recommender.vector_store().status()
             log(f"벡터 검색 — Qdrant · 컬렉션 {st['collection']!r} · {st.get('points')}구간 "
                 f"· μ {st['mu_source']}")
-    elif backend == "pinecone":
-        try:
-            got = pinecone_store.center()
-            # control 의 세대가 지금 판과 같은가. **저장본이 있을 때만** 다시 잴 수
-            # 있다 — 운영 판에는 없으므로 control 이 적은 값을 그대로 믿는다.
-            if getattr(recommender.CAT, "Z", None) is not None:
-                got.require_snapshot(recommender.current_snapshot())
-            _STATE["vector_search"] = {"backend": "pinecone", **got.stats(),
-                                       **pinecone_store.stats()}
-            log(f"벡터 검색 — Pinecone · namespace {pinecone_store.namespace()!r} · 평균 {got.rows}건")
-        except Exception as e:
-            _STATE["error"] = f"{type(e).__name__}: {e}"
-            log(f"벡터 검색 준비 실패 — {_STATE['error']}")
-            return
     else:
         _STATE["vector_search"] = {"backend": "local"}
 
@@ -241,11 +228,7 @@ def _start_pool_snapshot() -> None:
 
 
 def _generation() -> dict:
-    """서버가 지금 들고 있는 control 세대. **비밀값은 없다.**
-
-    갱신 배치가 이 값을 읽어 "새 μ 가 서버 메모리에 반영됐는가" 를 판정한다.
-    읽는 김에 캐시도 갱신되므로, 배치가 물어보는 행위 자체가 반영을 앞당긴다.
-    """
+    """서버가 지금 들고 있는 벡터 저장소의 세대와 (qdrant 면) 지난 준비 판정. **비밀값은 없다.**"""
     try:
         backend = recommender.vector_backend()
     except ValueError as e:
@@ -260,13 +243,7 @@ def _generation() -> dict:
                     "status": store.cached_status()}
         except Exception as e:                   # μ 가 없는 판 등 — /health 는 늘 답한다
             return {"backend": "qdrant", "error": f"{type(e).__name__}: {e}"}
-    if backend != "pinecone":
-        return {"backend": "local"}
-    try:
-        got = pinecone_store.center(reload=True)
-        return {"backend": "pinecone", **got.stats()}
-    except Exception as e:
-        return {"backend": "pinecone", "error": f"{type(e).__name__}: {e}"}
+    return {"backend": "local"}
 
 
 def _vector_settings() -> dict:
@@ -275,7 +252,10 @@ def _vector_settings() -> dict:
         backend = recommender.vector_backend()
     except ValueError as e:
         return {"backend": None, "error": str(e)}
-    out = {"backend": backend, **pinecone_store.settings()}
+    out = {"backend": backend}
+    legacy = vector_store.ignored_env()
+    if legacy:
+        out["ignored_env"] = legacy              # 이름만. 운영 Secret 에서 지울 때까지 보인다
     if backend == "qdrant":
         out["qdrant"] = qdrant_store.settings()
     return out
@@ -325,11 +305,10 @@ def health() -> dict:
         # 실패가 여기 보인다 — 값이 낡아도 추천은 계속되므로 이 칸이 유일한 단서다.
         "metadata_source": "feature_store",
         "pool_snapshot": internal_api.pool_snapshot_status(),
-        # 순간 벡터를 어디서 읽는가. Pinecone 을 켜 두었는데 값이 비면 검색이
+        # 순간 벡터를 어디서 읽는가. 외부 저장소(qdrant)를 골랐는데 설정이 비면 검색이
         # 통째로 실패하므로, 설정 여부가 준비 판정과 같은 화면에 있어야 한다.
         "vector_search": _vector_settings(),
-        # 갱신 중인지, 어느 세대를 들고 있는지. 배치가 "서버가 새 세대를 읽었나" 를
-        # 이 값으로 확인하고 그 뒤에 READY 로 넘어간다.
+        # 어느 저장소 세대를 들고 있는지, qdrant 면 지난 준비 판정까지.
         "vector_generation": _generation(),
         "index_contract": _STATE["plate"],
         "integrity": (_STATE["integrity"] or {}).get("checks"),

@@ -110,7 +110,7 @@ def in_process(a) -> dict:
     build_s = time.perf_counter() - t0
     os.environ["MUPID_AI_ARTIFACT_DIR"] = str(root)
     os.environ["MUPID_VECTOR_BACKEND"] = "local"
-    for k in ("MUPID_PINECONE_ENABLED", "MUPID_CLICKHOUSE_URL", "MUPID_CLICKHOUSE_SERVING_URL"):
+    for k in ("MUPID_CLICKHOUSE_URL", "MUPID_CLICKHOUSE_SERVING_URL"):
         os.environ.pop(k, None)
 
     from ai_server.app import feature_store as fs
