@@ -486,6 +486,31 @@ def test_next_and_search_still_choose_their_own_count():
                                       limit=20).limit == 20
 
 
+def test_only_daily_pins_the_seed_to_the_seoul_date():
+    """날짜 시드(S15P21A204-448)는 `daily` 만이다. 이어 듣기·검색은 종전 인자 그대로다."""
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    seen: dict = {}
+
+    def _recommend(user, n, exclude, explore, plan, ct, cm, **kw):
+        seen[n] = kw.get("daily", False)
+        return {"results": [], "diagnostics": {"shortfall": 0}}
+
+    app = FastAPI()
+    internal_api.install(app, SimpleNamespace(CAT=_FakeCat(), using=_using,
+                                              recommend=_recommend))
+    client = TestClient(app)
+    base = {"catalog": CATALOG, "recommendation_id": 1, "user_id": 1}
+    client.post("/internal/recommendations/daily", json=base)
+    client.post("/internal/recommendations/next", json={**base, "limit": 7})
+    client.post("/internal/recommendations/search",
+                json={**base, "limit": 9, "query_plan": {"filters": {"mood": ["calm"]}}})
+    assert seen == {4: True, 7: False, 9: False}
+
+
 # ------------------------------------------- 악기 코드: 확정 목록 밖은 만들지 않는다
 
 def test_instrument_codes_outside_the_canon_are_refused():

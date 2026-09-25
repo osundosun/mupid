@@ -50,7 +50,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from .api_client import MupidClient
+from .api_client import MupidApiError, MupidClient
 from .audit import ServerAuditError, repair_one
 from .batch import build_registrar, run_batch
 from .catalog import (
@@ -897,6 +897,38 @@ def repair_track(
         console.print("[green]등록 기록을 고쳤습니다.[/]")
     elif apply:
         console.print("[dim]고칠 것이 없었습니다.[/]")
+
+
+@app.command("daily-recommendation")
+def daily_recommendation(
+    config: ConfigOpt = None,
+    log_file: LogFileOpt = None,
+    no_log_file: NoLogOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """오늘의 모먼트 하루치 생성을 시작시킨다 (배치의 마지막 단계).
+
+    구간 분석·색인이 끝난 뒤에 부른다 — 그날 들어온 곡까지 후보에 넣기 위해서다.
+    서버는 바로 202 로 답하고 생성은 서버 안에서 돈다. 결과는 API 로그에 남는다.
+    날짜별 선점이 있어 두 번 불러도 같은 날이 두 번 돌지 않는다.
+    """
+    console = _start("daily-recommendation", log_file, no_log_file, config, verbose)
+    try:
+        cfg = ChunkConfig.from_file(str(config)) if config else ChunkConfig()
+    except (OSError, TypeError, ValueError) as e:
+        Console(stderr=True).print(f"[red]✖[/] {e}")
+        raise typer.Exit(1) from None
+    client = _client(cfg)
+    try:
+        data = client.start_daily_recommendations()
+    except (MupidApiError, OSError) as e:
+        logger.error("오늘의 모먼트 생성 요청 실패: %s", e)
+        Console(stderr=True).print(f"[red]✖[/] 오늘의 모먼트 생성 요청 실패: {e}")
+        raise typer.Exit(1) from None
+    started = bool(data.get("started"))
+    logger.info("오늘의 모먼트 date=%s started=%s", data.get("date"), started)
+    console.print(f"오늘의 모먼트 [bold]{data.get('date')}[/] — "
+                  + ("생성을 시작했다" if started else "이미 진행 중이라 새로 시작하지 않았다"))
 
 
 @app.command()

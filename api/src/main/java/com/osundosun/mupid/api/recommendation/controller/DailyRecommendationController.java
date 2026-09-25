@@ -3,9 +3,11 @@ package com.osundosun.mupid.api.recommendation.controller;
 import java.time.LocalDate;
 
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import java.util.Map;
+import java.util.OptionalInt;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -53,6 +55,22 @@ public class DailyRecommendationController {
     }
 
     /**
+     * 오늘치를 <b>시작만</b> 시킨다. 데이터 배치(`run_batch.sh`)가 분석·색인을 마친 뒤 부른다.
+     *
+     * <p>생성은 서버 안에서 따로 돌고 이 요청은 바로 202 로 끝난다 — 회원 수만큼 추천 서버를
+     * 부르는 동안 연결을 붙잡지 않는다. 이미 누가 돌리고 있으면 `started=false` 이고 아무것도
+     * 하지 않으므로, 배치가 다시 보내도 같은 날이 두 번 돌지 않는다. 결과는 로그에 남는다.
+     */
+    @SystemRole
+    @PostMapping("/daily/start")
+    public ResponseEntity<BaseResponse<Map<String, Object>>> startDaily() {
+        boolean started = recommendationBatch.startToday();
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(BaseResponse.of(
+            started ? "오늘의 모먼트 생성을 시작했습니다." : "오늘의 모먼트 생성이 이미 진행 중입니다.",
+            Map.of("date", LocalDate.now().toString(), "started", started)));
+    }
+
+    /**
      * 그날치를 지금 만든다. **운영용이다.**
      *
      * <p>배치는 매일 정오에 돌지만, 그날 추천 서버가 흔들려 실패하면 다음 날까지 아무도
@@ -69,10 +87,16 @@ public class DailyRecommendationController {
         @RequestParam(defaultValue = "false") boolean force
     ) {
         LocalDate target = date != null ? date : LocalDate.now();
-        int made = recommendationBatch.run(target, force);
+        // 데이터 배치의 시작 요청·정오 예비와 같은 날짜 선점을 잡는다. 이미 돌고 있으면 409 다.
+        OptionalInt made = recommendationBatch.runClaimed(target, force);
+        if (made.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(BaseResponse.of(
+                "그날의 오늘의 모먼트를 이미 만들고 있습니다. 끝난 뒤 다시 시도해 주세요.",
+                Map.of("date", target.toString(), "generated", 0)));
+        }
         return ResponseEntity.ok(BaseResponse.of(
             "오늘의 모먼트를 만들었습니다.",
-            Map.of("date", target.toString(), "generated", made)));
+            Map.of("date", target.toString(), "generated", made.getAsInt())));
     }
 
 }

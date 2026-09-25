@@ -397,11 +397,15 @@ function MomentSelection({ model: m }: { model: MupidModel }) {
 }
 export { SearchView } from './explore';
 export function SimilarView({ model: m }: { model: MupidModel }) {
-  const active = m.active;
-  // 지금 듣고 있는 구간이 질문이다. 「이 순간과 닮은 것」이므로 곡이 아니라 구간이다.
-  const part = active ? getSongSectionAt(active, m.time || active.moment) : null;
-  const musicId = active?.musicId;
-  const sectionId = part?.sectionId;
+  /*
+   * 파생곡 찾기를 누른 순간의 구간이 질문이다. 「이 순간과 닮은 것」이므로 곡이 아니라
+   * 구간이다. 재생 위치로 다시 고르지 않는다 — 듣는 사이 구간이 넘어가도 처음 받은
+   * 답과 기준 구간이 그대로여야 한다 (S15P21A204-447).
+   */
+  const seed = m.similarSeed;
+  const active = seed?.track ?? m.active;
+  const musicId = seed?.musicId;
+  const sectionId = seed?.sectionId;
   /**
    * 무엇을 물었는지 답과 함께 들고 있는다.
    *
@@ -456,7 +460,7 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
     <div className="content-page similar-page">
       <PageHeader title="비슷한 순간 추천" onBack={() => m.go('moment')} />
       <p className="eyebrow source-label">
-        {part ? `${part.label} 구간에서 시작했어요` : '이 순간에서 시작했어요'}
+        {seed ? `${seed.label} 구간에서 시작했어요` : '이 순간에서 시작했어요'}
       </p>
       <TrackRow model={m} track={active} />
       <div className="intro-copy">
@@ -475,6 +479,17 @@ export function SimilarView({ model: m }: { model: MupidModel }) {
             <TrackRow
               track={t}
               model={m}
+              /*
+               * **서버가 고른 그 구간에서 튼다.** 이 화면은 "고른 구간과 닮은 순간" 을
+               * 모아 놓은 자리인데, 줄을 눌러도 곡 처음부터 울리면 왜 닮았는지 들리지
+               * 않는다 — 들려주려던 그 순간까지 사용자가 직접 찾아가야 했다.
+               *
+               * **`recommended` 가 있을 때만 참이다.** 서버가 답하지 못해 인기곡으로
+               * 물러난 줄에는 권한 구간이 없는데, 거기까지 참을 넘기면 `play()` 가
+               * `track.moment`(곡 길이의 30%, `stream-catalog.toTrack`)로 떨어져
+               * **평범한 곡이 한가운데서 시작한다.** 그 값은 서버가 고른 순간이 아니다.
+               */
+              onPlay={() => m.play(t, !!t.recommended)}
               action={
                 <button
                   className="icon-button dismiss-track"

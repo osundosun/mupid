@@ -527,7 +527,8 @@ def daily(req: DailyRequest) -> RecommendationResponse:
         out = svc.recommend(_user_ref(req.user_id), DAILY_LIMIT, _exclude(req),
                             True, None, None, None,
                             beh_events=_behavior_events(req.user_id),
-                            onboarding=_onboarding(req, svc))
+                            onboarding=_onboarding(req, svc),
+                            daily=True)
     return to_response(req.recommendation_id, out, DAILY_LIMIT, False)
 
 
