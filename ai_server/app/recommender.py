@@ -32,8 +32,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
-from . import (catalog_body, labels_store, metrics, paths, pinecone_store, stage1_np,
-               vector_store as vstore)
+from . import (catalog_body, labels_store, metrics, model_bundle, paths, pinecone_store,
+               stage1_np, vector_store as vstore)
 from .log import log
 
 warnings.filterwarnings("ignore")
@@ -321,8 +321,13 @@ class Catalog:
 
         # NumPy 가중치가 있으면 그쪽을 먼저 쓴다. 서빙에서 torch 가 하는 일은 enc_user
         # 한 번뿐이라 이것만 있으면 이미지에서 torch 를 걷어낼 수 있다.
-        npz = paths.data_dir() / "stage1_weights.npz"
-        if p.exists() and npz.exists():
+        #
+        # 자리는 이미지의 모델 자리(`models.lock` 이 채택한 `user_encoder.npz`)가 먼저고,
+        # 없으면 판의 `stage1_weights.npz` 다 — 대응은 `model_bundle.SERVING` 한 곳에 있다.
+        enc_file = model_bundle.resolve("user_encoder.npz")
+        self.model_sources = {"user_encoder.npz": enc_file.source}
+        npz = enc_file.path
+        if p.exists() and npz is not None:
             try:
                 enc = stage1_np.load(npz)
                 if enc is not None and enc.in_dim == self.X.shape[1]:
@@ -385,12 +390,11 @@ class Catalog:
         if self.model_error:
             log(f"학습 점수 없이 규칙 경로로 동작한다 — {self.model_error}")
         self.comb = None
-        import os as _os
-        _name = _os.environ.get("MUPID_COMBINER", "logistic_flow_stage1.json")
-        cp = paths.data_dir() / _name
-        if not cp.exists():
-            cp = paths.data_dir() / "logistic_combiner.json"
-        if cp.exists():
+        # 결합기도 모델 자리 먼저. 판에서는 `MUPID_COMBINER` → `logistic_combiner.json` 순이다.
+        comb_file = model_bundle.resolve("combiner.json")
+        self.model_sources["combiner.json"] = comb_file.source
+        cp = comb_file.path
+        if cp is not None:
             d = json.loads(cp.read_text(encoding="utf-8"))
             self.comb = {"features": d["features"],
                          "mean": np.asarray(d["scaler_mean"], dtype=np.float64),
@@ -805,6 +809,80 @@ def onboarding_track_ok(ans: dict):
     return track_ok
 
 
+def _seed_table() -> Optional[dict]:
+    """모델 묶음의 온보딩 씨앗 표(`onboarding_seeds.npz`) — 곡 → {구간 종류: (합, 개수, 대표 id)}.
+
+    표는 "그 판의 벡터와 그 μ 로 센 합" 이라 **같은 판·같은 μ 일 때만** 쓸 수 있다. 판이
+    바뀌었거나(지문) 중심화 평균이 다르면(μ) 합이 다른 공간의 값이라, 오류 없이 씨앗 방향만
+    틀어진다. 그래서 맞지 않으면 쓰지 않고 지금처럼 센다 — 이유는 `/health` 의
+    `model.onboarding_seeds` 에 남는다. 판정은 저장소 세대마다 한 번이다(`_index_cache`,
+    요청 사본끼리 나눠 갖는다).
+    """
+    c = current()
+    store = vector_store(c)
+    key = ("seed_table", store.generation)
+    if key in c._index_cache:
+        return c._index_cache[key]
+    got, why = None, None
+    r = model_bundle.resolve("onboarding_seeds.npz")
+    if r.path is None:
+        why = "묶음에 없다 — 요청 사본마다 센다"
+    else:
+        try:
+            with np.load(r.path) as d:
+                mu = np.asarray(d["mu"], dtype=np.float32)
+                if float(d["min_moment_sec"]) != float(MIN_MOMENT_SEC):
+                    why = f"MIN_MOMENT_SEC 가 다르다 ({float(d['min_moment_sec'])} vs {MIN_MOMENT_SEC})"
+                elif mu.shape != store.mu.shape or not np.allclose(mu, store.mu, atol=1e-5):
+                    why = "중심화 평균 μ 가 지금 저장소와 다르다"
+                elif str(d["snapshot"]) != store.snapshot():
+                    why = "판 지문(snapshot)이 지금 저장소와 다르다"
+                else:
+                    got = {}
+                    for t, lab, k, rep, u in zip(d["track_id"], d["section_label"], d["count"],
+                                                 d["rep_moment_id"], d["sum_u"]):
+                        got.setdefault(str(t), {})[str(lab)] = (np.asarray(u, np.float64),
+                                                                int(k), str(rep))
+        except Exception as e:
+            why = f"읽지 못했다: {type(e).__name__}: {e}"
+    if why:
+        log(f"온보딩 씨앗 표를 쓰지 않는다 — {why}")
+    c._index_cache[key] = got
+    c._index_cache["seed_table_status"] = {"source": r.source, "used": got is not None,
+                                           "reason": why}
+    return got
+
+
+def seed_table_status() -> Optional[dict]:
+    """`/health` 용. 첫 온보딩 요청 전에는 아직 판정하지 않았다(None)."""
+    c = CAT
+    return None if c is None else c._index_cache.get("seed_table_status")
+
+
+def _seed_sums_from_table(missing: list, table: dict, idx: "PoolIndex") -> dict:
+    """표에서 곡별 합을 꺼낸다. **이 사본의 풀과 같은 곡만** — 구간 종류·개수·대표 구간이 모두
+    같아야 한다. 요청의 `catalog` 가 곡의 구간을 일부만 실었으면 표의 합은 그 곡의 합이 아니다."""
+    out: dict = {}
+    for t in missing:
+        ent = table.get(t)
+        if not ent:
+            continue
+        cur: dict = {}
+        for r in idx.track_rows.get(t, ()):
+            if not idx.serve[r]:
+                continue
+            slot = cur.get(idx.labels[r])
+            if slot is None:
+                cur[idx.labels[r]] = [1, r]
+            else:
+                slot[0] += 1
+        if set(cur) != set(ent) or any(
+                cur[lab][0] != ent[lab][1] or idx.ids[cur[lab][1]] != ent[lab][2] for lab in cur):
+            continue
+        out[t] = {lab: [ent[lab][0].copy(), ent[lab][1], cur[lab][1], ent[lab][2]] for lab in cur}
+    return out
+
+
 def seed_sums(tracks) -> dict:
     """곡 → {구간 종류: [중심화 벡터 합, 개수, 첫 풀 행, 그 행의 external_id]}.
 
@@ -814,10 +892,16 @@ def seed_sums(tracks) -> dict:
     단위다(`tools/export_onboarding_seeds.py`).
 
     합은 곡마다 처음 필요할 때 한 번 센다(원본을 저장소에서 읽는다). 로컬 갈래는
-    메모리에서 읽고, Pinecone 갈래는 그 곡들만 fetch 한다.
+    메모리에서 읽고, Pinecone 갈래는 그 곡들만 fetch 한다. 모델 묶음에 씨앗 표가 있고
+    지금 판과 맞으면 거기서 먼저 꺼낸다(`_seed_table`, S15P21A204-454).
     """
     cache = _vec_cache().setdefault("seed_sums", {})
     missing = [t for t in dict.fromkeys(tracks) if t not in cache]
+    if missing:
+        table = _seed_table()
+        if table:
+            cache.update(_seed_sums_from_table(missing, table, pool_index()))
+            missing = [t for t in missing if t not in cache]
     if missing:
         idx = pool_index()
         rows = [r for t in missing for r in idx.track_rows.get(t, ()) if idx.serve[r]]

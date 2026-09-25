@@ -207,6 +207,12 @@ k8s-deploy-manifests:
 #
 # 이미지는 torch 가 없어 순수 파이썬 휠만 받는다. 크로스 빌드가 파일 복사에
 # 가까워 QEMU 를 타지 않는다.
+#
+# **서빙 가중치는 여기서 굽는다** (S15P21A204-454). models.lock 에 채택된 버전이 있으면
+# package-ai.sh 가 서빙 파일을 Object Storage 에서 받아(system-ci, X-Accel-Redirect) sha256 을
+# 확인하고 이미지의 모델 자리에 넣는다. 없으면 지금처럼 판의 가중치로 돈다. 롤아웃이 끝나면
+# 채택을 알린다 — 새 가중치가 든 이미지로 파드가 바뀐 것이 곧 채택이다.
+# JupyterHub 는 부르지 않는다. 그쪽이 죽어도 코드 배포는 된다.
 k8s-deploy-ai:
   extends: .k8s-deploy
   needs:
@@ -215,15 +221,26 @@ k8s-deploy-ai:
     - job: ai-server-verify
       artifacts: false
       optional: true
+    # models.lock 이 바뀐 커밋에만 있다. 올린 뒤에 받아야 한다.
+    - job: model-publish
+      artifacts: false
+      optional: true
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
       changes: &ai_changes
         - ai_server/**/*
         - infra_k8s/base/ai.yaml
         - infra_k8s/ci/package-ai.sh
+        - models.lock
+        - infra/ci/model_publish.py
         - .gitlab-ci.yml
     - if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_REF_PROTECTED == "true" && $MUPID_DEPLOY_ENABLED == "true"'
       when: manual
+  before_script:
+    # 굽기·채택(model_publish.py)이 파이썬과 PyYAML 을 쓴다. Spring 은 표준 라이브러리로 부른다.
+    - apk add --no-cache curl openssh-client python3 py3-yaml
   script:
     - sh infra_k8s/ci/package-ai.sh
     - sh infra_k8s/ci/deploy-k8s.sh ai
+    # 수신기가 rollout status(readinessProbe 통과)까지 기다린 뒤라 여기 닿았으면 배포 성공이다.
+    - python3 infra/ci/model_publish.py adopt

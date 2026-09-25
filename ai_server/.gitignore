@@ -6,3 +6,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env
+
+# 이미지의 모델 자리. CI 가 models.lock 대로 채워 이미지에 굽는다(infra_k8s/ci/package-ai.sh).
+# 저장소에는 빈 자리만 둔다 — 개발·시험은 판(artifacts/)의 가중치를 읽는다.
+models/stage1/*
+!models/stage1/.gitkeep

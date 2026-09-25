@@ -24,6 +24,8 @@ include:
   # backend-verify·frontend-verify 때문에 남는다 — k8s job 이 needs 로 쓴다.
   - local: infra_k8s/ci/k8s-release.yml
   - local: infra/ci/ai-server.yml
+  # models.lock — 모델 묶음 대조·게시 (S15P21A204-454). 굽기·채택은 k8s-deploy-ai 가 한다.
+  - local: infra/ci/model.yml
 
 gemini-code-review:
   stage: ai-review

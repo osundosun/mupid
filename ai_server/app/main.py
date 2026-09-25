@@ -19,8 +19,8 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 
-from . import (index_contract, internal_api, labels_store, paths, pinecone_store,
-               recommender)
+from . import (index_contract, internal_api, labels_store, model_bundle, paths,
+               pinecone_store, recommender)
 from .log import log
 
 _STARTED = time.time()
@@ -59,7 +59,16 @@ def artifact_status() -> dict:
         "exists": labels_ok,
         "store": "clickhouse" if labels_store.configured() else "file",
         "why": "개인화. 없으면 모든 사용자가 콜드스타트다"}
-    missing = sorted(k for k, v in files.items() if not v["exists"])
+    # 이미지의 모델 자리가 대신하는 판 파일은 없어도 결핍이 아니다 (`model_bundle.SERVING`).
+    # 채택된 모델로 구운 이미지에서 판의 옛 가중치를 치우면 "선택 산출물 없음" 이 거짓이 된다.
+    for bundle_name, alts in model_bundle.SERVING.items():
+        if model_bundle.resolve(bundle_name).source != "image":
+            continue
+        for alt in alts():
+            if alt in files:
+                files[alt]["served_from_image_as"] = bundle_name
+    missing = sorted(k for k, v in files.items()
+                     if not v["exists"] and not v.get("served_from_image_as"))
     idm = paths.id_map_path()
     files["id_map.parquet"] = {
         "exists": idm.exists(), "path": str(idm),
@@ -113,6 +122,13 @@ def _startup() -> None:
 
     # ① 판의 계약 표식. 옛 판(장르·무드를 색인 안에 들고 있던 판)과 새 코드가 섞이면
     #    오류 없이 그 축이 통째로 빈다. 값을 읽기 전에 막는다.
+    bundle = model_bundle.status()
+    if bundle["image_bundle"]["error"]:
+        # 판으로 물러나 뜬다. 이미지가 약속한 모델로 돌지 않는다는 사실은 남긴다.
+        log(f"이미지의 모델 묶음을 쓰지 않는다 — {bundle['image_bundle']['error']}")
+    log(f"서빙 가중치 — {bundle['source'] or '없음'}"
+        + (f" · {bundle['name']} {bundle['version']}" if bundle["version"] else ""))
+
     plate = index_contract.check_plate()
     _STATE["plate"] = plate
     for line in plate["warnings"]:
@@ -179,6 +195,14 @@ def _generation() -> dict:
         return {"backend": "pinecone", "error": f"{type(e).__name__}: {e}"}
 
 
+def _model_status() -> dict:
+    """모델 자리 판정 + 이 프로세스가 실제로 적재한 자리. 둘이 다르면 기동 뒤 파일이 바뀐 것이다."""
+    out = model_bundle.status()
+    out["loaded_from"] = dict(getattr(recommender.CAT, "model_sources", None) or {})
+    out["onboarding_seeds"] = recommender.seed_table_status()
+    return out
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _startup()
@@ -203,6 +227,9 @@ def health() -> dict:
         "model_backend": getattr(recommender.CAT, "model_backend", None),
         # 규칙 경로로 내려앉았다면 이유가 여기 있다. 비어 있으면 학습 점수가 살아 있다.
         "model_error": getattr(recommender.CAT, "model_error", None),
+        # 서빙 가중치를 어디서 읽었나 — 이미지의 모델 자리(`models.lock` 이 채택한 버전)인가,
+        # 판에 섞인 가중치인가. 배포가 새 모델로 바뀌었는지 이 값으로 확인한다 (S15P21A204-454).
+        "model": _model_status(),
         "load_seconds": _STATE["load_seconds"],
         "error": _STATE["error"],
         "index": ({"moments": int(len(cat._mom_index)),

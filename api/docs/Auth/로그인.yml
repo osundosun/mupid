@@ -112,6 +112,17 @@ docs: |-
   | --- | --- | --- | --- |
   | `email` | string | ✅ | 이메일 형식 |
   | `password` | string | ✅ | 비밀번호 |
+  | `refresh_token_validity_days` | int | | 리프레시 토큰 만료(일). **`ROLE_SYSTEM` 만**, 1 ~ 180. 비우면 7일 |
+
+  ## 시스템 계정의 장기 토큰 (S15P21A204-454)
+
+  `ROLE_SYSTEM` 은 리프레시 토큰을 **회전하지 않는다**(`액세스 토큰 재발급` 참고). 그래서 만료가
+  곧 토큰을 갈아 끼우는 주기라, CI 처럼 토큰을 변수에 두는 곳은 길게 받는다 —
+  `{"email": …, "password": …, "refresh_token_validity_days": 180}`. 쿠키 `Max-Age` 도 그 길이를
+  따른다. 비밀번호를 꺼내지 않고 관리자 토큰으로 받으려면 `User / 시스템 계정 토큰 발급`.
+
+  다른 역할이 지정하면 범위와 상관없이 거절한다(`MUPID_REFRESH_TOKEN_VALIDITY_NOT_ALLOWED`) —
+  비밀번호를 확인한 뒤에 보므로 이 오류로 계정의 역할이 드러나지 않는다.
 
   ## 응답
 
@@ -130,6 +141,8 @@ docs: |-
   | 코드 | 상태 | 설명 |
   | --- | --- | --- |
   | `MUPID_WRONG_EMAIL_OR_PASSWORD` | 401 | 이메일 혹은 비밀번호 불일치 |
+  | `MUPID_REFRESH_TOKEN_VALIDITY_NOT_ALLOWED` | 400 | `ROLE_SYSTEM` 이 아닌데 만료를 지정함 |
+  | `MUPID_REFRESH_TOKEN_VALIDITY_OUT_OF_RANGE` | 400 | 만료가 1 ~ 180일 밖 |
   | `MUPID_INVALID_REQUEST_BODY` | 400 | 이메일 형식 오류 등 검증 실패 |
   | `MUPID_USER_NOT_FOUND` | 404 | 가입되지 않았거나 탈퇴한 이메일 |
   | `MUPID_NOT_READABLE_MESSAGE` | 400 | 요청 본문 누락/파싱 실패 |

@@ -23,6 +23,8 @@
 | `MUPID_DATA_ENV` | **File** | `music_preprocessing/deploy.env.example` 를 채운 것 | `data-deploy`·`data-batch`·`data-check` (JupyterHub). 접속 정보·배치 설정·토큰이 **전부 이 파일 하나** 안에 있다 |
 | `MUPID_API_ENV` | **File** | **GitLab CI/CD 변수**에 넣은 운영 환경변수 내용. 노드의 `/srv/mupid-k8s/.env` 는 **수신기가 쓰는 결과물**이지 사람이 넣는 입력이 아니다 | `k8s-deploy-env` (`infra_k8s/ci/deploy-env.sh`). 내용을 그대로 노드로 보내면 **노드의 root 수신기(`receive-env.py`)가 Secret `mupid-secrets` 를 갈아 끼우고 api 를 재시작**한다. CI 는 Secret 을 직접 만들지 않는다 — 배포 계정의 RBAC 이 `secrets` 를 막고 있다(`rbac.yaml`). 열면 CI 키를 훔친 쪽이 DB 비밀번호·JWT 서명키·S3 키를 전부 읽게 된다 |
 | `MUPID_AI_SERVER_ENV` | **File** | 추천 서버(`ai`) 전용 환경변수 내용. 키 목록은 아래 | `k8s-deploy-ai-env` (`infra_k8s/ci/deploy-ai-env.sh`) → 노드 수신기 `receive-ai-env.py` → Secret **`mupid-ai-secrets`** → **`ai` 만** 롤아웃. `MUPID_API_ENV` 와 나눠 둔 것은 AI 비밀(Pinecone 키)을 Spring 파드가 받지 않고, AI 값 하나 고치자고 api 까지 재시작되지 않게 하려는 것이다 |
+| `MUPID_SYSTEM_CI_REFRESH_TOKEN` | Variable (**Protected·Masked**) 또는 File | `system-ci@mupid.local` 의 **장기 리프레시 토큰** — 관리자가 `POST /api/v1/user/system/{userId}/token` 에 `{"refresh_token_validity_days": 180}` 으로 받는다(`api/docs/User/시스템 계정 토큰 발급.yml`). ROLE_SYSTEM 토큰은 **회전하지 않으므로** CI 가 이 변수를 다시 쓸 일이 없다(설계 §11 미결 10 의 결정) | `model-publish`(업로드 ④-d·관문 ④-c)·`k8s-deploy-ai`(굽기 ④-e·채택 ④-g) — `infra/ci/model_publish.py`. `models.lock` 에 채택된 모델이 없으면 읽지 않는다. **만료 전에 갈아 끼운다** — 새 토큰을 받아 이 변수를 바꾸고, 새면 관리자가 `DELETE /api/v1/user/system/{userId}/token` 으로 일괄 폐기한다 |
+| `MUPID_MODEL_RECOMPUTE_GATE` | Variable | `true` 또는 비움(기본 꺼짐) | `model-publish` 의 관문 ④-c — 새 모델의 재계산(`stage1_v{N}`)이 전 구간에 채워졌는지 Spring 에 묻는다. 그 API 는 **457(벡터 등록)이 만든다.** 꺼져 있으면 경고만 찍고 올린다. 457 이 API 를 만든 뒤 켠다 |
 
 > **`MUPID_AI_SERVER_ENV` 에 넣는 키** (2026-09-23 갱신, S15P21A204-423)
 >
