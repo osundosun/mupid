@@ -105,9 +105,9 @@ class FakeClickHouse:
 def rc(tmp_path_factory):
     root = tmp_path_factory.mktemp("v3")
     _build(root, n_tracks=N_TRACKS, per_track=PER_TRACK)
-    saved = {k: os.environ.get(k) for k in ("MUPID_AI_ARTIFACT_DIR", "MUPID_PINECONE_ENABLED")}
+    saved = {k: os.environ.get(k) for k in ("MUPID_AI_ARTIFACT_DIR", "MUPID_VECTOR_BACKEND")}
     os.environ["MUPID_AI_ARTIFACT_DIR"] = str(root)
-    os.environ.pop("MUPID_PINECONE_ENABLED", None)
+    os.environ.pop("MUPID_VECTOR_BACKEND", None)
 
     def _reload():
         for name in ("features", "labeler", "stage1_torch"):

@@ -5,14 +5,11 @@
 #
 #   listen_events ──(pull_signals)──> events_service.jsonl ──(labeler)──> section_labels
 #
-# ## Pinecone 갱신은 여기서 하지 않는다
+# ## 순간 벡터 적재는 여기서 하지 않는다
 #
-# 순간 벡터 적재의 원본은 `moments_emb.npy` 인데 **이 파드의 색인에는 없다** —
-# 배송 묶음에서 뺐다(순간 벡터의 정본은 Pinecone 이다). 여기서 돌리면 적재 원본이
-# 없어 실패한다.
-#
-# 갱신은 그 파일을 실제로 만드는 쪽, 곧 JupyterHub 분석 배치
-# (`music_preprocessing/run_batch.sh` 의 `analysis` 성공 직후)가 한다.
+# 벡터를 쓰는 것은 Spring 벡터 등록 API 하나다(설계 원칙 1). JupyterHub 가 분석한 곡의
+# 벡터를 `music-preprocessing vectors-send` 로 Spring 에 보내고, Spring 이 Qdrant 에 쓴다.
+# 이 작업은 라벨만 만든다.
 #
 # 추천 서버와 **같은 이미지**를 쓴다. 배치가 쓰는 코드가 서빙이 쓰는 코드와 갈리면
 # 라벨의 의미가 달라진다 — 등급 판정은 한 곳에서만 해야 한다(labeler 문서).
@@ -93,8 +90,8 @@ spec:
                   set -e
                   python -m ai_server.tools.pull_signals
                   python -m ai_server.tools.run_labeler --json
-              # Pinecone 키. 서빙 파드와 **같은 Secret** 을 읽는다 — 선호 구간 묶음이
-              # 원본 벡터를 Pinecone 에서 읽는다.
+              # 서빙 파드와 **같은 Secret** 을 읽는다 — 선호 구간 묶음이 원본 벡터를
+              # 서빙과 같은 갈래(`MUPID_VECTOR_BACKEND`, Qdrant 읽기 키)에서 읽는다.
               #
               # **Spring 자격은 쓰지 않는다.** 곡 번호 환산과 구간 경계는 ClickHouse
               # `v_track_sections_current` 에서 읽는다(`app/track_sections.py`). 예전에는

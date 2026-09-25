@@ -26,7 +26,7 @@ for input in app tools requirements.txt; do
 done
 # 모델 가중치는 이미지에 함께 굽는다. 352KB 이고 코드와 수명이 같다 —
 # 모델 버전이 곧 이미지 태그가 되어 되돌리기가 rollout undo 한 번이다.
-# 색인·임베딩은 여기 넣지 않는다 (Pinecone·ClickHouse 로 간다).
+# 색인·임베딩은 여기 넣지 않는다 (색인 판·Qdrant·ClickHouse 로 간다).
 if [ -f ai_server/artifacts/data/proc/mupid/stage1_weights.npz ]; then
   mkdir -p "$directory/context/ai_server/artifacts/data/proc/mupid"
   cp ai_server/artifacts/data/proc/mupid/stage1_weights.npz \

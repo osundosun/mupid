@@ -88,7 +88,7 @@ POOL_EXTRA = os.environ.get("MUPID_POOL_EXTRA", "")
 # 행 정렬이 걸린 것들. 넷은 반드시 함께 잘린다.
 #
 # `moments_emb.npy` 도 **배송한다.** 운영 추천 서버는 2026-09-24 부터 로컬 벡터
-# 모드(`MUPID_PINECONE_ENABLED=false`, Pinecone 이그레스 소진)라 판 안의 이 파일을
+# 갈래(`MUPID_VECTOR_BACKEND=local`)라 판 안의 이 파일을
 # 읽는다. 빼고 보내면 새 판을 올리는 순간 추천이 멈춘다 — 그래서 node-b 판은 한동안
 # 수동으로 넣었다. Qdrant 로 옮기는 단계(VECTOR-STORE-DESIGN §13 5단계)에서 다시 정리한다.
 ALIGNED = ("moments.parquet", "moments_emb.npy", "features_v1.npz", "stage1_section.npy")

@@ -39,7 +39,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
 from . import (catalog_body, clickhouse, feature_store, metrics, onboarding as onb, paths,
-               pinecone_store, pool_snapshot, qdrant_store, query_conditions)
+               pool_snapshot, qdrant_store, query_conditions, vector_store)
 from .log import log
 
 PREFIX = "/internal"
@@ -377,27 +377,15 @@ def _svc_mod():
 
 
 def _svc():
-    # 벡터를 갈아 끼우는 동안에는 **분명한 오류**를 돌려준다. 그때 데이터
-    # namespace 가 비었거나 반쯤 차 있어서, 그 상태의 추천은 오류가 아니라 그냥
-    # 이상한 결과로 나온다. 로컬 옛 벡터로 조용히 내려가지도 않는다.
-    #
-    # 같은 호출이 **새 μ 도 읽어 온다** — 배치가 평균을 갈았는데 서버가 옛 평균으로
-    # 계속 도는 상태를 막는다. 재기동이 필요 없다.
+    # 갈래 설정이 틀리면(모르는 값·지운 `pinecone`) **분명한 오류**를 돌려준다. 로컬 옛
+    # 벡터로 조용히 내려가지 않는다.
     svc = _svc_mod()
     try:
-        # 시험의 가짜 서비스 모듈에는 갈래 판정이 없다 — 그때는 예전 스위치만 본다.
-        pick = getattr(svc, "vector_backend", None)
-        backend = pick() if pick else ("pinecone" if pinecone_store.enabled() else "local")
+        # 시험의 가짜 서비스 모듈에는 갈래 판정이 없다 — 그때는 설정만 본다.
+        pick = getattr(svc, "vector_backend", None) or vector_store.backend_name
+        backend = pick()
     except ValueError as e:
         raise ApiError("INDEX_NOT_READY", f"순간 벡터 저장소 설정이 틀렸습니다: {e}")
-    if backend == "pinecone":
-        try:
-            pinecone_store.serving_center()
-        except pinecone_store.ServingPaused:
-            raise ApiError("RELOAD_IN_PROGRESS",
-                           "추천 벡터를 갱신하는 중입니다. 잠시 뒤 다시 시도해 주세요.")
-        except pinecone_store.PineconeError as e:
-            raise ApiError("INDEX_NOT_READY", f"순간 벡터 저장소를 읽지 못했습니다: {e}")
     # 곡·구간 값은 기준 풀 스냅샷이 들고 있다. 여기서 보는 것은 **색인·모델이 올라왔는가** 뿐이다.
     if getattr(svc, "CAT", None) is None:
         raise ApiError("INDEX_NOT_READY", "추천 색인이 아직 준비되지 않았습니다.")
@@ -768,18 +756,16 @@ def ready() -> dict:
     빠진 콜드스타트 추천이 나가지만 추천 자체는 된다. 그때 준비 완료를 거두면 모든
     파드가 한꺼번에 빠져 품질 저하가 장애로 번진다.
     """
-    # 갱신 중이면 여기서 RELOAD_IN_PROGRESS(503) 로 나간다 — readinessProbe 가
-    # 그것을 보고 파드를 엔드포인트에서 뺀다. 재개는 배치가 검증을 통과한 뒤에만
-    # 표시를 지우면서 일어난다.
-    svc = _svc()                       # 색인 미적재면 INDEX_NOT_READY (503)
+    # 준비가 안 됐으면 여기서 INDEX_NOT_READY(503) 로 나간다 — readinessProbe 가 그것을
+    # 보고 파드를 엔드포인트에서 뺀다.
+    svc = _svc()                       # 색인 미적재·갈래 설정 오류·Qdrant 미준비면 503
     return {"ready": True,
             "index_moments": int(len(svc.CAT._mom_index)),
             "metadata_source": "feature_store",
             "pool_snapshot": pool_snapshot_status(),
-            # 벡터 검색 갈래. Pinecone 장애는 여기서 드러나야 하고, 로컬 옛 벡터로
+            # 벡터 검색 갈래. Qdrant 장애는 여기서 드러나야 하고, 로컬 옛 벡터로
             # 조용히 내려가지 않는다.
             "vector_search": {"backend": svc.vector_backend(),
-                              **pinecone_store.settings(),
                               **({"qdrant": qdrant_store.settings()}
                                  if svc.vector_backend() == "qdrant" else {})},
             "behavior_store": behavior_store_status(),
@@ -822,7 +808,7 @@ def install(app: FastAPI, service_module=None) -> None:
     @app.exception_handler(ApiError)
     async def _api(request: Request, exc: ApiError):
         status = {"NO_CANDIDATES": 404, "UNSATISFIABLE_CONDITIONS": 404,
-                  "INDEX_NOT_READY": 503, "RELOAD_IN_PROGRESS": 503,
+                  "INDEX_NOT_READY": 503,
                   "CONDITIONS_UNAVAILABLE": 503, "INTERNAL_ERROR": 500}.get(exc.code, 400)
         return _err(exc.code, exc.message, status)
 

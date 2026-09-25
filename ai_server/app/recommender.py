@@ -32,8 +32,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
-from . import (catalog_body, labels_store, metrics, model_bundle, paths, pinecone_store,
-               stage1_np, vector_store as vstore)
+from . import (catalog_body, labels_store, metrics, model_bundle, paths, stage1_np,
+               vector_store as vstore)
 from .log import log
 
 warnings.filterwarnings("ignore")
@@ -66,7 +66,7 @@ POOL_SOURCE = os.environ.get("MUPID_POOL", "flow")
 #
 # **기본값에 `jamendo` 를 두지 않는다.** Jamendo 곡은 실서비스에서 재생하지 않는다 —
 # 학습용으로 색인에 섞여 있을 뿐이다. 기본값이 `jamendo` 이던 때에는 운영 매니페스트가
-# `''` 로 덮어서만 막혀 있었고, 그 설정이 없는 자리(JupyterHub 의 Pinecone 적재,
+# `''` 로 덮어서만 막혀 있었고, 그 설정이 없는 자리(JupyterHub 의 벡터 적재,
 # 새 도구)에서는 재생할 수 없는 곡이 조용히 후보가 됐다. 실제로 배포 직후 받은 추천
 # 3건이 전부 `JAMENDO_*` 였던 적이 있다(`infra_k8s/base/ai.yaml`).
 POOL_SOURCES = {POOL_SOURCE} | {
@@ -148,8 +148,8 @@ SIMILAR_OVERFETCH = 8
 # 원본 벡터를 그만큼 가져오게 된다.
 DNA_CANDIDATES_PER_SEED = 200
 # 씨앗(DNA 중심·온보딩 씨앗)이 하나도 없을 때 점수를 매길 후보 수. 예전에는 풀 전체를
-# 매겼다 — Pinecone 갈래에서는 그게 곧 풀 전체의 원본 벡터 fetch 였고, 2026-09-24 의
-# 이그레스 소진이 여기서 났다. 콜드스타트 순서(위치·에너지)는 사용자와 무관해서 사본마다
+# 매겼다 — 외부 벡터 저장소에서는 그게 곧 풀 전체의 원본 벡터 fetch 였고, 2026-09-24 의
+# Pinecone 이그레스 소진이 여기서 났다. 콜드스타트 순서(위치·에너지)는 사용자와 무관해서 사본마다
 # 한 번 세 두고 앞에서부터 이만큼만 가져온다. 탐색 칸이 `n·6` 위까지 보므로 그보다 넉넉하다.
 COLD_START_CANDIDATES = 300
 # 요청 사본마다 들고 있는 조건별 캐시(허용 목록·온보딩 씨앗)의 상한. 조건 조합은 몇 개
@@ -300,9 +300,8 @@ class Catalog:
         self.mom = pd.read_parquet(paths.data_dir() / "moments.parquet")
         if "source" not in self.mom.columns:
             self.mom["source"] = "fma"
-        # **운영 판에는 없다.** 순간 벡터의 정본은 Pinecone 이고, 이 파일은 분석
-        # 배치가 Pinecone 을 채울 때만 읽는 입력 산출물이다. 로컬 갈래(개발·비교)
-        # 에서만 쓰이므로 없으면 None 으로 둔다 — 읽는 자리가 이유를 말한다.
+        # local 갈래(운영이 지금 이것이다)의 벡터. qdrant 갈래에서는 판에 없어도 된다 —
+        # 없으면 None 으로 둔다. 읽는 자리가 이유를 말한다(`_require_local_vectors`).
         emb = paths.data_dir() / "moments_emb.npy"
         self.Z = np.load(emb, mmap_mode="r") if emb.exists() else None
         self.X, self.idx, self.info = feat.load()
@@ -915,7 +914,7 @@ def seed_sums(tracks) -> dict:
     단위다(`tools/export_onboarding_seeds.py`).
 
     합은 곡마다 처음 필요할 때 한 번 센다(원본을 저장소에서 읽는다). 로컬 갈래는
-    메모리에서 읽고, Pinecone 갈래는 그 곡들만 fetch 한다. 모델 묶음에 씨앗 표가 있고
+    메모리에서 읽고, qdrant 갈래는 그 곡들만 fetch 한다. 모델 묶음에 씨앗 표가 있고
     지금 판과 맞으면 거기서 먼저 꺼낸다(`_seed_table`, S15P21A204-454).
     """
     cache = _vec_cache().setdefault("seed_sums", {})
@@ -1743,21 +1742,21 @@ def user_positives(user: str) -> pd.DataFrame:
 
 # ------------------------------------------------- 순간 벡터를 어디서 읽는가
 #
-# 세 갈래가 있고, **고르는 것은 설정이지 실패가 아니다**(`MUPID_VECTOR_BACKEND`, 기본 local).
+# 두 갈래가 있고, **고르는 것은 설정이지 실패가 아니다**(`MUPID_VECTOR_BACKEND`, 기본 local).
 # 어느 쪽이든 추천 계산부는 `vector_store()` 가 돌려주는 인터페이스(`app/vector_store.py`)만
 # 부른다.
 #
 #   local     `moments_emb.npy` 를 읽는다. 운영이 지금 이것이다 (2026-09-24~)
 #   qdrant    node-b 의 Qdrant 컬렉션. 원본은 `mu + r·u` 로 되돌린다 (S15P21A204-456)
-#   pinecone  후보는 인덱스에서 찾고, 원본은 `mu + r·u` 로 되돌린다 (459 에서 지운다)
+#
+# 예전 Pinecone 갈래는 S15P21A204-459 에서 지웠다. `pinecone` 을 고르면 설정 오류다.
 #
 # 외부 저장소를 고른 배포에서 그 저장소가 **실패하면 local 로 내려가지 않는다.**
 # 내려가면 노드에 남은 옛 벡터로 조용히 다른 추천이 나가고, 그 사실이 응답 어디에도
 # 드러나지 않는다. 실패는 예외로 올려 `/internal/ready` 와 오류로 보이게 한다.
 
 def vector_backend() -> str:
-    # 예전 스위치(`MUPID_PINECONE_ENABLED`)도 계속 받는다 — 새 변수가 비었을 때만.
-    return vstore.backend_name(pinecone_store.enabled())
+    return vstore.backend_name()
 
 
 def vector_store(c: Optional["Catalog"] = None) -> vstore.VectorStore:
@@ -1767,8 +1766,6 @@ def vector_store(c: Optional["Catalog"] = None) -> vstore.VectorStore:
     올리면 함께 사라진다. 평균 μ 도 저장소가 들고 있다(색인 풀 전체로 한 번, !285).
     """
     backend = vector_backend()
-    if backend == "pinecone":
-        return vstore.PINECONE
     c = c if c is not None else current()
     if backend == "qdrant":
         got = c._index_cache.get("vector_store:qdrant")
@@ -1833,13 +1830,11 @@ def vector_store_problem() -> Optional[str]:
 def _pool_mean() -> np.ndarray:
     """중심화에 쓰는 풀 평균. **저장소가 들고 있다.**
 
-    Pinecone 을 켜면 **판에 고정된 평균**을 쓴다. 요청마다 풀에서 다시 재면 적재
-    때와 다른 공간으로 질의가 나가 유사도가 통째로 내려앉는다 — 오류 없이 품질만
-    나빠지는 종류다. 고정본이 없으면 멈춘다(지어내지 않는다). control 을 읽을 때마다
-    상태와 세대를 함께 보므로, 배치가 μ 를 갈면 재기동 없이 새 μ 를 쓴다.
+    qdrant 갈래는 컬렉션을 쓴 쪽과 **같은 μ**(동결 `mu.npy`, 없으면 판의 풀 평균)를 쓴다
+    (`_frozen_mu`). 다른 μ 로 질의하면 유사도가 통째로 내려앉는다 — 오류 없이 품질만
+    나빠지는 종류다.
 
-    로컬 갈래는 **색인 풀 전체**(`index_pool`)로 한 번 잰다 — Pinecone 적재가 평균을
-    재는 범위와 같다. 요청 사본의 후보로 재면 안 된다: 검색 사본은 조건을 통과한 구간만
+    로컬 갈래는 **색인 풀 전체**(`index_pool`)로 한 번 잰다. 요청 사본의 후보로 재면 안 된다: 검색 사본은 조건을 통과한 구간만
     묶으므로, "발라드만" 인 요청은 발라드의 평균으로 중심화돼 질의마다 기준점이 달라진다.
     오류 없이 순위만 틀어진다(2026-09-24 에 찾았다).
     """
@@ -1885,15 +1880,15 @@ def candidate_search(query_vector: np.ndarray, top_k: int,
     """닮은 순간 후보. 질의는 **이미 중심화된** 벡터여야 한다.
 
     `allow` 를 주지 않으면 이 요청의 후보 풀 전체(사본의 스냅샷에 있는 순간)로 묶는다.
-    로컬 갈래는 그 안에서 내적해 상위만 남기고(로컬 ANN 대용), Pinecone 갈래는 넓게
-    찾은 뒤 카탈로그 밖을 거른다.
+    로컬 갈래는 그 안에서 내적해 상위만 남기고(로컬 ANN 대용), qdrant 갈래는 허용 목록을
+    사전 필터로 걸거나 넉넉히 찾은 뒤 거른다(`QdrantVectorStore.search_many`).
     """
     q = np.asarray(query_vector, dtype=np.float32).reshape(-1)
     return vector_store().search(q, top_k, allow if allow is not None else _pool_allow())
 
 
 def index_pool(c: Optional["Catalog"] = None) -> pd.DataFrame:
-    """색인의 추천 풀 — Pinecone 적재 대상. **카탈로그와 교집합을 내지 않는다.**
+    """색인의 추천 풀 — 벡터 저장소의 적재 대상. **카탈로그와 교집합을 내지 않는다.**
 
     적재 도구도 Spring 을 부르지 않는다(연동 계약 2026-09-23 절). 지워진 곡의 벡터가
     남아도 기준 풀 스냅샷이 빼므로(`is_deleted`) 후보가 되지 않는다. 적재본 지문도
@@ -1905,11 +1900,10 @@ def index_pool(c: Optional["Catalog"] = None) -> pd.DataFrame:
 
 
 def current_snapshot() -> str:
-    """지금 판의 적재본 지문. 배치가 굳힌 평균과 대조하는 값이다.
+    """지금 판의 적재본 지문. local 저장소의 `snapshot()` 과 같은 값이다.
 
-    풀 전체 벡터를 한 번 훑는다(mmap). 기동에서 한 번뿐이고, 이 한 번이 "평균만
-    옛 것" 인 상태를 잡는다 — 그 상태는 오류가 아니라 유사도 저하로만 드러난다.
-    Pinecone 을 켜 두어도 **판의 벡터로** 잰다 — control 이 적은 값과 대조하는 자리다.
+    풀 전체 벡터를 한 번 훑는다(mmap). 요청 경로에서 부르지 않는다 — 씨앗 표를 판에 묶는
+    시험이 local 저장소의 지문과 이 값을 대조한다.
     """
     c = current()
     pool = index_pool(c)
@@ -1918,7 +1912,7 @@ def current_snapshot() -> str:
                    dtype=np.float32)
     version = (c.info.get("embedding_version", "mert-v1-95m")
                if isinstance(c.info, dict) else "mert-v1-95m")
-    return pinecone_store.snapshot_hash(ids, Z, version, POOL_SOURCES)
+    return vstore.snapshot_hash(ids, Z, version, POOL_SOURCES)
 
 
 def _vector_dim() -> int:
@@ -1929,7 +1923,7 @@ def _vector_dim() -> int:
 
 
 def _require_local_vectors(what: str):
-    """local 갈래에서만 쓰는 저장본. 운영(Pinecone)에는 없어도 된다."""
+    """local 갈래에서만 쓰는 저장본. qdrant 갈래에서는 판에 없어도 된다."""
     c = current()
     if getattr(c, "Z", None) is None:
         raise RuntimeError(
@@ -2150,7 +2144,7 @@ def similar_moments(moment_id: str, n: int, exclude_tracks: set[str] | None = No
         drop.add(src_track)
 
     # 곡당 하나만 남기므로 넉넉히 받아 온다. 한 곡이 구간 여럿으로 상위를 채우면
-    # 그만큼 곡 수가 줄어든다. **카탈로그에 있는 순간만** 찾는다 — Pinecone 에 남아
+    # 그만큼 곡 수가 줄어든다. **카탈로그에 있는 순간만** 찾는다 — 벡터 저장소에 남아
     # 있어도 MySQL 에서 지워졌으면 화면이 그 줄을 열지 못한다.
     want = max(n * SIMILAR_OVERFETCH, n + 1)
     by_moment = dict(candidate_search(q, want))
@@ -2607,7 +2601,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     # 씨앗(DNA 중심·온보딩 씨앗)마다 닮은 순간을 받아 그 합집합만 남긴다. 좁힌 뒤의 점수
     # 계산은 아래가 그대로 한다 — 저장소는 후보를 고르는 일만 하고 최종 순위는 맡지 않는다.
     # 씨앗이 없으면(콜드스타트) 사본마다 한 번 세 둔 콜드스타트 순서에서 앞의 것만 쓴다.
-    # 예전에는 이때 풀 전체를 점수 매겼고, Pinecone 갈래에서 풀 전체 fetch 가 됐다.
+    # 예전에는 이때 풀 전체를 점수 매겼고, 외부 저장소(Pinecone)에서는 풀 전체 fetch 가 됐다.
     #
     # 하드 제외(목록·세션 재생곡·DISLIKE)는 사용자 이력(H)이라 검색 뒤에 뺀다. 뺄 만큼 더
     # 받아 와서 "제외하지 않은 것 중 상위 K" 가 되게 한다.

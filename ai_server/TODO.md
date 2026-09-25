@@ -244,6 +244,11 @@ Spring `GET /api/v1/recommendation/daily` 는 `daily_recommendations` 를 **읽�
 
 ### 13-1. 벡터 저장소 — Pinecone 을 붙이지 않는다
 
+> **2026-09-25 갱신 (S15P21A204-459).** 이 결정은 한 번 뒤집혔다가 다시 확정됐다. 2026-09-24
+> Pinecone 전환(431)이 운영에 올라갔고, 콜드스타트가 요청마다 풀 전체를 fetch 해 무료 요금제
+> 이그레스를 소진했다 — 로컬 벡터로 되돌렸고 Pinecone 은 코드에서 지웠다. 규모가 커질 때의
+> 벡터 DB 는 **Qdrant** 다(`infra/VECTOR-STORE-DESIGN.md`). 아래는 2026-09-16 당시의 판단이다.
+
 > **2026-09-16 결정.** `S15P21A204-214` 는 현재 규모에서 근거가 없다.
 
 실측으로 판단했다.
@@ -267,8 +272,7 @@ Pinecone 을 넣으면 그 자리에 **추천 요청마다 네트워크 왕복�
 기동 시간에 부담이 되거나 (나) 완전 탐색이 응답 시간에 드러나기 시작할 때.
 그 전까지는 `tools/slice_index.py` 로 자른 색인을 노드에 올려 쓴다.
 
-`infra/AI-SPRING-CONTRACT.md` 의 Pinecone 절은 **아직 이 결정을 반영하지 않았다**
-— 그 문서는 Spring 팀과 공유하는 계약이라 따로 논의해 고친다.
+`infra/AI-SPRING-CONTRACT.md` 의 벡터 저장소 절(§2)은 459 에서 Qdrant 로 고쳤다.
 
 ### 14. `matched_dna_rep` 을 계약에 올리기
 

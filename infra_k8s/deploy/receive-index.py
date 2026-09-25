@@ -54,8 +54,8 @@ CHECKSUM = re.compile(r"^[0-9a-f]{64}$")
 # 정본이고 추천 서버가 Spring 내부 카탈로그 API 로 읽는다 — 색인이 사본을 들고 오면
 # 어느 쪽이 이기는지가 자리마다 갈린다. 옛 묶음은 이 목록 밖의 이름이라 거부된다.
 #
-# `moments_emb.npy` 는 받는다. 운영 추천 서버는 2026-09-24 부터 로컬 벡터 모드
-# (`MUPID_PINECONE_ENABLED=false`, Pinecone 이그레스 소진)라 판 안의 이 파일로 추천한다.
+# `moments_emb.npy` 는 받는다. 운영 추천 서버는 2026-09-24 부터 로컬 벡터 갈래
+# (`MUPID_VECTOR_BACKEND=local`)라 판 안의 이 파일로 추천한다.
 # 여기서 거절하던 동안 node-b 판은 수신기를 거치지 않고 손으로 만들어야 했다.
 # Qdrant 로 옮기는 단계(VECTOR-STORE-DESIGN §13 5단계)에서 다시 정리한다.
 ALLOWED = {

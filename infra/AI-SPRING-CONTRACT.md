@@ -264,11 +264,11 @@ Spring Boot 공개 API        ← 인증·권한·영속화는 전부 여기
    ▼
 FastAPI AI 내부 API         ← 추천 계산만. 상태를 갖지 않는다
    ├─ MySQL          곡·구간 메타 (읽기)
-   ├─ Pinecone       MERT 구간 임베딩
+   ├─ Qdrant         MERT 구간 임베딩 (읽기만 — 쓰는 것은 Spring 벡터 등록 API)
    └─ 로컬 산출물     랭킹 모델·색인
 ```
 
-Frontend 는 FastAPI·Pinecone·MySQL·ClickHouse 를 직접 부르지 않는다. FastAPI 는 Spring
+Frontend 는 FastAPI·Qdrant·MySQL·ClickHouse 를 직접 부르지 않는다. FastAPI 는 Spring
 에서만 호출한다.
 
 ---
@@ -325,46 +325,19 @@ AI 내부에는 문자열 곡 ID(`T000148`, `JAMENDO_1048629`)와 구간 ID(`T00
 
 ---
 
-## 2. Pinecone
+## 2. 순간 벡터 저장소 (Qdrant)
 
-### vector ID
+> **2026-09-25 변경됨 (S15P21A204-459).** 이 절은 Pinecone 계획이었다. Pinecone 은 2026-09-24
+> 운영에서 무료 요금제 이그레스를 소진해 되돌렸고 저장소에서 지웠다. 벡터 DB 는 node-b 의
+> **Qdrant** 다.
 
-```
-moment:{music_section_id}:mert-v1
-예) moment:15231:mert-v1
-```
-
-`music_section_id` 와 임베딩은 **1:1**. ID 에서 `music_section_id` 를 그대로 역추적할 수
-있고, 거기서 MySQL `music_id` 로 이어진다.
-
-### metadata
-
-| 키 | 타입 | 용도 |
-|---|---|---|
-| `music_id` | int | 곡 단위 중복 제거·필터 |
-| `music_section_id` | int | 역추적 |
-| `section_label` | string | 구간 종류 필터 |
-| `start_time_ms` / `end_time_ms` | int | 재생 위치 |
-| `model_version` | string | `mert-v1` |
-
-벡터 차원은 **1536** (MERT 구간 임베딩, 실측).
-
-### 저장 순서와 실패 처리
-
-```
-1) MySQL 구간 메타 저장          → music_section_id 발급
-2) vector ID 생성                moment:{music_section_id}:mert-v1
-3) Pinecone upsert
-4) MySQL external_id 에 vector ID 저장
-5) 양쪽 검증 (개수·역추적)
-```
-
-- **Pinecone 저장이 실패하면 그 구간을 성공으로 표시하지 않는다.** 4·5단계를 진행하지 않고
-  해당 곡을 재처리 대상으로 남긴다.
-- 재실행은 **같은 vector ID 로 upsert** 한다. `music_section_id` 가 같으면 ID 가 같으므로
-  중복 벡터가 생기지 않는다.
-- 반대로 MySQL 만 성공하고 Pinecone 이 비어 있으면 추천에서 그 구간이 조용히 빠진다.
-  5단계 검증이 이를 잡는다.
+- 정본은 `infra/VECTOR-STORE-DESIGN.md` §6.1(컬렉션·포인트 ID·payload)·§6.6(벡터 등록 API)이고,
+  서빙 쪽 사용법은 `ai_server/docs/QDRANT.md` 다.
+- **쓰는 것은 Spring 벡터 등록 API 하나다**(`PUT /music/{id}/vectors`, 곡 전체). JupyterHub 배치가
+  `music-preprocessing vectors-send` 로 보낸다. AI 서버는 읽기 전용 키로 읽기만 한다.
+- 벡터 차원은 **1536** (MERT 구간 임베딩, 실측). 컬렉션에는 원본이 아니라 중심화 방향
+  `u = (Z-μ)/‖Z-μ‖` 와 payload `r = ‖Z-μ‖` 가 들어가고, 원본은 `μ + r·u` 로 되돌린다.
+- 운영은 아직 local 갈래다(`MUPID_VECTOR_BACKEND` 비움) — 색인 판의 `moments_emb.npy` 로 추천한다.
 
 ---
 
@@ -878,15 +851,10 @@ ID 쪽이 최종 방어선이다.
 
 #### 아직 연결되지 않은 것
 
-아래는 **계획이며 현재 코드에 참조가 없다**(2026-09-15 확인). 벡터 검색은 Pinecone 이
-아니라 메모리의 NumPy 행렬로 전수 비교하고, 카탈로그는 MySQL 이 아니라 Parquet 에서
-읽는다. 곡 수가 적어 전수 비교가 정확도 손실 없이 충분하기 때문이다. 붙일 때를 위해
-이름만 남겨 둔다.
+아래는 **계획이며 현재 코드에 참조가 없다**(2026-09-15 확인). 카탈로그는 MySQL 이 아니라
+Parquet 에서 읽는다. 붙일 때를 위해 이름만 남겨 둔다. (벡터 저장소 설정은 위 §2 — Qdrant.)
 
 ```
-MUPID_PINECONE_API_KEY=        # 미연결
-MUPID_PINECONE_INDEX_HOST=     # 미연결
-MUPID_PINECONE_NAMESPACE=      # 미연결
 MUPID_MYSQL_URL=               # 미연결 — 읽을 계획도 없다 (Q8: 행동 데이터는 ClickHouse)
 MUPID_MYSQL_USER=              # 미연결
 MUPID_MYSQL_PASSWORD=          # 미연결
@@ -895,9 +863,9 @@ MUPID_CLICKHOUSE_USER=         # 미연결
 MUPID_CLICKHOUSE_PASSWORD=     # 미연결
 ```
 
-Pinecone 을 붙일 때는 **경계를 수정한 구간의 임베딩 재추출이 함께 들어가야 한다.**
-지금은 전수 비교라 원본 좌표 기준으로만 점수가 나가서 드러나지 않지만, 색인을 두면
-낡은 벡터가 남아 수정 전 경계로 추천이 나간다.
+외부 벡터 저장소(Qdrant)로 옮길 때는 **경계를 수정한 구간의 임베딩 재추출이 함께 들어가야
+한다.** 낡은 벡터가 남으면 수정 전 경계로 추천이 나간다 — 서빙은 payload `analysis_version` 을
+피처 저장소와 대조해 다르면 그 벡터를 버린다(설계 §9.3-3).
 
 ### AI 배치 (`ai_batch`)
 
@@ -910,9 +878,6 @@ MUPID_S3_ENDPOINT=
 MUPID_S3_ACCESS_KEY=
 MUPID_S3_SECRET=
 MUPID_S3_BUCKET=
-MUPID_PINECONE_API_KEY=
-MUPID_PINECONE_INDEX_HOST=
-MUPID_PINECONE_NAMESPACE=
 MUPID_MYSQL_URL=
 MUPID_MYSQL_USER=
 MUPID_MYSQL_PASSWORD=
