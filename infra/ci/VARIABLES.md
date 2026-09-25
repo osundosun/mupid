@@ -24,7 +24,21 @@
 | `MUPID_API_ENV` | **File** | **GitLab CI/CD 변수**에 넣은 운영 환경변수 내용. 노드의 `/srv/mupid-k8s/.env` 는 **수신기가 쓰는 결과물**이지 사람이 넣는 입력이 아니다 | `k8s-deploy-env` (`infra_k8s/ci/deploy-env.sh`). 내용을 그대로 노드로 보내면 **노드의 root 수신기(`receive-env.py`)가 Secret `mupid-secrets` 를 갈아 끼우고 api 를 재시작**한다. CI 는 Secret 을 직접 만들지 않는다 — 배포 계정의 RBAC 이 `secrets` 를 막고 있다(`rbac.yaml`). 열면 CI 키를 훔친 쪽이 DB 비밀번호·JWT 서명키·S3 키를 전부 읽게 된다 |
 | `MUPID_AI_SERVER_ENV` | **File** | 추천 서버(`ai`) 전용 환경변수 내용. 키 목록은 아래 | `k8s-deploy-ai-env` (`infra_k8s/ci/deploy-ai-env.sh`) → 노드 수신기 `receive-ai-env.py` → Secret **`mupid-ai-secrets`** → **`ai` 만** 롤아웃. `MUPID_API_ENV` 와 나눠 둔 것은 AI 비밀(Pinecone 키)을 Spring 파드가 받지 않고, AI 값 하나 고치자고 api 까지 재시작되지 않게 하려는 것이다 |
 | `MUPID_SYSTEM_CI_REFRESH_TOKEN` | Variable (**Protected·Masked**) 또는 File | `system-ci@mupid.local` 의 **장기 리프레시 토큰** — 관리자가 `POST /api/v1/user/system/{userId}/token` 에 `{"refresh_token_validity_days": 180}` 으로 받는다(`api/docs/User/시스템 계정 토큰 발급.yml`). ROLE_SYSTEM 토큰은 **회전하지 않으므로** CI 가 이 변수를 다시 쓸 일이 없다(설계 §11 미결 10 의 결정) | `model-publish`(업로드 ④-d·관문 ④-c)·`k8s-deploy-ai`(굽기 ④-e·채택 ④-g) — `infra/ci/model_publish.py`. `models.lock` 에 채택된 모델이 없으면 읽지 않는다. **만료 전에 갈아 끼운다** — 새 토큰을 받아 이 변수를 바꾸고, 새면 관리자가 `DELETE /api/v1/user/system/{userId}/token` 으로 일괄 폐기한다 |
-| `MUPID_MODEL_RECOMPUTE_GATE` | Variable | `true` 또는 비움(기본 꺼짐) | `model-publish` 의 관문 ④-c — 새 모델의 재계산(`stage1_v{N}`)이 전 구간에 채워졌는지 Spring 에 묻는다. 그 API 는 **457(벡터 등록)이 만든다.** 꺼져 있으면 경고만 찍고 올린다. 457 이 API 를 만든 뒤 켠다 |
+| `MUPID_MODEL_RECOMPUTE_GATE` | Variable | `true` 또는 비움(기본 꺼짐) | `model-publish` 의 관문 ④-c — 새 모델의 재계산(`stage1_v{N}`)이 전 구간에 채워졌는지 Spring 에 묻는다(`GET /api/v1/system/vectors/stage1/{N}/status` 의 `complete`, S15P21A204-457). 꺼져 있으면 경고만 찍고 올린다. **켜는 법은 아래** |
+
+> **재계산 관문 켜기** (`MUPID_MODEL_RECOMPUTE_GATE`, S15P21A204-457) — 켜는 것 자체는 운영 결정이다.
+>
+> 1. **먼저 Qdrant 가 채워져 있어야 한다.** 운영 컬렉션을 만들고(`infra_k8s/OPERATIONS-K8S.md` 7-1) 분석
+>    배치가 전 곡 벡터를 보낸 뒤(`music-preprocessing vectors-send`), 대조 불일치가 0 인지 본다(관리자 대시보드
+>    "Qdrant 벡터 반영"). 비어 있는 채로 켜면 모든 모델 게시가 멈춘다.
+> 2. 새 모델 버전 `v{N}` 의 재계산을 보낸다: `music-preprocessing vectors-stage1 v{N} --vectors <구간 벡터 .npy>`.
+>    끝에 관문 수치(`filled`/`expected_sections`, Qdrant `mert` 수)를 찍는다 — `complete=True` 여야 한다.
+> 3. GitLab → Settings → CI/CD → Variables 에 `MUPID_MODEL_RECOMPUTE_GATE` = `true` (Variable, Protected).
+>    다음 `models.lock` 병합부터 `model-publish` 가 `complete` 가 아니면 **올리지 않고 멈춘다**
+>    (메시지에 채워진 수·기대 수가 나온다). 끄려면 변수를 지운다 — 경고만 찍고 올리는 지금 동작으로 돌아간다.
+>
+> `complete` 는 `filled ≥ MySQL 의 살아 있는 곡 구간 수` 이고 `filled ≥ Qdrant mert 포인트 수` 다. 뒤의 조건은
+> AI 준비 판정의 분모라, 삭제된 곡의 포인트가 남아 있으면(매일 04:50 대조가 지운다) 관문이 멈춘다.
 
 > **`MUPID_AI_SERVER_ENV` 에 넣는 키** (2026-09-23 갱신, S15P21A204-423)
 >

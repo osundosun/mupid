@@ -25,8 +25,9 @@
     MUPID_SYSTEM_CI_REFRESH_TOKEN   `system-ci` 의 장기 리프레시 토큰 (ROLE_SYSTEM 은 회전하지
                                     않는다 — 설계 §11 미결 10 의 결정). Variable·File 둘 다 받는다
     MUPID_K8S_BASE_URL              Spring 앞단 주소 (배포 확인과 같은 값)
-    MUPID_MODEL_RECOMPUTE_GATE      `true` 면 publish 가 재계산 완료를 Spring 에 묻는다. 그 API 는
-                                    457(벡터 등록)이 만든다 — 그때까지 기본은 꺼짐이고 경고만 찍는다
+    MUPID_MODEL_RECOMPUTE_GATE      `true` 면 publish 가 재계산 완료를 Spring 에 묻는다
+                                    (`GET /api/v1/system/vectors/stage1/{v}/status`, 457). 기본은 꺼짐이고
+                                    경고만 찍는다 — 켜는 것은 운영 결정이다(infra/ci/VARIABLES.md)
 
 표준 라이브러리 + PyYAML 만 쓴다(Spring 쪽). `bake`·`adopt` 는 buildkit(alpine) 이미지에서 도는데
 거기엔 requests 가 없다. JupyterHub 를 부르는 `verify`·`publish` 만 `deploy-jupyter.py` 를
@@ -352,18 +353,26 @@ def publish(lock: Lock, directory: pathlib.Path, spring) -> str:
 def check_gate(lock: Lock, spring, enabled: bool) -> None:
     """관문 ④-c: 재계산(`stage1_v{N}`)이 전 구간에 채워졌는가.
 
-    그 API 는 457(벡터 등록)이 만든다. 그때까지는 CI 변수 스위치로 끄고 켜며 기본은 꺼짐 —
-    꺼져 있으면 **경고를 찍고 지나간다.** 켜면 아래 경로를 부르고 `complete` 가 참이 아니면
-    멈춘다. 457 이 경로·응답을 다르게 정하면 여기를 함께 고친다.
+    Spring 벡터 API(457)의 `GET /api/v1/system/vectors/{name}/{version}/status` 를 부르고
+    `complete` 가 참이 아니면 멈춘다. `complete` 는 "그 벡터를 가진 포인트 수 ≥ MySQL 의 살아 있는 곡의
+    구간 수" 이고 "≥ Qdrant 의 `mert` 포인트 수" 다 — 뒤의 것은 AI 준비 판정의 분모라, 빠지면 관문은
+    지났는데 새 파드가 Ready 가 되지 못한다(설계 §10.2-5).
+
+    CI 변수 스위치로 끄고 켜며 기본은 꺼짐 — 꺼져 있으면 **경고를 찍고 지나간다.** 켜는 것은 운영
+    결정이다(첫 적재가 끝나 Qdrant 가 채워진 뒤, infra/ci/VARIABLES.md).
     """
     if not enabled:
         log(f"경고: 재계산 관문이 꺼져 있다({GATE_ENV} != true). {lock.name}_{lock.version} 이 "
-            "전 구간에 채워졌는지 확인하지 않고 올린다 — 457 이 확인 API 를 만든 뒤 켠다")
+            "전 구간에 채워졌는지 확인하지 않고 올린다 — 켜는 법은 infra/ci/VARIABLES.md")
         return
-    got = spring.call("GET", f"/api/v1/system/models/{lock.name}/{lock.version}/recompute")
-    if not (got or {}).get("complete"):
-        raise Stop(f"{lock.name}_{lock.version} 재계산이 끝나지 않았다: {got}")
-    log(f"관문 통과 — {lock.name}_{lock.version} 재계산 완료")
+    got = spring.call("GET", f"/api/v1/system/vectors/{lock.name}/{lock.version}/status") or {}
+    counts = (f"채워진 {got.get('filled')} · 기대 {got.get('expected_sections')} · "
+              f"Qdrant mert {got.get('points')}")
+    if not got.get("complete"):
+        if not got.get("vector_exists"):
+            raise Stop(f"{lock.name}_{lock.version} 벡터가 컬렉션에 아직 없다 — 재계산(②)을 먼저 보낸다")
+        raise Stop(f"{lock.name}_{lock.version} 재계산이 끝나지 않았다: {counts}")
+    log(f"관문 통과 — {lock.name}_{lock.version} 재계산 완료 ({counts})")
 
 
 def bake(lock: Optional[Lock], out: pathlib.Path, spring_factory: Callable) -> bool:

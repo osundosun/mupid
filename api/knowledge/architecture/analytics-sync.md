@@ -115,10 +115,30 @@ MySQL 을 다시 읽으면 겹친 두 요청의 순서가 뒤집혀도 늦게 �
 200곡씩 채운다(1,060곡 약 6분). 고치는 길이 하나여야 한 번 확인한 것으로 끝난다. 구간의 `energy` 도 같다 — 컬럼을
 더하면 기존 행이 NULL 이라 전 곡이 체크섬 불일치로 잡혀 재시도가 교체한다. 새벽을 기다리지 않으려면 아래 "손으로 할 일".
 
+## 벡터 — `VECTOR` (S15P21A204-457)
+
+Qdrant 순간 벡터도 같은 표에 행을 남긴다. 다른 두 종류와 **다시 쓰는 쪽이 다르다** — 벡터는 오디오에서 만든
+파생 데이터라 원본이 배치(JupyterHub 전체 색인)에 있고, Spring 은 벡터를 보관하지 않는다. 그래서 이 행은
+**배치에게 보내는 할 일 목록**이다(설계 §6.6).
+
+| # | 장치 | 코드 |
+|---|---|---|
+| 1 | 미반영 기록 | `VectorSync.markPending` — 구간을 바꾸는 트랜잭션 안에서. 입구는 `PUT …/section`(`MusicSectionServiceImpl`)과 관리자 구간 CRUD(`AdminResourceServiceImpl.markSectionChanged`, 곡을 옮기면 전·후 곡 둘 다). 라벨만 바꿔도 올린다 — 라벨은 `X` 원핫에 들어가 `feat_v1`·`stage1` 이 달라진다(설계 §7.5) |
+| 2 | 쓴 뒤 지우기 | 벡터 등록(`PUT …/vectors`, `VectorServiceImpl`)이 검증 때 revision 을 읽고, Qdrant 에 쓴 뒤 **그 revision 일 때만** 지운다(`VectorSync.clear`). 쓰기가 실패하면 `attempts`·`last_error` 를 적는다 |
+| 3 | 재시도 | **없다.** 배치가 `GET /api/v1/system/vectors/pending` 으로 목록을 읽고 다시 보낸다 — `music-preprocessing vectors-send --pending` |
+| 4 | 대조 | `VectorReconciler` (매일 04:50 KST, Redis 선점 `vectors:날짜`). 살아 있는 곡마다 `external_id` 집합과 구간 지문(`analysis_version`·`seg_start_ms`·`seg_end_ms`)을 Qdrant payload 스크롤과 비교해 어긋난 곡을 1 에 넣는다. MySQL 에 살아 있지 않은 곡의 포인트는 **지운다**(설계 §7.4) — MySQL 쪽이 비었거나 Qdrant 곡의 절반 넘게를 지우게 되면 멈추고 알린다 |
+| 6 | 지표 | 대시보드 **Qdrant 벡터 반영** 한 줄, 게이지 `kind=VECTOR`. 기준은 같다(10분·1곡) |
+
+- 대조의 "검사 곡 수" 는 **살아 있는 곡**만 센다 — 삭제된 곡은 벡터를 받지 않는다(등록이 410). ClickHouse 구간 대조가
+  삭제된 곡을 넣는 것과 반대다(구간 사본은 삭제와 무관하게 남는다).
+- 처음 배포하면 첫 대조가 전 곡을 "Qdrant 에 없음" 으로 넣는다. 그것이 배치의 첫 적재 목록이다 — 대시보드 줄이 WARN 인
+  것이 정상이고, `vectors-send` 가 끝나면 0 으로 돌아온다. Qdrant 주소(`MUPID_QDRANT_URL`)가 비면 대조는 돌지 않는다.
+
 ## 쓰기 입구 전수 목록 (2026-09-25)
 
 `music_section_analysis` 와 곡 특징의 원천(곡·분석·장르·무드·스트림·코드)을 바꾸는 길 전부. **새 길을 만들면
-여기 적고 같은 트랜잭션에서 `TrackSectionSync.markPending`·`TrackFeatureSync.markChanged` 를 부른다.** 하나라도
+여기 적고 같은 트랜잭션에서 `TrackSectionSync.markPending`·`TrackFeatureSync.markChanged` 를 부른다.** 구간을 바꾸는
+길이면 `VectorSync.markPending`(벡터)도 — 지금은 `PUT …/section` 과 관리자 구간 CRUD 둘이다. 하나라도
 빠지면 불변식이 깨지고, 그 틈은 다음 날 대조가 잡을 때까지 남는다.
 
 | 입구 | 코드 | 무엇을 바꾸나 | 구간 | 곡 특징 |
@@ -160,12 +180,14 @@ HTTP 로 직접 썼다. 쓰기 관문을 우회했고, MySQL 이 아닌 색인�
   INSERT IGNORE INTO analytics_sync_pending (music_id, kind, analysis_version)
   SELECT music_id, 'CLICKHOUSE', MIN(analysis_version) FROM music_section_analysis GROUP BY music_id;
   ```
+- **벡터를 당장 다시 보내게 하고 싶을 때**: `kind = 'VECTOR'`, 버전은 MySQL 구간의 분석 버전으로 행을 넣고 배치가
+  `vectors-send --pending` 을 돌린다. Spring 이 벡터를 스스로 채우지는 않는다.
 - **대조를 당장 돌리고 싶을 때**: 지금은 호출 경로가 없다. 다음 04:40 을 기다리거나, 의심 곡을 위처럼 넣는다.
 - **`last_error` 가 계속 같은 곡에 쌓일 때**: 그 곡의 구간 값이 ClickHouse 형(`UInt32` 등)에 안 맞는 경우다.
   MySQL 값을 고치면 다음 회차가 넣는다.
 
 ## 근거
 
-`api/src/main/java/com/osundosun/mupid/api/analytics/sync/`, `analytics/repository/TrackSectionRepository.java`·
+`api/src/main/java/com/osundosun/mupid/api/analytics/sync/`, `vector/`(457), `analytics/repository/TrackSectionRepository.java`·
 `TrackFeatureRepository.java`, `knowledge/domain/migrate-analytics-sync-2026-09-25.sql`,
 `clickhouse/migrations/05-track-features.sql`, 시험 `analytics/sync/**`·`ai/catalog/TrackFeatureMysqlTest`

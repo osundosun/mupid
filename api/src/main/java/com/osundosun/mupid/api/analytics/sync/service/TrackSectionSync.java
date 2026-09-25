@@ -241,7 +241,7 @@ public class TrackSectionSync {
     }
 
     /** 가장 안쪽 원인. JDBC 예외는 겉이 {@code DataAccessException} 이라 그것만으로는 모른다. */
-    static String describe(Throwable e) {
+    public static String describe(Throwable e) {
         Throwable cause = e;
         while (cause.getCause() != null && cause.getCause() != cause) {
             cause = cause.getCause();

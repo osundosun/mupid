@@ -27,6 +27,7 @@ import com.osundosun.mupid.api.admin.response.AdminRowPageResponse;
 import com.osundosun.mupid.api.admin.response.AdminSchemaResponse;
 import com.osundosun.mupid.api.analytics.sync.service.TrackFeatureSync;
 import com.osundosun.mupid.api.analytics.sync.service.TrackSectionSync;
+import com.osundosun.mupid.api.analytics.sync.service.VectorSync;
 import com.osundosun.mupid.api.code.entity.Code;
 import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.common.exception.BusinessException;
@@ -104,6 +105,11 @@ public class AdminResourceServiceImpl implements AdminResourceService {
      */
     private final TrackSectionSync trackSectionSync;
     private final TrackFeatureSync trackFeatureSync;
+    /**
+     * 구간의 경계·라벨이 바뀌면 그 분석 버전의 벡터도 다시 필요하다 — 라벨은 {@code X} 원핫에 들어가
+     * {@code feat_v1}·{@code stage1} 이 달라진다(설계 §7.5). 배치가 다시 보낼 목록에 올린다 (S15P21A204-457).
+     */
+    private final VectorSync vectorSync;
 
     /**
      * MySQL 쪽. `JdbcTemplate` 빈이 둘이라(ClickHouse 용이 따로 있다) 못 박아 둔다.
@@ -389,9 +395,11 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         Integer musicNow = sectionMusicId(section);
         if (musicNow != null) {
             trackSectionSync.markPending(musicNow, section.getAnalysisVersion());
+            vectorSync.markPending(musicNow, section.getAnalysisVersion());
         }
         if (musicBefore != null && !musicBefore.equals(musicNow)) {
             trackSectionSync.markPending(musicBefore, section.getAnalysisVersion());
+            vectorSync.markPending(musicBefore, section.getAnalysisVersion());
         }
     }
 

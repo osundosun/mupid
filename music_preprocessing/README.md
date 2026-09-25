@@ -637,6 +637,23 @@ PUT /upload/chunk/1/0
 곡 번호는 스트림 작업 전에 `registered.json` 에 먼저 기록합니다. 그래야
 등록이 중간에 실패해도 다음 배치가 같은 곡을 또 만들지 않습니다.
 
+## 순간 벡터 보내기 (`vectors-*`, S15P21A204-457)
+
+Qdrant 에 쓰는 것은 Spring 하나다(`infra/VECTOR-STORE-DESIGN.md` §6.6). 이 명령들은 **전체 색인**
+(`<artifact>/data/proc/mupid` — 벡터의 원본)을 읽어 곡마다 `PUT /api/v1/music/{id}/vectors` 로 보낸다.
+곡 번호는 `registered.json` 에서 온다(번호 없는 곡 — 제목 ID 옛 행·Jamendo — 은 건너뛴다).
+
+| 명령 | 하는 일 |
+|---|---|
+| `vectors-freeze-mu` | 중심화 μ 를 등록 곡(삭제 포함) 구간으로 한 번 재어 `~/mupid_models/stage1/v1/mu.npy`(+ `mu.json`)에 둔다. **있으면 덮지 않는다** — μ 가 바뀌면 Qdrant 전체를 다시 넣어야 한다 |
+| `vectors-send` | 곡마다 `mert`(= `(Z-μ)/‖Z-μ‖`)·`r`·`feat_v1`·`stage1_v1`·`clap`(있는 구간만)을 보낸다. `--pending` 이면 Spring 의 미반영 목록만, `--music-id` 로 곡을 고른다 |
+| `vectors-stage1 v{N}` | 모델 재계산 — `stage1_v{N}` 만 1,000구간씩 덧붙이고 관문 수치를 찍는다. `--vectors` 로 새 모델의 구간 벡터(.npy, `features_v1` 과 같은 행)를 준다 |
+
+- 본문은 벡터마다 float32 리틀엔디언 바이트의 base64 다. 구간은 순번 오름차순(= MySQL 에 등록한 순서).
+- 429(쓰기 줄이 찼다)·5xx 는 기다렸다 같은 본문을 다시 보낸다. 409(구간·분석 버전 불일치)는 그 곡의 구간을 먼저
+  다시 등록해야 해서 세고 넘어간다. 410(삭제된 곡)은 건너뛴다 — 대조가 Qdrant 에서 그 곡을 지운다.
+- 새 곡을 적재하는 야간 배치에는 아직 붙이지 않았다. 새 곡은 미반영 `VECTOR` 로 남고 `vectors-send --pending` 이 채운다.
+
 ## 쓰이지 않는 스트림·청크 (`batch` 가 함께 훑는다)
 
 `batch` 가 끝나면 서버에 **아무도 재생하지 않는 청크**가 남아 있는지 훑고

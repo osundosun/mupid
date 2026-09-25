@@ -409,7 +409,7 @@ ClusterIP 만(밖에 열지 않는다). **떠도 ai 는 local 갈래로 돈다**
 
 | 키 | 넣는 곳 | Secret | 받는 파드 |
 |---|---|---|---|
-| `MUPID_QDRANT_API_KEY` (쓰기) | `MUPID_API_ENV` (`infra/deploy/.env.example`) | `mupid-secrets` | qdrant · qdrant-snapshot · (457 뒤) api |
+| `MUPID_QDRANT_API_KEY` (쓰기) | `MUPID_API_ENV` (`infra/deploy/.env.example`) | `mupid-secrets` | qdrant · qdrant-snapshot · api (벡터 등록, 457) |
 | `MUPID_QDRANT_READ_ONLY_API_KEY` (읽기) | `MUPID_AI_SERVER_ENV` (`infra/ci/VARIABLES.md`) | `mupid-ai-secrets` | qdrant · ai |
 
 수신기는 api·ai 만 다시 띄운다. **키를 넣거나 바꾼 뒤에는 Qdrant 도 다시 띄운다:**
@@ -427,6 +427,21 @@ ai 파드에서 돌리는 것은 NetworkPolicy 가 ai 의 연결을 받기 때�
 kubectl -n mupid get secret mupid-secrets -o jsonpath='{.data.MUPID_QDRANT_API_KEY}' | base64 -d \
   | kubectl -n mupid exec -i deploy/ai -- python -m ai_server.tools.qdrant_collection --api-key-stdin
 ```
+
+**벡터 채우기 (S15P21A204-457)** — Qdrant 에 쓰는 것은 api 하나다. 분석 배치(JupyterHub, `system-preprocessing`
+토큰)가 전체 색인에서 곡마다 `PUT /api/v1/music/{id}/vectors` 로 보낸다. μ 는 처음 한 번만 잰다(동결).
+
+```bash
+# JupyterHub, ~/music_preprocessing
+music-preprocessing vectors-freeze-mu --config config.json            # ~/mupid_models/stage1/v1/mu.npy (+ mu.json)
+music-preprocessing vectors-send --config config.json --yes           # 전 곡. 끝에 보냄·삭제된 곡·실패 수
+music-preprocessing vectors-send --config config.json --pending --yes # 미반영 목록만 다시
+```
+
+api 가 뜬 뒤 첫 04:50 대조가 벡터 없는 곡을 전부 미반영 `VECTOR` 로 넣는다 — 관리자 대시보드 "Qdrant 벡터
+반영" 줄이 WARN 이 되는 것이 정상이고, `vectors-send` 가 끝나면 0 으로 돌아온다. `mu.json` 의
+`pool_mean_l2_diff` 가 0 에 가깝지 않으면 ai 가 판의 풀 평균(`plate:pool_mean`)으로 읽어 유사도가 틀어진다 —
+`MUPID_VECTOR_BACKEND=qdrant` 로 바꾸기 전에 `mu.npy` 를 모델 묶음의 서빙 파일로 싣는다.
 
 **격리 확인** — 허용 목록 밖의 파드에서는 연결 자체가 막혀야 한다(키와 무관하게).
 

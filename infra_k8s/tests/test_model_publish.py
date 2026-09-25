@@ -100,7 +100,7 @@ class FakeSpring:
             self.completed.add(p["file_name"])
             declared = set(p["version_files"])
             return {"model_status": "CANDIDATE" if declared <= self.completed else "UPLOADING"}
-        if path.endswith("/recompute"):
+        if path.endswith("/status"):
             return self.gate
         if path.endswith("/adopt"):
             return {"current_version": path.split("/")[-2]}
@@ -242,13 +242,21 @@ class GateTest(Base):
 
     def test_on_and_incomplete_stops(self):
         with self.assertRaises(SystemExit):
-            mp.check_gate(self.lock, FakeSpring(gate={"complete": False}), enabled=True)
+            mp.check_gate(self.lock, FakeSpring(gate={"complete": False, "vector_exists": True,
+                                                      "filled": 10, "expected_sections": 12,
+                                                      "points": 12}), enabled=True)
+
+    def test_on_and_vector_missing_stops(self):
+        with self.assertRaises(SystemExit) as got:
+            mp.check_gate(self.lock, FakeSpring(gate={"complete": False, "vector_exists": False}),
+                          enabled=True)
+        self.assertIn("아직 없다", str(got.exception))
 
     def test_on_and_complete_passes(self):
         spring = FakeSpring(gate={"complete": True})
         with Quiet():
             mp.check_gate(self.lock, spring, enabled=True)
-        self.assertEqual(spring.calls[0][1], "/api/v1/system/models/stage1/v3/recompute")
+        self.assertEqual(spring.calls[0][1], "/api/v1/system/vectors/stage1/v3/status")
 
 
 class PublishTest(Base):

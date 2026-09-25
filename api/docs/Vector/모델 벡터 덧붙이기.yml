@@ -1,0 +1,77 @@
+info:
+  name: 모델 벡터 덧붙이기
+  type: http
+  seq: 2
+
+http:
+  method: PUT
+  url: "{{BASE_URL}}/api/v1/system/vectors/stage1/{{MODEL_VERSION}}"
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+  body:
+    type: json
+    data: |-
+      {
+        "sections": [
+          { "external_id": "T001001#0", "vector": "<base64 float32 LE × 128>" },
+          { "external_id": "T001001#1", "vector": "<base64 float32 LE × 128>" }
+        ]
+      }
+
+runtime:
+  variables:
+    - name: MODEL_VERSION
+      value: v2
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 덧붙임
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "모델 벡터가 덧붙었습니다.",
+            "data": { "version": "v2", "vector": "stage1_v2", "updated": 2, "vector_added": false }
+          }
+
+docs: |-
+  # 모델 벡터 덧붙이기
+
+  `PUT /api/v1/system/vectors/stage1/{version}` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  모델 재계산(설계 §6.3 반영 흐름 ②, §7.3). 새 모델이 만든 `stage1_v{version}` 을 **여러 곡의 구간에**
+  덧붙입니다. **다른 벡터(`mert`·`feat_v1`·옛 `stage1_v{N}`·`clap`)와 payload 는 건드리지 않습니다** —
+  서빙 중인 옛 버전은 그대로 돕니다. 구간 정체성이 바뀌지 않으므로 MySQL·ClickHouse 에는 쓰지 않습니다.
+
+  - **1,000구간이 상한**입니다 (바이트로 약 0.5MB). 설계 기준 90만 구간이면 약 900번입니다.
+  - 컬렉션에 `stage1_v{version}` 이 없으면 처음 요청이 만듭니다(`vector_added: true`).
+  - 멱등입니다 — 같은 묶음을 다시 보내면 같은 값으로 덮습니다.
+  - 배치 명령: `music-preprocessing vectors-stage1 v2 --vectors <새 모델의 구간 벡터 .npy>`
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_VECTOR_MODEL_VERSION_INVALID` | 400 | 버전이 `v<숫자>` 가 아님 |
+  | 검증 오류 · `MUPID_VECTOR_BATCH_TOO_LARGE` | 400 | 1,000구간 초과 |
+  | `MUPID_VECTOR_DIMENSION_MISMATCH` · `MUPID_VECTOR_NOT_FINITE` | 400 | 차원·NaN |
+  | `MUPID_VECTOR_SECTION_DUPLICATED` | 400 | 같은 구간이 두 번 |
+  | `MUPID_VECTOR_SECTION_UNKNOWN` | 404 | MySQL 에 없는 구간 |
+  | `MUPID_VECTOR_POINT_MISSING` | 409 | Qdrant 에 곡 전체 벡터가 아직 없는 구간 — `곡 벡터 등록` 먼저 |
+  | `MUPID_VECTOR_BUSY` · `MUPID_VECTOR_STORE_UNAVAILABLE` | 429 · 503 | 같은 묶음을 다시 |

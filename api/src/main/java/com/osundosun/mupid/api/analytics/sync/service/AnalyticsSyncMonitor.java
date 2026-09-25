@@ -42,7 +42,8 @@ import lombok.extern.slf4j.Slf4j;
  *       채운 값을 준다. 인스턴스마다 자기가 본 값이다.</li>
  * </ul>
  *
- * <p>종류마다 따로 센다 — 구간({@code CLICKHOUSE})과 곡 특징({@code TRACK_FEATURES}, S15P21A204-455).
+ * <p>종류마다 따로 센다 — 구간({@code CLICKHOUSE}), 곡 특징({@code TRACK_FEATURES}, S15P21A204-455),
+ * 벡터({@code VECTOR}, S15P21A204-457 — 대조는 Qdrant 쪽 {@code analysis_version}·존재 여부).
  * 대시보드에는 두 줄이 서고, 게이지는 {@code kind} 꼬리표로 갈린다. 알림 기준은 같다.
  */
 @Slf4j
@@ -97,6 +98,8 @@ public class AnalyticsSyncMonitor {
         Map<AnalyticsSyncKind, String[]> out = new EnumMap<>(AnalyticsSyncKind.class);
         out.put(AnalyticsSyncKind.CLICKHOUSE, new String[] {DEPENDENCY_NAME, "track-sections"});
         out.put(AnalyticsSyncKind.TRACK_FEATURES, new String[] {"ClickHouse 곡 특징 동기화", "track-features"});
+        // 벡터(S15P21A204-457)는 Spring 이 재시도하지 않는다 — 미반영이 밀리면 배치가 재전송을 안 한 것이다.
+        out.put(AnalyticsSyncKind.VECTOR, new String[] {"Qdrant 벡터 반영", "vectors"});
         return out;
     }
 
