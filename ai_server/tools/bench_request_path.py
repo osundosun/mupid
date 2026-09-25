@@ -22,6 +22,15 @@
     p95     cold 한 번과 warm `--repeat` 번을 합친 표본의 95 백분위 (설계 §13 5단계: < 1초)
     view    본문 `catalog` 로 요청 사본을 만드는 시간 (본문이 바뀔 때마다 한 번)
 
+**요청 경계까지** (`--api`, S15P21A204-458) — 같은 시나리오를 FastAPI 앱에 HTTP 본문으로 보내
+잰다(프로세스 안 ASGI, 망 없음). 본문 JSON 해석·검증·사본 찾기가 들어간다. 계약 v2 코드(458 전)
+에는 요청마다 본문 `catalog`(1만 곡 약 5MB)를 싣고, v3 코드에는 싣지 않는다 — 어느 쪽인지는
+`app/pool_snapshot.py` 가 있는지로 가른다. v3 는 기준 풀 스냅샷을 본문과 같은 값으로 미리 둔다
+(`install_static` — 피처 저장소 읽기는 `bench_pool_snapshot.py` 가 따로 잰다).
+
+    PYTHONPATH=/tmp/before python ai_server/tools/bench_request_path.py --api --label before
+    python -m ai_server.tools.bench_request_path --api --label after
+
 **Qdrant 갈래** (S15P21A204-456) — 로컬 Qdrant 를 띄우고 판의 벡터를 넣은 뒤(개발 전용 적재
 `tools/qdrant_dev_load.py`) 같은 시나리오를 `MUPID_VECTOR_BACKEND=qdrant` 로 잰다:
 
@@ -150,6 +159,66 @@ def catalog_body(tracks: int, per_track: int, keep=None, seed: int = 7) -> dict:
     return {"tracks": t_cols, "sections": s_cols}
 
 
+def _api_scenarios(rc, body: dict, s_body: dict, seed: str, cur: str) -> tuple[dict, dict]:
+    """HTTP 본문으로 부르는 시나리오. 계약 v2 코드면 본문에 `catalog` 를 싣는다."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ai_server.app import internal_api
+
+    try:
+        from ai_server.app import pool_snapshot
+    except ImportError:                          # 458 전 코드 — 본문으로 후보를 보낸다
+        pool_snapshot = None
+    info: dict = {"contract": "v2" if pool_snapshot is None else "v3"}
+    if pool_snapshot is not None:
+        t0 = time.perf_counter()
+        pool_snapshot.install_static(body, on_swap=internal_api.warm(rc))
+        info["snapshot_install_s"] = round(time.perf_counter() - t0, 2)
+    app = FastAPI()
+    internal_api.install(app, rc)
+    client = TestClient(app)
+    client.get("/internal/ready")                # 첫 호출의 준비(스레드 풀 등)를 재지 않게
+    genre = GENRES[0]
+    plan = {"filters": {"mood": [MOODS[1]]}}
+    if pool_snapshot is not None:
+        # v3 는 조건을 여기서 푼다 — v2 에서 Spring 이 장르로 거른 본문(`s_body`)과 같은 구간이 남는다.
+        plan = {"filters": {"genre": [genre], "mood": [MOODS[1]]}}
+    reqs = {
+        "daily/cold": ("/internal/recommendations/daily", {"user_id": 900001}, body),
+        "daily/onboarding": ("/internal/recommendations/daily",
+                             {"user_id": 900002, "onboarding": {"moods": [], "genres": [GENRES[1]]}},
+                             body),
+        "daily/dna": ("/internal/recommendations/daily", {"user_id": 1}, body),
+        "next/dna": ("/internal/recommendations/next",
+                     {"user_id": 1, "limit": 10, "current_track": cur.split("#")[0],
+                      "current_section": cur}, body),
+        "search/mood": ("/internal/recommendations/search",
+                        {"user_id": 900001, "limit": 10, "query_plan": plan}, s_body),
+        "similar": ("/internal/similar", {"external_id": seed, "limit": 10}, body),
+    }
+    out = {}
+    sizes = {}
+    for name, (path, extra, cat) in reqs.items():
+        payload = dict(extra)
+        if not path.endswith("similar"):
+            payload["recommendation_id"] = 1
+        if pool_snapshot is None:
+            payload["catalog"] = cat
+        raw = json.dumps(payload, separators=(",", ":")).encode()
+        sizes[name] = len(raw)
+
+        def run(path=path, raw=raw):
+            r = client.post(path, content=raw, headers={"content-type": "application/json"})
+            if r.status_code != 200:
+                raise SystemExit(f"{path} → {r.status_code} {r.text[:300]}")
+            return r.json()["items"]
+
+        out[name] = run
+    info["request_bytes"] = sizes
+    return out, info
+
+
 def _time(fn, repeat: int) -> dict:
     t0 = time.perf_counter()
     first = fn()
@@ -183,6 +252,8 @@ def main() -> int:
     ap.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
     ap.add_argument("--qdrant-write-key", default="")
     ap.add_argument("--qdrant-read-key", default="")
+    ap.add_argument("--api", action="store_true",
+                    help="HTTP 본문으로 요청 경계까지 잰다 (계약 v2 는 catalog 를 싣는다)")
     a = ap.parse_args()
 
     root = Path(a.workdir).resolve()
@@ -252,6 +323,9 @@ def main() -> int:
             problem = rc.vector_store_problem()
         if problem:
             raise SystemExit(f"Qdrant 준비 안 됨: {problem}")
+    api = None
+    if a.api:
+        scenarios, api = _api_scenarios(rc, body, s_body, seed, cur)
     results = {name: _time(fn, a.repeat) for name, fn in scenarios.items()}
     report = {
         "label": a.label, "backend": a.backend, "qdrant_load": qdrant_load,
@@ -260,6 +334,7 @@ def main() -> int:
         "build_s": round(build_s, 1), "catalog_load_s": round(load_s, 2),
         "view_build_s": round(view_s, 2), "search_view_build_s": round(s_view_s, 2),
         "body_bytes": len(json.dumps(body, separators=(",", ":"))),
+        **({"api": api} if api else {}),
         "results": results,
     }
     text = json.dumps(report, ensure_ascii=False, indent=1)

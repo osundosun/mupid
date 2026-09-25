@@ -182,9 +182,10 @@ def daily_seed(user: str, now: Optional[datetime] = None) -> int:
 # 추천 계산부는 예전과 **같은 열 이름**을 읽는다. 값의 출처만 바뀌었다 — 점수·가중치·
 # 필터·후보 생성·랭킹에는 손대지 않는다. 그래서 여기서 이름을 맞춰 둔다.
 
-# 곡 수준 값 가운데 추천이 읽는 것. **전부 요청 본문(`catalog`)에서 온다** — MySQL
-# `music_analysis` 가 정본이다(연동 계약 2026-09-23 절). 예전에는 색인의
-# `track_features.parquet` 이 들고 있었다.
+# 곡 수준 값 가운데 추천이 읽는 것. **전부 기준 풀 스냅샷에서 온다** — MySQL
+# `music_analysis` 가 정본이고 Spring 이 ClickHouse 피처 저장소에 같은 값을 쓴다(계약 v3,
+# `app/pool_snapshot.py`). 09-23 계약에서는 요청 본문 `catalog` 로 왔고, 그 전에는 색인의
+# `track_features.parquet` 이 들고 있었다. 스냅샷은 본문과 같은 모양이다(`catalog_body.Snapshot`).
 #   bpm            템포 게이트 · tempo_direction · _flow_penalty
 #   bpm_lo/bpm_hi  요청 BPM 범위 → catalog_facets 가 측정 BPM 보다 우선 사용
 #   language       온보딩 track_ok
@@ -220,6 +221,10 @@ def _attach_section_meta(mom: pd.DataFrame, snap) -> pd.DataFrame:
     `dur_sec` 는 시각에서 다시 센다. `rel_start`·`rel_end` 도 곡 길이를 알면 시각에서
     다시 센다 — 분석 때의 경계로 굳어 있으면 MySQL 에서 경계를 고쳐도 옛 위치로
     점수가 나간다. `rms` 는 MySQL `energy` 가 있으면 그것을 쓴다.
+
+    `dur_known` 은 경계를 아는가다. 피처 저장소를 한 번도 못 읽은 벡터 전용 스냅샷
+    (`pool_snapshot.vector_only`)만 경계를 모른다 — 그때 길이 0 으로 보고 전부 빼면 추천이
+    통째로 비므로, 모르는 것은 8초 미만 제외에서 통과시킨다(`PoolIndex.serve`).
     """
     sec = snap.section_frame()
     drop = [c for c in ("section_label", "start_sec", "end_sec", "dur_sec",
@@ -234,6 +239,7 @@ def _attach_section_meta(mom: pd.DataFrame, snap) -> pd.DataFrame:
 
     start = pd.to_numeric(out.pop("start_ms"), errors="coerce") / 1000.0
     end = pd.to_numeric(out.pop("end_ms"), errors="coerce") / 1000.0
+    out["dur_known"] = (start.notna() & end.notna()).to_numpy()
     out["start_sec"] = start.fillna(0.0)
     out["end_sec"] = end.fillna(0.0)
     out["dur_sec"] = (out.end_sec - out.start_sec).clip(lower=0.0)
@@ -284,8 +290,8 @@ class Catalog:
     def __init__(self, snap=None) -> None:
         """색인·모델을 올린다. `snap` 은 곡·구간 메타 스냅샷이다. **부르는 쪽이 준다.**
 
-        서빙은 기동 때 빈 스냅샷으로 올리고, 요청마다 본문의 `catalog` 로
-        `with_catalog()` 사본을 만든다. 배치는 ClickHouse 구간 표
+        서빙은 기동 때 빈 스냅샷으로 올리고, 기준 풀 스냅샷(`pool_snapshot`, 계약 v3)마다
+        `with_catalog()` 사본을 만든다(갱신 스레드가 미리). 배치는 ClickHouse 구간 표
         (`track_sections.load()`)를 넘긴다. 전역 스냅샷을 몰래 꺼내 쓰던 때에는
         적재를 빠뜨린 호출이 "카탈로그를 읽지 못했다" 로 멈췄다(S15P21A204-423).
         """
@@ -425,13 +431,15 @@ class Catalog:
         self.pool_sources_empty = sorted(k for k, v in self.pool_sources.items() if not v)
         self.pool_rows = self.pool.emb_row.to_numpy()
         self.pool_x = np.asarray([self.idx.get(m, -1) for m in self.pool.moment_id])
-        self.by_track = {t: g for t, g in self.pool.groupby("track_id", sort=False)}
+        # 곡 목록(풀에 처음 나온 차례). 예전에는 곡마다 DataFrame 을 쪼개 두었지만 읽는 곳은 키뿐이다
+        # (`catalog_facets`) — 곡 수만큼 표를 만드는 일이 기준 풀 갱신마다 수 초였다(10만 곡).
+        self.by_track = dict.fromkeys(pd.unique(self.pool.track_id.astype(str)))
         # 후보에 딸린 캐시는 사본마다 따로다. 남기면 다른 본문의 어휘가 샌다.
         for attr in ("_facets_cache", "_facets_by_track", "_view_cache"):
             self.__dict__.pop(attr, None)
 
     def with_catalog(self, snap) -> "Catalog":
-        """같은 색인·모델에 다른 후보를 묶은 사본. 요청마다 만든다(본문 해시로 재사용)."""
+        """같은 색인·모델에 다른 후보를 묶은 사본. 기준 풀 스냅샷마다(갱신 스레드), 검색은 조건마다 만든다."""
         out = copy.copy(self)
         out._bind(snap)
         return out
@@ -603,14 +611,21 @@ def catalog_facets() -> dict:
         return hit
     moment_instruments = {}
     if "instruments" in c.mom.columns:
-        for track_id, group in c.mom.groupby("track_id", sort=False):
+        # 악기가 적힌 구간만 묶는다. 빈 곡은 어차피 곡 값으로 물러나므로(아래 `or`) 결과가 같고,
+        # 구간 악기가 비어 오는 스냅샷에서 곡 수만큼 표를 쪼개지 않는다.
+        written = c.mom.instruments.fillna("").astype(str).str.strip() != ""
+        for track_id, group in c.mom[written].groupby("track_id", sort=False):
             moment_instruments[track_id] = list(dict.fromkeys(
                 instrument
                 for value in group.instruments
                 for instrument in _instrument_list(value)))
     rows = []
+    # `track_info()` 와 같은 값을 곡마다 `.loc` 없이 읽는다 — 행 하나를 Series 로 만드는 비용이
+    # 곡 수만큼 쌓였다(10만 곡이면 기준 풀 갱신마다 수십 초). 값의 규칙은 `track_info` 그대로다.
+    meta_rows = c.meta.to_dict("index") if len(c.meta) else {}
+    bpm_of = c.content.bpm.to_dict() if "bpm" in c.content.columns else {}
     for t in sorted(c.by_track):
-        ti = c.track_info(t)
+        ti = _facet_track_info(t, meta_rows.get(t, {}), bpm_of.get(t))
         lo, hi = (ti.get("bpm_requested") or [None, None])[:2]
         # 측정 BPM(자기상관)은 옥타브 오류가 잦다. 생성 시 요청한 범위가 있으면 그것을 쓴다.
         if lo is not None and hi is not None and float(lo) > 0:
@@ -665,6 +680,14 @@ def catalog_facets() -> dict:
     c._facets_cache = out
     c._facets_by_track = df.set_index("track_id").to_dict("index")
     return out
+
+
+def _facet_track_info(tid: str, m: dict, bpm) -> dict:
+    """`Catalog.track_info` 에서 조건 어휘가 읽는 칸만. 곡 메타 dict·BPM 을 받는다."""
+    return {"track_id": tid, "category": _text(m.get("category")),
+            "language": _text(m.get("language")),
+            "bpm": round(float(0.0 if bpm is None else bpm), 1),
+            "bpm_requested": [m.get("bpm_lo"), m.get("bpm_hi")], **_catalog_tags(m)}
 
 
 def catalog_facet_rows() -> dict:
@@ -1816,9 +1839,9 @@ def _pool_mean() -> np.ndarray:
     상태와 세대를 함께 보므로, 배치가 μ 를 갈면 재기동 없이 새 μ 를 쓴다.
 
     로컬 갈래는 **색인 풀 전체**(`index_pool`)로 한 번 잰다 — Pinecone 적재가 평균을
-    재는 범위와 같다. 요청의 후보(`catalog`)로 재면 안 된다: 검색은 Spring 이 조건으로
-    거른 후보만 보내므로, "발라드만" 온 요청은 발라드의 평균으로 중심화돼 질의마다
-    기준점이 달라진다. 오류 없이 순위만 틀어진다(2026-09-24 에 찾았다).
+    재는 범위와 같다. 요청 사본의 후보로 재면 안 된다: 검색 사본은 조건을 통과한 구간만
+    묶으므로, "발라드만" 인 요청은 발라드의 평균으로 중심화돼 질의마다 기준점이 달라진다.
+    오류 없이 순위만 틀어진다(2026-09-24 에 찾았다).
     """
     return vector_store().mu
 
@@ -1836,7 +1859,21 @@ def raw_vectors(moment_ids) -> tuple[np.ndarray, list[str]]:
     ids = [str(m) for m in moment_ids]
     if not ids:
         return np.zeros((0, _vector_dim()), np.float32), []
-    got = vector_store().fetch(ids)
+    store = vector_store()
+    want = getattr(getattr(current(), "catalog", None), "versions", None)
+    if want and hasattr(store, "fetch_versioned"):
+        # **구간 지문 대조**(설계 §9.3-3). 재분석 직후 한 저장소만 새 경계를 가진 틈에는 같은
+        # `T000001#3` 이 서로 다른 구간을 가리킨다 — 오류 없이 엉뚱한 구간이 추천된다. 피처 저장소
+        # (스냅샷)와 벡터 저장소의 분석 버전이 다르면 그 벡터를 없는 것으로 본다. 지문이 없는
+        # 포인트는 판정하지 않는다.
+        got, have = store.fetch_versioned(ids)
+        stale = [i for i in got if i in want and have.get(i, want[i]) != want[i]]
+        for i in stale:
+            del got[i]
+        if stale:
+            metrics.observe_stale_vectors(len(stale))
+    else:
+        got = store.fetch(ids)
     keep = [i for i in ids if i in got]          # 부른 차례를 지킨다
     if not keep:
         return np.zeros((0, _vector_dim()), np.float32), []
@@ -1847,7 +1884,7 @@ def candidate_search(query_vector: np.ndarray, top_k: int,
                      allow: Optional[vstore.AllowList] = None) -> list[tuple[str, float]]:
     """닮은 순간 후보. 질의는 **이미 중심화된** 벡터여야 한다.
 
-    `allow` 를 주지 않으면 이 요청의 후보 풀 전체(`catalog` 에 있는 순간)로 묶는다.
+    `allow` 를 주지 않으면 이 요청의 후보 풀 전체(사본의 스냅샷에 있는 순간)로 묶는다.
     로컬 갈래는 그 안에서 내적해 상위만 남기고(로컬 ANN 대용), Pinecone 갈래는 넓게
     찾은 뒤 카탈로그 밖을 거른다.
     """
@@ -1859,7 +1896,7 @@ def index_pool(c: Optional["Catalog"] = None) -> pd.DataFrame:
     """색인의 추천 풀 — Pinecone 적재 대상. **카탈로그와 교집합을 내지 않는다.**
 
     적재 도구도 Spring 을 부르지 않는다(연동 계약 2026-09-23 절). 지워진 곡의 벡터가
-    남아도 Spring 이 보낸 `catalog` 에 없으므로 후보가 되지 않는다. 적재본 지문도
+    남아도 기준 풀 스냅샷이 빼므로(`is_deleted`) 후보가 되지 않는다. 적재본 지문도
     이것으로 잰다 — 요청마다 다른 후보로 재면 배치와 서버가 서로 다른 값을 본다.
     """
     c = c if c is not None else current()
@@ -1910,9 +1947,9 @@ def center(V: np.ndarray) -> np.ndarray:
 
 # ---------------------------------------------- 요청 사본마다 한 번 세는 것 (S15P21A204-452)
 #
-# 요청 경로에서 풀 전체(N)를 훑는 연산을 **사본마다 한 번**으로 옮긴 자리다. 사본은 본문
-# `catalog` 의 해시로 재사용되므로(`internal_api._view`) `daily`·`next` 는 첫 요청만 이
-# 값을 만들고, 그 뒤 요청은 후보 K 개와 사용자 이력 H 만 다룬다. 무엇이 어디로 옮겨졌는지는
+# 요청 경로에서 풀 전체(N)를 훑는 연산을 **사본마다 한 번**으로 옮긴 자리다. 기준 사본은 기준 풀
+# 스냅샷마다 하나이고 갱신 스레드가 미리 만든다(`internal_api.warm`, 계약 v3) — 요청은 후보 K 개와
+# 사용자 이력 H 만 다룬다. 무엇이 어디로 옮겨졌는지는
 # `ai_server/docs/REQUEST-PATH-COMPLEXITY.md` 에 적었다.
 #
 # 캐시는 사본 객체에 붙는다(`_view_cache`). `_bind` 가 지우므로 다른 본문의 값이 새지 않고,
@@ -1961,6 +1998,9 @@ class PoolIndex:
         self.labels = pool.section_label.astype(str).to_numpy()
         self.pos = {m: i for i, m in enumerate(self.ids)}
         self.serve = (pool.dur_sec.to_numpy(dtype=np.float64) >= MIN_MOMENT_SEC)
+        if "dur_known" in pool.columns:
+            # 경계를 모르는 구간(벡터 전용 스냅샷)은 길이로 빼지 않는다. 아는 구간은 그대로다.
+            self.serve |= ~pool.dur_known.to_numpy(dtype=bool)
         self.dropped_short = int((~self.serve).sum())
         sp = pool[self.serve]
         rms = sp.rms.to_numpy(dtype=np.float64) if "rms" in sp.columns else np.zeros(len(sp))
@@ -2477,8 +2517,17 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
               current_track_id: Optional[str] = None, current_moment_id: Optional[str] = None,
               beh_events: Optional[list] = None,
               onboarding: Optional[dict] = None,
-              daily: bool = False, now: Optional[datetime] = None) -> dict:
+              daily: bool = False, now: Optional[datetime] = None,
+              spare: int = 0, conditions: Optional[dict] = None) -> dict:
+    """`n` 개를 고르고, `spare` 가 있으면 **그 뒤에** 여유분을 순위대로 더 붙인다(계약 v3).
+
+    앞의 `n` 개는 여유분이 없을 때와 **같다** — 분위 임계값·탐색 칸·선택은 모두 `n` 으로 센다.
+    여유분은 같은 순서에서 이어 뽑은 것이고, 탐색 칸에 자리를 내준 `n` 번째 곡이 그 맨 앞이다.
+    Spring 이 MySQL 기준 최종 필터로 삭제·재생 불가를 빼고 앞에서부터 `n` 개를 자른다.
+    `conditions` 는 조건 풀기 결과 요약(`query_conditions.Outcome.summary`) — 진단에만 싣는다.
+    """
     c = current()
+    target = n + max(int(spare), 0)
     C, W, dna_meta = build_dna(user, query_plan, current_track_id, current_moment_id)
     query_source = "labels" if len(C) else "none"
     onb_empty = ""
@@ -2523,11 +2572,12 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     idx = pool_index(c)
     diag["dropped_short"] = idx.dropped_short
     if query_plan is not None:
-        # 조건 게이트는 Spring 이 걸었다. 여기서 다시 걸지 않는다 — 두 곳이 같은 규칙을
-        # 따로 들고 있으면 한쪽만 고쳐진다. 무드 가점과 CLAP 은 아래에서 한다.
-        diag["nlp"] = {"gates": "spring",
+        # 조건 게이트는 요청 경계에서 이미 풀었다(`query_conditions`, 계약 v3) — 이 사본의 풀이
+        # 곧 통과한 구간이다. 여기서 다시 걸지 않는다. 무드 가점과 CLAP 은 아래에서 한다.
+        diag["nlp"] = {"gates": "query_conditions",
                        "plan": {k: v for k, v in query_plan.items()
-                                if not str(k).startswith("_")}}
+                                if not str(k).startswith("_")},
+                       **({"conditions": conditions} if conditions else {})}
     want_mood = _qvals(((query_plan or {}).get("filters") or {}).get("mood"))
 
     # ---- 명시 선호 게이트: 청취 이력 유무와 무관하게 항상 적용 (게이트 인계) ----
@@ -2751,10 +2801,10 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         cl_order = list(np.argsort(-W))
         ptr = {j: 0 for j in range(len(C))}
         guard = 0
-        while len(picked) < n and guard < 20000:
+        while len(picked) < target and guard < 20000:
             progressed = False
             for j in cl_order:
-                if len(picked) >= n:
+                if len(picked) >= target:
                     break
                 while ptr[j] < len(per[j]):
                     i = int(per[j][ptr[j]])
@@ -2776,7 +2826,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     else:
         order = np.argsort(-np.where(keep, final, -1e9))
         for i in order:
-            if len(picked) >= n:
+            if len(picked) >= target:
                 break
             r = pool.iloc[int(i)]
             if not keep[i] or r.track_id in taken_tracks:
@@ -2788,18 +2838,26 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
             taken_tracks.add(r.track_id)
             vecs.append(V[int(i)])
 
-    if query_plan is None and explore and EXPLORE_SLOTS and len(picked) >= 3:
+    # 여유분(`spare`)은 선택이 끝난 뒤 떼어 둔다. 탐색 칸은 **앞의 `n` 개만** 보고 정한다 —
+    # 여유분 곡까지 "이미 뽑힌 곡" 으로 세면 탐색 후보가 달라져 같은 날 같은 네 곡이 아니게 된다.
+    head, extra = picked[:n], picked[n:]
+    if query_plan is None and explore and EXPLORE_SLOTS and len(head) >= 3:
         # 오늘의 모멘트는 사용자·서울 날짜로 시드를 고정한다 — 같은 날 다시 열어도 같은
         # 네 곡이고, 날짜가 바뀌면 이 칸이 달라질 수 있다. 이어 듣기는 종전대로 분 단위다.
         rng = np.random.default_rng(daily_seed(user, now) if daily
                                     else int(time.time()) // 60)
+        head_tracks = {pool.iloc[i].track_id for i, _, _ in head}
         gorder = np.argsort(-np.where(keep, final, -1e9))
         cands = [int(i) for i in gorder[n:n * 6]
-                 if pool.iloc[int(i)].track_id not in taken_tracks]
+                 if pool.iloc[int(i)].track_id not in head_tracks]
         if cands:
             j = int(rng.choice(cands))
-            picked[-1] = (j, float(final[j]), -1)
-            taken_tracks.add(pool.iloc[j].track_id)
+            # 자리를 내준 곡은 여유분 맨 앞으로 간다. 탐색 곡과 같은 곡인 여유분은 뺀다.
+            extra = [head[-1], *extra]
+            head[-1] = (j, float(final[j]), -1)
+            explore_track = pool.iloc[j].track_id
+            extra = [x for x in extra if pool.iloc[x[0]].track_id != explore_track]
+    picked = head + extra[:max(int(spare), 0)]
 
     # 재생할 순간 (S15P21A204-448). 곡은 위에서 이미 정해졌다 — 여기서는 그 곡 안에서
     # 어느 순간을 틀지만 고른다. 점수·순위·결과 수는 그대로다.
@@ -2860,7 +2918,8 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         })
     diag.update({"n_pairs_compared": n_pairs, "candidates": len(pool),
                  "bpm_pref": round(bpm_pref, 1), "returned": len(out),
-                 "select_mode": mode, "requested": n, "shortfall": max(0, n - len(out)),
+                 "select_mode": mode, "requested": n, "spare": max(int(spare), 0),
+                 "shortfall": max(0, n - len(out)),
                  "prob_threshold": (round(p_min, 6) if mode == "logistic" else None),
                  "prob_threshold_rule": (p_rule if mode == "logistic" else None),
                  "passed_threshold": int(keep.sum()),

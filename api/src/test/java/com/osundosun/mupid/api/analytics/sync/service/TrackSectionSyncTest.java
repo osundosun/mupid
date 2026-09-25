@@ -28,6 +28,8 @@ import com.osundosun.mupid.api.analytics.sync.repository.AnalyticsSyncPendingRep
 import com.osundosun.mupid.api.analytics.sync.service.TrackSectionSync.RetryOutcome;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.enumerate.SectionLabel;
+import com.osundosun.mupid.api.music.mapping.repository.MusicAnalysisInstrumentRepository;
+import com.osundosun.mupid.api.music.mapping.repository.MusicAnalysisInstrumentRepository.SectionInstrument;
 import com.osundosun.mupid.api.music.repository.MusicSectionAnalysisRepository;
 
 /**
@@ -45,6 +47,7 @@ class TrackSectionSyncTest {
 
     private AnalyticsSyncPendingRepository pending;
     private MusicSectionAnalysisRepository sections;
+    private MusicAnalysisInstrumentRepository instruments;
     private TrackSectionRepository clickHouse;
     private TrackSectionSync sync;
 
@@ -52,8 +55,10 @@ class TrackSectionSyncTest {
     void setUp() {
         pending = mock(AnalyticsSyncPendingRepository.class);
         sections = mock(MusicSectionAnalysisRepository.class);
+        instruments = mock(MusicAnalysisInstrumentRepository.class);
         clickHouse = mock(TrackSectionRepository.class);
-        sync = new TrackSectionSync(pending, sections, clickHouse, mock(PlatformTransactionManager.class));
+        sync = new TrackSectionSync(pending, sections, instruments, clickHouse,
+            mock(PlatformTransactionManager.class));
     }
 
     private static MusicSectionAnalysis section(int id, int index, String version, int start, int end) {
@@ -69,7 +74,8 @@ class TrackSectionSyncTest {
     }
 
     private static List<TrackSectionRow> rows() {
-        return List.of(new TrackSectionRow(MUSIC_ID, 5001, "v1", 0, "T001001#0", "CHORUS", 0, 30_000, null));
+        return List.of(new TrackSectionRow(MUSIC_ID, 5001, "v1", 0, "T001001#0", "CHORUS", 0, 30_000, null,
+            List.of()));
     }
 
     @Test
@@ -123,6 +129,11 @@ class TrackSectionSyncTest {
         when(sections.findByMusic_MusicIdOrderByIndexAsc(MUSIC_ID)).thenReturn(List.of(
             section(9001, 0, "v1", 0, 12_000),
             section(9002, 1, "v1", 12_000, 40_000)));
+        // 악기는 구간 번호로 한 번에 읽는다. 질의가 준 순서(코드 번호순)를 그대로 싣고,
+        // `other` 도 거르지 않는다 — 거르는 것은 추천 서버 몫이다 (S15P21A204-458).
+        when(instruments.findCodeNamesBySectionIds(List.of(9001, 9002))).thenReturn(List.of(
+            new SectionInstrument(9001, "piano"),
+            new SectionInstrument(9001, "other")));
 
         RetryOutcome outcome = sync.retry(MUSIC_ID);
 
@@ -132,8 +143,10 @@ class TrackSectionSyncTest {
         verify(clickHouse).replaceSections(eq(MUSIC_ID), eq("v1"), written.capture());
         // 실패했던 요청의 스냅숏이 아니라 **지금 MySQL 에 있는 행**이다.
         assertThat(written.getValue()).containsExactly(
-            new TrackSectionRow(MUSIC_ID, 9001, "v1", 0, "T001001#0", "CHORUS", 0, 12_000, null),
-            new TrackSectionRow(MUSIC_ID, 9002, "v1", 1, "T001001#1", "CHORUS", 12_000, 40_000, null));
+            new TrackSectionRow(MUSIC_ID, 9001, "v1", 0, "T001001#0", "CHORUS", 0, 12_000, null,
+                List.of("piano", "other")),
+            new TrackSectionRow(MUSIC_ID, 9002, "v1", 1, "T001001#1", "CHORUS", 12_000, 40_000, null,
+                List.of()));
         verify(pending).deletePending(MUSIC_ID, KIND);
     }
 

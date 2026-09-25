@@ -83,8 +83,8 @@ public class TrackSectionRepository {
     private static final String INSERT = """
         INSERT INTO track_sections_local
             (track_id, music_section_analysis_id, analysis_version,
-             section_index, section_uid, fn, start_ms, end_ms, energy)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             section_index, section_uid, fn, start_ms, end_ms, energy, instruments)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
 
     private static final String EXISTING_INDEXES = """
@@ -128,6 +128,10 @@ public class TrackSectionRepository {
      *
      * <p>{@code energy} 는 실수라 문자열 표기가 두 DB 에서 다를 수 있다. 백만 배 해 내린 정수로
      * 잇는다 — IEEE 곱셈과 내림은 양쪽이 같다. 없으면 -1 (S15P21A204-455).
+     *
+     * <p>{@code instruments} 는 {@code ','} 로 이어 붙인다. 없으면 빈 문자열이고, MySQL 쪽은
+     * {@code GROUP_CONCAT} 을 코드 번호순으로 해 같은 문자열을 만든다 (S15P21A204-458). 컬럼을 더한
+     * 직후에는 기존 행이 빈 배열이라, 악기가 있는 곡은 전부 불일치로 잡혀 재시도가 채운다.
      */
     private static final String DIGESTS_BY_REPLICA = """
         SELECT hostName() AS replica, track_id, analysis_version,
@@ -135,7 +139,8 @@ public class TrackSectionRepository {
                sum(CRC32(concat(toString(music_section_analysis_id), '|', toString(section_index), '|',
                                 section_uid, '|', toString(fn), '|',
                                 toString(start_ms), '|', toString(end_ms), '|',
-                                toString(ifNull(toInt64(floor(energy * 1000000)), -1))))) AS checksum
+                                toString(ifNull(toInt64(floor(energy * 1000000)), -1)), '|',
+                                arrayStringConcat(instruments, ',')))) AS checksum
         FROM clusterAllReplicas('mupid_all', currentDatabase(), 'track_sections_local') FINAL
         GROUP BY replica, track_id, analysis_version
         """;
@@ -170,7 +175,7 @@ public class TrackSectionRepository {
             .map(row -> new Object[] {
                 row.trackId(), row.musicSectionAnalysisId(), row.analysisVersion(),
                 row.sectionIndex(), row.sectionUid(), row.fn(), row.startMs(), row.endMs(),
-                row.energy()})
+                row.energy(), row.instruments().toArray(String[]::new)})
             .toList();
         clickHouse.batchUpdate(INSERT, batch);
 

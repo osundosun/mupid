@@ -6,9 +6,9 @@ import java.util.List;
 /**
  * 시험용 추천 후보. DB 없이 {@link RecommenderCatalogService} 를 채운다.
  *
- * <p>대화 추천 시험들이 거는 조건({@code genre: poprock·pop}, {@code instrument: piano})을
- * 만족하도록 짜 두었다 — 조건을 걸었는데 후보가 없으면 추천 서버를 부르지 않고 끝나서, 그
- * 시험들이 보려는 경로에 닿지 못한다.
+ * <p>대화 추천 시험들이 거는 조건({@code genre: poprock·pop}, {@code instrument: piano})이 조건
+ * 어휘({@code RecommenderFacets})에 들어가도록 짜 두었다. 계약 v3(S15P21A204-458)부터 조건은 추천
+ * 서버가 걸고 이 후보는 어휘에만 쓰인다.
  */
 public final class TestCatalogs {
 

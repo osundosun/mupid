@@ -52,7 +52,9 @@ import jakarta.persistence.PersistenceContext;
  *       이름)이 모두 같은 트랜잭션에 {@code TRACK_FEATURES} 미반영 행을 남긴다.</li>
  *   <li>값 — {@link TrackFeatureSource} 가 만든 곡 특징이 추천 본문
  *       ({@link RecommenderCatalogServiceImpl#build})의 곡 줄과 같다. 서빙이 본문 대신 ClickHouse
- *       사본을 읽어도 순위가 바뀌지 않는다는 근거다(AI 쪽은 {@code test_feature_store.py}).</li>
+ *       사본을 읽어도 순위가 바뀌지 않는다는 근거다(AI 쪽은 {@code test_feature_store.py}). 계약 v3
+ *       (S15P21A204-458)에서 본문은 없어졌지만 {@code build()} 는 조건 어휘의 후보로 남아, 같은 규칙의
+ *       기준으로 계속 쓴다.</li>
  * </ul>
  *
  * <p>시험마다 롤백되므로 커밋 뒤 ClickHouse 쓰기는 돌지 않는다 — 미반영 행이 <b>남아 있는 것</b>이

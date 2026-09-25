@@ -12,9 +12,11 @@ import com.osundosun.mupid.api.ai.client.RecommenderDto;
 /**
  * 조건에 쓸 수 있는 어휘. 대화 모델이 QueryPlan 을 만들 때 이 값만 고르게 한다.
  *
- * <p>예전에는 추천 서버의 {@code GET /internal/facets} 가 만들었다. 조건을 거는 쪽이
- * Spring 으로 옮겨 오면서 어휘도 여기서 만든다 — 어휘의 정본이 MySQL 이고, 거는 쪽과 알려
- * 주는 쪽이 다르면 "알려 준 값인데 걸리지 않는" 조건이 생긴다(연동 계약 2026-09-23 절).
+ * <p>예전에는 추천 서버의 {@code GET /internal/facets} 가 만들었다. 어휘의 정본이 MySQL 이라
+ * 여기서 만든다(연동 계약 2026-09-23 절). 계약 v3(S15P21A204-458)에서 조건을 <b>거는</b> 쪽은 다시
+ * 추천 서버로 갔지만 어휘는 그대로 여기다 — 추천 서버가 거는 값(ClickHouse 사본)이 같은 MySQL 에서
+ * 오므로 "알려 준 값인데 걸리지 않는" 조건이 생기지 않는다. 사본이 늦는 동안의 틈은
+ * {@code UNSATISFIABLE_CONDITIONS} 로 드러난다(결과 0, 조건을 풀지 않는다).
  *
  * <p>응답 모양은 예전과 같다({@link RecommenderDto.Facets}) — 쓰는 쪽({@code AiRecommendToolImpl})을
  * 바꾸지 않는다.

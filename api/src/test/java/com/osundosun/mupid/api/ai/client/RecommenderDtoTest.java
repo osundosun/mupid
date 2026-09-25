@@ -27,7 +27,7 @@ class RecommenderDtoTest {
         RecommenderDto.SearchRequest request = new RecommenderDto.SearchRequest(
             5001L, 15, 3, List.of("T000901"), null,
             Map.of("filters", Map.of("genre", List.of("pop"))),
-            new RecommenderDto.Onboarding(List.of("잔잔한"), List.of("Jazz")), null);
+            new RecommenderDto.Onboarding(List.of("잔잔한"), List.of("Jazz")));
 
         String json = new String(AiJson.writeBytes(request), StandardCharsets.UTF_8);
 
@@ -40,13 +40,15 @@ class RecommenderDtoTest {
         // 추천 서버는 `extra = forbid` 다. 안 쓰는 칸을 null 로라도 보내면 400 이 아니라
         // 값이 들어간 것으로 읽힐 수 있어, 아예 빠지는 편이 안전하다.
         assertThat(json).doesNotContain("\"query\"");
+        // 계약 v3: 후보를 싣지 않는다. 조건은 query_plan 그대로 가고 추천 서버가 건다.
+        assertThat(json).doesNotContain("catalog");
     }
 
     @Test
     @DisplayName("이어 듣기 요청도 같은 규칙을 따른다")
     void writeNextRequest() {
         RecommenderDto.NextRequest request =
-            new RecommenderDto.NextRequest(7L, 15, 5, List.of(), "T000901", null, null, null);
+            new RecommenderDto.NextRequest(7L, 15, 5, List.of(), "T000901", null, null);
 
         String json = new String(AiJson.writeBytes(request), StandardCharsets.UTF_8);
 

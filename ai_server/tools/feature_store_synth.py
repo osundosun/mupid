@@ -30,6 +30,7 @@ GENRES = ["contemporary_pop", "pop_ballad", "indie_rock", "modern_jazz", "hip_ho
 MOODS = ["serene", "uplifting", "ethereal", "energetic", "focused", "emotional", "intense",
          "romantic", "melancholic", "playful", "dreamy", "dark", "hopeful", "nostalgic",
          "groovy", "calm", "epic"]
+INSTRUMENTS = ["piano", "guitar", "drums", "bass", "vocals", "other", "그 외 악기"]
 LANGUAGES = ["ko", "en", "ja", None]
 CATEGORIES = ["pop", "ballad", "dance", "inst", None]
 VERSION = "v1"
@@ -71,6 +72,8 @@ class Section:
     end_ms: int
     energy: Optional[float]
     analysis_version: str = VERSION
+    # 구간 악기 코드 이름(`music_analysis_instruments`, 06 마이그레이션). 본문 `catalog` 에는 없던 값이다.
+    instruments: list = field(default_factory=list)
 
 
 @dataclass
@@ -92,6 +95,8 @@ def synth(n_tracks: int, seed: int = 455, per_track: int = 9) -> Db:
     곡(약 2%), 에너지가 빈 구간, 장르·무드가 없는 곡.
     """
     rng = random.Random(seed)
+    # 악기는 따로 뽑는다 — 같은 시드의 나머지 값(455 측정·시험이 쓰는 분포)이 그대로이게.
+    inst_rng = random.Random(seed + 458)
     db = Db()
     sid = 1
     for i in range(n_tracks):
@@ -125,7 +130,9 @@ def synth(n_tracks: int, seed: int = 455, per_track: int = 9) -> Db:
         for k in range(n):
             energy = None if rng.random() < 0.03 else rng.random()
             db.sections.append(Section(sid, mid, k, f"{track}#{k}", rng.choice(LABELS),
-                                       bounds[k], bounds[k + 1], energy))
+                                       bounds[k], bounds[k + 1], energy,
+                                       instruments=sorted(inst_rng.sample(
+                                           INSTRUMENTS, inst_rng.choice([0, 1, 2, 3])))))
             sid += 1
     return db
 
@@ -246,4 +253,5 @@ def section_rows(db: Db) -> list:
         "analysis_version": s.analysis_version, "section_index": s.index,
         "section_uid": s.external_id, "fn": s.section_label,
         "start_ms": s.start_ms, "end_ms": s.end_ms, "energy": s.energy,
+        "instruments": list(s.instruments),
     } for s in db.sections]

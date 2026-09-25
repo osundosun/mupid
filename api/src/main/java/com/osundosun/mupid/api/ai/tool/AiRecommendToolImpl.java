@@ -4,13 +4,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Component;
 
-import com.osundosun.mupid.api.ai.catalog.QueryPlanFilter;
-import com.osundosun.mupid.api.ai.catalog.RecommenderCatalog;
 import com.osundosun.mupid.api.ai.catalog.RecommenderCatalogService;
 import com.osundosun.mupid.api.ai.catalog.RecommenderFacets;
 import com.osundosun.mupid.api.ai.client.OpenAiTool;
@@ -18,11 +14,11 @@ import com.osundosun.mupid.api.ai.client.RecommenderClient;
 import com.osundosun.mupid.api.ai.client.RecommenderDto;
 import com.osundosun.mupid.api.ai.dto.AiRecommendedTrack;
 import com.osundosun.mupid.api.music.dto.MusicSummary;
-import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.repository.MusicRepository;
 import com.osundosun.mupid.api.music.service.MusicSectionService;
 import com.osundosun.mupid.api.music.service.MusicSummaryAssembler;
+import com.osundosun.mupid.api.recommendation.service.RecommendationFinalFilter;
 import com.osundosun.mupid.api.recommendation.service.RecommendationReasonCache;
 import com.osundosun.mupid.api.onboarding.dto.CodeOption;
 import com.osundosun.mupid.api.onboarding.response.OnboardingResultResponse;
@@ -38,12 +34,17 @@ import lombok.extern.slf4j.Slf4j;
  * 한다. 어떤 곡의 어느 순간이 나올지는 추천 파이프라인이 정한다 — 모델에게 카탈로그를
  * 통째로 물릴 수도 없고, 물리면 없는 곡을 지어낸다.
  *
- * <h2>조건은 여기서 건다</h2>
+ * <h2>조건은 추천 서버가 건다 (계약 v3, S15P21A204-458)</h2>
  *
- * 대화 모델이 조건을 뽑으면 {@link QueryPlanFilter} 가 MySQL 후보에 걸고, 통과한 후보만
- * 추천 서버에 보낸다(연동 계약 2026-09-23 절). 어휘에 없는 필수 조건이 있으면 추천 서버를
- * 부르지 않고 빈 결과다 — 조건을 몰래 풀면 사용자가 말한 것과 다른 곡이 나간다.
- * 조건에 쓸 어휘도 같은 후보로 만든다({@link RecommenderFacets}).
+ * 대화 모델이 뽑은 조건을 {@code query_plan} 으로 <b>그대로</b> 보내고, 추천 서버가 ClickHouse
+ * 피처 저장소에 건다. 어휘에 없는 필수 조건이면 추천 서버가 {@code UNSATISFIABLE_CONDITIONS} 로
+ * 답하고 우리는 빈 결과로 받는다 — 조건을 몰래 풀면 사용자가 말한 것과 다른 곡이 나간다.
+ * 예전(2026-09-23 절)에는 {@code QueryPlanFilter} 가 여기서 MySQL 후보에 걸었는데, 규칙을 두 곳에
+ * 두지 않으려고 추천 서버로 되돌렸다(설계 §9.4). 조건에 쓸 어휘는 여전히 MySQL 로 만든다
+ * ({@link RecommenderFacets}).
+ *
+ * 응답에는 최종 필터만 건다({@link RecommendationFinalFilter}) — 지운 곡·재생할 수 없는 곡을
+ * 빼고 {@code limit} 으로 자른다.
  *
  * 대신 CLAP 임베딩 기반의 의미 재정렬은 빠진다. 무드는 추천 서버가 태그 일치로 부드럽게
  * 재정렬해 그 자리를 메운다.
@@ -131,7 +132,7 @@ public class AiRecommendToolImpl implements AiRecommendTool {
      * 조건 칸의 JSON Schema. 값 목록은 카탈로그에서 받아 채운다.
      *
      * 어휘를 못 만들면 열거 없이 자유 문자열로 둔다. 그래도 조건이 조용히 사라지지는
-     * 않는다 — {@link QueryPlanFilter} 가 어휘에 없는 조건을 "만족시킬 수 없음" 으로 보고
+     * 않는다 — 추천 서버가 어휘에 없는 조건을 {@code UNSATISFIABLE_CONDITIONS} 로 보고
      * 결과 0 을 준다.
      */
     private Map<String, Object> conditionSchema(RecommenderDto.Facets facets, String description) {
@@ -206,33 +207,23 @@ public class AiRecommendToolImpl implements AiRecommendTool {
             if (!exclude.isEmpty()) {
                 plan.put("exclude", exclude);
             }
-            // 조건은 **여기서** 건다. 통과한 후보만 보낸다(연동 계약 2026-09-23 절).
-            RecommenderCatalog catalog = catalogService.current();
-            QueryPlanFilter.Outcome outcome = QueryPlanFilter.apply(catalog, plan, null, null);
-            if (!outcome.satisfiable() || outcome.kept().isEmpty()) {
-                // 추천 서버를 부르지 않는다. 조건을 풀어 아무 곡이나 주면 안 된다.
-                log.info("조건을 만족하는 후보가 없다 user_id={} 만족 불가={} 무시={}",
-                    userId, outcome.unsatisfiable(), outcome.ignored());
-                return Result.empty();
-            }
-            java.util.Set<String> keep = outcome.keptIds();
+            // 조건은 추천 서버가 건다(계약 v3). 만족시킬 수 없으면 빈 목록이 온다.
             // userId 는 Integer 다. 여기서 primitive 로 언박싱하면 null 에서 NPE 가 나고
             // 대화 한 번이 통째로 500 이 된다 (S15P21A204-377). null 이면 요청 본문에서
             // 빠지고 추천 서버가 "필수 칸 없음" 으로 400 을 낸다 — 계약 위반이 계약대로
             // 드러나는 편이, 우리 코드가 터지는 것보다 낫다.
             items = recommender.search(new RecommenderDto.SearchRequest(
-                recommendationId, userId, limit, excludeTracks, null, plan, onboarding,
-                catalog.body(s -> keep.contains(s.externalId()))));
+                recommendationId, userId, limit, excludeTracks, null, plan, onboarding));
         } else {
             items = recommender.next(new RecommenderDto.NextRequest(
                 recommendationId, userId, limit, excludeTracks, currentTrack, null,
-                onboarding, catalogService.current().body()));
+                onboarding));
         }
         if (items.isEmpty()) {
             log.info("조건에 맞는 곡이 없다 user_id={} 조건={}", userId, filters);
             return Result.empty();
         }
-        List<AiRecommendedTrack> tracks = withMusicDetails(items);
+        List<AiRecommendedTrack> tracks = withMusicDetails(items, limit);
         // 사유 문장이 나가는 유일한 자리다. 재생 이벤트에는 실리지 않으므로 화면이
         // 되돌려줄 때까지 적어 둔다 ({@link RecommendationReasonCache}).
         for (AiRecommendedTrack track : tracks) {
@@ -305,77 +296,28 @@ public class AiRecommendToolImpl implements AiRecommendTool {
      * {@link AiRecommendedTrack} 주석에 있다. 조립은 목록·상세와 같은
      * {@link MusicSummaryAssembler} 가 한다. 두 벌이 되면 같은 곡이 화면마다 다르게 보인다.
      *
-     * MySQL 에 없는 `external_id` 는 **버린다.** 화면이 재생할 수 없는 줄을 그리게 되기
-     * 때문이다. 그런 일이 생겼다면 구간 적재가 색인보다 낡았다는 뜻이라 로그에 남긴다.
+     * 최종 필터는 {@link RecommendationFinalFilter} 가 건다 — MySQL 에 없는 `external_id`, 지운 곡,
+     * 재생할 수 없는 곡을 **버리고**, 같은 곡은 한 줄만, 앞에서부터 {@code limit} 개. 추천 서버는 그
+     * 몫까지 {@code limit} 보다 몇 개 더 준다(계약 v3).
+     *
+     * <p>재생할 수 없는 곡을 여기서 걷어내는 것은 S15P21A204-426 부터다. 예전에는 화면까지 보내
+     * 놓고 화면이 거른 뒤 "N곡은 아직 재생할 수 없어 빼뒀어요" 라고 알렸는데, 사용자가 할 수 있는
+     * 일이 없는 의문만 남겼다. 추천 건수(`track_count` 는 이 목록의 크기다)에서도 빠져야
+     * "3곡 중 1곡" 같은 말이 애초에 생기지 않는다.
      */
-    private List<AiRecommendedTrack> withMusicDetails(List<RecommenderDto.Item> items) {
-        List<String> externalIds = items.stream()
-            .map(RecommenderDto.Item::externalId).filter(Objects::nonNull).distinct().toList();
-        Map<String, MusicSectionAnalysis> sections =
-            musicSectionService.findByExternalIds(externalIds);
-
-        List<Integer> ids = sections.values().stream()
-            .map(row -> row.getMusic().getMusicId()).distinct().toList();
-        Map<Integer, Music> byId = musicRepository.findDetailAllByIds(ids).stream()
-            .collect(Collectors.toMap(Music::getMusicId, m -> m, (a, b) -> a));
-
-        // 남길 것을 먼저 고른다. 곡 표현은 **한 번에** 조립한다 — 곡마다 부르면
-        // 길이·장르·분위기 조회가 곡 수만큼 반복돼 N+1 이 된다.
-        List<RecommenderDto.Item> kept = new ArrayList<>();
-        List<MusicSectionAnalysis> keptSections = new ArrayList<>();
-        List<Music> keptMusics = new ArrayList<>();
-        // 버린 건수를 센다. 건별 경고만으로는 "전부 버려서 곡 0건인데 대화는 정상 응답" 하는
-        // 상태가 눈에 띄지 않는다 — 사용자에게는 "추천이 안 온다" 로 보인다.
-        int missingSection = 0;
-        int missingMusic = 0;
-        for (RecommenderDto.Item item : items) {
-            MusicSectionAnalysis section = sections.get(item.externalId());
-            if (section == null) {
-                missingSection++;
-                log.warn("추천된 external_id={} 가 DB 에 없다 — 구간 적재가 색인보다 낡았다",
-                    item.externalId());
-                continue;
-            }
-            Music music = byId.get(section.getMusic().getMusicId());
-            if (music == null) {
-                missingMusic++;
-                log.warn("구간 external_id={} 의 곡을 찾지 못했다", item.externalId());
-                continue;
-            }
-            kept.add(item);
-            keptSections.add(section);
-            keptMusics.add(music);
-        }
-
-        // 넘긴 순서 그대로 돌려준다 (`MusicSummaryAssembler.assemble`). 자리로 맞물리므로
-        // 길이가 어긋나면 곡과 구간이 뒤바뀐다 — 어긋나면 그 자리에서 멈춘다.
-        List<MusicSummary> summaries = musicSummaryAssembler.assemble(keptMusics);
-        if (summaries.size() != keptMusics.size()) {
-            throw new IllegalStateException(
-                "곡 표현 조립 결과가 넘긴 곡 수와 다르다 보낸=%d 받은=%d"
-                    .formatted(keptMusics.size(), summaries.size()));
-        }
+    private List<AiRecommendedTrack> withMusicDetails(List<RecommenderDto.Item> items, int limit) {
+        RecommendationFinalFilter.Outcome<RecommenderDto.Item> outcome = RecommendationFinalFilter.apply(
+            items, RecommenderDto.Item::externalId, limit,
+            musicSectionService::findByExternalIds,
+            // 목록·상세와 같은 조립기로 곡 표현을 만든다. 상세 조회가 지운 곡을 돌려주지 않는다.
+            ids -> musicSummaryAssembler.assemble(musicRepository.findDetailAllByIds(ids)),
+            log, "추천");
 
         List<AiRecommendedTrack> out = new ArrayList<>();
-        int notPlayable = 0;
-        for (int i = 0; i < kept.size(); i++) {
-            RecommenderDto.Item item = kept.get(i);
-            MusicSectionAnalysis section = keptSections.get(i);
-            MusicSummary music = summaries.get(i);
-            /*
-             * 재생할 수 없는 곡은 **여기서** 걷어낸다 (S15P21A204-426).
-             *
-             * 완료된 스트림이 없으면 눌러도 소리가 나지 않는다. 예전에는 화면까지 보내
-             * 놓고 화면이 거른 뒤 "N곡은 아직 재생할 수 없어 빼뒀어요" 라고 알렸는데,
-             * 사용자가 할 수 있는 일이 없는 의문만 남겼다. 추천 건수(`track_count` 는
-             * 이 목록의 크기다)에서도 빠져야 "3곡 중 1곡" 같은 말이 애초에 생기지 않는다.
-             */
-            if (!music.playable()) {
-                notPlayable++;
-                log.warn("추천된 music_id={} 는 재생 가능한 스트림이 없다 — 내려보내지 않는다",
-                    music.musicId());
-                continue;
-            }
+        for (RecommendationFinalFilter.Kept<RecommenderDto.Item> kept : outcome.kept()) {
+            RecommenderDto.Item item = kept.item();
+            MusicSectionAnalysis section = kept.section();
+            MusicSummary music = kept.music();
             out.add(new AiRecommendedTrack(
                 out.size() + 1,                          // 버린 것이 있어도 순번은 이어 붙인다
                 music,
@@ -387,14 +329,6 @@ public class AiRecommendToolImpl implements AiRecommendTool {
                 item.reasonCode(),
                 RecommendReason.of(item.reasonCode(), section.getSectionLabel())
             ));
-        }
-        int dropped = missingSection + missingMusic + notPlayable;
-        if (dropped > 0) {
-            // 곡이 0건이 된 경우는 **한 줄로 드러낸다.** 조용히 빈 목록을 돌려주면 원인을
-            // 찾을 단서가 사라진다. 원인은 보통 구간 적재가 색인보다 낡은 것이다.
-            log.warn("추천 {}건 중 {}건을 버렸다 (구간 없음={} 곡 없음={} 재생 불가={})"
-                + " — 남은 곡 {}건. 구간 적재가 색인보다 낡았는지, 스트림 변환이 밀렸는지 본다",
-                items.size(), dropped, missingSection, missingMusic, notPlayable, out.size());
         }
         return List.copyOf(out);
     }

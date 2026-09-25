@@ -251,13 +251,14 @@ def test_recommend_honours_exclusion(svc):
     assert first not in [r["track_id"] for r in again]
 
 
-def test_search_ranks_only_what_spring_sent(svc):
-    """조건 게이트는 Spring 이 건다. 이 서버는 받은 후보 밖으로 나가지 않는다."""
+def test_search_ranks_only_what_the_conditions_kept(svc):
+    """조건 게이트는 요청 경계(`query_conditions`)가 풀고 통과한 구간만 사본에 묶는다(계약 v3).
+    추천기는 그 사본 밖으로 나가지 않는다."""
     view = _spring_filtered(svc, lambda uid: int(uid[1:7]) % 3 == 0)   # GENRES[0] 곡만
     with svc.using(view):
         out = svc.recommend("internal:1", 5, set(), True,
                             {"filters": {"genre": [GENRES[0]]}})
-    assert out["diagnostics"]["nlp"]["gates"] == "spring"
+    assert out["diagnostics"]["nlp"]["gates"] == "query_conditions"
     assert out["results"]
     for r in out["results"]:
         assert int(r["track_id"][1:]) % 3 == 0

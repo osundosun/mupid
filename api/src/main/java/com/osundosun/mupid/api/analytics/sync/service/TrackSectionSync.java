@@ -1,6 +1,9 @@
 package com.osundosun.mupid.api.analytics.sync.service;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.springframework.stereotype.Component;
@@ -15,6 +18,7 @@ import com.osundosun.mupid.api.analytics.repository.TrackSectionRepository;
 import com.osundosun.mupid.api.analytics.sync.enumerate.AnalyticsSyncKind;
 import com.osundosun.mupid.api.analytics.sync.repository.AnalyticsSyncPendingRepository;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
+import com.osundosun.mupid.api.music.mapping.repository.MusicAnalysisInstrumentRepository;
 import com.osundosun.mupid.api.music.repository.MusicSectionAnalysisRepository;
 
 import lombok.extern.slf4j.Slf4j;
@@ -64,15 +68,18 @@ public class TrackSectionSync {
 
     private final AnalyticsSyncPendingRepository pendingRepository;
     private final MusicSectionAnalysisRepository sectionRepository;
+    private final MusicAnalysisInstrumentRepository instrumentRepository;
     private final TrackSectionRepository trackSectionRepository;
     private final TransactionTemplate newTransaction;
 
     public TrackSectionSync(AnalyticsSyncPendingRepository pendingRepository,
                             MusicSectionAnalysisRepository sectionRepository,
+                            MusicAnalysisInstrumentRepository instrumentRepository,
                             TrackSectionRepository trackSectionRepository,
                             PlatformTransactionManager transactionManager) {
         this.pendingRepository = pendingRepository;
         this.sectionRepository = sectionRepository;
+        this.instrumentRepository = instrumentRepository;
         this.trackSectionRepository = trackSectionRepository;
         this.newTransaction = new TransactionTemplate(transactionManager);
         this.newTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -104,13 +111,14 @@ public class TrackSectionSync {
     /**
      * 구간 교체 한 번: 미반영으로 올리고, 커밋되면 방금 넣은 구간을 ClickHouse 에 쓴다.
      *
-     * <p>{@code rows} 는 flush 로 번호가 채워진 뒤의 MySQL 행이다. 커밋 뒤에 다시 읽지 않고
-     * 이 스냅숏을 쓴다 — 두 요청이 겹쳐 스냅숏이 옛것이 되더라도, 뒤 요청이 revision 을
+     * <p>{@code rows} 는 flush 로 번호가 채워진 뒤의 MySQL 행이다. 악기는 이 자리에서 한 번 읽는다
+     * — 부르는 쪽이 악기 연결까지 넣은 <b>뒤에</b> 불러야 한다(같은 트랜잭션이라 JPQL 이 먼저 내보낸다).
+     * 커밋 뒤에 다시 읽지 않고 이 스냅숏을 쓴다 — 두 요청이 겹쳐 스냅숏이 옛것이 되더라도, 뒤 요청이 revision 을
      * 올려 두었으므로 앞 요청의 성공이 그 행을 지우지 못하고 재시도가 지금 구간으로 덮는다.
      */
     public void recordAndPushAfterCommit(int musicId, String analysisVersion,
                                          List<MusicSectionAnalysis> rows) {
-        List<TrackSectionRow> sections = toRows(musicId, rows);
+        List<TrackSectionRow> sections = toRows(musicId, rows, instrumentsOf(rows));
 
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             // 트랜잭션 밖에서 직접 불린 경우. 기록을 자기 트랜잭션으로 남기고, 기다릴 커밋이
@@ -191,7 +199,8 @@ public class TrackSectionSync {
 
             String version = current.get(0).getAnalysisVersion();
             try {
-                trackSectionRepository.replaceSections(musicId, version, toRows(musicId, current));
+                trackSectionRepository.replaceSections(musicId, version,
+                    toRows(musicId, current, instrumentsOf(current)));
             } catch (RuntimeException e) {
                 // ClickHouse 쪽 예외라 JPA 트랜잭션은 멀쩡하다. 실패를 적고 커밋한다.
                 pendingRepository.markFailed(musicId, KIND.name(), describe(e));
@@ -213,9 +222,28 @@ public class TrackSectionSync {
     }
 
     /**
-     * MySQL 구간 행 → ClickHouse 행. 버전은 행마다 자기 것을 싣는다.
+     * 구간 번호 → 악기 코드 이름(코드 번호순). 곡 하나의 구간 전부를 질의 한 번으로 읽는다.
      */
-    static List<TrackSectionRow> toRows(int musicId, List<MusicSectionAnalysis> rows) {
+    private Map<Integer, List<String>> instrumentsOf(List<MusicSectionAnalysis> rows) {
+        List<Integer> ids = rows.stream().map(MusicSectionAnalysis::getMusicSectionAnalysisId).toList();
+        Map<Integer, List<String>> out = new LinkedHashMap<>();
+        if (ids.isEmpty()) {
+            return out;
+        }
+        for (MusicAnalysisInstrumentRepository.SectionInstrument row
+            : instrumentRepository.findCodeNamesBySectionIds(ids)) {
+            out.computeIfAbsent(row.musicSectionAnalysisId(), key -> new ArrayList<>()).add(row.codeName());
+        }
+        return out;
+    }
+
+    /**
+     * MySQL 구간 행 → ClickHouse 행. 버전은 행마다 자기 것을 싣는다.
+     *
+     * @param instruments 구간 번호 → 악기 코드 이름. 없는 구간은 빈 배열이 된다
+     */
+    static List<TrackSectionRow> toRows(int musicId, List<MusicSectionAnalysis> rows,
+                                        Map<Integer, List<String>> instruments) {
         return rows.stream()
             .map(row -> new TrackSectionRow(
                 musicId,
@@ -226,7 +254,8 @@ public class TrackSectionSync {
                 row.getSectionLabel().name(),
                 row.getStartTimeMs(),
                 row.getEndTimeMs(),
-                row.getEnergy()))
+                row.getEnergy(),
+                instruments.getOrDefault(row.getMusicSectionAnalysisId(), List.of())))
             .toList();
     }
 

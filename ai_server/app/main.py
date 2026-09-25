@@ -6,9 +6,11 @@
 섞이면 **엉뚱한 곡을 추천하면서도 서비스는 정상처럼 뜬다.** 어긋나면 `/internal/ready` 를
 실패로 둔다.
 
-**기동에서 Spring 을 부르지 않는다**(연동 계약 2026-09-23 절). 곡·구간 메타는 요청마다
-본문으로 온다. 예전에는 기동 때 Spring 카탈로그를 당겨 왔고, 토큰이 만료되면 파드가
-Ready 가 되지 못해 배포가 롤백됐다(S15P21A204-423).
+**기동에서 Spring 을 부르지 않는다**(연동 계약 2026-09-23 절). 곡·구간 값은 ClickHouse 피처
+저장소에서 읽어 **기준 풀 스냅샷**으로 들고, 백그라운드에서 주기적으로 갈아 끼운다(계약 v3,
+`app/pool_snapshot.py`). 못 읽어도 뜬다 — 벡터 전용으로 추천하고 조건 검색만 끈다. 예전에는
+기동 때 Spring 카탈로그를 당겨 왔고, 토큰이 만료되면 파드가 Ready 가 되지 못해 배포가
+롤백됐다(S15P21A204-423).
 """
 from __future__ import annotations
 
@@ -19,8 +21,8 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 
-from . import (index_contract, internal_api, labels_store, model_bundle, paths,
-               pinecone_store, qdrant_store, recommender)
+from . import (feature_store, index_contract, internal_api, labels_store, model_bundle, paths,
+               pinecone_store, pool_snapshot, qdrant_store, recommender)
 from .log import log
 
 _STARTED = time.time()
@@ -146,7 +148,7 @@ def _startup() -> None:
         log(f"산출물 무결성 실패 — {_STATE['error']}")
         return
 
-    # ② 색인·모델. 후보는 비어 있다 — 요청마다 본문의 `catalog` 로 묶는다.
+    # ② 색인·모델. 후보는 비어 있다 — 요청마다 기준 풀 스냅샷으로 묶는다(④).
     try:
         recommender.CAT = recommender.Catalog()
     except Exception as e:
@@ -195,10 +197,47 @@ def _startup() -> None:
     else:
         _STATE["vector_search"] = {"backend": "local"}
 
+    # ④ 기준 풀 스냅샷. 준비 판정을 막지 않는다 — 못 읽으면 벡터 전용으로 뜬다.
+    _start_pool_snapshot()
     _STATE["loaded"] = True
     _STATE["load_seconds"] = round(time.time() - t0, 3)
+    st = pool_snapshot.status()
     log(f"적재 완료 {_STATE['load_seconds']}초 · 색인 {len(recommender.CAT._mom_index)}행 "
-        f"(후보는 요청 본문으로 온다)")
+        f"· 기준 풀 {st.get('source') or '벡터 전용'} {st.get('tracks', 0)}곡 {st.get('sections', 0)}구간")
+
+
+def _start_pool_snapshot() -> None:
+    """피처 저장소에서 기준 풀을 한 번 읽고, 갱신 스레드를 띄운다.
+
+    첫 읽기는 여기(기동)서 한다 — 요청 경로가 ClickHouse 를 기다리지 않게. 실패해도 갱신 스레드는
+    띄운다. ClickHouse 가 늦게 살아나면 다음 주기에 스냅샷이 생기고 조건 검색이 돌아온다.
+    """
+    if not feature_store.configured():
+        log("피처 저장소 주소가 없다(MUPID_CLICKHOUSE_SERVING_URL·MUPID_CLICKHOUSE_URL) — "
+            "벡터 전용으로 추천한다(조건 검색 끔)")
+        return
+    try:
+        ttl = pool_snapshot.ttl_seconds()
+    except ValueError as e:
+        log(f"기준 풀 갱신 주기 설정 오류 — 기본 {pool_snapshot.DEFAULT_TTL}초로 돈다: {e}")
+        ttl = pool_snapshot.DEFAULT_TTL
+
+    def pool_ids() -> list:
+        return recommender.index_pool(recommender.CAT).moment_id.astype(str).tolist()
+
+    store = feature_store.ClickHouseFeatureStore()
+    holder = pool_snapshot.Holder(
+        pool_snapshot.feature_store_loader(store, pool_ids),
+        ttl=ttl, on_swap=internal_api.warm(recommender),
+        # 판(색인 풀)이 바뀌어도 다시 읽는다 — 저장소 쪽이 그대로여도 물을 ID 가 달라졌다.
+        probe=lambda: (store.change_token(), id(recommender.CAT)))
+    pool_snapshot.install(holder)
+    if holder.refresh():
+        st = holder.status()
+        log(f"기준 풀 스냅샷 — {feature_store.serving_env()} · {st['tracks']}곡 {st['sections']}구간 "
+            f"(삭제·재생 불가 {st.get('dropped', 0)} · 없음 {st.get('missing', 0)} · "
+            f"버전 불일치 {st.get('stale', 0)}) · {st['last_refresh_seconds']}초 · {ttl:g}초마다 갱신")
+    holder.start()
 
 
 def _generation() -> dict:
@@ -282,8 +321,10 @@ def health() -> dict:
         "index": ({"moments": int(len(cat._mom_index)),
                    "pool_sources": sorted(recommender.POOL_SOURCES)}
                   if cat is not None else None),
-        # 곡·순간 메타데이터의 출처. 요청 본문이다 — 기동 때 준비할 것이 없다.
-        "metadata_source": "request",
+        # 곡·순간 메타데이터의 출처. 피처 저장소를 읽은 기준 풀 스냅샷이다(계약 v3). 나이·연속
+        # 실패가 여기 보인다 — 값이 낡아도 추천은 계속되므로 이 칸이 유일한 단서다.
+        "metadata_source": "feature_store",
+        "pool_snapshot": internal_api.pool_snapshot_status(),
         # 순간 벡터를 어디서 읽는가. Pinecone 을 켜 두었는데 값이 비면 검색이
         # 통째로 실패하므로, 설정 여부가 준비 판정과 같은 화면에 있어야 한다.
         "vector_search": _vector_settings(),

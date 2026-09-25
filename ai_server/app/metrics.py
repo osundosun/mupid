@@ -27,6 +27,11 @@ _query_source: Counter = Counter()    # labels | onboarding | none
 _behavior: deque = deque(maxlen=_KEEP)
 _behavior_source: Counter = Counter()   # clickhouse|file|unavailable|mapping_empty
 _onb_unmapped: Counter = Counter()    # mood | genre — 답변은 왔는데 하나도 못 옮긴 축
+_legacy_catalog: Counter = Counter()  # path -> 옛 Spring 이 본문에 catalog 를 실어 보낸 건수
+_conditions: Counter = Counter()      # 조건 풀기 결과 — kept | unsatisfiable | empty | unavailable
+_snapshot_refresh: Counter = Counter()  # ok | failed — 기준 풀 스냅샷 갱신
+_snapshot_seconds: deque = deque(maxlen=_KEEP)
+_stale_vectors: Counter = Counter()   # 구간 지문이 피처 저장소와 달라 버린 후보 수
 
 
 def observe_request(path: str, seconds: float, error_code: str | None = None) -> None:
@@ -81,6 +86,37 @@ def observe_onboarding_unmapped(axis: str) -> None:
         _onb_unmapped[axis] += 1
 
 
+def observe_legacy_catalog(path: str) -> None:
+    """요청 본문에 `catalog` 가 왔다 — **옛 Spring 이다** (계약 v3, S15P21A204-458).
+
+    받되 쓰지 않는다. 그래서 새 AI 를 먼저 올려도 옛 Spring 과 함께 돈다. 새 Spring 이 다
+    올라간 뒤에도 0 이 아니면 어딘가 옛 호출자가 남아 약 0.5MB 를 요청마다 보내고 있다.
+    """
+    with _LOCK:
+        _legacy_catalog[path] += 1
+
+
+def observe_conditions(outcome: str) -> None:
+    """조건 검색 한 건의 조건 풀기 결과. `unavailable` 은 피처 저장소가 없어 검색을 껐다는 뜻이다."""
+    with _LOCK:
+        _conditions[outcome] += 1
+
+
+def observe_snapshot_refresh(ok: bool, seconds: float) -> None:
+    """기준 풀 스냅샷 갱신 한 번. 실패가 이어지면 요청은 **직전 스냅샷**으로 돈다 —
+    값이 낡아 가는 것은 `/internal/ready` 의 `pool_snapshot.age_seconds` 로 본다."""
+    with _LOCK:
+        _snapshot_refresh["ok" if ok else "failed"] += 1
+        _snapshot_seconds.append(seconds)
+
+
+def observe_stale_vectors(n: int) -> None:
+    """벡터 저장소(Qdrant)의 구간 지문이 피처 저장소와 달라 버린 후보(설계 §9.3-3). 재분석 직후
+    잠깐 생기는 것이 정상이고, 계속 쌓이면 Spring 이 한쪽만 쓴 것이다(§10.1-1)."""
+    with _LOCK:
+        _stale_vectors["dropped"] += int(n)
+
+
 def observe_behavior(seconds: float) -> None:
     """행동 로그 조회에 걸린 시간. 개인화 사용자가 느린 원인을 분리해 본다."""
     with _LOCK:
@@ -121,6 +157,12 @@ def snapshot() -> dict:
             # 답변은 왔는데 그 축을 하나도 못 옮긴 건수. 응답에는 드러나지 않는다.
             "onboarding_unmapped": dict(_onb_unmapped),
             "reason_codes": dict(_reasons),
+            # 옛 Spring(본문에 catalog)이 보낸 건수. 새 Spring 배포 뒤에는 0 이어야 한다.
+            "legacy_catalog_requests": dict(_legacy_catalog),
+            "conditions": dict(_conditions),
+            "stale_vectors": dict(_stale_vectors),
+            "pool_snapshot_refresh": {**dict(_snapshot_refresh),
+                                      "seconds": _lat_block(list(_snapshot_seconds))},
             "query_source": qs,
             # 콜드스타트 비율: 이력도 온보딩도 없어 근거 없이 나간 추천의 몫.
             # 온보딩·라벨 배치가 도는지 보는 핵심 지표다.
@@ -132,6 +174,11 @@ def reset() -> None:
     """테스트 전용. 운영 중에 부르면 추세가 끊긴다."""
     with _LOCK:
         _onb_unmapped.clear()
+        _legacy_catalog.clear()
+        _conditions.clear()
+        _snapshot_refresh.clear()
+        _snapshot_seconds.clear()
+        _stale_vectors.clear()
         _lat.clear()
         _calls.clear()
         _errors.clear()

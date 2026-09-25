@@ -18,15 +18,20 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.admin.service.AdminResourceService;
 import com.osundosun.mupid.api.analytics.sync.dto.SectionDigest;
 import com.osundosun.mupid.api.analytics.sync.dto.TrackVersion;
 import com.osundosun.mupid.api.analytics.sync.repository.AnalyticsSyncPendingRepository;
 import com.osundosun.mupid.api.analytics.sync.repository.SectionDigestRepository;
+import com.osundosun.mupid.api.code.entity.Code;
+import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.music.entity.Album;
 import com.osundosun.mupid.api.music.entity.Artist;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.entity.MusicSectionAnalysis;
 import com.osundosun.mupid.api.music.enumerate.SectionLabel;
+import com.osundosun.mupid.api.music.mapping.repository.MusicAnalysisInstrumentRepository;
+import com.osundosun.mupid.api.music.mapping.repository.MusicAnalysisInstrumentRepository.SectionInstrument;
 import com.osundosun.mupid.api.music.repository.MusicSectionAnalysisRepository;
 import com.osundosun.mupid.api.music.request.MusicSectionBulkLine;
 import com.osundosun.mupid.api.music.request.MusicSectionBulkRequest;
@@ -67,6 +72,12 @@ class AnalyticsSyncPendingMysqlTest {
     private SectionDigestRepository digestRepository;
 
     @Autowired
+    private MusicAnalysisInstrumentRepository instrumentRepository;
+
+    @Autowired
+    private AdminResourceService adminResourceService;
+
+    @Autowired
     @Qualifier("jdbcTemplate")
     private JdbcTemplate mysql;
 
@@ -100,9 +111,15 @@ class AnalyticsSyncPendingMysqlTest {
     }
 
     private void replace(String version, int sections) {
+        replace(version, sections, null);
+    }
+
+    /** @param firstInstruments 첫 구간에만 다는 악기 이름. 나머지 구간은 악기가 없다 */
+    private void replace(String version, int sections, List<String> firstInstruments) {
         List<MusicSectionBulkLine> lines = java.util.stream.IntStream.range(0, sections)
             .mapToObj(i -> new MusicSectionBulkLine(i, uid + "#" + i, SectionLabel.CHORUS,
-                i * 10_000, (i + 1) * 10_000, null, null, i == 0 ? 0.7071067811865476 : null))
+                i * 10_000, (i + 1) * 10_000, null, i == 0 ? firstInstruments : null,
+                i == 0 ? 0.7071067811865476 : null))
             .toList();
         sectionService.replaceSections(music.getMusicId(), new MusicSectionBulkRequest(version, lines));
         em.flush();
@@ -171,9 +188,12 @@ class AnalyticsSyncPendingMysqlTest {
     }
 
     @Test
-    @DisplayName("MySQL 요약의 체크섬은 행 문자열 CRC32 의 합이다 — ClickHouse 문장과 같은 규칙 (에너지 포함)")
+    @DisplayName("MySQL 요약의 체크섬은 행 문자열 CRC32 의 합이다 — ClickHouse 문장과 같은 규칙 (에너지·악기 포함)")
     void digestMatchesDocumentedFormula() {
-        replace("v1", 2);
+        // 코드 번호가 먼저인 쪽이 앞에 온다. 요청에는 거꾸로 싣는다 — 순서는 요청이 아니라 코드표가 정한다.
+        String first = instrument("keys");
+        String second = instrument("other");
+        replace("v1", 2, List.of(second, first));
         em.clear();
 
         long expected = 0;
@@ -184,7 +204,9 @@ class AnalyticsSyncPendingMysqlTest {
                 row.getExternalId(), row.getSectionLabel().name(),
                 String.valueOf(row.getStartTimeMs()), String.valueOf(row.getEndTimeMs()),
                 // 에너지는 백만 배 내림 정수, 없으면 -1 (S15P21A204-455)
-                String.valueOf(row.getEnergy() == null ? -1 : (long)Math.floor(row.getEnergy() * 1_000_000)))
+                String.valueOf(row.getEnergy() == null ? -1 : (long)Math.floor(row.getEnergy() * 1_000_000)),
+                // 악기는 코드 번호순 ',' 로, 없으면 빈 문자열 (S15P21A204-458)
+                row.getIndex() == 0 ? first + "," + second : "")
                 .getBytes(StandardCharsets.UTF_8));
             expected += crc.getValue();
         }
@@ -192,6 +214,51 @@ class AnalyticsSyncPendingMysqlTest {
         Map<TrackVersion, SectionDigest> digests = digestRepository.digests();
         assertThat(digests.get(new TrackVersion(music.getMusicId(), "v1")))
             .isEqualTo(new SectionDigest(2, expected));
+    }
+
+    @Test
+    @DisplayName("사본에 싣는 악기는 코드 이름 그대로, 코드 번호순이고 other 도 남는다")
+    void instrumentsForTheCopyAreRawCodeNamesInCodeOrder() {
+        String first = instrument("keys");
+        String second = instrument("other");
+        replace("v1", 2, List.of(second, first));
+
+        List<Integer> ids = sectionRepository.findByMusic_MusicIdOrderByIndexAsc(music.getMusicId()).stream()
+            .map(MusicSectionAnalysis::getMusicSectionAnalysisId).toList();
+
+        // `TrackSectionSync` 가 ClickHouse `track_sections.instruments` 로 옮기는 값이다. 구체적이지
+        // 않은 악기를 조건에서 빼는 것은 추천 서버 몫이라 여기서는 거르지 않는다.
+        assertThat(instrumentRepository.findCodeNamesBySectionIds(ids)).containsExactly(
+            new SectionInstrument(ids.get(0), first),
+            new SectionInstrument(ids.get(0), second));
+    }
+
+    @Test
+    @DisplayName("관리자 화면에서 구간 악기 연결이나 악기 코드를 고치면 그 곡의 구간 미반영 행이 남는다")
+    void adminInstrumentEditsRecordPending() {
+        String name = instrument("keys");
+        replace("v1", 1, List.of(name));
+        int sectionId = sectionRepository.findByMusic_MusicIdOrderByIndexAsc(music.getMusicId())
+            .getFirst().getMusicSectionAnalysisId();
+        int codeId = mysql.queryForObject("SELECT code_id FROM codes WHERE code_name = ?", Integer.class, name);
+
+        // 악기 코드 이름은 사본(`track_sections.instruments`)에 그대로 들어간다 — 그 악기를 단 곡 전부가 바뀐다.
+        pendingRepository.deletePending(music.getMusicId(), KIND);
+        adminResourceService.update("code", String.valueOf(codeId), Map.of());
+        assertThat(pendingRepository.findRevision(music.getMusicId(), KIND)).as("악기 코드").isPresent();
+
+        // 연결 한 줄을 지워도 그 구간의 악기가 바뀐다. 복합키는 "구간번호,코드번호" 다.
+        pendingRepository.deletePending(music.getMusicId(), KIND);
+        adminResourceService.delete("musicAnalysisInstrument", sectionId + "," + codeId);
+        assertThat(pendingRepository.findRevision(music.getMusicId(), KIND)).as("악기 연결").isPresent();
+    }
+
+    /** 악기 코드. 부트스트랩이 심지 않는 종류라 시험이 만든다 — 이름은 겹치지 않게 붙인다. */
+    private String instrument(String prefix) {
+        String name = prefix + "-" + UUID.randomUUID().toString().substring(0, 6);
+        em.persist(Code.builder().codeType(CodeType.INSTRUMENT).codeName(name).displayName(name).build());
+        em.flush();
+        return name;
     }
 
 }

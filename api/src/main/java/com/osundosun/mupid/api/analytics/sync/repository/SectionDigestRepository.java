@@ -21,6 +21,11 @@ import com.osundosun.mupid.api.analytics.sync.dto.TrackVersion;
  * 문자열과 달라진다).
  * {@code section_label} 은 ENUM 이라 이름 문자열({@code CHORUS})로 이어지고, ClickHouse 의
  * {@code fn} 과 같다.
+ *
+ * <p>악기(S15P21A204-458)는 다른 표({@code music_analysis_instruments})라 구간마다 상관 부질의로
+ * 코드 이름을 <b>코드 번호순</b> {@code ','} 로 잇는다 — ClickHouse 는 배열을 넣은 순서 그대로
+ * {@code arrayStringConcat} 한다. 악기가 없으면 {@code GROUP_CONCAT} 이 NULL 이라 빈 문자열로 바꾼다.
+ * {@code group_concat_max_len}(기본 1024)은 구간 하나의 악기(많아야 열 몇 개)에 넉넉하다.
  */
 @Repository
 public class SectionDigestRepository {
@@ -29,8 +34,13 @@ public class SectionDigestRepository {
         SELECT music_id, analysis_version, COUNT(*) AS sections,
                SUM(CRC32(CONCAT_WS('|', music_section_analysis_id, `index`, external_id,
                                    section_label, start_time_ms, end_time_ms,
-                                   COALESCE(CAST(FLOOR(energy * 1000000) AS SIGNED), -1)))) AS checksum
-        FROM music_section_analysis
+                                   COALESCE(CAST(FLOOR(energy * 1000000) AS SIGNED), -1),
+                                   COALESCE((SELECT GROUP_CONCAT(c.code_name ORDER BY c.code_id SEPARATOR ',')
+                                             FROM music_analysis_instruments i
+                                             JOIN codes c ON c.code_id = i.instrument_code_id
+                                             WHERE i.music_section_analysis_id = s.music_section_analysis_id),
+                                            '')))) AS checksum
+        FROM music_section_analysis s
         GROUP BY music_id, analysis_version
         """;
 

@@ -11,13 +11,12 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 조건 필터와 조건 어휘가 <b>함께 쓰는</b> 곡 파생값. 한 곳에서만 계산한다.
+ * 조건 어휘({@link RecommenderFacets})가 쓰는 곡 파생값.
  *
- * <p>규칙은 예전 추천 서버({@code ai_server/app/recommender.py} 의 {@code _catalog_tags}·
- * {@code _vocal_values}·{@code parse_style}·{@code catalog_facets}·{@code _qvals}·
- * {@code _qmatch})와 같다. 조건을 거는 쪽이 Spring 으로 옮겨 왔을 뿐 판정은 바꾸지 않는다
- * (연동 계약 2026-09-23 절). 두 곳이 같은 규칙을 따로 들면 한쪽만 고쳐지므로 추천 서버에서는
- * 지웠다.
+ * <p>규칙은 추천 서버가 조건을 걸 때 쓰는 것({@code _catalog_tags}·{@code _vocal_values}·
+ * {@code parse_style})과 같다. 어휘가 알려 준 값이 추천 서버에서 걸리지 않으면 "알려 준 값인데 결과
+ * 0" 이 된다. 조건을 거는 판정({@code _qvals}·{@code _qmatch}, 예전 {@code QueryPlanFilter})은 계약 v3
+ * (S15P21A204-458)에서 추천 서버로 되돌아갔다 — 여기에는 어휘를 세는 데 필요한 것만 남는다.
  */
 final class CatalogFacts {
 
@@ -44,15 +43,11 @@ final class CatalogFacts {
     }
 
     final Map<String, TrackFacet> byTrack;
-    /** 구간 → 검색에 쓰는 악기(구체적인 것만). */
-    final Map<String, List<String>> sectionInstruments;
 
     CatalogFacts(RecommenderCatalog catalog) {
         Map<String, List<String>> union = new LinkedHashMap<>();
-        sectionInstruments = new LinkedHashMap<>();
         for (RecommenderCatalog.Section s : catalog.sections()) {
             List<String> specific = specificInstruments(s.instruments());
-            sectionInstruments.put(s.externalId(), specific);
             List<String> bucket = union.computeIfAbsent(s.track(), k -> new ArrayList<>());
             for (String name : specific) {
                 if (!bucket.contains(name)) {
@@ -135,43 +130,6 @@ final class CatalogFacts {
             case "", "unknown", "nan", "none", "null", "<na>", "nat" -> "";
             default -> s;
         };
-    }
-
-    /**
-     * 비교용 정규화. 소문자, {@code -}·공백은 {@code _}. 값 하나든 목록이든 받는다.
-     */
-    static List<String> qvals(Object v) {
-        if (v == null) {
-            return List.of();
-        }
-        Collection<?> items = v instanceof Collection<?> c ? c : List.of(v);
-        List<String> out = new ArrayList<>();
-        for (Object item : items) {
-            if (item == null) {
-                continue;
-            }
-            String s = String.valueOf(item).strip();
-            if (s.isEmpty()) {
-                continue;
-            }
-            out.add(s.toLowerCase(Locale.ROOT).replace('-', '_').replace(' ', '_'));
-        }
-        return out;
-    }
-
-    /**
-     * {@code _} 경계 부분 일치 — {@code rock} 은 {@code alternative_rock} 에 맞는다.
-     */
-    static boolean qmatch(Object values, Object wanted) {
-        List<String> have = qvals(values);
-        for (String w : qvals(wanted)) {
-            for (String h : have) {
-                if (w.equals(h) || ("_" + h + "_").contains("_" + w + "_")) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
 }
