@@ -82,6 +82,52 @@ class NginxCopyTest(unittest.TestCase):
         self.assertEqual(root.group(1), copied.group(1))
 
 
+class NginxSystemUploadTest(unittest.TestCase):
+    """모델 가중치 업로드(`/upload/system/`, S15P21A204-453)는 청크와 같은 길이다.
+
+    바이트는 Nginx 가 Filer 로 바로 흘리고 스프링은 auth_request 로 허가만 한다. 여기서
+    어긋나면 조용히 새는 것들을 못 박는다: 토큰이 Filer 로 넘어가는 것, PUT 이 아닌 방식이
+    스프링의 확인(완료·sha256)을 건너뛰고 Filer 에 닿는 것, `/storage/` 가 밖에 열리는 것.
+    개발 템플릿도 같은 모양이어야 로컬에서 확인한 것이 운영과 같다.
+    """
+
+    FILES = (
+        K8S / "base" / "nginx" / "default.conf",
+        ROOT / "api" / "nginx" / "templates" / "default.conf.template",
+    )
+
+    @staticmethod
+    def _location(conf, head):
+        start = conf.index(head)
+        # location 블록은 4칸 들여쓴 `}` 로 닫힌다 (안쪽 `{ … }` 는 한 줄이다)
+        return conf[start:conf.index("\n    }", start)]
+
+    def test_the_upload_block_asks_spring_and_strips_the_token(self):
+        for path in self.FILES:
+            with self.subTest(file=path.name):
+                conf = path.read_text(encoding="utf-8")
+                block = self._location(conf, "location ~ ^/upload/system/")
+                self.assertIn("auth_request /internal/system-upload-auth;", block)
+                self.assertIn("limit_except PUT { deny all; }", block)
+                self.assertIn("proxy_request_buffering off;", block)
+                self.assertRegex(block, r"proxy_set_header Authorization (''|\"\");")
+                self.assertIn("proxy_pass http://mupid_storage$storage_path;", block)
+
+                auth = self._location(conf, "location = /internal/system-upload-auth {")
+                self.assertIn("internal;", auth)
+                self.assertIn("proxy_pass_request_body off;", auth)
+                self.assertIn("X-Original-Content-Length $content_length", auth)
+                self.assertIn(
+                    "/api/v1/system/objects/$system_object_id/upload-auth", auth)
+
+    def test_storage_stays_internal(self):
+        for path in self.FILES:
+            with self.subTest(file=path.name):
+                conf = path.read_text(encoding="utf-8")
+                block = self._location(conf, "location /storage/ {")
+                self.assertRegex(block, r"(?m)^\s*internal;", "/storage/ 가 internal 이 아니면 Filer 가 밖에 열린다")
+
+
 class ClickHouseCopyTest(unittest.TestCase):
     """base/clickhouse/ is a copy of api/clickhouse/. Every node-specific value
     in those files is `from_env`, so one set serves both pods and there is no
@@ -2011,7 +2057,10 @@ class AiServerDeployTest(unittest.TestCase):
                 with self.subTest(service=doc["metadata"]["name"]):
                     self.assertIn(doc["spec"].get("type", "ClusterIP"), ("ClusterIP",))
         nginx = (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
-        self.assertNotIn("/internal/", nginx.replace("/internal/chunk-upload-auth", ""))
+        # 업로드 허가 두 곳은 nginx 자신의 auth_request 서브요청이다 (`internal;`, Spring 으로 간다).
+        for own in ("/internal/chunk-upload-auth", "/internal/system-upload-auth"):
+            nginx = nginx.replace(own, "")
+        self.assertNotIn("/internal/", nginx)
 
     def test_the_shared_secret_is_optional_so_the_pod_still_starts(self):
         """Secret 에 없는 키를 optional 없이 참조하면 파드가

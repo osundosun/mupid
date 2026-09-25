@@ -1,0 +1,88 @@
+info:
+  name: 오브젝트 완료
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/api/v1/system/objects/{{SYSTEM_OBJECT_ID}}/complete"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 완료 — 마지막 파일이라 버전이 후보가 됨
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": "오브젝트가 완료되었습니다.",
+            "data": {
+              "object_id": 16,
+              "kind": "MODEL",
+              "name": "stage1",
+              "version": "v3",
+              "file_name": "user_encoder.npz",
+              "size_bytes": 12582912,
+              "sha256": "9c2e0000000000000000000000000000000000000000000000000000000000aa",
+              "status": "COMPLETED",
+              "upload_url": null,
+              "model_status": "CANDIDATE"
+            }
+          }
+  - name: 409 sha256 불일치
+    response:
+      status: 409
+      statusText: Conflict
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "code": "MUPID_OBJECT_SHA256_MISMATCH",
+            "message": "스토리지에 저장된 파일의 sha256 이 신고한 값과 다릅니다.",
+            "error_details": null
+          }
+
+docs: |-
+  # 오브젝트 완료
+
+  `POST /api/v1/system/objects/{objectId}/complete` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  배치용 Object Storage API **③ 단계**. 본문은 없습니다.
+
+  스프링이 스토리지에서 파일을 **흘려 읽어**(버퍼 하나, 힙에 통째로 올리지 않는다)
+  크기와 sha256 을 재고, ① 에서 신고한 값과 같으면 `COMPLETED` 로 바꿉니다. 청크는
+  크기만 대조하지만(decision 0016) 모델 파일은 **내용까지** 서버가 확인합니다.
+
+  이 버전의 `version_files` 가 모두 `COMPLETED` 가 되면 버전이 `CANDIDATE` 가 되고
+  `manifest.json` 의 sha256 이 버전에 남습니다(`data.model_status`).
+
+  이미 완료된 오브젝트에 다시 부르면 같은 응답을 돌려줍니다(멱등).
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_SYSTEM_OBJECT_NOT_FOUND` | 404 | 그런 오브젝트가 없음 |
+  | `MUPID_OBJECT_NOT_UPLOADED` | 409 | 스토리지에 파일이 없음 (② 를 안 했다) |
+  | `MUPID_OBJECT_SIZE_MISMATCH` | 409 | 저장된 크기가 신고와 다름 |
+  | `MUPID_OBJECT_SHA256_MISMATCH` | 409 | 저장된 내용의 sha256 이 신고와 다름 |
+
+  거절돼도 오브젝트는 `UPLOADING` 으로 남습니다. ② 부터 다시 하면 됩니다.
