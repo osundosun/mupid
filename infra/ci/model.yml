@@ -44,7 +44,8 @@ model-verify:
     when: always
     expire_in: 1 week
     # MR 화면에 링크로 뜬다. 리뷰어가 job 로그를 뒤지지 않고 지표를 본다.
-    expose_as: models.lock 대조
+    # 이름에는 글자·숫자·공백·-·_ 만 된다(점이 들어가면 파이프라인이 job 없이 실패한다).
+    expose_as: models lock 대조
     paths:
       - .model/models-lock.md
 
