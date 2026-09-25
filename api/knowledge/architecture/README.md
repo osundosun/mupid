@@ -14,6 +14,7 @@
 | [admin-console.md](admin-console.md) | 관리자 화면 — 메타모델 기반 자원 CRUD, `/api/admin` 경로, 화면이 열려 있는 이유 |
 | [cache-redis.md](cache-redis.md) | 캐시 키 규약과 TTL — 범용 캐시가 아니라 JWT 차단 목록 전용 |
 | [analytics-clickhouse.md](analytics-clickhouse.md) | 클러스터 토폴로지, 스키마 설계, Kafka 연동, 로컬 기동·검증 |
+| [analytics-sync.md](analytics-sync.md) | MySQL → ClickHouse 구간 사본 동기화 — 미반영 기록·재시도·대조·지표, **쓰기 입구 전수 목록** |
 | [integrations.md](integrations.md) | S3 호환 스토리지, Gmail API, 메일 템플릿, 자격증명 취급 |
 | [configuration.md](configuration.md) | `MUPID_` 규약, `application.yaml`↔`.env`↔compose 3중 구조, 환경변수 목록 |
 | [deployment.md](deployment.md) | compose·Dockerfile 용도 구분, nginx, CI 파이프라인, 배포·롤백·백업 |

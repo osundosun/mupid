@@ -21,6 +21,11 @@ resources:
   - ai.yaml
   # 라벨 야간 배치. 라벨이 없으면 오류 없이 모든 사용자가 콜드스타트다.
   - ai-labeler.yaml
+  # 순간 벡터 저장소(S15P21A204-456). 떠도 ai 는 local 갈래로 돈다 — 전환은
+  # MUPID_AI_SERVER_ENV 의 MUPID_VECTOR_BACKEND=qdrant (qdrant.yaml 머리말).
+  - qdrant.yaml
+  # 네임스페이스의 첫 NetworkPolicy. Qdrant 파드만 고른다 — 다른 파드는 그대로다.
+  - qdrant-networkpolicy.yaml
 # The hash suffix is deliberate: editing nginx.conf produces a new ConfigMap name
 # and therefore a new pod. Without it the file would change on disk while the
 # running nginx kept the old configuration.
@@ -43,6 +48,7 @@ configMapGenerator:
     files:
       - clickhouse/users/00-profile.xml
       - clickhouse/users/10-mupid-user.xml
+      - clickhouse/users/20-serving-user.xml
   - name: clickhouse-keeper
     files:
       - clickhouse/keeper/keeper_config.xml

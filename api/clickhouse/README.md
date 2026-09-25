@@ -407,15 +407,35 @@ public class SectionStatsService {
 | --- | --- |
 | `analytics/repository/ListenAnalyticsRepository` | MUBTI·리포트가 쓰는 판정용 집계 |
 | `analytics/repository/UserActivityRepository` | 관리자 화면의 사용자 타임라인 (원본 이벤트) |
-| `analytics/repository/TrackSectionRepository` | **유일하게 쓰는 쪽.** 구간 적재 (S15P21A204-435) |
+| `analytics/repository/TrackSectionRepository` | **쓰는 쪽.** 구간 적재 (S15P21A204-435) |
+| `analytics/repository/TrackFeatureRepository` | **쓰는 쪽.** 곡 단위 특징 `track_features` 적재·레플리카별 대조 읽기 (S15P21A204-455) |
 
-`TrackSectionRepository` 는 `MusicSectionServiceImpl.replaceSections` 가 부른다. 배치가
+`TrackSectionRepository` 는 `analytics.sync.service.TrackSectionSync` 만 부른다. 배치가
 `PUT /api/v1/music/{musicId}/section` 으로 올린 구간이 MySQL 과 `track_sections` 양쪽에
 들어간다. **MySQL 트랜잭션이 커밋된 뒤에** 넣고, 실패해도 MySQL 을 되돌리지 않는다 —
-분석 DB 가 죽었다고 곡 등록이 멈추면 배치가 곡마다 선다. 대신 곡 번호가 `ERROR` 로그에
-남고, 밀린 곡은 `ai_server/tools/push_sections.py` 로 메운다.
+분석 DB 가 죽었다고 곡 등록이 멈추면 배치가 곡마다 선다. 대신 같은 트랜잭션에
+`analytics_sync_pending` 행이 남고, 재시도(1분)·대조(매일)가 MySQL 의 지금 구간으로 메운다
+(S15P21A204-451, `knowledge/architecture/analytics-sync.md`).
 
 행동 데이터(`listen_events`)는 스프링이 직접 쓰지 않는다. Kafka 를 거쳐 들어온다.
+
+`TrackFeatureRepository` 는 `analytics.sync.service.TrackFeatureSync` 만 부른다. 분석 값·장르/무드·곡 삭제·스트림·
+구간 교체가 같은 방식(미반영 기록 → 커밋 뒤 쓰기 → 재시도 → 대조)으로 곡 특징 사본을 맞춘다.
+
+`track_sections.instruments`(S15P21A204-458)는 구간 악기의 코드 이름 배열이다. 계약 v3 에서 추천 서버가 악기
+조건을 여기서 건다. 서빙 뷰 `v_serving_sections` 와 사전 `dict_serving_sections` 에도 실린다. 떠 있는 클러스터는
+`migrations/06-section-instruments.sql` 을 **api 배포 전에** 한 번 건다(05 다음). 기존 행은 빈 배열이고, 구간 대조의
+체크섬에 악기가 들어 있어 다음 대조가 악기 있는 곡을 전부 다시 쓴다.
+
+### 서빙 계정 `mupid_serving` (S15P21A204-455)
+
+`users/20-serving-user.xml`. 추천 서버의 특징 조회(`ai_server/app/feature_store.py`)가 쓰는 **읽기 전용** 계정이다
+(`readonly = 1`, 실행 2초, 동시 16, 메모리 1GB). 비밀번호는 `MUPID_CLICKHOUSE_SERVING_PASSWORD` — compose 는 비우면
+`MUPID_CLICKHOUSE_PASSWORD` 를 쓴다. **값이 없는 채로 두면 ClickHouse 는 빈 비밀번호로 계정을 연다**(25.3 에서
+확인). 운영 파드는 그때 난수로 잠근다(`infra_k8s/base/clickhouse.yaml`).
+
+서빙 조회 지연은 `ai_server/tools/bench_feature_store.py` 로 잰다 — 이 클러스터에 `mupid_bench455` DB 를 따로
+만들고 끝나면 지운다(`default` 에는 손대지 않는다). 결과는 `infra/VECTOR-STORE-DESIGN.md` §11 미결 4.
 
 ## 함께 고친 것: `storage`(SeaweedFS)
 

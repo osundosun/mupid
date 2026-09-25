@@ -64,6 +64,9 @@ PREFIXES: tuple[tuple[str, str], ...] = (
     ("prototype/", "Frontend"),
     ("api/", "Backend"),
     ("ai_server/", "AI"),
+    # 운영에 쓸 모델의 정본(S15P21A204-454). 바꾸면 AI 이미지가 새 가중치로 구워진다 —
+    # 모델 담당(AI)이 보는 변경이다. 대조·게시 job(model.yml)은 경로로 따로 뜬다.
+    ("models.lock", "AI"),
     ("music_preprocessing/", "Data"),
     # GPU 서버로 곡을 생성·다운로드하는 Playwright 자동화. music_preprocessing
     # (다운스트림 가공)과는 별도 코드지만 같은 Data 영역이다.

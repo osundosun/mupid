@@ -35,6 +35,11 @@ public class UserServiceImpl implements UserService {
     public static final int SYSTEM_USER_PASSWORD_LENGTH = 32;
 
     /**
+     * 닉네임 상한. {@code users.nickname} 이 VARCHAR(10) 이다.
+     */
+    public static final int SYSTEM_USER_NICKNAME_MAX_LENGTH = 10;
+
+    /**
      * 탈퇴한 계정의 `password` 자리에 남기는 값.
      *
      * <p>BCrypt 해시가 아니라 **해시로도 읽히지 않는 문자열**이다. 탈퇴 계정은
@@ -85,8 +90,11 @@ public class UserServiceImpl implements UserService {
 
         // 사람이 로그인할 계정이 아니라서 비밀번호를 받지 않고 서버가 만든다.
         String password = PasswordGenerateUtils.generatePassword(SYSTEM_USER_PASSWORD_LENGTH);
+        // 이메일 앞부분을 그대로 쓰면 `system-preprocessing` 처럼 쓰는 곳을 밝힌 이름이
+        // users.nickname(VARCHAR(10))에 들어가지 않는다. 계정은 쓰는 곳마다 따로 둔다
+        // (저장소 재설계 원칙 6) — 이름이 길어지는 것이 정상이라 여기서 자른다.
         String nickname = (dto.nickname() == null || dto.nickname().isBlank())
-            ? dto.email().split("@")[0]
+            ? abbreviate(dto.email().split("@")[0], SYSTEM_USER_NICKNAME_MAX_LENGTH)
             : dto.nickname();
 
         User newUser = repository.save(User.builder()
@@ -102,9 +110,23 @@ public class UserServiceImpl implements UserService {
         return new SystemUserCreateResult(newUser, password);
     }
 
+    private static String abbreviate(String value, int maxLength) {
+        return value.length() <= maxLength ? value : value.substring(0, maxLength);
+    }
+
     @Override
     public Optional<User> getUser(int userId) {
         return repository.findByUserIdAndStatusNot(userId, UserStatus.WITHDRAW);
+    }
+
+    @Override
+    public User getSystemUser(int userId) {
+        User user = getUser(userId)
+            .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+        if (user.getRole() != UserRole.ROLE_SYSTEM) {
+            throw new BusinessException(UserErrorCode.NOT_SYSTEM_USER);
+        }
+        return user;
     }
     
     @Override

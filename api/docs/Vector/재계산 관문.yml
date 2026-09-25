@@ -1,0 +1,68 @@
+info:
+  name: 재계산 관문
+  type: http
+  seq: 3
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/system/vectors/stage1/{{MODEL_VERSION}}/status"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MODEL_VERSION
+      value: v2
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+examples:
+  - name: 200 덜 채워짐
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: |-
+          {
+            "message": null,
+            "data": {
+              "name": "stage1",
+              "version": "v2",
+              "vector": "stage1_v2",
+              "vector_exists": true,
+              "expected_sections": 9098,
+              "points": 9098,
+              "filled": 8000,
+              "complete": false
+            }
+          }
+
+docs: |-
+  # 재계산 관문
+
+  `GET /api/v1/system/vectors/stage1/{version}/status` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  CI `model-publish` 의 관문 ④-c(설계 §6.3)가 부릅니다(`infra/ci/model_publish.py check_gate`,
+  스위치 `MUPID_MODEL_RECOMPUTE_GATE`). `complete` 가 거짓이면 CI 가 모델을 올리지 않고 멈춥니다.
+
+  | 필드 | 뜻 |
+  | --- | --- |
+  | `expected_sections` | MySQL 의 **살아 있는 곡**의 구간 수 — 채워져야 할 수 |
+  | `points` | Qdrant 에서 `mert` 를 가진 포인트 수 — AI 준비 판정의 분모 |
+  | `filled` | `stage1_v{version}` 을 가진 포인트 수 |
+  | `complete` | `vector_exists` 이고 `filled ≥ expected_sections` 이고 `filled ≥ points` |
+
+  `filled ≥ points` 를 함께 보는 이유 — AI 는 새 파드가 뜰 때 `stage1_vN` 수를 `mert` 수와 비교해 준비
+  판정을 합니다(`QdrantVectorStore._check`). MySQL 기준으로만 통과시키면 삭제된 곡의 포인트가 남아 있을 때
+  관문은 지났는데 새 파드가 Ready 가 되지 못합니다. 삭제된 곡의 포인트는 매일 대조가 지웁니다.

@@ -81,44 +81,9 @@ else
   failed=1
 fi
 
-# 순간 벡터를 Pinecone 으로 올린다. **분석이 성공했을 때만** 돈다 —
-# `moments_emb.npy` 를 방금 만든 것이 그 단계이고, 실패한 판으로 인덱스를 갈아
-# 끼우면 추천이 멈춘 채 잘못된 벡터를 받는다.
-#
-# 이 일을 여기서 하는 이유: 적재 원본이 이 서버에만 있다. AI 서버 배송 색인에는
-# `moments_emb.npy` 가 없어서 그쪽 배치(ai-labeler)에서는 돌 수 없다.
-#
-# 키는 환경에서만 온다(`MUPID_PINECONE_*`). 없으면 조용히 건너뛴다 — 아직 전환하지
-# 않은 환경에서 배치가 실패할 이유가 없다.
-#
-# **`ai_server` 코드는 이 디렉터리에 없다.** deploy-jupyter.py 는 music_preprocessing
-# 만 올린다. 이 호스트의 AI 서버 체크아웃을 가리켜야 한다 — 기본값은 위 주석이
-# 말하는 자리(`mupid_ai_project_dev`)다. 구현을 여기로 복사하지 않는다.
-MUPID_AI_SERVER_DIR="${MUPID_AI_SERVER_DIR:-$HOME/mupid_ai_project_dev}"
-
-case "${MUPID_PINECONE_ENABLED:-}" in
-  1|true|TRUE|yes|YES|on|ON) pinecone_enabled=1 ;;
-  *) pinecone_enabled=0 ;;
-esac
-
-if [ "$analysis_ok" -eq 1 ] && [ "$pinecone_enabled" -eq 1 ]; then
-  echo
-  echo "=== pinecone-sync $(date '+%F %T') ==="
-  if [ -d "$MUPID_AI_SERVER_DIR/ai_server" ]; then
-    # 색인 루트는 위에서 export 한 MUPID_AI_ARTIFACT_DIR 그대로다 —
-    # 방금 analysis 가 moments_emb.npy 를 쓴 그 자리다.
-    ( cd "$MUPID_AI_SERVER_DIR"       && python3 -m ai_server.tools.pinecone_sync --reload )
-    status=$?
-  else
-    echo "ai_server 체크아웃을 찾지 못했다: $MUPID_AI_SERVER_DIR" >&2
-    echo "  MUPID_AI_SERVER_DIR 로 경로를 준다. 구현을 여기로 복사하지 않는다." >&2
-    status=1
-  fi
-  echo "=== pinecone-sync 끝 (종료 $status) ==="
-  [ "$status" -eq 0 ] || failed=1
-elif [ "$analysis_ok" -eq 1 ]; then
-  echo "MUPID_PINECONE_ENABLED 가 활성값이 아니다 — Pinecone 동기화를 건너뛴다"
-fi
+# 순간 벡터는 이 배치가 올리지 않는다. 벡터 저장소에 곧바로 쓰던 예전 동기화 단계는
+# 지웠다(S15P21A204-459) — 벡터는 `music-preprocessing vectors-send` 가 Spring 벡터 등록
+# API 로 보내고, Qdrant 에 쓰는 것은 Spring 하나다(설계 원칙 1).
 
 # 오늘의 모먼트 하루치 (S15P21A204-448). 분석·색인이 끝난 뒤라 그날 들어온 곡까지
 # 후보에 든다. **분석이 성공한 날에만 부른다** — 실패한 날 구판 색인으로 하루치를 굳히지

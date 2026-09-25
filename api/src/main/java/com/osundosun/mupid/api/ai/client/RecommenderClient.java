@@ -31,7 +31,11 @@ import lombok.extern.slf4j.Slf4j;
  * <ul>
  *   <li>{@code NO_CANDIDATES} (404) — **장애가 아니다.** 조건에 맞는 곡이 없다는 뜻이라
  *       빈 목록으로 돌려준다. 재시도하면 사용자만 기다린다
- *   <li>{@code INDEX_NOT_READY} (503) · 500 · 타임아웃 — 재시도 대상. 한 번만 더 부른다
+ *   <li>{@code UNSATISFIABLE_CONDITIONS} (404) — 역시 장애가 아니다. 필수 조건(장르·언어·보컬·악기)이
+ *       어휘에 없어 맞는 곡이 있을 수 없다. 조건을 거는 쪽이 추천 서버로 옮겨 가면서(계약 v3) 예전
+ *       {@code QueryPlanFilter} 의 "만족 불가" 가 이 코드로 온다. 빈 목록이다
+ *   <li>{@code INDEX_NOT_READY} · {@code CONDITIONS_UNAVAILABLE} (503) · 500 · 타임아웃 — 재시도
+ *       대상. 한 번만 더 부른다. 뒤의 것은 피처 저장소(ClickHouse)가 안 닿아 조건 검색을 끈 상태다
  *   <li>400·그 밖의 404 — 다시 불러도 같은 답이다. 바로 올린다
  * </ul>
  *
@@ -54,6 +58,12 @@ public class RecommenderClient {
     /** 조건에 맞는 곡이 없다. 빈 목록으로 답한다. */
     private static final String NO_CANDIDATES = "NO_CANDIDATES";
 
+    /** 필수 조건이 어휘에 없다. 역시 빈 목록이다 — 조건을 풀어 아무 곡이나 주지 않는다. */
+    private static final String UNSATISFIABLE_CONDITIONS = "UNSATISFIABLE_CONDITIONS";
+
+    /** 피처 저장소가 안 닿아 조건 검색을 못 한다. 5xx 재시도 규칙을 그대로 탄다. */
+    private static final String CONDITIONS_UNAVAILABLE = "CONDITIONS_UNAVAILABLE";
+
     private final RestClient recommenderRestClient;
     private final RecommenderProperties props;
 
@@ -62,8 +72,8 @@ public class RecommenderClient {
     }
 
     /**
-     * 조건 기반 추천. 조건은 이미 걸어서 통과한 후보만 {@code catalog} 로 보낸다
-     * ({@link com.osundosun.mupid.api.ai.catalog.QueryPlanFilter}).
+     * 조건 기반 추천. 조건({@code query_plan})은 추천 서버가 피처 저장소에 건다(계약 v3).
+     * 만족시킬 수 없는 조건이면 빈 목록이다.
      */
     public List<RecommenderDto.Item> search(RecommenderDto.SearchRequest request) {
         return items(SEARCH, request);
@@ -165,11 +175,24 @@ public class RecommenderClient {
         }
     }
 
-    private Attempt classify(String path, HttpStatusCode status, String errorCode) {
+    private Attempt classify(String path, HttpStatusCode status, RecommenderDto.Error error) {
+        String errorCode = error == null ? null : error.errorCode();
         if (NO_CANDIDATES.equals(errorCode)) {
             // 장애가 아니다. 화면에는 "맞는 곡이 없다" 로 나가야 한다.
             log.info("추천 결과 없음 path={}", path);
             return Attempt.none(NO_CANDIDATES);
+        }
+        if (UNSATISFIABLE_CONDITIONS.equals(errorCode)) {
+            // 장애가 아니다. 어느 조건이 어휘에 없었는지는 메시지에 있다 — 대화 모델이 어휘 밖의
+            // 말을 넣었는지, 코드표가 바뀌었는지 가리는 단서라 남긴다.
+            log.info("추천 조건을 만족시킬 수 없다 path={} message={}", path, error.message());
+            return Attempt.none(UNSATISFIABLE_CONDITIONS);
+        }
+        if (CONDITIONS_UNAVAILABLE.equals(errorCode)) {
+            // 아래 5xx 규칙으로 재시도한다. 코드만 따로 적는 것은 원인이 추천 서버가 아니라
+            // ClickHouse 쪽이라는 것을 로그에서 바로 보이게 하려는 것이다.
+            log.warn("추천 서버가 피처 저장소를 못 읽어 조건 검색을 끈 상태다 path={} message={}",
+                path, error.message());
         }
         if (status.value() == 401) {
             // 한쪽만 켠 상태다. 다시 불러도 같으므로 재시도하지 않는다.
@@ -183,15 +206,14 @@ public class RecommenderClient {
         return Attempt.failed(retryable, errorCode);
     }
 
-    /** 오류 본문에서 `error_code` 만 꺼낸다. 없으면 null — 그 자체가 정보다. */
-    private String readError(ClientHttpResponse response) {
+    /** 오류 본문의 `error_code`·`message`. 없으면 null — 그 자체가 정보다. */
+    private RecommenderDto.Error readError(ClientHttpResponse response) {
         try {
             byte[] raw = response.getBody().readAllBytes();
             if (raw.length == 0) {
                 return null;
             }
-            RecommenderDto.Error error = AiJson.read(raw, RecommenderDto.Error.class);
-            return error == null ? null : error.errorCode();
+            return AiJson.read(raw, RecommenderDto.Error.class);
         } catch (Exception e) {
             return null;
         }
@@ -200,7 +222,7 @@ public class RecommenderClient {
     /**
      * @param response  성공 응답. 실패면 null
      * @param retryable 한 번 더 불러 볼 만한가 (500·503·타임아웃)
-     * @param empty     실패는 아니지만 결과가 없다 ({@code NO_CANDIDATES})
+     * @param empty     실패는 아니지만 결과가 없다 ({@code NO_CANDIDATES}·{@code UNSATISFIABLE_CONDITIONS})
      */
     /**
      * 한 번의 호출 결과.

@@ -8,7 +8,7 @@
 #
 # ## 왜 MUPID_API_ENV 와 나누나
 #
-# 추천 서버 비밀(Pinecone 키 등)을 `MUPID_API_ENV` 에 섞으면 **Spring 파드도 함께
+# 추천 서버 비밀(Qdrant 읽기 키 등)을 `MUPID_API_ENV` 에 섞으면 **Spring 파드도 함께
 # 받는다** — Spring 은 쓰지 않는 자격이고, 한 곳이 새면 둘 다 새는 모양이 된다.
 # 나눠 두면 각 파드가 제 몫만 본다. (추천 서버는 Spring 을 부르지 않으므로 여기에
 # ROLE_SYSTEM 토큰을 넣지 않는다 — 연동 계약 2026-09-23 절.)
@@ -52,8 +52,14 @@ ssh-keygen -y -P '' -f "$key" >/dev/null 2>&1 || {
 # CR 을 걷어낸다. 윈도우에서 만든 내용을 붙여 넣으면 값 끝에 \r 이 붙고,
 # 그러면 토큰이 조용히 틀린 값이 된다.
 read_secret "$MUPID_AI_SERVER_ENV" | tr -d '\r' > "$body"
+# 항목이 **하나라도** 있어야 한다. 0 개면 변수를 잘못 골랐거나(경로만 든 Variable 등) 내용이
+# 비었다 — 그대로 보내면 Secret 이 통째로 비고 ai 가 다시 뜬다. 예전 기준은 2 개였는데 그
+# 둘은 지운 외부 벡터 DB 의 키였다(S15P21A204-459). 수신기에는 필수 키가 없어서
+# (`receive-ai-env.py` 의 REQUIRED) 1 개 넘는 기준에는 근거가 없다 — 그 키를 지우면
+# 남는 것은 `MUPID_QDRANT_READ_ONLY_API_KEY` 하나(전환 뒤에는 `MUPID_VECTOR_BACKEND` 까지)다.
+# ClickHouse 서빙 비밀번호는 이 파일이 아니라 `mupid-secrets` 에서 온다(`base/ai.yaml`).
 lines=$(grep -cE '^MUPID_[A-Z0-9_]+=' "$body" || true)
-[ "$lines" -ge 2 ] || {
+[ "$lines" -ge 1 ] || {
   echo "MUPID_AI_SERVER_ENV 에서 MUPID_* 항목을 $lines 개만 찾았다 — 내용을 확인한다" >&2
   exit 64
 }

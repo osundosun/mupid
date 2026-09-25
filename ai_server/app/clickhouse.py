@@ -4,8 +4,9 @@
 한 번에 훑는 데 특화돼 있고, `listen_events` 의 정렬키가 `(user_id, occurred_at, event_id)`
 라 사용자 한 명 범위 조회가 1차 접근 경로다.
 
-접속부(`_http_base` · `_auth` · `query`)는 `tools/push_sections.py` 에 있던 것을 그대로
-옮겨 왔다. 배치와 서빙이 각자 들고 있으면 한쪽만 고쳐져 접속 방식이 갈린다.
+접속부(`_http_base` · `_auth` · `query`)는 배치(`tools/pull_signals.py`)와 함께 쓴다.
+배치와 서빙이 각자 들고 있으면 한쪽만 고쳐져 접속 방식이 갈린다. **읽기만 한다** —
+`track_sections` 를 쓰던 `push_sections` 는 지웠다(S15P21A204-451).
 
 어휘가 다르다
     Spring 이 수집하는 이벤트(`EventType` 22종)와 추천기가 읽던 파일 로그의 어휘가
@@ -20,6 +21,10 @@
     없다.
 
     MUPID_CLICKHOUSE_URL / _SECURE / _USER / _PASSWORD
+
+접속 변수의 머리(`env`)를 바꿔 다른 계정으로 붙을 수 있다. 서빙 특징 조회
+(`app/feature_store.py`)가 읽기 전용 서빙 계정 `MUPID_CLICKHOUSE_SERVING_*` 으로 붙는
+길이다 — 같은 접속부를 두 벌로 만들지 않는다.
 """
 from __future__ import annotations
 
@@ -45,18 +50,21 @@ WANTED = ("PLAY_START", "PLAY_END", "TRACK_SKIP",
 SURFACE = {"RECOMMEND": "recommendation", "SEARCH": "search", "PLAYLIST": "playlist"}
 
 
-def _http_base() -> str:
+ENV = "MUPID_CLICKHOUSE"
+
+
+def _http_base(env: str = ENV) -> str:
     """`jdbc:clickhouse://host:port/db` 도 받는다 — .env 가 그 형태로 적혀 있다.
 
     **스킴을 낮추지 않는다.** 무조건 `http://` 를 붙이면 `https://` 로 적어 둔
     ClickHouse 에도 평문으로 붙어 자격증명이 헤더에 실려 나간다.
     """
-    raw = os.environ.get("MUPID_CLICKHOUSE_URL", "").strip()
+    raw = os.environ.get(f"{env}_URL", "").strip()
     if not raw:
-        raise SystemExit("MUPID_CLICKHOUSE_URL 이 비어 있다.")
+        raise SystemExit(f"{env}_URL 이 비어 있다.")
     m = re.match(r"^jdbc:clickhouse://([^/?]+)", raw)
     if m:
-        secure = os.environ.get("MUPID_CLICKHOUSE_SECURE", "").strip().lower()
+        secure = os.environ.get(f"{env}_SECURE", "").strip().lower()
         scheme = "https" if secure in ("1", "true", "yes") else "http"
         return f"{scheme}://{m.group(1)}"
     m = re.match(r"^(https?)://([^/?]+)", raw)
@@ -65,18 +73,20 @@ def _http_base() -> str:
     return f"http://{raw.split('/')[0]}"
 
 
-def _auth() -> str:
-    u = os.environ.get("MUPID_CLICKHOUSE_USER", "").strip()
-    p = os.environ.get("MUPID_CLICKHOUSE_PASSWORD", "")
+def _auth(env: str = ENV) -> str:
+    u = os.environ.get(f"{env}_USER", "").strip()
+    p = os.environ.get(f"{env}_PASSWORD", "")
     if not u:
-        raise SystemExit("MUPID_CLICKHOUSE_USER 가 비어 있다.")
+        raise SystemExit(f"{env}_USER 가 비어 있다.")
     return "Basic " + b64encode(f"{u}:{p}".encode()).decode()
 
 
-def query(sql: str, body: bytes | None = None, timeout: int = TIMEOUT) -> str:
-    url = f"{_http_base()}/?query={urllib.parse.quote(sql)}" if body else _http_base() + "/"
+def query(sql: str, body: bytes | None = None, timeout: float = TIMEOUT,
+          env: str = ENV) -> str:
+    base = _http_base(env)
+    url = f"{base}/?query={urllib.parse.quote(sql)}" if body else base + "/"
     req = urllib.request.Request(url, data=body if body else sql.encode(), method="POST")
-    req.add_header("Authorization", _auth())
+    req.add_header("Authorization", _auth(env))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read().decode()
@@ -88,8 +98,8 @@ class ClickHouseError(Exception):
     """조회에 실패했다. **추천을 죽이지 않는다** — 행동 없이 계산하고 그 사실을 알린다."""
 
 
-def configured() -> bool:
-    return bool(os.environ.get("MUPID_CLICKHOUSE_URL", "").strip())
+def configured(env: str = ENV) -> bool:
+    return bool(os.environ.get(f"{env}_URL", "").strip())
 
 
 # 문자열 곡 ID 를 되돌리는 조인. `v_track_sections_current` 가 현재 분석 버전만 고른다.

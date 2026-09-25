@@ -17,9 +17,10 @@
 #   · "특징값 93MB 는 서빙이 읽지 않는다" — 틀렸다. app/main.py 가 기동 때
 #     Catalog() 를 만들고 그 생성자가 features.load() 로 features_v1.npz 를
 #     읽는다. 지연 import 라 grep 에 걸리지 않았을 뿐이다.
-#   · "임베딩·구간 벡터를 Pinecone 으로" — 규모가 근거를 못 준다. 추천 풀은
+#   · "임베딩·구간 벡터를 외부 벡터 DB 로" — 그때 규모로는 근거가 없었다. 추천 풀은
 #     10,007구간뿐이라 Z[pool_rows] @ q 가 약 15 MFLOP, 1ms 미만이다.
 #     외부 저장소를 넣으면 요청마다 네트워크 왕복이 생긴다 (ai_server/TODO.md).
+#     벡터 DB 는 저장소 재설계에서 Qdrant 로 들였다(infra/VECTOR-STORE-DESIGN.md).
 #
 # 실제로 줄어든 것은 다음 둘이다.
 #
@@ -82,8 +83,8 @@ spec:
           image: mupid-ai:placeholder
           imagePullPolicy: IfNotPresent
           ports: [{containerPort: 8100}]
-          # Pinecone 키·인덱스 설정. GitLab File 변수 `MUPID_AI_SERVER_ENV` → 노드
-          # 수신기(`receive-ai-env.py`) → 이 Secret 으로 온다.
+          # 추천 서버 전용 설정(Qdrant 읽기 키·벡터 갈래). GitLab File 변수
+          # `MUPID_AI_SERVER_ENV` → 노드 수신기(`receive-ai-env.py`) → 이 Secret 으로 온다.
           #
           # **Spring 자격은 없다.** 추천 서버는 Spring 을 부르지 않는다(연동 계약
           # 2026-09-23 절) — 곡·구간 메타는 Spring 이 추천 요청 본문에 싣는다. 예전에는
@@ -91,7 +92,15 @@ spec:
           # 못해 배포가 롤백됐다(S15P21A204-423).
           #
           # `optional: true` 인 것은 **아직 안 올린 클러스터에서도 파드가 뜨게** 하려는
-          # 것이다. Pinecone 을 켜지 않았다면 이 Secret 없이도 추천이 된다.
+          # 것이다. local 갈래(기본)는 이 Secret 없이도 추천이 된다.
+          #
+          # Qdrant(S15P21A204-456)도 이 Secret 으로만 온다 — 여기 env 를 더하지 않는다.
+          #   MUPID_QDRANT_READ_ONLY_API_KEY  읽기 전용 키. qdrant.yaml 이 같은 키를 받는다
+          #   MUPID_VECTOR_BACKEND            local(기본) | qdrant
+          #   MUPID_QDRANT_URL                기본 http://qdrant:6333
+          # 갈래를 이 매니페스트에 적지 않는 것이 **병합해도 local 로 도는** 이유다. 전환은
+          # 벡터가 채워진 뒤(457) `MUPID_AI_SERVER_ENV` 에 `MUPID_VECTOR_BACKEND=qdrant` 를
+          # 넣는 것이고, 수신기가 ai 만 다시 띄운다.
           envFrom:
             - secretRef: {name: mupid-ai-secrets, optional: true}
           env:
@@ -120,6 +129,16 @@ spec:
             - name: MUPID_CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef: {name: mupid-secrets, key: MUPID_CLICKHOUSE_PASSWORD}
+            # 서빙 특징 조회(app/feature_store.py, S15P21A204-455)는 읽기 전용 서빙 계정으로
+            # **같은 노드의 clickhouse-0** 에 붙는다. 헤드리스 이름 `clickhouse` 는 두 파드로
+            # 풀려 node-a 로 나갈 수 있다. 읽는 표가 전부 mupid_all 이라 clickhouse-0 하나로
+            # 충분하다. 아직 요청 경로에 연결하지 않았다(458). 비밀이 없으면 서빙 계정은
+            # 잠겨 있고(clickhouse.yaml) 특징 조회가 인증 오류를 낸다 — 연결 전 등록한다.
+            - {name: MUPID_CLICKHOUSE_SERVING_URL, value: 'http://clickhouse-0.clickhouse:8123'}
+            - {name: MUPID_CLICKHOUSE_SERVING_USER, value: mupid_serving}
+            - name: MUPID_CLICKHOUSE_SERVING_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: mupid-secrets, key: MUPID_CLICKHOUSE_SERVING_PASSWORD, optional: true}
             # Spring 과 나누는 /internal 공유 비밀. **양쪽을 동시에 켠다** —
             # 여기만 켜고 Spring 의 MUPID_RECOMMENDER_INTERNAL_TOKEN 을 비우면
             # 추천 호출이 전부 401 이다. 배포 설정만으로 조용히 죽는 형태다.

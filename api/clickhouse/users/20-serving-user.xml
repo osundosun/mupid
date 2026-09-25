@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<!--
+  추천 서빙 전용 계정·프로파일 (S15P21A204-455, infra/VECTOR-STORE-DESIGN.md §6.2 "서빙 트래픽과
+  분석 트래픽").
+
+  ai_server 의 특징 조회(app/feature_store.py)가 요청마다 이 계정으로 붙는다. 같은 ClickHouse 에
+  관리자 대시보드·MUBTI 리포트 같은 분석 조회도 도는데, 서빙 조회가 그 뒤에 줄을 서거나 무거운
+  조회 하나가 서빙 스레드를 다 잡지 않게 계정을 나눈다.
+
+  - readonly 1        읽기만. 설정도 못 바꾼다 — 아래 한도를 질의에서 풀 수 없다. 쓰기는 Spring
+                      하나다(설계 원칙 1). 라벨러의 section_labels 쓰기는 이 계정이 아니라 mupid 로 한다
+  - max_execution_time 2초. 특징 조회는 1만 곡에서 수십 ms 다(측정 표는 MR·설계 §11 미결 4).
+                      2초를 넘는 서빙 조회는 고장이고, 기다리게 두느니 끊고 벡터만으로 계속한다
+  - max_concurrent_queries_for_user 16. api 파드가 한 벌이고 요청당 조회가 한두 번이라 넉넉하다.
+                      넘으면 즉시 거절된다(TOO_MANY_SIMULTANEOUS_QUERIES) — 분석 조회 몫을 남긴다
+  - max_memory_usage  1GB. 파드 한도 4Gi, 서버 한도 3Gi 안에서 서빙 조회 하나가 가져갈 수 있는 몫
+  - max_result_rows   20만 행. 조건 풀기가 ID 를 잘라 돌려주므로 이보다 커질 일이 없다. 실수로
+                      표를 통째로 끌어가는 질의를 막는다
+
+  가까운 레플리카
+    읽는 표(track_features_local·track_sections_local)와 사전(dict_serving_sections)이 모두
+    mupid_all(1 샤드 × 2 레플리카, 전 노드 복제)이라, 붙은 노드 안에서 끝나고 다른 노드로 나가지
+    않는다. 그래서 "가까운 레플리카" 는 어디에 붙느냐로 정한다 — ai 파드는 node-b 에 있고
+    clickhouse-0 도 node-b 다. ai 는 헤드리스 서비스 이름(clickhouse, 두 파드로 풀린다) 대신
+    clickhouse-0.clickhouse:8123 에 붙는다(infra_k8s/base/ai.yaml MUPID_CLICKHOUSE_SERVING_URL).
+    load_balancing = nearest_hostname 은 Distributed 표를 읽게 되는 날을 위한 것이다.
+
+  비밀번호
+    MUPID_CLICKHOUSE_SERVING_PASSWORD. 환경변수가 없으면 ClickHouse 는 빈 비밀번호로 계정을 연다
+    (2026-09-25 25.3 에서 확인) — 그러면 누구나 붙는다. 그래서 운영 파드는 비밀이 없을 때 셸에서
+    아무도 모르는 난수를 넣고 뜬다(infra_k8s/base/clickhouse.yaml). 계정이 잠긴 채 뜨고, 비밀을
+    등록한 뒤 파드를 다시 띄우면 열린다. 로컬 compose 는 값이 없으면 mupid 비밀번호를 쓴다.
+
+  networks 가 ::/0 인 것은 10-mupid-user.xml 과 같은 판단이다(클러스터 안에서만 열린 포트).
+-->
+<clickhouse>
+    <profiles>
+        <serving>
+            <readonly>1</readonly>
+            <max_execution_time>2</max_execution_time>
+            <timeout_overflow_mode>throw</timeout_overflow_mode>
+            <max_concurrent_queries_for_user>16</max_concurrent_queries_for_user>
+            <max_memory_usage>1000000000</max_memory_usage>
+            <max_result_rows>200000</max_result_rows>
+            <result_overflow_mode>throw</result_overflow_mode>
+            <load_balancing>nearest_hostname</load_balancing>
+        </serving>
+    </profiles>
+    <users>
+        <mupid_serving>
+            <password from_env="MUPID_CLICKHOUSE_SERVING_PASSWORD"/>
+            <profile>serving</profile>
+            <quota>default</quota>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <access_management>0</access_management>
+            <allow_databases>
+                <database>default</database>
+            </allow_databases>
+        </mupid_serving>
+    </users>
+</clickhouse>

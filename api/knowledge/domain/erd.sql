@@ -42,6 +42,17 @@ CREATE TABLE IF NOT EXISTS `ai_chat_sessions` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`ai_chat_session_id`)
 );
+CREATE TABLE IF NOT EXISTS `analytics_sync_pending` (
+  `music_id` INT NOT NULL COMMENT '곡 번호 (music.music_id)',
+  `kind` VARCHAR(16) NOT NULL COMMENT '반영할 곳 — CLICKHOUSE',
+  `analysis_version` VARCHAR(20) NOT NULL COMMENT '반영할 분석 버전',
+  `revision` BIGINT NOT NULL DEFAULT 1 COMMENT '같은 곡이 다시 기록될 때마다 오른다',
+  `attempts` INT NOT NULL DEFAULT 0 COMMENT '재시도 작업이 시도한 횟수',
+  `last_error` VARCHAR(500) DEFAULT NULL COMMENT '마지막 실패 사유',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '처음 미반영이 된 시각',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '마지막으로 기록·시도한 시각',
+  PRIMARY KEY (`music_id`, `kind`)
+) COMMENT='ClickHouse 등 사본에 아직 반영되지 않은 곡';
 CREATE TABLE IF NOT EXISTS `albums` (
   `album_id` INT AUTO_INCREMENT NOT NULL COMMENT '앨범 PK',
   `artist_id` INT NOT NULL COMMENT '아티스트 FK',
@@ -129,6 +140,21 @@ CREATE TABLE IF NOT EXISTS `lyrics` (
   `time_ms` INT UNSIGNED NOT NULL,
   PRIMARY KEY (`lyric_id`)
 );
+CREATE TABLE IF NOT EXISTS `model_versions` (
+  `model_version_id` INT AUTO_INCREMENT NOT NULL COMMENT '모델 버전 PK',
+  `name` VARCHAR(32) NOT NULL COMMENT '모델 이름 (예: stage1)',
+  `version` VARCHAR(16) NOT NULL COMMENT '버전 (예: v3)',
+  `status` ENUM('UPLOADING', 'CANDIDATE', 'ADOPTED', 'RETIRED') NOT NULL COMMENT '상태',
+  `file_names` VARCHAR(2048) NOT NULL COMMENT '이 버전의 파일명 목록 (정렬, 쉼표)',
+  `manifest_sha256` VARCHAR(64) DEFAULT NULL COMMENT 'manifest.json 의 sha256 — 후보가 될 때 채운다',
+  `candidate_at` DATETIME DEFAULT NULL COMMENT '후보가 된 시각',
+  `adopted_at` DATETIME DEFAULT NULL COMMENT '마지막으로 채택된 시각',
+  `retired_at` DATETIME DEFAULT NULL COMMENT '폐기된 시각',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 일시',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '수정 일시',
+  PRIMARY KEY (`model_version_id`)
+) COMMENT='모델 버전 (가중치 묶음)';
+CREATE UNIQUE INDEX `uq_model_versions_name_version` ON `model_versions` (`name`, `version`);
 CREATE TABLE IF NOT EXISTS `mubti` (
   `mubti_id` INT AUTO_INCREMENT NOT NULL,
   `title` VARCHAR(20) NOT NULL,
@@ -217,6 +243,7 @@ CREATE TABLE IF NOT EXISTS `music_section_analysis` (
   `end_time_ms` INT NOT NULL,
   `external_id` VARCHAR(64) NOT NULL,
   `energy` DOUBLE DEFAULT NULL COMMENT '구간 에너지 (오디오 RMS, 0~1)',
+  `analysis_version` VARCHAR(20) NOT NULL DEFAULT 'v1' COMMENT '구간 분석 버전',
   PRIMARY KEY (`music_section_analysis_id`)
 );
 CREATE UNIQUE INDEX `ux_music_section_analysis_external_id` ON `music_section_analysis` (`external_id`);
@@ -227,8 +254,8 @@ CREATE TABLE IF NOT EXISTS `music_section_analysis_mood` (
 );
 CREATE TABLE IF NOT EXISTS `object_storage_files` (
   `file_id` INT AUTO_INCREMENT NOT NULL,
-  `file_type` ENUM('IMG', 'MUSIC', 'WAVEFORM') NOT NULL,
-  `category` ENUM('PROFILE', 'ARTIST', 'ALBUM', 'TRACK', 'MUBTI', 'STREAMING', 'WAVEFORM') NOT NULL,
+  `file_type` ENUM('IMG', 'MUSIC', 'WAVEFORM', 'MODEL') NOT NULL,
+  `category` ENUM('PROFILE', 'ARTIST', 'ALBUM', 'TRACK', 'MUBTI', 'STREAMING', 'WAVEFORM', 'MODEL') NOT NULL,
   `original_file_name` VARCHAR(255) NOT NULL,
   `storage_object_key` VARCHAR(255) NOT NULL,
   `file_size_bytes` INT NOT NULL COMMENT '파일 크기 (bytes)',
@@ -304,6 +331,23 @@ CREATE TABLE IF NOT EXISTS `streams` (
   `status` ENUM('PENDING', 'IN_PROGRESS', 'DONE', 'FAILED') NOT NULL DEFAULT 'PENDING',
   PRIMARY KEY (`stream_id`)
 );
+CREATE TABLE IF NOT EXISTS `system_objects` (
+  `object_id` INT AUTO_INCREMENT NOT NULL COMMENT '오브젝트 PK',
+  `kind` ENUM('MODEL') NOT NULL COMMENT '종류',
+  `model_version_id` INT DEFAULT NULL COMMENT '모델 버전 (kind = MODEL)',
+  `file_name` VARCHAR(128) NOT NULL COMMENT '파일명',
+  `storage_object_key` VARCHAR(255) NOT NULL COMMENT '저장 키 — system/model/{name}/{version}/{file}',
+  `size_bytes` BIGINT NOT NULL COMMENT '신고한 크기 (bytes)',
+  `sha256` VARCHAR(64) NOT NULL COMMENT '신고한 sha256 — 완료 때 서버가 대조한다',
+  `status` ENUM('UPLOADING', 'COMPLETED') NOT NULL COMMENT '상태',
+  `file_id` INT DEFAULT NULL COMMENT '완료 뒤 스토리지 파일 (object_storage_files)',
+  `completed_at` DATETIME DEFAULT NULL COMMENT '완료된 시각',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 일시',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '수정 일시',
+  PRIMARY KEY (`object_id`)
+) COMMENT='배치용 Object Storage API 로 올리는 파일';
+CREATE UNIQUE INDEX `uq_system_objects_storage_object_key` ON `system_objects` (`storage_object_key`);
+CREATE INDEX `ix_system_objects_model_version_id` ON `system_objects` (`model_version_id`);
 CREATE TABLE IF NOT EXISTS `users` (
   `user_id` INT AUTO_INCREMENT NOT NULL COMMENT '유저 PK',
   `email` VARCHAR(320) NOT NULL COMMENT '로그인 이메일',
@@ -415,5 +459,9 @@ ALTER TABLE `reports` ADD CONSTRAINT `fk_analysis_reports_copy_listening_dna_id`
 ALTER TABLE `search_histories` ADD CONSTRAINT `fk_search_history_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `streams` ADD CONSTRAINT `fk_song_streams_song_id` FOREIGN KEY (`music_id`) REFERENCES `music` (`music_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `system_objects` ADD CONSTRAINT `fk_system_objects_model_version_id` FOREIGN KEY (`model_version_id`) REFERENCES `model_versions` (`model_version_id`);
+-- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
+ALTER TABLE `system_objects` ADD CONSTRAINT `fk_system_objects_file_id` FOREIGN KEY (`file_id`) REFERENCES `object_storage_files` (`file_id`);
 -- 참조 무결성을 위반하는 기존 데이터가 있으면 실패합니다
 ALTER TABLE `users` ADD CONSTRAINT `fk_user_profile_image` FOREIGN KEY (`image_file_id`) REFERENCES `object_storage_files` (`file_id`);

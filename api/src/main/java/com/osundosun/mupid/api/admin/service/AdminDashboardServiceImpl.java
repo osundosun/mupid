@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.osundosun.mupid.api.admin.response.AdminDashboardResponse;
 import com.osundosun.mupid.api.admin.response.AdminDependencyStatus;
 import com.osundosun.mupid.api.admin.response.AdminResourceSummary;
+import com.osundosun.mupid.api.analytics.sync.service.AnalyticsSyncMonitor;
 import com.osundosun.mupid.api.event.properties.EventProperties;
 import com.osundosun.mupid.api.storage.properties.StorageProperties;
 import com.osundosun.mupid.api.user.enumerate.UserRole;
@@ -68,6 +69,7 @@ public class AdminDashboardServiceImpl implements AdminDashboardService {
     private final S3Client s3Client;
     private final StorageProperties storageProperties;
     private final EventProperties eventProperties;
+    private final AnalyticsSyncMonitor analyticsSyncMonitor;
 
     @Qualifier("clickHouseJdbcTemplate")
     private final JdbcTemplate clickHouseJdbcTemplate;
@@ -105,6 +107,9 @@ public class AdminDashboardServiceImpl implements AdminDashboardService {
         statuses.add(probeMysql());
         statuses.add(probeRedis());
         statuses.add(probeClickHouse());
+        // 붙어 있는가가 아니라 **MySQL 과 같은가**다. ClickHouse 가 살아 있어도 구간 사본이
+        // 밀리면 재생 신호가 버려진다 — 미반영 나이·마지막 대조 불일치로 판정한다 (451).
+        statuses.addAll(analyticsSyncMonitor.statuses());
         statuses.add(probeStorage());
         statuses.add(probeKafka());
         return statuses;

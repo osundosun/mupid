@@ -547,6 +547,159 @@ def analysis_values(
         raise typer.Exit(1)
 
 
+def _vector_board(console: Console, cfg: ChunkConfig, data_dir: Path | None):
+    """전체 색인과 곡 번호표. 벡터 명령 셋이 같이 쓴다."""
+    import os
+
+    from . import vectors as vx
+
+    if data_dir is None:
+        root = cfg.analysis_artifact_dir or os.environ.get("MUPID_AI_ARTIFACT_DIR", "")
+        if not root:
+            console.print("[red]✖[/] 색인 위치를 모른다 — --data-dir 또는 MUPID_AI_ARTIFACT_DIR")
+            raise typer.Exit(2)
+        data_dir = Path(root) / "data" / "proc" / "mupid"
+    try:
+        board = vx.Board.open(data_dir)
+    except vx.VectorError as e:
+        console.print(f"[red]✖[/] {e}")
+        raise typer.Exit(2) from None
+    return board, Registry(cfg.api_registry_log).catalog_music_id
+
+
+DataDirOpt = Annotated[
+    Path | None,
+    typer.Option(help="전체 색인 디렉터리 (<artifact>/data/proc/mupid)", show_default=False),
+]
+MuOpt = Annotated[
+    Path,
+    typer.Option(help="동결 μ (mu.npy). 모델 묶음에 넣는 그 파일이다"),
+]
+DEFAULT_MU = Path.home() / "mupid_models" / "stage1" / "v1" / "mu.npy"
+
+
+@app.command("vectors-freeze-mu")
+def vectors_freeze_mu(
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+    out: MuOpt = DEFAULT_MU,
+    log_file: LogFileOpt = None,
+    no_log_file: NoLogOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """중심화 μ 를 등록 곡 기준으로 한 번 재어 동결한다. [b]있으면 덮지 않는다.[/]"""
+    from . import vectors as vx
+
+    console = _start("vectors-freeze-mu", log_file, no_log_file, config, verbose)
+    cfg = ChunkConfig.from_file(str(config)) if config else ChunkConfig()
+    board, music_id_of = _vector_board(console, cfg, data_dir)
+    try:
+        meta = vx.freeze_mu(board, music_id_of, out)
+    except vx.VectorError as e:
+        console.print(f"[red]✖[/] {e}")
+        raise typer.Exit(1) from None
+    console.print(f"μ 동결 → [cyan]{out}[/] · 곡 {meta['tracks']} · 구간 {meta['sections']} · "
+                  f"판 풀 평균과의 거리 {meta['pool_mean_l2_diff']:.3g}")
+
+
+@app.command("vectors-send")
+def vectors_send(
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+    mu: MuOpt = DEFAULT_MU,
+    analysis_version: Annotated[str, typer.Option(help="등록한 구간의 분석 버전")] = "v1",
+    model_version: Annotated[
+        str, typer.Option(help="색인의 stage1_section.npy 를 만든 모델 버전")] = "v1",
+    pending: Annotated[
+        bool, typer.Option("--pending", help="Spring 의 미반영 목록에 있는 곡만 보낸다")] = False,
+    music_id: Annotated[
+        list[int] | None, typer.Option(help="이 곡만 (여러 번)", show_default=False)] = None,
+    api_base_url: Annotated[
+        str | None, typer.Option(help="Mupid API 루트", show_default=False)] = None,
+    dry_run: DryRunOpt = False,
+    yes: YesOpt = False,
+    log_file: LogFileOpt = None,
+    no_log_file: NoLogOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """색인의 벡터를 곡마다 [b]PUT /music/{id}/vectors[/] 로 보낸다 (Qdrant 는 Spring 이 쓴다)."""
+    from . import vectors as vx
+
+    console = _start("vectors-send", log_file, no_log_file, config, verbose)
+    cfg = ChunkConfig.from_file(str(config)) if config else ChunkConfig()
+    if api_base_url:
+        cfg.api_base_url = api_base_url
+    board, music_id_of = _vector_board(console, cfg, data_dir)
+    try:
+        mu_vec = vx.load_mu(mu)
+    except vx.VectorError as e:
+        console.print(f"[red]✖[/] {e}")
+        raise typer.Exit(2) from None
+
+    client = None if dry_run else _client(cfg)
+    only = set(music_id) if music_id else None
+    if pending and client is not None:
+        items = client.vector_pending()
+        waiting = {int(i["music_id"]) for i in items}
+        only = waiting if only is None else only & waiting
+        console.print(f"미반영 목록 {len(items)}곡")
+    p = vx.plan(board, music_id_of, only)
+    console.print(f"보낼 곡 {len(p.tracks)} · 번호 없음(미등록·Jamendo) {p.unregistered} · "
+                  f"분석 {analysis_version} · 모델 {model_version}")
+    if dry_run:
+        return
+    _confirm(console, yes, dry_run, f"곡 {len(p.tracks)}개의 벡터를 {cfg.api_base_url} 에 교체합니다.")
+    result = vx.send(client, board, p, mu_vec, analysis_version, model_version)
+    console.print(f"보냄 {result['sent']} · 삭제된 곡 {len(result['gone'])} · 실패 {len(result['failed'])}")
+    for f in result["failed"][:10]:
+        console.print(f"  [red]{f['music_id']}[/] {f['track_id']} {f['error']}")
+    if result["failed"]:
+        raise typer.Exit(1)
+
+
+@app.command("vectors-stage1")
+def vectors_stage1(
+    version: Annotated[str, typer.Argument(help="새 모델 버전 (v2 …)")],
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+    vectors_file: Annotated[
+        Path | None,
+        typer.Option("--vectors", help="새 모델의 구간 벡터 (.npy, features_v1 과 같은 행). "
+                     "비우면 판의 stage1_section.npy", show_default=False)] = None,
+    api_base_url: Annotated[
+        str | None, typer.Option(help="Mupid API 루트", show_default=False)] = None,
+    dry_run: DryRunOpt = False,
+    yes: YesOpt = False,
+    log_file: LogFileOpt = None,
+    no_log_file: NoLogOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """모델 재계산 — stage1_{version} 만 1,000구간씩 보내고 관문 수치를 찍는다."""
+    import numpy as np
+
+    from . import vectors as vx
+
+    console = _start("vectors-stage1", log_file, no_log_file, config, verbose)
+    cfg = ChunkConfig.from_file(str(config)) if config else ChunkConfig()
+    if api_base_url:
+        cfg.api_base_url = api_base_url
+    board, music_id_of = _vector_board(console, cfg, data_dir)
+    S = np.load(vectors_file, mmap_mode="r") if vectors_file else None
+    if S is not None and (S.shape[0] != len(board.x_row) or S.shape[1] != vx.STAGE1_DIM):
+        console.print(f"[red]✖[/] {vectors_file} 모양 {S.shape} — ({len(board.x_row)}, {vx.STAGE1_DIM}) 이어야 한다")
+        raise typer.Exit(2)
+    if dry_run:
+        console.print("dry-run — 보내지 않는다")
+        return
+    _confirm(console, yes, dry_run, f"stage1_{version} 을 {cfg.api_base_url} 에 덧붙입니다.")
+    client = _client(cfg)
+    result = vx.send_stage1(client, board, music_id_of, version, S)
+    status = client.stage1_status(version)
+    console.print(f"보냄 {result['sent']}구간 ({result['batches']}번) · 관문 "
+                  f"{status['filled']}/{status['expected_sections']} (Qdrant mert {status['points']}) · "
+                  f"complete={status['complete']}")
+
+
 @app.command()
 def classify(
     config: ConfigOpt = None,

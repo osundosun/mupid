@@ -43,7 +43,16 @@ public enum FileCategory {
      * 아니라 {@code /api/v1/music/{musicId}/waveform} 으로 나가므로 이 정책을 거치지
      * 않는다 — 그쪽은 {@code SecurityConfig} 의 기본(인증 필요)이 가른다.
      */
-    WAVEFORM("곡 파형", ImageAccessPolicy.MACHINE, null);
+    WAVEFORM("곡 파형", ImageAccessPolicy.MACHINE, null),
+
+    /**
+     * 모델 묶음 파일 — {@code system/model/{name}/{version}/{file}}.
+     *
+     * <p>파형과 같이 정책은 <b>쓰기 기준</b>이다. 실제 쓰기·읽기는 이미지 경로가 아니라
+     * {@code /api/v1/system/objects} 3단계와 {@code X-Accel-Redirect} 로만 한다
+     * ({@code SystemObjectController}).
+     */
+    MODEL("모델 가중치", ImageAccessPolicy.MACHINE, null);
 
     private final String displayName;
     private final ImageAccessPolicy accessPolicy;

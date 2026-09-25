@@ -6,9 +6,11 @@
 섞이면 **엉뚱한 곡을 추천하면서도 서비스는 정상처럼 뜬다.** 어긋나면 `/internal/ready` 를
 실패로 둔다.
 
-**기동에서 Spring 을 부르지 않는다**(연동 계약 2026-09-23 절). 곡·구간 메타는 요청마다
-본문으로 온다. 예전에는 기동 때 Spring 카탈로그를 당겨 왔고, 토큰이 만료되면 파드가
-Ready 가 되지 못해 배포가 롤백됐다(S15P21A204-423).
+**기동에서 Spring 을 부르지 않는다**(연동 계약 2026-09-23 절). 곡·구간 값은 ClickHouse 피처
+저장소에서 읽어 **기준 풀 스냅샷**으로 들고, 백그라운드에서 주기적으로 갈아 끼운다(계약 v3,
+`app/pool_snapshot.py`). 못 읽어도 뜬다 — 벡터 전용으로 추천하고 조건 검색만 끈다. 예전에는
+기동 때 Spring 카탈로그를 당겨 왔고, 토큰이 만료되면 파드가 Ready 가 되지 못해 배포가
+롤백됐다(S15P21A204-423).
 """
 from __future__ import annotations
 
@@ -19,8 +21,8 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 
-from . import (index_contract, internal_api, labels_store, paths, pinecone_store,
-               recommender)
+from . import (feature_store, index_contract, internal_api, labels_store, model_bundle, paths,
+               pool_snapshot, qdrant_store, recommender, vector_store)
 from .log import log
 
 _STARTED = time.time()
@@ -44,7 +46,7 @@ def artifact_status() -> dict:
 
     매핑표는 **서빙 산출물이 아니다.** 숫자↔문자열 번역은 Spring 이 하고
     `/internal/ready` 도 더는 보지 않는다(`internal_api.ready`). 그래도 상태는
-    싣는다 — 적재 도구(`push_sections`·`register_sections`)가 이 파일을 쓰므로
+    싣는다 — 배치 도구(`register_sections`·`pull_signals`)가 이 파일을 쓰므로
     운영 중에 "왜 적재가 안 되나" 를 여기서 먼저 본다. 대신 `missing` 에는 넣지
     않는다. 넣으면 기동 로그가 매번 "선택 산출물 없음" 을 찍어, 정작 개인화가
     빠진 배포와 구분이 되지 않는다.
@@ -59,7 +61,16 @@ def artifact_status() -> dict:
         "exists": labels_ok,
         "store": "clickhouse" if labels_store.configured() else "file",
         "why": "개인화. 없으면 모든 사용자가 콜드스타트다"}
-    missing = sorted(k for k, v in files.items() if not v["exists"])
+    # 이미지의 모델 자리가 대신하는 판 파일은 없어도 결핍이 아니다 (`model_bundle.SERVING`).
+    # 채택된 모델로 구운 이미지에서 판의 옛 가중치를 치우면 "선택 산출물 없음" 이 거짓이 된다.
+    for bundle_name, alts in model_bundle.SERVING.items():
+        if model_bundle.resolve(bundle_name).source != "image":
+            continue
+        for alt in alts():
+            if alt in files:
+                files[alt]["served_from_image_as"] = bundle_name
+    missing = sorted(k for k, v in files.items()
+                     if not v["exists"] and not v.get("served_from_image_as"))
     idm = paths.id_map_path()
     files["id_map.parquet"] = {
         "exists": idm.exists(), "path": str(idm),
@@ -73,9 +84,8 @@ def check_integrity() -> dict:
     out: dict = {"ok": False, "checks": {}, "errors": []}
     try:
         mom = pd.read_parquet(d / "moments.parquet", columns=["moment_id", "emb_row"])
-        # `moments_emb.npy` 는 **운영 판에 없다.** 순간 벡터의 정본은 Pinecone 이고
-        # 이 파일은 분석 배치의 입력 산출물이다. 있으면 함께 세고, 없어도 실패가
-        # 아니다 — 대신 벡터 쪽 정합은 control namespace 의 세대 검증이 본다.
+        # `moments_emb.npy` 는 local 갈래의 벡터다. 있으면 함께 세고, 없어도 실패가
+        # 아니다 — qdrant 갈래는 판 없이 돈다(벡터 쪽 정합은 Qdrant 준비 판정이 본다).
         rows = {
             "moments": len(mom),
             "features_v1": int(np.load(d / "features_v1.npz")["X"].shape[0]),
@@ -113,6 +123,13 @@ def _startup() -> None:
 
     # ① 판의 계약 표식. 옛 판(장르·무드를 색인 안에 들고 있던 판)과 새 코드가 섞이면
     #    오류 없이 그 축이 통째로 빈다. 값을 읽기 전에 막는다.
+    bundle = model_bundle.status()
+    if bundle["image_bundle"]["error"]:
+        # 판으로 물러나 뜬다. 이미지가 약속한 모델로 돌지 않는다는 사실은 남긴다.
+        log(f"이미지의 모델 묶음을 쓰지 않는다 — {bundle['image_bundle']['error']}")
+    log(f"서빙 가중치 — {bundle['source'] or '없음'}"
+        + (f" · {bundle['name']} {bundle['version']}" if bundle["version"] else ""))
+
     plate = index_contract.check_plate()
     _STATE["plate"] = plate
     for line in plate["warnings"]:
@@ -130,7 +147,7 @@ def _startup() -> None:
         log(f"산출물 무결성 실패 — {_STATE['error']}")
         return
 
-    # ② 색인·모델. 후보는 비어 있다 — 요청마다 본문의 `catalog` 로 묶는다.
+    # ② 색인·모델. 후보는 비어 있다 — 요청마다 기준 풀 스냅샷으로 묶는다(④).
     try:
         recommender.CAT = recommender.Catalog()
     except Exception as e:
@@ -138,45 +155,118 @@ def _startup() -> None:
         log(f"색인 적재 실패 — {_STATE['error']}")
         return
 
-    # ③ 벡터 검색 갈래. Pinecone 을 켜 두었으면 **평균·namespace·판이 한 묶음인지**
-    #    기동에서 본다. 하나만 갈아 끼운 상태는 오류가 아니라 유사도 저하로만
-    #    드러나므로 요청을 받기 전에 잡아야 한다.
-    if pinecone_store.enabled():
-        try:
-            got = pinecone_store.center()
-            # control 의 세대가 지금 판과 같은가. **저장본이 있을 때만** 다시 잴 수
-            # 있다 — 운영 판에는 없으므로 control 이 적은 값을 그대로 믿는다.
-            if getattr(recommender.CAT, "Z", None) is not None:
-                got.require_snapshot(recommender.current_snapshot())
-            _STATE["vector_search"] = {"backend": "pinecone", **got.stats(),
-                                       **pinecone_store.stats()}
-            log(f"벡터 검색 — Pinecone · namespace {pinecone_store.namespace()!r} · 평균 {got.rows}건")
-        except Exception as e:
-            _STATE["error"] = f"{type(e).__name__}: {e}"
-            log(f"벡터 검색 준비 실패 — {_STATE['error']}")
-            return
+    # ③ 벡터 검색 갈래. 모르는 값이면 여기서 멈춘다 — 조용히 local 로 내려가지 않는다.
+    try:
+        backend = recommender.vector_backend()
+    except ValueError as e:
+        _STATE["error"] = str(e)
+        log(f"벡터 검색 갈래 설정 오류 — {_STATE['error']}")
+        return
+
+    #    지운 Pinecone 갈래의 옛 설정이 남아 있으면 **알리기만 한다.** 운영 Secret 에 아직
+    #    있다 — 지워질 때까지 기동을 막으면 배포가 곧 추천 중단이다. 값은 읽지 않는다.
+    legacy = vector_store.ignored_env()
+    if legacy:
+        log(f"경고: 쓰지 않는 옛 설정 {', '.join(legacy)} — Pinecone 갈래는 지웠다(무시한다)")
+    if backend == "qdrant":
+        # Qdrant 는 **여기서 멈추지 않는다.** 판정은 `/internal/ready` 가 요청마다(몇 초 캐시)
+        # 다시 한다 — Qdrant 가 늦게 뜨거나 잠깐 죽었다 살아나도 재기동 없이 준비 완료로
+        # 돌아온다. 기동에서는 판정을 한 번 찍어 둔다.
+        why = recommender.vector_store_problem()
+        _STATE["vector_search"] = {"backend": "qdrant", **qdrant_store.settings(),
+                                   "problem": why}
+        if why:
+            log(f"벡터 검색 — Qdrant 준비 안 됨 (준비 판정 실패) — {why}")
+        else:
+            st = recommender.vector_store().status()
+            log(f"벡터 검색 — Qdrant · 컬렉션 {st['collection']!r} · {st.get('points')}구간 "
+                f"· μ {st['mu_source']}")
     else:
         _STATE["vector_search"] = {"backend": "local"}
 
+    # ④ 기준 풀 스냅샷. 준비 판정을 막지 않는다 — 못 읽으면 벡터 전용으로 뜬다.
+    _start_pool_snapshot()
     _STATE["loaded"] = True
     _STATE["load_seconds"] = round(time.time() - t0, 3)
+    st = pool_snapshot.status()
     log(f"적재 완료 {_STATE['load_seconds']}초 · 색인 {len(recommender.CAT._mom_index)}행 "
-        f"(후보는 요청 본문으로 온다)")
+        f"· 기준 풀 {st.get('source') or '벡터 전용'} {st.get('tracks', 0)}곡 {st.get('sections', 0)}구간")
+
+
+def _start_pool_snapshot() -> None:
+    """피처 저장소에서 기준 풀을 한 번 읽고, 갱신 스레드를 띄운다.
+
+    첫 읽기는 여기(기동)서 한다 — 요청 경로가 ClickHouse 를 기다리지 않게. 실패해도 갱신 스레드는
+    띄운다. ClickHouse 가 늦게 살아나면 다음 주기에 스냅샷이 생기고 조건 검색이 돌아온다.
+    """
+    if not feature_store.configured():
+        log("피처 저장소 주소가 없다(MUPID_CLICKHOUSE_SERVING_URL·MUPID_CLICKHOUSE_URL) — "
+            "벡터 전용으로 추천한다(조건 검색 끔)")
+        return
+    try:
+        ttl = pool_snapshot.ttl_seconds()
+    except ValueError as e:
+        log(f"기준 풀 갱신 주기 설정 오류 — 기본 {pool_snapshot.DEFAULT_TTL}초로 돈다: {e}")
+        ttl = pool_snapshot.DEFAULT_TTL
+
+    def pool_ids() -> list:
+        return recommender.index_pool(recommender.CAT).moment_id.astype(str).tolist()
+
+    store = feature_store.ClickHouseFeatureStore()
+    holder = pool_snapshot.Holder(
+        pool_snapshot.feature_store_loader(store, pool_ids),
+        ttl=ttl, on_swap=internal_api.warm(recommender),
+        # 판(색인 풀)이 바뀌어도 다시 읽는다 — 저장소 쪽이 그대로여도 물을 ID 가 달라졌다.
+        probe=lambda: (store.change_token(), id(recommender.CAT)))
+    pool_snapshot.install(holder)
+    if holder.refresh():
+        st = holder.status()
+        log(f"기준 풀 스냅샷 — {feature_store.serving_env()} · {st['tracks']}곡 {st['sections']}구간 "
+            f"(삭제·재생 불가 {st.get('dropped', 0)} · 없음 {st.get('missing', 0)} · "
+            f"버전 불일치 {st.get('stale', 0)}) · {st['last_refresh_seconds']}초 · {ttl:g}초마다 갱신")
+    holder.start()
 
 
 def _generation() -> dict:
-    """서버가 지금 들고 있는 control 세대. **비밀값은 없다.**
-
-    갱신 배치가 이 값을 읽어 "새 μ 가 서버 메모리에 반영됐는가" 를 판정한다.
-    읽는 김에 캐시도 갱신되므로, 배치가 물어보는 행위 자체가 반영을 앞당긴다.
-    """
-    if not pinecone_store.enabled():
-        return {"backend": "local"}
+    """서버가 지금 들고 있는 벡터 저장소의 세대와 (qdrant 면) 지난 준비 판정. **비밀값은 없다.**"""
     try:
-        got = pinecone_store.center(reload=True)
-        return {"backend": "pinecone", **got.stats()}
-    except Exception as e:
-        return {"backend": "pinecone", "error": f"{type(e).__name__}: {e}"}
+        backend = recommender.vector_backend()
+    except ValueError as e:
+        return {"backend": None, "error": str(e)}
+    if backend == "qdrant":
+        if recommender.CAT is None:
+            return {"backend": "qdrant"}
+        try:
+            store = recommender.vector_store()
+            # 지난 판정만 싣는다 — /health 는 liveness 라 Qdrant 를 기다리면 안 된다.
+            return {"backend": "qdrant", "generation": store.generation,
+                    "status": store.cached_status()}
+        except Exception as e:                   # μ 가 없는 판 등 — /health 는 늘 답한다
+            return {"backend": "qdrant", "error": f"{type(e).__name__}: {e}"}
+    return {"backend": "local"}
+
+
+def _vector_settings() -> dict:
+    """갈래와 그 설정. **키는 있는지 여부만** 싣는다. 갈래 설정이 틀려도 /health 는 답한다."""
+    try:
+        backend = recommender.vector_backend()
+    except ValueError as e:
+        return {"backend": None, "error": str(e)}
+    out = {"backend": backend}
+    legacy = vector_store.ignored_env()
+    if legacy:
+        out["ignored_env"] = legacy              # 이름만. 운영 Secret 에서 지울 때까지 보인다
+    if backend == "qdrant":
+        out["qdrant"] = qdrant_store.settings()
+    return out
+
+
+def _model_status() -> dict:
+    """모델 자리 판정 + 이 프로세스가 실제로 적재한 자리. 둘이 다르면 기동 뒤 파일이 바뀐 것이다."""
+    out = model_bundle.status()
+    out["loaded_from"] = dict(getattr(recommender.CAT, "model_sources", None) or {})
+    out["onboarding_seeds"] = recommender.seed_table_status()
+    return out
 
 
 @asynccontextmanager
@@ -203,19 +293,22 @@ def health() -> dict:
         "model_backend": getattr(recommender.CAT, "model_backend", None),
         # 규칙 경로로 내려앉았다면 이유가 여기 있다. 비어 있으면 학습 점수가 살아 있다.
         "model_error": getattr(recommender.CAT, "model_error", None),
+        # 서빙 가중치를 어디서 읽었나 — 이미지의 모델 자리(`models.lock` 이 채택한 버전)인가,
+        # 판에 섞인 가중치인가. 배포가 새 모델로 바뀌었는지 이 값으로 확인한다 (S15P21A204-454).
+        "model": _model_status(),
         "load_seconds": _STATE["load_seconds"],
         "error": _STATE["error"],
         "index": ({"moments": int(len(cat._mom_index)),
                    "pool_sources": sorted(recommender.POOL_SOURCES)}
                   if cat is not None else None),
-        # 곡·순간 메타데이터의 출처. 요청 본문이다 — 기동 때 준비할 것이 없다.
-        "metadata_source": "request",
-        # 순간 벡터를 어디서 읽는가. Pinecone 을 켜 두었는데 값이 비면 검색이
+        # 곡·순간 메타데이터의 출처. 피처 저장소를 읽은 기준 풀 스냅샷이다(계약 v3). 나이·연속
+        # 실패가 여기 보인다 — 값이 낡아도 추천은 계속되므로 이 칸이 유일한 단서다.
+        "metadata_source": "feature_store",
+        "pool_snapshot": internal_api.pool_snapshot_status(),
+        # 순간 벡터를 어디서 읽는가. 외부 저장소(qdrant)를 골랐는데 설정이 비면 검색이
         # 통째로 실패하므로, 설정 여부가 준비 판정과 같은 화면에 있어야 한다.
-        "vector_search": {"backend": recommender.vector_backend(),
-                          **pinecone_store.settings()},
-        # 갱신 중인지, 어느 세대를 들고 있는지. 배치가 "서버가 새 세대를 읽었나" 를
-        # 이 값으로 확인하고 그 뒤에 READY 로 넘어간다.
+        "vector_search": _vector_settings(),
+        # 어느 저장소 세대를 들고 있는지, qdrant 면 지난 준비 판정까지.
         "vector_generation": _generation(),
         "index_contract": _STATE["plate"],
         "integrity": (_STATE["integrity"] or {}).get("checks"),

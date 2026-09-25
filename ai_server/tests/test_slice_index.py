@@ -97,17 +97,21 @@ def test_every_vector_keeps_its_value(sliced):
     X_after = np.load(out / "features_v1.npz")["X"]
     S_before = np.load(full / "stage1_section.npy")
     S_after = np.load(out / "stage1_section.npy")
+    # `moments_emb.npy` 는 **배송한다.** 운영이 로컬 벡터 모드라 판 안의 이 파일로
+    # 추천한다. 빠지면 새 판을 올리는 순간 추천이 멈춘다(S15P21A204-450).
+    Z_before = np.load(full / "moments_emb.npy")
+    Z_after = np.load(out / "moments_emb.npy")
+    assert len(Z_after) == len(after)
+    assert Z_after.dtype == Z_before.dtype
 
     old_row = before.set_index("moment_id").emb_row
     for i, mid in enumerate(after.moment_id):
         j = int(old_row.loc[mid])
         assert np.array_equal(X_after[i], X_before[j]), f"{mid} 특징이 바뀌었다"
         assert np.array_equal(S_after[i], S_before[j]), f"{mid} 구간 벡터가 바뀌었다"
+        # 로컬 모드는 `Z[emb_row]` 로 닿는다. 새 emb_row 자리에 원래 구간의 벡터가 있어야 한다.
+        assert np.array_equal(Z_after[int(after.emb_row[i])], Z_before[j]),             f"{mid} 임베딩이 바뀌었다"
 
-    # `moments_emb.npy` 는 **배송에 없다.** 순간 벡터의 정본은 Pinecone 이고, 이
-    # 파일은 분석 배치가 그것을 채울 때만 읽는 입력 산출물이다. 실으면 같은 벡터를
-    # 파일과 인덱스 두 곳에서 관리하게 된다.
-    assert not (out / "moments_emb.npy").exists()
     assert (full / "moments_emb.npy").exists(), "원본까지 지우면 적재할 근거가 없다"
 
 
@@ -217,6 +221,28 @@ def test_refuses_when_features_are_out_of_order(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as e:
         slice_index.slice_index(src, dst)
     assert e.value.code == 65
+
+
+def test_refuses_when_embeddings_do_not_match_moments(tmp_path, monkeypatch):
+    """임베딩 행이 모자라면 자른 판의 `Z[emb_row]` 가 다른 구간을 가리킨다. 그 전에 멈춘다."""
+    monkeypatch.setenv("MUPID_POOL", "flow")
+    from ai_server.tools import slice_index
+
+    src, dst = tmp_path / "full", tmp_path / "serving"
+    data = _build(src)
+    Z = np.load(data / "moments_emb.npy")
+    np.save(data / "moments_emb.npy", Z[:-1])
+
+    with pytest.raises(SystemExit) as e:
+        slice_index.slice_index(src, dst)
+    assert e.value.code == 65
+    assert not (dst / "data" / "proc" / "mupid" / "moments_emb.npy").exists()
+
+
+def test_report_counts_the_embedding_rows(sliced):
+    """자른 뒤 검사(`_verify`)가 임베딩까지 센다. 보고서는 수신기의 대조 갈래다."""
+    _, out, report = sliced
+    assert report["rows"]["moments_emb"] == report["rows"]["moments"]
 
 
 def test_report_records_what_was_dropped(sliced):

@@ -86,10 +86,14 @@ POOL_SOURCE = os.environ.get("MUPID_POOL", "flow")
 POOL_EXTRA = os.environ.get("MUPID_POOL_EXTRA", "")
 
 # 행 정렬이 걸린 것들. 넷은 반드시 함께 잘린다.
-# 행 정렬이 걸린 것들. `moments_emb.npy` 는 **자르기의 입력**이지만 배송에는 넣지
-# 않는다(`NOT_SHIPPED`) — Pinecone 이 정본이라 서버가 읽을 일이 없다.
+#
+# `moments_emb.npy` 도 **배송한다.** 운영 추천 서버는 2026-09-24 부터 로컬 벡터
+# 갈래(`MUPID_VECTOR_BACKEND=local`)라 판 안의 이 파일을
+# 읽는다. 빼고 보내면 새 판을 올리는 순간 추천이 멈춘다 — 그래서 node-b 판은 한동안
+# 수동으로 넣었다. Qdrant 로 옮기는 단계(VECTOR-STORE-DESIGN §13 5단계)에서 다시 정리한다.
 ALIGNED = ("moments.parquet", "moments_emb.npy", "features_v1.npz", "stage1_section.npy")
-SHIPPED_ALIGNED = ("moments.parquet", "features_v1.npz", "stage1_section.npy")
+SHIPPED_ALIGNED = ("moments.parquet", "moments_emb.npy", "features_v1.npz",
+                   "stage1_section.npy")
 
 # 행과 무관한 것들. 그대로 복사한다 — 모델 가중치·결합기·특징 정의.
 COPY_AS_IS = ("stage1_weights.npz", "stage1.pt", "logistic_flow_stage1.json",
@@ -99,11 +103,7 @@ COPY_AS_IS = ("stage1_weights.npz", "stage1.pt", "logistic_flow_stage1.json",
 #
 # `content.parquet` 과 `flow_meta.parquet` 은 전체 색인 쪽에 그대로 남는다 — 특징을
 # 다시 굽는 오프라인 경로(`features.fit`)가 읽기 때문이다. 나가지 않을 뿐이다.
-# `moments_emb.npy` 도 나가지 않는다. 순간 벡터의 운영 정본은 Pinecone 이고,
-# 이 파일은 분석 배치가 그것을 채울 때만 읽는 입력 산출물이다. 배송에 실으면
-# 같은 벡터를 파일과 인덱스 두 곳에서 관리하게 된다.
-NOT_SHIPPED = ("content.parquet", "flow_meta.parquet", "moments_emb.npy",
-               "track_features.parquet")
+NOT_SHIPPED = ("content.parquet", "flow_meta.parquet", "track_features.parquet")
 
 # `moments.parquet` 에서 떼는 열. 전부 `music_section_analysis` 와 그에 딸린 표가
 # 정본이고, 추천 서버는 요청 본문으로 받는다.
@@ -169,9 +169,12 @@ def slice_index(src: Path, dst: Path, *, src_data: Path | None = None) -> dict:
     dropped_cols = [c for c in MOMENT_DROP if c in sliced.columns]
     sliced.drop(columns=dropped_cols).to_parquet(out / "moments.parquet", index=False)
 
-    # ② 임베딩은 **자르지 않는다.** 배송에 넣지 않으므로 잘라 둘 이유가 없다.
-    #    Pinecone 적재는 전체 색인 쪽 원본을 그대로 읽는다(`pinecone_sync`).
-    _ = old_rows
+    # ② 임베딩 — 옛 emb_row 로 골라 새 emb_row 순서로 쓴다. 로컬 벡터 모드는
+    #    `Z[emb_row]` 로 닿으므로 ① 의 번호 매김과 같은 순서여야 한다.
+    emb = np.load(data / "moments_emb.npy", mmap_mode="r")
+    if len(emb) != len(mom):
+        fail(f"moments_emb 행 수가 moments 와 다르다: {len(emb)} vs {len(mom)}")
+    np.save(out / "moments_emb.npy", np.asarray(emb[old_rows], dtype=emb.dtype))
 
     # ③ 특징 — PCA 성분·평균·열 이름은 그대로 옮긴다(재계산 아님).
     payload = {key: features[key] for key in features.files}
@@ -266,6 +269,7 @@ def _verify(out: Path) -> dict:
         "moments": len(mom),
         "features_v1": int(np.load(out / "features_v1.npz")["X"].shape[0]),
         "stage1_section": int(np.load(out / "stage1_section.npy", mmap_mode="r").shape[0]),
+        "moments_emb": int(np.load(out / "moments_emb.npy", mmap_mode="r").shape[0]),
     }
     if len(set(counts.values())) != 1:
         fail(f"자른 색인의 행 수가 어긋난다: {counts}")

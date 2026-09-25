@@ -49,9 +49,14 @@ import pandas as pd
 from ai_server.app import ids, onboarding, paths, recommender
 from ai_server.app.log import log
 from ai_server.tools import _api_auth, build_id_map
-from ai_server.tools.push_sections import SECTION_ENUM
 
 ANALYSIS_VERSION = "v1"
+
+# MySQL `section_label` ENUM(= Spring `SectionLabel`) 과 같은 어휘만 올린다. 밖의 라벨은
+# Spring 이 400 으로 거절하고, 그러면 곡 전체가 빠진다 — 여기서 먼저 거른다.
+# (예전에는 지운 `push_sections` 에 있었다. 대조 시험: test_section_enum_matches_spring)
+SECTION_ENUM = ("INTRO", "VERSE", "PRE_CHORUS", "CHORUS", "BRIDGE",
+                "BREAK", "INST", "SOLO", "OUTRO")
 TIMEOUT = 30
 
 

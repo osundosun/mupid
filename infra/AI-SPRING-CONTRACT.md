@@ -10,14 +10,156 @@
 
 ---
 
-## 2026-09-23 계약 변경 — AI 는 Spring 을 부르지 않는다
+## 2026-09-25 계약 v3 — 요청 본문에서 `catalog` 를 뺐다
 
-**이 절이 아래 모든 절보다 우선한다.** 대상 `S15P21A204-423`.
+**이 절이 아래 모든 절보다 우선한다.** 대상 `S15P21A204-458`. 근거는 저장소 재설계
+[`infra/VECTOR-STORE-DESIGN.md`](VECTOR-STORE-DESIGN.md) §9(요청 경로)·§10.1(장애)·§13 6단계.
+2026-09-23 절을 대체한다 — 그 절의 원칙("AI 는 Spring 을 부르지 않는다")은 그대로이고, 곡·구간
+값이 **요청 본문 대신 ClickHouse 피처 저장소**에서 온다.
 
-구현: AI `app/catalog_body.py`(받기·검증), Spring `api/.../ai/catalog/`(후보 수집
-`RecommenderCatalogService`, 검색 조건 `QueryPlanFilter`, 조건 어휘 `RecommenderFacets`),
-적재 `music_preprocessing analysis-values`. 아래 절에서 `/internal/facets`·카탈로그 적재·
-`MUPID_API_*` 를 말하는 대목은 이 절 이전의 기록이다.
+구현
+
+| 쪽 | 위치 | 하는 일 |
+|---|---|---|
+| AI | `ai_server/app/pool_snapshot.py` | 기준 풀 스냅샷 — 피처 저장소를 백그라운드에서 읽어 갈아 끼운다 |
+| AI | `ai_server/app/feature_store.py` | 서빙 읽기(`lookup_many`, 조각·곡 단위, 서빙 계정) — 455 |
+| AI | `ai_server/app/query_conditions.py` | 검색 조건 풀기 — 예전 Spring `QueryPlanFilter` 의 규칙 그대로 |
+| AI | `ai_server/app/internal_api.py` | 본문 `catalog` 받되 무시, `limit + 여유분`, 새 오류 코드 |
+| Spring | `api/.../ai/client/RecommenderDto` 외 호출부 4곳 | 본문 조립 제거, **최종 필터**(삭제·재생 불가, MySQL 기준) 뒤 `limit` 개로 자르기 |
+| Spring | `api/.../ai/catalog/RecommenderFacets` | 조건 어휘(대화 모델 선택지) — 그대로 |
+| ClickHouse | `api/clickhouse/migrations/06-section-instruments.sql` | `track_sections.instruments` — 악기 조건을 AI 가 풀 수 있게 |
+
+걷어낸 것: Spring `QueryPlanFilter`·`CatalogBody`(+시험) — 조건 규칙을 두 곳에 두지 않는다.
+AI 의 본문 해시 사본 캐시(`_view` 의 `digest_of`) — 본문과 함께 사라졌다.
+
+### 흐름
+
+| 흐름 | 방향 | 무엇이 오가나 |
+|---|---|---|
+| 추천 요청 | Spring → AI | 사용자·개수·제외 곡·기준 곡·온보딩·조건(검색). **곡·구간 값 없음** |
+| 곡·구간 값 | Spring → ClickHouse → AI (읽기 전용) | `track_features`·`dict_serving_sections` (455). 쓰기 관문은 Spring 하나 |
+| 최종 필터 | Spring (MySQL) | 응답에서 삭제·재생 불가를 빼고 `limit` 개 |
+| **AI → Spring** | **없다** | |
+
+### 요청 본문
+
+| 경로 | 필드 | 크기 (Spring 직렬화 실측) |
+|---|---|---|
+| `daily` | `recommendation_id`, `user_id`, `limit`(4), `exclude_tracks`, `onboarding` | 175B |
+| `next` | + `current_track`, `current_section` | 제외 200곡 2,232B, 상한 500곡 + 기준 곡 5,243B |
+| `search` | `daily` 의 것 + `query_plan` (`query` 는 보내지 않는다) | 407B (조건 6칸) |
+| `similar` | `external_id`, `limit`, `exclude_tracks` | 66B |
+
+```json
+{ "recommendation_id": 5001, "user_id": 15, "limit": 10,
+  "exclude_tracks": ["T000148"],
+  "current_track": "T000901", "current_section": "T000901#2",
+  "onboarding": { "moods": ["serene"], "genres": ["jazz"] } }
+```
+
+크기를 좌우하는 것은 `exclude_tracks`(곡당 약 10B)뿐이라 Spring 이 상한을 둔다 —
+`NextTrackRequest.excludeMusicIds` 에 `@Size(max = 500)`. 곡 수(1천이든 10만이든)와 무관하다.
+예전 본문은 1,034곡에서 약 497KB, 10만 곡이면 약 49MB 였다(설계 §3.1).
+
+`search` 는 `current_track`·`current_section` 도 받는다 — 템포·에너지 **방향** 조건의 기준이다.
+보내지 않으면 그 조건은 무시되고 진단에 남는다(예전 Spring 도 기준 없이 불렀다).
+
+### 응답 — `limit + 여유분`과 최종 필터
+
+AI 는 순위대로 **`limit + 여유분`**(여유분 = `limit` 의 절반 올림, 최소 2 — `internal_api.spare_for`)을
+돌려준다. 오늘의 모먼트는 요청 `limit` 이 4 그대로이고 응답은 최대 6개다.
+
+- **앞의 `limit` 개는 여유분이 없을 때와 같다.** 분위 임계값·탐색 칸·선택은 `limit` 으로 센다.
+  여유분은 같은 순서에서 이어 뽑은 것이고, 탐색 칸에 자리를 내준 `limit` 번째 곡이 그 맨 앞이다.
+- Spring 은 번역하면서 **MySQL 기준으로 지워진 곡·재생할 수 없는 곡·없는 구간을 빼고**, 같은 곡은
+  앞 순위만 남긴 뒤 **앞에서부터 `limit` 개**를 자른다. 오늘의 모먼트가 지워진 곡 하나 때문에 3개로
+  나가지 않는다. 여유분으로도 모자라면 그만큼 적게 나간다(임의로 채우지 않는다).
+- `shortfall` 의 기준은 요청한 `limit` 이다.
+- **본문에 `catalog` 를 실은 옛 호출자에게는 예전처럼 `limit` 개까지만 준다** — 옛 Spring 은 받은
+  것을 전부 저장한다.
+
+### 오류
+
+| `error_code` | HTTP | 뜻 | Spring |
+|---|---|---|---|
+| `NO_CANDIDATES` | 404 | 맞는 곡이 없다 | 빈 목록 (그대로) |
+| **`UNSATISFIABLE_CONDITIONS`** | 404 | 필수 조건(장르·언어·보컬·악기) 값이 어휘에 없다. `message` 에 칸과 값 | **빈 목록** — 장애가 아니다 |
+| **`CONDITIONS_UNAVAILABLE`** | 503 | 피처 저장소를 한 번도 못 읽어 조건 검색을 껐다(벡터 전용) | 재시도 대상 (5xx 그대로) |
+| `INVALID_CATALOG` | — | **없어졌다.** `catalog` 는 읽지 않으므로 모양도 보지 않는다 | |
+
+### 검색 조건 (AI 가 푼다)
+
+규칙은 2026-09-23 절에서 Spring 이 걸던 것과 **같다**(`QueryPlanFilterTest` 의 사례 전부를
+`ai_server/tests/test_query_conditions.py` 로 옮겼다). 값은 기준 풀 스냅샷에서 읽는다.
+
+| 조건 | 대상 값 | 비교 |
+|---|---|---|
+| `filters.genre` / `exclude.genre` | 곡 장르 코드 ∪ 스타일(`category` 에서 보컬·언어 접두어를 뗀 것) | 토큰 일치 |
+| `filters.language` / `exclude.language` | `language` | 토큰 일치 |
+| `filters.instrument` / `exclude.instrument` | 구간 악기(`track_sections.instruments`), 없으면 곡의 구간 악기 합집합. `other`·`그 외 악기` 는 근거로 쓰지 않는다 | 토큰 일치 |
+| `filters.vocal` / `exclude.vocal` | `instrumental` / `voice` + `male`·`female`·`mixed` | 토큰 일치 |
+| `exclude.mood` | 곡 무드 | 토큰 일치 |
+| `filters.flow` / `exclude.flow` | 구간 라벨(소문자). `filters.flow` 는 첫 값 하나 | 토큰 일치 |
+| `filters.bpm_min`·`bpm_max` | 요청 BPM 범위의 중간값, 없으면 측정 BPM | 이상·이하 |
+| `filters.tempo_direction` | 위와 같은 BPM, 기준은 `current_track` | 더 빠름/느림 |
+| `filters.energy_direction` | `energy`, 기준은 `current_section`(없으면 곡 평균) | 더 높음/낮음 |
+
+요청 값은 먼저 풀의 어휘로 옮긴다 — 소문자, `-`·공백은 `_` 로 바꾼 뒤 어휘에 **정확히** 있는 값만
+남는다(`rock` 이 어휘에 없으면 `indie_rock` 으로 넓혀지지 않는다). 남은 값과 후보 값의 비교가 "토큰
+일치"이고 `_` 경계 부분 일치다. **어휘에 없는 필수 조건은 조용히 풀지 않는다** — 빈 결과와 이유
+(`UNSATISFIABLE_CONDITIONS`). 풀에 악기·보컬 데이터가 아예 없으면 그 조건은 무시하고 진단에 남긴다.
+`filters.mood` 는 거르지 않는다(가점). `activity`·`goal` 은 필드가 없어 무시한다.
+
+통과한 구간이 곧 그 요청 사본의 풀이다. 벡터 검색의 허용 목록은 **1만 개 이하면 사전 필터**(Qdrant
+`HasId`), 넘으면 넉넉히 뽑아 사후 필터다(설계 §9.3-1, 기준은 `MUPID_PREFILTER_MAX`). 로컬 갈래는
+허용 행만 내적한다.
+
+### 기준 풀 스냅샷
+
+| 항목 | 값 |
+|---|---|
+| 무엇 | 색인 풀 ID 전부로 읽은 곡·구간 값(`feature_store.lookup_many` — 서빙 사전 + `track_features FINAL`). 예전 본문 `catalog` 와 같은 모양·같은 값이다(455 `test_feature_store`, 458 `test_contract_v3`) |
+| 요청 경로 | **읽지 않는다.** 스냅샷을 참조만 한다. 사본·풀 색인·조건 파생값은 갱신 스레드가 미리 만든다 |
+| 주기 | `MUPID_POOL_SNAPSHOT_TTL_SEC` (기본 60초). 내용이 그대로면 갈아 끼우지 않는다 |
+| 교체 | 원자적(참조 하나). 미리 만들기에 실패하면 갈아 끼우지 않는다 |
+| 읽기 실패 | 직전 스냅샷을 계속 쓴다. `/internal/ready`·`/health` 의 `pool_snapshot.age_seconds`·`consecutive_failures`·`last_error`, 지표 `pool_snapshot_refresh` |
+| 한 번도 못 읽음 | 벡터 전용 — 곡·구간 값을 모른 채 벡터만으로 추천, 조건 검색 끔(`CONDITIONS_UNAVAILABLE`). 준비 판정은 막지 않는다(설계 §10.1-5) |
+| 빈 결과 | 읽었는데 색인 풀의 구간이 하나도 없으면(백필 전) 실패로 센다 — 빈 풀로 갈아 끼우지 않는다 |
+| 지워진 곡 | 스냅샷이 뺀다(`is_deleted`·`playable`). 갱신 사이의 틈은 Spring 최종 필터가 막는다 |
+
+**왜 후보 K 개만 읽지 않나.** 추천기에 사용자와 무관한 "풀 전체" 값이 있다 — 콜드스타트 순서(풀
+전체 에너지 백분위), 온보딩 씨앗의 곡 고르기(전 곡·단계 완화), 온보딩 고정 게이트, 곡 안 에너지
+백분위, 8초 미만 제외, 온보딩 장르 어휘. 후보 값만으로는 이것을 같은 값으로 못 만들어 순위가 바뀐다.
+그래서 본문 자리를 스냅샷이 그대로 대신하고(2026-09-25 결정), ClickHouse 집계로 대체하는 것은 후속이다
+(설계 §9.3). 비용은 설계 규모에서 갱신 한 번 — 내용이 바뀐 갱신 약 77초·메모리 +1.7GB(10만 곡, 합성·가짜 응답), 1만 곡 약 6초·+180MB, 실제 dev ClickHouse 1만 곡 읽기 3.5초. 바뀌지 않았으면 싼 변경 확인(`change_token`, 약 15ms)만 한다. 데모(1,060곡)는 1초 안쪽이지만 10만 곡 전에는 후속(ClickHouse 집계)이 필요하다 이다(`ai_server/tools/bench_pool_snapshot.py`).
+
+### 호환·배포 순서
+
+**v3 AI 먼저, Spring 나중.** v3 AI 는 요청에 `catalog` 가 **와도 무시**하고(지표
+`legacy_catalog_requests` 만 센다) 피처 저장소를 쓰며, 그런 옛 호출자에게는 `limit` 개까지만
+준다 — 옛 Spring + 새 AI 가 함께 돈다(`test_contract_v3::test_old_spring_body_gets_the_same_answer_and_the_old_count`).
+새 Spring 은 `catalog` 를 보내지 않고 새 오류 코드·여유분을 안다. 새 Spring + 옛 AI 는 **안 된다**
+(옛 AI 는 `catalog` 가 필수라 400).
+
+전제(AI 배포 전): 455 의 서빙 설정(`MUPID_CLICKHOUSE_SERVING_URL`·`_USER`·`_PASSWORD`)과 `track_features`
+백필, 이 계약의 06 마이그레이션(없으면 악기 조건만 "데이터 없음"으로 무시된다 — 한 번 빼고 다시 읽는다).
+
+### 환경변수 (AI)
+
+| 변수 | 기본 | 뜻 |
+|---|---|---|
+| `MUPID_CLICKHOUSE_SERVING_URL`·`_USER`·`_PASSWORD` | (455) | 피처 저장소 서빙 계정. 없으면 `MUPID_CLICKHOUSE_*` |
+| `MUPID_POOL_SNAPSHOT_TTL_SEC` | 60 | 기준 풀 갱신 주기(초) |
+| `MUPID_PREFILTER_MAX` | 10000 | Qdrant 허용 목록을 사전 필터(`HasId`)로 보내는 상한 |
+
+---
+
+## 2026-09-23 계약 변경 — AI 는 Spring 을 부르지 않는다 (계약 v3 가 대체)
+
+대상 `S15P21A204-423`. **곡·구간 값을 요청 본문 `catalog` 로 보내던 부분과 Spring 이 검색 조건을
+걸던 부분은 위 계약 v3 가 대체했다.** 남는 것은 원칙과 이력이다 — AI 가 Spring 을 부르지 않는다,
+MySQL 에 쓰는 길은 Spring 하나다, 조건 어휘는 Spring 이 MySQL 로 만든다(`RecommenderFacets`).
+본문 열 정의는 이제 `track_features`·`track_sections` 의 열 정의다(`api/clickhouse/migrations/05-track-features.sql`).
 
 ### 무엇이 어긋나 있었나
 
@@ -33,120 +175,8 @@ ROLE_SYSTEM 리프레시 토큰으로 불러 곡·구간 메타를 통째로 들
 | 카탈로그 0건 | Spring 은 snake_case, AI 는 camelCase 로 읽음 |
 | 기동 순서 의존 | Spring → AI 호출에 AI → Spring 호출이 더해져 서로를 기다림 |
 
-### 흐름
-
-| 흐름 | 방향 | 무엇이 오가나 |
-|---|---|---|
-| 추천 요청 | Spring → AI | 후보와 그 값(`catalog`, 아래) + 기존 필드 |
-| 행동 데이터 | AI → ClickHouse (읽기 전용) | 청취·구간 신호 (Q8, 그대로) |
-| 배치의 곡 번호·구간 경계 | AI 배치 → ClickHouse `v_track_sections_current` | Spring 이 MySQL 구간을 저장할 때 함께 씀(435) |
-| **AI → Spring** | **없다** | |
-
-적재 파이프라인(`music_preprocessing`, `ai_server/tools/register_*`)이 분석 결과를 Spring
-API 로 **등록**하는 것은 그대로다. MySQL 에 쓰는 길은 Spring 하나라는 계약이고, 추천
-서버가 Spring 을 읽는 것과 다른 일이다.
-
-### 역할
-
-**Spring 이 한다** — MySQL 이 정본인 판단은 전부 여기서 끝낸다.
-
-| 일 | 전에는 | 설명 |
-|---|---|---|
-| 후보 제외 | AI (카탈로그 교집합) | 삭제된 곡(`music.is_deleted`), 재생할 수 없는 곡(스트림 없음) |
-| 검색 조건 필터 | AI `filter_query_pool` | 아래 "검색 조건" |
-| 조건 어휘·선택지(`facets`) | AI `/internal/facets` | 코드표와 새 컬럼에서 만든다. AI 의 `/internal/facets` 는 없앤다 |
-
-**AI 가 한다** — 벡터와 모델이 필요한 계산만.
-
-- 벡터 검색(Pinecone), 선호 구간 묶음(DNA), 학습 점수, 로지스틱 결합
-- 온보딩 씨앗 (조건을 단계적으로 풀며 씨앗 12개를 찾는 계산 — 후보 **값**이 필요해 Spring
-  이 미리 걸러 줄 수 없다)
-- 무드 가점(`filters.mood` 는 게이트가 아니라 재정렬 재료), CLAP 가점, 이어 듣기 흐름 감점,
-  선호 BPM 게이트
-
-### 요청 본문 `catalog`
-
-모든 추천 경로(`next`·`daily`·`search`·`similar`)에 **필수**로 싣는다. 열 단위 배열이다 —
-같은 위치가 같은 행이다. 행 객체 배열보다 약 60% 작다(실측, 아래).
-
-```json
-"catalog": {
-  "tracks": {
-    "track":       ["T000001", "T000002"],
-    "duration_ms": [151978, 203000],
-    "bpm":         [128.0, null],
-    "bpm_requested_min": [120, null],
-    "bpm_requested_max": [130, null],
-    "language":    ["korean", null],
-    "category":    ["female_korean_ballad", null],
-    "genres":      [["ballad"], []],
-    "moods":       [["calm", "warm"], []],
-    "has_vocal":   [true, null],
-    "vocal_gender":["F", null]
-  },
-  "sections": {
-    "external_id":   ["T000001#0", "T000001#1"],
-    "section_label": ["INTRO", "CHORUS"],
-    "start_ms":      [0, 15500],
-    "end_ms":        [15500, 45000],
-    "energy":        [0.031, 0.087]
-  }
-}
-```
-
-| 필드 | MySQL | 값 |
-|---|---|---|
-| `track` | `music_section_analysis.external_id` 의 `#` 앞 | 문자열 곡 ID |
-| `duration_ms` | `streams.duration_ms` | 곡 길이. AI 가 `rel_start = start_ms / duration_ms` 를 센다 |
-| `bpm` | `music_analysis.bpm` **(신규)** | 측정 BPM. 모르면 `null` |
-| `bpm_requested_min`·`_max` | `music_analysis.bpm_requested_min`·`_max` **(신규)** | 생성 때 요청한 BPM 범위 |
-| `language` | `music_analysis.language` **(신규)** | `korean`·`english`·`japanese`… |
-| `category` | `music_analysis.category` **(신규)** | 생성 스타일 원문(`female_korean_ballad`) |
-| `genres`·`moods` | `music_genres`·`music_moods` → `codes.code_name` | 코드 이름 그대로 |
-| `has_vocal`·`vocal_gender` | `music_analysis` | 그대로 |
-| `section_label` | `music_section_analysis.section_label` | ENUM 이름 그대로(`CHORUS`) |
-| `start_ms`·`end_ms` | `music_section_analysis` | 그대로 |
-| `energy` | `music_section_analysis.energy` **(신규)** | 구간 RMS(0~1). 모르면 `null` |
-
-**`sections` 에 없는 구간은 후보가 아니다.** `tracks` 에 없는 곡의 구간은 보내지 않는다.
-`exclude_tracks` 는 지금처럼 따로 싣는다 — 사용자마다 다른 것을 `catalog` 에 섞으면 본문이
-사용자마다 달라져 AI 가 파생 결과를 재사용할 수 없다.
-
-**크기** (2026-09-23 실측, 1,034곡·9,098구간, 조건 없는 최악): 열 단위 본문 약 317KB
-(gzip 62KB), AI 파싱 4ms. 구간이 10만을 넘으면 다시 설계한다.
-
-**AI 는 본문 없이는 계산하지 않는다.** 같은 본문이 거듭 오면 파생 결과(곡 메타 표·온보딩
-표)를 **본문 해시로** 재사용해도 된다 — 캐시이지 상태가 아니다. 본문이 바뀌면 다시 만든다.
-
-### 검색 조건 (Spring 이 건다)
-
-`search` 는 Spring 이 QueryPlan 의 조건으로 `catalog` 를 **걸러서** 보낸다. 옮기는 규칙은
-지금 AI(`recommender.filter_query_pool`, `_canonicalize_query_tags`, `_qmatch`)와 같다.
-
-| 조건 | 대상 값 | 비교 |
-|---|---|---|
-| `filters.genre` / `exclude.genre` | 곡 장르 코드 ∪ 스타일(`category` 에서 보컬·언어 접두어를 뗀 것) | 토큰 일치 |
-| `filters.language` / `exclude.language` | `language` | 토큰 일치 |
-| `filters.instrument` / `exclude.instrument` | 구간 악기, 없으면 곡의 구간 악기 합집합. `other`·`그 외 악기` 는 근거로 쓰지 않는다 | 토큰 일치 |
-| `filters.vocal` / `exclude.vocal` | `instrumental` / `voice` + `male`·`female`·`mixed` | 토큰 일치 |
-| `exclude.mood` | 곡 무드 | 토큰 일치 |
-| `filters.flow` / `exclude.flow` | 구간 라벨(소문자) | 토큰 일치 |
-| `filters.bpm_min`·`bpm_max` | 요청 BPM 범위의 중간값, 없으면 측정 BPM | 이상·이하 |
-| `filters.tempo_direction` | 위와 같은 BPM, 기준은 `current_track` | 더 빠름/느림 |
-| `filters.energy_direction` | `energy`, 기준은 `current_section`(없으면 곡 평균) | 더 높음/낮음 |
-
-요청 값은 먼저 카탈로그 어휘로 옮긴다 — 소문자, `-`·공백은 `_` 로 바꾼 뒤 어휘에 **정확히**
-있는 값만 남는다(`rock` 이 어휘에 없으면 `indie_rock` 으로 넓혀지지 않는다). 남은 값과 후보
-값의 비교가 "토큰 일치" 이고, `_` 경계 부분 일치다 — 어휘의 `ballad` 는 스타일
-`korean_ballad` 에 맞는다.
-
-**어휘에 없는 필수 조건은 조용히 버리지 않는다.** `genre`·`language`·`vocal`·`instrument`
-중 요청했는데 카탈로그 어휘로 하나도 옮겨지지 않은 것이 있으면 AI 를 부르지 않고 빈 결과와
-`unsatisfiable` 을 돌려준다 — 조건을 몰래 풀면 사용자가 말한 것과 다른 곡이 나간다.
-
-`filters.mood` 는 거르지 않는다(가점). `activity`·`goal` 은 카탈로그 필드가 없어 무시하고
-그 사실을 진단에 남긴다. QueryPlan 원문은 지금처럼 `query_plan` 으로 함께 보낸다 — AI 가
-무드 가점과 진단에 쓴다.
+그 뒤 본문 `catalog` 가 곡 수에 비례해 커지는 것(1,034곡에서 약 497KB, 10만 곡이면 약 49MB)이
+문제가 되어 계약 v3 로 옮겼다.
 
 ### MySQL 신규 컬럼
 
@@ -159,16 +189,9 @@ API 로 **등록**하는 것은 그대로다. MySQL 에 쓰는 길은 Spring 하
 | `music_section_analysis` | `energy` | `DOUBLE NULL` | `PUT /api/v1/music/{id}/section` 의 줄마다 |
 
 전부 오디오 분석·생성 조건에서 나온 값이고 쓰는 쪽이 분석 파이프라인 하나라 `music_analysis`
-에 모은다. 기존 행은 AI 색인(`track_features.parquet`, `moments.parquet` 의 `rms`)에서
-한 번 옮긴다.
+에 모은다. Spring 이 같은 값을 ClickHouse 피처 저장소에도 쓴다(451·455).
 
-### Pinecone 적재 대상
-
-색인의 추천 풀(`MUPID_POOL`) 전체다. **카탈로그와 교집합을 내지 않는다** — 적재 도구도
-Spring 을 부르지 않는다. 지워진 곡의 벡터가 남아도 Spring 이 보낸 `catalog` 에 없으므로
-후보가 되지 않는다.
-
-### 걷어내는 것
+### 걷어낸 것 (09-23)
 
 | 쪽 | 무엇 |
 |---|---|
@@ -222,8 +245,9 @@ AI 색인의 키는 문자열(`T000901#2`)이고 MySQL 은 정수다. 둘을 잇
 
 ### 남은 것
 
-- `id_map.parquet` 은 **배치에만** 남는다. ClickHouse `track_sections` 가 숫자 `track_id` 를
-  쓰기 때문에 `push_sections` 가 필요로 한다. 서빙은 읽지 않는다
+- `id_map.parquet` 은 **배치에만** 남는다. ClickHouse 행동 표가 숫자 `track_id` 를 쓰기
+  때문에 `pull_signals` 가 필요로 한다. 서빙은 읽지 않는다 (구간 표를 쓰던 `push_sections` 는
+  451 에서 지웠다 — 구간 표는 Spring 이 쓴다)
 - `labels_service.parquet`(선호 구간 등급)은 **배치 유지**. 전체 사용자 통계로 정해지고
   모델이 그 정의로 학습돼 있어, 요청마다 한 사람치로 바꾸면 점수 분포가 달라진다
 
@@ -240,11 +264,11 @@ Spring Boot 공개 API        ← 인증·권한·영속화는 전부 여기
    ▼
 FastAPI AI 내부 API         ← 추천 계산만. 상태를 갖지 않는다
    ├─ MySQL          곡·구간 메타 (읽기)
-   ├─ Pinecone       MERT 구간 임베딩
+   ├─ Qdrant         MERT 구간 임베딩 (읽기만 — 쓰는 것은 Spring 벡터 등록 API)
    └─ 로컬 산출물     랭킹 모델·색인
 ```
 
-Frontend 는 FastAPI·Pinecone·MySQL·ClickHouse 를 직접 부르지 않는다. FastAPI 는 Spring
+Frontend 는 FastAPI·Qdrant·MySQL·ClickHouse 를 직접 부르지 않는다. FastAPI 는 Spring
 에서만 호출한다.
 
 ---
@@ -301,46 +325,19 @@ AI 내부에는 문자열 곡 ID(`T000148`, `JAMENDO_1048629`)와 구간 ID(`T00
 
 ---
 
-## 2. Pinecone
+## 2. 순간 벡터 저장소 (Qdrant)
 
-### vector ID
+> **2026-09-25 변경됨 (S15P21A204-459).** 이 절은 Pinecone 계획이었다. Pinecone 은 2026-09-24
+> 운영에서 무료 요금제 이그레스를 소진해 되돌렸고 저장소에서 지웠다. 벡터 DB 는 node-b 의
+> **Qdrant** 다.
 
-```
-moment:{music_section_id}:mert-v1
-예) moment:15231:mert-v1
-```
-
-`music_section_id` 와 임베딩은 **1:1**. ID 에서 `music_section_id` 를 그대로 역추적할 수
-있고, 거기서 MySQL `music_id` 로 이어진다.
-
-### metadata
-
-| 키 | 타입 | 용도 |
-|---|---|---|
-| `music_id` | int | 곡 단위 중복 제거·필터 |
-| `music_section_id` | int | 역추적 |
-| `section_label` | string | 구간 종류 필터 |
-| `start_time_ms` / `end_time_ms` | int | 재생 위치 |
-| `model_version` | string | `mert-v1` |
-
-벡터 차원은 **1536** (MERT 구간 임베딩, 실측).
-
-### 저장 순서와 실패 처리
-
-```
-1) MySQL 구간 메타 저장          → music_section_id 발급
-2) vector ID 생성                moment:{music_section_id}:mert-v1
-3) Pinecone upsert
-4) MySQL external_id 에 vector ID 저장
-5) 양쪽 검증 (개수·역추적)
-```
-
-- **Pinecone 저장이 실패하면 그 구간을 성공으로 표시하지 않는다.** 4·5단계를 진행하지 않고
-  해당 곡을 재처리 대상으로 남긴다.
-- 재실행은 **같은 vector ID 로 upsert** 한다. `music_section_id` 가 같으면 ID 가 같으므로
-  중복 벡터가 생기지 않는다.
-- 반대로 MySQL 만 성공하고 Pinecone 이 비어 있으면 추천에서 그 구간이 조용히 빠진다.
-  5단계 검증이 이를 잡는다.
+- 정본은 `infra/VECTOR-STORE-DESIGN.md` §6.1(컬렉션·포인트 ID·payload)·§6.6(벡터 등록 API)이고,
+  서빙 쪽 사용법은 `ai_server/docs/QDRANT.md` 다.
+- **쓰는 것은 Spring 벡터 등록 API 하나다**(`PUT /music/{id}/vectors`, 곡 전체). JupyterHub 배치가
+  `music-preprocessing vectors-send` 로 보낸다. AI 서버는 읽기 전용 키로 읽기만 한다.
+- 벡터 차원은 **1536** (MERT 구간 임베딩, 실측). 컬렉션에는 원본이 아니라 중심화 방향
+  `u = (Z-μ)/‖Z-μ‖` 와 payload `r = ‖Z-μ‖` 가 들어가고, 원본은 `μ + r·u` 로 되돌린다.
+- 운영은 아직 local 갈래다(`MUPID_VECTOR_BACKEND` 비움) — 색인 판의 `moments_emb.npy` 로 추천한다.
 
 ---
 
@@ -777,44 +774,39 @@ MUPID_API_REFRESH_TOKEN=     # ROLE_SYSTEM 계정의 리프레시 토큰
 테스트가 지킨다 (`test_every_spring_code_reaches_the_catalog`). 카탈로그 어휘가 바뀌면
 이 테스트가 먼저 깨진다.
 
-### AI 가 구간 표를 넣을 때 (선행 조건)
+### 구간 표는 Spring 이 넣는다 (선행 조건)
 
 **이것이 없으면 행동 데이터가 통째로 버려진다.** `mv_user_section_signals` 는
 `dictGet(dict_track_sections, ...)` 로 재생 위치가 어느 구간인지 찾고, 못 찾으면 그
 이벤트를 버린다. 2026-09-15 에 실제로 재현했다 — 구간 표가 비어 있으니 좋아요를 눌러도
 `user_section_signals` 에 한 줄도 안 남았고, 구간 1건을 넣자 바로 통과했다.
 
-읽기 전용 원칙(Q8)의 유일한 예외다. `track_sections` 는 **AI 만이 만들 수 있는 분석
-결과**다. 행동 데이터는 여전히 읽기만 한다.
+> **2026-09-25 (S15P21A204-451) — AI 는 이 표를 쓰지 않는다.** 예전에는 읽기 전용 원칙(Q8)의
+> 예외로 `ai_server/tools/push_sections.py` 가 색인(`moments.parquet`)을 `id_map` 으로 번역해
+> HTTP 로 직접 넣었다. 쓰기 관문(Spring)을 우회했고 원천이 MySQL 이 아니라 색인이라 두 저장소가
+> 어긋날 여지가 있어 지웠다. AI 는 이제 **어떤 ClickHouse 표에도 쓰지 않는다**
+> (`test_ai_server_never_writes_track_sections`).
 
-**2026-09-22(S15P21A204-435)부터 이 표를 쓰는 곳이 둘이다.** 전처리 배치가 부르는
-요구 1(`PUT /api/v1/music/{musicId}/section`)이 MySQL 과 `track_sections` 에 함께
-적재한다. 배치가 도는 경로에서는 그쪽이 정상 경로이고, 아래 도구는 **일괄 시드와
-복구용**이다. 컬럼이 같은 모양이라 어느 쪽이 넣어도 결과가 같다.
-
-```
-moments.parquet ──(id_map)──> track_sections ──> dict_track_sections
-                                                       ↑
-                           listen_events ──> mv_user_section_signals
-```
-
-도구는 `ai_server/tools/push_sections.py` 다.
+쓰는 쪽은 Spring 하나다. 요구 1(`PUT /api/v1/music/{musicId}/section`)이 MySQL 에 구간을 넣고,
+같은 트랜잭션에 `analytics_sync_pending` 행을 남긴 뒤, 커밋되면 `track_sections_local` 에 쓴다.
+실패하면 그 행을 재시도 작업(1분)이 MySQL 의 지금 구간으로 메우고, 대조 작업(매일 04:40)이
+레플리카마다 MySQL 과 비교해 어긋난 곡을 다시 넣는다 → `api/knowledge/architecture/analytics-sync.md`.
 
 | 컬럼 | 값 |
 |---|---|
-| `track_id` | **MySQL 이 발급한 숫자.** `id_map` 에 없는 곡은 넣지 않고 센다 |
+| `track_id` | MySQL `music_id` |
 | `section_uid` | 문자열 구간 ID(`T001001#3`). MySQL `external_id` 와 같은 값이다 |
-| `analysis_version` | **`v1` 고정.** `v_track_sections_current` 가 이 값만 고른다 |
-| `fn` | MySQL `section_label` ENUM 어휘만. 밖의 라벨은 제외하고 센다 |
-| `music_section_analysis_id` | MySQL 구간 PK. `id_map` 에 없으면 **0 으로 두고 센다** — 곡과 달리 구간은 번호를 몰라도 넣는다. `dictGet` 에는 `section_uid` 면 충분하고, 빼면 그 구간의 이벤트가 통째로 버려진다 |
+| `analysis_version` | MySQL `music_section_analysis.analysis_version` (요청이 싣는 값, 지금 `v1`). `v_track_sections_current` 가 `v1` 만 고른다 |
+| `fn` | MySQL `section_label` |
+| `music_section_analysis_id` | MySQL 구간 PK |
 
 `peak_ms` 는 2026-09-22 에 없앴다. MySQL 에 대응 컬럼이 없고 구간 안 정점을 산출한 적도
 없어 줄곧 시작점이 들어가 있었다.
 
-넣은 뒤 **두 노드 모두** 딕셔너리를 갱신해야 한다(`ON CLUSTER mupid_all`). 한쪽만 하면
-그 샤드로 간 조회가 구간을 못 찾는다 — 초기화 직후 ch-02 만 `NOT_LOADED` 였다.
-갱신을 건너뛰어도 `LIFETIME(300~600초)` 로 언젠가는 반영되지만, 그때까지 들어온 이벤트는
-버려진다.
+딕셔너리는 `LIFETIME(300~600초)` 로 10분 안에 새 구간을 집는다. 그 사이 들어온 이벤트는
+버려진다 — 즉시 반영이 필요한 시나리오(시드·검증)는 `SYSTEM RELOAD DICTIONARY ON CLUSTER
+mupid_all dict_track_sections` 를 **두 노드 모두**에 건다(한쪽만 하면 그 샤드로 간 조회가
+구간을 못 찾는다 — 초기화 직후 ch-02 만 `NOT_LOADED` 였다).
 
 ### AI 배치가 행동 데이터를 읽을 때 (Q8)
 
@@ -847,31 +839,22 @@ ID 쪽이 최종 방어선이다.
 
 | 작업 | 언제 | 명령 |
 |---|---|---|
-| 구간 표 최초 적재 | `id_map` 이 갖춰진 뒤 한 번 | `push_sections --full` |
-| 구간 표 증분 | **신규 곡·재분석 뒤** | `push_sections` |
-| 구간 표 대사 | 하루 1회 | `push_sections --audit` (차이 있으면 종료 코드 3) |
+| 구간 표 적재·대사 | — | **AI 작업이 아니다.** Spring 이 적재 커밋 뒤 쓰고, 재시도(1분)·대조(매일)가 맞춘다 |
 | 신호 수집 | 짧은 주기 | `pull_signals` |
 | 라벨·선호 갱신 | 신호 수집 뒤 | `run_labeler` |
 
-**재생할 때마다 `push_sections` 를 돌리지 않는다.** 구간 표는 곡이 늘거나 경계가 바뀔 때만
-변하고, 재생은 아무것도 바꾸지 않는다. Kubernetes 로 가면 전처리 완료 이벤트로 Job 을
-띄우거나 짧은 주기 CronJob 으로 같은 명령을 돌리면 된다 — 증분이라 자주 돌려도 비용이
-거의 없다.
+**재생할 때마다 도는 것은 없다.** 구간 표는 곡이 늘거나 경계가 바뀔 때만 변하고, 재생은
+아무것도 바꾸지 않는다.
 
 **쓰기 권한을 주지 않는다.** AI 는 어떤 DB 에도 직접 쓰지 않는다
 ([decision/0011](../api/knowledge/decision/0011-jpa-manages-schema.md)).
 
 #### 아직 연결되지 않은 것
 
-아래는 **계획이며 현재 코드에 참조가 없다**(2026-09-15 확인). 벡터 검색은 Pinecone 이
-아니라 메모리의 NumPy 행렬로 전수 비교하고, 카탈로그는 MySQL 이 아니라 Parquet 에서
-읽는다. 곡 수가 적어 전수 비교가 정확도 손실 없이 충분하기 때문이다. 붙일 때를 위해
-이름만 남겨 둔다.
+아래는 **계획이며 현재 코드에 참조가 없다**(2026-09-15 확인). 카탈로그는 MySQL 이 아니라
+Parquet 에서 읽는다. 붙일 때를 위해 이름만 남겨 둔다. (벡터 저장소 설정은 위 §2 — Qdrant.)
 
 ```
-MUPID_PINECONE_API_KEY=        # 미연결
-MUPID_PINECONE_INDEX_HOST=     # 미연결
-MUPID_PINECONE_NAMESPACE=      # 미연결
 MUPID_MYSQL_URL=               # 미연결 — 읽을 계획도 없다 (Q8: 행동 데이터는 ClickHouse)
 MUPID_MYSQL_USER=              # 미연결
 MUPID_MYSQL_PASSWORD=          # 미연결
@@ -880,9 +863,9 @@ MUPID_CLICKHOUSE_USER=         # 미연결
 MUPID_CLICKHOUSE_PASSWORD=     # 미연결
 ```
 
-Pinecone 을 붙일 때는 **경계를 수정한 구간의 임베딩 재추출이 함께 들어가야 한다.**
-지금은 전수 비교라 원본 좌표 기준으로만 점수가 나가서 드러나지 않지만, 색인을 두면
-낡은 벡터가 남아 수정 전 경계로 추천이 나간다.
+외부 벡터 저장소(Qdrant)로 옮길 때는 **경계를 수정한 구간의 임베딩 재추출이 함께 들어가야
+한다.** 낡은 벡터가 남으면 수정 전 경계로 추천이 나간다 — 서빙은 payload `analysis_version` 을
+피처 저장소와 대조해 다르면 그 벡터를 버린다(설계 §9.3-3).
 
 ### AI 배치 (`ai_batch`)
 
@@ -895,9 +878,6 @@ MUPID_S3_ENDPOINT=
 MUPID_S3_ACCESS_KEY=
 MUPID_S3_SECRET=
 MUPID_S3_BUCKET=
-MUPID_PINECONE_API_KEY=
-MUPID_PINECONE_INDEX_HOST=
-MUPID_PINECONE_NAMESPACE=
 MUPID_MYSQL_URL=
 MUPID_MYSQL_USER=
 MUPID_MYSQL_PASSWORD=

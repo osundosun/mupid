@@ -20,6 +20,12 @@ public interface UserService {
 
     Optional<User> getUser(int userId);
 
+    /**
+     * 관리자의 토큰 발급·폐기 대상인 ROLE_SYSTEM 계정. 없으면 `USER_NOT_FOUND`,
+     * 사람 계정이면 `NOT_SYSTEM_USER` 다.
+     */
+    User getSystemUser(int userId);
+
     Optional<User> getUserByEmail(String email);
 
     Optional<User> getUserByImageFileId(int imageFileId);

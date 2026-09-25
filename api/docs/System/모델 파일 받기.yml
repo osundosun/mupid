@@ -1,0 +1,44 @@
+info:
+  name: 모델 파일 받기
+  type: http
+  seq: 5
+
+http:
+  method: GET
+  url: "{{BASE_URL}}/api/v1/system/models/{{MODEL_NAME}}/{{MODEL_VERSION}}/files/{{MODEL_FILE_NAME}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{ACCESS_TOKEN}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: MODEL_NAME
+      value: stage1
+    - name: MODEL_VERSION
+      value: v3
+    - name: MODEL_FILE_NAME
+      value: user_encoder.npz
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  # 모델 파일 받기
+
+  `GET /api/v1/system/models/{name}/{version}/files/{fileName}` · `ROLE_SYSTEM` / `ROLE_ADMIN` 필요
+
+  `오브젝트 받기` 와 같습니다. 번호 대신 이름·버전·파일명으로 찾습니다 — CI 는
+  `models.lock` 의 이 셋으로 바로 받습니다(§6.3 ④-e).
+
+  ## 오류
+
+  | 코드 | 상태 | 설명 |
+  | --- | --- | --- |
+  | `MUPID_INVALID_MODEL_NAME` · `MUPID_INVALID_MODEL_VERSION` · `MUPID_INVALID_OBJECT_FILE_NAME` | 400 | 형식 |
+  | `MUPID_SYSTEM_OBJECT_NOT_FOUND` | 404 | 그런 파일이 없음 |
+  | `MUPID_OBJECT_NOT_COMPLETED` | 409 | 완료 전 |

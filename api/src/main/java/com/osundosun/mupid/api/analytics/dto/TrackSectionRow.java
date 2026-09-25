@@ -1,5 +1,7 @@
 package com.osundosun.mupid.api.analytics.dto;
 
+import java.util.List;
+
 /**
  * ClickHouse {@code track_sections} 한 행. MySQL {@code music_section_analysis} 를
  * 그대로 옮긴 것이다 (S15P21A204-435).
@@ -14,6 +16,7 @@ package com.osundosun.mupid.api.analytics.dto;
  *   sectionUid              ← external_id
  *   fn                      ← section_label
  *   startMs / endMs         ← start_time_ms / end_time_ms
+ *   instruments             ← music_analysis_instruments → codes.code_name (코드 번호순)
  * </pre>
  *
  * <p>{@code analysisVersion} 은 MySQL 에 없다. 요청이 실어 오지만 구간 표에 버전
@@ -29,6 +32,13 @@ package com.osundosun.mupid.api.analytics.dto;
  * @param fn                     구간 종류({@code INTRO}·{@code CHORUS}…)
  * @param startMs                구간 시작
  * @param endMs                  구간 끝
+ * @param energy                 구간 RMS(0~1). 모르면 null. 서빙 특징 조회가 요청 본문
+ *                               {@code catalog.sections.energy} 대신 읽는다 (S15P21A204-455)
+ * @param instruments            구간에 들리는 악기의 코드 이름, 코드 번호순. 없으면 빈 목록이다.
+ *                               {@code other} 같은 구체적이지 않은 이름도 그대로 싣는다 — 추천 서버가
+ *                               악기 조건({@code filters/exclude.instrument})을 걸 때 거른다
+ *                               (S15P21A204-458). 구간 행과 다른 표지만 같은 요청이 같이 바꾸므로
+ *                               구간과 같은 곡 단위 교체를 탄다
  */
 public record TrackSectionRow(
     int trackId,
@@ -38,7 +48,14 @@ public record TrackSectionRow(
     String sectionUid,
     String fn,
     int startMs,
-    int endMs
+    int endMs,
+    Double energy,
+    List<String> instruments
 ) {
+
+    public TrackSectionRow {
+        // null 을 받으면 INSERT 가 Array 칸에 NULL 을 넣으려다 실패한다. "없다" 는 빈 배열이다.
+        instruments = instruments == null ? List.of() : List.copyOf(instruments);
+    }
 
 }

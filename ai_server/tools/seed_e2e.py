@@ -1,6 +1,6 @@
 """음원 없이 추천 파이프라인 전체를 한 번 통과시키는 시드 도구.
 
-    곡 적재 → 구간 적재 → id_map → push_sections → 행동 신호 → pull_signals
+    곡 적재 → 구간 적재(MySQL·ClickHouse) → id_map → 행동 신호 → pull_signals
     → run_labeler → 추천 전후 비교
 
 SeaweedFS 도 음원 파일도 건드리지 않는다. **행만 넣는다.** 추천기는 `id_map` 을 보지
@@ -303,6 +303,33 @@ def seed_sections(m: Manifest, sections, id_of_track: dict[str, int]) -> int:
 
     log(f"구간 {len(rows)}건 적재")
     return len(rows)
+
+
+def seed_track_sections(m: Manifest) -> int:
+    """이 회차의 구간을 ClickHouse `track_sections_local` 에도 넣는다. **dev 시험 픽스처다.**
+
+    운영에서 이 표를 쓰는 것은 Spring 하나다 — 구간 교체 커밋 뒤 쓰고, 실패하면 미반영
+    기록을 재시도가 메운다(S15P21A204-451). 이 시드는 위 `seed_sections` 로 Spring 을
+    거치지 않고 MySQL 에 넣었으므로 Spring 이 할 일을 여기서 대신한다. `listen_events` 를
+    직접 넣는 것(`test_e2e_seed.ch_insert_events`)과 같은 성격이고, 정리는 `cleanup` 이
+    `track_id` 로 한다. 예전에는 `push_sections --full` 이 이 자리였다(지웠다).
+
+    `section_uid` 는 run 접두사를 뗀 색인 moment_id 다 — 추천기가 그 이름으로 찾는다.
+    """
+    rows = mysql(
+        "SELECT music_id, music_section_analysis_id, analysis_version, `index`, "
+        "SUBSTRING_INDEX(external_id,'|',-1), section_label, start_time_ms, end_time_ms "
+        "FROM music_section_analysis "
+        f"WHERE external_id LIKE {sql_str(m.run_id + '|%')}")
+    count = sum(1 for line in rows.splitlines() if line.strip())
+    if count:
+        ch("INSERT INTO track_sections_local (track_id, music_section_analysis_id, "
+           "analysis_version, section_index, section_uid, fn, start_ms, end_ms) "
+           "FORMAT TabSeparated\n" + rows)
+        # 딕셔너리는 10분까지 늦는다. 시험은 바로 다음 단계에서 신호를 만든다.
+        ch("SYSTEM RELOAD DICTIONARY ON CLUSTER mupid_all dict_track_sections")
+    log(f"ClickHouse 구간 {count}건 적재")
+    return count
 
 
 # 색인의 라벨 어휘는 ERD ENUM 과 다르다. 없는 값을 그대로 넣으면 MySQL 이 거절한다.

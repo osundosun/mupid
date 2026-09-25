@@ -1,0 +1,217 @@
+# Qdrant — 순간 벡터 저장소 (S15P21A204-456, infra/VECTOR-STORE-DESIGN.md §6.1·§6.4·§10.1).
+#
+# 컬렉션 `moments__mert-v1-95m` 하나. 정의는 ai_server/app/qdrant_collection.json 한 곳에
+# 있고, 만드는 것은 사람이 배포 뒤 한 번 돌리는 도구다(`ai_server/tools/qdrant_collection.py`,
+# 멱등). **쓰는 것은 Spring 하나다**(벡터 등록 API, 457) — ai·라벨러는 읽기 전용 키만 받는다.
+#
+# ## 이 매니페스트가 떠도 추천은 바뀌지 않는다
+#
+# ai 의 갈래는 `MUPID_VECTOR_BACKEND` 이고 기본이 local 이다(ai.yaml 은 이 값을 넣지 않는다).
+# 병합이 곧 배포라, 컬렉션이 비어 있는 동안에도 ai 는 지금처럼 판의 벡터로 돈다. 벡터가
+# 채워진 뒤(457) `MUPID_AI_SERVER_ENV` 에 `MUPID_VECTOR_BACKEND=qdrant` 를 넣는 것이 전환이다.
+# 전환 뒤에는 Qdrant 가 죽으면 ai 의 준비 판정이 실패한다(§10.1 장애 표) — local 로 조용히
+# 내려가지 않는다.
+#
+# ## 왜 node-b 인가
+#
+# ai 와 같은 노드다(`mupid.io/role: ai`). 요청마다 검색·조회가 오가므로 노드 사이를 건너면
+# 왕복이 붙는다. 대신 node-b 단일 장애점이 하나 늘어난다 — 데모는 받아들인다(§10.1-8).
+#
+# ## 인증 — 키가 없으면 잠긴 채 뜬다
+#
+# Qdrant 는 `api_key` 가 비면 **인증 없이 열린다.** 그래서 키 두 개를 모두 Secret 에서 받고,
+# 없으면 아무도 모르는 무작위 값으로 채워 띄운다 — clickhouse.yaml 의 서빙 계정과 같은 방식이다.
+# 파드는 뜨고(/readyz 는 인증을 받지 않는다) 누구도 읽거나 쓰지 못한다.
+#
+#   QDRANT__SERVICE__API_KEY            쓰기(전체) — Spring. `MUPID_API_ENV` → Secret mupid-secrets
+#                                       의 MUPID_QDRANT_API_KEY. 스냅샷 CronJob 도 이 키를 쓴다
+#                                       (Qdrant 스냅샷은 전체 권한이 있어야 만든다)
+#   QDRANT__SERVICE__READ_ONLY_API_KEY  읽기 — ai·라벨러. `MUPID_AI_SERVER_ENV` → Secret
+#                                       mupid-ai-secrets 의 MUPID_QDRANT_READ_ONLY_API_KEY.
+#                                       검색·조회·개수만 되고 쓰기는 403 이다 (v1.19.1 에서 확인)
+#
+# 키는 env 로 들어가 프로세스가 뜰 때 한 번 읽힌다. 키를 바꾸면 **이 파드도** 다시 띄워야 한다 —
+# 수신기(receive-env.py·receive-ai-env.py)는 api·ai 만 재시작한다:
+#   kubectl -n mupid rollout restart statefulset/qdrant
+#
+# ## 밖에 열지 않는다
+#
+# Service 는 ClusterIP 이고 nodePort·hostPort 가 없다. nginx.conf 에도 업스트림이 없다. 누가
+# 들어올 수 있는지는 qdrant-networkpolicy.yaml 이 정한다(api·ai·ai-labeler·스냅샷 작업).
+---
+apiVersion: v1
+kind: Service
+metadata: {name: qdrant, namespace: mupid}
+spec:
+  type: ClusterIP
+  selector: {app: qdrant}
+  ports:
+    - {name: http, port: 6333, targetPort: 6333}
+    # gRPC. Spring(457)이 Java 클라이언트를 쓰면 이쪽이다. 서빙(ai)은 REST 만 쓴다.
+    - {name: grpc, port: 6334, targetPort: 6334}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: qdrant, namespace: mupid}
+spec:
+  serviceName: qdrant
+  # 하나다. 복제 2벌은 노드가 둘 다 있어야 의미가 있고, 실 서비스 규모에서 다시 본다(§10.1-8).
+  replicas: 1
+  selector: {matchLabels: {app: qdrant}}
+  template:
+    metadata: {labels: {app: qdrant}}
+    spec:
+      nodeSelector: {mupid.io/role: ai}
+      # 종료 때 WAL 을 flush 할 시간. 기본 30초면 충분하지만 명시한다.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: qdrant
+          # v1.19.1 의 digest(멀티 아키텍처 목록)다. 태그가 아니라 digest 로 고정한 이유는
+          # storage.yaml 의 SeaweedFS 와 같다 — 같은 태그가 다른 이미지를 가리키게 되면
+          # 저장 형식이 조용히 올라가 되돌릴 수 없다. 올릴 때는 스냅샷을 먼저 뜬다.
+          image: qdrant/qdrant@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10
+          # 키가 비면 무작위 값으로 잠근다 (위 "인증"). 백틱을 쓰는 이유는 clickhouse.yaml 과
+          # 같다 — kubelet 이 args 의 `$(` 를 먼저 펼친다.
+          command: [/bin/bash, -c]
+          args:
+            - |
+              set -eu
+              for name in QDRANT__SERVICE__API_KEY QDRANT__SERVICE__READ_ONLY_API_KEY; do
+                if [ -z "${!name:-}" ]; then
+                  export "$name=`head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'`"
+                  echo "$name unset: locked with a random key" >&2
+                fi
+              done
+              exec ./entrypoint.sh
+          env:
+            - name: QDRANT__SERVICE__API_KEY
+              valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_QDRANT_API_KEY, optional: true}}
+            - name: QDRANT__SERVICE__READ_ONLY_API_KEY
+              valueFrom: {secretKeyRef: {name: mupid-ai-secrets, key: MUPID_QDRANT_READ_ONLY_API_KEY, optional: true}}
+            - {name: QDRANT__STORAGE__STORAGE_PATH, value: /qdrant/storage}
+            - {name: QDRANT__STORAGE__SNAPSHOTS_PATH, value: /qdrant/snapshots}
+            # 검색 스레드와 색인(최적화) 스레드. Qdrant 는 노드의 코어 수(4)로 잡는데 한도는
+            # 아래 1500m 라, 그대로 두면 제 몫보다 많은 스레드가 스로틀에 걸린다.
+            - {name: QDRANT__STORAGE__PERFORMANCE__MAX_SEARCH_THREADS, value: '2'}
+            - {name: QDRANT__STORAGE__PERFORMANCE__OPTIMIZER_CPU_BUDGET, value: '1'}
+            - {name: QDRANT__TELEMETRY_DISABLED, value: 'true'}
+          ports:
+            - {containerPort: 6333}
+            - {containerPort: 6334}
+          resources:
+            # node-b 는 할당 가능 3코어에 ai(500m)·kafka(200m)·clickhouse-0(300m)·storage-volume
+            # (100m)·dbstudio(175m) 요청이 이미 있다(1,275m). 요청값은 **데모 규모**로 잡는다 —
+            # 9천 구간이면 int8 `mert` 약 14MB, 원본(on_disk) 55MB, stage1 5MB 로 유휴에 가깝다.
+            # 요청을 크게 잡으면 스케줄러가 다른 파드를 못 올린다(§13 5단계 제약).
+            #
+            # 한도는 **설계 규모**(90만 구간, §6.1)로 잡는다 — 메모리에 int8 `mert` 약 1.4GB +
+            # HNSW 약 0.5GB + stage1 약 0.5GB ≈ 2.4GB, 원본 8GB 는 디스크(mmap, 페이지 캐시는
+            # 회수된다). 3Gi 는 그 위에 여유 600MB 다. node-b 가용 메모리 약 12GiB 안이다.
+            # CPU 한도 1500m 은 ai(3000m 한도)와 한꺼번에 몰려도 노드를 다 먹지 않게 한다.
+            requests: {cpu: 200m, memory: 384Mi}
+            limits: {cpu: 1500m, memory: 3Gi}
+          volumeMounts:
+            - {name: storage, mountPath: /qdrant/storage}
+            - {name: snapshots, mountPath: /qdrant/snapshots}
+          # /readyz·/livez 는 API 키 없이 답한다(v1.19.1 에서 확인). 이미지에 curl 이 없어
+          # exec 가 아니라 httpGet 이다.
+          startupProbe:
+            httpGet: {path: /readyz, port: 6333}
+            periodSeconds: 10
+            # 설계 규모에서 WAL 재생·세그먼트 적재가 길어질 수 있다 — 최대 10분.
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /readyz, port: 6333}
+            periodSeconds: 15
+            failureThreshold: 4
+          livenessProbe:
+            httpGet: {path: /livez, port: 6333}
+            periodSeconds: 30
+            failureThreshold: 5
+  volumeClaimTemplates:
+    # node-b 디스크(local-path). 설계 규모 원본 약 8GB + 색인·WAL — 20Gi.
+    - metadata: {name: storage}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 20Gi}}
+    # 로컬 스냅샷. **node-b 에만 둔다**(§6.1 백업) — Object Storage 로 올리지 않는다. 원본은
+    # JupyterHub 의 전체 색인이라 스냅샷은 복구를 빠르게 할 뿐이다. 보관 3판(qdrant-snapshot).
+    - metadata: {name: snapshots}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 30Gi}}
+---
+# 매일 한 번 스냅샷을 뜨고 오래된 것을 지운다.
+#
+# Qdrant 에 예약 스냅샷 기능이 없어 CronJob 으로 API 를 부른다. 스냅샷 파일은 **Qdrant 파드의
+# 볼륨에** 남는다(`snapshots_path`) — 이 작업은 파일을 옮기지 않는다. 복구:
+#   kubectl -n mupid exec qdrant-0 -- ls /qdrant/snapshots/moments__mert-v1-95m
+#   PUT /collections/moments__mert-v1-95m/snapshots/recover  {"location": "file:///qdrant/snapshots/…"}
+#
+# 한국시간 05:30. MySQL 백업(03:00~03:05)·라벨러(04:00, 보통 수 분)와 겹치지 않게 뒤로 뺐다.
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: qdrant-snapshot, namespace: mupid}
+spec:
+  schedule: "30 5 * * *"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800
+      template:
+        metadata: {labels: {app: qdrant-snapshot}}
+        spec:
+          restartPolicy: Never
+          # Qdrant 와 같은 노드. 부르기만 하므로 꼭 그럴 필요는 없지만 node-a 의 CPU 여유가 더 적다.
+          nodeSelector: {mupid.io/role: ai}
+          containers:
+            - name: snapshot
+              # curl 8.22.0 의 digest. Qdrant 이미지에는 curl 이 없다.
+              image: curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+              command: [/bin/sh, -c]
+              # 셸 스크립트다(jq 없음). 스냅샷 이름은 `<컬렉션>-<id>-<날짜-시각>.snapshot` 이라
+              # 이름 순이 곧 시간 순이다. 새 판을 뜬 **뒤에** 앞의 것을 지운다 — 뜨다 실패하면
+              # 지우지 않는다(set -e).
+              args:
+                - |
+                  set -eu
+                  if [ -z "${MUPID_QDRANT_API_KEY:-}" ]; then
+                    echo "MUPID_QDRANT_API_KEY 가 없다 — Qdrant 가 잠긴 채 떠 있다. 스냅샷을 건너뛴다" >&2
+                    exit 1
+                  fi
+                  base="http://qdrant:6333/collections/$COLLECTION"
+                  code=`curl -s -o /dev/null -w '%{http_code}' -H "api-key: $MUPID_QDRANT_API_KEY" "$base"`
+                  if [ "$code" = 404 ]; then
+                    echo "컬렉션 $COLLECTION 이 아직 없다 — 건너뛴다"
+                    exit 0
+                  fi
+                  curl -fsS -X POST -H "api-key: $MUPID_QDRANT_API_KEY" "$base/snapshots?wait=true"
+                  echo
+                  names=`curl -fsS -H "api-key: $MUPID_QDRANT_API_KEY" "$base/snapshots" \
+                    | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | sort`
+                  total=`echo "$names" | grep -c . || true`
+                  # 셸 산술 확장 대신 awk — kubelet 이 args 안의 달러-괄호를 먼저 펼친다.
+                  drop=`echo "$total $KEEP" | awk '{print $1 - $2}'`
+                  if [ "$drop" -gt 0 ]; then
+                    echo "$names" | head -n "$drop" | while read -r n; do
+                      curl -fsS -X DELETE -H "api-key: $MUPID_QDRANT_API_KEY" "$base/snapshots/$n?wait=true"
+                      echo " 지웠다: $n"
+                    done
+                  fi
+                  echo "스냅샷 $total 판 중 $KEEP 판을 남긴다"
+              env:
+                - {name: COLLECTION, value: moments__mert-v1-95m}
+                # 3판. 설계 규모 원본 약 8GB 기준 한 판 8~10GB, 스냅샷 볼륨 30Gi 안이다.
+                - {name: KEEP, value: '3'}
+                - name: MUPID_QDRANT_API_KEY
+                  valueFrom: {secretKeyRef: {name: mupid-secrets, key: MUPID_QDRANT_API_KEY, optional: true}}
+              resources:
+                requests: {cpu: 10m, memory: 16Mi}
+                limits: {cpu: 200m, memory: 64Mi}

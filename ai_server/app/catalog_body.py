@@ -1,4 +1,8 @@
-"""요청 본문의 `catalog` — Spring 이 보내는 후보와 그 값 (연동 계약 2026-09-23 절).
+"""곡·구간 값의 스냅샷 모양 — 예전 요청 본문 `catalog` (연동 계약 2026-09-23 절).
+
+**계약 v3(S15P21A204-458)부터 요청 본문으로는 오지 않는다.** 같은 모양을 ClickHouse 피처 저장소가
+내고(`feature_store.Lookup.body()`), 기준 풀 스냅샷(`pool_snapshot`)이 이 모듈로 `Snapshot` 을 만든다.
+아래는 09-23 계약 때의 설명이다 — 모양과 규칙은 그대로다.
 
 **AI 는 Spring 을 부르지 않는다.** 곡·구간 메타의 정본은 MySQL 이고, Spring 이 추천을
 부를 때마다 후보를 걸러 그 값과 함께 본문에 싣는다. 이 모듈은 그 본문을 추천기가 읽는
@@ -55,6 +59,9 @@ class Snapshot:
         self.generated_last = generated_last
         self.digest = digest
         self.loaded_at = time.time()
+        # 구간 → 분석 버전(구간 지문). 피처 저장소에서 온 스냅샷만 채운다(계약 v3) — 벡터 저장소의
+        # 지문과 다른 후보를 버리는 데 쓴다(설계 §9.3-3, `recommender.raw_vectors`). 비었으면 대조하지 않는다.
+        self.versions: dict = {}
 
     def music_id(self, track_id: str) -> Optional[int]:
         row = self.tracks.get(str(track_id))
@@ -149,8 +156,11 @@ def digest_of(body: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def from_body(body: dict) -> Snapshot:
-    """`catalog` 본문 → 스냅샷. 모양이 계약과 다르면 거절한다."""
+def from_body(body: dict, digest: Optional[str] = None) -> Snapshot:
+    """`catalog` 본문 → 스냅샷. 모양이 계약과 다르면 거절한다.
+
+    `digest` 는 부르는 쪽이 이미 잰 `digest_of(body)` 다. 두 번 재지 않으려고 받는다.
+    """
     if not isinstance(body, dict):
         raise CatalogBodyError("catalog 는 객체여야 한다")
     extra = sorted(set(body) - {"tracks", "sections"})
@@ -213,4 +223,4 @@ def from_body(body: dict) -> Snapshot:
             "moment_moods": "",
             "energy": _num(s["energy"][i]),
         }
-    return Snapshot(tracks, sections, digest=digest_of(body))
+    return Snapshot(tracks, sections, digest=digest or digest_of(body))

@@ -142,6 +142,9 @@ services:
       # 0 을 주면 ClickHouse 기본 비율(호스트 RAM 의 90%) 계산을 쓴다.
       CH_MAX_SERVER_MEMORY: ${MUPID_CLICKHOUSE_MAX_MEMORY:-4294967296}
       MUPID_CLICKHOUSE_PASSWORD: ${MUPID_CLICKHOUSE_PASSWORD:?.env 에 MUPID_CLICKHOUSE_PASSWORD 설정 필요}
+      # 서빙 읽기 계정(users/20-serving-user.xml). 비우면 ClickHouse 가 빈 비밀번호로 열므로
+      # 값이 없으면 mupid 비밀번호를 쓴다.
+      MUPID_CLICKHOUSE_SERVING_PASSWORD: ${MUPID_CLICKHOUSE_SERVING_PASSWORD:-${MUPID_CLICKHOUSE_PASSWORD}}
     volumes:
       # ClickHouse 는 config.d 하위 디렉터리를 재귀 탐색하지 않으므로 파일 단위로 마운트한다.
       # 디렉터리째 마운트하면 이미지가 넣는 docker_related_config.xml 과
@@ -152,6 +155,7 @@ services:
       - ./clickhouse/server/10-macros.xml:/etc/clickhouse-server/config.d/10-macros.xml:ro
       - ./clickhouse/users/00-profile.xml:/etc/clickhouse-server/users.d/00-profile.xml:ro
       - ./clickhouse/users/10-mupid-user.xml:/etc/clickhouse-server/users.d/10-mupid-user.xml:ro
+      - ./clickhouse/users/20-serving-user.xml:/etc/clickhouse-server/users.d/20-serving-user.xml:ro
       - ch1-data:/var/lib/clickhouse
     ports:
       - "${MUPID_CLICKHOUSE_HTTP_PORT:-18123}:8123"
@@ -190,6 +194,9 @@ services:
       CH_KEEPER_HOST: mupid-dev-ch-keeper
       CH_MAX_SERVER_MEMORY: ${MUPID_CLICKHOUSE_MAX_MEMORY:-4294967296}
       MUPID_CLICKHOUSE_PASSWORD: ${MUPID_CLICKHOUSE_PASSWORD:?.env 에 MUPID_CLICKHOUSE_PASSWORD 설정 필요}
+      # 서빙 읽기 계정(users/20-serving-user.xml). 비우면 ClickHouse 가 빈 비밀번호로 열므로
+      # 값이 없으면 mupid 비밀번호를 쓴다.
+      MUPID_CLICKHOUSE_SERVING_PASSWORD: ${MUPID_CLICKHOUSE_SERVING_PASSWORD:-${MUPID_CLICKHOUSE_PASSWORD}}
     volumes:
       - ./clickhouse/server/00-cluster.xml:/etc/clickhouse-server/config.d/00-cluster.xml:ro
       - ./clickhouse/server/01-keeper.xml:/etc/clickhouse-server/config.d/01-keeper.xml:ro
@@ -197,6 +204,7 @@ services:
       - ./clickhouse/server/10-macros.xml:/etc/clickhouse-server/config.d/10-macros.xml:ro
       - ./clickhouse/users/00-profile.xml:/etc/clickhouse-server/users.d/00-profile.xml:ro
       - ./clickhouse/users/10-mupid-user.xml:/etc/clickhouse-server/users.d/10-mupid-user.xml:ro
+      - ./clickhouse/users/20-serving-user.xml:/etc/clickhouse-server/users.d/20-serving-user.xml:ro
       - ch2-data:/var/lib/clickhouse
     ports:
       - "${MUPID_CLICKHOUSE_HTTP_PORT_2:-18124}:8123"
@@ -301,6 +309,37 @@ services:
       kafka:
         condition: service_healthy
 
+  # 순간 벡터 저장소 (S15P21A204-456). 운영은 infra_k8s/base/qdrant.yaml 과 같은 판이다.
+  # 기본 스택에는 들지 않는다 — `docker compose --profile vectors up -d qdrant`.
+  # 키가 없으면 인증 없이 열리므로 개발용 기본값을 둔다(127.0.0.1 에만 연다).
+  # 컬렉션: python -m ai_server.tools.qdrant_collection --url http://127.0.0.1:6333
+  qdrant:
+    profiles: [vectors]
+    image: qdrant/qdrant@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10
+    container_name: mupid-dev-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${MUPID_QDRANT_API_KEY:-dev-qdrant-write}
+      QDRANT__SERVICE__READ_ONLY_API_KEY: ${MUPID_QDRANT_READ_ONLY_API_KEY:-dev-qdrant-read}
+      QDRANT__TELEMETRY_DISABLED: "true"
+    ports:
+      - "127.0.0.1:${MUPID_QDRANT_PORT:-6333}:6333"
+      - "127.0.0.1:${MUPID_QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - backend
+    healthcheck:
+      # 이미지에 curl 이 없다. /readyz 는 키 없이 답한다.
+      test:
+        - CMD
+        - bash
+        - -c
+        - exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\r\n\r\n' >&3 && grep -q ' 200 ' <&3
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
   # ---------------------------------------------------------------------------
   # 1회성 초기화 컨테이너. 정상 종료(exited 0)되는 것이 기대 동작이다.
   # ---------------------------------------------------------------------------
@@ -383,6 +422,8 @@ volumes:
     name: mupid-dev-mysql-data
   redis-data:
     name: mupid-dev-redis-data
+  qdrant-data:
+    name: mupid-dev-qdrant-data
   storage-data:
     name: mupid-dev-storage-data
   ch-keeper-data:

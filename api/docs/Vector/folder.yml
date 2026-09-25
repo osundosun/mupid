@@ -1,0 +1,65 @@
+info:
+  name: Vector
+  type: folder
+  seq: 18
+
+request:
+  auth: inherit
+
+docs:
+  type: text/markdown
+  content: |-
+    # Vector
+
+    벡터 등록 API — 순간 벡터를 Qdrant 에 쓰는 **유일한 길** (S15P21A204-457, 저장소 재설계
+    `infra/VECTOR-STORE-DESIGN.md` §6.6·§7.1·§7.3). 전부 `@SystemRole` (`ROLE_SYSTEM` / `ROLE_ADMIN`) 입니다.
+    분석 배치(`system-preprocessing`)가 보내고, 재계산 관문은 CI(`system-ci`)가 읽습니다.
+    **ai_server 는 Qdrant 를 읽기만 합니다**(읽기 전용 키).
+
+    | 엔드포인트 | 동작 | 누가 |
+    | --- | --- | --- |
+    | `PUT /api/v1/music/{musicId}/vectors` | 곡 하나의 모든 벡터 — 새 곡·재분석 | 분석 배치 |
+    | `PUT /api/v1/system/vectors/stage1/{version}` | 모델 재계산 — `stage1_v{N}` 만, 1,000구간씩 | 분석 배치 |
+    | `GET /api/v1/system/vectors/stage1/{version}/status` | 재계산 관문 — 전 구간에 채워졌나 | CI `model-publish` |
+    | `GET /api/v1/system/vectors/pending` | 벡터가 아직 없는 곡 — 다시 보낼 목록 | 분석 배치 |
+
+    ## 본문 형식 (설계 §11 미결 5 의 결정)
+
+    **JSON 안에 벡터마다 float32 리틀엔디언 바이트의 base64** 를 싣습니다.
+
+    ```python
+    base64.b64encode(np.asarray(v, "<f4").tobytes()).decode()
+    ```
+
+    `application/octet-stream` 을 쓰지 않는 이유 — 한 요청에 종류가 다섯이고(`mert`·`r`·`feat_v1`·
+    `stage1_v{N}`·`clap`) `clap` 은 구간마다 있거나 없어, 바이트 한 덩어리로 보내면 경계를 헤더에
+    따로 적는 틀을 새로 만들어야 합니다. JSON 이면 메타와 벡터가 한 문서에 있고 검증이 애너테이션으로
+    끝납니다. 크기는 구간당 약 10.5KB(곡 9구간이면 약 95KB) — JSON 숫자 배열의 절반 아래입니다.
+
+    ## 무엇을 싣나 — AI 가 읽는 모양 그대로
+
+    정의는 `ai_server/app/qdrant_collection.json` 하나이고 Spring 은 그 바이트 사본
+    (`api/src/main/resources/qdrant/`)을 씁니다. 두 파일이 다르면 AI 시험
+    (`test_qdrant_schema_copy.py`)이 CI 에서 멈춥니다.
+
+    | 벡터 | 차원 | 담는 것 |
+    | --- | --- | --- |
+    | `mert` | 1536 | **중심화 방향** `u = (Z-μ)/‖Z-μ‖`. μ 는 동결 값(`mu.npy`, 설계 §6.3). 단위 벡터가 아니면 거절 |
+    | `r` (payload) | — | `‖Z-μ‖`. AI 가 원본을 `μ + r·u` 로 되돌린다 |
+    | `feat_v1` | 285 | 랭킹 입력 특징 `X` |
+    | `stage1_v{N}` | 128 | 모델 버전 N 의 구간 벡터. 컬렉션에 없으면 Spring 이 덧붙인다 |
+    | `clap` | 512 | 있는 구간만 |
+
+    포인트 id 는 `UUIDv5(7722576a-…, external_id)`. payload 의 구간 지문(`analysis_version`·
+    `seg_start_ms`·`seg_end_ms`)과 `track_id` 는 **MySQL 에서** 싣습니다 — 배치가 보낸 값이 아닙니다.
+    `Cosine` 으로 정의된 벡터(`mert`·`stage1_v{N}`·`clap`)는 Qdrant 가 저장할 때 단위 길이로 맞춥니다.
+
+    ## 실패와 재시도 — 원본은 배치가 가진다
+
+    - Spring 은 **Qdrant 에 쓴 뒤 응답**합니다(`wait=true`). 벡터를 따로 보관하지 않습니다.
+    - **4xx 는 다시 보내도 같은 답**입니다 — 본문을 고치거나 구간을 먼저 등록합니다.
+    - **429·503 은 같은 본문을 다시** 보냅니다(곡 단위 교체라 멱등). 429 는 쓰기 줄이 찬 것입니다 —
+      벡터 쓰기는 사용자 요청과 다른 풀에서 동시 2개, 대기 8개까지만 돕니다(설계 §10.3-7).
+    - 구간 등록(`PUT …/section`)이 커밋되면 그 곡은 미반영 `VECTOR` 로 남고, 벡터 등록이 성공하면
+      지워집니다. 매일 04:50 대조가 Qdrant 와 어긋난 곡을 여기에 다시 넣습니다. 배치는 `벡터 미반영 목록`
+      을 읽어 다시 보냅니다(`music-preprocessing vectors-send --pending`).

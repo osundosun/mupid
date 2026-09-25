@@ -89,14 +89,14 @@ class AiRecommendToolNullUserTest {
         Integer absent = null;
 
         assertThatCode(() -> new RecommenderDto.NextRequest(
-            7L, absent, 3, List.of(), "T000901", null, null, null))
+            7L, absent, 3, List.of(), "T000901", null, null))
             .doesNotThrowAnyException();
         assertThatCode(() -> new RecommenderDto.SearchRequest(
             7L, absent, 3, List.of(), null,
-            Map.of("filters", Map.of("genre", List.of("pop"))), null, null))
+            Map.of("filters", Map.of("genre", List.of("pop"))), null))
             .doesNotThrowAnyException();
         assertThatCode(() -> new RecommenderDto.DailyRequest(
-            7L, absent, 3, List.of(), null, null))
+            7L, absent, 3, List.of(), null))
             .doesNotThrowAnyException();
     }
 
@@ -106,7 +106,7 @@ class AiRecommendToolNullUserTest {
         Integer absent = null;
 
         String json = new String(AiJson.writeBytes(new RecommenderDto.NextRequest(
-            7L, absent, 3, List.of(), "T000901", null, null, null)), StandardCharsets.UTF_8);
+            7L, absent, 3, List.of(), "T000901", null, null)), StandardCharsets.UTF_8);
 
         // primitive 였다면 언박싱 자체가 터졌다. Integer 라 터지지 않는데, 그렇다고
         // `"user_id":0` 이 나가면 계약(`ge=1`) 위반이 아니라 **다른 사용자 조회**가 된다.

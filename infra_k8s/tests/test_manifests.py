@@ -82,6 +82,52 @@ class NginxCopyTest(unittest.TestCase):
         self.assertEqual(root.group(1), copied.group(1))
 
 
+class NginxSystemUploadTest(unittest.TestCase):
+    """모델 가중치 업로드(`/upload/system/`, S15P21A204-453)는 청크와 같은 길이다.
+
+    바이트는 Nginx 가 Filer 로 바로 흘리고 스프링은 auth_request 로 허가만 한다. 여기서
+    어긋나면 조용히 새는 것들을 못 박는다: 토큰이 Filer 로 넘어가는 것, PUT 이 아닌 방식이
+    스프링의 확인(완료·sha256)을 건너뛰고 Filer 에 닿는 것, `/storage/` 가 밖에 열리는 것.
+    개발 템플릿도 같은 모양이어야 로컬에서 확인한 것이 운영과 같다.
+    """
+
+    FILES = (
+        K8S / "base" / "nginx" / "default.conf",
+        ROOT / "api" / "nginx" / "templates" / "default.conf.template",
+    )
+
+    @staticmethod
+    def _location(conf, head):
+        start = conf.index(head)
+        # location 블록은 4칸 들여쓴 `}` 로 닫힌다 (안쪽 `{ … }` 는 한 줄이다)
+        return conf[start:conf.index("\n    }", start)]
+
+    def test_the_upload_block_asks_spring_and_strips_the_token(self):
+        for path in self.FILES:
+            with self.subTest(file=path.name):
+                conf = path.read_text(encoding="utf-8")
+                block = self._location(conf, "location ~ ^/upload/system/")
+                self.assertIn("auth_request /internal/system-upload-auth;", block)
+                self.assertIn("limit_except PUT { deny all; }", block)
+                self.assertIn("proxy_request_buffering off;", block)
+                self.assertRegex(block, r"proxy_set_header Authorization (''|\"\");")
+                self.assertIn("proxy_pass http://mupid_storage$storage_path;", block)
+
+                auth = self._location(conf, "location = /internal/system-upload-auth {")
+                self.assertIn("internal;", auth)
+                self.assertIn("proxy_pass_request_body off;", auth)
+                self.assertIn("X-Original-Content-Length $content_length", auth)
+                self.assertIn(
+                    "/api/v1/system/objects/$system_object_id/upload-auth", auth)
+
+    def test_storage_stays_internal(self):
+        for path in self.FILES:
+            with self.subTest(file=path.name):
+                conf = path.read_text(encoding="utf-8")
+                block = self._location(conf, "location /storage/ {")
+                self.assertRegex(block, r"(?m)^\s*internal;", "/storage/ 가 internal 이 아니면 Filer 가 밖에 열린다")
+
+
 class ClickHouseCopyTest(unittest.TestCase):
     """base/clickhouse/ is a copy of api/clickhouse/. Every node-specific value
     in those files is `from_env`, so one set serves both pods and there is no
@@ -92,6 +138,7 @@ class ClickHouseCopyTest(unittest.TestCase):
         ("server", "02-server.xml"), ("server", "03-system-logs.xml"),
         ("server", "10-macros.xml"),
         ("users", "00-profile.xml"), ("users", "10-mupid-user.xml"),
+        ("users", "20-serving-user.xml"),
     )
 
     def test_copies_match_the_originals(self):
@@ -2011,7 +2058,10 @@ class AiServerDeployTest(unittest.TestCase):
                 with self.subTest(service=doc["metadata"]["name"]):
                     self.assertIn(doc["spec"].get("type", "ClusterIP"), ("ClusterIP",))
         nginx = (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
-        self.assertNotIn("/internal/", nginx.replace("/internal/chunk-upload-auth", ""))
+        # 업로드 허가 두 곳은 nginx 자신의 auth_request 서브요청이다 (`internal;`, Spring 으로 간다).
+        for own in ("/internal/chunk-upload-auth", "/internal/system-upload-auth"):
+            nginx = nginx.replace(own, "")
+        self.assertNotIn("/internal/", nginx)
 
     def test_the_shared_secret_is_optional_so_the_pod_still_starts(self):
         """Secret 에 없는 키를 optional 없이 참조하면 파드가
@@ -2201,12 +2251,12 @@ class IndexUploadTest(unittest.TestCase):
         self.assertIn("ALLOWED = {", receiver)
         allowed = receiver[receiver.index("ALLOWED = {"):]
         allowed = allowed[:allowed.index("}")]
-        for name in ("moments.parquet", "features_v1.npz", "stage1_section.npy"):
+        # `moments_emb.npy` 도 받는다 — 운영이 로컬 벡터 모드라 판 안의 이 파일로
+        # 추천한다(S15P21A204-450). 허용 목록만 잘라서 본다.
+        for name in ("moments.parquet", "moments_emb.npy", "features_v1.npz",
+                     "stage1_section.npy"):
             with self.subTest(file=name):
                 self.assertIn(f'"{name}"', allowed)
-        # `moments_emb.npy` 는 **거절**한다. 이 이름이 파일 어딘가에 있는지만 보면
-        # 거절 메시지에 걸려 통과해 버린다 — 허용 목록만 잘라서 본다.
-        self.assertNotIn("moments_emb.npy", allowed)
         # 경로도 한 겹으로 묶는다. data/proc/mupid 바로 아래만 받는다.
         self.assertIn('INNER = "data/proc/mupid"', receiver)
         self.assertIn("parent != INNER", receiver)
@@ -2274,17 +2324,16 @@ class IndexUploadTest(unittest.TestCase):
         self.assertNotIn("서빙 경로가 읽지 않는다", text)
 
     def test_the_uploader_refuses_to_send_an_incomplete_index(self):
-        """배송되는 세 개가 다 있어야 한다. 하나라도 빠지면 ready 가 영영 false 다.
+        """행 정렬된 네 개가 다 있어야 한다. 하나라도 빠지면 수신기가 거절한다.
 
-        `moments_emb.npy` 를 여기 넣으면 안 된다 — slice_index 의 NOT_SHIPPED 라
-        정상 묶음에도 없고, 요구하면 업로드가 통째로 멈춘다."""
+        `moments_emb.npy` 도 본다 — 로컬 벡터 모드가 운영 경로라 수신기가 요구한다."""
         script = (self.CI / "deploy-index.sh").read_text(encoding="utf-8")
-        for name in ("moments.parquet", "features_v1.npz", "stage1_section.npy"):
-            with self.subTest(file=name):
-                self.assertIn(name, script)
         loop = next(line for line in script.splitlines()
                     if line.startswith("for name in "))
-        self.assertNotIn("moments_emb.npy", loop)
+        for name in ("moments.parquet", "moments_emb.npy", "features_v1.npz",
+                     "stage1_section.npy"):
+            with self.subTest(file=name):
+                self.assertIn(name, loop)
         self.assertIn("slice_index", script)
 
     def test_the_uploader_demands_the_node_the_pod_runs_on(self):
@@ -2369,11 +2418,13 @@ class IndexReceiverCheckTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def _fill(self, feat_rows, sec_rows, report_rows=None):
-        """`moments_emb.npy` 는 만들지 않는다 — 배송에서 빠졌고 수신기가 거절한다."""
+    def _fill(self, feat_rows, sec_rows, report_rows=None, emb_rows=None):
+        """`emb_rows` 를 안 주면 `moments_emb.npy` 는 구간 벡터와 같은 행 수로 만든다."""
         _npz(self.data / "features_v1.npz", feat_rows)
         _npy(self.data / "stage1_section.npy", sec_rows)
+        _npy(self.data / "moments_emb.npy", sec_rows if emb_rows is None else emb_rows)
         (self.data / "moments.parquet").write_bytes(b"PAR1")
+        (self.data / "index_meta.json").write_text("{}", encoding="utf-8")
         if report_rows is not None:
             (self.data / "slice_report.json").write_text(
                 json.dumps({"rows": {"moments": report_rows}}), encoding="utf-8")
@@ -2431,6 +2482,59 @@ class IndexReceiverCheckTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             self.mod.verify(pathlib.Path(self.tmp))
         self.assertEqual(65, caught.exception.code)
+
+    def test_a_bundle_without_embeddings_is_refused(self):
+        """로컬 벡터 모드가 운영 경로다. 임베딩이 없는 판으로 current 를 갈아 끼우면
+        그 순간 추천이 멈춘다(S15P21A204-450)."""
+        self._fill(10007, 10007)
+        (self.data / "moments_emb.npy").unlink()
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.verify(pathlib.Path(self.tmp))
+        self.assertEqual(65, caught.exception.code)
+
+    def test_embeddings_from_another_plate_are_refused(self):
+        """`Z[emb_row]` 는 행이 하나만 어긋나도 오류 없이 다른 구간의 벡터를 쓴다."""
+        self._fill(10007, 10007, report_rows=10007, emb_rows=9334)
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.check_rows(self.data)
+        self.assertEqual(65, caught.exception.code)
+
+    def test_embeddings_must_match_the_moment_count_in_the_report(self):
+        """moments.parquet 은 numpy 없이 셀 수 없어 보고서의 moments 와 맞춘다."""
+        self._fill(9334, 9334, report_rows=10007, emb_rows=9334)
+        with self.assertRaises(SystemExit) as caught:
+            self.mod.check_rows(self.data)
+        self.assertEqual(65, caught.exception.code)
+
+    def _bundle(self, names):
+        import io
+        import tarfile
+
+        archive = pathlib.Path(self.tmp) / "index.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            for name in names:
+                body = b"x"
+                info = tarfile.TarInfo(f"{self.mod.INNER}/{name}")
+                info.size = len(body)
+                tar.addfile(info, io.BytesIO(body))
+        return archive
+
+    def test_the_receiver_extracts_a_bundle_with_embeddings(self):
+        """거절하던 동안 node-b 판은 수신기를 거치지 않고 손으로 만들어야 했다."""
+        archive = self._bundle(["moments.parquet", "moments_emb.npy"])
+        target = pathlib.Path(self.tmp) / "tree"
+        target.mkdir()
+        self.mod.safe_extract(archive, target)
+        self.assertTrue((target / self.mod.INNER / "moments_emb.npy").exists())
+
+    def test_the_receiver_still_refuses_unknown_and_escaping_names(self):
+        """받는 이름을 늘렸다고 경계가 느슨해지면 안 된다 — 이건 root 로 돈다."""
+        for name in ("moments_emb.npy.sh", "../moments_emb.npy"):
+            with self.subTest(name=name):
+                archive = self._bundle([name])
+                with self.assertRaises(SystemExit) as caught:
+                    self.mod.safe_extract(archive, pathlib.Path(self.tmp))
+                self.assertEqual(65, caught.exception.code)
 
 class ApplyTagSubstitutionTest(unittest.TestCase):
     """`mupid-apply` 는 placeholder 가 클러스터에 올라가는 것을 막으려고 존재한다.
@@ -2601,6 +2705,213 @@ class LabelBatchFileTest(unittest.TestCase):
             self.assertTrue(found, name)
             state.append(found[0])
         self.assertEqual(state[0], state[1])
+
+
+class QdrantManifestTest(unittest.TestCase):
+    """Qdrant (S15P21A204-456, 설계 §6.1·§6.4). kubectl 없이 파일로 본다 — CI 이미지에 kubectl 이
+    없어서 이것만이 파이프라인에서 실제로 확인된다.
+
+    지키는 것: node-b 고정·digest 고정·한도, 밖에 열지 않음, 키가 없으면 잠긴 채 뜸, NetworkPolicy
+    가 Qdrant 만 고름(네임스페이스의 첫 정책이라 다른 파드에 번지면 안 된다), ai 는 local 그대로."""
+
+    QDRANT = K8S / "base" / "qdrant.yaml"
+    POLICY = K8S / "base" / "qdrant-networkpolicy.yaml"
+    DIGEST = re.compile(r"^[\w./-]+@sha256:[0-9a-f]{64}$")
+
+    def _docs(self, path):
+        return [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d]
+
+    def _kind(self, kind):
+        return next(d for d in self._docs(self.QDRANT) if d["kind"] == kind)
+
+    def _pod(self):
+        return self._kind("StatefulSet")["spec"]["template"]["spec"]
+
+    def _cron_pod(self):
+        return self._kind("CronJob")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+
+    def _base_workloads(self):
+        """base 의 모든 파드 템플릿 (이름, 라벨, spec)."""
+        for path in sorted((K8S / "base").glob("*.yaml")):
+            for d in self._docs(path):
+                if d.get("kind") in ("Deployment", "StatefulSet"):
+                    t = d["spec"]["template"]
+                elif d.get("kind") == "CronJob":
+                    t = d["spec"]["jobTemplate"]["spec"]["template"]
+                else:
+                    continue
+                yield d["metadata"]["name"], (t.get("metadata") or {}).get("labels") or {}, t["spec"]
+
+    def test_it_is_in_the_overlay(self):
+        kustomization = (K8S / "base" / "kustomization.yaml").read_text(encoding="utf-8")
+        for name in ("qdrant.yaml", "qdrant-networkpolicy.yaml"):
+            with self.subTest(file=name):
+                self.assertRegex(kustomization, re.compile(rf"^\s+- {re.escape(name)}\s*$", re.M))
+
+    def test_it_runs_on_the_ai_node_with_a_node_local_volume(self):
+        pod = self._pod()
+        self.assertEqual({"mupid.io/role": "ai"}, pod["nodeSelector"])
+        claims = self._kind("StatefulSet")["spec"]["volumeClaimTemplates"]
+        self.assertEqual({"storage", "snapshots"}, {c["metadata"]["name"] for c in claims})
+        for c in claims:
+            self.assertEqual("local-path", c["spec"]["storageClassName"])
+        # 스냅샷은 노드 볼륨에만 — Object Storage 자격(S3 키)을 받지 않는다 (§6.1 백업).
+        text = self.QDRANT.read_text(encoding="utf-8")
+        self.assertNotIn("MUPID_S3_", text)
+        self.assertNotIn("mupid-storage-s3", text)
+
+    def test_images_are_pinned_by_digest(self):
+        for where, pod in (("qdrant", self._pod()), ("snapshot", self._cron_pod())):
+            for c in pod["containers"]:
+                with self.subTest(pod=where, container=c["name"]):
+                    self.assertRegex(c["image"], self.DIGEST)
+
+    def test_requests_are_small_and_limits_are_set(self):
+        """node-b 는 할당 가능 3코어에 요청이 이미 1,275m 다. 요청이 크면 다른 파드가 Pending 이다."""
+        for where, pod in (("qdrant", self._pod()), ("snapshot", self._cron_pod())):
+            for c in pod["containers"]:
+                res = c["resources"]
+                with self.subTest(pod=where):
+                    self.assertTrue({"cpu", "memory"} <= set(res["requests"]))
+                    self.assertTrue({"cpu", "memory"} <= set(res["limits"]))
+                    cpu = res["requests"]["cpu"]
+                    milli = int(cpu[:-1]) if cpu.endswith("m") else int(float(cpu) * 1000)
+                    self.assertLessEqual(milli, 250)
+
+    def test_it_is_never_exposed_outside_the_cluster(self):
+        svc = self._kind("Service")
+        self.assertEqual("ClusterIP", svc["spec"].get("type", "ClusterIP"))
+        for p in svc["spec"]["ports"]:
+            self.assertNotIn("nodePort", p)
+        for c in self._pod()["containers"]:
+            for p in c.get("ports", []):
+                self.assertNotIn("hostPort", p)
+        self.assertFalse(self._pod().get("hostNetwork"))
+        conf = (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
+        self.assertNotIn("qdrant", conf.lower())
+
+    def test_it_never_starts_open_when_a_key_is_missing(self):
+        """Qdrant 는 api_key 가 비면 인증 없이 열린다. 비면 무작위 키로 잠가야 한다."""
+        c = self._pod()["containers"][0]
+        env = {e["name"]: e for e in c["env"]}
+        refs = {
+            "QDRANT__SERVICE__API_KEY": ("mupid-secrets", "MUPID_QDRANT_API_KEY"),
+            "QDRANT__SERVICE__READ_ONLY_API_KEY": ("mupid-ai-secrets", "MUPID_QDRANT_READ_ONLY_API_KEY"),
+        }
+        script = c["args"][0]
+        for name, (secret, key) in refs.items():
+            with self.subTest(env=name):
+                ref = env[name]["valueFrom"]["secretKeyRef"]
+                self.assertEqual((secret, key), (ref["name"], ref["key"]))
+                self.assertTrue(ref.get("optional"), "비밀 전에 배포돼도 파드는 떠야 한다")
+                self.assertIn(name, script)
+        self.assertIn('if [ -z "${!name:-}" ]', script)
+        self.assertIn("/dev/urandom", script)
+        self.assertIn("exec ./entrypoint.sh", script)
+        self.assertLess(script.index("/dev/urandom"), script.index("exec ./entrypoint.sh"))
+        for pod in (self._pod(), self._cron_pod()):
+            # kubelet 이 args 의 `$(` 를 먼저 펼친다 (clickhouse.yaml 과 같은 이유).
+            self.assertNotIn("$(", " ".join(pod["containers"][0]["args"]))
+
+    def test_the_snapshot_job_targets_the_defined_collection(self):
+        schema = json.loads((ROOT / "ai_server" / "app" / "qdrant_collection.json").read_text(encoding="utf-8"))
+        c = self._cron_pod()["containers"][0]
+        env = {e["name"]: e for e in c["env"]}
+        self.assertEqual(schema["collection"], env["COLLECTION"]["value"])
+        self.assertGreaterEqual(int(env["KEEP"]["value"]), 1)
+        cron = self._kind("CronJob")["spec"]
+        self.assertEqual("Asia/Seoul", cron["timeZone"])
+        self.assertEqual("Forbid", cron["concurrencyPolicy"])
+        # 라벨러(04:00)·MySQL 백업(03:00)과 같은 시각이 아니다.
+        labeler = next(d for d in self._docs(K8S / "base" / "ai-labeler.yaml") if d["kind"] == "CronJob")
+        self.assertNotEqual(labeler["spec"]["schedule"].split()[1], cron["schedule"].split()[1])
+        self.assertNotEqual("3", cron["schedule"].split()[1])
+
+    def test_the_policy_selects_only_qdrant(self):
+        """네임스페이스의 첫 NetworkPolicy 다. 다른 파드를 고르면 그 파드의 연결이 전부 막힌다."""
+        policies = [d for p in (K8S / "base").glob("*.yaml") for d in self._docs(p)
+                    if d.get("kind") == "NetworkPolicy"]
+        self.assertEqual(["qdrant-ingress"], [p["metadata"]["name"] for p in policies])
+        spec = policies[0]["spec"]
+        self.assertEqual({"matchLabels": {"app": "qdrant"}}, spec["podSelector"])
+        self.assertEqual(["Ingress"], spec["policyTypes"], "나가는 연결은 건드리지 않는다")
+        selected = [name for name, labels, _ in self._base_workloads() if labels.get("app") == "qdrant"]
+        self.assertEqual(["qdrant"], selected)
+
+    def test_the_policy_admits_exactly_the_design_table(self):
+        """설계 §6.4: 쓰기 Spring, 읽기 ai·라벨러 (+ 스냅샷 작업). 라벨이 실제 파드에 있어야 한다."""
+        spec = self._docs(self.POLICY)[0]["spec"]
+        (rule,) = spec["ingress"]
+        (peer,) = rule["from"]
+        (expr,) = peer["podSelector"]["matchExpressions"]
+        allowed = set(expr["values"])
+        self.assertEqual({"api", "ai", "ai-labeler", "qdrant-snapshot"}, allowed)
+        self.assertNotIn("namespaceSelector", peer)
+        self.assertNotIn("ipBlock", peer)
+        present = {labels.get("app") for _, labels, _ in self._base_workloads()}
+        self.assertTrue(allowed <= present, f"라벨이 없는 파드: {sorted(allowed - present)}")
+        self.assertEqual({6333, 6334}, {p["port"] for p in rule["ports"]})
+
+    def test_k3s_keeps_its_network_policy_controller(self):
+        """k3s 는 kube-router 로 NetworkPolicy 를 지킨다. 이 플래그가 생기면 정책이 조용히 무력해진다."""
+        for role in ("k3s_server", "k3s_agent"):
+            text = (K8S / "ansible" / "roles" / role / "tasks" / "main.yml").read_text(encoding="utf-8")
+            with self.subTest(role=role):
+                self.assertNotIn("disable-network-policy", text)
+                self.assertNotIn("flannel-backend=none", text)
+
+    def test_ai_stays_on_the_local_backend(self):
+        """병합이 곧 배포다. 매니페스트가 갈래를 바꾸면 벡터가 채워지기 전에 추천이 멈춘다."""
+        text = (K8S / "base" / "ai.yaml").read_text(encoding="utf-8")
+        self.assertNotRegex(text, re.compile(r"name:\s*MUPID_VECTOR_BACKEND\s*,\s*value:\s*'?qdrant"))
+
+    def test_the_keys_are_written_down(self):
+        doc = (ROOT / "infra" / "ci" / "VARIABLES.md").read_text(encoding="utf-8")
+        for key in ("MUPID_QDRANT_READ_ONLY_API_KEY", "MUPID_QDRANT_API_KEY", "MUPID_VECTOR_BACKEND"):
+            with self.subTest(key=key):
+                self.assertIn(key, doc)
+        runbook = (K8S / "OPERATIONS-K8S.md").read_text(encoding="utf-8")
+        self.assertIn("rollout restart statefulset/qdrant", runbook)
+        self.assertIn("qdrant_collection", runbook)
+
+
+class PineconeRemovedTest(unittest.TestCase):
+    """Pinecone 을 지웠다 (S15P21A204-459). 운영 Secret 에는 옛 키가 지워질 때까지 남는다 —
+    남아 있어도 배포가 막히지 않아야 하고, 배치가 AI 비밀을 받지도 않아야 한다."""
+
+    def _receiver(self):
+        spec = importlib.util.spec_from_file_location(
+            "receive_ai_env", K8S / "deploy" / "receive-ai-env.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_receiver_accepts_leftover_pinecone_keys(self):
+        """예전에는 `MUPID_PINECONE_ENABLED=true` 에 키가 없으면 업로드를 거부했다."""
+        receiver = self._receiver()
+        self.assertFalse(hasattr(receiver, "PINECONE_REQUIRED"))
+        got = receiver.parse(b"MUPID_PINECONE_ENABLED=true\nMUPID_QDRANT_READ_ONLY_API_KEY=k\n")
+        self.assertEqual({"MUPID_PINECONE_ENABLED", "MUPID_QDRANT_READ_ONLY_API_KEY"}, set(got))
+
+    def test_one_entry_is_enough_to_deploy_the_ai_env(self):
+        """Pinecone 키를 지우면 Qdrant 읽기 키 하나만 남을 수 있다. 예전 기준(2 개)이면 배포가 멈춘다."""
+        script = (K8S / "ci" / "deploy-ai-env.sh").read_text(encoding="utf-8")
+        self.assertIn('[ "$lines" -ge 1 ]', script)
+        self.assertNotIn('-ge 2', script)
+
+    def test_the_batch_no_longer_gets_the_ai_secrets(self):
+        script = (ROOT / "infra" / "ci" / "deploy-jupyter.py").read_text(encoding="utf-8")
+        self.assertNotIn('AI_ENV = "MUPID_AI_SERVER_ENV"', script)
+        self.assertNotIn("extra_env", script)
+        batch = (ROOT / "music_preprocessing" / "run_batch.sh").read_text(encoding="utf-8")
+        self.assertNotIn("pinecone", batch.lower())
+
+    def test_no_manifest_or_ci_script_mentions_pinecone(self):
+        for folder in ("base", "ci", "deploy"):
+            for path in sorted((K8S / folder).glob("*")):
+                if path.is_file():
+                    with self.subTest(path=path.name):
+                        self.assertNotIn("pinecone", path.read_text(encoding="utf-8").lower())
 
 
 if __name__ == "__main__":

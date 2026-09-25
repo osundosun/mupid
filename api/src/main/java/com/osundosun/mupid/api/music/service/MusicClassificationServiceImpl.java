@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.analytics.sync.service.TrackFeatureSync;
 import com.osundosun.mupid.api.code.entity.Code;
 import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.code.error.CodeErrorCode;
@@ -34,6 +35,7 @@ public class MusicClassificationServiceImpl implements MusicClassificationServic
     private final CodeRepository codeRepository;
     private final MusicGenreRepository musicGenreRepository;
     private final MusicMoodRepository musicMoodRepository;
+    private final TrackFeatureSync trackFeatureSync;
 
     /**
      * 지우고 다시 넣는다. <b>한 트랜잭션에서</b> 한다.
@@ -85,6 +87,9 @@ public class MusicClassificationServiceImpl implements MusicClassificationServic
             musicMoodRepository.save(new MusicMood(
                 new MusicMood.MusicMoodId(), music, mood));
         }
+
+        // ClickHouse `track_features` 의 genres·moods (S15P21A204-455).
+        trackFeatureSync.markChanged(musicId);
 
         return new MusicClassificationResponse(
             musicId,

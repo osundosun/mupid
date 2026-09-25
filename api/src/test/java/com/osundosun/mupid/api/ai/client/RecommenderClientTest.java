@@ -93,7 +93,7 @@ class RecommenderClientTest {
 
     private RecommenderDto.SearchRequest request() {
         return new RecommenderDto.SearchRequest(1L, 15, 3, List.of(), null,
-            Map.of("filters", Map.of("genre", List.of("pop"))), null, null);
+            Map.of("filters", Map.of("genre", List.of("pop"))), null);
     }
 
     @Test
@@ -122,6 +122,33 @@ class RecommenderClientTest {
 
         assertThat(client.search(request())).isEmpty();
         assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("UNSATISFIABLE_CONDITIONS 도 장애가 아니라 빈 목록이다 — 조건을 풀지 않고, 재시도하지 않는다")
+    void unsatisfiableConditions() throws IOException {
+        // 계약 v3: 조건은 추천 서버가 건다. 어휘에 없는 필수 조건이면 404 로 "맞을 수 없다" 고 답한다.
+        // 예전 QueryPlanFilter 의 "만족 불가" 와 같은 뜻이라 대화는 "맞는 곡이 없다" 로 이어져야 한다.
+        AtomicInteger calls = new AtomicInteger();
+        RecommenderClient client = start(calls, List.of(Map.entry(404,
+            "{ \"error_code\": \"UNSATISFIABLE_CONDITIONS\", \"message\": \"instrument=theremin 은 어휘에 없다\" }")));
+
+        assertThat(client.search(request())).isEmpty();
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("CONDITIONS_UNAVAILABLE(503) 은 다른 5xx 처럼 한 번만 다시 부르고 올린다")
+    void conditionsUnavailableRetriesOnce() throws IOException {
+        AtomicInteger calls = new AtomicInteger();
+        RecommenderClient client = start(calls, List.of(Map.entry(503,
+            "{ \"error_code\": \"CONDITIONS_UNAVAILABLE\", \"message\": \"feature store unreachable\" }")));
+
+        assertThatThrownBy(() -> client.search(request()))
+            .isInstanceOf(BusinessException.class)
+            .extracting(e -> ((BusinessException) e).getErrorCode())
+            .isEqualTo(AiErrorCode.RECOMMENDER_UNAVAILABLE);
+        assertThat(calls).hasValue(2);
     }
 
     @Test

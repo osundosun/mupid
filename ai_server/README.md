@@ -89,7 +89,7 @@ Python **3.12**. GPU 도 `torch` 도 필요 없다 — 사용자 벡터 계산�
 |---|---|---|
 | `MUPID_AI_ARTIFACT_DIR` | `ai_server/artifacts` | 모델·색인 루트 (**필수**). 서비스·매핑표·라벨러가 모두 이 하나를 기준으로 경로를 만든다 |
 | `MUPID_AI_PORT` | `8100` | 포트 |
-| `MUPID_ID_MAP` | `<ARTIFACT_DIR>/data/proc/mupid/id_map.parquet` | 숫자 ID 매핑표. **배치 전용** (`push_sections`). 서빙은 읽지 않는다 |
+| `MUPID_ID_MAP` | `<ARTIFACT_DIR>/data/proc/mupid/id_map.parquet` | 숫자 ID 매핑표. **배치 전용** (`pull_signals`). 서빙은 읽지 않는다 |
 | `MUPID_CLICKHOUSE_URL` | (없음) | 행동 저장소. 비우면 개인화 없이 돈다 |
 | `MUPID_CLICKHOUSE_USER` · `_PASSWORD` | (없음) | 〃 (읽기 전용 계정) |
 | `MUPID_POOL` | `flow` | 후보 풀의 주 출처 (`moments.parquet` 의 `source`) |
@@ -187,37 +187,39 @@ BE 는 아래만 호출한다. 내부 JSON 은 `snake_case` 다.
 |---|---|
 | 행동 데이터 | **요청마다 ClickHouse 직접 조회** (`user_section_signals`·`listen_events`) |
 | 온보딩 | **요청 본문** — Spring 코드표 이름 그대로 받아 카탈로그 어휘로 옮긴다 |
-| 후보와 곡·구간 값 | **요청 본문 `catalog`** — Spring 이 MySQL 에서 만든다(아래) |
+| 후보와 곡·구간 값 | **기준 풀 스냅샷** — ClickHouse 피처 저장소를 백그라운드에서 읽어 둔다(아래, 계약 v3) |
 | 임베딩·무드·악기 확률 | 자체 색인 (행렬이라 요청에 실을 수 없다) |
 | 선호 구간 등급 | ClickHouse `section_labels` — **배치가 만든다**(아래 "배치") |
 
-### 요청
+### 요청 (계약 v3, 2026-09-25)
 
 ```json
 { "recommendation_id": 5001, "user_id": 15, "limit": 10,
   "exclude_tracks": ["T000148"],
   "current_track": "T000901", "current_section": "T000901#2",
-  "onboarding": { "moods": ["serene"], "genres": ["Jazz"] },
-  "catalog": { "tracks": { "track": ["T000901"], "duration_ms": [151978], "...": [] },
-               "sections": { "external_id": ["T000901#2"], "...": [] } } }
+  "onboarding": { "moods": ["serene"], "genres": ["Jazz"] } }
 ```
 
-`recommendation_id`·`user_id`·`catalog` 가 필수.
+`recommendation_id`·`user_id` 만 필수. `current_*` 는 `next` 전용(검색은 방향 조건의 기준으로만
+받는다)이고, 위 예시의 `limit: 10` 은 `next`·`search` 기준이다. 타입이 엄격하다 — `"5001"` 같은
+문자열이나 실수 `limit` 은 400 으로 거부한다. 본문은 수백 B 다 — 크기를 좌우하는 것은
+`exclude_tracks`(곡당 약 10B, Spring 이 500곡에서 자른다)뿐이다.
 
-#### `catalog` — 이 요청의 후보
+#### 곡·구간 값 — 기준 풀 스냅샷 (`app/pool_snapshot.py`)
 
 **이 서버는 Spring 을 부르지 않는다.** 후보(삭제 안 됨·재생 가능)와 그 값(BPM·언어·스타일·
-보컬·구간 에너지)은 Spring 이 MySQL 에서 모아 **요청마다** 열 단위로 싣는다. 열 목록과
-MySQL 컬럼 대응은 `infra/AI-SPRING-CONTRACT.md` 의 "2026-09-23" 절, 받는 코드는
-`app/catalog_body.py` 다.
+보컬·구간 에너지·구간 악기)은 Spring 이 MySQL 과 함께 쓰는 **ClickHouse 피처 저장소**에 있다.
+요청마다 읽지 않는다 — 갱신 스레드가 색인 풀 ID 전부로 읽어(`feature_store.lookup_many`, 서빙 계정
+`MUPID_CLICKHOUSE_SERVING_*`) 스냅샷으로 **통째로 갈아 끼우고**(기본 60초, `MUPID_POOL_SNAPSHOT_TTL_SEC`),
+요청은 그것을 참조만 한다. 내용이 그대로면 갈아 끼우지 않는다.
 
-- `sections` 에 있고 색인에도 있는 구간만 후보다. 색인에만 있는 구간(지워진 곡)은 나가지 않는다.
-- 같은 본문이 거듭 오면 파생 표를 **본문 해시로** 재사용한다(최근 8개). 캐시이지 상태가 아니다.
-- 모양이 틀리면 400 `INVALID_CATALOG`, 색인과 겹치는 구간이 없으면 404 `NO_CANDIDATES`.
-
-`catalog` 외에는 `recommendation_id`·`user_id` 만 필수. `current_*` 는 `next` 전용이고, 위 예시의
-`limit: 10` 은 `next`·`search` 기준이다. 타입이 엄격하다 — `"5001"` 같은 문자열이나
-실수 `limit` 은 400 으로 거부한다.
+- 스냅샷에 있고 색인에도 있는 구간만 후보다. 지워진 곡·재생 불가 곡·분석 버전이 어긋난 구간은
+  스냅샷이 뺀다(`feature_store.assemble`). 끝의 틈(삭제 직후 60초)은 Spring 최종 필터가 막는다.
+- 갱신이 실패하면 **직전 스냅샷**을 계속 쓴다. 한 번도 못 읽었으면 **벡터 전용**(곡·구간 값을
+  모른 채 벡터만)으로 추천하고 조건 검색은 끈다(503 `CONDITIONS_UNAVAILABLE`). 준비 판정은 막지
+  않는다 — 상태는 `/internal/ready`·`/health` 의 `pool_snapshot`(나이·연속 실패·곡/구간 수)에 있다.
+- 옛 Spring 이 본문에 `catalog` 를 실어 보내도 **받되 쓰지 않는다**(`/internal/metrics` 의
+  `legacy_catalog_requests` 로 센다). 그래서 AI 를 먼저 배포해도 된다.
 
 #### `daily` 의 개수는 고정이다
 
@@ -233,9 +235,11 @@ MySQL 컬럼 대응은 `infra/AI-SPRING-CONTRACT.md` 의 "2026-09-23" 절, 받�
 보내는 쪽이 어설프게 옮기면 조건이 조용히 사라진다.
 
 `search` 는 **`query_plan` 이 필수다.** 조건은 Spring 의 대화 모델이 뽑고, 게이트 조건
-(장르·언어·보컬·악기·flow·BPM·방향)은 **Spring 이 이미 걸러서** `catalog` 로 보낸다. 이
-서버는 `query_plan` 을 무드 가점·CLAP 재정렬·진단에만 쓴다. 원문 `query` 는 기록용이고
-조건으로 해석하지 않는다(자연어 해석기 경로는 없앴다).
+(장르·언어·보컬·악기·flow·BPM·방향)은 **이 서버가 기준 풀 스냅샷에서 푼다**(`app/query_conditions.py`
+— 예전 Spring `QueryPlanFilter` 의 규칙 그대로, 표는 `infra/AI-SPRING-CONTRACT.md` 계약 v3 절).
+어휘에 없는 필수 조건(장르·언어·보컬·악기)은 조용히 풀지 않고 404 `UNSATISFIABLE_CONDITIONS` 로
+이유와 함께 거절한다. 통과한 구간 안에서 순위를 매기고 `query_plan` 을 무드 가점·CLAP 재정렬·진단에
+쓴다. 원문 `query` 는 기록용이고 조건으로 해석하지 않는다(자연어 해석기 경로는 없앴다).
 
 `query_plan` 은 `filters`·`exclude` 만 읽는다. 밑줄로 시작하는 키는 내부 전용이라 버린다.
 
@@ -252,7 +256,11 @@ MySQL 컬럼 대응은 `infra/AI-SPRING-CONTRACT.md` 의 "2026-09-23" 절, 받�
 ```
 
 - 같은 곡은 한 번만 나온다 (`#` 앞이 곡 ID 다)
-- 후보가 모자라면 임의로 채우지 않고 `shortfall` 에 부족분을 적는다
+- **`limit` 보다 많이 올 수 있다(계약 v3).** 순위대로 `limit + 여유분`(`limit` 의 절반 올림, 최소 2 —
+  `internal_api.spare_for`)을 준다. Spring 이 MySQL 기준으로 삭제·재생 불가를 빼고 앞에서부터
+  `limit` 개를 자른다. 앞의 `limit` 개는 여유분이 없을 때와 같다(탐색 칸도 그 안에 있다).
+  본문에 `catalog` 를 실은 옛 호출자에게는 예전처럼 `limit` 개까지만 준다
+- 후보가 모자라면 임의로 채우지 않고 `shortfall` 에 부족분을 적는다 (기준은 `limit`)
 - **시간·구간 종류·제목·문구를 싣지 않는다.** Spring 이 `external_id` 로 가져오는 값이라
   두 벌이 되면 어긋날 자리만 생긴다
 - `reason_code` 6종
@@ -278,8 +286,9 @@ MySQL 컬럼 대응은 `infra/AI-SPRING-CONTRACT.md` 의 "2026-09-23" 절, 받�
 |---|---|---|
 | `INVALID_REQUEST` | 400 | 타입·범위·미정의 필드 |
 | `NO_CANDIDATES` | 404 | **조건에 맞는 곡이 없음 — 장애가 아니다.** 빈 목록으로 전달 |
-| `INVALID_CATALOG` | 400 | `catalog` 의 열 이름·길이·형이 틀림 — 보내는 쪽 버그다 |
+| `UNSATISFIABLE_CONDITIONS` | 404 | 필수 조건 값이 어휘에 없다 — 장애가 아니다. 빈 목록 (계약 v3) |
 | `INDEX_NOT_READY` | 503 | 색인 미적재. 재시도 대상 |
+| `CONDITIONS_UNAVAILABLE` | 503 | 피처 저장소를 한 번도 못 읽어 조건 검색을 껐다. 재시도 대상 (계약 v3) |
 | `INTERNAL_ERROR` | 500 | 그 밖. 재시도 대상 |
 
 읽기 타임아웃 **5초**, 재시도는 `503`·`500`·타임아웃에만 1회. `400`·`404` 는 재시도하지 않는다.
@@ -294,7 +303,10 @@ MySQL 컬럼 대응은 `infra/AI-SPRING-CONTRACT.md` 의 "2026-09-23" 절, 받�
 | `latency_seconds` | 경로별 p50·p95·max |
 | `behavior_lookup_seconds` | 행동 로그 조회 시간. 개인화 사용자가 느린 원인을 분리한다 |
 | `errors` | 코드별 건수와 실패율 |
-| `ready` | `/internal/ready` 상태. 실패율만 보고는 원인을 못 가른다 |
+| `ready` | `/internal/ready` 상태(기준 풀 스냅샷 포함). 실패율만 보고는 원인을 못 가른다 |
+| `pool_snapshot_refresh` | 기준 풀 갱신 성공·실패 건수와 걸린 시간 |
+| `conditions` | 조건 검색의 조건 풀기 결과 (`kept`·`unsatisfiable`·`empty`·`unavailable`) |
+| `legacy_catalog_requests` | 본문에 `catalog` 를 실은 옛 호출자 건수. 새 Spring 배포 뒤 0 이어야 한다 |
 
 **프로세스가 살아 있는 동안만 쌓인다.** 재시작하면 0 이라 `started_at`·`uptime_seconds` 를
 함께 내보낸다. 장기 추세는 수집기가 주기적으로 읽어 쌓아야 한다.
@@ -321,9 +333,10 @@ MySQL 컬럼 대응은 `infra/AI-SPRING-CONTRACT.md` 의 "2026-09-23" 절, 받�
 
 ### 조건 어휘 (Spring 이 만든다)
 
-예전 `GET /internal/facets` 는 없앴다. 대화 모델에 주는 선택지는 Spring 이 **MySQL 후보에서
+예전 `GET /internal/facets` 는 없앴다. 대화 모델에 주는 선택지는 Spring 이 **MySQL 에서
 직접** 만든다(`api/.../ai/catalog/RecommenderFacets`) — 없는 태그를 지어내면 조건이 어휘에
-없어 후보가 0 이 된다. 모양은 예전 응답과 같아 아래를 그대로 참고한다.
+없어 `UNSATISFIABLE_CONDITIONS` 가 된다. 조건을 푸는 쪽(이 서버)은 같은 값의 사본(피처 저장소)을
+본다. 모양은 예전 응답과 같아 아래를 그대로 참고한다.
 
 ```json
 { "catalog": { "tracks": 111, "moments": 65540 },
@@ -386,8 +399,9 @@ MySQL 컬럼 대응은 `infra/AI-SPRING-CONTRACT.md` 의 "2026-09-23" 절, 받�
 
 곡 문자열 ID 는 구간 UID 의 `#` 앞이다(Q3 — MySQL 에 곡 문자열 ID 를 따로 두지 않는다).
 
-`id_map.parquet` 은 **배치에만 남는다.** ClickHouse `track_sections` 가 숫자 `track_id` 를
-쓰기 때문에 `push_sections` 가 그 표를 필요로 한다. 서빙 경로는 읽지 않는다.
+`id_map.parquet` 은 **배치에만 남는다.** ClickHouse 행동 표가 숫자 `track_id` 를 쓰기 때문에
+`pull_signals` 가 그 표로 곡 문자열 ID 를 되짚는다. 서빙 경로는 읽지 않는다.
+ClickHouse `track_sections` 는 AI 가 쓰지 않는다 — Spring 이 MySQL 구간을 옮긴다(S15P21A204-451).
 
 ## 테스트
 
@@ -430,7 +444,7 @@ pytest 11건 전부 통과.
 - `search` 의 실제 자연어 추천 — 해석기가 없어 501 만 확인했다 → `S15P21A204-219`
 - MySQL 실데이터 ID 매핑 — 시험용 임시 매핑으로만 검증
 - Spring 통합 호출, 운영 재시작·종료·롤백
-- Pinecone 연결 → `S15P21A204-214` — **현재 규모에서는 붙이지 않기로 했다**(TODO "벡터 저장소") 
+- ~~Pinecone 연결 → `S15P21A204-214`~~ — 2026-09-24 운영에 올렸다가 무료 요금제 이그레스를 소진해 되돌렸고, S15P21A204-459 에서 지웠다. 벡터 DB 는 Qdrant 다(`docs/QDRANT.md`, `infra/VECTOR-STORE-DESIGN.md`) 
 
 이력이 있는 사용자는 응답이 p50 **2.22초**다(콜드스타트 0.30초). 요청마다 행동 로그를 전수
 스캔하는 구조이며 개선은 `S15P21A204-217`.
@@ -439,7 +453,7 @@ pytest 11건 전부 통과.
 
 1. 모델·색인 수령 후 `MUPID_AI_ARTIFACT_DIR` 배치
 2. 서비스 기동, `/health` 확인
-3. 구간 적재(`register_sections`) → ClickHouse 구간 표(`push_sections`)
+3. 구간 적재(`register_sections`) — ClickHouse 구간 표는 Spring 이 같은 요청에서 채운다(밀리면 재시도·대조가 메운다)
 4. Spring 내부 클라이언트 연결 (5초 타임아웃, 1회 재시도, 장애 시 대체 동작)
 5. 공개 API 에서 `snake_case` → `camelCase` 변환
 6. **`external_id` → `music_id`·구간 번호 번역** (`MusicSectionService.findByExternalIds`)

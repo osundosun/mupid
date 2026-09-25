@@ -1,0 +1,29 @@
+# 운영에 쓸 모델의 정본 (infra/VECTOR-STORE-DESIGN.md §6.3, S15P21A204-454).
+#
+# 이 파일을 바꾸는 MR 의 병합이 모델 교체의 방아쇠다. CI 가 읽는다 — infra/ci/model_publish.py
+#   MR      model-verify   JupyterHub 에서 받아 sha256 대조, manifest 지표를 남긴다 (올리지 않는다)
+#   master  model-publish  받기 → 대조(다르면 멈춘다) → 재계산 관문 → Object Storage → CANDIDATE
+#           k8s-deploy-ai  서빙 파일만 Object Storage 에서 받아 이미지에 굽는다 → 롤아웃 → 채택
+# 되돌리기는 이 파일을 되돌리는 커밋이다.
+#
+# **지금은 채택된 모델이 없다.** 가중치가 아직 JupyterHub 의 묶음(~/mupid_models/stage1/v{N}/)으로
+# 나뉘지 않고 운영 판 안에 섞여 있다. 그래서 null 이고, 이미지와 ai_server 는 판의 가중치로 돈다.
+# 첫 채택은 배포 뒤 사람이 한다 — 묶음을 만들고 아래 모양으로 채운 MR 을 올린다.
+#
+# stage1:
+#   version: v1
+#   jupyter_dir: mupid_models/stage1/v1          # 홈 기준. 버전으로 끝나야 한다
+#   files:                                       # 파일별 sha256 (소문자 hex 64자, sha256sum 그대로)
+#     manifest.json:        <sha256>             # 반드시 있어야 한다
+#     user_encoder.npz:     <sha256>
+#     combiner.json:        <sha256>
+#     onboarding_seeds.npz: <sha256>
+#     section_encoder.npz:  <sha256>
+#     pca.npz:              <sha256>
+#     features_info.json:   <sha256>
+#     feature_stats.npz:    <sha256>
+#     mu.npy:               <sha256>
+#   serving: [user_encoder.npz, combiner.json, onboarding_seeds.npz]
+#
+# stage1.pt(학습 원본)는 싣지 않는다 — JupyterHub 에만 둔다.
+stage1: null

@@ -38,6 +38,7 @@ class PathMappingTest(unittest.TestCase):
             ("api/src/main/java/Foo.java", "Backend"),
             ("infra/image/Dockerfile", "Backend"),
             ("ai_server/app/main.py", "AI"),
+            ("models.lock", "AI"),
             ("music_preprocessing/src/x.py", "Data"),
             ("flow_music_automation/scripts/x.py", "Data"),
             ("infra/ci/deploy-jupyter.py", "Data"),

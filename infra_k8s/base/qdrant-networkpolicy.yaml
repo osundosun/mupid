@@ -1,0 +1,41 @@
+# Qdrant 로 들어오는 연결을 정한다 (S15P21A204-456, 설계 §6.4·§10.1-9).
+#
+# **mupid 네임스페이스의 첫 NetworkPolicy 다.** NetworkPolicy 는 `podSelector` 가 고른 파드에만
+# 적용되고, 어떤 정책에도 걸리지 않은 파드는 지금처럼 모든 연결을 받는다. 그래서 선택자를
+# `app: qdrant` 로만 두면 api·ai·clickhouse·kafka 등 다른 파드는 아무것도 바뀌지 않는다 —
+# `policyTypes` 도 Ingress 만이라 Qdrant 가 나가는 연결도 그대로다. 적용이 다른 워크로드를
+# 재시작시키지도 않는다(파드 템플릿을 건드리지 않는다). infra_k8s/tests 가 이 두 가지를 본다.
+#
+# 들어올 수 있는 것 (§6.4 표):
+#   api              Spring — 쓰기 키 (벡터 등록, 457)
+#   ai               추천 서버 — 읽기 키
+#   ai-labeler       라벨 야간 배치 — 읽기 키 (지금은 부르지 않지만 설계 표의 읽기 쪽이다)
+#   qdrant-snapshot  매일 로컬 스냅샷 (qdrant.yaml)
+# 나머지 파드는 키가 있어도 연결 자체가 막힌다. 키는 인증이고, 이것은 격리다 — 키가 새도
+# dbstudio·kafka 같은 파드에서는 닿지 않는다.
+#
+# ## k3s 가 이것을 지키는가
+#
+# 지킨다. k3s 는 kube-router 의 NetworkPolicy 컨트롤러를 내장하고 **기본으로 켠다**
+# (`--disable-network-policy` 로만 끈다). infra_k8s/ansible/roles/k3s_server 의 설치 인자는
+# traefik·servicelb 만 끈다 — 그 플래그가 생기면 infra_k8s/tests 가 실패한다. CNI(flannel)
+# 자체는 정책을 모르지만, 정책은 kube-router 가 노드의 iptables 로 건다. 노드를 건너는 연결
+# (node-a 의 api → node-b 의 qdrant)도 파드 IP 기준이라 같게 막힌다.
+#
+# kubelet 의 프로브(/readyz·/livez)는 노드 자신에서 오고 kube-router 가 노드 발신을 허용하므로
+# 이 정책에 막히지 않는다. 배포 뒤 확인은 OPERATIONS-K8S.md 의 Qdrant 절에 적었다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: qdrant-ingress, namespace: mupid}
+spec:
+  podSelector:
+    matchLabels: {app: qdrant}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - {key: app, operator: In, values: [api, ai, ai-labeler, qdrant-snapshot]}
+      ports:
+        - {protocol: TCP, port: 6333}
+        - {protocol: TCP, port: 6334}

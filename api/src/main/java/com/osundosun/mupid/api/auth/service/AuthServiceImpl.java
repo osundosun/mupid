@@ -31,14 +31,17 @@ public class AuthServiceImpl implements AuthService {
     private final UserService userService;
 
     @Override
-    public AuthLoginResult login(String email, String password) {
+    public AuthLoginResult login(String email, String password, Integer refreshTokenValidityDays) {
         User user = userService.getUserByEmail(email).orElse(null);
         if (user == null || !passwordEncoder.matches(password, user.getPassword())) {
             throw new BusinessException(AuthErrorCode.WRONG_EMAIL_OR_PASSWORD);
         }
+        // 비밀번호를 확인한 뒤에 본다. 먼저 보면 "만료 지정이 거절됐다" 로 역할이 드러난다.
+        Duration validity = jwtProvider.resolveRefreshTokenValidity(user, refreshTokenValidityDays);
         return new AuthLoginResult(
             jwtProvider.issueAccessToken(user),
-            jwtProvider.issueRefreshToken(user),
+            jwtProvider.issueRefreshToken(user, validity),
+            validity,
             user
         );
     }

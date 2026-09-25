@@ -29,6 +29,9 @@ import lombok.Setter;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class MusicSectionAnalysis {
 
+    /** 기존 행이 전부 이 버전으로 적재됐다 (2026-09-25 대조). DDL 의 DEFAULT 와 같다. */
+    public static final String DEFAULT_ANALYSIS_VERSION = "v1";
+
     /**
      * 음악 구간 분석 번호
      */
@@ -86,5 +89,19 @@ public class MusicSectionAnalysis {
      */
     @Column
     private Double energy;
+
+    /**
+     * 구간 분석 버전 (`v1`). 구간 교체 요청이 싣는 값이다.
+     *
+     * 예전에는 ClickHouse `track_sections` 에만 남았다. 재시도·대조 작업이 MySQL 만 보고
+     * ClickHouse 에 **같은 값**을 쓰려면 여기 있어야 한다 (S15P21A204-451). 딕셔너리가 보는
+     * 버전과 다르면 ClickHouse 에 들어가도 구간 판정에 쓰이지 않는다.
+     *
+     * 필드 초기값을 두는 것은 관리자 화면처럼 기본 생성자로 만드는 길에서도 NOT NULL 이
+     * 지켜지게 하려는 것이다. DB 기본값은 하이버네이트가 null 을 명시해 넣으면 안 먹는다.
+     */
+    @Builder.Default
+    @Column(nullable = false, length = 20)
+    private String analysisVersion = DEFAULT_ANALYSIS_VERSION;
 
 }
