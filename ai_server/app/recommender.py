@@ -292,6 +292,9 @@ class Catalog:
         self.X, self.idx, self.info = feat.load()
 
         self._mom_index = self.mom
+        # 사본(`with_catalog`)이 **함께** 보는 색인 캐시. `copy.copy` 는 이 dict 를
+        # 그대로 나눠 가지므로, 후보와 무관하게 판에만 딸린 값은 여기 둔다.
+        self._index_cache: dict = {}
         self._bind(snap if snap is not None else catalog_body.empty())
         self.clap_idx, self.clap_emb = {}, None
         clap_path = paths.data_dir() / "clap_moments.npz"
@@ -410,7 +413,7 @@ class Catalog:
         self.pool_x = np.asarray([self.idx.get(m, -1) for m in self.pool.moment_id])
         self.by_track = {t: g for t, g in self.pool.groupby("track_id", sort=False)}
         # 후보에 딸린 캐시는 사본마다 따로다. 남기면 다른 본문의 어휘가 샌다.
-        for attr in ("_facets_cache", "_facets_by_track", "_mu_g"):
+        for attr in ("_facets_cache", "_facets_by_track"):
             self.__dict__.pop(attr, None)
 
     def with_catalog(self, snap) -> "Catalog":
@@ -1559,6 +1562,11 @@ def _pool_mean() -> np.ndarray:
     Pinecone 을 켜면 **판에 고정된 평균**을 쓴다. 요청마다 풀에서 다시 재면 적재
     때와 다른 공간으로 질의가 나가 유사도가 통째로 내려앉는다 — 오류 없이 품질만
     나빠지는 종류다. 고정본이 없으면 멈춘다(지어내지 않는다).
+
+    로컬 갈래는 **색인 풀 전체**(`index_pool`)로 한 번 잰다 — Pinecone 적재가 평균을
+    재는 범위와 같다. 요청의 후보(`catalog`)로 재면 안 된다: 검색은 Spring 이 조건으로
+    거른 후보만 보내므로, "발라드만" 온 요청은 발라드의 평균으로 중심화돼 질의마다
+    기준점이 달라진다. 오류 없이 순위만 틀어진다(2026-09-24 에 찾았다).
     """
     c = current()
     if vector_backend() == "pinecone":
@@ -1567,9 +1575,11 @@ def _pool_mean() -> np.ndarray:
         # 서버를 다시 띄우지 않아도 새 평균을 쓰게 되는 자리가 여기다.
         return pinecone_store.serving_center().mu
     Z = _require_local_vectors("_pool_mean")
-    if getattr(c, "_mu_g", None) is None:
-        c._mu_g = np.asarray(Z[c.pool_rows], dtype=np.float32).mean(0)
-    return c._mu_g
+    cache = c._index_cache
+    if cache.get("pool_mean") is None:
+        rows = index_pool(c).emb_row.to_numpy()
+        cache["pool_mean"] = np.asarray(Z[rows], dtype=np.float32).mean(0)
+    return cache["pool_mean"]
 
 
 def raw_vectors(moment_ids) -> tuple[np.ndarray, list[str]]:
