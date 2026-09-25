@@ -62,7 +62,7 @@ public enum CacheKind {
      */
     ReportBatch("report:batch"),
 
-    /** 오늘의 모먼트 생성 배치 선점. 스케줄러는 인스턴스마다 돈다. */
+    /** 오늘의 모먼트 생성 선점. 데이터 배치의 시작 요청과 정오 예비 스케줄이 함께 잡는다. */
     DailyRecommendationBatch("recommendation:daily:batch"),
 
     /**

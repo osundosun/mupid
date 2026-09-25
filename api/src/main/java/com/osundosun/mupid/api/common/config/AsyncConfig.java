@@ -55,4 +55,23 @@ public class AsyncConfig {
         return executor;
     }
 
+    /** 오늘의 모먼트 하루치 생성 전용 실행기 이름 (S15P21A204-448). */
+    public static final String DAILY_RECOMMENDATION_EXECUTOR = "dailyRecommendationExecutor";
+
+    /**
+     * 한 번에 하나만 돈다. 하루치 생성은 회원을 차례로 돌며 추천 서버를 부르는 긴 작업이고,
+     * 같은 날짜는 Redis 선점으로 이미 하나만 들어온다. 날짜가 다른 요청(운영자가 지난 날을
+     * 다시 돌리는 경우)이 겹쳐도 추천 서버를 동시에 두 배로 때리지 않도록 줄을 세운다.
+     */
+    @Bean(name = DAILY_RECOMMENDATION_EXECUTOR)
+    public ThreadPoolTaskExecutor dailyRecommendationExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(1);
+        executor.setQueueCapacity(2);
+        executor.setThreadNamePrefix("daily-recommendation-");
+        executor.initialize();
+        return executor;
+    }
+
 }

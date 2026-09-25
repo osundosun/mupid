@@ -4,11 +4,15 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
 
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.task.TaskExecutor;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.osundosun.mupid.api.cache.enumerate.CacheKind;
 import com.osundosun.mupid.api.cache.service.CacheService;
+import com.osundosun.mupid.api.common.config.AsyncConfig;
 import com.osundosun.mupid.api.user.enumerate.UserStatus;
 import com.osundosun.mupid.api.user.repository.UserRepository;
 
@@ -30,6 +34,14 @@ import lombok.extern.slf4j.Slf4j;
  * 수만큼 만든다. `uq_daily_recommendation_user_date` 덕분에 중복 행은 안 생기지만
  * 추천 서버를 회원 수만큼 여러 번 때린다. 그래서 진입에 Redis 선점을 건다 —
  * {@code ReportDailyBatch} 와 같은 이유이고 같은 방식이다.
+ *
+ * <h2>누가 부르나 (S15P21A204-448)</h2>
+ *
+ * <p>먼저 매일 도는 데이터 배치(`music_preprocessing/run_batch.sh`)가 곡 등록·구간
+ * 분석·색인을 마친 뒤 {@link #startToday()} 로 시작시킨다 — 그날 들어온 곡까지 후보에
+ * 넣기 위해서다. 요청은 바로 돌려주고 생성은 전용 실행기에서 돈다. 정오 스케줄
+ * ({@link #runToday()})은 <b>예비</b>다. 배치가 실패했거나 분석이 실패해 부르지 않은 날에만
+ * 실제로 만들고, 배치가 이미 만든 회원은 건너뛴다. 두 길 모두 같은 선점을 잡는다.
  *
  * <h2>실패를 어떻게 다루나</h2>
  *
@@ -56,22 +68,66 @@ public class DailyRecommendationBatch {
     private final UserRepository userRepository;
     private final DailyRecommendationService dailyRecommendationService;
     private final CacheService cacheService;
+    @Qualifier(AsyncConfig.DAILY_RECOMMENDATION_EXECUTOR)
+    private final TaskExecutor dailyExecutor;
 
     /**
-     * 매일 정오.
+     * 매일 정오. <b>예비다</b> — 보통은 데이터 배치가 {@link #startToday()} 로 먼저 만든다.
      *
-     * <p>자정이 아닌 이유는 아침에 한 번 듣고 난 뒤의 행동까지 반영하기 위해서다.
-     * 자정에 돌면 전날 밤 이후의 신호가 통째로 빠진 채 하루치 추천이 굳는다.
+     * <p>배치가 만든 날에는 모든 회원이 "이미 있음" 으로 건너뛰어 추천 서버를 부르지 않는다.
+     * 배치가 실패했거나 분석이 실패해 부르지 않은 날에만 여기서 만든다.
      */
     @Scheduled(cron = "0 0 12 * * *", zone = "Asia/Seoul")
     public void runToday() {
         LocalDate today = LocalDate.now();
-        if (!cacheService.setIfAbsent(today.toString(),
-                CacheKind.DailyRecommendationBatch, LOCK_TTL)) {
-            log.info("오늘의 모먼트 배치를 다른 인스턴스가 이미 잡았다. date={}", today);
+        if (!claim(today)) {
             return;
         }
         run(today, false);
+    }
+
+    /**
+     * 데이터 배치가 부르는 자리. 선점을 잡으면 전용 실행기에 넘기고 <b>바로</b> 돌아온다.
+     *
+     * <p>회원 수만큼 추천 서버를 부르는 동안 HTTP 요청을 붙잡고 있지 않는다 — 붙잡으면 nginx
+     * 60초에 끊기고, 끊겨도 서버는 계속 돌아 배치만 실패로 남는다. 선점이 이미 잡혀 있으면
+     * (다른 인스턴스·재시도·정오 예비가 돌고 있으면) 아무것도 하지 않는다.
+     *
+     * <p>끝나면 선점을 푼다. 그래야 도중에 몇 명이 실패한 날 정오 예비가 그 사람들을 채운다.
+     *
+     * @return 이번 호출로 시작했으면 true, 이미 누군가 돌고 있으면 false
+     */
+    public boolean startToday() {
+        LocalDate today = LocalDate.now();
+        if (!claim(today)) {
+            return false;
+        }
+        try {
+            dailyExecutor.execute(() -> {
+                try {
+                    run(today, false);
+                } finally {
+                    release(today);
+                }
+            });
+        } catch (TaskRejectedException e) {
+            // 넘기지 못했으면 선점을 쥔 채 두지 않는다 — 정오 예비까지 막힌다.
+            release(today);
+            throw e;
+        }
+        return true;
+    }
+
+    private boolean claim(LocalDate date) {
+        if (cacheService.setIfAbsent(date.toString(), CacheKind.DailyRecommendationBatch, LOCK_TTL)) {
+            return true;
+        }
+        log.info("오늘의 모먼트 배치를 다른 실행이 이미 잡았다. date={}", date);
+        return false;
+    }
+
+    private void release(LocalDate date) {
+        cacheService.delete(date.toString(), CacheKind.DailyRecommendationBatch);
     }
 
     /**
