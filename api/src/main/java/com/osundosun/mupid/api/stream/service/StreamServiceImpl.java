@@ -6,6 +6,7 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.analytics.sync.service.TrackFeatureSync;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.music.entity.Music;
 import com.osundosun.mupid.api.music.error.MusicErrorCode;
@@ -30,6 +31,7 @@ public class StreamServiceImpl implements StreamService {
     private final StorageService storageService;
     private final StreamRepository streamRepository;
     private final ChunkRepository chunkRepository;
+    private final TrackFeatureSync trackFeatureSync;
 
     @Override
     public int createStream(int musicId, StreamCreateRequest request) {
@@ -51,7 +53,11 @@ public class StreamServiceImpl implements StreamService {
             .chunkCount(request.chunkCount())
             .status(StreamStatus.PENDING)
             .build();
-        return streamRepository.save(newStream).getStreamId();
+        int streamId = streamRepository.save(newStream).getStreamId();
+        // PENDING 이라 재생 가능 여부는 그대로지만, 곡 특징은 곡 단위로 통째로 다시 쓰므로 무엇이
+        // 바뀌었는지 가리지 않는다 — 스트림을 바꾸는 입구는 모두 올린다 (S15P21A204-455).
+        trackFeatureSync.markChanged(musicId);
+        return streamId;
     }
 
     @Override
@@ -104,6 +110,8 @@ public class StreamServiceImpl implements StreamService {
         }
 
         stream.setStatus(status);
+        // DONE 이 되거나 풀리면 `track_features.playable`·`duration_ms` 가 바뀐다 (S15P21A204-455).
+        trackFeatureSync.markChanged(stream.getMusic().getMusicId());
     }
 
     @Override
@@ -124,6 +132,7 @@ public class StreamServiceImpl implements StreamService {
             storageService.deleteFile(fileId);
         }
         streamRepository.delete(stream);
+        trackFeatureSync.markChanged(stream.getMusic().getMusicId());
     }
     
 }

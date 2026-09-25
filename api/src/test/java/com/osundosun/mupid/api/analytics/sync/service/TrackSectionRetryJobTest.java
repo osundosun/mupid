@@ -24,7 +24,8 @@ class TrackSectionRetryJobTest {
     private final AnalyticsSyncPendingRepository pending = mock(AnalyticsSyncPendingRepository.class);
     private final TrackSectionSync sync = mock(TrackSectionSync.class);
     private final AnalyticsSyncMonitor monitor = mock(AnalyticsSyncMonitor.class);
-    private final TrackSectionRetryJob job = new TrackSectionRetryJob(pending, sync, monitor);
+    private final TrackFeatureSync featureSync = mock(TrackFeatureSync.class);
+    private final TrackSectionRetryJob job = new TrackSectionRetryJob(pending, sync, featureSync, monitor);
 
     @Test
     @DisplayName("남은 곡을 차례로 다시 쓰고, 다른 인스턴스가 잡은 곡은 건너뛴다")
@@ -75,6 +76,22 @@ class TrackSectionRetryJobTest {
         job.run();
 
         verify(sync, never()).retry(anyInt());
+        verify(monitor).refreshPending();
+    }
+
+    @Test
+    @DisplayName("곡 특징은 자기 종류의 후보만 가져가고, 구간 쪽 실패와 따로 멈춘다 (S15P21A204-455)")
+    void featuresRoundIsSeparate() {
+        when(pending.findCandidates("CLICKHOUSE", TrackSectionRetryJob.BATCH)).thenReturn(List.of(1));
+        when(sync.retry(1)).thenReturn(RetryOutcome.FAILED);
+        when(pending.findCandidates("TRACK_FEATURES", TrackSectionRetryJob.BATCH)).thenReturn(List.of(1, 2));
+        when(featureSync.retry(1)).thenReturn(RetryOutcome.SYNCED);
+        when(featureSync.retry(2)).thenReturn(RetryOutcome.SYNCED);
+
+        job.run();
+
+        verify(featureSync).retry(1);
+        verify(featureSync).retry(2);
         verify(monitor).refreshPending();
     }
 

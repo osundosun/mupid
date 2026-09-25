@@ -83,8 +83,8 @@ public class TrackSectionRepository {
     private static final String INSERT = """
         INSERT INTO track_sections_local
             (track_id, music_section_analysis_id, analysis_version,
-             section_index, section_uid, fn, start_ms, end_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             section_index, section_uid, fn, start_ms, end_ms, energy)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
 
     private static final String EXISTING_INDEXES = """
@@ -125,13 +125,17 @@ public class TrackSectionRepository {
      *
      * <p>{@code FINAL} 로 병합 전 중복을 누른다(설계 §8.2-6). 이어 붙이는 문자열은
      * {@code SectionDigestRepository} 의 MySQL 문장과 <b>같아야 한다</b>.
+     *
+     * <p>{@code energy} 는 실수라 문자열 표기가 두 DB 에서 다를 수 있다. 백만 배 해 내린 정수로
+     * 잇는다 — IEEE 곱셈과 내림은 양쪽이 같다. 없으면 -1 (S15P21A204-455).
      */
     private static final String DIGESTS_BY_REPLICA = """
         SELECT hostName() AS replica, track_id, analysis_version,
                count() AS sections,
                sum(CRC32(concat(toString(music_section_analysis_id), '|', toString(section_index), '|',
                                 section_uid, '|', toString(fn), '|',
-                                toString(start_ms), '|', toString(end_ms)))) AS checksum
+                                toString(start_ms), '|', toString(end_ms), '|',
+                                toString(ifNull(toInt64(floor(energy * 1000000)), -1))))) AS checksum
         FROM clusterAllReplicas('mupid_all', currentDatabase(), 'track_sections_local') FINAL
         GROUP BY replica, track_id, analysis_version
         """;
@@ -165,7 +169,8 @@ public class TrackSectionRepository {
         List<Object[]> batch = rows.stream()
             .map(row -> new Object[] {
                 row.trackId(), row.musicSectionAnalysisId(), row.analysisVersion(),
-                row.sectionIndex(), row.sectionUid(), row.fn(), row.startMs(), row.endMs()})
+                row.sectionIndex(), row.sectionUid(), row.fn(), row.startMs(), row.endMs(),
+                row.energy()})
             .toList();
         clickHouse.batchUpdate(INSERT, batch);
 

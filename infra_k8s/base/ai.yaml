@@ -120,6 +120,16 @@ spec:
             - name: MUPID_CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef: {name: mupid-secrets, key: MUPID_CLICKHOUSE_PASSWORD}
+            # 서빙 특징 조회(app/feature_store.py, S15P21A204-455)는 읽기 전용 서빙 계정으로
+            # **같은 노드의 clickhouse-0** 에 붙는다. 헤드리스 이름 `clickhouse` 는 두 파드로
+            # 풀려 node-a 로 나갈 수 있다. 읽는 표가 전부 mupid_all 이라 clickhouse-0 하나로
+            # 충분하다. 아직 요청 경로에 연결하지 않았다(458). 비밀이 없으면 서빙 계정은
+            # 잠겨 있고(clickhouse.yaml) 특징 조회가 인증 오류를 낸다 — 연결 전 등록한다.
+            - {name: MUPID_CLICKHOUSE_SERVING_URL, value: 'http://clickhouse-0.clickhouse:8123'}
+            - {name: MUPID_CLICKHOUSE_SERVING_USER, value: mupid_serving}
+            - name: MUPID_CLICKHOUSE_SERVING_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: mupid-secrets, key: MUPID_CLICKHOUSE_SERVING_PASSWORD, optional: true}
             # Spring 과 나누는 /internal 공유 비밀. **양쪽을 동시에 켠다** —
             # 여기만 켜고 Spring 의 MUPID_RECOMMENDER_INTERNAL_TOKEN 을 비우면
             # 추천 호출이 전부 401 이다. 배포 설정만으로 조용히 죽는 형태다.

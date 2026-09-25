@@ -45,7 +45,8 @@ import jakarta.persistence.PersistenceContext;
  * {@code FOR UPDATE SKIP LOCKED}, {@code CRC32}) 라 목으로는 문법조차 확인되지 않는다.
  * 로컬 dev MySQL 에 {@code migrate-analytics-sync-2026-09-25.sql} 이 적용돼 있어야 한다.
  * 트랜잭션은 시험마다 롤백되므로 커밋 뒤 ClickHouse 쓰기는 돌지 않는다 —
- * 그래서 구간 교체 뒤 <b>미반영 행이 남아 있는 것</b>이 정상이다.
+ * 그래서 구간 교체 뒤 <b>미반영 행이 남아 있는 것</b>이 정상이다. 구간 교체는 곡 특징
+ * ({@code TRACK_FEATURES}, S15P21A204-455)도 함께 올리므로 행을 셀 때는 종류를 건다.
  */
 @SpringBootTest
 @Transactional
@@ -101,7 +102,7 @@ class AnalyticsSyncPendingMysqlTest {
     private void replace(String version, int sections) {
         List<MusicSectionBulkLine> lines = java.util.stream.IntStream.range(0, sections)
             .mapToObj(i -> new MusicSectionBulkLine(i, uid + "#" + i, SectionLabel.CHORUS,
-                i * 10_000, (i + 1) * 10_000, null, null, null))
+                i * 10_000, (i + 1) * 10_000, null, null, i == 0 ? 0.7071067811865476 : null))
             .toList();
         sectionService.replaceSections(music.getMusicId(), new MusicSectionBulkRequest(version, lines));
         em.flush();
@@ -127,15 +128,15 @@ class AnalyticsSyncPendingMysqlTest {
     void sameMusicUpdatesOneRow() {
         replace("v1", 2);
         mysql.update("UPDATE analytics_sync_pending SET created_at = created_at - INTERVAL 1 HOUR "
-            + "WHERE music_id = ?", music.getMusicId());
+            + "WHERE music_id = ? AND kind = 'CLICKHOUSE'", music.getMusicId());
         replace("v2", 3);
 
         assertThat(pendingRepository.findRevision(music.getMusicId(), KIND)).contains(2L);
         assertThat(mysql.queryForObject(
-            "SELECT COUNT(*) FROM analytics_sync_pending WHERE music_id = ?", Integer.class,
+            "SELECT COUNT(*) FROM analytics_sync_pending WHERE music_id = ? AND kind = 'CLICKHOUSE'", Integer.class,
             music.getMusicId())).isEqualTo(1);
         assertThat(mysql.queryForObject(
-            "SELECT analysis_version FROM analytics_sync_pending WHERE music_id = ?", String.class,
+            "SELECT analysis_version FROM analytics_sync_pending WHERE music_id = ? AND kind = 'CLICKHOUSE'", String.class,
             music.getMusicId())).isEqualTo("v2");
         // 다시 기록돼도 "처음 미반영이 된 시각" 은 그대로여야 밀린 나이가 보인다.
         assertThat(pendingRepository.oldestAgeSeconds(KIND)).isGreaterThanOrEqualTo(3_600L);
@@ -162,7 +163,7 @@ class AnalyticsSyncPendingMysqlTest {
         assertThat(pendingRepository.claim(musicId, KIND)).contains(1L);
         assertThat(pendingRepository.markFailed(musicId, KIND, "ConnectException: refused")).isEqualTo(1);
         assertThat(mysql.queryForObject(
-            "SELECT attempts FROM analytics_sync_pending WHERE music_id = ?", Integer.class, musicId))
+            "SELECT attempts FROM analytics_sync_pending WHERE music_id = ? AND kind = 'CLICKHOUSE'", Integer.class, musicId))
             .isEqualTo(1);
         assertThat(pendingRepository.countPending(KIND)).isPositive();
         assertThat(pendingRepository.oldestAgeSeconds(KIND)).isNotNull();
@@ -170,7 +171,7 @@ class AnalyticsSyncPendingMysqlTest {
     }
 
     @Test
-    @DisplayName("MySQL 요약의 체크섬은 행 문자열 CRC32 의 합이다 — ClickHouse 문장과 같은 규칙")
+    @DisplayName("MySQL 요약의 체크섬은 행 문자열 CRC32 의 합이다 — ClickHouse 문장과 같은 규칙 (에너지 포함)")
     void digestMatchesDocumentedFormula() {
         replace("v1", 2);
         em.clear();
@@ -181,7 +182,9 @@ class AnalyticsSyncPendingMysqlTest {
             crc.update(String.join("|",
                 String.valueOf(row.getMusicSectionAnalysisId()), String.valueOf(row.getIndex()),
                 row.getExternalId(), row.getSectionLabel().name(),
-                String.valueOf(row.getStartTimeMs()), String.valueOf(row.getEndTimeMs()))
+                String.valueOf(row.getStartTimeMs()), String.valueOf(row.getEndTimeMs()),
+                // 에너지는 백만 배 내림 정수, 없으면 -1 (S15P21A204-455)
+                String.valueOf(row.getEnergy() == null ? -1 : (long)Math.floor(row.getEnergy() * 1_000_000)))
                 .getBytes(StandardCharsets.UTF_8));
             expected += crc.getValue();
         }

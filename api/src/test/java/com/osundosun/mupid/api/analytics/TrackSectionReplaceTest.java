@@ -31,7 +31,7 @@ class TrackSectionReplaceTest {
 
     private static TrackSectionRow section(int index, int sectionId, int startMs, int endMs) {
         return new TrackSectionRow(1001, sectionId, VERSION, index,
-            "T001001#" + index, "CHORUS", startMs, endMs);
+            "T001001#" + index, "CHORUS", startMs, endMs, 0.25);
     }
 
     @Test
@@ -53,7 +53,7 @@ class TrackSectionReplaceTest {
         // 들어간다. 둘 다 UInt32 라 ClickHouse 는 아무 말도 하지 않는다.
         assertThat(sql.getValue()).contains(
             "(track_id, music_section_analysis_id, analysis_version",
-            "section_index, section_uid, fn, start_ms, end_ms)");
+            "section_index, section_uid, fn, start_ms, end_ms, energy)");
 
         // `track_sections`(Distributed) 가 아니라 로컬 표다. mupid_all 은 샤딩이 없어
         // 복제로 전 노드에 퍼지고, Distributed 로 넣을 때 필요한
@@ -64,7 +64,7 @@ class TrackSectionReplaceTest {
             .contains("INSERT INTO track_sections_local")
             .doesNotContain("SETTINGS");
         assertThat(batch.getValue()).singleElement().isEqualTo(
-            new Object[] {1001, 5001, VERSION, 0, "T001001#0", "CHORUS", 0, 30_000});
+            new Object[] {1001, 5001, VERSION, 0, "T001001#0", "CHORUS", 0, 30_000, 0.25});
     }
 
     @Test

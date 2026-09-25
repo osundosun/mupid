@@ -1,10 +1,12 @@
 package com.osundosun.mupid.api.analytics.sync.service;
 
 import java.util.List;
+import java.util.function.IntFunction;
 
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import com.osundosun.mupid.api.analytics.sync.enumerate.AnalyticsSyncKind;
 import com.osundosun.mupid.api.analytics.sync.repository.AnalyticsSyncPendingRepository;
 import com.osundosun.mupid.api.analytics.sync.service.TrackSectionSync.RetryOutcome;
 
@@ -28,6 +30,11 @@ import lombok.extern.slf4j.Slf4j;
  * 연결 시간 제한(3초)을 기다리면 200곡에 10분이 걸려 다음 회차와 겹친다. 실패한 곡은
  * {@code updated_at} 이 올라 다음 회차에 뒤로 가므로, 고칠 수 없는 곡 하나가 매번 앞을
  * 막지도 않는다.
+ *
+ * <h2>곡 특징도 같은 회차에서 (S15P21A204-455)</h2>
+ *
+ * <p>{@code TRACK_FEATURES} 종류({@link TrackFeatureSync})를 구간 다음에 같은 규칙으로 돈다. 종류마다
+ * 따로 멈춘다 — 구간 쪽 한 곡이 실패해도 곡 삭제 표시는 간다. 이름은 구간 시절의 것을 그대로 둔다.
  */
 @Slf4j
 @Component
@@ -39,6 +46,7 @@ public class TrackSectionRetryJob {
 
     private final AnalyticsSyncPendingRepository pendingRepository;
     private final TrackSectionSync sync;
+    private final TrackFeatureSync featureSync;
     private final AnalyticsSyncMonitor monitor;
 
     /** 한 회차 결과. */
@@ -66,12 +74,30 @@ public class TrackSectionRetryJob {
             // MySQL 이 안 닿는 경우. 다음 회차가 다시 본다.
             log.warn("ClickHouse 미반영 재시도를 하지 못했다.", e);
         }
+        try {
+            Round round = retryFeatures();
+            if (round.touched() > 0) {
+                log.info("ClickHouse 곡 특징 미반영 재시도 — 반영 {} · 곡없음 {} · 실패 {} · 다른 인스턴스 {}",
+                    round.synced(), round.nothingToWrite(), round.failed(), round.skipped());
+            }
+        } catch (RuntimeException e) {
+            log.warn("ClickHouse 곡 특징 미반영 재시도를 하지 못했다.", e);
+        }
         monitor.refreshPending();
     }
 
+    /** 구간({@code CLICKHOUSE}) 한 회차. */
     public Round retryPending() {
-        List<Integer> candidates =
-            pendingRepository.findCandidates(TrackSectionSync.KIND.name(), BATCH);
+        return retry(TrackSectionSync.KIND, sync::retry);
+    }
+
+    /** 곡 특징({@code TRACK_FEATURES}) 한 회차. */
+    public Round retryFeatures() {
+        return retry(TrackFeatureSync.KIND, featureSync::retry);
+    }
+
+    private Round retry(AnalyticsSyncKind kind, IntFunction<RetryOutcome> retrier) {
+        List<Integer> candidates = pendingRepository.findCandidates(kind.name(), BATCH);
         int synced = 0;
         int skipped = 0;
         int nothingToWrite = 0;
@@ -79,7 +105,7 @@ public class TrackSectionRetryJob {
         for (Integer musicId : candidates) {
             RetryOutcome outcome;
             try {
-                outcome = sync.retry(musicId);
+                outcome = retrier.apply(musicId);
             } catch (RuntimeException e) {
                 // MySQL 쪽 예외(잠금 대기 초과 등). 실패로 세고 멈춘다.
                 log.warn("미반영 곡 재시도 중 MySQL 오류 musicId={}", musicId, e);

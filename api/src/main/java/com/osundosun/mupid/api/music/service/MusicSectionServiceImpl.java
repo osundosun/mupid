@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.analytics.sync.service.TrackFeatureSync;
 import com.osundosun.mupid.api.analytics.sync.service.TrackSectionSync;
 import com.osundosun.mupid.api.code.entity.Code;
 import com.osundosun.mupid.api.code.enumerate.CodeType;
@@ -48,6 +49,7 @@ public class MusicSectionServiceImpl implements MusicSectionService {
     private final MusicAnalysisInstrumentRepository instrumentRepository;
     private final CodeRepository codeRepository;
     private final TrackSectionSync trackSectionSync;
+    private final TrackFeatureSync trackFeatureSync;
 
     @Override
     public MusicSectionBulkResponse replaceSections(int musicId, MusicSectionBulkRequest request) {
@@ -107,6 +109,9 @@ public class MusicSectionServiceImpl implements MusicSectionService {
         // 커밋 뒤에 쓴다 — 실패해도 MySQL 적재는 되돌리지 않고, 남은 기록을 재시도 작업이
         // 메운다 (S15P21A204-451, `TrackSectionSync`).
         trackSectionSync.recordAndPushAfterCommit(musicId, request.analysisVersion(), rows);
+        // 곡 특징의 `track`(문자열 곡 ID)·`analysis_version` 은 구간에서 온다. 함께 올린다
+        // (S15P21A204-455 — 종류를 나눈 이유는 `AnalyticsSyncKind`).
+        trackFeatureSync.markChanged(musicId);
 
         return new MusicSectionBulkResponse(
             musicId,

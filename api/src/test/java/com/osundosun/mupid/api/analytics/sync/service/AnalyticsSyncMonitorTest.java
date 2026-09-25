@@ -17,6 +17,7 @@ import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import com.osundosun.mupid.api.admin.response.AdminDependencyStatus;
 import com.osundosun.mupid.api.analytics.sync.dto.ReconcileReport;
 import com.osundosun.mupid.api.analytics.sync.dto.TrackVersion;
+import com.osundosun.mupid.api.analytics.sync.enumerate.AnalyticsSyncKind;
 import com.osundosun.mupid.api.analytics.sync.repository.AnalyticsSyncPendingRepository;
 import com.osundosun.mupid.api.analytics.sync.service.AnalyticsSyncMonitor.LastReconcile;
 import com.osundosun.mupid.api.cache.service.CacheService;
@@ -128,9 +129,30 @@ class AnalyticsSyncMonitorTest {
         monitor.refreshPending();
         monitor.recordReconcile(new ReconcileReport(NOW, 10, Set.of(new TrackVersion(1, "v1")), Map.of(), 0, 0, null));
 
-        assertThat(registry.get("mupid.analytics.sync.pending").gauge().value()).isEqualTo(4);
-        assertThat(registry.get("mupid.analytics.sync.pending.oldest.age").gauge().value()).isEqualTo(125);
-        assertThat(registry.get("mupid.analytics.reconcile.mismatch").gauge().value()).isEqualTo(1);
+        assertThat(registry.get("mupid.analytics.sync.pending").tag("kind", "CLICKHOUSE").gauge().value())
+            .isEqualTo(4);
+        assertThat(registry.get("mupid.analytics.sync.pending.oldest.age").tag("kind", "CLICKHOUSE")
+            .gauge().value()).isEqualTo(125);
+        assertThat(registry.get("mupid.analytics.reconcile.mismatch").tag("kind", "CLICKHOUSE")
+            .gauge().value()).isEqualTo(1);
+        // 곡 특징은 따로 센다 — 구간 대조가 곡 특징 게이지를 건드리지 않는다.
+        assertThat(registry.get("mupid.analytics.reconcile.mismatch").tag("kind", "TRACK_FEATURES")
+            .gauge().value()).isEqualTo(-1);
+    }
+
+    @Test
+    @DisplayName("대시보드에는 종류마다 한 줄 — 구간·곡 특징")
+    void oneDashboardLinePerKind() {
+        AnalyticsSyncPendingRepository pending = mock(AnalyticsSyncPendingRepository.class);
+        when(pending.countPending("TRACK_FEATURES")).thenReturn(2L);
+        when(pending.oldestAgeSeconds("TRACK_FEATURES")).thenReturn(11 * 60L);
+        AnalyticsSyncMonitor monitor = new AnalyticsSyncMonitor(pending, mock(CacheService.class),
+            new StaticListableBeanFactory().getBeanProvider(MeterRegistry.class));
+
+        assertThat(monitor.statuses()).extracting(AdminDependencyStatus::name)
+            .containsExactly("ClickHouse 구간 동기화", "ClickHouse 곡 특징 동기화");
+        assertThat(monitor.status(AnalyticsSyncKind.TRACK_FEATURES).status()).isEqualTo("WARN");
+        assertThat(monitor.status(AnalyticsSyncKind.CLICKHOUSE).status()).isEqualTo("UP");
     }
 
 }

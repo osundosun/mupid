@@ -43,6 +43,7 @@ configMapGenerator:
     files:
       - clickhouse/users/00-profile.xml
       - clickhouse/users/10-mupid-user.xml
+      - clickhouse/users/20-serving-user.xml
   - name: clickhouse-keeper
     files:
       - clickhouse/keeper/keeper_config.xml

@@ -14,7 +14,7 @@ MySQL `music_section_analysis` 한 행을 그대로 옮긴 것이다. 이름이 
 
 ```sql
 track_id, music_section_analysis_id, analysis_version, section_index,
-section_uid, fn, start_ms, end_ms, created_at
+section_uid, fn, start_ms, end_ms, energy, created_at
 ```
 
 | 컬럼 | MySQL | 의미 |
@@ -26,6 +26,7 @@ section_uid, fn, start_ms, end_ms, created_at
 | `start_ms` / `end_ms` | `start_time_ms` / `end_time_ms` | 구간 범위. 재생 위치를 구간에 매핑하는 근거 |
 | `fn` | `section_label` | 구간의 역할 분류 |
 | `analysis_version` | `analysis_version` | 구간 분석 버전. 버전이 다르면 구간 정의가 다르다 (MySQL 쪽은 451 에서 생겼다) |
+| `energy` | `energy` | 구간 RMS(0~1). 서빙 특징 조회가 요청 본문 대신 읽는다 (455). 같은 행의 컬럼이라 따로 표를 두지 않았다 |
 | `created_at` | — | `ReplacingMergeTree` 의 버전 컬럼 |
 
 `peak_ms` 는 2026-09-22 에 없앴다. MySQL 에 대응이 없고, 구간 안 정점을 산출한 적이 없어 줄곧 구간 시작점이 그대로 들어가 있었다.
@@ -50,6 +51,42 @@ section_uid, fn, start_ms, end_ms, created_at
 - `ORDER BY (analysis_version, track_id, section_index)`
 - 클러스터가 **`mupid_all`** 이다. 이벤트 테이블(`mupid`)과 달리 샤딩하지 않고 **모든 노드에 같은 사본**을 둔다 — 이벤트와 조인할 때 네트워크 이동을 없애기 위해서다.
 - 이벤트 테이블과 달리 **TTL 이 없다.** 구간 정의는 분석 데이터가 아니라 참조 데이터다.
+
+## `track_features` — 곡 단위 특징 사본 (S15P21A204-455)
+
+추천 요청 본문 `catalog.tracks` 에 싣던 곡 값을 ClickHouse 에 둔 것이다. **모든 곡**이 한 행씩 있고,
+본문이 후보를 고르던 조건을 값으로 들고 있다.
+
+| 컬럼 | 원천 (MySQL) |
+|---|---|
+| `track_id` | `music.music_id` |
+| `track` | 첫 구간(시작 시각순) `external_id` 의 `#` 앞. 구간이 없으면 빈 문자열 |
+| `duration_ms` | `DONE` 스트림 `duration_ms` 의 최댓값 |
+| `bpm`·`bpm_requested_min/max`·`language`·`category`·`has_vocal`·`vocal_gender` | `music_analysis` |
+| `genres`·`moods` | `music_genres`·`music_moods` 의 코드 이름, 코드 번호순 |
+| `is_deleted` | `music.is_deleted` — **곡 삭제가 ClickHouse 에 닿는 곳** |
+| `playable` | `DONE` 스트림이 있는가 |
+| `analysis_version` | 첫 구간의 분석 버전 |
+| `version` | Spring 이 쓴 시각(epoch ms). ReplacingMergeTree 버전 |
+
+값의 규칙은 `RecommenderCatalogServiceImpl.build` 와 같다(시험 `TrackFeatureMysqlTest`). 쓰는 쪽은
+`TrackFeatureSync` 하나이고, 미반영 기록·재시도·대조를 구간과 같은 틀로 탄다 →
+[architecture/analytics-sync.md](../architecture/analytics-sync.md). 읽을 때는 `FINAL`.
+
+**곡 삭제와 구간**: 곡을 지워도 구간 사본은 남는다(MySQL 도 구간을 지우지 않는다). 서빙은
+`track_features` 와 맞춰 삭제된 곡을 뺀다. 재생 신호 판정(`dict_track_sections`)은 지금처럼 전 곡을 본다 —
+지워진 곡의 과거 청취도 취향 신호다.
+
+### 서빙 조회 (AI)
+
+| 객체 | 하는 일 |
+|---|---|
+| `v_serving_sections` | 곡의 **현재** 분석 버전(`track_features.analysis_version`)인 구간만, `FINAL` 로 |
+| `dict_serving_sections` | 위 뷰를 `section_uid` 로 찾는 사전(`COMPLEX_KEY_HASHED_ARRAY`). 1만 곡에 12MB, 원본을 따라오는 데 최대 30초 |
+
+`ai_server/app/feature_store.py` 가 읽는다 — 후보 수백 개의 특징(`lookup`)과 조건 풀기(`solve`).
+읽기 전용 서빙 계정 `mupid_serving`(`clickhouse/users/20-serving-user.xml`)으로 같은 노드의
+`clickhouse-0` 에 붙는다. 지연은 설계 문서 §11 미결 4.
 
 ## 재생 위치 → 구간 판정
 

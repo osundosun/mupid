@@ -138,6 +138,7 @@ class ClickHouseCopyTest(unittest.TestCase):
         ("server", "02-server.xml"), ("server", "03-system-logs.xml"),
         ("server", "10-macros.xml"),
         ("users", "00-profile.xml"), ("users", "10-mupid-user.xml"),
+        ("users", "20-serving-user.xml"),
     )
 
     def test_copies_match_the_originals(self):

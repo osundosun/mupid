@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.osundosun.mupid.api.analytics.sync.service.TrackFeatureSync;
 import com.osundosun.mupid.api.common.exception.BusinessException;
 import com.osundosun.mupid.api.common.error.GlobalErrorCode;
 import com.osundosun.mupid.api.music.entity.Album;
@@ -68,6 +69,7 @@ public class MusicServiceImpl implements MusicService {
     private final MusicSectionAnalysisMoodRepository sectionMoodRepository;
     private final MusicAnalysisInstrumentRepository instrumentRepository;
     private final StorageService storageService;
+    private final TrackFeatureSync trackFeatureSync;
 
     @Override
     public int addMusic(MusicAddRequest request) {
@@ -390,6 +392,9 @@ public class MusicServiceImpl implements MusicService {
     public void deleteMusic(int musicId) {
         Music music = requireAlive(musicId);
         music.setIsDeleted(true);
+        // ClickHouse 는 곡 삭제를 `track_features.is_deleted` 로 안다 (S15P21A204-455). 구간 사본은
+        // 그대로 둔다 — MySQL 도 구간을 지우지 않고, 서빙은 이 표와 맞춰 삭제된 곡을 뺀다.
+        trackFeatureSync.markChanged(musicId);
     }
 
     /**
