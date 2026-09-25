@@ -1,5 +1,6 @@
 package com.osundosun.mupid.api.recommendation.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -105,6 +106,33 @@ class DailyRecommendationBatchTest {
             .thenReturn(false);
         batch.runToday();
         verify(service, never()).generate(anyInt(), any(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("수동 생성도 같은 선점을 잡는다 — 돌고 있으면 비어 있고, 끝나면 선점을 푼다")
+    void manualGenerateUsesTheSameClaim() {
+        LocalDate day = LocalDate.of(2026, 9, 25);
+        when(cache.setIfAbsent(eq(day.toString()), eq(CacheKind.DailyRecommendationBatch), any(Duration.class)))
+            .thenReturn(false, true);
+        when(service.generate(anyInt(), eq(day), eq(true))).thenReturn(true);
+
+        assertTrue(batch.runClaimed(day, true).isEmpty());
+        verify(service, never()).generate(anyInt(), any(), anyBoolean());
+
+        assertEquals(2, batch.runClaimed(day, true).getAsInt());
+        verify(cache).delete(day.toString(), CacheKind.DailyRecommendationBatch);
+    }
+
+    @Test
+    @DisplayName("생성 도중 예외가 나도 선점을 푼다")
+    void claimIsReleasedEvenWhenTheRunThrows() {
+        LocalDate day = LocalDate.of(2026, 9, 25);
+        when(cache.setIfAbsent(eq(day.toString()), eq(CacheKind.DailyRecommendationBatch), any(Duration.class)))
+            .thenReturn(true);
+        when(users.findAllUserIdsByStatus(UserStatus.ACTIVE)).thenThrow(new IllegalStateException("db"));
+
+        assertThrows(IllegalStateException.class, () -> batch.runClaimed(day, false));
+        verify(cache).delete(day.toString(), CacheKind.DailyRecommendationBatch);
     }
 
 }

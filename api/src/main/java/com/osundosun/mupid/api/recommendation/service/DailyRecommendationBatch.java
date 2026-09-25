@@ -3,6 +3,7 @@ package com.osundosun.mupid.api.recommendation.service;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.OptionalInt;
 
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
@@ -61,7 +62,9 @@ public class DailyRecommendationBatch {
      * 선점 유지 시간.
      *
      * <p>배치가 도는 시간보다 넉넉하되 하루보다는 짧아야 한다. 하루를 넘기면 다음 날
-     * 배치가 자기 선점에 막힌다.
+     * 배치가 자기 선점에 막힌다. 모든 길이 끝나면 선점을 풀므로, 이 값은 도중에 죽었을 때
+     * 선점이 풀리기까지의 시간이다. 추천 서버 호출은 회원당 최악 약 14초(연결 2초 + 읽기
+     * 5초, 한 번 재시도)라 6시간이면 최악으로도 약 1,500명, p50(2.2초)이면 약 9,800명이다.
      */
     private static final Duration LOCK_TTL = Duration.ofHours(6);
 
@@ -79,11 +82,28 @@ public class DailyRecommendationBatch {
      */
     @Scheduled(cron = "0 0 12 * * *", zone = "Asia/Seoul")
     public void runToday() {
-        LocalDate today = LocalDate.now();
-        if (!claim(today)) {
-            return;
+        runClaimed(LocalDate.now(), false);
+    }
+
+    /**
+     * 선점을 잡고 그 자리에서 만든다. 정오 예비와 운영자 수동 생성이 쓴다.
+     *
+     * <p>세 길(데이터 배치의 시작 요청·정오 예비·수동 생성)이 <b>같은 날짜 선점</b>을 잡는다.
+     * 그래서 어느 둘이 겹쳐도 같은 날이 동시에 두 번 돌지 않는다. 끝나면 선점을 푼다 — 쥔 채
+     * 두면 그날 추천 서버가 흔들려 몇 명이 빠졌을 때 운영자가 {@link #LOCK_TTL} 동안 다시 돌릴
+     * 수 없다. TTL 은 도중에 프로세스가 죽었을 때만 쓰인다.
+     *
+     * @return 만든 사용자 수. 이미 누군가 돌고 있으면 비어 있다
+     */
+    public OptionalInt runClaimed(LocalDate date, boolean force) {
+        if (!claim(date)) {
+            return OptionalInt.empty();
         }
-        run(today, false);
+        try {
+            return OptionalInt.of(run(date, force));
+        } finally {
+            release(date);
+        }
     }
 
     /**

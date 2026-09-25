@@ -380,8 +380,9 @@ MySQL 은 서비스용(지금 이 사람의 최근 감상), ClickHouse 는 분�
 조회는 저장된 것을 읽기만 한다. 먼저 매일 도는 데이터 배치(`music_preprocessing/run_batch.sh`)
 가 분석이 성공한 날 마지막 단계로 `POST /api/v1/recommendation/daily/start`(`ROLE_SYSTEM`,
 202 로 바로 돌아오고 생성은 서버 안에서 돈다)를 부른다. 정오 스케줄은 **예비**다 — 배치가
-만든 날에는 전원 건너뛰고, 배치가 실패했거나 분석이 실패한 날에만 만든다. 두 길이 같은 Redis
-선점을 잡는다(S15P21A204-448). 수동 재실행은 `POST /api/v1/recommendation/daily/generate`. 배치를 아직 타지 않은 사람이라도
+만든 날에는 전원 건너뛰고, 배치가 실패했거나 분석이 실패한 날에만 만든다. 수동 재실행은
+`POST /api/v1/recommendation/daily/generate` 다. 세 길이 **같은 날짜별 Redis 선점**을 잡고
+끝나면 푼다 — 겹치면 뒤의 것은 시작 요청이 `started=false`, 수동 생성이 409 다(S15P21A204-448). 배치를 아직 타지 않은 사람이라도
 `groups` 가 빈 배열로 나가는 일은 이제 거의 없다 — 아래 폴백을 본다.
 **어느 쪽이든 404 가 아니다.**
 

@@ -7,6 +7,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import java.util.Map;
+import java.util.OptionalInt;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -86,10 +87,16 @@ public class DailyRecommendationController {
         @RequestParam(defaultValue = "false") boolean force
     ) {
         LocalDate target = date != null ? date : LocalDate.now();
-        int made = recommendationBatch.run(target, force);
+        // 데이터 배치의 시작 요청·정오 예비와 같은 날짜 선점을 잡는다. 이미 돌고 있으면 409 다.
+        OptionalInt made = recommendationBatch.runClaimed(target, force);
+        if (made.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(BaseResponse.of(
+                "그날의 오늘의 모먼트를 이미 만들고 있습니다. 끝난 뒤 다시 시도해 주세요.",
+                Map.of("date", target.toString(), "generated", 0)));
+        }
         return ResponseEntity.ok(BaseResponse.of(
             "오늘의 모먼트를 만들었습니다.",
-            Map.of("date", target.toString(), "generated", made)));
+            Map.of("date", target.toString(), "generated", made.getAsInt())));
     }
 
 }
