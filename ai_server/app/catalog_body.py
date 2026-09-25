@@ -149,8 +149,11 @@ def digest_of(body: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def from_body(body: dict) -> Snapshot:
-    """`catalog` 본문 → 스냅샷. 모양이 계약과 다르면 거절한다."""
+def from_body(body: dict, digest: Optional[str] = None) -> Snapshot:
+    """`catalog` 본문 → 스냅샷. 모양이 계약과 다르면 거절한다.
+
+    `digest` 는 부르는 쪽이 이미 잰 `digest_of(body)` 다. 두 번 재지 않으려고 받는다.
+    """
     if not isinstance(body, dict):
         raise CatalogBodyError("catalog 는 객체여야 한다")
     extra = sorted(set(body) - {"tracks", "sections"})
@@ -213,4 +216,4 @@ def from_body(body: dict) -> Snapshot:
             "moment_moods": "",
             "energy": _num(s["energy"][i]),
         }
-    return Snapshot(tracks, sections, digest=digest_of(body))
+    return Snapshot(tracks, sections, digest=digest or digest_of(body))

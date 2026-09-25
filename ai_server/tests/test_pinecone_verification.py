@@ -278,7 +278,8 @@ def test_8_every_remaining_column_reaches_a_caller(staged):
             "bpm_requested_max", "duration_ms"} <= set(cb.TRACK_COLS)
 
     facets = inspect.getsource(rc.catalog_facets)
-    seeds = inspect.getsource(rc.onboarding_seeds)
+    # 온보딩 게이트는 씨앗 계산에서 떼어 냈다(S15P21A204-452) — 곡 언어를 읽는 곳이 그쪽이다.
+    seeds = inspect.getsource(rc.onboarding_track_ok)
     info = inspect.getsource(rc.Catalog.track_info)
 
     assert "bpm_source" in facets

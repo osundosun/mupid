@@ -21,6 +21,7 @@ import threading
 import time
 import uuid
 import warnings
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -31,7 +32,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse, Response)
 from pydantic import BaseModel
 
-from . import catalog_body, labels_store, metrics, paths, pinecone_store, stage1_np
+from . import (catalog_body, labels_store, metrics, paths, pinecone_store, stage1_np,
+               vector_store as vstore)
 from .log import log
 
 warnings.filterwarnings("ignore")
@@ -145,6 +147,14 @@ SIMILAR_OVERFETCH = 8
 # 여기서 받은 것만 점수를 매기므로 너무 좁으면 후보가 마르고, 너무 넓으면 요청마다
 # 원본 벡터를 그만큼 가져오게 된다.
 DNA_CANDIDATES_PER_SEED = 200
+# 씨앗(DNA 중심·온보딩 씨앗)이 하나도 없을 때 점수를 매길 후보 수. 예전에는 풀 전체를
+# 매겼다 — Pinecone 갈래에서는 그게 곧 풀 전체의 원본 벡터 fetch 였고, 2026-09-24 의
+# 이그레스 소진이 여기서 났다. 콜드스타트 순서(위치·에너지)는 사용자와 무관해서 사본마다
+# 한 번 세 두고 앞에서부터 이만큼만 가져온다. 탐색 칸이 `n·6` 위까지 보므로 그보다 넉넉하다.
+COLD_START_CANDIDATES = 300
+# 요청 사본마다 들고 있는 조건별 캐시(허용 목록·온보딩 씨앗)의 상한. 조건 조합은 몇 개
+# 안 되지만, 드문 조합이 쌓여 메모리를 먹지 않게 오래된 것부터 버린다.
+VIEW_CACHE_MAX = 64
 # ------------------------------------------------------------------------
 
 
@@ -413,7 +423,7 @@ class Catalog:
         self.pool_x = np.asarray([self.idx.get(m, -1) for m in self.pool.moment_id])
         self.by_track = {t: g for t, g in self.pool.groupby("track_id", sort=False)}
         # 후보에 딸린 캐시는 사본마다 따로다. 남기면 다른 본문의 어휘가 샌다.
-        for attr in ("_facets_cache", "_facets_by_track"):
+        for attr in ("_facets_cache", "_facets_by_track", "_view_cache"):
             self.__dict__.pop(attr, None)
 
     def with_catalog(self, snap) -> "Catalog":
@@ -714,8 +724,12 @@ def onboarding_of(user: str, injected: dict | None = None) -> dict | None:
 
 def onboarding_seeds(user: str,
                      injected: dict | None = None) -> tuple[np.ndarray, np.ndarray, list[dict]]:
-    """조사 답변으로 씨앗 질의 벡터를 만든다. 라벨이 없어도 개인화가 된다."""
-    c = current()
+    """조사 답변으로 씨앗 질의 벡터를 만든다. 라벨이 없어도 개인화가 된다.
+
+    **씨앗은 답변에만 달렸고 사용자와 무관하다.** 그래서 요청마다 풀에서 만들지 않고
+    사본·저장소 세대마다 답변 조합당 한 번 세어 둔다(`compute_onboarding_seeds`,
+    S15P21A204-452). 사용자 이름은 돌려줄 때 `dna_id` 에만 붙인다.
+    """
     ans = onboarding_of(user, injected)
     if not ans:
         return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
@@ -736,72 +750,151 @@ def onboarding_seeds(user: str,
                           "씨앗을 만들지 않는다",
                   "mood_raw": list(ans.get("mood_raw") or []),
                   "genre_raw": list(ans.get("genre_raw") or [])}])
-    fac = catalog_facets()
-    df = fac["_df"].set_index("track_id")
+    key = tuple((axis, tuple(sorted(str(x) for x in (ans.get(axis) or []))))
+                for axis in ONB_FILTER_AXES)
+    cache = _bounded(_vec_cache(), "onboarding_seeds")
+    hit = cache.get(key)
+    if hit is None:
+        hit = _remember(cache, key, compute_onboarding_seeds(ans))
+    else:
+        cache.move_to_end(key)
+    seeds, W, groups = hit
+    meta = [{"dna_id": f"{user}#seed_{lab}", **m} for lab, m in groups]
+    return seeds.copy(), W.copy(), meta
+
+
+def onboarding_track_ok(ans: dict):
+    """답변 → `track_ok(tid, relax)`. 완화 단계(relax)가 오를수록 조건을 하나씩 푼다.
+
+    곡 메타는 `catalog_facet_rows()`(사본마다 한 번 만든 dict)에서 읽는다. 예전에는
+    곡 표를 요청마다 `set_index` 하고 곡마다 `.loc` 으로 Series 를 새로 만들었다.
+    """
+    meta = catalog_facet_rows()
+    want_lang = ans.get("language") or []
+    want_voc = ans.get("vocal_type") or []
+    want_sty = ans.get("style") or []
+    want_tempo = ans.get("tempo") or []
+    want_genre = ans.get("genre") or []
+    want_mood = ans.get("mood") or []
+    want_inst = ans.get("instrument") or []
 
     def track_ok(tid: str, relax: int) -> bool:
-        if tid not in df.index:
+        r = meta.get(tid)
+        if r is None:
             return False
-        r = df.loc[tid]
-        want_lang = ans.get("language") or []
-        want_voc = ans.get("vocal_type") or []
-        want_sty = ans.get("style") or []
-        want_tempo = ans.get("tempo") or []
-        want_genre = ans.get("genre") or []
-        want_mood = ans.get("mood") or []
-        want_inst = ans.get("instrument") or []
-        if relax < 3 and want_lang and r.language not in want_lang:
+        if relax < 3 and want_lang and r.get("language") not in want_lang:
             return False
         if relax < 3 and want_voc and not (
-                set(_vocal_values(r.has_vocal, r.vocal_gender)) & set(want_voc)):
+                set(_vocal_values(r.get("has_vocal"), r.get("vocal_gender"))) & set(want_voc)):
             return False
-        if relax < 2 and want_sty and r.style not in want_sty:
+        if relax < 2 and want_sty and r.get("style") not in want_sty:
             return False
-        if relax < 2 and want_genre and r.genre not in want_genre:
+        if relax < 2 and want_genre and r.get("genre") not in want_genre:
             return False
         if relax < 1 and want_tempo:
-            ok = any(lo <= r.bpm < hi for k, _l, lo, hi in TEMPO_BUCKETS if k in want_tempo)
+            bpm = r.get("bpm")
+            ok = any(lo <= bpm < hi for k, _l, lo, hi in TEMPO_BUCKETS if k in want_tempo)
             if not ok:
                 return False
-        if relax < 1 and want_mood and not (set(r.moods or []) & set(want_mood)):
+        if relax < 1 and want_mood and not (set(r.get("moods") or []) & set(want_mood)):
             return False
-        if relax < 1 and want_inst and not (set(r.instruments or []) & set(want_inst)):
+        if relax < 1 and want_inst and not (set(r.get("instruments") or []) & set(want_inst)):
             return False
         return True
 
-    want_secs = ans.get("section_label") or []
+    return track_ok
+
+
+def seed_sums(tracks) -> dict:
+    """곡 → {구간 종류: [중심화 벡터 합, 개수, 첫 풀 행, 그 행의 external_id]}.
+
+    온보딩 씨앗은 "조건에 맞는 곡들의 구간 종류별 평균 방향" 이다. 평균은 합으로 쪼개지므로
+    곡·구간 종류 단위의 합만 있으면 어떤 조건의 씨앗이든 합을 더해 만든다 — 원본 벡터를
+    다시 읽지 않는다. 이 표가 모델 묶음의 `onboarding_seeds.npz`(설계 §6.3)로 나가는
+    단위다(`tools/export_onboarding_seeds.py`).
+
+    합은 곡마다 처음 필요할 때 한 번 센다(원본을 저장소에서 읽는다). 로컬 갈래는
+    메모리에서 읽고, Pinecone 갈래는 그 곡들만 fetch 한다.
+    """
+    cache = _vec_cache().setdefault("seed_sums", {})
+    missing = [t for t in dict.fromkeys(tracks) if t not in cache]
+    if missing:
+        idx = pool_index()
+        rows = [r for t in missing for r in idx.track_rows.get(t, ()) if idx.serve[r]]
+        V0, found = raw_vectors(idx.ids[rows].tolist())
+        U = center(V0) if found else np.zeros((0, _vector_dim()), np.float32)
+        fresh: dict = {t: {} for t in missing}
+        for u, mid in zip(U, found):
+            r = idx.pos[mid]
+            slot = fresh[idx.tracks[r]].get(idx.labels[r])
+            if slot is None:
+                fresh[idx.tracks[r]][idx.labels[r]] = [u.astype(np.float64), 1, r, mid]
+            else:
+                slot[0] = slot[0] + u
+                slot[1] += 1
+                if r < slot[2]:
+                    slot[2], slot[3] = r, mid
+        cache.update(fresh)
+    return {t: cache[t] for t in tracks}
+
+
+def compute_onboarding_seeds(ans: dict) -> tuple[np.ndarray, np.ndarray, list]:
+    """답변 하나의 씨앗 (벡터, 가중치, [(구간 종류, 메타)]). **사용자와 무관하다.**
+
+    조건을 단계적으로 완화하며 추천 구간이 `ONBOARD_MIN_MATCH` 개 이상 모일 때까지
+    곡을 고르고, 고른 곡들의 구간 종류별 중심화 벡터 평균을 씨앗으로 쓴다. 구간 종류별로
+    씨앗을 나누고(하나로 평균 내지 않는다) 많은 쪽부터 `ONBOARD_SEEDS` 개를 둔다.
+
+    읽는 양은 곡 수(T)와 고른 곡의 구간 수다 — 곡 표를 조건으로 한 번 거르고, 구간은
+    `seed_sums` 의 곡별 합을 더한다. 답변 조합마다 한 번만 부른다(`onboarding_seeds`).
+    """
+    idx = pool_index()
+    track_ok = onboarding_track_ok(ans)
+    want_secs = set(ans.get("section_label") or [])
+
+    def labels_of(t):
+        return {lab: k for lab, k in idx.label_counts.get(t, {}).items()
+                if not want_secs or lab in want_secs}
+
+    matched: list[str] = []
     for relax in range(4):
-        pool = c.pool[c.pool.track_id.map(lambda t: track_ok(t, relax))]
-        if want_secs:
-            pool = pool[pool.section_label.isin(want_secs)]
-        pool = pool[pool.dur_sec >= MIN_MOMENT_SEC]
-        if len(pool) >= ONBOARD_MIN_MATCH:
+        matched = [t for t in idx.track_order if track_ok(t, relax)]
+        if sum(sum(labels_of(t).values()) for t in matched) >= ONBOARD_MIN_MATCH:
             break
-    if pool.empty:
+    matched = [t for t in matched if labels_of(t)]
+    if not matched:
         return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
 
-    # **원본 벡터를 읽어 여기서 중심화한다.** 조건에 맞는 구간들의 평균이라
-    # ANN 질의로 표현되지 않는다 — 그래서 원본 인덱스에서 id 로 가져온다.
-    V0, found = raw_vectors(pool.moment_id.astype(str).tolist())
-    if not found:
+    # **원본 벡터를 중심화해 더한다.** 조건에 맞는 구간들의 평균이라 ANN 질의로
+    # 표현되지 않는다 — 그래서 원본을 id 로 가져온다(`seed_sums`).
+    groups: dict = {}                       # 구간 종류 -> [합, 개수, 첫 풀 행, 대표 id]
+    for t, by_label in seed_sums(matched).items():
+        for lab, (u, k, first, mid) in by_label.items():
+            if want_secs and lab not in want_secs:
+                continue
+            g = groups.get(lab)
+            if g is None:
+                groups[lab] = [u.copy(), k, first, mid]
+            else:
+                g[0] += u
+                g[1] += k
+                if first < g[2]:
+                    g[2], g[3] = first, mid
+    if not groups:
         return np.zeros((0, _vector_dim()), np.float32), np.zeros(0), []
-    pool = pool[pool.moment_id.astype(str).isin(found)]
-    V = center(V0)
-    # 구간 라벨별로 씨앗을 나눈다 (하나로 평균 내지 않는다)
+    # 풀에 처음 나온 차례로 두고 구간이 많은 쪽부터 — 예전 `groupby(sort=False)` 뒤
+    # 안정 정렬과 같은 순서다.
+    order = sorted(groups.items(), key=lambda kv: kv[1][2])
+    order.sort(key=lambda kv: -kv[1][1])
     seeds, W, meta = [], [], []
-    groups = list(pool.groupby("section_label", sort=False))
-    groups.sort(key=lambda kv: -len(kv[1]))
-    place = {m: i for i, m in enumerate(found)}
-    for lab, g in groups[:ONBOARD_SEEDS]:
-        idx = [place[str(m)] for m in g.moment_id]
-        v = V[idx].mean(0)
-        v /= max(np.linalg.norm(v), 1e-9)
-        seeds.append(v)
-        W.append(float(len(g)) ** 0.5)
-        meta.append({"dna_id": f"{user}#seed_{lab}", "n_members": int(len(g)),
-                     "cohesion": float((V[idx] @ v).mean()),
-                     "rep_moment_id": str(g.iloc[0].moment_id),
-                     "source": "onboarding", "relax_level": relax})
+    for lab, (u, k, _first, mid) in order[:ONBOARD_SEEDS]:
+        norm = max(float(np.linalg.norm(u)), 1e-9)
+        seeds.append((u / norm).astype(np.float32))
+        W.append(float(k) ** 0.5)
+        # 응집도 = 구성원과 씨앗 방향의 평균 내적 = ‖합‖ / 개수
+        meta.append((lab, {"n_members": int(k), "cohesion": norm / k,
+                           "rep_moment_id": str(mid),
+                           "source": "onboarding", "relax_level": relax}))
     W = np.asarray(W, dtype=np.float32)
     W /= max(W.sum(), 1e-9)
     return np.asarray(seeds, dtype=np.float32), W, meta
@@ -1543,10 +1636,11 @@ def user_positives(user: str) -> pd.DataFrame:
 
 # ------------------------------------------------- 순간 벡터를 어디서 읽는가
 #
-# 두 갈래가 있고, **고르는 것은 설정이지 실패가 아니다.**
+# 두 갈래가 있고, **고르는 것은 설정이지 실패가 아니다.** 어느 쪽이든 추천 계산부는
+# `vector_store()` 가 돌려주는 인터페이스(`app/vector_store.py`)만 부른다.
 #
-#   local     `moments_emb.npy` 를 읽는다. Pinecone 전환 전의 동작이다
-#   pinecone  후보는 후보 인덱스에서 찾고, 원본 벡터는 원본 인덱스에서 가져온다
+#   local     `moments_emb.npy` 를 읽는다. 운영이 지금 이것이다 (2026-09-24~)
+#   pinecone  후보는 인덱스에서 찾고, 원본은 `mu + r·u` 로 되돌린다 (459 에서 지운다)
 #
 # Pinecone 을 켜 둔 배포에서 Pinecone 이 **실패하면 local 로 내려가지 않는다.**
 # 내려가면 노드에 남은 옛 벡터로 조용히 다른 추천이 나가고, 그 사실이 응답 어디에도
@@ -1556,37 +1650,51 @@ def vector_backend() -> str:
     return "pinecone" if pinecone_store.enabled() else "local"
 
 
+def vector_store(c: Optional["Catalog"] = None) -> vstore.VectorStore:
+    """지금 설정의 순간 벡터 저장소.
+
+    로컬 저장소는 **판에 딸린다**(`_index_cache`) — 요청 사본끼리 나눠 갖고, 판을 새로
+    올리면 함께 사라진다. 평균 μ 도 저장소가 들고 있다(색인 풀 전체로 한 번, !285).
+    """
+    if vector_backend() == "pinecone":
+        return vstore.PINECONE
+    c = c if c is not None else current()
+    got = c._index_cache.get("vector_store")
+    if got is None:
+        Z = _require_local_vectors("vector_store")
+        mom, pool = c._mom_index, index_pool(c)
+        version = (c.info.get("embedding_version", "mert-v1-95m")
+                   if isinstance(c.info, dict) else "mert-v1-95m")
+        got = vstore.LocalVectorStore(
+            Z, dict(zip(mom.moment_id.astype(str), mom.emb_row.astype(int))),
+            pool.moment_id.astype(str).tolist(), pool.emb_row.to_numpy(),
+            version, POOL_SOURCES)
+        c._index_cache["vector_store"] = got
+    return got
+
+
 def _pool_mean() -> np.ndarray:
-    """중심화에 쓰는 풀 평균.
+    """중심화에 쓰는 풀 평균. **저장소가 들고 있다.**
 
     Pinecone 을 켜면 **판에 고정된 평균**을 쓴다. 요청마다 풀에서 다시 재면 적재
     때와 다른 공간으로 질의가 나가 유사도가 통째로 내려앉는다 — 오류 없이 품질만
-    나빠지는 종류다. 고정본이 없으면 멈춘다(지어내지 않는다).
+    나빠지는 종류다. 고정본이 없으면 멈춘다(지어내지 않는다). control 을 읽을 때마다
+    상태와 세대를 함께 보므로, 배치가 μ 를 갈면 재기동 없이 새 μ 를 쓴다.
 
     로컬 갈래는 **색인 풀 전체**(`index_pool`)로 한 번 잰다 — Pinecone 적재가 평균을
     재는 범위와 같다. 요청의 후보(`catalog`)로 재면 안 된다: 검색은 Spring 이 조건으로
     거른 후보만 보내므로, "발라드만" 온 요청은 발라드의 평균으로 중심화돼 질의마다
     기준점이 달라진다. 오류 없이 순위만 틀어진다(2026-09-24 에 찾았다).
     """
-    c = current()
-    if vector_backend() == "pinecone":
-        # control 이 들고 있다. **읽을 때마다 상태와 세대를 함께 본다** —
-        # UPDATING 이면 여기서 멈추고, 세대가 바뀌었으면 새 μ 로 갈아 끼운다.
-        # 서버를 다시 띄우지 않아도 새 평균을 쓰게 되는 자리가 여기다.
-        return pinecone_store.serving_center().mu
-    Z = _require_local_vectors("_pool_mean")
-    cache = c._index_cache
-    if cache.get("pool_mean") is None:
-        rows = index_pool(c).emb_row.to_numpy()
-        cache["pool_mean"] = np.asarray(Z[rows], dtype=np.float32).mean(0)
-    return cache["pool_mean"]
+    return vector_store().mu
 
 
 def raw_vectors(moment_ids) -> tuple[np.ndarray, list[str]]:
     """원본 Z 를 `external_id` 로 읽는다. **변환 벡터를 쓰지 않는다.**
 
     DNA 군집과 온보딩 조건별 평균이 부른다. 둘 다 "닮은 것 찾기" 가 아니라 "이
-    구간들의 평균" 이라 ANN 질의로 표현되지 않는다 — 그래서 원본 인덱스가 따로 있다.
+    구간들의 평균" 이라 ANN 질의로 표현되지 않는다 — 그래서 원본을 id 로 가져온다.
+    후보를 좁힌 뒤의 점수 계산도 이것으로 원본을 다시 읽는다.
 
     돌려주는 것은 (벡터, 실제로 찾은 id) 다. 없는 id 는 빠지므로 부르는 쪽이 수를
     세어 판단한다.
@@ -1594,35 +1702,23 @@ def raw_vectors(moment_ids) -> tuple[np.ndarray, list[str]]:
     ids = [str(m) for m in moment_ids]
     if not ids:
         return np.zeros((0, _vector_dim()), np.float32), []
-    if vector_backend() == "local":
-        Z = _require_local_vectors("raw_vectors")
-        rowmap = current().mom.set_index(current().mom.moment_id.astype(str)).emb_row
-        keep = [i for i in ids if i in rowmap.index]
-        if not keep:
-            return np.zeros((0, _vector_dim()), np.float32), []
-        rows = rowmap.loc[keep].to_numpy()
-        return np.asarray(Z[rows], dtype=np.float32), keep
-    got = pinecone_store.fetch_raw(ids)
+    got = vector_store().fetch(ids)
     keep = [i for i in ids if i in got]          # 부른 차례를 지킨다
     if not keep:
         return np.zeros((0, _vector_dim()), np.float32), []
     return np.asarray([got[i] for i in keep], dtype=np.float32), keep
 
 
-def candidate_search(query_vector: np.ndarray, top_k: int) -> list[tuple[str, float]]:
+def candidate_search(query_vector: np.ndarray, top_k: int,
+                     allow: Optional[vstore.AllowList] = None) -> list[tuple[str, float]]:
     """닮은 순간 후보. 질의는 **이미 중심화된** 벡터여야 한다.
 
-    Pinecone 갈래는 후보 인덱스만 본다(저장값이 `normalize(Z - mu)` 라 같은 공간이다).
-    local 갈래는 오늘처럼 풀 전체와 내적해 상위만 남긴다 — 같은 값이 나온다.
+    `allow` 를 주지 않으면 이 요청의 후보 풀 전체(`catalog` 에 있는 순간)로 묶는다.
+    로컬 갈래는 그 안에서 내적해 상위만 남기고(로컬 ANN 대용), Pinecone 갈래는 넓게
+    찾은 뒤 카탈로그 밖을 거른다.
     """
     q = np.asarray(query_vector, dtype=np.float32).reshape(-1)
-    if vector_backend() == "pinecone":
-        return pinecone_store.search(q, top_k)
-    c = current()
-    Z = _require_local_vectors("candidate_search")
-    sim = center(np.asarray(Z[c.pool_rows], dtype=np.float32)) @ q
-    order = np.argsort(-sim)[:top_k]
-    return [(str(c.pool.moment_id.iloc[int(i)]), float(sim[int(i)])) for i in order]
+    return vector_store().search(q, top_k, allow if allow is not None else _pool_allow())
 
 
 def index_pool(c: Optional["Catalog"] = None) -> pd.DataFrame:
@@ -1642,6 +1738,7 @@ def current_snapshot() -> str:
 
     풀 전체 벡터를 한 번 훑는다(mmap). 기동에서 한 번뿐이고, 이 한 번이 "평균만
     옛 것" 인 상태를 잡는다 — 그 상태는 오류가 아니라 유사도 저하로만 드러난다.
+    Pinecone 을 켜 두어도 **판의 벡터로** 잰다 — control 이 적은 값과 대조하는 자리다.
     """
     c = current()
     pool = index_pool(c)
@@ -1677,6 +1774,176 @@ def center(V: np.ndarray) -> np.ndarray:
     return W
 
 
+# ---------------------------------------------- 요청 사본마다 한 번 세는 것 (S15P21A204-452)
+#
+# 요청 경로에서 풀 전체(N)를 훑는 연산을 **사본마다 한 번**으로 옮긴 자리다. 사본은 본문
+# `catalog` 의 해시로 재사용되므로(`internal_api._view`) `daily`·`next` 는 첫 요청만 이
+# 값을 만들고, 그 뒤 요청은 후보 K 개와 사용자 이력 H 만 다룬다. 무엇이 어디로 옮겨졌는지는
+# `ai_server/docs/REQUEST-PATH-COMPLEXITY.md` 에 적었다.
+#
+# 캐시는 사본 객체에 붙는다(`_view_cache`). `_bind` 가 지우므로 다른 본문의 값이 새지 않고,
+# 벡터에서 나온 값은 저장소 세대(`generation`)를 열쇠에 넣어 판·갈래가 바뀌면 새로 센다.
+
+def _view_cache(c: Optional["Catalog"] = None) -> dict:
+    c = c if c is not None else current()
+    got = c.__dict__.get("_view_cache")
+    if got is None:
+        got = c.__dict__.setdefault("_view_cache", {})
+    return got
+
+
+def _bounded(cache: dict, name: str) -> "OrderedDict":
+    got = cache.get(name)
+    if got is None:
+        got = cache.setdefault(name, OrderedDict())
+    return got
+
+
+def _remember(od: "OrderedDict", key, value):
+    od[key] = value
+    od.move_to_end(key)
+    while len(od) > VIEW_CACHE_MAX:
+        od.popitem(last=False)
+    return value
+
+
+class PoolIndex:
+    """요청 사본의 후보 풀을 한 번 훑어 만든 색인. **사용자와 무관한 값만** 든다.
+
+    `pos`          external_id → 풀 행 번호 (예전 `pool.moment_id == x`·`isin` 자리)
+    `serve`        추천에 쓰는 행 (`MIN_MOMENT_SEC` 이상). 예전에는 요청마다 걸렀다
+    `rms_pct`      곡 안 에너지 백분위 — 결합기 특징 `rms_pct`. 후보만 보고 세면
+                   후보를 좁힌 만큼 값이 바뀌므로 곡의 구간 전체로 한 번 센다
+    `cold`         콜드스타트 규칙 점수(에너지 백분위·곡 40% 부근). `cold_order` 가 그 순서
+    `track_rows`   곡 → 풀 행 번호들 (첫 chorus·온보딩 씨앗)
+    `label_counts` 곡 → {구간 종류: 추천에 쓰는 행 수} (온보딩 씨앗의 완화 판정)
+    """
+
+    def __init__(self, c: "Catalog") -> None:
+        pool = c.pool
+        n = len(pool)
+        self.ids = pool.moment_id.astype(str).to_numpy()
+        self.tracks = pool.track_id.astype(str).to_numpy()
+        self.labels = pool.section_label.astype(str).to_numpy()
+        self.pos = {m: i for i, m in enumerate(self.ids)}
+        self.serve = (pool.dur_sec.to_numpy(dtype=np.float64) >= MIN_MOMENT_SEC)
+        self.dropped_short = int((~self.serve).sum())
+        sp = pool[self.serve]
+        rms = sp.rms.to_numpy(dtype=np.float64) if "rms" in sp.columns else np.zeros(len(sp))
+        self.rms_pct = np.full(n, 0.5, dtype=np.float64)
+        self.rms_pct[self.serve] = np.nan_to_num(
+            sp.assign(_r=rms).groupby("track_id")._r.rank(pct=True).to_numpy(), nan=0.5)
+        self.cold = np.full(n, -np.inf, dtype=np.float64)
+        if len(sp):
+            self.cold[self.serve] = (
+                sp.rms.rank(pct=True).to_numpy() * 0.5
+                + (1.0 - (((sp.rel_start + sp.rel_end) / 2 - 0.4).abs() / 0.6).clip(0, 1)
+                   ).to_numpy())
+        serve_rows = np.flatnonzero(self.serve)
+        self.cold_order = serve_rows[np.argsort(-self.cold[serve_rows], kind="stable")]
+        self.track_rows: dict[str, list[int]] = {}
+        self.label_counts: dict[str, dict[str, int]] = {}
+        self.track_order: list[str] = []
+        for i in range(n):
+            t = self.tracks[i]
+            if t not in self.track_rows:
+                self.track_rows[t] = []
+                self.label_counts[t] = {}
+                self.track_order.append(t)
+            self.track_rows[t].append(i)
+            if self.serve[i]:
+                lc = self.label_counts[t]
+                lc[self.labels[i]] = lc.get(self.labels[i], 0) + 1
+        self._mood_rows: Optional[dict] = None
+
+    def mood_rows(self) -> dict:
+        """정규화한 무드 → 그 무드를 가진 곡의 추천 행, **콜드스타트 순서대로**."""
+        if self._mood_rows is None:
+            meta = catalog_facet_rows()
+            moods = {t: set(_qvals((meta.get(t) or {}).get("moods", [])))
+                     for t in self.track_rows}
+            out: dict[str, list[int]] = {}
+            for i in self.cold_order:
+                for m in moods.get(self.tracks[i], ()):
+                    out.setdefault(m, []).append(int(i))
+            self._mood_rows = out
+        return self._mood_rows
+
+
+def pool_index(c: Optional["Catalog"] = None) -> PoolIndex:
+    cache = _view_cache(c)
+    got = cache.get("pool_index")
+    if got is None:
+        got = cache.setdefault("pool_index", PoolIndex(c if c is not None else current()))
+    return got
+
+
+def _vec_cache(c: Optional["Catalog"] = None) -> dict:
+    """벡터에서 나온 사본 캐시. 저장소 세대가 바뀌면(판 교체·갈래 전환) 새로 센다."""
+    return _view_cache(c).setdefault(("vectors", vector_store(c).generation), {})
+
+
+class Gate:
+    """후보 단계의 게이트 하나 = 풀 행 마스크 + 저장소 허용 목록.
+
+    언어·보컬·스타일 제외(온보딩 명시 선호)와 구간 유형(이력 없는 온보딩)을 **검색 전에**
+    건다. 예전에는 풀 전체를 점수 매긴 뒤 `keep` 으로 떨궜다 — 후보를 먼저 좁히면 게이트
+    밖의 이웃이 상위 K 를 차지해 남는 후보가 마른다. Qdrant 에서는 payload 필터가 아니라
+    이 허용 목록(`HasId`)으로 간다 — MySQL 값을 Qdrant 에 넣지 않는다(설계 §6.1).
+    """
+
+    def __init__(self, mask: np.ndarray, allow: vstore.AllowList, cold_rows: np.ndarray,
+                 dropped_filter: int = 0, dropped_section: int = 0) -> None:
+        self.mask = mask
+        self.allow = allow
+        self.cold_rows = cold_rows          # 콜드스타트 순서 중 게이트를 지난 행
+        self.dropped_filter = dropped_filter
+        self.dropped_section = dropped_section
+
+
+def _gate(wl=(), wv=(), xs=(), ws=()) -> Gate:
+    """(언어, 보컬, 제외 스타일, 구간 유형) 조합의 게이트. 사본·세대마다 조합당 한 번 만든다."""
+    key = (tuple(sorted(wl)), tuple(sorted(wv)), tuple(sorted(xs)), tuple(sorted(ws)))
+    cache = _bounded(_vec_cache(), "gates")
+    hit = cache.get(key)
+    if hit is not None:
+        cache.move_to_end(key)
+        return hit
+    idx = pool_index()
+    mask = idx.serve.copy()
+    dropped_filter = dropped_section = 0
+    if wl or wv or xs:
+        meta = catalog_facet_rows()
+        ok_track = {}
+        for t in idx.track_rows:
+            r = meta.get(t)
+            ok_track[t] = r is not None and (
+                (not wl or r.get("language") in wl)
+                and (not wv or bool(set(_vocal_values(
+                    r.get("has_vocal"), r.get("vocal_gender"))) & set(wv)))
+                and (not xs or r.get("style") not in xs))
+        okm = np.asarray([ok_track[t] for t in idx.tracks], dtype=bool)
+        dropped_filter = int((mask & ~okm).sum())
+        mask &= okm
+    if ws:
+        okl = np.isin(idx.labels, list(ws))
+        dropped_section = int((mask & ~okl).sum())
+        mask &= okl
+    rows = np.flatnonzero(mask)
+    gate = Gate(mask, vector_store().allow(idx.ids[rows].tolist()),
+                idx.cold_order[mask[idx.cold_order]], dropped_filter, dropped_section)
+    return _remember(cache, key, gate)
+
+
+def _pool_allow() -> vstore.AllowList:
+    """이 요청 후보 풀 전체(짧은 구간 포함) — `similar` 가 보는 범위."""
+    cache = _vec_cache()
+    got = cache.get("pool_allow")
+    if got is None:
+        got = cache.setdefault("pool_allow", vector_store().allow(pool_index().ids.tolist()))
+    return got
+
+
 def similar_moments(moment_id: str, n: int, exclude_tracks: set[str] | None = None,
                     same_track: bool = False) -> list[dict]:
     """기준 구간과 닮은 다른 곡의 구간. **개인화는 하지 않는다.**
@@ -1691,11 +1958,11 @@ def similar_moments(moment_id: str, n: int, exclude_tracks: set[str] | None = No
     곡" 으로서 쓸모가 없다.
     """
     c = current()
-    hit = c.pool.index[c.pool.moment_id == moment_id]
-    if not len(hit):
+    idx = pool_index(c)
+    i0 = idx.pos.get(str(moment_id))
+    if i0 is None:
         return []
-    i0 = int(hit[0])
-    src_track = str(c.pool.track_id.iloc[i0])
+    src_track = str(idx.tracks[i0])
 
     # 질의 벡터는 **원본**에서 만들어 중심화한다. 저장된 후보가 같은 변환을 거친
     # 것이라 이래야 같은 공간이다.
@@ -1709,20 +1976,18 @@ def similar_moments(moment_id: str, n: int, exclude_tracks: set[str] | None = No
         drop.add(src_track)
 
     # 곡당 하나만 남기므로 넉넉히 받아 온다. 한 곡이 구간 여럿으로 상위를 채우면
-    # 그만큼 곡 수가 줄어든다.
+    # 그만큼 곡 수가 줄어든다. **카탈로그에 있는 순간만** 찾는다 — Pinecone 에 남아
+    # 있어도 MySQL 에서 지워졌으면 화면이 그 줄을 열지 못한다.
     want = max(n * SIMILAR_OVERFETCH, n + 1)
     by_moment = dict(candidate_search(q, want))
-
-    # **카탈로그에 있는 순간만** 남긴다. Pinecone 에 남아 있어도 MySQL 에서
-    # 지워졌으면 화면이 그 줄을 열지 못한다.
-    pool_by_id = c.pool.set_index(c.pool.moment_id.astype(str))
 
     out: list[dict] = []
     seen: set[str] = set()
     for mid, score in sorted(by_moment.items(), key=lambda kv: -kv[1]):
-        if mid == str(moment_id) or mid not in pool_by_id.index:
+        i = idx.pos.get(mid)
+        if mid == str(moment_id) or i is None:
             continue
-        r = pool_by_id.loc[mid]
+        r = c.pool.iloc[i]
         t = str(r.track_id)
         if t in drop or t in seen:
             continue
@@ -1749,7 +2014,10 @@ def build_dna(user: str, query_plan: Optional[dict] = None,
         # 조건 검색이다. **후보는 Spring 이 이미 조건으로 걸렀다**(연동 계약 2026-09-23
         # 절). 그 안에 있는 선호 구간만 취향 묶음에 쓴다 — 조건 밖의 취향이 섞이면 "피아노
         # 곡" 을 물었는데 좋아하는 록 곡 쪽으로 끌려간다.
-        matched = c.pool[c.pool.moment_id.isin(pos.section_key)]
+        # 선호 구간(H)에서 풀을 찾는다. 풀(N)에서 선호 구간을 찾지 않는다.
+        idx = pool_index(c)
+        rows = sorted({idx.pos[k] for k in pos.section_key.astype(str) if k in idx.pos})
+        matched = c.pool.iloc[rows]
         want_mood = _qvals(((query_plan or {}).get("filters") or {}).get("mood"))
         if want_mood:
             meta = catalog_facet_rows()
@@ -1849,9 +2117,25 @@ FEATS_ALL = (["rule_sim", "model_sim", "log_dur", "rel_center", "rms_pct", "bpm_
              + [f"lab_{L}" for L in LABELS8])
 
 
+def _track_bpm(c: "Catalog", track_ids) -> np.ndarray:
+    """후보 곡들의 BPM (모르면 0). `c.content.bpm.get(t)` 를 후보마다 부르던 자리다.
+
+    값은 같다 — `content.bpm` 은 이미 0 으로 채워져 있고, 없는 곡은 0 이다. 후보마다
+    DataFrame 속성을 다시 찾는 비용(후보당 수십 µs)이 후보 수만큼 쌓여 묶음마다 부르는
+    `serve_features` 에서 요청 시간의 대부분을 차지했다.
+    """
+    ids = pd.Series(np.asarray(track_ids, dtype=object))
+    return ids.map(c.content.bpm).fillna(0.0).to_numpy(dtype=np.float64)
+
+
 def serve_features(pool: pd.DataFrame, rule_sim: np.ndarray, model_sim: np.ndarray,
-                   bpm_pref: float) -> np.ndarray:
-    """전체 특징을 만든 뒤 결합기가 선언한 이름 순서로 고른다."""
+                   bpm_pref: float, rms_pct: Optional[np.ndarray] = None) -> np.ndarray:
+    """전체 특징을 만든 뒤 결합기가 선언한 이름 순서로 고른다.
+
+    `rms_pct` 는 곡 안 에너지 백분위다. 추천 경로는 사본에서 곡의 구간 전체로 센 값
+    (`PoolIndex.rms_pct`)을 넘긴다 — 후보만 보고 세면 후보를 좁힌 만큼 값이 바뀐다.
+    주지 않으면 받은 `pool` 안에서 센다(예전 식).
+    """
     c = current()
     n = len(pool)
     F = np.zeros((n, len(FEATS_ALL)), dtype=np.float64)
@@ -1859,11 +2143,14 @@ def serve_features(pool: pd.DataFrame, rule_sim: np.ndarray, model_sim: np.ndarr
     F[:, 1] = model_sim
     F[:, 2] = np.log1p(pool.dur_sec.to_numpy(dtype=np.float64))
     F[:, 3] = ((pool.rel_start + pool.rel_end) / 2).to_numpy(dtype=np.float64)
-    rms = pool.rms.to_numpy(dtype=np.float64) if "rms" in pool.columns else np.zeros(n)
-    F[:, 4] = np.nan_to_num(
-        pool.assign(_r=rms).groupby("track_id")._r.rank(pct=True).to_numpy(), nan=0.5)
+    if rms_pct is not None:
+        F[:, 4] = rms_pct
+    else:
+        rms = pool.rms.to_numpy(dtype=np.float64) if "rms" in pool.columns else np.zeros(n)
+        F[:, 4] = np.nan_to_num(
+            pool.assign(_r=rms).groupby("track_id")._r.rank(pct=True).to_numpy(), nan=0.5)
     if bpm_pref > 0:
-        bpm = np.array([float(c.content.bpm.get(t, 0.0)) for t in pool.track_id])
+        bpm = _track_bpm(c, pool.track_id)
         F[:, 5] = np.abs(np.log2(np.clip(bpm, 1e-6, None) / bpm_pref))
     li = {L: i for i, L in enumerate(LABELS8)}
     for k, L in enumerate(pool.section_label.astype(str)):
@@ -1908,13 +2195,18 @@ def soft_rerank(v: np.ndarray, clap_active: bool, clap_pct: np.ndarray,
     return out
 
 
-def mood_match_ratio(pool: pd.DataFrame, wanted: list, fac: pd.DataFrame) -> np.ndarray:
-    """요청한 무드 중 그 곡이 실제로 가진 비율. 게이트가 아니라 가점 재료다."""
+def mood_match_ratio(pool: pd.DataFrame, wanted: list, fac) -> np.ndarray:
+    """요청한 무드 중 그 곡이 실제로 가진 비율. 게이트가 아니라 가점 재료다.
+
+    `fac` 은 track_id → 메타 dict(`catalog_facet_rows()`)다. 요청마다 곡 표 전체를
+    `set_index` 하지 않으려고 dict 를 받는다. DataFrame 을 주면 dict 로 옮겨 쓴다.
+    """
     want = set(_qvals(wanted))
     if not want:
         return np.zeros(len(pool), dtype=np.float32)
-    per_track = {t: len(want & set(_qvals(fac.loc[t].get("moods", []))))
-                 for t in pool.track_id.unique() if t in fac.index}
+    rows = fac if isinstance(fac, dict) else fac.to_dict("index")
+    per_track = {t: len(want & set(_qvals((rows.get(t) or {}).get("moods", []))))
+                 for t in pool.track_id.unique() if t in rows}
     return np.asarray([per_track.get(t, 0) / len(want) for t in pool.track_id],
                       dtype=np.float32)
 
@@ -1954,16 +2246,19 @@ def _flow_penalty(pool: pd.DataFrame, current_track_id: Optional[str],
         return None
     c = current()
     ref_bpm = float(c.content.bpm.get(current_track_id, 0.0) or 0.0)
-    ref = c.mom[c.mom.moment_id == current_moment_id] if current_moment_id else c.mom.iloc[0:0]
-    if ref.empty:
-        ref = c.mom[c.mom.track_id == current_track_id]
-    ref_rms = float(ref.rms.mean()) if not ref.empty else 0.0
+    # 기준 구간의 에너지. 예전에는 `c.mom` 전체를 id 로 훑었다(요청마다 O(N)) — 사본마다
+    # 한 번 dict 로 만들어 두고 찾는다. 구간을 모르면 그 곡 구간들의 평균이다.
+    by_moment, by_track = _reference_energy(c)
+    ref_rms = by_moment.get(str(current_moment_id)) if current_moment_id else None
+    if ref_rms is None:
+        ref_rms = by_track.get(str(current_track_id))
+    ref_rms = float(ref_rms) if ref_rms is not None and ref_rms == ref_rms else 0.0
     if ref_bpm <= 0 and ref_rms <= 0:
         return None
 
     pen = np.zeros(len(pool), dtype=np.float64)
     if ref_bpm > 0:
-        bpm = np.array([float(c.content.bpm.get(t, 0.0) or 0.0) for t in pool.track_id])
+        bpm = _track_bpm(c, pool.track_id)
         known = bpm > 0
         lr = np.zeros(len(pool))
         lr[known] = np.abs(np.log2(bpm[known] / ref_bpm))
@@ -1974,6 +2269,19 @@ def _flow_penalty(pool: pd.DataFrame, current_track_id: Optional[str],
         rel = np.abs(pool.rms.to_numpy() - ref_rms) / max(ref_rms, 1e-9)
         pen += FLOW_W_ENERGY * np.clip((rel - 1.0), 0.0, 1.0)
     return pen
+
+
+def _reference_energy(c: "Catalog") -> tuple[dict, dict]:
+    """(구간 → rms, 곡 → 구간 rms 평균). 색인 전체(`c.mom`)로 사본마다 한 번 센다."""
+    cache = _view_cache(c)
+    got = cache.get("reference_energy")
+    if got is None:
+        mom = c.mom
+        rms = pd.to_numeric(mom.rms, errors="coerce")
+        got = (dict(zip(mom.moment_id.astype(str), rms.to_numpy())),
+               rms.groupby(mom.track_id.astype(str)).mean().to_dict())
+        cache["reference_energy"] = got
+    return got
 
 
 def first_chorus_moments(pool: pd.DataFrame, picked: list[int]) -> dict[int, int]:
@@ -1996,6 +2304,39 @@ def first_chorus_moments(pool: pd.DataFrame, picked: list[int]) -> dict[int, int
         if t not in first or key < first[t]:
             first[t] = key
     return {i: first[tids[i]][2] if tids[i] in first else i for i in picked}
+
+
+def _cold_candidates(idx: PoolIndex, gate: Gate, hard: set, k: int,
+                     want_mood: list) -> np.ndarray:
+    """씨앗이 없을 때의 후보: 콜드스타트 순서 앞에서 하드 제외를 뺀 K 개.
+
+    조건 검색에서 무드를 물었으면 **그 무드를 가진 곡** 중 앞의 K 개도 더한다. 무드는
+    게이트가 아니라 가점(`MOOD_WEIGHT`)이라, 순서가 조금 뒤여도 무드가 맞으면 위로
+    올라올 수 있다 — 그 곡들이 후보에서 빠지면 가점이 할 일이 없다.
+    읽는 양은 K 와 하드 제외 수(H)에 비례한다. 풀 전체를 훑지 않는다.
+    """
+    out: list[int] = []
+    seen: set = set()
+
+    def take(seq, limit: int) -> None:
+        got = 0
+        for i in seq:
+            if got >= limit:
+                break
+            i = int(i)
+            if not gate.mask[i] or idx.tracks[i] in hard:
+                continue
+            got += 1
+            if i not in seen:
+                seen.add(i)
+                out.append(i)
+
+    take(gate.cold_rows, k)
+    if want_mood:
+        by_mood = idx.mood_rows()
+        for m in dict.fromkeys(want_mood):
+            take(by_mood.get(m, ()), k)
+    return np.asarray(sorted(out), dtype=np.int64)
 
 
 def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_plan: Optional[dict] = None,
@@ -2045,37 +2386,79 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
                             "excluded_dislike": len(beh["dislike"] - set(exclude)),
                             "skip_penalty_applied": 0}
 
-    pool = c.pool[~c.pool.track_id.isin(hard)]
-    pool = pool[pool.dur_sec >= MIN_MOMENT_SEC]
-    diag["dropped_short"] = int((c.pool.dur_sec < MIN_MOMENT_SEC).sum())
+    idx = pool_index(c)
+    diag["dropped_short"] = idx.dropped_short
     if query_plan is not None:
         # 조건 게이트는 Spring 이 걸었다. 여기서 다시 걸지 않는다 — 두 곳이 같은 규칙을
         # 따로 들고 있으면 한쪽만 고쳐진다. 무드 가점과 CLAP 은 아래에서 한다.
         diag["nlp"] = {"gates": "spring",
                        "plan": {k: v for k, v in query_plan.items()
                                 if not str(k).startswith("_")}}
-    # ── 후보 검색. Pinecone 갈래는 **여기서** 후보를 좁힌다.
+    want_mood = _qvals(((query_plan or {}).get("filters") or {}).get("mood"))
+
+    # ---- 명시 선호 게이트: 청취 이력 유무와 무관하게 항상 적용 (게이트 인계) ----
+    # **후보 단계에서 건다**(S15P21A204-452). 예전에는 풀 전체를 점수 매긴 뒤 `keep` 으로
+    # 떨궜는데, 후보를 먼저 좁히면 게이트 밖 이웃이 상위 K 를 차지해 후보가 마른다.
+    ans = (onboarding_of(user, onboarding) or {}) if query_plan is None else {}
+    wl = ans.get("language") or []
+    wv = ans.get("vocal_type") or []
+    xs = ans.get("exclude_style") or []
+    # 구간 유형은 **추정 대상**이다. 이력이 없을 때만 게이트로 걸고,
+    # 이력이 생기면 학습된 점수가 담당한다.
+    ws = ans.get("section_label") or []
+    section_gate = bool(ws) and query_source == "onboarding"
+    gate = _gate(wl, wv, xs, ws if section_gate else ())
+    if ans:
+        if wl or wv or xs:
+            diag["dropped_onboarding_filter"] = gate.dropped_filter
+        diag["persistent_gates"] = {"language": wl, "vocal_type": wv, "exclude_style": xs}
+        if section_gate:
+            diag["dropped_onboarding_section"] = gate.dropped_section
+            diag["section_gate"] = "active (이력 없음)"
+        elif ws:
+            diag["section_gate"] = "released (이력 기반 점수로 전환)"
+
+    # ── 후보 검색. **점수는 여기서 뽑은 후보 K 개에만 매긴다.**
     #
-    # DNA 중심마다 닮은 순간을 받아 그 합집합만 남긴다. 좁힌 뒤의 점수 계산은 아래가
-    # 그대로 한다 — Pinecone 은 후보를 고르는 일만 하고 최종 순위는 맡지 않는다.
+    # 씨앗(DNA 중심·온보딩 씨앗)마다 닮은 순간을 받아 그 합집합만 남긴다. 좁힌 뒤의 점수
+    # 계산은 아래가 그대로 한다 — 저장소는 후보를 고르는 일만 하고 최종 순위는 맡지 않는다.
+    # 씨앗이 없으면(콜드스타트) 사본마다 한 번 세 둔 콜드스타트 순서에서 앞의 것만 쓴다.
+    # 예전에는 이때 풀 전체를 점수 매겼고, Pinecone 갈래에서 풀 전체 fetch 가 됐다.
+    #
+    # 하드 제외(목록·세션 재생곡·DISLIKE)는 사용자 이력(H)이라 검색 뒤에 뺀다. 뺄 만큼 더
+    # 받아 와서 "제외하지 않은 것 중 상위 K" 가 되게 한다.
     #
     # 좁힌 뒤 **원본 벡터를 다시 가져와 여기서 중심화한다.** 검색 점수를 그대로
     # 쓰지 않는 이유는, 중심마다 상위 K 밖의 값을 모르는 채로 행렬을 채우면 그
     # 빈자리가 점수에 섞이기 때문이다. 원본을 가져오면 좁히기 전과 **같은 값**이 된다.
-    if vector_backend() == "pinecone" and len(C):
-        found: dict = {}
-        for j, cv in enumerate(C):
-            for mid, _score in candidate_search(cv, DNA_CANDIDATES_PER_SEED):
-                found.setdefault(mid, j)
-        before = len(pool)
-        pool = pool[pool.moment_id.astype(str).isin(found)].reset_index(drop=True)
-        diag["vector_search"] = {"backend": "pinecone", "seeds": int(len(C)),
+    hard_rows = sum(len(idx.track_rows.get(str(t), ())) for t in hard)
+    if len(C):
+        hits = vector_store().search_many(C, DNA_CANDIDATES_PER_SEED + hard_rows, gate.allow)
+        found: set = set()
+        for got in hits:
+            taken = 0
+            for mid, _score in got:
+                i = idx.pos.get(mid)
+                if i is None or idx.tracks[i] in hard:
+                    continue
+                found.add(i)
+                taken += 1
+                if taken >= DNA_CANDIDATES_PER_SEED:
+                    break
+        prow = np.asarray(sorted(found), dtype=np.int64)
+        diag["vector_search"] = {"backend": vector_backend(), "seeds": int(len(C)),
+                                 "candidates_from": "seeds",
                                  "per_seed": DNA_CANDIDATES_PER_SEED,
-                                 "retrieved": len(found),
-                                 "kept_after_catalog_gate": len(pool),
-                                 "dropped_from_pool": int(before - len(pool))}
+                                 "allowed": len(gate.allow),
+                                 "retrieved": int(len(prow))}
     else:
-        diag["vector_search"] = {"backend": vector_backend(), "seeds": int(len(C))}
+        k = max(COLD_START_CANDIDATES, n * 8)
+        prow = _cold_candidates(idx, gate, hard, k, want_mood)
+        diag["vector_search"] = {"backend": vector_backend(), "seeds": 0,
+                                 "candidates_from": "cold_start_order",
+                                 "per_order": k, "allowed": len(gate.allow),
+                                 "retrieved": int(len(prow))}
+    pool = c.pool.iloc[prow].reset_index(drop=True)
 
     diag["candidates"] = len(pool)
     if pool.empty:
@@ -2101,10 +2484,8 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     # 대신 일치하는 곡을 위로 올린다. CLAP 이 없는 경로(호출자가 QueryPlan 을 직접 보낸
     # 경우)에서 mood 가 아무 일도 하지 않던 것을 메운다.
     mood_match = None
-    want_mood = _qvals(((query_plan or {}).get("filters") or {}).get("mood"))
     if want_mood:
-        mood_match = mood_match_ratio(pool, want_mood, catalog_facets()["_df"]
-                                      .set_index("track_id"))
+        mood_match = mood_match_ratio(pool, want_mood, catalog_facet_rows())
         diag["mood_rerank"] = {"requested": want_mood, "weight": MOOD_WEIGHT,
                                "matched": int((mood_match > 0).sum()),
                                "candidates": len(pool)}
@@ -2113,14 +2494,17 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     V0, kept = raw_vectors(pool.moment_id.astype(str).tolist())
     if len(kept) != len(pool):
         # 카탈로그에는 있는데 벡터가 없는 순간. 점수를 지어내지 않고 후보에서 뺀다.
-        pool = pool[pool.moment_id.astype(str).isin(kept)].reset_index(drop=True)
+        # 곁따르는 배열도 **같은 마스크로** 자른다 — 앞에서 자르면 행이 어긋난다.
+        has = pool.moment_id.astype(str).isin(kept).to_numpy()
+        pool = pool[has].reset_index(drop=True)
+        prow = prow[has]
         diag["missing_vectors"] = int(diag["candidates"] - len(pool))
         if pool.empty:
             return {"results": [], "diagnostics": {**diag, "reason": "후보 벡터가 없다"}}
-        clap_score = clap_score[:len(pool)]
-        clap_pct = clap_pct[:len(pool)]
+        clap_score = clap_score[has]
+        clap_pct = clap_pct[has]
         if mood_match is not None:
-            mood_match = mood_match[:len(pool)]
+            mood_match = mood_match[has]
     V = center(V0)
     n_pairs = 0
     if len(C):
@@ -2130,8 +2514,9 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         n_pairs = int(S.size)
     else:
         # 조사도 라벨도 없을 때의 최후 폴백. 근거가 약하므로 그 사실을 함께 알린다.
-        s_rule = pool.rms.rank(pct=True).to_numpy() * 0.5 + \
-            (1.0 - (((pool.rel_start + pool.rel_end) / 2 - 0.4).abs() / 0.6).clip(0, 1)).to_numpy()
+        # 점수(에너지 백분위·곡 40% 부근)는 사본의 추천 행 전체로 한 번 센 값이다 —
+        # 후보를 그 순서로 뽑았으므로 후보 안의 순서도 예전과 같다.
+        s_rule = idx.cold[prow]
         best_j = np.zeros(len(pool), dtype=int)
         diag["cold_start"] = True
         diag["cold_start_note"] = ("초기 선호 조사(POST /onboarding)가 없어 위치(곡 40% 부근)와 "
@@ -2182,7 +2567,8 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
                                 "max": round(float(flow_pen.max()), 4)}
     diag["skip_penalty_applied"] = int(pool.track_id.isin(beh["skip_pen"]).sum())
     if mode == "logistic":
-        prob = logistic_prob(serve_features(pool, rule_mean, s_model, bpm_pref))
+        prob = logistic_prob(serve_features(pool, rule_mean, s_model, bpm_pref,
+                                            rms_pct=idx.rms_pct[prow]))
         final = prob
     else:
         prob = np.zeros(len(pool))
@@ -2194,40 +2580,9 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
 
     # BPM 게이트 (사용자 선호 BPM 중앙값 기준)
     keep = np.ones(len(pool), dtype=bool)
-    # ---- 명시 선호 게이트: 청취 이력 유무와 무관하게 항상 적용 (게이트 인계) ----
-    ans = (onboarding_of(user, onboarding) or {}) if query_plan is None else {}
-    if ans:
-        fac = catalog_facets()["_df"].set_index("track_id")   # 온보딩 게이트. 캐시된 df 다
-        wl = ans.get("language") or []
-        wv = ans.get("vocal_type") or []
-        xs = ans.get("exclude_style") or []
-        if wl or wv or xs:
-            okm = []
-            for t in pool.track_id:
-                if t not in fac.index:
-                    okm.append(False)
-                    continue
-                r = fac.loc[t]
-                okm.append((not wl or r.language in wl)
-                           and (not wv or set(_vocal_values(
-                               r.has_vocal, r.vocal_gender)) & set(wv))
-                           and (not xs or r.style not in xs))
-            okm = np.asarray(okm)
-            diag["dropped_onboarding_filter"] = int((keep & ~okm).sum())
-            keep &= okm
-        diag["persistent_gates"] = {"language": wl, "vocal_type": wv, "exclude_style": xs}
-        # 구간 유형은 **추정 대상**이다. 이력이 없을 때만 게이트로 걸고,
-        # 이력이 생기면 학습된 점수가 담당한다.
-        ws = ans.get("section_label") or []
-        if ws and query_source == "onboarding":
-            okl = pool.section_label.isin(ws).to_numpy()
-            diag["dropped_onboarding_section"] = int((keep & ~okl).sum())
-            keep &= okl
-            diag["section_gate"] = "active (이력 없음)"
-        elif ws:
-            diag["section_gate"] = "released (이력 기반 점수로 전환)"
+    # 명시 선호 게이트(언어·보컬·스타일·구간 유형)는 후보 단계에서 이미 걸었다(`_gate`).
     if bpm_pref > 0:
-        bpm = np.array([float(c.content.bpm.get(t, 0.0)) for t in pool.track_id])
+        bpm = _track_bpm(c, pool.track_id)
         lr = np.abs(np.log2(np.clip(bpm, 1e-6, None) / bpm_pref))
         keep &= lr <= MAX_BPM_LOG2
         diag["dropped_bpm"] = int((~(lr <= MAX_BPM_LOG2)).sum())
@@ -2253,7 +2608,8 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
         for j in range(len(C)):
             if mode == "logistic":
                 sj = logistic_prob(serve_features(
-                    pool, S[:, j] / max(float(W[j]), 1e-9), s_model, bpm_pref))
+                    pool, S[:, j] / max(float(W[j]), 1e-9), s_model, bpm_pref,
+                    rms_pct=idx.rms_pct[prow]))
             else:
                 sj = W_RULE * pct(S[:, j]) + (W_MODEL * pct(s_model) if zu is not None else 0.0)
             sj = soft_rerank(sj, clap_active, clap_pct, mood_match) + bdelta
@@ -2317,9 +2673,19 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     # **시연용 임시 처리다.** 곡을 뽑은 근거 순간과 들려주는 순간이 다를 수 있다. 본 수정은
     # 점수를 매기기 전에 후보 순간을 곡마다 첫 chorus 로 좁혀 둘을 맞추는 것이다(후속 티켓).
     play: dict[int, int] = {}
+    ext = pool
     wanted_flow = _qvals(((query_plan or {}).get("filters") or {}).get("flow"))
     if (daily or query_plan is not None) and not wanted_flow:
-        play = first_chorus_moments(pool, [i for i, _, _ in picked])
+        # 첫 chorus 는 후보 밖에 있을 수 있다(후보는 닮은 순간만 뽑았다). 뽑힌 곡의 추천
+        # 행을 뒤에 덧붙여 찾는다 — 앞쪽 행 번호(`i`)는 그대로라 점수 배열과 어긋나지 않는다.
+        picked_rows = [i for i, _, _ in picked]
+        have = set(prow.tolist())
+        extra = sorted({r for t in {str(pool.track_id.iloc[i]) for i in picked_rows}
+                        for r in idx.track_rows.get(t, ())
+                        if idx.serve[r] and r not in have})
+        if extra:
+            ext = pd.concat([pool, c.pool.iloc[extra]], ignore_index=True)
+        play = first_chorus_moments(ext, picked_rows)
         diag["moment_rule"] = {"rule": "first_chorus_else_selected",
                                "switched": sum(1 for i, j in play.items() if i != j)}
     elif wanted_flow:
@@ -2328,7 +2694,7 @@ def recommend(user: str, n: int, exclude: set[str], explore: bool = True, query_
     out = []
     for rank, (i, fs, cj) in enumerate(picked, 1):
         # 점수 칸은 곡을 뽑은 순간(`i`)의 값 그대로, 순간 칸은 재생할 순간(`r`)의 값이다.
-        r = pool.iloc[play.get(i, i)]
+        r = ext.iloc[play.get(i, i)]
         b = pool.iloc[i]          # 사유 문장은 근거 순간으로 쓴다 — 유사도가 그 순간의 값이다
         ti = c.track_info(r.track_id)
         jj = cj if (cj is not None and cj >= 0) else int(best_j[i]) if len(C) else -1
