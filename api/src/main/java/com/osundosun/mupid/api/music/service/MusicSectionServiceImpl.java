@@ -13,11 +13,8 @@ import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import com.osundosun.mupid.api.analytics.dto.TrackSectionRow;
-import com.osundosun.mupid.api.analytics.repository.TrackSectionRepository;
+import com.osundosun.mupid.api.analytics.sync.service.TrackSectionSync;
 import com.osundosun.mupid.api.code.entity.Code;
 import com.osundosun.mupid.api.code.enumerate.CodeType;
 import com.osundosun.mupid.api.code.repository.CodeRepository;
@@ -50,7 +47,7 @@ public class MusicSectionServiceImpl implements MusicSectionService {
     private final MusicSectionAnalysisMoodRepository moodRepository;
     private final MusicAnalysisInstrumentRepository instrumentRepository;
     private final CodeRepository codeRepository;
-    private final TrackSectionRepository trackSectionRepository;
+    private final TrackSectionSync trackSectionSync;
 
     @Override
     public MusicSectionBulkResponse replaceSections(int musicId, MusicSectionBulkRequest request) {
@@ -95,6 +92,7 @@ public class MusicSectionServiceImpl implements MusicSectionService {
                 .endTimeMs(line.endTimeMs())
                 .externalId(line.externalId().strip())
                 .energy(line.energy())
+                .analysisVersion(request.analysisVersion())
                 .build())
             .toList();
         repository.saveAll(rows);
@@ -105,7 +103,10 @@ public class MusicSectionServiceImpl implements MusicSectionService {
         replaceMoods(request.sections(), rows);
         replaceInstruments(request.sections(), rows);
 
-        syncToAnalytics(musicId, request.analysisVersion(), rows);
+        // ClickHouse `track_sections` 사본. 미반영 기록을 **이 트랜잭션 안에서** 남기고,
+        // 커밋 뒤에 쓴다 — 실패해도 MySQL 적재는 되돌리지 않고, 남은 기록을 재시도 작업이
+        // 메운다 (S15P21A204-451, `TrackSectionSync`).
+        trackSectionSync.recordAndPushAfterCommit(musicId, request.analysisVersion(), rows);
 
         return new MusicSectionBulkResponse(
             musicId,
@@ -151,63 +152,6 @@ public class MusicSectionServiceImpl implements MusicSectionService {
                                                             int musicSectionAnalysisId) {
         return repository.findById(musicSectionAnalysisId)
             .filter(row -> row.getMusic().getMusicId().equals(musicId));
-    }
-
-    /**
-     * 같은 구간을 ClickHouse {@code track_sections} 에도 넣는다 (S15P21A204-435).
-     *
-     * <p><b>커밋한 뒤에 넣는다.</b> 트랜잭션 안에서 넣으면 뒤따르는 MySQL 작업이 실패해
-     * 롤백됐을 때 ClickHouse 에만 구간이 남는다. ClickHouse 에는 우리가 쓰는 형태의
-     * 트랜잭션이 없어 되돌릴 방법도 없다.
-     *
-     * <p><b>실패해도 MySQL 적재를 되돌리지 않는다.</b> 분석 DB 가 죽었다고 구간 적재
-     * 전체가 실패하면 배치가 곡마다 멈춘다 — 인증·회원과 마찬가지로 요구 1 의 본체는
-     * MySQL 이고 ClickHouse 는 그 위의 분석 경로다({@code ClickHouseConfig} 가 헬스체크를
-     * 떼어 둔 것과 같은 판단). 대신 <b>곡 번호와 구간 수를 로그에 남긴다</b> — 조용히
-     * 비면 "이 곡만 추천에 안 나온다" 로만 돌아오고, 그때는 원인을 찾을 근거가 없다.
-     * 밀린 곡은 배치를 다시 돌리거나 {@code ai_server/tools/push_sections.py} 로 메운다.
-     *
-     * <p>커밋 뒤 실행이라 <b>테스트에서는 돌지 않는다</b>. 테스트는
-     * {@code @Transactional} 로 매번 롤백하므로 afterCommit 콜백이 불리지 않는다 —
-     * MySQL 계층 시험이 ClickHouse 를 띄우지 않아도 되는 이유이기도 하다.
-     */
-    private void syncToAnalytics(int musicId, String analysisVersion,
-                                 List<MusicSectionAnalysis> rows) {
-        List<TrackSectionRow> sections = rows.stream()
-            .map(row -> new TrackSectionRow(
-                musicId,
-                row.getMusicSectionAnalysisId(),
-                analysisVersion,
-                row.getIndex(),
-                row.getExternalId(),
-                row.getSectionLabel().name(),
-                row.getStartTimeMs(),
-                row.getEndTimeMs()))
-            .toList();
-
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            // 트랜잭션 밖에서 직접 불린 경우(시험·배치 코드). 기다릴 커밋이 없으므로
-            // 바로 넣는다.
-            writeToAnalytics(musicId, analysisVersion, sections);
-            return;
-        }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                writeToAnalytics(musicId, analysisVersion, sections);
-            }
-        });
-    }
-
-    private void writeToAnalytics(int musicId, String analysisVersion,
-                                  List<TrackSectionRow> sections) {
-        try {
-            trackSectionRepository.replaceSections(musicId, analysisVersion, sections);
-        } catch (Exception e) {
-            log.error("ClickHouse track_sections 적재 실패 — musicId={} version={} 구간 {}건. "
-                + "MySQL 은 적재됐다. 배치를 다시 돌리거나 push_sections 로 메운다.",
-                musicId, analysisVersion, sections.size(), e);
-        }
     }
 
     /**

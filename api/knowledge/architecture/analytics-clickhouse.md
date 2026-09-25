@@ -356,9 +356,9 @@ MySQL `JdbcTemplate` 이 `@Primary` 이므로 **`@Qualifier` 를 빠뜨리면 �
 |---|---|---|
 | `ListenAnalyticsRepository` | 읽기 | MUBTI·취향 리포트의 판정용 집계. 취향 리포트가 처음 들여왔다 → [decision/0019](../decision/0019-report-reads-clickhouse-directly.md) |
 | `UserActivityRepository` | 읽기 | 관리자 화면의 사용자 타임라인 (원본 이벤트 한 줄씩) |
-| `TrackSectionRepository` | **쓰기** | 구간 적재. `MusicSectionServiceImpl.replaceSections` 가 MySQL 커밋 뒤에 부른다 (S15P21A204-435) |
+| `TrackSectionRepository` | **쓰기** | 구간 적재. `analytics.sync.service.TrackSectionSync` 만 부른다 — 구간 교체 커밋 뒤, 그리고 미반영 재시도 (S15P21A204-435·451). 레플리카별 대조 요약도 여기서 읽는다 |
 
-`track_sections` 만 스프링이 쓴다. 행동 데이터는 Kafka 를 거쳐 들어오고 스프링은 손대지 않는다. 쓰기가 실패해도 MySQL 적재를 되돌리지 않는다 — 분석 DB 가 죽었다고 곡 등록이 멈추면 배치가 곡마다 선다. 곡 번호를 `ERROR` 로그에 남기고, 밀린 곡은 `ai_server/tools/push_sections.py` 로 메운다.
+`track_sections` 만 스프링이 쓴다. 행동 데이터는 Kafka 를 거쳐 들어오고 스프링은 손대지 않는다. 쓰기가 실패해도 MySQL 적재를 되돌리지 않는다 — 분석 DB 가 죽었다고 곡 등록이 멈추면 배치가 곡마다 선다. 대신 같은 트랜잭션에 미반영 기록을 남기고 재시도(1분)·대조(매일)가 메운다 → [analytics-sync.md](analytics-sync.md).
 
 새 **조회**를 붙일 때 `ListenAnalyticsRepository` 가 지키는 것 세 가지를 같이 지킨다.
 

@@ -101,16 +101,17 @@ MySQL 에서 이미 적재된 것을 내보내 만드는 길도 남아 있다(`b
 **`id_map` 은 이제 서빙이 읽지 않는다.** 숫자 ID 번역은 Spring 이 맡는다. 그래도 4번이
 읽으므로 이 절차에서는 빠지지 않는다.
 
-## 4. ClickHouse 구간 적재
+## 4. ClickHouse 구간 적재 — 할 일 없음
 
-    python -m ai_server.tools.push_sections --full
-
-딕셔너리 갱신까지 도구가 한다. 따로 부르지 않는다.
+**AI 쪽에서 돌리는 도구가 없다** (S15P21A204-451 에서 `push_sections` 를 지웠다). 2번의
+`PUT /api/v1/music/{id}/section` 이 커밋되면 Spring 이 같은 구간을 ClickHouse 에 쓰고,
+실패하면 미반영 기록을 재시도 작업(1분)·대조 작업(매일)이 메운다
+(`api/knowledge/architecture/analytics-sync.md`). 딕셔너리는 10분 안에 새 구간을 집는다.
 
 | 기대 | 확인 |
 | --- | --- |
-| `구간 65540개 중 10007개 적재 대상` | 도구 출력 |
 | `track_sections` +10,007 | `SELECT count() FROM track_sections WHERE analysis_version='v1'` |
+| 미반영 0 | 관리자 대시보드 "ClickHouse 구간 동기화" 또는 `SELECT COUNT(*) FROM analytics_sync_pending` |
 
 > **2026-09-16 변경.** 예전에는 이 시점에서 `/internal/ready` 가 503 → 200 으로
 > 바뀌었다. 지금은 **매핑이 `ready` 에 영향을 주지 않는다** — 숫자 ID 번역을 Spring 이
@@ -118,7 +119,7 @@ MySQL 에서 이미 적재된 것을 내보내 만드는 길도 남아 있다(`b
 > (`infra/AI-SPRING-CONTRACT.md` 의 "2026-09-16 계약 변경").
 >
 > **`id_map` 자체는 이 절차에 그대로 필요하다.** ClickHouse `track_sections` 가 숫자
-> `track_id` 를 쓰기 때문에 바로 앞 단계(`push_sections`)가 읽는다. 없어진 것은 서빙
+> `track_id` 를 쓰기 때문에 5번(`pull_signals`)이 그것으로 곡을 되짚는다. 없어진 것은 서빙
 > 경로의 의존과 `/internal/id-map` 엔드포인트다.
 
 ## 5. 행동 신호 수집

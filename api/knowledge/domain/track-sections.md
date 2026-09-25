@@ -25,19 +25,24 @@ section_uid, fn, start_ms, end_ms, created_at
 | `section_index` | `index` | 곡 안에서의 순서 |
 | `start_ms` / `end_ms` | `start_time_ms` / `end_time_ms` | 구간 범위. 재생 위치를 구간에 매핑하는 근거 |
 | `fn` | `section_label` | 구간의 역할 분류 |
-| `analysis_version` | — | 구간 분석 버전. 버전이 다르면 구간 정의가 다르다 |
+| `analysis_version` | `analysis_version` | 구간 분석 버전. 버전이 다르면 구간 정의가 다르다 (MySQL 쪽은 451 에서 생겼다) |
 | `created_at` | — | `ReplacingMergeTree` 의 버전 컬럼 |
 
 `peak_ms` 는 2026-09-22 에 없앴다. MySQL 에 대응이 없고, 구간 안 정점을 산출한 적이 없어 줄곧 구간 시작점이 그대로 들어가 있었다.
 
 **누가 채우는가**
 
+**Spring 하나다.** 원천은 언제나 MySQL `music_section_analysis` 다 (S15P21A204-451).
+
 | 길 | 언제 | 무엇이 |
 |---|---|---|
-| `PUT /api/v1/music/{musicId}/section` | 전처리 배치가 곡을 올릴 때 | `analytics/repository/TrackSectionRepository` 가 MySQL 적재 **커밋 뒤에** 넣는다 |
-| `ai_server/tools/push_sections.py` | 일괄 시드·복구(`--full`), 하루 1회 점검(`--audit`) | 색인의 `moments.parquet` 을 `id_map` 으로 번역해 넣는다 |
+| 커밋 뒤 즉시 쓰기 | `PUT /api/v1/music/{musicId}/section` 이 커밋된 직후 | 방금 넣은 구간을 `TrackSectionRepository` 가 넣는다 |
+| 재시도 | 1분마다, 미반영 기록이 남은 곡 | MySQL 의 **지금** 구간으로 곡 단위 교체 |
+| 대조 | 매일 04:40 | 레플리카마다 구간 수·체크섬을 MySQL 과 비교해 어긋난 곡을 미반영에 넣는다 |
 
-두 길이 넣는 컬럼은 같고 `ReplacingMergeTree` 라 나중 것이 남는다. 앞의 길이 실패해도 **MySQL 적재는 되돌리지 않는다** — 분석 DB 가 죽었다고 곡 등록이 멈추면 배치가 곡마다 선다. 대신 `ERROR` 로그에 곡 번호가 남고, 밀린 곡은 뒤의 길로 메운다.
+쓰기가 실패해도 **MySQL 적재는 되돌리지 않는다** — 분석 DB 가 죽었다고 곡 등록이 멈추면 배치가 곡마다 선다. 대신 구간 교체와 같은 트랜잭션에 `analytics_sync_pending` 행이 남아 재시도가 메운다 → [architecture/analytics-sync.md](../architecture/analytics-sync.md). 예전의 `ai_server/tools/push_sections.py`(색인을 ClickHouse 에 직접 쓰던 복구 도구)는 지웠다.
+
+`analysis_version` 은 이제 MySQL `music_section_analysis.analysis_version` 에도 있고 두 저장소가 같은 값을 쓴다.
 
 **저장 설계**
 

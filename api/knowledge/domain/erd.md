@@ -36,7 +36,7 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 
 ## 테이블 한눈에 보기
 
-`erd.sql` 의 테이블 30개. **뷰는 없다** — 2026-09-15 재산출에서 `user_auth`
+`erd.sql` 의 테이블 31개. **뷰는 없다** — 2026-09-15 재산출에서 `user_auth`
 (`SELECT user_id, email, password FROM users WHERE status != 'WITHDRAW'`)가
 빠졌고, 코드도 이 뷰를 쓰지 않는다.
 
@@ -51,8 +51,9 @@ AI 에이전트에게도 같은 규칙이 적용된다. 요청이 스키마 변�
 | 플레이리스트 | `playlists`, `playlist_tracks` |
 | 추천·분석 | `daily_recommendations`, `daily_recommendation_tracks`, `reports`, `listening`, `mubti` |
 | AI 채팅 | `ai_chat_sessions`, `ai_chat_messages` |
+| 사본 동기화 | `analytics_sync_pending` |
 
-**30개 모두 코드에 엔티티가 있다.** 2026-09-11 반입 때는 4개뿐이었지만 그 뒤로
+**31개 모두 코드에 엔티티가 있다.** 2026-09-11 반입 때는 4개뿐이었지만 그 뒤로
 도메인이 차례로 붙었다. 그래서 이제 ERD 를 고치면 **반드시 어딘가의 엔티티가
 함께 바뀐다** — 위쪽 "ERD 를 고치기 전에 반드시 물어본다" 가 그만큼 무거워졌다.
 
@@ -397,6 +398,31 @@ NULL 을 허용한다. 파형이 아직 없는 곡은 비정상이 아니다 —
 > [migrate-ai-values-2026-09-23.sql](migrate-ai-values-2026-09-23.sql) 를 적용한다.
 > NULL 컬럼 추가뿐이라 기존 행을 건드리지 않는다. 앱이 먼저 올라가면 엔티티가 없는
 > 컬럼을 읽어 곡 조회가 실패한다.
+
+## 2026-09-25 — 사본 동기화 (S15P21A204-451)
+
+저장소 재설계(`infra/VECTOR-STORE-DESIGN.md` §8·§11 미결 11)에서 합의한 변경이다.
+MySQL 이 정본이고 ClickHouse `track_sections` 는 그 사본인데, 커밋 뒤 쓰기가 실패하면
+로그만 남고 끝났다. "아직 사본에 안 갔다" 를 **구간 교체와 같은 트랜잭션에** 남겨
+빠지지 않게 한다.
+
+| 표 | 컬럼 | 형 | 뜻 |
+|---|---|---|---|
+| `analytics_sync_pending` | `music_id`·`kind` | `INT`·`VARCHAR(16)` 복합 PK | 곡·반영할 곳마다 한 행. `kind` 는 지금 `CLICKHOUSE` 뿐이고 `VECTOR`(457)가 더해진다 — ENUM 이 아닌 것은 종류를 DDL 없이 더하려는 것 |
+| `analytics_sync_pending` | `analysis_version` | `VARCHAR(20)` | 반영할 분석 버전 |
+| `analytics_sync_pending` | `revision` | `BIGINT DEFAULT 1` | 같은 곡이 다시 기록될 때마다 오른다. 커밋 뒤 쓰기는 자기 revision 일 때만 행을 지운다 |
+| `analytics_sync_pending` | `attempts`·`last_error` | `INT`·`VARCHAR(500) NULL` | 재시도 작업이 남기는 횟수·사유 |
+| `analytics_sync_pending` | `created_at`·`updated_at` | `DATETIME` | `created_at` 은 **처음** 미반영이 된 시각이라 다시 기록돼도 그대로다 — "가장 오래된 미반영의 나이" 지표가 이것을 본다 |
+| `music_section_analysis` | `analysis_version` | `VARCHAR(20) NOT NULL DEFAULT 'v1'` | 구간 분석 버전. 지금까지 ClickHouse 에만 있었다 |
+
+`analytics_sync_pending.music_id` 에 FK 를 걸지 않는다. 곡은 논리 삭제라 FK 가 지켜 줄
+것이 없고, 뒤에 붙을 `VECTOR` 종류는 곡이 지워진 뒤에도 "지워라" 를 들고 있어야 한다.
+동작은 [architecture/analytics-sync.md](../architecture/analytics-sync.md).
+
+> ⚠️ **개발 DB 에만 적용했다** (2026-09-25). 운영 DB 는 앱 배포 **전에**
+> [migrate-analytics-sync-2026-09-25.sql](migrate-analytics-sync-2026-09-25.sql) 를 적용한다.
+> 새 표와 DEFAULT 있는 NOT NULL 컬럼 추가뿐이라 기존 행을 깨지 않는다. 앱이 먼저 올라가면
+> 구간 적재가 없는 컬럼에 쓰다 실패한다.
 
 ## 곡 식별자가 둘이다
 

@@ -156,9 +156,9 @@ def test_seed_pipeline_end_to_end():
         id_map = pd.read_parquet(data_dir / "id_map.parquet")
         assert len(id_map) == 10007, f"매핑 {len(id_map)}건"
 
-        # ── (e) ClickHouse 구간 적재
-        assert run_tool("ai_server.tools.push_sections", "--full",
-                        env=env).returncode == 0
+        # ── (e) ClickHouse 구간 적재. 운영에서는 Spring 이 구간 교체 커밋 뒤에 쓴다
+        # (S15P21A204-451). 이 시험은 MySQL 에 직접 넣었으므로 그 몫을 시드가 대신한다.
+        se.seed_track_sections(manifest)
         loaded = int(se.ch("SELECT count() FROM track_sections "
                            "WHERE analysis_version = 'v1'").strip())
         assert loaded >= 10007, f"track_sections {loaded}건"

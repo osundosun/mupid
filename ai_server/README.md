@@ -89,7 +89,7 @@ Python **3.12**. GPU 도 `torch` 도 필요 없다 — 사용자 벡터 계산�
 |---|---|---|
 | `MUPID_AI_ARTIFACT_DIR` | `ai_server/artifacts` | 모델·색인 루트 (**필수**). 서비스·매핑표·라벨러가 모두 이 하나를 기준으로 경로를 만든다 |
 | `MUPID_AI_PORT` | `8100` | 포트 |
-| `MUPID_ID_MAP` | `<ARTIFACT_DIR>/data/proc/mupid/id_map.parquet` | 숫자 ID 매핑표. **배치 전용** (`push_sections`). 서빙은 읽지 않는다 |
+| `MUPID_ID_MAP` | `<ARTIFACT_DIR>/data/proc/mupid/id_map.parquet` | 숫자 ID 매핑표. **배치 전용** (`pull_signals`). 서빙은 읽지 않는다 |
 | `MUPID_CLICKHOUSE_URL` | (없음) | 행동 저장소. 비우면 개인화 없이 돈다 |
 | `MUPID_CLICKHOUSE_USER` · `_PASSWORD` | (없음) | 〃 (읽기 전용 계정) |
 | `MUPID_POOL` | `flow` | 후보 풀의 주 출처 (`moments.parquet` 의 `source`) |
@@ -386,8 +386,9 @@ MySQL 컬럼 대응은 `infra/AI-SPRING-CONTRACT.md` 의 "2026-09-23" 절, 받�
 
 곡 문자열 ID 는 구간 UID 의 `#` 앞이다(Q3 — MySQL 에 곡 문자열 ID 를 따로 두지 않는다).
 
-`id_map.parquet` 은 **배치에만 남는다.** ClickHouse `track_sections` 가 숫자 `track_id` 를
-쓰기 때문에 `push_sections` 가 그 표를 필요로 한다. 서빙 경로는 읽지 않는다.
+`id_map.parquet` 은 **배치에만 남는다.** ClickHouse 행동 표가 숫자 `track_id` 를 쓰기 때문에
+`pull_signals` 가 그 표로 곡 문자열 ID 를 되짚는다. 서빙 경로는 읽지 않는다.
+ClickHouse `track_sections` 는 AI 가 쓰지 않는다 — Spring 이 MySQL 구간을 옮긴다(S15P21A204-451).
 
 ## 테스트
 
@@ -439,7 +440,7 @@ pytest 11건 전부 통과.
 
 1. 모델·색인 수령 후 `MUPID_AI_ARTIFACT_DIR` 배치
 2. 서비스 기동, `/health` 확인
-3. 구간 적재(`register_sections`) → ClickHouse 구간 표(`push_sections`)
+3. 구간 적재(`register_sections`) — ClickHouse 구간 표는 Spring 이 같은 요청에서 채운다(밀리면 재시도·대조가 메운다)
 4. Spring 내부 클라이언트 연결 (5초 타임아웃, 1회 재시도, 장애 시 대체 동작)
 5. 공개 API 에서 `snake_case` → `camelCase` 변환
 6. **`external_id` → `music_id`·구간 번호 번역** (`MusicSectionService.findByExternalIds`)

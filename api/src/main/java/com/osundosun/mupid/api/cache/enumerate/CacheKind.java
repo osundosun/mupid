@@ -82,6 +82,22 @@ public enum CacheKind {
      * 넣어도 한 줄만 남는다. ClickHouse 를 인스턴스 수만큼 때리지 않으려는 것뿐이다.
      */
     AiPreferenceBatch("analytics:ai-preference:batch"),
+
+    /**
+     * MySQL–ClickHouse 구간 대조 배치 선점 (S15P21A204-451). 키는 그날 날짜다.
+     *
+     * <p>뚫려도 틀리지 않는다 — 대조는 어긋난 곡을 미반영에 넣기만 하고 그것이 멱등이다.
+     * 전 곡 집계로 ClickHouse 를 인스턴스 수만큼 때리지 않으려는 것이다.
+     */
+    AnalyticsReconcileBatch("analytics:reconcile:batch"),
+
+    /**
+     * 마지막 구간 대조의 결과. 관리자 대시보드가 읽는다.
+     *
+     * <p>대조는 선점한 인스턴스 한 곳에서만 돌고 대시보드 요청은 아무 인스턴스로나 가므로,
+     * 결과를 메모리에만 두면 인스턴스마다 다른 답을 한다. 잃어도 다음 날 대조가 다시 쓴다.
+     */
+    AnalyticsReconcileLast("analytics:reconcile:last"),
     /**
      * 사용자별 재생 큐. `queue:user:{userId}` 한 자리에 큐 한 벌이 통째로 들어간다.
      *

@@ -185,13 +185,13 @@ docs:
     판정합니다. **비어 있으면 좋아요를 눌러도 `user_section_signals` 에 한 줄도
     남지 않습니다** — 오류가 아니라 침묵이라 화면만 봐서는 알 수 없습니다.
 
-    `analysis_version` 은 MySQL 에는 저장되지 않고(컬럼이 없습니다) ClickHouse 에만
-    남습니다. `v1` 이 아닌 값을 보내면 표에는 들어가되 딕셔너리가 보지 않아
+    `analysis_version` 은 MySQL `music_section_analysis.analysis_version` 과 ClickHouse
+    양쪽에 같은 값으로 남습니다(S15P21A204-451). `v1` 이 아닌 값을 보내면 표에는 들어가되 딕셔너리가 보지 않아
     **구간 판정에 전혀 쓰이지 않습니다.**
 
     ClickHouse 적재가 실패해도 이 API 는 **200 을 돌려줍니다.** 분석 DB 가 죽었다고
-    곡 등록이 멈추면 배치가 곡마다 섭니다. 서버 로그에 곡 번호가 `ERROR` 로 남고,
-    밀린 곡은 `ai_server/tools/push_sections.py` 로 메웁니다.
+    곡 등록이 멈추면 배치가 곡마다 섭니다. 대신 같은 트랜잭션에 미반영 기록이 남아
+    Spring 재시도 작업이 1분 안에 다시 씁니다. 따로 도구를 돌릴 필요가 없습니다.
 
     ## ERD 변경 — 2026-09-16 적용 완료
 

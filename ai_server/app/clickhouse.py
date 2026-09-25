@@ -4,8 +4,9 @@
 한 번에 훑는 데 특화돼 있고, `listen_events` 의 정렬키가 `(user_id, occurred_at, event_id)`
 라 사용자 한 명 범위 조회가 1차 접근 경로다.
 
-접속부(`_http_base` · `_auth` · `query`)는 `tools/push_sections.py` 에 있던 것을 그대로
-옮겨 왔다. 배치와 서빙이 각자 들고 있으면 한쪽만 고쳐져 접속 방식이 갈린다.
+접속부(`_http_base` · `_auth` · `query`)는 배치(`tools/pull_signals.py`)와 함께 쓴다.
+배치와 서빙이 각자 들고 있으면 한쪽만 고쳐져 접속 방식이 갈린다. **읽기만 한다** —
+`track_sections` 를 쓰던 `push_sections` 는 지웠다(S15P21A204-451).
 
 어휘가 다르다
     Spring 이 수집하는 이벤트(`EventType` 22종)와 추천기가 읽던 파일 로그의 어휘가

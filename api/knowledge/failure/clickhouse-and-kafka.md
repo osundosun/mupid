@@ -185,7 +185,7 @@
 - **증상**: `JdbcTemplate.batchUpdate` 가 `java.lang.ArrayIndexOutOfBoundsException: Index 0 out of bounds for length 0` 으로 터진다. 스택은 `com.clickhouse.jdbc.PreparedStatementImpl.setObject` 에서 시작해 SQL 이 왜 틀렸는지는 한 글자도 말하지 않는다. 진짜 이유는 stderr 한 줄에만 있다 — `line 4:0 mismatched input 'SETTINGS' expecting {FORMAT, SELECT, VALUES, WITH, '('}`.
 - **원인**: `clickhouse-jdbc:0.9.0` 의 **v2 드라이버**가 SQL 을 ANTLR 로 직접 파싱해 자리표시자를 찾는데, `VALUES` 앞의 `SETTINGS` 절을 문법에 두지 않았다. 파싱이 깨져도 예외를 던지지 않고 **자리표시자 0개**로 넘어가므로, 첫 `setObject(1, …)` 에서 빈 배열을 건드린다.
 - **해결**: JDBC 로 넣을 때는 `SETTINGS` 를 쓰지 않는다. `track_sections` 는 `mupid_all`(1 샤드 × 2 레플리카)이라 샤딩이 없어 `track_sections_local` 에 바로 넣으면 `distributed_foreground_insert` 자체가 필요 없다 (`analytics/repository/TrackSectionRepository`). `ALTER TABLE … SETTINGS mutations_sync = 1` 은 자리표시자가 없어 `execute()` 로 그대로 나간다 — 막히는 것은 **PreparedStatement** 뿐이다.
-- **이어서**: HTTP 인터페이스로 넣는 `verify.sh` 와 `ai_server/tools/push_sections.py` 에는 이 제약이 없다. 그 두 곳의 SQL 을 JDBC 로 옮겨 붙일 때 이 함정을 다시 밟는다.
+- **이어서**: HTTP 인터페이스로 넣는 `verify.sh` 에는 이 제약이 없다(예전의 `ai_server/tools/push_sections.py` 도 그랬는데 451 에서 지웠다). 그 SQL 을 JDBC 로 옮겨 붙일 때 이 함정을 다시 밟는다.
 - **근거**: `api/src/main/java/com/osundosun/mupid/api/analytics/repository/TrackSectionRepository.java`, `api/src/test/java/com/osundosun/mupid/api/analytics/TrackSectionReplaceTest.java`
 
 ### 구간을 다시 올렸는데 없어진 구간이 ClickHouse 에 남는다 — 해소됨

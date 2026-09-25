@@ -1,8 +1,11 @@
 package com.osundosun.mupid.api.analytics.repository;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -11,6 +14,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import com.osundosun.mupid.api.analytics.dto.TrackSectionRow;
+import com.osundosun.mupid.api.analytics.sync.dto.SectionDigest;
+import com.osundosun.mupid.api.analytics.sync.dto.TrackVersion;
 
 /**
  * 곡의 구간 분석 결과를 ClickHouse {@code track_sections} 에 적재한다 (S15P21A204-435).
@@ -52,7 +57,7 @@ import com.osundosun.mupid.api.analytics.dto.TrackSectionRow;
  * v2 드라이버의 파서가 {@code VALUES} 앞의 {@code SETTINGS} 절을 모른다
  * ({@code mismatched input 'SETTINGS' expecting &#123;FORMAT, SELECT, VALUES, WITH, '('&#125;}).
  * 자리표시자를 하나도 못 찾은 채 넘어가 {@code ArrayIndexOutOfBoundsException} 으로 터진다.
- * HTTP 로 넣는 {@code verify.sh} · {@code push_sections.py} 에는 이 제약이 없다.
+ * HTTP 로 넣는 {@code verify.sh} 에는 이 제약이 없다.
  *
  * <p>읽는 쪽도 같은 이유로 로컬 표를 본다. 쓰기와 읽기가 같은 노드에서 끝나야 바로 아래의
  * 정리 판단이 흔들리지 않는다.
@@ -62,7 +67,14 @@ import com.osundosun.mupid.api.analytics.dto.TrackSectionRow;
  * {@code dict_track_sections} 는 {@code LIFETIME(MIN 300 MAX 600)} 이라 늦어도 10분 안에
  * 새 구간을 집는다. 곡마다 {@code SYSTEM RELOAD DICTIONARY ON CLUSTER} 를 부르면 곡 수만큼
  * 전체 사전을 다시 읽게 되어 배치가 ClickHouse 를 붙들고 앉는다. 즉시 반영이 필요한
- * 시나리오(시드·검증)는 {@code ai_server/tools/push_sections.py} 처럼 배치 끝에 한 번 부른다.
+ * 시나리오(시드·검증)는 배치 끝에 한 번 부른다.
+ *
+ * <h2>쓰는 쪽은 이 클래스 하나다 (S15P21A204-451)</h2>
+ *
+ * 부르는 곳은 {@code analytics.sync.service.TrackSectionSync} 뿐이다 — 구간 교체 커밋 뒤,
+ * 그리고 미반영 기록을 재시도할 때. 예전에는 {@code ai_server/tools/push_sections.py} 가
+ * ClickHouse 에 HTTP 로 직접 썼는데 걷어냈다. 밀린 곡은 대조 작업이 찾아 미반영 기록에 넣고
+ * 재시도가 MySQL 의 현재 구간으로 메운다.
  */
 @Repository
 public class TrackSectionRepository {
@@ -91,6 +103,37 @@ public class TrackSectionRepository {
         ALTER TABLE track_sections_local ON CLUSTER mupid_all
         DELETE WHERE analysis_version = '%s' AND track_id = %d AND section_index IN (%s)
         SETTINGS mutations_sync = 1
+        """;
+
+    /**
+     * {@code mupid_all} 의 레플리카 이름. 데이터와 무관하게 구한다 — 구간을 한 줄도 못 받은
+     * 레플리카는 아래 요약 질의의 결과에 <b>나타나지 않으므로</b>, 결과에서 이름을 모으면
+     * 통째로 빈 레플리카를 "문제 없음" 으로 넘긴다.
+     */
+    private static final String REPLICAS = """
+        SELECT DISTINCT hostName() FROM clusterAllReplicas('mupid_all', system.one)
+        """;
+
+    /**
+     * 레플리카마다 곡·버전별 구간 요약.
+     *
+     * <p>{@code clusterAllReplicas} 는 레플리카 하나하나를 샤드처럼 따로 읽는다.
+     * {@code hostName()} 은 그 원격 쪽에서 계산되어 행이 어느 레플리카에서 왔는지 알려 준다.
+     * 연결은 헤드리스 서비스 하나({@code clickhouse:8123})라 어느 노드에 붙든 두 레플리카를
+     * 각각 본다. 한 레플리카가 안 닿으면 질의 전체가 실패한다 — 반쪽 결과로 "일치" 라고
+     * 하지 않는다.
+     *
+     * <p>{@code FINAL} 로 병합 전 중복을 누른다(설계 §8.2-6). 이어 붙이는 문자열은
+     * {@code SectionDigestRepository} 의 MySQL 문장과 <b>같아야 한다</b>.
+     */
+    private static final String DIGESTS_BY_REPLICA = """
+        SELECT hostName() AS replica, track_id, analysis_version,
+               count() AS sections,
+               sum(CRC32(concat(toString(music_section_analysis_id), '|', toString(section_index), '|',
+                                section_uid, '|', toString(fn), '|',
+                                toString(start_ms), '|', toString(end_ms)))) AS checksum
+        FROM clusterAllReplicas('mupid_all', currentDatabase(), 'track_sections_local') FINAL
+        GROUP BY replica, track_id, analysis_version
         """;
 
     private final JdbcTemplate clickHouse;
@@ -148,6 +191,24 @@ public class TrackSectionRepository {
     private void deleteStale(int musicId, String analysisVersion, List<Integer> indexes) {
         String list = indexes.stream().map(String::valueOf).collect(Collectors.joining(","));
         clickHouse.execute(DELETE_STALE.formatted(quote(analysisVersion), musicId, list));
+    }
+
+    /**
+     * 레플리카마다 곡·버전별 구간 요약. 구간이 하나도 없는 레플리카도 빈 표로 들어 있다.
+     *
+     * @return 레플리카 이름 → (곡·버전 → 요약)
+     */
+    public Map<String, Map<TrackVersion, SectionDigest>> digestsByReplica() {
+        Map<String, Map<TrackVersion, SectionDigest>> out = new LinkedHashMap<>();
+        for (String replica : clickHouse.queryForList(REPLICAS, String.class)) {
+            out.put(replica, new HashMap<>());
+        }
+        clickHouse.query(DIGESTS_BY_REPLICA, rs -> {
+            out.computeIfAbsent(rs.getString("replica"), key -> new HashMap<>()).put(
+                new TrackVersion(rs.getInt("track_id"), rs.getString("analysis_version")),
+                new SectionDigest(rs.getLong("sections"), rs.getLong("checksum")));
+        });
+        return out;
     }
 
     /**

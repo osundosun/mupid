@@ -696,6 +696,11 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
 
 1. **쓰기 입구 전수 목록**: Spring 에서 곡·구간·분석·장르·무드·스트림·삭제를 바꾸는 API·배치를 모두
    찾아 미반영 기록을 남기게 한다. 하나라도 빠지면 불변식이 깨진다.
+   → **`track_sections` 범위는 채웠다 (S15P21A204-451):**
+   [`api/knowledge/architecture/analytics-sync.md`](../api/knowledge/architecture/analytics-sync.md) 의
+   "쓰기 입구 전수 목록". 구간을 바꾸는 길은 요구 1(`PUT …/section`)과 관리자 자원 CRUD 둘이고 둘 다
+   같은 트랜잭션에 미반영 기록을 남긴다. 곡 삭제·분석 값·장르·무드(`track_features`)는 455, 벡터는 457 에서
+   같은 표에 행을 더한다.
 2. **선택도 기준**: 사전 필터 ID 목록 상한 (1만으로 시작).
 3. **`X` 의 라벨 의존**을 끊을지 — 재학습 때 라벨을 `X` 에서 빼고 ClickHouse 값으로 점수에 더하는 안. AI 담당.
 4. **ClickHouse 서빙 지연 기준**: 1만 곡에서 특징 조회·조건 풀기 p95 목표.
@@ -724,8 +729,10 @@ Qdrant 의 메모리·검색 속도는 설계 규모(90만 구간)에서 병목�
   **고쳤다(S15P21A204-450, 이 MR).** `slice_index` 가 싣고 수신기가 REQUIRED 로 받으며 행 수를 센다.
   배포 뒤 Ansible 로 수신기를 다시 설치해야(`infra_k8s/ansible/receivers.yml`) 판 업로드가 정식 경로로 된다.
 - 로컬 중심화 평균이 요청 후보 기준으로 재지던 버그는 !285 로 고쳤다 (배포 대기).
-- MySQL–ClickHouse `track_sections` 는 2026-09-25 에 완전히 일치했지만, 쓰기 실패 시 로그만 남는
-  구조는 그대로다 (§8.1).
+- ~~MySQL–ClickHouse `track_sections` 는 2026-09-25 에 완전히 일치했지만, 쓰기 실패 시 로그만 남는
+  구조는 그대로다 (§8.1).~~ **정합성 기반을 넣었다(S15P21A204-451, 배포 대기).** 미반영 기록
+  `analytics_sync_pending`·1분 재시도·매일 레플리카별 대조·`analysis_version` MySQL 컬럼·대시보드 지표,
+  `push_sections.py` 삭제. 운영 MySQL 마이그레이션(`migrate-analytics-sync-2026-09-25.sql`)을 앱보다 먼저 건다.
 - node-b 단일 장애점(§10.1-8)은 지금도 마찬가지다.
 
 ---

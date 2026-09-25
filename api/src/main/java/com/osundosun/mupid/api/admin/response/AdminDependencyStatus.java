@@ -11,7 +11,10 @@ public record AdminDependencyStatus(
     String name,
 
     /**
-     * UP / DOWN
+     * UP / DOWN / WARN
+     *
+     * WARN 은 붙어는 있지만 기준을 넘은 상태다 — 지금은 ClickHouse 구간 동기화 한 줄이 쓴다
+     * (미반영이 밀렸거나 대조가 어긋났을 때). 화면은 UP 이 아니면 전부 빨갛게 칠한다.
      */
     String status,
 
