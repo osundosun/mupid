@@ -256,6 +256,10 @@ JupyterHub 의 전체 색인에서 다시 보내 만들 수 있고, 스냅샷은
 Spring API(§6.6)로 다시 보낸다 — 설계 기준 90만 구간이면 곡당 요청 10만 번이라, 재적재 시간을 재 두고
 허용 범위를 정한다(§11 미결 12).
 
+> **456 에서**: 정의는 `ai_server/app/qdrant_collection.json` 한 곳(Spring 457 도 이것으로 만든다), 읽기는
+> `ai_server/app/vector_store.py` 의 `QdrantVectorStore`(`MUPID_VECTOR_BACKEND=qdrant`, 기본 local), 매니페스트는
+> `infra_k8s/base/qdrant.yaml`·`qdrant-networkpolicy.yaml`, 계약은 `ai_server/docs/QDRANT.md`.
+
 ### 6.2 ClickHouse 피처 저장소
 
 #### 표

@@ -60,7 +60,8 @@ MANIFEST = "manifest.json"
 BAKED_MANIFEST = "model.json"
 # 서빙 파일 셋. ai_server 가 이 이름으로 찾는다(model_bundle.SERVING). 다른 이름을 서빙에 올리면
 # 이미지에 들어가도 아무도 읽지 않는다 — 조용히 무시되는 것보다 lock 검사에서 멈추는 편이 낫다.
-SERVING_NAMES = {"user_encoder.npz", "combiner.json", "onboarding_seeds.npz"}
+# mu.npy 는 Qdrant 갈래의 동결 μ 다(설계 §6.3, S15P21A204-456) — 서빙에 올리면 ai 가 그 μ 로 읽는다.
+SERVING_NAMES = {"user_encoder.npz", "combiner.json", "onboarding_seeds.npz", "mu.npy"}
 # Spring 의 규칙과 같다 (api/docs/System/folder.yml). 여기서 먼저 보면 MR 에서 잡힌다.
 VERSION_RE = re.compile(r"^v[0-9]{1,6}$")
 FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")

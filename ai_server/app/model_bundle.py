@@ -17,6 +17,8 @@
                             → logistic_combiner.json   (그것도 없을 때)
     onboarding_seeds.npz    — 판에는 없다. 없으면 요청 사본마다 센다
                               (`tools/export_onboarding_seeds.py`, `recommender.seed_sums`)
+    mu.npy                  — 판에는 없다. Qdrant 갈래의 동결 μ (설계 §6.3, S15P21A204-456).
+                              없으면 판의 색인 풀 평균을 쓴다 (`recommender._frozen_mu`)
 """
 from __future__ import annotations
 
@@ -43,6 +45,7 @@ SERVING = {
     "user_encoder.npz": lambda: ("stage1_weights.npz",),
     "combiner.json": _combiner_names,
     "onboarding_seeds.npz": lambda: (),
+    "mu.npy": lambda: (),
 }
 
 

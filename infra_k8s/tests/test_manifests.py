@@ -2707,5 +2707,173 @@ class LabelBatchFileTest(unittest.TestCase):
         self.assertEqual(state[0], state[1])
 
 
+class QdrantManifestTest(unittest.TestCase):
+    """Qdrant (S15P21A204-456, 설계 §6.1·§6.4). kubectl 없이 파일로 본다 — CI 이미지에 kubectl 이
+    없어서 이것만이 파이프라인에서 실제로 확인된다.
+
+    지키는 것: node-b 고정·digest 고정·한도, 밖에 열지 않음, 키가 없으면 잠긴 채 뜸, NetworkPolicy
+    가 Qdrant 만 고름(네임스페이스의 첫 정책이라 다른 파드에 번지면 안 된다), ai 는 local 그대로."""
+
+    QDRANT = K8S / "base" / "qdrant.yaml"
+    POLICY = K8S / "base" / "qdrant-networkpolicy.yaml"
+    DIGEST = re.compile(r"^[\w./-]+@sha256:[0-9a-f]{64}$")
+
+    def _docs(self, path):
+        return [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d]
+
+    def _kind(self, kind):
+        return next(d for d in self._docs(self.QDRANT) if d["kind"] == kind)
+
+    def _pod(self):
+        return self._kind("StatefulSet")["spec"]["template"]["spec"]
+
+    def _cron_pod(self):
+        return self._kind("CronJob")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+
+    def _base_workloads(self):
+        """base 의 모든 파드 템플릿 (이름, 라벨, spec)."""
+        for path in sorted((K8S / "base").glob("*.yaml")):
+            for d in self._docs(path):
+                if d.get("kind") in ("Deployment", "StatefulSet"):
+                    t = d["spec"]["template"]
+                elif d.get("kind") == "CronJob":
+                    t = d["spec"]["jobTemplate"]["spec"]["template"]
+                else:
+                    continue
+                yield d["metadata"]["name"], (t.get("metadata") or {}).get("labels") or {}, t["spec"]
+
+    def test_it_is_in_the_overlay(self):
+        kustomization = (K8S / "base" / "kustomization.yaml").read_text(encoding="utf-8")
+        for name in ("qdrant.yaml", "qdrant-networkpolicy.yaml"):
+            with self.subTest(file=name):
+                self.assertRegex(kustomization, re.compile(rf"^\s+- {re.escape(name)}\s*$", re.M))
+
+    def test_it_runs_on_the_ai_node_with_a_node_local_volume(self):
+        pod = self._pod()
+        self.assertEqual({"mupid.io/role": "ai"}, pod["nodeSelector"])
+        claims = self._kind("StatefulSet")["spec"]["volumeClaimTemplates"]
+        self.assertEqual({"storage", "snapshots"}, {c["metadata"]["name"] for c in claims})
+        for c in claims:
+            self.assertEqual("local-path", c["spec"]["storageClassName"])
+        # 스냅샷은 노드 볼륨에만 — Object Storage 자격(S3 키)을 받지 않는다 (§6.1 백업).
+        text = self.QDRANT.read_text(encoding="utf-8")
+        self.assertNotIn("MUPID_S3_", text)
+        self.assertNotIn("mupid-storage-s3", text)
+
+    def test_images_are_pinned_by_digest(self):
+        for where, pod in (("qdrant", self._pod()), ("snapshot", self._cron_pod())):
+            for c in pod["containers"]:
+                with self.subTest(pod=where, container=c["name"]):
+                    self.assertRegex(c["image"], self.DIGEST)
+
+    def test_requests_are_small_and_limits_are_set(self):
+        """node-b 는 할당 가능 3코어에 요청이 이미 1,275m 다. 요청이 크면 다른 파드가 Pending 이다."""
+        for where, pod in (("qdrant", self._pod()), ("snapshot", self._cron_pod())):
+            for c in pod["containers"]:
+                res = c["resources"]
+                with self.subTest(pod=where):
+                    self.assertTrue({"cpu", "memory"} <= set(res["requests"]))
+                    self.assertTrue({"cpu", "memory"} <= set(res["limits"]))
+                    cpu = res["requests"]["cpu"]
+                    milli = int(cpu[:-1]) if cpu.endswith("m") else int(float(cpu) * 1000)
+                    self.assertLessEqual(milli, 250)
+
+    def test_it_is_never_exposed_outside_the_cluster(self):
+        svc = self._kind("Service")
+        self.assertEqual("ClusterIP", svc["spec"].get("type", "ClusterIP"))
+        for p in svc["spec"]["ports"]:
+            self.assertNotIn("nodePort", p)
+        for c in self._pod()["containers"]:
+            for p in c.get("ports", []):
+                self.assertNotIn("hostPort", p)
+        self.assertFalse(self._pod().get("hostNetwork"))
+        conf = (K8S / "base" / "nginx" / "default.conf").read_text(encoding="utf-8")
+        self.assertNotIn("qdrant", conf.lower())
+
+    def test_it_never_starts_open_when_a_key_is_missing(self):
+        """Qdrant 는 api_key 가 비면 인증 없이 열린다. 비면 무작위 키로 잠가야 한다."""
+        c = self._pod()["containers"][0]
+        env = {e["name"]: e for e in c["env"]}
+        refs = {
+            "QDRANT__SERVICE__API_KEY": ("mupid-secrets", "MUPID_QDRANT_API_KEY"),
+            "QDRANT__SERVICE__READ_ONLY_API_KEY": ("mupid-ai-secrets", "MUPID_QDRANT_READ_ONLY_API_KEY"),
+        }
+        script = c["args"][0]
+        for name, (secret, key) in refs.items():
+            with self.subTest(env=name):
+                ref = env[name]["valueFrom"]["secretKeyRef"]
+                self.assertEqual((secret, key), (ref["name"], ref["key"]))
+                self.assertTrue(ref.get("optional"), "비밀 전에 배포돼도 파드는 떠야 한다")
+                self.assertIn(name, script)
+        self.assertIn('if [ -z "${!name:-}" ]', script)
+        self.assertIn("/dev/urandom", script)
+        self.assertIn("exec ./entrypoint.sh", script)
+        self.assertLess(script.index("/dev/urandom"), script.index("exec ./entrypoint.sh"))
+        for pod in (self._pod(), self._cron_pod()):
+            # kubelet 이 args 의 `$(` 를 먼저 펼친다 (clickhouse.yaml 과 같은 이유).
+            self.assertNotIn("$(", " ".join(pod["containers"][0]["args"]))
+
+    def test_the_snapshot_job_targets_the_defined_collection(self):
+        schema = json.loads((ROOT / "ai_server" / "app" / "qdrant_collection.json").read_text(encoding="utf-8"))
+        c = self._cron_pod()["containers"][0]
+        env = {e["name"]: e for e in c["env"]}
+        self.assertEqual(schema["collection"], env["COLLECTION"]["value"])
+        self.assertGreaterEqual(int(env["KEEP"]["value"]), 1)
+        cron = self._kind("CronJob")["spec"]
+        self.assertEqual("Asia/Seoul", cron["timeZone"])
+        self.assertEqual("Forbid", cron["concurrencyPolicy"])
+        # 라벨러(04:00)·MySQL 백업(03:00)과 같은 시각이 아니다.
+        labeler = next(d for d in self._docs(K8S / "base" / "ai-labeler.yaml") if d["kind"] == "CronJob")
+        self.assertNotEqual(labeler["spec"]["schedule"].split()[1], cron["schedule"].split()[1])
+        self.assertNotEqual("3", cron["schedule"].split()[1])
+
+    def test_the_policy_selects_only_qdrant(self):
+        """네임스페이스의 첫 NetworkPolicy 다. 다른 파드를 고르면 그 파드의 연결이 전부 막힌다."""
+        policies = [d for p in (K8S / "base").glob("*.yaml") for d in self._docs(p)
+                    if d.get("kind") == "NetworkPolicy"]
+        self.assertEqual(["qdrant-ingress"], [p["metadata"]["name"] for p in policies])
+        spec = policies[0]["spec"]
+        self.assertEqual({"matchLabels": {"app": "qdrant"}}, spec["podSelector"])
+        self.assertEqual(["Ingress"], spec["policyTypes"], "나가는 연결은 건드리지 않는다")
+        selected = [name for name, labels, _ in self._base_workloads() if labels.get("app") == "qdrant"]
+        self.assertEqual(["qdrant"], selected)
+
+    def test_the_policy_admits_exactly_the_design_table(self):
+        """설계 §6.4: 쓰기 Spring, 읽기 ai·라벨러 (+ 스냅샷 작업). 라벨이 실제 파드에 있어야 한다."""
+        spec = self._docs(self.POLICY)[0]["spec"]
+        (rule,) = spec["ingress"]
+        (peer,) = rule["from"]
+        (expr,) = peer["podSelector"]["matchExpressions"]
+        allowed = set(expr["values"])
+        self.assertEqual({"api", "ai", "ai-labeler", "qdrant-snapshot"}, allowed)
+        self.assertNotIn("namespaceSelector", peer)
+        self.assertNotIn("ipBlock", peer)
+        present = {labels.get("app") for _, labels, _ in self._base_workloads()}
+        self.assertTrue(allowed <= present, f"라벨이 없는 파드: {sorted(allowed - present)}")
+        self.assertEqual({6333, 6334}, {p["port"] for p in rule["ports"]})
+
+    def test_k3s_keeps_its_network_policy_controller(self):
+        """k3s 는 kube-router 로 NetworkPolicy 를 지킨다. 이 플래그가 생기면 정책이 조용히 무력해진다."""
+        for role in ("k3s_server", "k3s_agent"):
+            text = (K8S / "ansible" / "roles" / role / "tasks" / "main.yml").read_text(encoding="utf-8")
+            with self.subTest(role=role):
+                self.assertNotIn("disable-network-policy", text)
+                self.assertNotIn("flannel-backend=none", text)
+
+    def test_ai_stays_on_the_local_backend(self):
+        """병합이 곧 배포다. 매니페스트가 갈래를 바꾸면 벡터가 채워지기 전에 추천이 멈춘다."""
+        text = (K8S / "base" / "ai.yaml").read_text(encoding="utf-8")
+        self.assertNotRegex(text, re.compile(r"name:\s*MUPID_VECTOR_BACKEND\s*,\s*value:\s*'?(qdrant|pinecone)"))
+
+    def test_the_keys_are_written_down(self):
+        doc = (ROOT / "infra" / "ci" / "VARIABLES.md").read_text(encoding="utf-8")
+        for key in ("MUPID_QDRANT_READ_ONLY_API_KEY", "MUPID_QDRANT_API_KEY", "MUPID_VECTOR_BACKEND"):
+            with self.subTest(key=key):
+                self.assertIn(key, doc)
+        runbook = (K8S / "OPERATIONS-K8S.md").read_text(encoding="utf-8")
+        self.assertIn("rollout restart statefulset/qdrant", runbook)
+        self.assertIn("qdrant_collection", runbook)
+
+
 if __name__ == "__main__":
     unittest.main()

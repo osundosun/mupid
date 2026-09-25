@@ -43,6 +43,14 @@
 > | `MUPID_PINECONE_TIMEOUT` | 아니오 | 호출 하나의 제한 시간(초, 기본 10) |
 > | `MUPID_AI_SERVER_URL` | 갱신 배치에 **예** | 갱신 배치가 `/health` 로 "서버가 새 μ 를 읽었나" 를 확인할 주소. 확인 못 하면 `READY` 로 넘어가지 않는다 |
 > | `MUPID_AI_SERVER_DIR` | 아니오 | 분석 배치 호스트의 `ai_server` 체크아웃 경로 (기본 `$HOME/mupid_ai_project_dev`) |
+> | `MUPID_VECTOR_BACKEND` | 아니오 | 순간 벡터 갈래 `local`(기본) \| `qdrant` \| `pinecone` (S15P21A204-456). 비우면 예전 `MUPID_PINECONE_ENABLED` 를 따른다. **Qdrant 에 벡터가 채워진 뒤(457)** `qdrant` 로 바꾼다 — 그 전에 바꾸면 준비 판정이 "컬렉션이 비었다" 로 실패해 추천이 멈춘다 |
+> | `MUPID_QDRANT_READ_ONLY_API_KEY` | qdrant 에 **예** | Qdrant 읽기 전용 키. ai 가 쓰고, **Qdrant 파드도 같은 Secret 에서 이 키를 받는다**(`infra_k8s/base/qdrant.yaml`). 비면 Qdrant 가 무작위 키로 잠긴 채 뜬다. 값을 바꾸면 ai 는 수신기가 다시 띄우지만 Qdrant 는 사람이 `kubectl -n mupid rollout restart statefulset/qdrant` |
+> | `MUPID_QDRANT_URL` | 아니오 | 기본 `http://qdrant:6333` (클러스터 안 ClusterIP) |
+> | `MUPID_QDRANT_COLLECTION`·`MUPID_QDRANT_TIMEOUT` | 아니오 | 기본은 `ai_server/app/qdrant_collection.json` 의 이름 · 5초 |
+>
+> **Qdrant 쓰기 키 `MUPID_QDRANT_API_KEY` 는 여기가 아니라 `MUPID_API_ENV`** 에 넣는다(Secret
+> `mupid-secrets`, `infra/deploy/.env.example`). 쓰는 것은 Spring(벡터 등록, 457)과 스냅샷 CronJob
+> 뿐이고, ai 는 쓰기 키를 받지 않는다(설계 §6.4). 이 키도 바꾸면 Qdrant 를 다시 띄운다.
 >
 > **분석 배치에도 같은 파일 변수를 쓴다.** JupyterHub 배치는 `deploy-jupyter.py --batch`
 > 가 `MUPID_AI_SERVER_ENV` 를 읽어 **배치 프로세스의 환경으로만** 넘긴다 — 서버

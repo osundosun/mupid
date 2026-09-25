@@ -1720,18 +1720,21 @@ def user_positives(user: str) -> pd.DataFrame:
 
 # ------------------------------------------------- 순간 벡터를 어디서 읽는가
 #
-# 두 갈래가 있고, **고르는 것은 설정이지 실패가 아니다.** 어느 쪽이든 추천 계산부는
-# `vector_store()` 가 돌려주는 인터페이스(`app/vector_store.py`)만 부른다.
+# 세 갈래가 있고, **고르는 것은 설정이지 실패가 아니다**(`MUPID_VECTOR_BACKEND`, 기본 local).
+# 어느 쪽이든 추천 계산부는 `vector_store()` 가 돌려주는 인터페이스(`app/vector_store.py`)만
+# 부른다.
 #
 #   local     `moments_emb.npy` 를 읽는다. 운영이 지금 이것이다 (2026-09-24~)
+#   qdrant    node-b 의 Qdrant 컬렉션. 원본은 `mu + r·u` 로 되돌린다 (S15P21A204-456)
 #   pinecone  후보는 인덱스에서 찾고, 원본은 `mu + r·u` 로 되돌린다 (459 에서 지운다)
 #
-# Pinecone 을 켜 둔 배포에서 Pinecone 이 **실패하면 local 로 내려가지 않는다.**
+# 외부 저장소를 고른 배포에서 그 저장소가 **실패하면 local 로 내려가지 않는다.**
 # 내려가면 노드에 남은 옛 벡터로 조용히 다른 추천이 나가고, 그 사실이 응답 어디에도
 # 드러나지 않는다. 실패는 예외로 올려 `/internal/ready` 와 오류로 보이게 한다.
 
 def vector_backend() -> str:
-    return "pinecone" if pinecone_store.enabled() else "local"
+    # 예전 스위치(`MUPID_PINECONE_ENABLED`)도 계속 받는다 — 새 변수가 비었을 때만.
+    return vstore.backend_name(pinecone_store.enabled())
 
 
 def vector_store(c: Optional["Catalog"] = None) -> vstore.VectorStore:
@@ -1740,9 +1743,18 @@ def vector_store(c: Optional["Catalog"] = None) -> vstore.VectorStore:
     로컬 저장소는 **판에 딸린다**(`_index_cache`) — 요청 사본끼리 나눠 갖고, 판을 새로
     올리면 함께 사라진다. 평균 μ 도 저장소가 들고 있다(색인 풀 전체로 한 번, !285).
     """
-    if vector_backend() == "pinecone":
+    backend = vector_backend()
+    if backend == "pinecone":
         return vstore.PINECONE
     c = c if c is not None else current()
+    if backend == "qdrant":
+        got = c._index_cache.get("vector_store:qdrant")
+        if got is None:
+            mu, source = _frozen_mu(c)
+            got = vstore.QdrantVectorStore(mu, source, POOL_SOURCES,
+                                           model_version=model_bundle.status()["version"])
+            c._index_cache["vector_store:qdrant"] = got
+        return got
     got = c._index_cache.get("vector_store")
     if got is None:
         Z = _require_local_vectors("vector_store")
@@ -1755,6 +1767,44 @@ def vector_store(c: Optional["Catalog"] = None) -> vstore.VectorStore:
             version, POOL_SOURCES)
         c._index_cache["vector_store"] = got
     return got
+
+
+def _frozen_mu(c: "Catalog") -> tuple[np.ndarray, str]:
+    """Qdrant 갈래의 중심화 평균과 그 출처.
+
+    컬렉션의 `mert` 는 쓴 쪽이 μ 로 중심화한 방향이라, 읽는 쪽도 **같은 μ** 여야 한다(설계 §6.3
+    "μ 동결"). 이미지의 모델 자리에 `mu.npy` 가 있으면(채택된 모델 묶음) 그것을, 없으면 지금처럼
+    판의 **색인 풀 평균**을 쓴다 — local 갈래가 재는 값과 같다(!285). 둘 다 없으면 멈춘다
+    (지어내지 않는다).
+    """
+    r = model_bundle.resolve("mu.npy")
+    if r.path is not None:
+        mu = np.asarray(np.load(r.path), dtype=np.float32).reshape(-1)
+        return mu, f"{r.source}:mu.npy"
+    Z = getattr(c, "Z", None)
+    if Z is None:
+        raise RuntimeError("Qdrant 갈래의 중심화 평균이 없다 — 이미지에 mu.npy 도, 판에 "
+                           "moments_emb.npy 도 없다")
+    rows = index_pool(c).emb_row.to_numpy()
+    mu = (np.asarray(Z[rows], dtype=np.float32).mean(0) if len(rows)
+          else np.zeros(int(Z.shape[1]), np.float32))
+    return mu, "plate:pool_mean"
+
+
+def vector_store_problem() -> Optional[str]:
+    """고른 갈래가 요청을 받을 수 없는 이유. 받을 수 있으면 None.
+
+    지금은 qdrant 갈래만 본다 — 컬렉션이 없거나, 비었거나, 이미지의 모델 버전 벡터가 전 구간에
+    없으면 준비 판정이 실패한다(설계 §10.1 장애 표·§10.2-1). 판정은 저장소가 몇 초 동안
+    기억한다(`QdrantVectorStore.status`).
+    """
+    try:
+        if vector_backend() != "qdrant":
+            return None
+        st = vector_store().status()
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+    return None if st["ok"] else "; ".join(st["errors"])
 
 
 def _pool_mean() -> np.ndarray:
@@ -1838,7 +1888,7 @@ def _vector_dim() -> int:
     c = current()
     if c is not None and getattr(c, "Z", None) is not None:
         return int(c.Z.shape[1])
-    return pinecone_store.center().dim
+    return vector_store(c).dim
 
 
 def _require_local_vectors(what: str):
@@ -1846,8 +1896,8 @@ def _require_local_vectors(what: str):
     c = current()
     if getattr(c, "Z", None) is None:
         raise RuntimeError(
-            f"{what}: moments_emb.npy 가 판에 없다. 운영은 Pinecone 을 켜고 "
-            f"돌린다(MUPID_PINECONE_ENABLED) — 로컬 갈래는 개발·비교용이다")
+            f"{what}: moments_emb.npy 가 판에 없다. 판 없이 돌리려면 외부 저장소 "
+            f"갈래를 고른다(MUPID_VECTOR_BACKEND=qdrant)")
     return c.Z
 
 

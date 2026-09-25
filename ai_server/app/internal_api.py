@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, model_validator
 
 from . import (catalog_body, clickhouse, metrics, onboarding as onb, paths,
-               pinecone_store)
+               pinecone_store, qdrant_store)
 from .log import log
 
 PREFIX = "/internal"
@@ -349,7 +349,14 @@ def _svc():
     #
     # 같은 호출이 **새 μ 도 읽어 온다** — 배치가 평균을 갈았는데 서버가 옛 평균으로
     # 계속 도는 상태를 막는다. 재기동이 필요 없다.
-    if pinecone_store.enabled():
+    svc = _svc_mod()
+    try:
+        # 시험의 가짜 서비스 모듈에는 갈래 판정이 없다 — 그때는 예전 스위치만 본다.
+        pick = getattr(svc, "vector_backend", None)
+        backend = pick() if pick else ("pinecone" if pinecone_store.enabled() else "local")
+    except ValueError as e:
+        raise ApiError("INDEX_NOT_READY", f"순간 벡터 저장소 설정이 틀렸습니다: {e}")
+    if backend == "pinecone":
         try:
             pinecone_store.serving_center()
         except pinecone_store.ServingPaused:
@@ -357,10 +364,15 @@ def _svc():
                            "추천 벡터를 갱신하는 중입니다. 잠시 뒤 다시 시도해 주세요.")
         except pinecone_store.PineconeError as e:
             raise ApiError("INDEX_NOT_READY", f"순간 벡터 저장소를 읽지 못했습니다: {e}")
-    svc = _svc_mod()
     # 후보는 요청마다 본문으로 온다. 여기서 보는 것은 **색인·모델이 올라왔는가** 뿐이다.
     if getattr(svc, "CAT", None) is None:
         raise ApiError("INDEX_NOT_READY", "추천 색인이 아직 준비되지 않았습니다.")
+    # Qdrant 갈래는 컬렉션이 서빙할 수 있어야 한다(설계 §10.1 장애 표 — Qdrant 가 죽으면 추천이
+    # 멈춘다). 판정은 저장소가 몇 초 기억하므로 요청마다 Qdrant 를 두드리지 않는다.
+    if backend == "qdrant":
+        why = svc.vector_store_problem()
+        if why:
+            raise ApiError("INDEX_NOT_READY", f"순간 벡터 저장소(Qdrant)가 준비되지 않았습니다: {why}")
     return svc
 
 
@@ -631,7 +643,9 @@ def ready() -> dict:
             # 벡터 검색 갈래. Pinecone 장애는 여기서 드러나야 하고, 로컬 옛 벡터로
             # 조용히 내려가지 않는다.
             "vector_search": {"backend": svc.vector_backend(),
-                              **pinecone_store.settings()},
+                              **pinecone_store.settings(),
+                              **({"qdrant": qdrant_store.settings()}
+                                 if svc.vector_backend() == "qdrant" else {})},
             "behavior_store": behavior_store_status(),
             "paths": paths.check()}
 

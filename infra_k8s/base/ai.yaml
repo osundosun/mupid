@@ -92,6 +92,14 @@ spec:
           #
           # `optional: true` 인 것은 **아직 안 올린 클러스터에서도 파드가 뜨게** 하려는
           # 것이다. Pinecone 을 켜지 않았다면 이 Secret 없이도 추천이 된다.
+          #
+          # Qdrant(S15P21A204-456)도 이 Secret 으로만 온다 — 여기 env 를 더하지 않는다.
+          #   MUPID_QDRANT_READ_ONLY_API_KEY  읽기 전용 키. qdrant.yaml 이 같은 키를 받는다
+          #   MUPID_VECTOR_BACKEND            local(기본) | qdrant | pinecone
+          #   MUPID_QDRANT_URL                기본 http://qdrant:6333
+          # 갈래를 이 매니페스트에 적지 않는 것이 **병합해도 local 로 도는** 이유다. 전환은
+          # 벡터가 채워진 뒤(457) `MUPID_AI_SERVER_ENV` 에 `MUPID_VECTOR_BACKEND=qdrant` 를
+          # 넣는 것이고, 수신기가 ai 만 다시 띄운다.
           envFrom:
             - secretRef: {name: mupid-ai-secrets, optional: true}
           env:

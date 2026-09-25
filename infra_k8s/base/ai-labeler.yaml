@@ -53,6 +53,9 @@ spec:
       # 두 시간을 넘기면 무언가 잘못된 것이다. 붙잡고 있으면 다음 판이 막힌다.
       activeDeadlineSeconds: 7200
       template:
+        # qdrant-networkpolicy.yaml 이 이 라벨로 Qdrant 연결을 허락한다(읽기 키, 설계 §6.4).
+        # CronJob 이 만드는 Job 파드에는 고정된 이름표가 없어서 붙여 둔다.
+        metadata: {labels: {app: ai-labeler}}
         spec:
           restartPolicy: Never
           # 색인이 이 노드의 디스크에 있다. 추천 서버와 같은 자리에 묶는다.
