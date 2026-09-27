@@ -133,6 +133,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
                 meta.getTable(),
                 meta.getCategory(),
                 meta.isComposite(),
+                meta.isEventTimeline(),
                 count(meta)
             ));
         }
