@@ -19,6 +19,12 @@ public record AdminResourceSummary(
     boolean composite,
 
     /**
+     * 행동 타임라인을 가진 자원인가 (회원). 타임라인은 왼쪽 목록에 따로 두지 않고 이 자원의
+     * 행에서 들어가므로, 타임라인 화면이 "돌아갈 목록" 과 "켜 둘 왼쪽 줄" 을 여기서 찾는다.
+     */
+    boolean eventTimeline,
+
+    /**
      * 전체 행 수. 테이블마다 `COUNT` 한 번씩 돈다.
      */
     long count

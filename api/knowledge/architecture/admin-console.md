@@ -18,7 +18,7 @@
 | `admin/service/AdminTimelineServiceImpl.java` | 곡의 가사·구간 타임라인 (MySQL 자원) |
 | `admin/service/AdminUserTimelineServiceImpl.java` | 회원의 행동 타임라인 (ClickHouse 이벤트) |
 | `analytics/repository/UserActivityRepository.java` | 그 타임라인이 읽는 ClickHouse 질의 |
-| `admin/service/AdminAiPreferenceServiceImpl.java` | AI 선호도 추이 (ClickHouse 집계 표) |
+| `admin/service/AdminAiPreferenceServiceImpl.java` | AI 선호도 (ClickHouse 집계 표) |
 | `analytics/repository/AiPreferenceRepository.java` · `analytics/service/AiPreferenceBatch.java` | 그 집계를 계산·적재하는 쿼리와 매시 배치 |
 | `admin/controller/AdminClickHouseController.java` | ClickHouse 화면 프록시 (`/api/admin/clickhouse/**`) |
 | `admin/service/AdminClickHouseConsoleServiceImpl.java` | 열람권 발급·검사, 프록시 본체 |
@@ -41,7 +41,7 @@
 | 행 | 목록 조회와 같은 모양(`_id`·`_labels`) | 전용 record. 식별자로 고칠 대상이 없다 |
 | 편집 | 된다 — 같은 편집기, `PATCH /resource/…`. 드래그로 시각도 옮긴다 | **없다.** 이벤트 원본은 쌓기만 한다 |
 | 밴드 선언 | `AdminResourceRegistry.TIMELINES` (자원·시간 컬럼) | `AdminUserEventGroup` (이벤트 종류 묶음) |
-| 화면 진입 | 스키마의 `timeline_axes` 가 비어 있지 않은 자원 | 스키마의 `event_timeline` 이 참인 자원 + 왼쪽 목록 항목 |
+| 화면 진입 | 스키마의 `timeline_axes` 가 비어 있지 않은 자원 | 스키마의 `event_timeline` 이 참인 자원(회원)의 **행동** 단추. 왼쪽 목록에는 없다 |
 
 축을 그날 데이터에서 유도하지 않는 것이 행동 타임라인의 핵심이다. 유도하면 새벽에만
 쓴 날과 온종일 쓴 날의 눈금이 달라져 **날짜를 바꿀 때마다 같은 가로 위치가 다른 시각을
@@ -78,7 +78,7 @@
 ## AI 선호도는 원본이 아니라 집계 표를 읽는다
 
 왼쪽 목록의 **AI 선호도** (S15P21A204-427). AI 가 추천한 곡을 사람들이 실제로 듣는지를
-시간별 선 그래프로 그린다. 지표 정의·배치·표는 [domain/ai-preference.md](../domain/ai-preference.md).
+머리 수치와 기간 합계 표로 보여 준다. 지표 정의·배치·표는 [domain/ai-preference.md](../domain/ai-preference.md).
 
 회원 행동 타임라인과 달리 **`listen_events` 를 화면에서 훑지 않는다.** 이레치(168칸)를
 화면을 열 때마다 재생 단위로 접으면 무겁고, 한 시간 칸의 값은 그 시간이 지나면 거의 안
@@ -88,16 +88,10 @@
 
 화면 쪽에서 지킨 것:
 
-- **그래프는 인라인 SVG 문자열이다.** 차트 라이브러리를 넣지 않는다(380-C 와 같은 제약) —
-  `innerHTML` 한 번으로 다른 화면과 같은 방식으로 그린다.
-- 가로 위치는 **칸의 번호**에서 나온다. 서버가 빈틈없는 `hours[]` 를 주므로 시각 문자열을
-  `Date` 로 파싱하지 않는다(브라우저 시간대를 타면 칸이 밀린다).
-- 비율이 `null` 인 칸(재생 0회)과 **계산 안 된 칸**(`computed=false`)에서 선을 끊는다.
-  이어 그리면 모르는 구간을 아는 것처럼 보인다. 계산 안 된 칸은 옅은 붉은 띠로 칠한다.
-- AI 선과 기준선(AI 아닌 재생, 점선)을 **한 그래프에 겹친다.** AI 선호율만으로는 좋은지
-  나쁜지 읽히지 않는다.
-- 지표 선택(선호율·완주율·스킵률…)은 응답을 다시 부르지 않는다 — 한 응답에 전부 있다.
-  창과 지표는 주소(`?view=aiPreference&from=…&to=…&metric=…`)에 실린다.
+- AI 와 기준선(AI 아닌 재생)을 **나란히** 놓는다. AI 선호율만으로는 좋은지 나쁜지 읽히지 않는다.
+- 창은 주소(`?view=aiPreference&from=…&to=…`)에 실린다.
+- **시간별 추이 그래프는 뺐다**(2026-09-27). 응답의 `hours[]`·`series[].points[]` 는 서버가 그대로
+  주지만 화면이 쓰지 않는다 — 다시 그리려면 git 이력의 `aiChartHtml` 을 본다.
 
 ## 자원 목록은 손으로 관리하지 않는다
 

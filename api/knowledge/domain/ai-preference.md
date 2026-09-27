@@ -15,7 +15,7 @@
 | 집계 | `analytics/service/AiPreferenceBatch` — 매시 5분, 직전 6시간을 다시 센다 |
 | 저장 | ClickHouse `ai_preference_hourly` (`mupid_all`, ReplacingMergeTree) — 한 시간 × 구분 5 |
 | 조회 | `GET /api/v1/admin/ai-preference` · 다시 집계 `POST /api/v1/admin/ai-preference/aggregate` |
-| 화면 | 관리자 콘솔 왼쪽 목록 **AI 선호도** — 시간별 선 그래프 |
+| 화면 | 관리자 콘솔 왼쪽 목록 **AI 선호도** — 머리 수치와 기간 합계 표 (시간별 그래프는 2026-09-27 에 뺐다) |
 | DDL | `clickhouse/init/01-schema.sql` 끝 · 이미 떠 있는 클러스터는 `clickhouse/migrations/04-ai-preference-hourly.sql` 을 **손으로** 적용 |
 
 MySQL 은 쓰지 않는다. 새 표가 ERD 밖(ClickHouse)이라 팀 합의가 필요한 스키마 변경이 없다.
@@ -100,8 +100,8 @@ MySQL 은 쓰지 않는다. 새 표가 ERD 밖(ClickHouse)이라 팀 합의가 �
   세므로 합계에서는 비운다.
 
 **AI 선호율은 기준선(`NON_AI`) 선호율과 견줘서 읽는다.** 선호율 40% 가 좋은지 나쁜지는
-사람들이 원래 곡을 얼마나 끝까지 듣는지에 달렸다. 화면이 두 선을 한 그래프에 겹쳐
-그리는 이유다(점선이 기준선).
+사람들이 원래 곡을 얼마나 끝까지 듣는지에 달렸다. 화면이 머리 수치와 기간 합계 표에서
+두 값을 나란히 놓는 이유다.
 
 ## 배치
 
