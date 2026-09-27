@@ -457,30 +457,6 @@
 
         /* ---------------------------------------------------- AI 선호도 (427) */
 
-        /* 선 그래프는 SVG 한 장이다. 이 화면은 라이브러리를 넣지 않는다(380-C 와 같은
-           제약) — viewBox 로 그리고 너비만 늘려 화면 폭을 따라가게 한다. */
-        .ai-chart {
-            padding: 8px;
-            background: var(--panel-2);
-            border: 1px solid var(--line);
-            border-radius: 8px;
-        }
-
-        .ai-chart svg { display: block; width: 100%; height: auto; }
-        .ai-chart .grid-y { stroke: var(--line); stroke-width: 1; }
-        .ai-chart .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-        .ai-chart .line { fill: none; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
-        .ai-chart .line.main { stroke-width: 2.6; }
-        .ai-chart .line.baseline { stroke-dasharray: 5 4; }
-        /* 배치가 계산하지 않은 시간. "재생 0회" 와 달리 **모른다** 는 뜻이라 칠해 둔다. */
-        .ai-chart .missing { fill: rgba(255, 107, 107, 0.08); }
-        .ai-chart .hover { fill: transparent; }
-        .ai-chart .hover:hover { fill: rgba(255, 255, 255, 0.05); }
-
-        .ai-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 2px 0; color: var(--muted); font-size: 12px; }
-        .ai-legend .swatch { display: inline-block; width: 14px; height: 3px; margin-right: 6px; vertical-align: middle; border-radius: 2px; }
-        .ai-legend .swatch.baseline { background: none !important; border-top: 2px dashed var(--muted); height: 0; }
-
         .pager { display: flex; align-items: center; gap: 10px; justify-content: flex-end; margin-top: 12px; color: var(--muted); }
 
         /* ------------------------------------------------------------------ 모달 */
@@ -639,13 +615,11 @@
         userDate: null,
         /**
          * AI 선호도 (S15P21A204-427). 창은 사용자 타임라인처럼 **응답에서 받아 둔다** —
-         * 기본 창의 "오늘" 은 서버의 Asia/Seoul 이다. 지표는 화면만의 선택이라 서버에
-         * 보내지 않고 주소에만 싣는다.
+         * 기본 창의 "오늘" 은 서버의 Asia/Seoul 이다.
          */
         aiPreference: null,
         aiFrom: null,
         aiTo: null,
-        aiMetric: 'engaged_rate',
         page: 0,
         size: DEFAULT_SIZE,
         sort: null,
@@ -826,14 +800,13 @@
             + (state.view === 'clickhouse') + '">'
             + '<span><strong>ClickHouse 콘솔</strong>'
             + '<span class="table-name">쿼리 · 차트</span></span></button>'
-            + '<button class="nav-item" data-view="userTimeline" aria-current="'
-            + (state.view === 'userTimeline') + '">'
-            + '<span><strong>사용자 행동 타임라인</strong>'
-            + '<span class="table-name">날짜 · 하루 24시간</span></span></button>'
+            // 사용자 행동 타임라인은 여기 두지 않는다 — 회원 한 사람을 고른 뒤에야 볼 것이
+            // 있는 화면이라 회원 목록의 "행동" 단추로만 들어간다. 그동안은 들어온 회원 목록이
+            // 왼쪽에서 켜져 있다(아래 `current`).
             + '<button class="nav-item" data-view="aiPreference" aria-current="'
             + (state.view === 'aiPreference') + '">'
             + '<span><strong>AI 선호도</strong>'
-            + '<span class="table-name">추천곡 재생 · 시간별</span></span></button>';
+            + '<span class="table-name">추천곡 재생 · 기간 합계</span></span></button>';
 
         var category = null;
         state.resources.forEach(function (resource) {
@@ -848,7 +821,8 @@
                 category = resource.category;
                 html += '<div class="nav-group">' + escape(category) + '</div>';
             }
-            var current = state.view === 'resource' && state.resource === resource.name;
+            var current = (state.view === 'resource' || state.view === 'userTimeline')
+                && state.resource === resource.name;
             html += '<button class="nav-item" data-resource="' + escape(resource.name) + '"'
                 + ' aria-current="' + current + '">'
                 + '<span><strong>' + escape(resource.label) + '</strong>'
@@ -2380,7 +2354,6 @@
             userDate: state.userDate,
             aiFrom: state.aiFrom,
             aiTo: state.aiTo,
-            aiMetric: state.aiMetric,
             page: state.page,
             size: state.size,
             sort: state.sort,
@@ -2417,19 +2390,16 @@
             }
         }
         if (snap.view === 'aiPreference') {
-            // 창은 서버가 정해 준 값이라 받은 뒤에는 언제나 적는다. 지표는 기본값이면
-            // 적지 않는다 — 주소가 짧아야 무엇을 바꿔 봤는지 한눈에 읽힌다.
+            // 창은 서버가 정해 준 값이라 받은 뒤에는 언제나 적는다.
             if (snap.aiFrom && snap.aiTo) {
                 params.set('from', snap.aiFrom);
                 params.set('to', snap.aiTo);
             }
-            if (snap.aiMetric && snap.aiMetric !== 'engaged_rate') {
-                params.set('metric', snap.aiMetric);
-            }
         }
         // 타임라인에도 목록 맥락을 같이 적는다. 그래야 F5 로 타임라인에 바로 들어와도
         // "목록으로" 가 어느 목록의 몇 페이지로 돌아갈지 안다.
-        if ((snap.view === 'resource' || snap.view === 'timeline') && snap.resource) {
+        if ((snap.view === 'resource' || snap.view === 'timeline' || snap.view === 'userTimeline')
+                && snap.resource) {
             params.set('resource', snap.resource);
             // 기본값은 적지 않는다. 주소가 짧아야 무엇을 좁혀 봤는지 한눈에 읽힌다.
             if (snap.page) {
@@ -2466,7 +2436,6 @@
         var size = Number(params.get('size'));
         var known = view === 'resource' || view === 'clickhouse' || view === 'timeline'
             || view === 'userTimeline' || view === 'aiPreference';
-        var metric = params.get('metric');
         var snap = {
             view: known ? view : 'dashboard',
             consoleTab: params.get('tab') === 'dashboard' ? 'dashboard' : 'play',
@@ -2480,10 +2449,6 @@
             // 상한도 달라서 한쪽 값을 다른 쪽으로 물려주면 400 이 난다.
             aiFrom: view === 'aiPreference' ? params.get('from') : null,
             aiTo: view === 'aiPreference' ? params.get('to') : null,
-            // 모르는 지표는 받지 않는다. 받으면 선택 상자에 아무것도 선택되지 않는다.
-            aiMetric: AI_METRICS.some(function (item) {
-                return item.key === metric;
-            }) ? metric : 'engaged_rate',
             page: Math.max(Math.floor(Number(params.get('page')) || 0), 0),
             size: PAGE_SIZES.indexOf(size) >= 0 ? size : DEFAULT_SIZE,
             sort: params.get('sort'),
@@ -2564,6 +2529,14 @@
         if (snap.view === 'userTimeline') {
             // 회원 번호가 없어도 연다. 고르는 자리가 화면 안에 있어서 빈 화면이 되지
             // 않는다 — 대시보드로 떨어뜨리면 주소를 공유받은 사람이 엉뚱한 곳에 선다.
+            // 목록 맥락은 곡 타임라인처럼 되돌려 둔다("← 회원 목록" 이 돌아갈 페이지).
+            state.resource = snap.resource;
+            state.page = snap.page;
+            state.size = snap.size;
+            state.sort = snap.sort;
+            state.direction = snap.direction;
+            state.keyword = snap.keyword;
+            state.filters = Object.assign({}, snap.filters);
             openUserTimeline(snap.userTimelineUserId, snap);
             return;
         }
@@ -2583,6 +2556,15 @@
     function loadResources() {
         return request('/resource').then(function (resources) {
             state.resources = resources;
+            if (state.view === 'userTimeline') {
+                // 행동 타임라인에 바로 들어왔으면 돌아갈 회원 목록을 이제야 안다.
+                var member = memberResourceName(state.resource);
+                if (member !== state.resource) {
+                    state.resource = member;
+                    renderUserTimeline();
+                    syncHistory();
+                }
+            }
             renderNav();
         });
     }
@@ -2735,7 +2717,17 @@
      */
     function openUserTimeline(userId, saved) {
         state.view = 'userTimeline';
-        state.resource = null;
+        // 목록 맥락을 비우지 않는다 — 왼쪽 목록에서 켜 둘 줄이자 "← 회원 목록" 이 돌아갈 곳이다.
+        var member = memberResourceName(state.resource);
+        if (member !== state.resource) {
+            // 다른 자원의 페이지·필터를 회원 목록에 물려주면 엉뚱한 조건으로 열린다.
+            state.page = 0;
+            state.sort = null;
+            state.direction = 'desc';
+            state.keyword = '';
+            state.filters = {};
+        }
+        state.resource = member;
         state.userTimelineUserId = userId || null;
         state.userTimeline = null;
         state.userFrom = saved ? saved.userFrom : null;
@@ -2749,6 +2741,28 @@
         }
         el('content').innerHTML = '<div class="empty">행동 기록을 불러오는 중…</div>';
         return loadUserTimeline();
+    }
+
+    /**
+     * 행동 타임라인이 속한 회원 목록의 자원 이름.
+     *
+     * <p>타임라인은 왼쪽 목록에 따로 없고 회원 행의 "행동" 단추로 들어온다. 보던 목록이 그
+     * 자원이면 그대로 쓰고(페이지·필터를 지킨다), 아니면 — 공유된 링크로 바로 들어왔거나 F5 —
+     * 서버가 `event_timeline` 이라고 한 자원을 고른다. 화면이 "user" 라는 이름을 쥐지 않는다.
+     */
+    function memberResourceName(preferred) {
+        var list = state.resources || [];
+        if (!list.length) {
+            // 링크로 바로 들어오면 왼쪽 목록이 아직 안 왔다 — 주소의 값을 믿고, 목록이 오면
+            // loadResources() 가 다시 맞춘다.
+            return preferred || null;
+        }
+        var hit = list.filter(function (resource) {
+            return resource.name === preferred && resource.event_timeline;
+        })[0] || list.filter(function (resource) {
+            return resource.event_timeline;
+        })[0];
+        return hit ? hit.name : null;
     }
 
     /**
@@ -2810,8 +2824,8 @@
 
         if (!state.userTimelineUserId) {
             html += '<p class="sub">회원을 고르면 그 사람의 행동을 날짜별로, 그리고 하루'
-                + ' 시간축 위에 그립니다. 회원 목록의 <strong>행동</strong> 단추로도 들어올 수'
-                + ' 있습니다.</p>' + userPickerHtml();
+                + ' 시간축 위에 그립니다. 회원 목록의 <strong>행동</strong> 단추로 들어오거나'
+                + ' 회원 번호를 넣으세요.</p>' + userPickerHtml();
             el('content').innerHTML = html;
             return;
         }
@@ -2853,6 +2867,9 @@
      */
     function userPickerHtml() {
         var html = '<div class="toolbar">'
+            + (state.resource
+                ? '<button class="btn ghost small" data-timeline-back="true">← 회원 목록</button>'
+                : '')
             + '<input id="user-timeline-id" class="field" style="width:130px" placeholder="회원 번호"'
             + ' value="' + attr(state.userTimelineUserId === null ? '' : state.userTimelineUserId) + '"'
             + ' inputmode="numeric" autocomplete="off">'
@@ -3146,25 +3163,7 @@
 
     // ------------------------------------------------------ AI 선호도 (427)
 
-    /**
-     * 그래프로 고를 수 있는 지표. `key` 는 응답 `AdminAiPreferenceStats` 의 필드 이름이다.
-     *
-     * 선호율이 맨 앞(기본값)인 것은 "AI 가 고른 곡을 사람들이 실제로 듣는가" 에 가장 곧게
-     * 답하기 때문이다. 정의는 서버와 `knowledge/domain/ai-preference.md` 가 같이 들고 있다 —
-     * 여기 문장을 바꾸면 그쪽도 고친다.
-     */
-    var AI_METRICS = [
-        { key: 'engaged_rate', label: '선호율', rate: true,
-          desc: '30초 이상 들었거나 끝까지 들은 재생의 비율' },
-        { key: 'completion_rate', label: '완주율', rate: true, desc: '끝까지 들은 재생의 비율' },
-        { key: 'skip_rate', label: '스킵률', rate: true, desc: '넘긴 재생의 비율' },
-        { key: 'early_skip_rate', label: '조기 스킵률', rate: true, desc: '30초를 못 채우고 넘긴 재생의 비율' },
-        { key: 'like_rate', label: '좋아요율', rate: true, desc: '재생 중에 좋아요를 누른 재생의 비율' },
-        { key: 'share', label: '재생 비중', rate: true, desc: '그 시간 전체 재생 가운데 이 구분의 몫' },
-        { key: 'plays', label: '재생 수', rate: false, desc: '시작한 재생의 수 (시작한 시간에 센다)' }
-    ];
-
-    /** 선 색. 구분 이름이 정한다 — 순서로 정하면 선이 하나 빠질 때 색이 밀린다. */
+    /** 기간 합계 표의 구분 색. 구분 이름이 정한다 — 순서로 정하면 구분이 하나 빠질 때 색이 밀린다. */
     var AI_COLORS = {
         AI: '#7aa2ff',
         HOME: '#56d364',
@@ -3177,22 +3176,12 @@
     /** 기간 단추. 창의 끝은 그대로 두고 시작만 옮긴다 (사용자 타임라인과 같은 방식). */
     var AI_RANGE_PRESETS = [1, 7, 14, 31];
 
-    function aiMetric() {
-        var found = AI_METRICS.filter(function (metric) {
-            return metric.key === state.aiMetric;
-        })[0];
-        return found || AI_METRICS[0];
-    }
-
     function openAiPreference(saved) {
         state.view = 'aiPreference';
         state.resource = null;
         state.aiPreference = null;
         state.aiFrom = saved ? saved.aiFrom : state.aiFrom;
         state.aiTo = saved ? saved.aiTo : state.aiTo;
-        if (saved && saved.aiMetric) {
-            state.aiMetric = saved.aiMetric;
-        }
         renderNav();
         el('content').innerHTML = '<h2>AI 선호도</h2><div class="empty">집계를 불러오는 중…</div>';
         return loadAiPreference();
@@ -3241,11 +3230,10 @@
 
     function renderAiPreference() {
         var data = state.aiPreference;
-        var metric = aiMetric();
         var html = '<h2>AI 선호도</h2>'
             + '<p class="sub">AI 가 추천한 곡(오늘의 모먼트 · 구간 추천 · 챗봇)을 사람들이 실제로'
             + ' 듣는지 봅니다. <strong>선호율</strong>은 30초 이상 들었거나 끝까지 들은 재생의'
-            + ' 비율이고, 점선은 AI 가 고르지 않은 재생(검색·재생 목록·큐 등)의 같은 값입니다.'
+            + ' 비율이고, <strong>AI 아닌 재생</strong> 줄(검색·재생 목록·큐 등)과 견줘 읽습니다.'
             + ' 재생은 시작한 시간에 셉니다 · 기준 ' + escape(data ? data.time_zone : 'Asia/Seoul') + '</p>';
 
         html += aiToolbarHtml();
@@ -3265,10 +3253,8 @@
                 + ' · 진행 중인 시간은 다음 정시 5분에 들어옵니다.</p>';
         }
 
+        // 시간별 추이 그래프는 뺐다 — 머리 수치와 기간 합계로 읽는다.
         html += aiSummaryHtml(data);
-        html += '<h3>' + escape(metric.label) + ' 추이 <span class="muted" style="font-weight:400;'
-            + 'font-size:12px">' + escape(metric.desc) + '</span></h3>';
-        html += aiChartHtml(data, metric);
         html += aiTableHtml(data);
 
         el('content').innerHTML = html;
@@ -3282,13 +3268,7 @@
         html += '<input id="ai-from" class="field" type="date" value="' + attr(state.aiFrom || '') + '">'
             + '<span class="muted">~</span>'
             + '<input id="ai-to" class="field" type="date" value="' + attr(state.aiTo || '') + '">'
-            + '<span class="muted">지표</span><select id="ai-metric" class="field">';
-        AI_METRICS.forEach(function (metric) {
-            html += '<option value="' + attr(metric.key) + '"'
-                + (metric.key === aiMetric().key ? ' selected' : '') + '>'
-                + escape(metric.label) + '</option>';
-        });
-        html += '</select><span class="grow"></span>'
+            + '<span class="grow"></span>'
             + '<button class="btn ghost small" id="ai-aggregate">다시 집계</button>'
             + '<button class="btn ghost small" data-ai-refresh="true">새로고침</button></div>';
         return html;
@@ -3305,10 +3285,6 @@
             return '–';
         }
         return (Number(value) * 100).toFixed(1) + '%';
-    }
-
-    function aiValueText(metric, value) {
-        return metric.rate ? aiPercent(value) : (value === null ? '–' : number(value));
     }
 
     /**
@@ -3328,196 +3304,6 @@
             + stat('AI 재생 수', number(ai.total.plays) + '회')
             + stat('AI 조기 스킵률', aiPercent(ai.total.early_skip_rate))
             + '</div>';
-    }
-
-    /**
-     * 시간 칸 하나의 값. **계산 안 된 칸은 null** 이다 — 0 으로 그리면 "그 시간엔 아무도
-     * 안 들었다" 가 된다. 비율은 서버가 이미 분모 0 을 null 로 준다.
-     */
-    function aiPointValue(data, line, index, metric) {
-        var hour = data.hours[index];
-        if (!hour || !hour.computed) {
-            return null;
-        }
-        var point = line.points[index];
-        if (!point) {
-            return null;
-        }
-        var value = point[metric.key];
-        return value === null || value === undefined ? null : Number(value);
-    }
-
-    /** 1·2·2.5·5 × 10ⁿ 으로 올린 눈금 최댓값. */
-    function niceCeil(value) {
-        if (!(value > 0)) {
-            return 1;
-        }
-        var pow = Math.pow(10, Math.floor(Math.log10(value)));
-        var steps = [1, 2, 2.5, 5, 10];
-        for (var i = 0; i < steps.length; i++) {
-            if (steps[i] * pow >= value) {
-                return steps[i] * pow;
-            }
-        }
-        return 10 * pow;
-    }
-
-    /**
-     * 선 그래프. SVG 를 문자열로 만든다 — 다른 화면처럼 `innerHTML` 한 번으로 그린다.
-     *
-     * 가로 위치는 **칸의 번호**에서 나온다. 시각 문자열을 `Date` 로 파싱하면 브라우저
-     * 시간대를 타서 칸이 밀린다 — 서버가 이미 빈틈없는 시간 목록을 준다.
-     */
-    function aiChartHtml(data, metric) {
-        var hours = data.hours || [];
-        var n = hours.length;
-        if (n === 0) {
-            return '<div class="ai-chart"><p class="empty">그릴 시간이 없습니다.'
-                + ' 오늘 0시 직후에는 아직 끝난 시간이 없습니다.</p></div>';
-        }
-        var lines = data.series || [];
-
-        var W = 960;
-        var H = 300;
-        var L = 48;
-        var R = 12;
-        var T = 12;
-        var B = 30;
-        var plotW = W - L - R;
-        var plotH = H - T - B;
-        var step = plotW / n;
-
-        var max = 0;
-        lines.forEach(function (line) {
-            for (var i = 0; i < n; i++) {
-                var value = aiPointValue(data, line, i, metric);
-                if (value !== null && value > max) {
-                    max = value;
-                }
-            }
-        });
-        // 비율은 100% 를 넘지 않는다. 값이 작으면 눈금을 줄여 선이 바닥에 붙지 않게 한다.
-        var top = metric.rate ? Math.min(1, niceCeil(max || 1)) : niceCeil(max || 1);
-
-        function x(i) {
-            return L + (i + 0.5) * step;
-        }
-        function y(value) {
-            return T + plotH * (1 - value / top);
-        }
-
-        var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="'
-            + attr(metric.label + ' 시간별 추이') + '">';
-
-        // 계산 안 된 시간 — 이어진 칸끼리 한 사각형으로 묶는다.
-        var runStart = -1;
-        for (var m = 0; m <= n; m++) {
-            var missing = m < n && !hours[m].computed;
-            if (missing && runStart < 0) {
-                runStart = m;
-            }
-            if (!missing && runStart >= 0) {
-                svg += '<rect class="missing" x="' + (L + runStart * step).toFixed(2) + '" y="' + T
-                    + '" width="' + ((m - runStart) * step).toFixed(2) + '" height="' + plotH + '"></rect>';
-                runStart = -1;
-            }
-        }
-
-        for (var t = 0; t <= 4; t++) {
-            var tickValue = (top * t) / 4;
-            var ty = y(tickValue).toFixed(2);
-            svg += '<line class="grid-y" x1="' + L + '" x2="' + (W - R) + '" y1="' + ty + '" y2="' + ty + '"></line>'
-                + '<text class="tick" x="' + (L - 6) + '" y="' + ty + '" dy="4" text-anchor="end">'
-                + escape(metric.rate ? Math.round(tickValue * 1000) / 10 + '%' : number(tickValue))
-                + '</text>';
-        }
-
-        // 가로 눈금. 하루가 넘으면 날짜만(자정마다), 하루 이내면 세 시간마다 시각을 적는다.
-        var days = Math.ceil(n / 24);
-        var every = Math.max(1, Math.ceil(days / 10));
-        var dayIndex = 0;
-        for (var h = 0; h < n; h++) {
-            var label = hours[h].hour;
-            var clock = label.slice(11, 16);
-            var text = null;
-            if (n <= 24) {
-                if (h % 3 === 0) {
-                    text = clock;
-                }
-            } else if (clock === '00:00') {
-                if (dayIndex % every === 0) {
-                    text = label.slice(5, 10);
-                }
-                dayIndex = dayIndex + 1;
-            }
-            if (text !== null) {
-                var tx = (L + h * step).toFixed(2);
-                svg += '<line class="grid-y" x1="' + tx + '" x2="' + tx + '" y1="' + T + '" y2="' + (T + plotH) + '"></line>'
-                    + '<text class="tick" x="' + tx + '" y="' + (H - 10) + '" text-anchor="start">'
-                    + escape(text) + '</text>';
-            }
-        }
-
-        // 선. 값이 null 인 칸에서 끊는다 — 이어 그리면 모르는 구간을 아는 것처럼 보인다.
-        // 앞뒤가 다 끊긴 외딴 점은 선이 안 되므로 점으로 찍는다.
-        lines.forEach(function (line) {
-            var color = AI_COLORS[line.key] || '#e6e8ee';
-            var cls = 'line' + (line.key === 'AI' ? ' main' : '') + (line.ai ? '' : ' baseline');
-            var path = '';
-            var dots = '';
-            for (var i = 0; i < n; i++) {
-                var value = aiPointValue(data, line, i, metric);
-                if (value === null) {
-                    continue;
-                }
-                var prev = i > 0 ? aiPointValue(data, line, i - 1, metric) : null;
-                var next = i + 1 < n ? aiPointValue(data, line, i + 1, metric) : null;
-                path += (prev === null ? 'M' : 'L') + x(i).toFixed(2) + ' ' + y(value).toFixed(2) + ' ';
-                if (prev === null && next === null) {
-                    dots += '<circle cx="' + x(i).toFixed(2) + '" cy="' + y(value).toFixed(2)
-                        + '" r="2.5" fill="' + color + '"></circle>';
-                }
-            }
-            if (path) {
-                svg += '<path class="' + cls + '" stroke="' + color + '" d="' + path.trim() + '"></path>';
-            }
-            svg += dots;
-        });
-
-        // 마우스를 올리면 그 시간의 전부. 칸이 좁아 글자를 그릴 수 없으므로 여기가
-        // 유일하게 건수까지 읽을 수 있는 자리다.
-        for (var k = 0; k < n; k++) {
-            svg += '<rect class="hover" x="' + (L + k * step).toFixed(2) + '" y="' + T
-                + '" width="' + step.toFixed(2) + '" height="' + plotH + '"><title>'
-                + escape(aiHourTitle(data, k, metric)) + '</title></rect>';
-        }
-
-        svg += '</svg>';
-
-        var legend = '<div class="ai-legend">';
-        lines.forEach(function (line) {
-            legend += '<span><span class="swatch' + (line.ai ? '' : ' baseline') + '" style="background:'
-                + (AI_COLORS[line.key] || '#e6e8ee') + '"></span>' + escape(line.label) + '</span>';
-        });
-        legend += '<span><span class="swatch" style="background:rgba(255,107,107,0.35)"></span>'
-            + '집계 안 된 시간</span></div>';
-
-        return '<div class="ai-chart">' + svg + legend + '</div>';
-    }
-
-    function aiHourTitle(data, index, metric) {
-        var hour = data.hours[index];
-        var lines = [hour.hour + (hour.computed ? '' : '  (집계 안 됨)')];
-        if (!hour.computed) {
-            return lines.join('\n');
-        }
-        (data.series || []).forEach(function (line) {
-            var point = line.points[index] || {};
-            lines.push(line.label + ': ' + aiValueText(metric, point[metric.key])
-                + ' · 재생 ' + number(point.plays || 0) + '회'
-                + (point.users === null || point.users === undefined ? '' : ' · ' + number(point.users) + '명'));
-        });
-        return lines.join('\n');
     }
 
     /** 창 전체의 합. 비율은 서버가 건수를 먼저 더한 뒤 나눈 값이다. */
@@ -3674,18 +3460,8 @@
             openConsole();
             return;
         }
-        if (target.dataset.view === 'userTimeline') {
-            // 왼쪽 목록에서 들어올 때는 보던 회원을 이어서 연다. 매번 비우면 다른 화면에
-            // 다녀올 때마다 회원 번호를 다시 쳐야 한다.
-            var keptUser = state.userTimelineUserId;
-            var keptRange = snapshot();
-            navigate(function () {
-                return openUserTimeline(keptUser, keptRange);
-            });
-            return;
-        }
         if (target.dataset.view === 'aiPreference') {
-            // 보던 창과 지표를 이어서 연다 (사용자 타임라인과 같은 판단).
+            // 보던 창을 이어서 연다.
             var keptAi = snapshot();
             navigate(function () {
                 return openAiPreference(keptAi);
@@ -3916,14 +3692,6 @@
             state.aiTo = aiTo;
             loadAiPreference();
             return;
-        }
-        if (event.target.id === 'ai-metric') {
-            // 지표는 이미 받은 응답 안에 전부 있다. 다시 부르지 않고 다시 그리기만 한다.
-            state.aiMetric = event.target.value;
-            if (state.aiPreference) {
-                renderAiPreference();
-            }
-            syncHistory();
         }
     });
 
