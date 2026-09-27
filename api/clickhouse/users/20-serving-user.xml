@@ -55,9 +55,20 @@
                 <ip>::/0</ip>
             </networks>
             <access_management>0</access_management>
-            <allow_databases>
-                <database>default</database>
-            </allow_databases>
+            <!--
+              allow_databases 대신 grants 로 준다 (S15P21A204-461). allow_databases 는 데이터베이스
+              단위라 system.dictionaries 한 표의 세 열만 열 방법이 없었다 — 기준 풀 변경 확인
+              (feature_store.change_token_sql)이 사전의 마지막 갱신 시각을 읽는데 그 권한이 없어,
+              2026-09-26 운영에서 60 초마다 ACCESS_DENIED → "전부 읽는다" 로 떨어졌다(하루 1,423 번).
+              둘은 함께 쓸 수 없다(grants 가 있으면 allow_* 를 거절한다).
+
+              - default.*            SELECT 와 dictGet. 전과 같은 범위다(readonly 라 쓰기는 없다)
+              - system.dictionaries  변경 확인에 쓰는 세 열만. 사전 정의(source·쿼리)는 보이지 않는다
+            -->
+            <grants>
+                <query>GRANT SELECT, dictGet ON default.*</query>
+                <query>GRANT SELECT(database, name, last_successful_update_time) ON system.dictionaries</query>
+            </grants>
         </mupid_serving>
     </users>
 </clickhouse>
