@@ -2827,6 +2827,14 @@ class QdrantManifestTest(unittest.TestCase):
         self.assertNotEqual(labeler["spec"]["schedule"].split()[1], cron["schedule"].split()[1])
         self.assertNotEqual("3", cron["schedule"].split()[1])
 
+    def test_the_snapshot_job_waits_for_the_policy_before_calling(self):
+        """새 파드는 NetworkPolicy 에 IP 가 반영되기 전 1~2 초 동안 qdrant 에 닿지 못한다 (S15P21A204-462)."""
+        script = " ".join(self._cron_pod()["containers"][0]["args"])
+        self.assertIn("until curl", script)
+        self.assertIn("/readyz", script)
+        self.assertLess(script.index("/readyz"), script.index('"$base"'),
+                        "첫 API 호출보다 먼저 연결을 기다려야 한다")
+
     def test_the_policy_selects_only_qdrant(self):
         """네임스페이스의 첫 NetworkPolicy 다. 다른 파드를 고르면 그 파드의 연결이 전부 막힌다."""
         policies = [d for p in (K8S / "base").glob("*.yaml") for d in self._docs(p)
