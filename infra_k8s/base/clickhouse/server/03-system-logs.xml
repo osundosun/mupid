@@ -61,6 +61,19 @@
         <flush_interval_milliseconds>60000</flush_interval_milliseconds>
         <partition_by>event_date</partition_by>
         <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        <!--
+          머지를 세로(열 하나씩)로 강제한다 (S15P21A204-460).
+
+          metric_log 는 열이 1,212 개인데 하루 파티션이 8,640 행뿐이라 기본 세로 머지 기준
+          (vertical_merge_algorithm_min_rows_to_activate = 131072 행)에 못 미친다. 그러면 가로
+          머지가 모든 열을 한꺼번에 열어 열마다 버퍼를 잡는다 — 2026-09-27 운영에서 이 머지 하나가
+          서버 한도 3 GiB 에 닿아 3 분에 수백 번 실패하며 재시도했고, 그동안 ai 의 기준 풀 갱신과
+          api 의 리포트 집계가 MEMORY_LIMIT_EXCEEDED 로 함께 죽었다. 세로 머지는 열을 하나씩
+          쓰므로 메모리가 열 수에 비례하지 않는다. 행이 적어 느려질 것도 없다.
+
+          운영 클러스터에는 같은 값을 ALTER TABLE system.metric_log MODIFY SETTING 으로 먼저 넣었다.
+        -->
+        <settings>vertical_merge_algorithm_min_rows_to_activate = 1, vertical_merge_algorithm_min_columns_to_activate = 1</settings>
     </metric_log>
 
     <asynchronous_metric_log>
