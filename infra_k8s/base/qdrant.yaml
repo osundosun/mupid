@@ -186,6 +186,19 @@ spec:
                     echo "MUPID_QDRANT_API_KEY 가 없다 — Qdrant 가 잠긴 채 떠 있다. 스냅샷을 건너뛴다" >&2
                     exit 1
                   fi
+                  # 연결이 열릴 때까지 기다린다 (S15P21A204-462). 새 파드는 kube-router 가
+                  # NetworkPolicy(qdrant-networkpolicy.yaml) 허용 목록에 제 IP 를 넣기 전 1~2 초 동안
+                  # qdrant 에 닿지 못한다 — 뜨자마자 부르던 때는 9/26·9/27 이틀 모두 curl exit 7 로
+                  # 끝나 스냅샷이 한 판도 없었다. /readyz 는 키 없이 열린다.
+                  n=0
+                  until curl -s -m 2 -o /dev/null "http://qdrant:6333/readyz"; do
+                    n=`echo "$n" | awk '{print $1 + 1}'`
+                    if [ "$n" -ge 30 ]; then
+                      echo "qdrant 에 30 번 연결해 봤지만 닿지 못했다" >&2
+                      exit 1
+                    fi
+                    sleep 1
+                  done
                   base="http://qdrant:6333/collections/$COLLECTION"
                   code=`curl -s -o /dev/null -w '%{http_code}' -H "api-key: $MUPID_QDRANT_API_KEY" "$base"`
                   if [ "$code" = 404 ]; then
