@@ -13,15 +13,21 @@
   그 순간과 닮은 <strong>새로운 음악</strong>을 만나게 됩니다.
 </div>
 
+<br />
+
 <div align="center">
-  <strong>SSAFY 15기 특화 프로젝트 · 빅데이터 분산</strong><br />
+  SSAFY 15기 특화 프로젝트 · 빅데이터 분산<br />
   <strong>오순도순 A204</strong>
 </div>
+
+<br />
 
 <div align="center">
   <a href="https://j15a204.p.ssafy.io">🎧 서비스 바로가기</a> ·
   <a href="https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21A204">💻 GitLab</a>
 </div>
+
+<br />
 
 <div align="center">
 <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat&amp;logo=react&amp;logoColor=white" alt="React 19" />
@@ -30,6 +36,8 @@
 <img src="https://img.shields.io/badge/ClickHouse-FFCC01?style=flat&amp;logo=clickhouse&amp;logoColor=black" alt="ClickHouse" />
 <img src="https://img.shields.io/badge/Kubernetes-326CE5?style=flat&amp;logo=kubernetes&amp;logoColor=white" alt="Kubernetes" />
 </div>
+
+<br />
 
 ---
 
