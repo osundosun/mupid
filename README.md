@@ -24,7 +24,9 @@
 
 <div align="center">
   <a href="https://j15a204.p.ssafy.io">🎧 서비스 바로가기</a> ·
-  <a href="https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21A204">💻 GitLab</a>
+  <a href="https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21A204">💻 GitLab</a> ·
+  <a href="https://github.com/GyuWonLee/MUPID">🐙 GitHub</a> ·
+  <a href="exec/README.md">📘 포팅 매뉴얼</a>
 </div>
 
 <br />
@@ -46,7 +48,9 @@
 | [프로젝트 소개](#overview) | [시스템 구성](#architecture) | [디렉터리 구조](#structure) |
 | [주요 기능](#features) | [핵심 기술](#technology) | [로컬 실행](#getting-started) |
 | [사용자 흐름](#journey) | [기술 스택](#stack) | [협업 규칙](#contributing) |
-| [팀 소개](#team) | [트러블슈팅](#troubleshooting) | [관련 문서](#docs) |
+| [팀 소개](#team) | [트러블슈팅](#troubleshooting) | [포팅 · 배포 매뉴얼](#porting) |
+
+📚 [전체 관련 문서](#docs) · 🎬 [시연 시나리오](exec/시연_시나리오.md)
 
 
 ---
@@ -138,6 +142,7 @@ flowchart TB
     API --> LLM[LLM · GPT-5 mini]
     API --> VECTOR[(Qdrant)]
     AI --> CH
+    AI --> VECTOR
     AI --> ARTIFACT[음악 임베딩 · 모델 산출물]
     PRE[음원 전처리 · 등록 배치] --> API
 ```
@@ -152,7 +157,7 @@ flowchart TB
 | **MySQL / Redis** | 서비스의 관계형 데이터 관리, 캐시와 이벤트 중복 방지 등 |
 | **Kafka / ClickHouse** | 청취 이벤트 전달, 분산 저장, 구간별 선호 신호와 분석 데이터 집계 |
 | **FastAPI 추천 서버** | 사용자 행동과 음악 특징을 이용한 후보 필터링·점수 계산·순위 결정 |
-| **Qdrant** | 음악 순간 벡터의 저장·검색과 벡터 반영 상태 관리 |
+| **Qdrant** | 음악 순간 벡터 저장·검색. API가 벡터를 등록하고 추천 서버가 읽기 전용으로 검색 |
 | **SeaweedFS / Nginx** | 음원·이미지 저장과 인증된 청크 전송 |
 
 </details>
@@ -225,9 +230,9 @@ flowchart TB
 
 발표자료의 추천 모델은 사용자와 음악을 각각 인코딩하는 **Dual Encoder** 구조입니다. 각 인코더는 `Linear → LayerNorm · GELU → Linear`를 거쳐 같은 임베딩 공간의 벡터를 만들고, 코사인 유사도로 사용자와 음악 순간의 관계를 계산합니다.
 
-서비스의 최종 추천에는 모델 점수 외에도 선호 구간의 특징(DNA), 행동 신호, 요청 조건을 함께 반영합니다. 운영 추론은 NumPy로 실행할 수 있도록 구성해 GPU와 PyTorch 없이 서빙하며, 학습된 가중치와 음악 색인은 별도 산출물로 준비합니다.
+서비스의 최종 추천에는 모델 점수 외에도 선호 구간의 특징(DNA), 행동 신호, 요청 조건을 함께 반영합니다. 운영 추론은 NumPy로 실행해 GPU와 PyTorch 없이 서빙합니다. 운영 순간 벡터는 Qdrant에서 읽고, 음악 색인과 랭킹 가중치는 별도로 준비합니다. 로컬에서는 파일 색인도 사용할 수 있습니다. 준비 절차와 `models.lock`의 모델 배포 흐름은 [AI 포팅 매뉴얼](exec/ai/README.md)에 정리되어 있습니다.
 
-발표자료에서는 FMA와 Jamendo 관련 데이터·가중치를 학습 자료로, Flow 생성 음원과 자체 수집 행동 로그를 운영 입력으로 소개합니다. 데이터셋·개별 음원·모델 가중치의 이용 조건은 각각의 원본 라이선스와 약관을 따릅니다.
+발표자료에서는 FMA와 Jamendo 관련 데이터·가중치를 학습 자료로, Flow 생성 음원과 자체 수집 행동 로그를 운영 입력으로 소개합니다. Jamendo는 학습용이며 서비스의 재생·추천 후보에는 포함하지 않습니다. 데이터셋·개별 음원·모델 가중치의 이용 조건은 각각의 원본 라이선스와 약관을 따릅니다.
 
 </details>
 
@@ -327,12 +332,13 @@ flowchart LR
 
 ```text
 S15P21A204/
+├── exec/                   # 포팅 매뉴얼, DB 복원 안내, 외부 서비스, 시연 시나리오
 ├── frontend/               # 웹 UI, 플레이어, 청취 이벤트 수집
 ├── app/                    # Tauri 기반 Android 앱 셸
 ├── api/                    # Spring Boot API와 관리자 페이지
 │   ├── docs/               # Bruno API 컬렉션
 │   ├── clickhouse/         # 분석 스키마, 로컬 클러스터, 검증 도구
-│   └── knowledge/         # 아키텍처, 설계 결정, 장애 기록
+│   └── knowledge/          # 아키텍처, 설계 결정, 장애 기록
 ├── ai_server/              # 추천 서버, 모델 서빙, 데이터 배치
 ├── music_preprocessing/    # 음원 청킹, 카탈로그·가사·스트림 등록
 ├── flow_music_automation/  # 생성 음원 수집·처리 자동화
@@ -347,15 +353,64 @@ S15P21A204/
 
 ---
 
+<a id="porting"></a>
+
+## 📘 포팅 · 배포 매뉴얼
+
+**처음 실행하거나 다른 환경에 배포한다면 [포팅 매뉴얼](exec/README.md)부터 확인하세요.** 환경별 버전, 빌드 명령, 환경 변수, 배포 절차를 모듈별로 정리했습니다.
+
+| 문서 | 확인할 내용 |
+| :--- | :--- |
+| 🧭 [전체 안내](exec/README.md) | 제출 자료 구성, 모듈별 문서, 최초 구축 순서 |
+| ⚙️ [Backend](exec/backend/README.md) | Java 21·Spring Boot 빌드, DB 스키마, 인증·스토리지 연결 |
+| 🖥️ [Frontend](exec/frontend/README.md) | Node.js·vinext 개발 환경, API 프록시, 운영 정적 빌드 |
+| 📱 [Android 앱](exec/app/README.md) | Rust·JDK·SDK/NDK, 서명 키, Firebase, APK·웹 번들 업데이트 |
+| 🧠 [AI 추천 서버](exec/ai/README.md) | 모델·색인 준비, Qdrant, 내부 API, 라벨러 CronJob |
+| 🎵 [데이터 파이프라인](exec/data/README.md) | 음원 수집, 청킹, 송폼 분석·임베딩, 데이터 등록 |
+| ☁️ [인프라·배포](exec/infra/README.md) | k3s 2노드, Ansible, Secret, GitLab CI/CD, 배포·롤백 |
+| 🗄️ [DB 복원 안내](exec/db/README.md) | MySQL 덤프 복원, 빈 스키마 구성, 별도 저장소 복구 범위 |
+| 🔌 [외부 서비스](exec/외부_서비스.md) | Gmail API·GMS·Firebase 등 필요한 계정과 설정 |
+| 🎬 [시연 시나리오](exec/시연_시나리오.md) | 시연 계정·기기 준비, 사용자 흐름, 관리자 기능 점검 |
+
+### 처음 구축하는 순서
+
+1. **클러스터 준비** — Ansible로 k3s 클러스터와 배포 수신기를 구성합니다.
+2. **환경 설정** — 서비스별 Secret을 준비하고 Kubernetes 매니페스트를 적용합니다.
+3. **MySQL 준비** — 새 개발 DB에는 [빈 스키마](api/knowledge/domain/erd.sql)를 적용합니다. 운영 데이터 복원이 필요하면 [DB 복원 안내](exec/db/README.md)를 따릅니다.
+4. **저장소 초기화** — SeaweedFS 버킷, Kafka 토픽, ClickHouse 스키마, Qdrant 컬렉션을 준비합니다.
+5. **배포와 데이터 준비** — GitLab CI로 API·웹·AI 이미지를 배포하고, 음원·모델·색인과 벡터 데이터를 준비합니다.
+6. **동작 확인** — 웹·API·추천 서버 상태를 점검한 뒤 시연 시나리오대로 가입·감상·추천을 확인합니다.
+
+> **준비 범위**: MySQL 덤프는 음원·이미지 파일, ClickHouse 데이터, Qdrant 벡터를 포함하지 않습니다. 모델·색인, 인증 정보, 앱 서명 키도 별도로 준비해야 합니다. 운영 덤프는 실제 회원·청취 데이터를 포함하므로 접근 권한이 있는 GitLab에서 관리합니다.
+
+<details>
+<summary><b>🔎 실행·배포 전 확인할 차이</b></summary>
+
+| 항목 | 기준 |
+| :--- | :--- |
+| 웹 운영 빌드 | `npm run build:ec2`로 만든 정적 파일을 Nginx에서 제공합니다. 기본 `npm run build`의 Cloudflare Worker 대상과 구분합니다. |
+| 개발 프록시 | `MUPID_API_ORIGIN`은 음원 청크를 전송하는 **Nginx 주소**를 가리킵니다. Compose 기본 `8080`과 프록시 기본 `9900`을 맞춥니다. |
+| MySQL | 앱은 테이블을 자동 생성하지 않습니다. 스키마 또는 덤프를 먼저 적용합니다. |
+| 추천 서버 | 운영은 `MUPID_VECTOR_BACKEND=qdrant`이며, 색인·가중치와 Qdrant 데이터 준비가 필요합니다. |
+| Android | 백엔드 JDK 21과 앱 빌드 JDK 17 환경을 구분합니다. APK에는 Firebase 설정과 서명 키가 필요합니다. |
+| 배포 파이프라인 | 운영 자동화는 GitLab CI/CD 기준입니다. GitHub에 코드를 복사하는 것만으로 CI 변수·Runner·배포가 이전되지는 않습니다. |
+| 추가 확인 | 매뉴얼의 `TODO: 팀 확인`은 아직 확정되지 않은 정보입니다. 계정·키 전달 경로와 시연 환경 등을 팀과 확인합니다. |
+
+</details>
+
+---
+
 <a id="getting-started"></a>
 
 ## 🚀 로컬 실행
+
+아래는 개발 환경의 빠른 시작 안내입니다. 전체 설정과 운영 배포는 [포팅 매뉴얼](exec/README.md)을 기준으로 합니다.
 
 ### 사전 준비
 
 | 항목 | 필요 조건 |
 | --- | --- |
-| 저장소 접근 | SSAFY GitLab 저장소를 읽을 수 있는 계정 |
+| 저장소 접근 | GitLab 또는 GitHub 저장소를 읽을 수 있는 계정 |
 | Frontend | Node.js **22.13.0 이상**, npm |
 | Backend | JDK **21**, 저장소의 Gradle Wrapper |
 | 공통 인프라 | Docker와 Docker Compose |
@@ -363,7 +418,7 @@ S15P21A204/
 | 음원 전처리 | Python **3.12 이상**, uv, libopus를 포함한 FFmpeg |
 | Android 앱 | Rust, Tauri CLI, Android SDK/NDK, 앱 빌드용 JDK |
 
-**클론만으로 전체 서비스 데이터가 준비되지는 않습니다.** MySQL 스키마, 음악 카탈로그·음원, 추천 모델 산출물과 각 서비스의 환경 설정이 필요합니다. 특히 MySQL 테이블은 애플리케이션이 자동 생성하지 않으므로 팀에서 관리하는 스키마를 먼저 적용해야 합니다. [스키마 관리 결정](api/knowledge/decision/0011-jpa-manages-schema.md)을 참고하세요.
+**클론만으로 전체 서비스 데이터가 준비되지는 않습니다.** MySQL 스키마, 음악 카탈로그·음원, 추천 모델 산출물과 각 서비스의 환경 설정이 필요합니다. MySQL 테이블은 애플리케이션이 자동 생성하지 않습니다. 새 개발 환경에는 [erd.sql](api/knowledge/domain/erd.sql)을 적용하고, 운영 데이터 복원은 [DB 포팅 매뉴얼](exec/db/README.md)을 따릅니다.
 
 아래 명령은 별도 표시가 없으면 Bash 기준입니다. 각 서버는 별도 터미널에서 실행합니다.
 
@@ -376,6 +431,8 @@ cd S15P21A204
 npm install
 ```
 
+GitHub에서 시작하려면 `git clone https://github.com/GyuWonLee/MUPID.git` 후 `cd MUPID`에서 같은 절차를 진행합니다.
+
 루트의 npm 패키지는 Husky 관리용입니다. 프론트엔드 의존성은 `frontend/`에서 별도로 설치합니다.
 
 </details>
@@ -387,12 +444,14 @@ npm install
 cd api
 cp .env.example .env
 # .env의 연결 정보와 인증 값을 로컬 환경에 맞게 설정
-docker compose up -d
-# MySQL 스키마 준비 및 초기화 컨테이너 완료 확인 후 실행
+docker compose up -d --wait
+# 새 개발 DB에 knowledge/domain/erd.sql을 적용한 뒤 실행
 ./gradlew bootRun
 ```
 
 Windows PowerShell에서는 `Copy-Item .env.example .env`, `./gradlew.bat bootRun`을 사용합니다. 기존 `.env`가 있다면 복사 대신 필요한 설정만 확인합니다.
+
+벡터 API를 로컬에서 함께 사용하면 `docker compose --profile vectors up -d qdrant`로 Qdrant도 실행합니다. 스키마 적용과 연결 설정은 [Backend 포팅 매뉴얼](exec/backend/README.md)을 참고하세요.
 
 주요 설정은 다음과 같습니다. 전체 항목은 [API 환경 설정 예시](api/.env.example)를 기준으로 합니다.
 
@@ -470,7 +529,7 @@ ai_server/.venv/bin/python -m ai_server.tools.serve
 ./ai_server/.venv/Scripts/python.exe -m ai_server.tools.serve
 ```
 
-기본 포트는 `8100`입니다. `/health`와 `/internal/ready`에서 상태를 확인합니다. 색인·가중치·개인화 데이터 준비 조건은 [AI 서버 문서](ai_server/README.md)를 따릅니다. 내부 토큰을 설정한 경우 내부 경로 호출에는 인증이 필요합니다.
+기본 포트는 `8100`입니다. `/health`와 `/internal/ready`에서 상태를 확인합니다. 색인·가중치·개인화 데이터와 Qdrant 준비 조건은 [AI 포팅 매뉴얼](exec/ai/README.md)을 따릅니다. 내부 토큰을 설정한 경우 내부 경로 호출에는 인증이 필요합니다.
 
 </details>
 
@@ -567,6 +626,8 @@ Merge Request의 `Frontend`·`Backend`·`AI`·`Data`·`Infra` 영역 라벨에 �
 
 | 문서 | 내용 |
 | --- | --- |
+| [포팅 매뉴얼 전체 안내](exec/README.md) | 모듈별 빌드·환경 설정·배포·DB 복원 |
+| [외부 서비스](exec/외부_서비스.md) · [시연 시나리오](exec/시연_시나리오.md) | 연동 준비와 시연 순서 |
 | [Frontend](frontend/README.md) | 화면 구성과 프론트엔드 개발 안내 |
 | [Android 앱](app/README.md) | Tauri 셸과 네이티브 연동, 앱 빌드 |
 | [Backend API](api/README.md) | API 개발 환경과 설정 |
