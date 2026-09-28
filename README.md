@@ -1,27 +1,35 @@
 <a id="top"></a>
 
-<div align="center">
+<p align="center">
+  <img src="frontend/public/mupid-logo-cupid-sky.png" alt="MUPID 로고" width="320" />
+</p>
 
-<img src="frontend/public/mupid-logo-cupid-sky.png" alt="MUPID 로고" width="320" />
+<h1 align="center">MUPID · 뮤피드</h1>
 
-# MUPID · 뮤피드
+<h3 align="center">좋아했던 순간이 다음 음악이 되는 곳</h3>
 
-### 좋아했던 순간이 다음 음악이 되는 곳
+<p align="center">
+  곡 안에서 <strong>마음에 든 순간</strong>을 저장하면,<br />
+  그 순간과 닮은 <strong>새로운 음악</strong>을 만나게 됩니다.
+</p>
 
-곡 안에서 **마음에 든 순간**을 저장하면,<br />
-그 순간과 닮은 **새로운 음악**을 만나게 됩니다.
+<p align="center">
+  <strong>SSAFY 15기 특화 프로젝트 · 빅데이터 분산</strong><br />
+  <strong>오순도순 A204</strong>
+</p>
 
-**SSAFY 15기 특화 프로젝트 · 빅데이터 분산 · 오순도순 A204**
+<p align="center">
+  <a href="https://j15a204.p.ssafy.io">🎧 서비스 바로가기</a> ·
+  <a href="https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21A204">💻 GitLab</a>
+</p>
 
-[🎧 서비스 바로가기](https://j15a204.p.ssafy.io) · [💻 GitLab](https://lab.ssafy.com/s15-bigdata-dist-sub1/S15P21A204)
-
+<p align="center">
 <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat&amp;logo=react&amp;logoColor=white" alt="React 19" />
 <img src="https://img.shields.io/badge/Spring_Boot-4.1.2_SNAPSHOT-6DB33F?style=flat&amp;logo=springboot&amp;logoColor=white" alt="Spring Boot 4.1.2 SNAPSHOT" />
 <img src="https://img.shields.io/badge/FastAPI-009688?style=flat&amp;logo=fastapi&amp;logoColor=white" alt="FastAPI" />
 <img src="https://img.shields.io/badge/ClickHouse-FFCC01?style=flat&amp;logo=clickhouse&amp;logoColor=black" alt="ClickHouse" />
 <img src="https://img.shields.io/badge/Kubernetes-326CE5?style=flat&amp;logo=kubernetes&amp;logoColor=white" alt="Kubernetes" />
-
-</div>
+</p>
 
 ---
 
