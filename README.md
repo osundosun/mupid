@@ -16,7 +16,8 @@
 <br />
 
 <div align="center">
-  SSAFY 15기 특화 프로젝트 · 빅데이터 분산<br />
+  SSAFY 15기 · 빅데이터 분산<br />
+  <strong>🏆 2학기 특화프로젝트 우수상(1등)</strong><br />
   <strong>오순도순 A204</strong>
 </div>
 
@@ -46,7 +47,7 @@
 | 🎵 서비스 알아보기 | 🛠️ 기술 살펴보기 | 🚀 개발 시작하기 |
 | :--- | :--- | :--- |
 | [프로젝트 소개](#overview) | [시스템 구성](#architecture) | [디렉터리 구조](#structure) |
-| [주요 기능](#features) | [핵심 기술](#technology) | [로컬 실행](#getting-started) |
+| [주요 기능](#features) · [서비스 화면](#screenshots) | [핵심 기술](#technology) | [로컬 실행](#getting-started) |
 | [사용자 흐름](#journey) | [기술 스택](#stack) | [협업 규칙](#contributing) |
 | [팀 소개](#team) | [트러블슈팅](#troubleshooting) | [포팅 · 배포 매뉴얼](#porting) |
 
@@ -102,6 +103,36 @@
 **지원 환경** · PC 웹 / 모바일 웹 / Android 앱
 
 Android 앱은 웹과 같은 화면을 Tauri로 제공하며, Rust 기반 통신·SQLite 저장소·재생 알림과 잠금화면 연동을 지원합니다.
+
+---
+
+<a id="screenshots"></a>
+
+## 🖼️ 서비스 화면
+
+### 메인 · 오늘의 Moment
+
+![뮤피드 메인 · 오늘의 Moment](docs/images/main-jump-right-in.png)
+
+### 메인 · 음악 감상
+
+![뮤피드 메인 · 음악 감상](docs/images/main-run.png)
+
+### 음악 탐색
+
+![뮤피드 음악 탐색](docs/images/explore.png)
+
+### 음악 플레이어
+
+![뮤피드 음악 플레이어](docs/images/player.png)
+
+### 순간 저장
+
+![뮤피드 순간 저장](docs/images/save-moment.png)
+
+### 내 취향 리포트
+
+![뮤피드 내 취향 리포트](docs/images/taste-report.png)
 
 ---
 
