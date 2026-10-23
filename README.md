@@ -112,27 +112,39 @@ Android 앱은 웹과 같은 화면을 Tauri로 제공하며, Rust 기반 통신
 
 ### 메인 · 오늘의 Moment
 
-![뮤피드 메인 · 오늘의 Moment](docs/images/main-jump-right-in.png)
+<p align="center">
+  <a href="docs/images/main-jump-right-in.png"><img src="docs/images/main-jump-right-in.png" alt="뮤피드 메인 · 오늘의 Moment" width="614" /></a>
+</p>
 
 ### 메인 · 음악 감상
 
-![뮤피드 메인 · 음악 감상](docs/images/main-run.png)
+<p align="center">
+  <a href="docs/images/main-run.png"><img src="docs/images/main-run.png" alt="뮤피드 메인 · 음악 감상" width="795" /></a>
+</p>
 
 ### 음악 탐색
 
-![뮤피드 음악 탐색](docs/images/explore.png)
+<p align="center">
+  <a href="docs/images/explore.png"><img src="docs/images/explore.png" alt="뮤피드 음악 탐색" width="800" /></a>
+</p>
 
 ### 음악 플레이어
 
-![뮤피드 음악 플레이어](docs/images/player.png)
+<p align="center">
+  <a href="docs/images/player.png"><img src="docs/images/player.png" alt="뮤피드 음악 플레이어" width="800" /></a>
+</p>
 
 ### 순간 저장
 
-![뮤피드 순간 저장](docs/images/save-moment.png)
+<p align="center">
+  <a href="docs/images/save-moment.png"><img src="docs/images/save-moment.png" alt="뮤피드 순간 저장" width="800" /></a>
+</p>
 
 ### 내 취향 리포트
 
-![뮤피드 내 취향 리포트](docs/images/taste-report.png)
+<p align="center">
+  <a href="docs/images/taste-report.png"><img src="docs/images/taste-report.png" alt="뮤피드 내 취향 리포트" width="800" /></a>
+</p>
 
 ---
 
