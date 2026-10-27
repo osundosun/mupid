@@ -388,7 +388,6 @@ S15P21A204/
 ├── infra_k8s/              # Kubernetes, Ansible, 운영 배포
 ├── infra/                  # 공통 CI와 기존 Compose 운영 자료
 ├── prototype/              # 초기 프론트엔드 프로토타입
-├── 진행사항/               # 개인별 진행 기록
 ├── 회고/                   # 팀 회고
 ├── .husky/                 # 커밋 메시지 검증
 └── .gitlab-ci.yml          # CI/CD 파이프라인
@@ -682,7 +681,7 @@ Merge Request의 `Frontend`·`Backend`·`AI`·`Data`·`Infra` 영역 라벨에 �
 | [생성 음원 자동화](flow_music_automation/README.md) | 생성 음원 수집·처리 흐름 |
 | [Kubernetes 구성](infra_k8s/README.md) | 클러스터와 배포 구성 |
 | [Kubernetes 운영](infra_k8s/OPERATIONS-K8S.md) | 배포·검증·롤백 절차 |
-| [진행사항](진행사항/README.md) · [회고](회고/README.md) | 프로젝트 진행과 회고 기록 |
+| [회고](회고/README.md) | 프로젝트 회고 기록 |
 
 ---
 

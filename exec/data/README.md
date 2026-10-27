@@ -232,4 +232,4 @@ DB 덤프로 옮기지 않고 3-2절의 `catalog → covers → lyrics → class
 - Jamendo 곡은 번호가 없어서 벡터 전송 대상에서 빠진다.
 - 스키마 변경은 팀 합의 후 ERD → `erd.sql` 재산출 → DB 에 직접 ALTER → 엔티티 순서로 한다([erd.md](../../api/knowledge/domain/erd.md) 「ERD 를 고치기 전에」). CI 는 스키마를 검증하지 않는다.
 - ClickHouse 운영 Keeper 는 단일 노드용 설정([keeper_config.xml](../../api/clickhouse/keeper/keeper_config.xml))이다. 3노드 이상으로 늘리는 것은 남은 과제다.
-- 인수인계 참고: [AI데이터_인수인계_계획.md](../../진행사항/정예준/AI데이터_인수인계_계획.md), [세션_이어가기.md](../../진행사항/정예준/세션_이어가기.md) — 2026-09-17 기준 미적용 DDL 목록(①~⑥)은 [erd.md](../../api/knowledge/domain/erd.md) 「아직 DB 에 적용하지 않은 DDL」에 있다.
+- 2026-09-17 기준 미적용 DDL 목록(①~⑥)은 [erd.md](../../api/knowledge/domain/erd.md) 「아직 DB 에 적용하지 않은 DDL」에 있다.
