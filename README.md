@@ -17,7 +17,7 @@
 
 <div align="center">
   SSAFY 15기 · 빅데이터 분산<br />
-  <strong>🏆 2학기 특화프로젝트 우수상(1등)</strong><br />
+  <strong>🏆 2학기 특화프로젝트 우수상(본선진출 & 1등)</strong><br />
   <strong>오순도순 A204</strong>
 </div>
 
