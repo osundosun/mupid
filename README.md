@@ -111,47 +111,56 @@ Android 앱은 웹과 같은 화면을 Tauri로 제공하며, Rust 기반 통신
 
 ## 🖼️ 서비스 화면
 
-### 메인 · 오늘의 Moment
+### PC
+
+#### 메인 · 오늘의 Moment
 
 <p align="center">
   <a href="docs/images/f11-home.jpg"><img src="docs/images/f11-home.jpg" alt="뮤피드 메인 · 오늘의 Moment" width="614" /></a>
 </p>
 
-### 메인 · 음악 감상
+#### 메인 · 음악 감상
 
 <p align="center">
   <a href="docs/images/main-run.png"><img src="docs/images/main-run.png" alt="뮤피드 메인 · 음악 감상" width="795" /></a>
 </p>
 
-### 음악 탐색
+#### 음악 탐색
 
 <p align="center">
   <a href="docs/images/f11-explore.jpg"><img src="docs/images/f11-explore.jpg" alt="뮤피드 음악 탐색" width="800" /></a>
 </p>
 
-### 음악 플레이어
+#### 음악 플레이어
 
 <p align="center">
   <a href="docs/images/player.png"><img src="docs/images/player.png" alt="뮤피드 음악 플레이어" width="800" /></a>
 </p>
 
-### 순간 저장
+#### 순간 저장
 
 <p align="center">
   <a href="docs/images/save-moment.png"><img src="docs/images/save-moment.png" alt="뮤피드 순간 저장" width="800" /></a>
 </p>
 
-### 내 취향 리포트
+#### 내 취향 리포트
 
 <p align="center">
   <a href="docs/images/taste-report.png"><img src="docs/images/taste-report.png" alt="뮤피드 내 취향 리포트" width="800" /></a>
 </p>
 
-### 보관함
+#### 보관함
 
 <p align="center">
   <a href="docs/images/f11-library.jpg"><img src="docs/images/f11-library.jpg" alt="뮤피드 보관함 화면" width="614" /></a>
 </p>
+
+
+### 모바일
+
+| 메인 · 오늘의 Moment | 보관함 |
+| :---: | :---: |
+| <a href="docs/images/mupid-home-mobile.jpg"><img src="docs/images/mupid-home-mobile.jpg" alt="뮤피드 모바일 메인" width="260" /></a> | <a href="docs/images/mupid-library-mobile.jpg"><img src="docs/images/mupid-library-mobile.jpg" alt="뮤피드 모바일 보관함" width="260" /></a> |
 
 ---
 
