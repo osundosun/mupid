@@ -114,7 +114,7 @@ Android 앱은 웹과 같은 화면을 Tauri로 제공하며, Rust 기반 통신
 ### 메인 · 오늘의 Moment
 
 <p align="center">
-  <a href="docs/images/main-jump-right-in.png"><img src="docs/images/main-jump-right-in.png" alt="뮤피드 메인 · 오늘의 Moment" width="614" /></a>
+  <a href="docs/images/f11-home.jpg"><img src="docs/images/f11-home.jpg" alt="뮤피드 메인 · 오늘의 Moment" width="614" /></a>
 </p>
 
 ### 메인 · 음악 감상
@@ -126,7 +126,7 @@ Android 앱은 웹과 같은 화면을 Tauri로 제공하며, Rust 기반 통신
 ### 음악 탐색
 
 <p align="center">
-  <a href="docs/images/explore.png"><img src="docs/images/explore.png" alt="뮤피드 음악 탐색" width="800" /></a>
+  <a href="docs/images/f11-explore.jpg"><img src="docs/images/f11-explore.jpg" alt="뮤피드 음악 탐색" width="800" /></a>
 </p>
 
 ### 음악 플레이어
@@ -147,10 +147,10 @@ Android 앱은 웹과 같은 화면을 Tauri로 제공하며, Rust 기반 통신
   <a href="docs/images/taste-report.png"><img src="docs/images/taste-report.png" alt="뮤피드 내 취향 리포트" width="800" /></a>
 </p>
 
-### 모바일 · 보관함
+### 보관함
 
 <p align="center">
-  <a href="docs/images/mupid-library-mobile.jpg"><img src="docs/images/mupid-library-mobile.jpg" alt="모바일 보관함 화면" width="300" /></a>
+  <a href="docs/images/f11-library.jpg"><img src="docs/images/f11-library.jpg" alt="뮤피드 보관함 화면" width="614" /></a>
 </p>
 
 ---
