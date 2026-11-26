@@ -114,7 +114,7 @@ Android 앱은 웹과 같은 화면을 Tauri로 제공하며, Rust 기반 통신
 ### 메인 · 오늘의 Moment
 
 <p align="center">
-  <a href="docs/images/mupid-home.jpg"><img src="docs/images/mupid-home.jpg" alt="뮤피드 메인 · 오늘의 Moment" width="800" /></a>
+  <a href="docs/images/main-jump-right-in.png"><img src="docs/images/main-jump-right-in.png" alt="뮤피드 메인 · 오늘의 Moment" width="614" /></a>
 </p>
 
 ### 메인 · 음악 감상
@@ -147,12 +147,11 @@ Android 앱은 웹과 같은 화면을 Tauri로 제공하며, Rust 기반 통신
   <a href="docs/images/taste-report.png"><img src="docs/images/taste-report.png" alt="뮤피드 내 취향 리포트" width="800" /></a>
 </p>
 
-### 모바일 · 탐색과 보관함
+### 모바일 · 보관함
 
-| 음악 탐색 | 보관함 |
-| :---: | :---: |
-| <a href="docs/images/mupid-explore-mobile.jpg"><img src="docs/images/mupid-explore-mobile.jpg" alt="모바일 음악 탐색 화면" width="300" /></a> | <a href="docs/images/mupid-library-mobile.jpg"><img src="docs/images/mupid-library-mobile.jpg" alt="모바일 보관함 화면" width="300" /></a> |
-| 분위기·장르·보컬로 음악을 찾습니다. | 플레이리스트, 저장한 순간, 좋아한 곡을 모아 봅니다. |
+<p align="center">
+  <a href="docs/images/mupid-library-mobile.jpg"><img src="docs/images/mupid-library-mobile.jpg" alt="모바일 보관함 화면" width="300" /></a>
+</p>
 
 ---
 
