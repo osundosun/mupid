@@ -156,11 +156,12 @@ Android 앱은 웹과 같은 화면을 Tauri로 제공하며, Rust 기반 통신
 </p>
 
 
-### 모바일
+### 모바일 · iPhone 16
 
-| 메인 · 오늘의 Moment | 보관함 |
-| :---: | :---: |
-| <a href="docs/images/mupid-home-mobile.jpg"><img src="docs/images/mupid-home-mobile.jpg" alt="뮤피드 모바일 메인" width="260" /></a> | <a href="docs/images/mupid-library-mobile.jpg"><img src="docs/images/mupid-library-mobile.jpg" alt="뮤피드 모바일 보관함" width="260" /></a> |
+| 메인 · 오늘의 Moment | 음악 탐색 | 보관함 |
+| :---: | :---: | :---: |
+| <a href="docs/images/iphone16-home.png"><img src="docs/images/iphone16-home.png" alt="뮤피드 모바일 메인" width="220" /></a> | <a href="docs/images/iphone16-explore.png"><img src="docs/images/iphone16-explore.png" alt="뮤피드 모바일 탐색" width="220" /></a> | <a href="docs/images/iphone16-library.png"><img src="docs/images/iphone16-library.png" alt="뮤피드 모바일 보관함" width="220" /></a> |
+
 
 ---
 
